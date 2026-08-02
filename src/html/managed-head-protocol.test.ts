@@ -228,6 +228,7 @@ describe("managed head protocol", () => {
       onload: "ignored",
       "data-vf-shell-head": "spoofed",
       "data-vf-route-head": "spoofed",
+      "data-vf-server-head-commit": "spoofed",
     });
 
     assertEquals(descriptor?.attributes, [

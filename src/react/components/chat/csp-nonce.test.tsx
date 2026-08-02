@@ -248,6 +248,15 @@ describe("getDocumentNonce hydration behavior", () => {
     assert(html.startsWith(`<style nonce="${TEST_NONCE}">`));
   });
 
+  it("applies the isolated render nonce to ColorModeScript during SSR", async () => {
+    const { result: html } = await runWithHeadCollector(
+      () => renderToString(<ColorModeScript />),
+      { nonce: TEST_NONCE },
+    );
+
+    assert(html.startsWith(`<script nonce="${TEST_NONCE}">`));
+  });
+
   it("preserves nonces on ChatStyleProvider style tags after hydration re-renders", async () => {
     const nonce = await hydrateAndReadStyleNonce(<HydratingChatStyleProviderFixture />);
     assertEquals(nonce, TEST_NONCE);

@@ -10,8 +10,12 @@ export const HEAD_CONTENT_HASH_ATTRIBUTE = "data-vf-hash";
 export const HEAD_REACT_MANAGED_ATTRIBUTE = "data-vf-react-head";
 export const HEAD_REACT_OWNER_ATTRIBUTE = "data-vf-react-head-owner";
 export const HEAD_ROUTE_MANAGED_ATTRIBUTE = "data-vf-route-head";
+export const HEAD_SERVER_COMMIT_ATTRIBUTE = "data-vf-server-head-commit";
 export const HEAD_SHELL_PROVENANCE_ATTRIBUTE = "data-vf-shell-head";
 export const HEAD_SSR_PAYLOAD_ATTRIBUTE = "data-vf-ssr-head";
+export const HEAD_SERVER_REGISTRAR_SYMBOL = Symbol.for(
+  "veryfront.react.server-head-registrar.v1",
+);
 export const HEAD_MANAGER_RETIRE_SYMBOL = Symbol.for(
   "veryfront.client-head-manager.retire.v1",
 );
@@ -118,12 +122,30 @@ export function isHeadFrameworkAttribute(name: string): boolean {
     case HEAD_REACT_MANAGED_ATTRIBUTE:
     case HEAD_REACT_OWNER_ATTRIBUTE:
     case HEAD_ROUTE_MANAGED_ATTRIBUTE:
+    case HEAD_SERVER_COMMIT_ATTRIBUTE:
     case HEAD_SHELL_PROVENANCE_ATTRIBUTE:
     case HEAD_SSR_PAYLOAD_ATTRIBUTE:
       return true;
     default:
       return false;
   }
+}
+
+/**
+ * Register a structured Head payload with the active server render.
+ *
+ * The returned value is an unpredictable, request-scoped commit token. HTML
+ * generation accepts a payload only when its rendered owner carries a token
+ * registered in the same render context. Browser renders and React renders
+ * outside Veryfront's SSR boundary have no registrar and return undefined.
+ */
+export function registerServerHeadPayload(payload: string): string | undefined {
+  const registrar = (globalThis as typeof globalThis & {
+    [HEAD_SERVER_REGISTRAR_SYMBOL]?: unknown;
+  })[HEAD_SERVER_REGISTRAR_SYMBOL];
+  return typeof registrar === "function"
+    ? (registrar as (value: string) => string | undefined)(payload)
+    : undefined;
 }
 
 export function isSingletonHeadMetaKey(key: string | undefined): boolean {

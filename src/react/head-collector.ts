@@ -11,9 +11,15 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
+  aggregateManagedHeadDescriptors,
+  assertManagedHeadDescriptorBudget,
+  deserializeManagedHeadPayload,
+  HEAD_SERVER_REGISTRAR_SYMBOL,
   headLinkSingletonKeyFromRecord,
   headMetaSingletonKeyFromRecord,
   headScriptKeysIntersect,
+  type ManagedHeadDescriptor,
+  MAX_MANAGED_HEAD_ENTRIES,
   scriptIdentityKeysFromRecord,
 } from "#veryfront/html/managed-head-protocol.ts";
 
@@ -58,10 +64,13 @@ export interface CollectedHead {
 
 export const HEAD_COLLECTOR_SYMBOL = Symbol.for("veryfront.react.collect-head");
 const HEAD_COLLECTOR_STATE_SYMBOL = Symbol.for(
-  "veryfront.react.head-collector-state.v1",
+  "veryfront.react.head-collector-state.v2",
 );
 const HEAD_RENDER_NONCE_SYMBOL = Symbol.for(
   "veryfront.react.head-render-nonce.v1",
+);
+const HEAD_RENDER_REGISTRATIONS_SYMBOL = Symbol.for(
+  "veryfront.react.head-render-registrations.v1",
 );
 
 /**
@@ -86,75 +95,177 @@ function createEmpty(): CollectedHead {
 }
 
 type HeadCollector = (data: Partial<CollectedHead>) => void;
+type HeadPayloadRegistrar = (payload: string) => string | undefined;
+
+interface RegisteredHeadPayload {
+  readonly token: string;
+  readonly descriptors: readonly ManagedHeadDescriptor[];
+}
+
+interface HeadRegistrationState {
+  readonly byPayload: Map<string, RegisteredHeadPayload>;
+  readonly byToken: Map<string, RegisteredHeadPayload>;
+  budgetDescriptors: ManagedHeadDescriptor[];
+}
 
 interface HeadCollectorState {
   readonly storage: AsyncLocalStorage<HeadCollectorContext>;
   readonly collect: HeadCollector;
+  readonly registerPayload: HeadPayloadRegistrar;
 }
 
 type HeadCollectorContext = CollectedHead & {
   /** Response-scoped CSP nonce available while React owns the render call. */
   readonly [HEAD_RENDER_NONCE_SYMBOL]?: string;
+  /** Payloads registered by Head instances during this render only. */
+  readonly [HEAD_RENDER_REGISTRATIONS_SYMBOL]: HeadRegistrationState;
 };
+
+function collectInto(
+  collected: CollectedHead,
+  data: Partial<CollectedHead>,
+): void {
+  if (data.title !== undefined) collected.title = data.title;
+  if (data.description !== undefined) collected.description = data.description;
+
+  for (const meta of data.metas ?? []) {
+    const singletonKey = headMetaSingletonKeyFromRecord(meta);
+    if (singletonKey === "meta:description") {
+      collected.description = meta.content ?? "";
+    }
+    // Single-valued keys override the earlier (layout) tag; every other key
+    // (and keyless metas) accumulates.
+    if (singletonKey) {
+      const idx = collected.metas.findIndex((existing) =>
+        headMetaSingletonKeyFromRecord(existing) === singletonKey
+      );
+      if (idx !== -1) {
+        collected.metas[idx] = meta;
+        continue;
+      }
+    }
+    collected.metas.push(meta);
+  }
+
+  for (const link of data.links ?? []) {
+    const singletonKey = headLinkSingletonKeyFromRecord(link);
+    // A single-valued `rel` (canonical, manifest, …) overrides the earlier
+    // tag; every other rel (stylesheet, preload, icon, alternate, …) accumulates.
+    if (singletonKey) {
+      const idx = collected.links.findIndex((existing) =>
+        headLinkSingletonKeyFromRecord(existing) === singletonKey
+      );
+      if (idx !== -1) {
+        collected.links[idx] = link;
+        continue;
+      }
+    }
+    collected.links.push(link);
+  }
+  if (data.styles?.length) collected.styles.push(...data.styles);
+  for (const script of data.scripts ?? []) {
+    const incomingKeys = scriptIdentityKeysFromRecord(script);
+    const isDupe = incomingKeys.length > 0 &&
+      collected.scripts.some((existing) =>
+        headScriptKeysIntersect(
+          scriptIdentityKeysFromRecord(existing),
+          incomingKeys,
+        )
+      );
+    if (!isDupe) collected.scripts.push(script);
+  }
+}
+
+function collectDescriptors(
+  collected: CollectedHead,
+  descriptors: readonly ManagedHeadDescriptor[],
+): void {
+  for (const descriptor of descriptors) {
+    const attributes = Object.fromEntries(descriptor.attributes);
+    switch (descriptor.tagName) {
+      case "title":
+        collectInto(collected, { title: descriptor.content ?? "" });
+        break;
+      case "meta":
+        collectInto(collected, { metas: [attributes] });
+        break;
+      case "link":
+        collectInto(collected, { links: [attributes] });
+        break;
+      case "style":
+        collectInto(collected, {
+          styles: [
+            descriptor.attributes.length === 0
+              ? descriptor.content ?? ""
+              : { ...attributes, content: descriptor.content ?? "" },
+          ],
+        });
+        break;
+      case "script":
+        collectInto(collected, {
+          scripts: [{
+            ...attributes,
+            ...(descriptor.content !== undefined && { content: descriptor.content }),
+          }],
+        });
+        break;
+    }
+  }
+}
+
+function createRegistrationState(): HeadRegistrationState {
+  return {
+    byPayload: new Map(),
+    byToken: new Map(),
+    budgetDescriptors: [],
+  };
+}
+
+function createCommitToken(registrations: HeadRegistrationState): string {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const bytes = new Uint8Array(24);
+    globalThis.crypto.getRandomValues(bytes);
+    const token = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+    if (!registrations.byToken.has(token)) return token;
+  }
+  throw new TypeError("Unable to allocate a unique managed-head commit token");
+}
 
 function createHeadCollectorState(): HeadCollectorState {
   const storage = new AsyncLocalStorage<HeadCollectorContext>();
-  function collectHead(data: Partial<CollectedHead>): void {
+  const collect: HeadCollector = (data) => {
     const collected = storage.getStore();
-    if (!collected) return;
+    if (collected) collectInto(collected, data);
+  };
+  const registerPayload: HeadPayloadRegistrar = (payload) => {
+    const context = storage.getStore();
+    if (!context) return undefined;
 
-    if (data.title !== undefined) collected.title = data.title;
-    if (data.description !== undefined) collected.description = data.description;
-
-    for (const meta of data.metas ?? []) {
-      const singletonKey = headMetaSingletonKeyFromRecord(meta);
-      if (singletonKey === "meta:description") {
-        collected.description = meta.content ?? "";
-      }
-      // Single-valued keys override the earlier (layout) tag; every other key
-      // (and keyless metas) accumulates.
-      if (singletonKey) {
-        const idx = collected.metas.findIndex((existing) =>
-          headMetaSingletonKeyFromRecord(existing) === singletonKey
-        );
-        if (idx !== -1) {
-          collected.metas[idx] = meta;
-          continue;
-        }
-      }
-      collected.metas.push(meta);
+    const registrations = context[HEAD_RENDER_REGISTRATIONS_SYMBOL];
+    const existing = registrations.byPayload.get(payload);
+    if (existing) return existing.token;
+    if (registrations.byPayload.size >= MAX_MANAGED_HEAD_ENTRIES) {
+      throw new TypeError(
+        `Managed head exceeds the ${MAX_MANAGED_HEAD_ENTRIES}-registration request limit`,
+      );
     }
 
-    for (const link of data.links ?? []) {
-      const singletonKey = headLinkSingletonKeyFromRecord(link);
-      // A single-valued `rel` (canonical, manifest, …) overrides the earlier
-      // tag; every other rel (stylesheet, preload, icon, alternate, …) accumulates.
-      if (singletonKey) {
-        const idx = collected.links.findIndex((existing) =>
-          headLinkSingletonKeyFromRecord(existing) === singletonKey
-        );
-        if (idx !== -1) {
-          collected.links[idx] = link;
-          continue;
-        }
-      }
-      collected.links.push(link);
-    }
-    if (data.styles?.length) collected.styles.push(...data.styles);
-    for (const script of data.scripts ?? []) {
-      const incomingKeys = scriptIdentityKeysFromRecord(script);
-      const isDupe = incomingKeys.length > 0 &&
-        collected.scripts.some((existing) =>
-          headScriptKeysIntersect(
-            scriptIdentityKeysFromRecord(existing),
-            incomingKeys,
-          )
-        );
-      if (!isDupe) collected.scripts.push(script);
-    }
-  }
+    const descriptors = deserializeManagedHeadPayload(payload);
+    const budgetDescriptors = aggregateManagedHeadDescriptors([
+      ...registrations.budgetDescriptors,
+      ...descriptors,
+    ]);
+    assertManagedHeadDescriptorBudget(budgetDescriptors);
 
-  return { storage, collect: collectHead };
+    const token = createCommitToken(registrations);
+    const registration = { token, descriptors };
+    registrations.byPayload.set(payload, registration);
+    registrations.byToken.set(token, registration);
+    registrations.budgetDescriptors = budgetDescriptors;
+    return token;
+  };
+
+  return { storage, collect, registerPayload };
 }
 
 const globalHeadCollectorState = globalThis as typeof globalThis & {
@@ -178,11 +289,33 @@ const globalHeadCollector = globalThis as typeof globalThis & {
 };
 globalHeadCollector[HEAD_COLLECTOR_SYMBOL] = collectHead;
 
+const globalHeadRegistrar = globalThis as typeof globalThis & {
+  [HEAD_SERVER_REGISTRAR_SYMBOL]?: HeadPayloadRegistrar;
+};
+const installedRegistrar = Reflect.getOwnPropertyDescriptor(
+  globalHeadRegistrar,
+  HEAD_SERVER_REGISTRAR_SYMBOL,
+);
+if (!installedRegistrar) {
+  Object.defineProperty(globalHeadRegistrar, HEAD_SERVER_REGISTRAR_SYMBOL, {
+    value: headCollectorState.registerPayload,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+} else if (installedRegistrar.value !== headCollectorState.registerPayload) {
+  throw new TypeError("Managed-head server registrar integrity check failed");
+}
+
 export async function runWithHeadCollector<T>(
   fn: () => T | Promise<T>,
   options: { nonce?: string } = {},
 ): Promise<{ result: T; head: CollectedHead }> {
   const head = createEmpty() as HeadCollectorContext;
+  Object.defineProperty(head, HEAD_RENDER_REGISTRATIONS_SYMBOL, {
+    value: createRegistrationState(),
+    enumerable: false,
+  });
   if (options.nonce) {
     Object.defineProperty(head, HEAD_RENDER_NONCE_SYMBOL, {
       value: options.nonce,
@@ -203,6 +336,32 @@ export function getHeadCollectorContext(): CollectedHead | null {
  */
 export function getHeadCollectorNonce(): string | undefined {
   return headStorage.getStore()?.[HEAD_RENDER_NONCE_SYMBOL];
+}
+
+/**
+ * Materialize only Head payloads whose server-only commit token appears in the
+ * completed React HTML. Tokens and payloads are bound to `head`'s render
+ * context, so ordinary SSR markup cannot manufacture trusted head entries.
+ */
+export function resolveCommittedHeadRegistrations(
+  head: CollectedHead,
+  commitTokens: readonly string[],
+): CollectedHead {
+  const resolved = createEmpty();
+  collectInto(resolved, head);
+
+  const registrations = (head as HeadCollectorContext)[HEAD_RENDER_REGISTRATIONS_SYMBOL];
+  if (!registrations || commitTokens.length === 0) return resolved;
+
+  const descriptors: ManagedHeadDescriptor[] = [];
+  for (const token of commitTokens) {
+    const registration = registrations.byToken.get(token);
+    if (registration) descriptors.push(...registration.descriptors);
+  }
+  const committed = aggregateManagedHeadDescriptors(descriptors);
+  assertManagedHeadDescriptorBudget(committed);
+  collectDescriptors(resolved, committed);
+  return resolved;
 }
 
 export function hasCollectedHead(): boolean {
@@ -226,6 +385,13 @@ function clearCollectedHead(store: CollectedHead): void {
   store.links = [];
   store.styles = [];
   store.scripts = [];
+
+  const registrations = (store as HeadCollectorContext)[HEAD_RENDER_REGISTRATIONS_SYMBOL];
+  if (registrations) {
+    registrations.byPayload.clear();
+    registrations.byToken.clear();
+    registrations.budgetDescriptors = [];
+  }
 }
 
 export function resetHeadCollector(): void {

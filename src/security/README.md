@@ -97,7 +97,9 @@ structured `Head` script/style declarations, and explicitly source-authored
 static HTML documents. Veryfront does not add the nonce to raw SSR output,
 because doing so would authorize arbitrary application or user-controlled
 markup under CSP. Use structured `Head` declarations, external same-origin
-assets, or explicit CSP hashes for application-owned inline code.
+assets, or explicit CSP hashes for application-owned inline code. Structured
+`Head` authorization is registered in request-scoped render state; serialized
+DOM attributes alone never establish trusted provenance.
 
 ### Paths and filesystem access
 

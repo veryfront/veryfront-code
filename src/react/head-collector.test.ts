@@ -8,6 +8,7 @@ import {
   HEAD_COLLECTOR_SYMBOL,
   runWithHeadCollector,
 } from "./head-collector.ts";
+import { HEAD_SERVER_REGISTRAR_SYMBOL } from "#veryfront/html/managed-head-protocol.ts";
 
 describe("head-collector", () => {
   describe("collectHead", () => {
@@ -338,6 +339,18 @@ describe("head-collector", () => {
       })[HEAD_COLLECTOR_SYMBOL];
 
       assertEquals(globalCollector, collectHead);
+    });
+
+    it("locks the server payload registrar against cross-request replacement", () => {
+      const descriptor = Reflect.getOwnPropertyDescriptor(
+        globalThis,
+        HEAD_SERVER_REGISTRAR_SYMBOL,
+      );
+
+      assertEquals(typeof descriptor?.value, "function");
+      assertEquals(descriptor?.configurable, false);
+      assertEquals(descriptor?.enumerable, false);
+      assertEquals(descriptor?.writable, false);
     });
 
     it("keeps the first evaluated copy connected after a second copy loads", async () => {

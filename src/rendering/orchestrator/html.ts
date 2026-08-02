@@ -37,9 +37,9 @@ import {
 } from "./html-project-css.ts";
 import {
   buildHeadElements as buildCollectedHeadElements,
-  extractCommittedHeadFromHTML,
   mergeCollectedHeadWithShell,
   mergeFrontmatter as mergeCollectedFrontmatter,
+  resolveCommittedHeadFromHTML,
 } from "./html-head.ts";
 import { mergeImportedCSS as mergeImportedProjectCss } from "./html-imported-css.ts";
 import type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
@@ -235,7 +235,7 @@ export class HTMLGenerator {
   }
 
   async generateFullHTML(context: HTMLGenerationContext): Promise<string> {
-    const committedHead = extractCommittedHeadFromHTML(context.html);
+    const committedHead = resolveCommittedHeadFromHTML(context.html, context.collectedHead);
     const effectiveContext = committedHead ? { ...context, collectedHead: committedHead } : context;
     let html: string;
     if (isFullHTMLDocument(effectiveContext.html)) {
@@ -268,7 +268,7 @@ export class HTMLGenerator {
       throw error;
     }
 
-    const committedHead = extractCommittedHeadFromHTML(reactContent);
+    const committedHead = resolveCommittedHeadFromHTML(reactContent, context.collectedHead);
     const fullContext = {
       ...context,
       html: reactContent,
