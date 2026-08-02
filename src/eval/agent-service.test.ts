@@ -132,7 +132,17 @@ describe("eval/agent-service", () => {
           AG_UI_EVAL_MODEL: "anthropic/claude-sonnet-4-6",
           DURABLE_CANARY_REPORT_PATH: reportPath,
         },
-        createCases: () => [],
+        createCases: () => [{
+          id: "model-forwarding",
+          label: "Durable canary model forwarding",
+          prepare: async () => ({
+            cleanup: async () => {},
+            conversationId: "11111111-1111-4111-8111-111111111111",
+            prompt: "Verify durable canary model forwarding",
+            title: "Durable canary model forwarding",
+            validate: () => {},
+          }),
+        }],
         createRunner: (config) => {
           runnerConfig = config;
           return createDurableRunCanaryRunner(

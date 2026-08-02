@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type EvalRecord, metrics } from "veryfront/eval";
 
@@ -171,6 +171,51 @@ describe("eval/metrics", () => {
     );
     assertEquals((await latency.evaluate(createRecord())).pass, true);
     assertEquals((await tokens.evaluate(createRecord())).pass, true);
+  });
+
+  it("fails operational budgets closed when required measurements are missing", async () => {
+    const record = createRecord({ usage: {} });
+
+    const tokens = await metrics.ops.tokens({ maxTotal: 20 }).budget().evaluate(record);
+    const cost = await metrics.ops.cost({ maxUsd: 0.05 }).budget().evaluate(record);
+
+    assertEquals(tokens.pass, false);
+    assertEquals(tokens.explanation, "Eval token usage was not measured: totalTokens.");
+    assertEquals(cost.pass, false);
+    assertEquals(cost.explanation, "Eval cost was not measured.");
+  });
+
+  it("validates metric bounds and tool-call count contracts at construction", () => {
+    assertThrows(
+      () => metrics.answer.regex({ pattern: "[" }),
+      Error,
+      "pattern is invalid",
+    );
+    assertThrows(
+      () => metrics.knowledge.recallAtK({ k: 0 }),
+      Error,
+      "at least 1",
+    );
+    assertThrows(
+      () => metrics.ops.tokens({}),
+      Error,
+      "requires",
+    );
+    assertThrows(
+      () => metrics.ops.cost({ maxUsd: Number.NaN }),
+      Error,
+      "finite",
+    );
+    assertThrows(
+      () => metrics.answer.exactMatch().gate({ min: 1, max: 0 }),
+      Error,
+      "cannot exceed",
+    );
+    assertThrows(
+      () => metrics.agent.toolCallCount("search", { exact: 1, min: 1 }),
+      Error,
+      "cannot be combined",
+    );
   });
 
   it("evaluates operation cost budgets with billed gateway cost when present", async () => {
@@ -430,6 +475,35 @@ describe("eval/metrics", () => {
           match: "knowledge/billing-escalation.md",
         },
       },
+    );
+  });
+
+  it("matches tool inputs by own JSON keys without prototype collisions", async () => {
+    const expected = JSON.parse('{"__proto__":{"polluted":true}}') as Record<string, unknown>;
+    const inheritedInput = Object.create({ orderId: "A1049" }) as Record<string, unknown>;
+    const record = createRecord({
+      trace: {
+        events: [],
+        toolCalls: [
+          { name: "unsafe", input: {} },
+          { name: "inherited", input: inheritedInput },
+        ],
+      },
+    });
+
+    assertEquals(
+      (await metrics.agent.calledTool("unsafe", {
+        input: expected,
+        match: "exact",
+      }).evaluate(record)).pass,
+      false,
+    );
+    assertEquals(
+      (await metrics.agent.calledTool("inherited", {
+        input: { orderId: "A1049" },
+        match: "partial",
+      }).evaluate(record)).pass,
+      false,
     );
   });
 

@@ -1,3 +1,11 @@
+import {
+  assertFiniteEvalNumber,
+  createEvalValidationError,
+  isEvalRecord,
+  normalizeEvalString,
+  normalizeEvalStringList,
+} from "../../validation.ts";
+
 /** Public API contract for live eval request body. */
 export interface LiveEvalRequestBody {
   threadId: string;
@@ -33,23 +41,55 @@ export interface BuildLiveEvalRequestBodyInput {
 export function buildLiveEvalRequestBody(
   input: BuildLiveEvalRequestBodyInput,
 ): LiveEvalRequestBody {
+  const testCaseId = normalizeEvalString(input.testCaseId, "Live eval test case id");
+  if (typeof input.prompt !== "string") {
+    throw createEvalValidationError("Live eval prompt must be a string");
+  }
+  if (input.metadata !== undefined && !isEvalRecord(input.metadata)) {
+    throw createEvalValidationError("Live eval metadata must be an object");
+  }
+  const metadata = Object.create(null) as Record<string, string>;
+  for (const [key, value] of Object.entries(input.metadata ?? {})) {
+    if (typeof value !== "string") {
+      throw createEvalValidationError(`Live eval metadata "${key}" must be a string`);
+    }
+    metadata[key] = value;
+  }
+  const allowedTools = input.allowedTools === undefined
+    ? undefined
+    : normalizeEvalStringList(input.allowedTools, "Live eval allowedTools");
+  if (input.maxSteps !== undefined) {
+    assertFiniteEvalNumber(input.maxSteps, "Live eval maxSteps", { integer: true, min: 1 });
+  }
+
   const veryfront: Record<string, unknown> = {};
-  if (input.projectId) {
-    veryfront.projectId = input.projectId;
+  if (input.projectId !== null) {
+    veryfront.projectId = normalizeEvalString(input.projectId, "Live eval projectId");
   }
-  if (input.conversationId) {
-    veryfront.conversationId = input.conversationId;
+  if (input.conversationId !== undefined && input.conversationId !== null) {
+    veryfront.conversationId = normalizeEvalString(
+      input.conversationId,
+      "Live eval conversationId",
+    );
   }
-  if (input.branchId) {
-    veryfront.branchId = input.branchId;
+  if (input.branchId !== undefined) {
+    veryfront.branchId = normalizeEvalString(input.branchId, "Live eval branchId");
   }
-  if (input.model) {
-    veryfront.model = input.model;
+  if (input.model !== undefined) {
+    veryfront.model = normalizeEvalString(input.model, "Live eval model");
   }
-  if (input.allowedTools || input.forceRuntimeOverrides) {
+  if (
+    allowedTools !== undefined ||
+    input.forceRuntimeOverrides ||
+    input.maxSteps !== undefined
+  ) {
     veryfront.runtimeOverrides = {
-      allowedTools: input.allowedTools ?? [],
-      ...(input.maxSteps ? { maxSteps: input.maxSteps } : {}),
+      ...(allowedTools !== undefined
+        ? { allowedTools }
+        : input.forceRuntimeOverrides
+        ? { allowedTools: [] }
+        : {}),
+      ...(input.maxSteps !== undefined ? { maxSteps: input.maxSteps } : {}),
     };
   }
 
@@ -57,8 +97,8 @@ export function buildLiveEvalRequestBody(
     threadId: crypto.randomUUID(),
     runId: `eval-run-${crypto.randomUUID()}`,
     state: {
-      evalCase: input.testCaseId,
-      ...(input.metadata ?? {}),
+      ...metadata,
+      evalCase: testCaseId,
     },
     tools: [],
     context: [],

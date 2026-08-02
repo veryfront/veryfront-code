@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { EvalReport } from "veryfront/eval";
 import { compareEvalModelReports, createEvalModelComparisonMarkdown } from "./model-comparison.ts";
@@ -612,6 +612,45 @@ describe("eval/model-comparison", () => {
         "| 7000 | 2000 | 9000 | 7000 | 2000 | 0.12 | 0.08 | 0.20 | 0.30 | 0.20 | 0.50 | 0.50 | 5.00 | gateway | deferred |",
       ),
       true,
+    );
+  });
+
+  it("rejects ambiguous reports and malformed comparison policies", () => {
+    const baseline = createReport("baseline");
+    const candidate = createReport("candidate");
+
+    assertThrows(
+      () => compareEvalModelReports([baseline], { baselineModel: "baseline" }),
+      Error,
+      "at least one candidate",
+    );
+    assertThrows(
+      () =>
+        compareEvalModelReports([baseline, baseline, candidate], {
+          baselineModel: "baseline",
+        }),
+      Error,
+      "Duplicate eval model report",
+    );
+    assertThrows(
+      () =>
+        compareEvalModelReports([baseline, candidate], {
+          baselineModel: "baseline",
+          minGroundedness: Number.NaN,
+        }),
+      Error,
+      "finite",
+    );
+    assertThrows(
+      () =>
+        compareEvalModelReports([baseline, candidate], {
+          baselineModel: "baseline",
+          objectives: {
+            totalTokens: { weight: -1, direction: "minimize" },
+          },
+        }),
+      Error,
+      "at least 0",
     );
   });
 });

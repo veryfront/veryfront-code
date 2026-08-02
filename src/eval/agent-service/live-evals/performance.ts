@@ -1,3 +1,5 @@
+import { assertFiniteEvalNumber, createEvalValidationError } from "../../validation.ts";
+
 /** Public API contract for live eval runtime. */
 export type LiveEvalRuntime = "framework";
 
@@ -37,6 +39,18 @@ function calculateDurationPercentile(
 export function buildRuntimePerformanceSummary(
   results: LiveEvalResultForPerformance[],
 ): Record<LiveEvalRuntime, RuntimePerformanceSummary> {
+  for (const [index, result] of results.entries()) {
+    if (result.runtime !== "framework") {
+      throw createEvalValidationError(
+        `Live eval result[${index}] has unsupported runtime "${String(result.runtime)}"`,
+      );
+    }
+    assertFiniteEvalNumber(
+      result.durationMs,
+      `Live eval result[${index}] durationMs`,
+      { min: 0 },
+    );
+  }
   const durations = results.map((result) => result.durationMs).sort((
     left,
     right,

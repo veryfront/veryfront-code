@@ -134,13 +134,19 @@ describe("provider/veryfront-cloud", () => {
               'data: {"type":"response.output_item.added","item":{"id":"rs_1","type":"reasoning"}}\n\n',
             ),
             encoder.encode(
-              'data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1","delta":"Thinking."}\n\n',
+              'data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1","output_index":0,"summary_index":0,"delta":"Thinking."}\n\n',
             ),
             encoder.encode(
-              'data: {"type":"response.output_item.done","item":{"id":"rs_1","type":"reasoning"}}\n\n',
+              'data: {"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":"Thinking."}]}}\n\n',
             ),
             encoder.encode(
-              'data: {"type":"response.output_text.delta","item_id":"msg_1","delta":"Hello"}\n\n',
+              'data: {"type":"response.output_item.added","output_index":1,"item":{"id":"msg_1","type":"message","role":"assistant","status":"in_progress","content":[]}}\n\n',
+            ),
+            encoder.encode(
+              'data: {"type":"response.output_text.delta","item_id":"msg_1","output_index":1,"content_index":0,"delta":"Hello"}\n\n',
+            ),
+            encoder.encode(
+              'data: {"type":"response.output_item.done","output_index":1,"item":{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Hello"}]}}\n\n',
             ),
             encoder.encode(
               'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}}\n\n',

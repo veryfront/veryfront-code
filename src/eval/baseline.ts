@@ -7,6 +7,7 @@ import type {
   EvalReportComparisonPolicy,
 } from "./types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { assertFiniteEvalNumber } from "./validation.ts";
 
 function metricKey(metric: EvalMetricSummary): string {
   return `${metric.name}:${metric.family}:${metric.severity}`;
@@ -195,6 +196,45 @@ export function compareEvalReports(
   baseline: EvalReport,
   policy: EvalReportComparisonPolicy = {},
 ): EvalReportComparison {
+  if (
+    current.definitionId !== baseline.definitionId ||
+    current.targetKind !== baseline.targetKind ||
+    current.target !== baseline.target
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail:
+        `Eval baseline identity mismatch: current ${current.definitionId} (${current.targetKind}:${current.target}), baseline ${baseline.definitionId} (${baseline.targetKind}:${baseline.target})`,
+    });
+  }
+  if (policy.passRateDropThreshold !== undefined) {
+    assertFiniteEvalNumber(policy.passRateDropThreshold, "Baseline pass-rate drop threshold", {
+      min: 0,
+      max: 1,
+    });
+  }
+  if (policy.metricPassRateDropThreshold !== undefined) {
+    assertFiniteEvalNumber(
+      policy.metricPassRateDropThreshold,
+      "Baseline metric pass-rate drop threshold",
+      { min: 0, max: 1 },
+    );
+  }
+  if (policy.failedDeltaThreshold !== undefined) {
+    assertFiniteEvalNumber(policy.failedDeltaThreshold, "Baseline failed-delta threshold", {
+      integer: true,
+      min: 0,
+    });
+  }
+  if (policy.usageIncreaseThreshold !== undefined) {
+    assertFiniteEvalNumber(policy.usageIncreaseThreshold, "Baseline usage increase threshold", {
+      min: 0,
+    });
+  }
+  if (policy.latencyIncreaseThreshold !== undefined) {
+    assertFiniteEvalNumber(policy.latencyIncreaseThreshold, "Baseline latency increase threshold", {
+      min: 0,
+    });
+  }
   const resolvedPolicy = {
     passRateDropThreshold: policy.passRateDropThreshold ?? 0,
     metricPassRateDropThreshold: policy.metricPassRateDropThreshold ?? 0,

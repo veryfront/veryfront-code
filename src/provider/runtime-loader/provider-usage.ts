@@ -1,35 +1,17 @@
+import {
+  mergeRuntimeUsage,
+  readRuntimeTokenCount as readTokenCount,
+  type RuntimeUsage,
+  sumRuntimeTokenCounts as sumTokenCounts,
+} from "../runtime-usage.ts";
 import { readRecord } from "./provider-records.ts";
 
-/** Gateway billing mode attached by Veryfront Cloud usage envelopes. */
-export type GatewayBillingMode = "direct" | "deferred";
-
-/** Read a trusted gateway billing mode from provider metadata. */
-export function readGatewayBillingMode(value: unknown): GatewayBillingMode | undefined {
-  return value === "direct" || value === "deferred" ? value : undefined;
-}
-
-/** Public API contract for runtime usage. */
-export type RuntimeUsage = {
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  cacheCreationInputTokens?: number;
-  cacheReadInputTokens?: number;
-  reasoningTokens?: number;
-  billableInputTokens?: number;
-  billableOutputTokens?: number;
-  providerCostUsd?: number;
-  providerInputCostUsd?: number;
-  providerOutputCostUsd?: number;
-  veryfrontChargeUsd?: number;
-  veryfrontInputChargeUsd?: number;
-  veryfrontOutputChargeUsd?: number;
-  veryfrontBilledUsd?: number;
-  costCredits?: number;
-  costSource?: "gateway" | "missing" | "partial";
-  billingMode?: GatewayBillingMode;
-  usageCaptureStatus?: "complete" | "partial" | "missing";
-};
+export {
+  mergeRuntimeUsage,
+  readGatewayBillingMode,
+  sanitizeRuntimeUsage,
+} from "../runtime-usage.ts";
+export type { GatewayBillingMode, RuntimeUsage } from "../runtime-usage.ts";
 
 export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefined {
   const record = readRecord(payload);
@@ -38,20 +20,17 @@ export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefine
     return undefined;
   }
 
-  const inputTokens = usage.input_tokens;
-  const outputTokens = usage.output_tokens;
-  const cacheCreationInputTokens = usage.cache_creation_input_tokens;
-  const cacheReadInputTokens = usage.cache_read_input_tokens;
+  const inputTokens = readTokenCount(usage.input_tokens);
+  const outputTokens = readTokenCount(usage.output_tokens);
+  const cacheCreationInputTokens = readTokenCount(usage.cache_creation_input_tokens);
+  const cacheReadInputTokens = readTokenCount(usage.cache_read_input_tokens);
 
   return {
-    inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
-    outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
-    totalTokens: typeof inputTokens === "number" || typeof outputTokens === "number"
-      ? (typeof inputTokens === "number" ? inputTokens : 0) +
-        (typeof outputTokens === "number" ? outputTokens : 0)
-      : undefined,
-    ...(typeof cacheCreationInputTokens === "number" ? { cacheCreationInputTokens } : {}),
-    ...(typeof cacheReadInputTokens === "number" ? { cacheReadInputTokens } : {}),
+    inputTokens,
+    outputTokens,
+    totalTokens: sumTokenCounts(inputTokens, outputTokens),
+    ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+    ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
   };
 }
 
@@ -62,20 +41,20 @@ export function extractGoogleUsage(payload: unknown): RuntimeUsage | undefined {
     return undefined;
   }
 
-  const inputTokens = usage.promptTokenCount;
-  const outputTokens = usage.candidatesTokenCount;
-  const totalTokens = usage.totalTokenCount;
-  const cachedContentTokenCount = usage.cachedContentTokenCount;
-  const thoughtsTokenCount = usage.thoughtsTokenCount;
+  const inputTokens = readTokenCount(usage.promptTokenCount);
+  const outputTokens = readTokenCount(usage.candidatesTokenCount);
+  const totalTokens = readTokenCount(usage.totalTokenCount);
+  const cachedContentTokenCount = readTokenCount(usage.cachedContentTokenCount);
+  const thoughtsTokenCount = readTokenCount(usage.thoughtsTokenCount);
 
   return {
-    inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
-    outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
-    totalTokens: typeof totalTokens === "number" ? totalTokens : undefined,
-    ...(typeof cachedContentTokenCount === "number"
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    ...(cachedContentTokenCount !== undefined
       ? { cacheReadInputTokens: cachedContentTokenCount }
       : {}),
-    ...(typeof thoughtsTokenCount === "number" ? { reasoningTokens: thoughtsTokenCount } : {}),
+    ...(thoughtsTokenCount !== undefined ? { reasoningTokens: thoughtsTokenCount } : {}),
   };
 }
 
@@ -86,20 +65,20 @@ export function extractOpenAIUsage(payload: unknown): RuntimeUsage | undefined {
     return undefined;
   }
 
-  const inputTokens = usage.prompt_tokens;
-  const outputTokens = usage.completion_tokens;
-  const totalTokens = usage.total_tokens;
+  const inputTokens = readTokenCount(usage.prompt_tokens);
+  const outputTokens = readTokenCount(usage.completion_tokens);
+  const totalTokens = readTokenCount(usage.total_tokens);
   const promptTokensDetails = readRecord(usage.prompt_tokens_details);
-  const cachedTokens = promptTokensDetails?.cached_tokens;
+  const cachedTokens = readTokenCount(promptTokensDetails?.cached_tokens);
   const completionTokensDetails = readRecord(usage.completion_tokens_details);
-  const reasoningTokens = completionTokensDetails?.reasoning_tokens;
+  const reasoningTokens = readTokenCount(completionTokensDetails?.reasoning_tokens);
 
   return {
-    inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
-    outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
-    totalTokens: typeof totalTokens === "number" ? totalTokens : undefined,
-    ...(typeof cachedTokens === "number" ? { cacheReadInputTokens: cachedTokens } : {}),
-    ...(typeof reasoningTokens === "number" ? { reasoningTokens } : {}),
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    ...(cachedTokens !== undefined ? { cacheReadInputTokens: cachedTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
   };
 }
 
@@ -117,24 +96,23 @@ export function extractOpenAIResponsesUsage(payload: unknown): RuntimeUsage | un
   const usage = readRecord(responseRecord?.usage) ?? readRecord(record?.usage);
   if (!usage) return undefined;
 
-  const inputTokens = typeof usage.input_tokens === "number" ? usage.input_tokens : undefined;
-  const outputTokens = typeof usage.output_tokens === "number" ? usage.output_tokens : undefined;
-  const totalTokens = typeof usage.total_tokens === "number"
-    ? usage.total_tokens
-    : (inputTokens !== undefined || outputTokens !== undefined
-      ? (inputTokens ?? 0) + (outputTokens ?? 0)
-      : undefined);
+  const inputTokens = readTokenCount(usage.input_tokens);
+  const outputTokens = readTokenCount(usage.output_tokens);
+  const reportedTotalTokens = readTokenCount(usage.total_tokens);
+  const totalTokens = reportedTotalTokens !== undefined
+    ? reportedTotalTokens
+    : sumTokenCounts(inputTokens, outputTokens);
   const inputDetails = readRecord(usage.input_tokens_details);
-  const cachedTokens = inputDetails?.cached_tokens;
+  const cachedTokens = readTokenCount(inputDetails?.cached_tokens);
   const outputDetails = readRecord(usage.output_tokens_details);
-  const reasoningTokens = outputDetails?.reasoning_tokens;
+  const reasoningTokens = readTokenCount(outputDetails?.reasoning_tokens);
 
   return {
     inputTokens,
     outputTokens,
     totalTokens,
-    ...(typeof cachedTokens === "number" ? { cacheReadInputTokens: cachedTokens } : {}),
-    ...(typeof reasoningTokens === "number" ? { reasoningTokens } : {}),
+    ...(cachedTokens !== undefined ? { cacheReadInputTokens: cachedTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
   };
 }
 
@@ -143,68 +121,5 @@ export function mergeUsage(
   current: RuntimeUsage | undefined,
   next: RuntimeUsage | undefined,
 ): RuntimeUsage | undefined {
-  if (!current) {
-    return next;
-  }
-
-  if (!next) {
-    return current;
-  }
-
-  const inputTokens = next.inputTokens ?? current.inputTokens;
-  const outputTokens = next.outputTokens ?? current.outputTokens;
-  const cacheCreationInputTokens = next.cacheCreationInputTokens ??
-    current.cacheCreationInputTokens;
-  const cacheReadInputTokens = next.cacheReadInputTokens ?? current.cacheReadInputTokens;
-  const reasoningTokens = next.reasoningTokens ?? current.reasoningTokens;
-  const billableInputTokens = next.billableInputTokens ?? current.billableInputTokens;
-  const billableOutputTokens = next.billableOutputTokens ?? current.billableOutputTokens;
-  const providerCostUsd = next.providerCostUsd ?? current.providerCostUsd;
-  const providerInputCostUsd = next.providerInputCostUsd ?? current.providerInputCostUsd;
-  const providerOutputCostUsd = next.providerOutputCostUsd ?? current.providerOutputCostUsd;
-  const veryfrontChargeUsd = next.veryfrontChargeUsd ?? current.veryfrontChargeUsd;
-  const veryfrontInputChargeUsd = next.veryfrontInputChargeUsd ?? current.veryfrontInputChargeUsd;
-  const veryfrontOutputChargeUsd = next.veryfrontOutputChargeUsd ??
-    current.veryfrontOutputChargeUsd;
-  const veryfrontBilledUsd = next.veryfrontBilledUsd ?? current.veryfrontBilledUsd;
-  const costCredits = next.costCredits ?? current.costCredits;
-  const costSource = next.costSource ?? current.costSource;
-  const billingMode = next.billingMode === "deferred" || current.billingMode === "deferred"
-    ? "deferred"
-    : next.billingMode ?? current.billingMode;
-  const usageCaptureStatus = next.usageCaptureStatus ?? current.usageCaptureStatus;
-
-  // Prefer the provider-reported total (latest non-undefined wins, matching the
-  // ?? semantics used for input/output above). Providers like Gemini 2.5
-  // thinking models and OpenAI reasoning models report a total that exceeds
-  // input + output because it includes reasoning/thoughts tokens. Recomputing
-  // the sum would discard those, undercounting usage. Take the larger of the
-  // provider total and the recomputed sum so we never undercount.
-  const reportedTotal = next.totalTokens ?? current.totalTokens;
-  const recomputedTotal = (inputTokens ?? 0) + (outputTokens ?? 0);
-  const totalTokens = reportedTotal !== undefined
-    ? Math.max(reportedTotal, recomputedTotal)
-    : recomputedTotal;
-
-  return {
-    inputTokens,
-    outputTokens,
-    totalTokens,
-    ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
-    ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
-    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
-    ...(billableInputTokens !== undefined ? { billableInputTokens } : {}),
-    ...(billableOutputTokens !== undefined ? { billableOutputTokens } : {}),
-    ...(providerCostUsd !== undefined ? { providerCostUsd } : {}),
-    ...(providerInputCostUsd !== undefined ? { providerInputCostUsd } : {}),
-    ...(providerOutputCostUsd !== undefined ? { providerOutputCostUsd } : {}),
-    ...(veryfrontChargeUsd !== undefined ? { veryfrontChargeUsd } : {}),
-    ...(veryfrontInputChargeUsd !== undefined ? { veryfrontInputChargeUsd } : {}),
-    ...(veryfrontOutputChargeUsd !== undefined ? { veryfrontOutputChargeUsd } : {}),
-    ...(veryfrontBilledUsd !== undefined ? { veryfrontBilledUsd } : {}),
-    ...(costCredits !== undefined ? { costCredits } : {}),
-    ...(costSource !== undefined ? { costSource } : {}),
-    ...(billingMode !== undefined ? { billingMode } : {}),
-    ...(usageCaptureStatus !== undefined ? { usageCaptureStatus } : {}),
-  };
+  return mergeRuntimeUsage(current, next);
 }
