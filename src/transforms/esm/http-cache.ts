@@ -31,6 +31,10 @@ import {
 import { looksLikeHtmlContent as looksLikeHtmlNotJs } from "./html-content.ts";
 import { HttpModuleBodyError, readHttpModuleText } from "../shared/http-module-response.ts";
 import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
+import {
+  guardedOutboundFetch,
+  OutboundRequestBlockedError,
+} from "#veryfront/security/http/outbound-fetch.ts";
 
 // Extracted modules
 import { embedSourceUrl, extractSourceUrl } from "./source-url-embed.ts";
@@ -140,7 +144,7 @@ async function fetchHttpModuleAttempt(
 
   try {
     const startedAt = performance.now();
-    response = await fetch(url, {
+    response = await guardedOutboundFetch(url, {
       headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
       signal,
       redirect: "follow",
@@ -171,7 +175,10 @@ async function fetchHttpModuleAttempt(
       contentType: response.headers.get("content-type") ?? "",
     };
   } catch (error) {
-    if (error instanceof HttpModuleResponseError || error instanceof HttpModuleBodyError) {
+    if (
+      error instanceof HttpModuleResponseError || error instanceof HttpModuleBodyError ||
+      error instanceof OutboundRequestBlockedError
+    ) {
       throw error;
     }
     if (response) await discardResponseBody(response);
@@ -205,6 +212,8 @@ async function fetchHttpModule(url: string): Promise<HttpModuleFetchResult> {
         shouldRetry: (error) =>
           error instanceof HttpModuleBodyError
             ? false
+            : error instanceof OutboundRequestBlockedError
+            ? false
             : !(error instanceof HttpModuleResponseError) ||
               shouldRetryHttpModuleFetch(error.status),
         computeDelay: (attempt) => HTTP_MODULE_FETCH_RETRY_DELAY_MS * (attempt + 1),
@@ -233,6 +242,9 @@ async function fetchHttpModule(url: string): Promise<HttpModuleFetchResult> {
       throw BUILD_FAILED.create({
         detail: `Failed to fetch ${safeUrl}: ${error.message}`,
       });
+    }
+    if (error instanceof OutboundRequestBlockedError) {
+      throw BUILD_FAILED.create({ detail: error.message });
     }
     throw error;
   }
