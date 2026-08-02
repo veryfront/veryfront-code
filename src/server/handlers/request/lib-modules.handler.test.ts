@@ -30,6 +30,7 @@ const MODULE_PATH = `${PROJECT_DIR}/node_modules/veryfront/esm/src/chat/index.js
 const INSTALLED_PACKAGE_PATH = `${PROJECT_DIR}/node_modules/veryfront/package.json`;
 const PROJECT_PACKAGE_PATH = `${PROJECT_DIR}/package.json`;
 const MODULE_SOURCE = "export const chat = true;";
+const WORKFLOW_MODULE_SOURCE = "export const useWorkflow = true;";
 const originalPinningFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
 
 afterEach(() => {
@@ -95,18 +96,28 @@ function sourceFor(
   });
 }
 
-async function requestChat(
+async function requestModule(
+  module: string,
   ctx: HandlerContext,
   query = "",
   method = "GET",
   headers?: HeadersInit,
 ): Promise<Response> {
   const result = await createHandler().handle(
-    new Request(`http://localhost/_veryfront/lib/chat.js${query}`, { method, headers }),
+    new Request(`http://localhost/_veryfront/lib/${module}${query}`, { method, headers }),
     ctx,
   );
   assertExists(result.response);
   return result.response;
+}
+
+function requestChat(
+  ctx: HandlerContext,
+  query = "",
+  method = "GET",
+  headers?: HeadersInit,
+): Promise<Response> {
+  return requestModule("chat.js", ctx, query, method, headers);
 }
 
 async function createPinnedFixture(adapter = createAdapter()): Promise<{
@@ -198,7 +209,24 @@ describe("LibModulesHandler", () => {
       assertEquals(LIB_MODULE_PATHS["chat.js"], "esm/src/chat/index.js");
       assertEquals(LIB_MODULE_PATHS["markdown.js"], "esm/src/markdown/index.js");
       assertEquals(LIB_MODULE_PATHS["mdx.js"], "esm/src/mdx/index.js");
-      assertEquals(LIB_MODULE_PATHS["workflow.js"], "esm/src/react/workflow/index.js");
+      assertEquals(LIB_MODULE_PATHS["workflow.js"], "esm/src/workflow/react/index.js");
+    });
+
+    // The package builds and exports the React workflow entry from
+    // src/workflow/react/index.ts, so the published file is
+    // esm/src/workflow/react/index.js. Serving it from any other path 404s the
+    // `veryfront/workflow` import that src/html/utils.ts maps to this route.
+    it("should serve workflow.js from the published workflow/react build output", async () => {
+      const adapter = createAdapter();
+      adapter.fs.files.set(
+        `${PROJECT_DIR}/node_modules/veryfront/esm/src/workflow/react/index.js`,
+        WORKFLOW_MODULE_SOURCE,
+      );
+
+      const response = await requestModule("workflow.js", createContext(adapter));
+
+      assertEquals(response.status, 200);
+      assertEquals(await response.text(), WORKFLOW_MODULE_SOURCE);
     });
   });
 
