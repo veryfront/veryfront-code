@@ -88,7 +88,8 @@ describe("SSR distributed cache availability", () => {
 
   it("reports disabled when initialization finds no distributed backend", async () => {
     const originalSSRModuleBackend = CacheBackends.ssrModule;
-    CacheBackends.ssrModule = () => Promise.resolve(null);
+    CacheBackends.ssrModule =
+      (() => Promise.resolve(null)) as unknown as typeof CacheBackends.ssrModule;
 
     try {
       const redis = await import("./redis.ts?absent-backend-availability-test");

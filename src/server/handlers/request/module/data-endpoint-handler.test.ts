@@ -453,10 +453,12 @@ describe("server/handlers/request/module/data-endpoint-handler", () => {
     ): Promise<{ slug: string | undefined; status: number }> {
       let slug: string | undefined;
       setRendererInitializer(
-        createInitializer(((observed: string) => {
-          slug = observed;
-          return Promise.resolve({ frontmatter: {}, headings: [], html: "" });
-        }) as unknown as Renderer["renderPage"]),
+        createInitializer(
+          ((observed: string) => {
+            slug = observed;
+            return Promise.resolve({ frontmatter: {}, headings: [], html: "" });
+          }) as unknown as Renderer["renderPage"],
+        ),
       );
 
       const response = await callDataEndpoint(
@@ -489,7 +491,7 @@ describe("server/handlers/request/module/data-endpoint-handler", () => {
     });
 
     it("still renders a dot-segment slug outside production", async () => {
-      const ctx = { ...makeCtx("/project"), resolvedEnvironment: "development" } as HandlerContext;
+      const ctx: HandlerContext = { ...makeCtx("/project"), resolvedEnvironment: "preview" };
       assertEquals(
         (await slugFor("/_veryfront/data/.veryfront/secrets.json", ctx)).slug,
         ".veryfront/secrets",
