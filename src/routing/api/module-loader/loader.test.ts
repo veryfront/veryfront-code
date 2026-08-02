@@ -7,7 +7,8 @@ import {
   getNodeExternalPackagesToResolve,
   getUserDependencies,
   isSpecifierResolutionError,
-  loadHandlerModule,
+  loadHandlerModule as loadHandlerModuleRaw,
+  prepareHandlerModule,
   resolveEsmUserDependencies,
   rewriteCompiledBinaryUserDependencyImports,
   rewriteCompiledBinaryVeryfrontImports,
@@ -21,8 +22,20 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { env, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import type { LoadModuleOptions } from "./types.ts";
+import { executeAppRoute } from "../route-executor.ts";
+import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
+import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 
 const fs = createFileSystem();
+
+function loadHandlerModule(options: LoadModuleOptions) {
+  return loadHandlerModuleRaw({
+    ...options,
+    allowHostProjectCodeExecution: true,
+  });
+}
 
 const adapter: RuntimeAdapter = {
   id: "node",
@@ -86,6 +99,7 @@ const adapter: RuntimeAdapter = {
 
 describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, () => {
   afterAll(async () => {
+    await __resetPoolForTests();
     const { stop } = await import("veryfront/extensions/bundler");
     await stop();
   });
@@ -104,6 +118,98 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     });
 
     assertEquals(typeof route?.GET, "function");
+  });
+
+  it("rejects host loading without an explicit capability before evaluation", async () => {
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "untrusted-handler.ts");
+    const marker = "__vf_untrusted_host_loader_marker__";
+    delete (globalThis as Record<string, unknown>)[marker];
+    await fs.writeTextFile(
+      modulePath,
+      `globalThis.${marker} = true; export const GET = () => new Response("ok");`,
+    );
+
+    await assertRejects(
+      () =>
+        loadHandlerModuleRaw({
+          projectDir: tmpDir,
+          modulePath,
+          adapter,
+          config: undefined,
+        } as never),
+      TypeError,
+      "explicit trusted-local execution",
+    );
+    assertEquals((globalThis as Record<string, unknown>)[marker], undefined);
+  });
+
+  it("prepares route source without evaluating top-level project code", async () => {
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "prepared-handler.ts");
+    const marker = "__vf_prepare_route_host_marker__";
+    delete (globalThis as Record<string, unknown>)[marker];
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `globalThis.${marker} = "evaluated";`,
+        `export const GET = () => new Response("ok");`,
+      ].join("\n"),
+    );
+
+    const prepared = await prepareHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+
+    assertEquals((globalThis as Record<string, unknown>)[marker], undefined);
+    assertEquals(prepared.sha256.length, 64);
+    assertMatch(prepared.source, /__vf_prepare_route_host_marker__/);
+  });
+
+  it("executes prepared bundled source only inside the project worker", async () => {
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "isolated-handler.ts");
+    const marker = "__vf_prepared_route_worker_marker__";
+    delete (globalThis as Record<string, unknown>)[marker];
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `globalThis.${marker} = "worker-only";`,
+        `export function GET() { return new Response(String(globalThis.${marker})); }`,
+      ].join("\n"),
+    );
+
+    const prepared = await prepareHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    const response = await runWithExactSourceIntegrationPolicy(
+      normalizeSourceIntegrationPolicy({ allow: {} }),
+      () =>
+        executeAppRoute(
+          {},
+          new Request("http://localhost/api/isolated"),
+          { route: { pattern: "/api/isolated", page: modulePath }, params: {} },
+          "/api/isolated",
+          adapter,
+          {
+            modulePath,
+            projectDir: tmpDir,
+            isLocalProject: false,
+            preparedModule: prepared,
+            executionScopeId: `loader-test-${crypto.randomUUID()}`,
+          },
+        ),
+    );
+
+    assertEquals(response.status, 200);
+    assertEquals(await response.text(), "worker-only");
+    assertEquals((globalThis as Record<string, unknown>)[marker], undefined);
   });
 
   it("resolves relative imports through adapter when file is not local", async () => {

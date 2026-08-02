@@ -67,6 +67,9 @@ export interface WorkflowDiscoveryOptions {
 
   /** Enable debug logging */
   debug?: boolean;
+
+  /** Explicit host-owned capability for a trusted local or dedicated runtime. */
+  allowHostProjectCodeExecution?: boolean;
 }
 
 /**
@@ -127,6 +130,7 @@ export async function discoverWorkflows(
     config,
     workflowsDir = "workflows",
     debug = false,
+    allowHostProjectCodeExecution,
   } = options;
 
   const workflows: DiscoveredWorkflow[] = [];
@@ -170,6 +174,7 @@ export async function discoverWorkflows(
         const module = await importDiscoveryModule(file.path, {
           adapter,
           projectDir,
+          allowHostProjectCodeExecution,
         });
 
         // Extract workflows from module exports

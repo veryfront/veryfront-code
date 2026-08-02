@@ -159,6 +159,7 @@ export async function runDynamicWorkflowRun(
           cacheKey: tenant.projectId ?? tenant.projectSlug,
           verbose: debug,
           sourceIntegrationPolicy,
+          allowHostProjectCodeExecution: true,
         });
 
         if (discoveryResult.errors.length > 0 && debug) {

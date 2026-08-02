@@ -113,6 +113,19 @@ export async function handleRSCEndpoint(
     return new Response("Flight endpoint removed. Use custom RSC endpoints.", { status: 410 });
   }
 
+  // These transports import or evaluate tenant-owned server modules. Until the
+  // generation-owned isolated RSC graph is connected to the worker renderer,
+  // remote projects must not fall back to the shared host realm.
+  if (!isLocalProject && isRscServerExecutionEndpoint(sub)) {
+    return new Response("Service Unavailable", {
+      status: HttpStatus.SERVICE_UNAVAILABLE,
+      headers: {
+        "cache-control": "no-store",
+        "retry-after": "1",
+      },
+    });
+  }
+
   const url = new URL(req.url);
   const dependencyPinningSource = providedDependencyPinningSource ??
     createDependencyPinningSource({
@@ -287,6 +300,15 @@ export async function handleRSCEndpoint(
       },
     });
   }
+}
+
+function isRscServerExecutionEndpoint(sub: string): boolean {
+  return sub === "action" ||
+    sub === "payload" ||
+    sub === "render" ||
+    sub.startsWith("render/") ||
+    sub === "stream" ||
+    sub.startsWith("stream/");
 }
 
 function isDependencySnapshotBoundEndpoint(sub: string): boolean {

@@ -12,7 +12,7 @@ import { agent } from "../factory.ts";
 import {
   createRuntimeAgentDefinitionFromAgent,
   describeProjectAgentRuntimeAgentIdCandidates,
-  discoverProjectAgentRuntime,
+  discoverProjectAgentRuntime as discoverProjectAgentRuntimeRaw,
   doesProjectAgentRuntimeAgentMatchSource,
   getProjectAgentRuntimeAgentIdCandidates,
   resolveSingleProjectAgentRuntimeAgentId,
@@ -29,6 +29,12 @@ import { registerSkill } from "#veryfront/skill/registry.ts";
 import { createLoadSkillTool } from "#veryfront/skill/tools.ts";
 import { getEffectiveAgentSystem } from "../runtime/effective-agent-system.ts";
 import { tool } from "#veryfront/tool";
+
+const discoverProjectAgentRuntime: typeof discoverProjectAgentRuntimeRaw = (input) =>
+  discoverProjectAgentRuntimeRaw({
+    ...input,
+    allowHostProjectCodeExecution: true,
+  });
 
 async function withTempDir(fn: (dir: string) => Promise<void> | void): Promise<void> {
   const dir = Deno.makeTempDirSync();

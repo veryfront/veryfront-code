@@ -5,7 +5,7 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
 import { validateHTTPImports } from "./http-validator.ts";
 import { loadSecurityConfig } from "./security-config.ts";
-import type { APIRoute, LoadModuleOptions } from "./types.ts";
+import type { APIRoute, LoadHostModuleOptions, LoadModuleOptions } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import { createFileSystem, realPath } from "#veryfront/platform/compat/fs.ts";
@@ -23,6 +23,11 @@ import {
   readProjectDependencies,
   rewriteExternalImports,
 } from "./external-import-rewriter.ts";
+import {
+  MAX_WORKER_MODULE_SOURCE_BYTES,
+  type PreparedWorkerModule,
+} from "#veryfront/security/sandbox/worker-types.ts";
+import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 export {
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
@@ -40,7 +45,12 @@ const logger = serverLogger.component("api");
 
 export { toCjsDestructureBindings } from "./loader-helpers.ts";
 
-export function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute | null> {
+export function loadHandlerModule(options: LoadHostModuleOptions): Promise<APIRoute | null> {
+  if (!isExplicitHostProjectCodeExecutionAllowed(options)) {
+    return Promise.reject(
+      new TypeError("Host API module loading requires explicit trusted-local execution"),
+    );
+  }
   return withSpan(
     "api.loadHandlerModule",
     async () => {
@@ -59,6 +69,62 @@ export function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute 
           createError({
             type: "api",
             message: `Failed to load API handler: ${errorMsg}`,
+          }),
+        );
+      }
+    },
+    { "api.modulePath": options.modulePath, "api.projectDir": options.projectDir },
+  );
+}
+
+/**
+ * Build an API route without importing or evaluating project code in the host
+ * realm. Shared runtimes pass this immutable source snapshot to the project
+ * worker, which rehashes and evaluates it under tenant-scoped permissions.
+ */
+export function prepareHandlerModule(options: LoadModuleOptions): Promise<PreparedWorkerModule> {
+  return withSpan(
+    "api.prepareHandlerModule",
+    async () => {
+      const { projectDir, modulePath, adapter, config } = options;
+      validateModulePath(modulePath, projectDir);
+
+      if (isCompiledBinary()) {
+        throw toError(
+          createError({
+            type: "api",
+            message: "Isolated API route preparation is unavailable in this compiled runtime",
+          }),
+        );
+      }
+
+      try {
+        const fs = createFileSystem();
+        const source = await buildTranspiledModuleSource(
+          modulePath,
+          projectDir,
+          adapter,
+          fs,
+          config,
+        );
+        const bytes = new TextEncoder().encode(source);
+        if (bytes.byteLength > MAX_WORKER_MODULE_SOURCE_BYTES) {
+          throw new TypeError(
+            `Prepared API route exceeds the ${MAX_WORKER_MODULE_SOURCE_BYTES}-byte worker limit`,
+          );
+        }
+        const digest = await crypto.subtle.digest("SHA-256", bytes);
+        return Object.freeze({
+          source,
+          sha256: new Uint8Array(digest).toHex(),
+        });
+      } catch (error: unknown) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        logger.error(`Failed to prepare isolated API handler ${modulePath}:`, error);
+        throw toError(
+          createError({
+            type: "api",
+            message: `Failed to prepare isolated API handler: ${errorMsg}`,
           }),
         );
       }
@@ -399,15 +465,32 @@ function createProjectBoundaryPlugin(roots: string[]): Plugin {
   };
 }
 
-function loadAndTranspileModule(
+async function loadAndTranspileModule(
   modulePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
   fs: FileSystem,
   config?: VeryfrontConfig,
 ): Promise<APIRoute> {
+  const source = await buildTranspiledModuleSource(
+    modulePath,
+    projectDir,
+    adapter,
+    fs,
+    config,
+  );
+  return await loadModuleFromCode(source, fs);
+}
+
+function buildTranspiledModuleSource(
+  modulePath: string,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+  fs: FileSystem,
+  config?: VeryfrontConfig,
+): Promise<string> {
   return withSpan(
-    "api.loadAndTranspileModule",
+    "api.buildTranspiledModuleSource",
     async () => {
       const { filePath: resolvedPath, contents: source } = await readFileWithExtensions(
         adapter,
@@ -525,7 +608,7 @@ function loadAndTranspileModule(
       const js = result.outputFiles?.[0]?.text ?? "export {}";
       logger.debug(`transpiled size ${js.length} bytes`);
 
-      return loadModuleFromCode(js, projectDir, fs, userDeps);
+      return await rewriteExternalImports(js, projectDir, fs, userDeps);
     },
     { "api.modulePath": modulePath, "api.projectDir": projectDir },
   );
@@ -587,14 +670,12 @@ export function getUserDependencies(
 
 async function loadModuleFromCode(
   code: string,
-  projectDir: string,
   fs: FileSystem,
-  userDeps: Map<string, string> = new Map(),
 ): Promise<APIRoute> {
   const tempDir = await fs.makeTempDir({ prefix: "vf-api-" });
   const tempFile = pathHelper.join(tempDir, "handler.mjs");
 
-  const transformedCode = await rewriteExternalImports(code, projectDir, fs, userDeps);
+  const transformedCode = code;
 
   // In compiled Deno binaries, external modules loaded from temp files cannot
   // resolve "veryfront" since the source is embedded in the binary's virtual FS.

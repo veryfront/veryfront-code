@@ -13,6 +13,7 @@ import type { HandlerContext } from "#veryfront/types";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { serverLogger } from "#veryfront/utils";
 import { isWebSocketPath } from "#veryfront/server/runtime-handler/request-utils.ts";
+import { isExplicitlyLocalProject } from "#veryfront/security/project-locality.ts";
 
 const DEFAULT_MAX_ENTRIES = 100;
 const logger = serverLogger.component("project-middleware");
@@ -20,6 +21,7 @@ const logger = serverLogger.component("project-middleware");
 type MiddlewareLoader = (
   projectDir: string,
   adapter: RuntimeAdapter,
+  allowHostProjectCodeExecution: boolean,
 ) => Promise<MiddlewareFunction[]>;
 
 interface ProjectMiddlewareRuntimeOptions {
@@ -57,7 +59,11 @@ export class ProjectMiddlewareRuntime {
       maxEntries: options.maxEntries ?? DEFAULT_MAX_ENTRIES,
     });
     this.#loadMiddleware = options.loadMiddleware ??
-      ((projectDir, adapter) => loadMiddlewareFile(projectDir, adapter, { throwOnError: true }));
+      ((projectDir, adapter, allowHostProjectCodeExecution) =>
+        loadMiddlewareFile(projectDir, adapter, {
+          throwOnError: true,
+          allowHostProjectCodeExecution,
+        }));
 
     if (options.registryName) {
       registerLRUCache(options.registryName, this.#cache);
@@ -103,8 +109,14 @@ export class ProjectMiddlewareRuntime {
 
     const environment = resolvedEnvironment(ctx);
     const branch = resolvedBranch(ctx);
+    const allowHostProjectCodeExecution = !isSharedProxy || isExplicitlyLocalProject(ctx);
     const executeMiddleware = async (): Promise<Response | undefined> => {
-      const middleware = await this.#getMiddleware(ctx, environment, branch);
+      const middleware = await this.#getMiddleware(
+        ctx,
+        environment,
+        branch,
+        allowHostProjectCodeExecution,
+      );
       if (middleware.length === 0) return next();
 
       const pipeline = new MiddlewarePipeline();
@@ -144,13 +156,19 @@ export class ProjectMiddlewareRuntime {
     ctx: HandlerContext,
     environment: "production" | "preview",
     branch: string | null,
+    allowHostProjectCodeExecution: boolean,
   ): Promise<readonly MiddlewareFunction[]> {
-    const key = this.#buildCacheKey(ctx, environment, branch);
-    if (!key) return this.#load(ctx);
+    const key = this.#buildCacheKey(
+      ctx,
+      environment,
+      branch,
+      allowHostProjectCodeExecution,
+    );
+    if (!key) return this.#load(ctx, allowHostProjectCodeExecution);
 
     let pending = this.#cache.get(key);
     if (!pending) {
-      pending = Promise.resolve().then(() => this.#load(ctx));
+      pending = Promise.resolve().then(() => this.#load(ctx, allowHostProjectCodeExecution));
       this.#cache.set(key, pending);
     }
 
@@ -166,6 +184,7 @@ export class ProjectMiddlewareRuntime {
     ctx: HandlerContext,
     environment: "production" | "preview",
     branch: string | null,
+    allowHostProjectCodeExecution: boolean,
   ): string | null {
     const projectIdentity = ctx.projectId ?? ctx.projectSlug;
     if (!projectIdentity) return null;
@@ -176,15 +195,23 @@ export class ProjectMiddlewareRuntime {
     const environmentIdentity = ctx.environmentId ?? ctx.environmentName ?? "default";
     return [
       cacheSegment(projectIdentity),
+      allowHostProjectCodeExecution ? "host" : "isolated",
       environment,
       cacheSegment(sourceIdentity),
       cacheSegment(environmentIdentity),
     ].join(":");
   }
 
-  async #load(ctx: HandlerContext): Promise<readonly MiddlewareFunction[]> {
+  async #load(
+    ctx: HandlerContext,
+    allowHostProjectCodeExecution: boolean,
+  ): Promise<readonly MiddlewareFunction[]> {
     try {
-      const fileMiddleware = await this.#loadMiddleware(ctx.projectDir, ctx.adapter);
+      const fileMiddleware = await this.#loadMiddleware(
+        ctx.projectDir,
+        ctx.adapter,
+        allowHostProjectCodeExecution,
+      );
       return [...fileMiddleware, ...(ctx.config?.middleware?.custom ?? [])];
     } catch (error) {
       logger.error("Failed to load project middleware", {

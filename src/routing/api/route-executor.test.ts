@@ -1,15 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  __resetInProcessIsolationWarningForTests,
-  executeAppRoute,
-  executePagesRoute,
+  executeAppRoute as executeAppRouteRaw,
+  executePagesRoute as executePagesRouteRaw,
+  type ExecuteRouteOptions,
 } from "./route-executor.ts";
 import type { RouteMatch } from "./api-route-matcher.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
-import { __resetLoggerConfigForTests } from "../../utils/logger/index.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 
@@ -75,34 +74,65 @@ function makeMatch(
   return { route: { pattern, page }, params };
 }
 
-function captureConsoleWarn(): { getOutput: () => string; restore: () => void } {
-  const originalWarn = console.warn;
-  const output: string[] = [];
+const LOCAL_EXECUTION: ExecuteRouteOptions = Object.freeze({
+  isLocalProject: true,
+  allowHostProjectCodeExecution: true,
+});
 
-  console.warn = (...args: unknown[]) => {
-    output.push(args.map(String).join(" "));
-  };
+function executeAppRoute(
+  handler: Parameters<typeof executeAppRouteRaw>[0],
+  request: Request,
+  match: RouteMatch,
+  pathname: string,
+  adapter: RuntimeAdapter,
+  options?: ExecuteRouteOptions,
+): Promise<Response> {
+  return executeAppRouteRaw(
+    handler,
+    request,
+    match,
+    pathname,
+    adapter,
+    options ?? LOCAL_EXECUTION,
+  );
+}
 
+function executePagesRoute(
+  handler: Parameters<typeof executePagesRouteRaw>[0],
+  request: Request,
+  match: RouteMatch,
+  pathname: string,
+  adapter: RuntimeAdapter,
+  projectDir?: string,
+  options?: ExecuteRouteOptions,
+): Promise<Response> {
+  return executePagesRouteRaw(
+    handler,
+    request,
+    match,
+    pathname,
+    adapter,
+    projectDir,
+    options ?? LOCAL_EXECUTION,
+  );
+}
+
+async function prepareModuleSource(source: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(source));
+  return { source, sha256: new Uint8Array(digest).toHex() };
+}
+
+async function isolatedRouteOptions(
+  source: string,
+  executionScopeId: string,
+): Promise<ExecuteRouteOptions> {
   return {
-    getOutput: () => output.join("\n"),
-    restore: () => {
-      console.warn = originalWarn;
-    },
+    modulePath: "/tmp/test/handler.ts",
+    projectDir: "/tmp/test",
+    isLocalProject: false,
+    preparedModule: await prepareModuleSource(source),
+    executionScopeId,
   };
-}
-
-function restoreEnv(snapshot: Map<string, string | undefined>): void {
-  for (const [key, value] of snapshot) {
-    if (value === undefined) {
-      Deno.env.delete(key);
-    } else {
-      Deno.env.set(key, value);
-    }
-  }
-}
-
-function snapshotEnv(keys: string[]): Map<string, string | undefined> {
-  return new Map(keys.map((key) => [key, Deno.env.get(key)]));
 }
 
 describe("routing/api/route-executor", () => {
@@ -232,7 +262,7 @@ describe("routing/api/route-executor", () => {
       assertEquals(await response.json(), { ok: true });
     });
 
-    it("should accept cross-context Response-like objects (duck typing)", async () => {
+    it("should reject forged Response-like objects", async () => {
       const bodyStream = new ReadableStream({
         start(controller) {
           controller.enqueue(new TextEncoder().encode('{"cross":"context"}'));
@@ -270,13 +300,10 @@ describe("routing/api/route-executor", () => {
         makeAdapter(),
       );
 
-      assert(response instanceof Response, "should be normalized to a real Response instance");
-      assertEquals(response.status, 200);
-      assertEquals(response.headers.get("content-type"), "application/json");
-      assertEquals(await response.text(), '{"cross":"context"}');
+      assertEquals(response.status, 500);
     });
 
-    it("should normalize cross-context Response for HEAD requests", async () => {
+    it("should reject forged Response-like objects for HEAD requests", async () => {
       const fakeResponse = {
         status: 201,
         statusText: "Created",
@@ -308,10 +335,7 @@ describe("routing/api/route-executor", () => {
         makeAdapter(),
       );
 
-      assert(response instanceof Response, "should be a real Response instance");
-      assertEquals(response.status, 201);
-      assertEquals(response.headers.get("x-custom"), "value");
-      assertEquals(await response.text(), "");
+      assertEquals(response.status, 500);
     });
 
     it("should return error response when handler returns null", async () => {
@@ -507,184 +531,24 @@ describe("routing/api/route-executor", () => {
 
       assertEquals(response.status, 500);
     });
-
-    it("continues pages API route execution when isolation warning logging fails", async () => {
-      const envSnapshot = snapshotEnv([
-        "WORKER_ISOLATION_ENABLED",
-        "WORKER_ISOLATION_API",
-        "LOG_FORMAT",
-        "LOG_LEVEL",
-        "NO_COLOR",
-      ]);
-      Deno.env.delete("WORKER_ISOLATION_ENABLED");
-      Deno.env.delete("WORKER_ISOLATION_API");
-      Deno.env.set("LOG_FORMAT", "text");
-      Deno.env.set("LOG_LEVEL", "WARN");
-      Deno.env.set("NO_COLOR", "1");
-      __resetPoolForTests();
-      __resetInProcessIsolationWarningForTests();
-      __resetLoggerConfigForTests();
-      const originalWarn = console.warn;
-
-      try {
-        console.warn = () => {
-          throw new Error("warning sink unavailable");
-        };
-
-        const handler = {
-          GET: () => Response.json({ msg: "pages api" }),
-        };
-
-        const request = new Request("http://localhost/api/hello", { method: "GET" });
-        const response = await executePagesRoute(
-          handler,
-          request,
-          makeMatch("/api/hello", "/tmp/test/pages/api/hello.ts"),
-          "/api/hello",
-          makeAdapter("production"),
-          "/tmp/test",
-          {
-            modulePath: "/tmp/test/pages/api/hello.ts",
-            projectDir: "/tmp/test",
-            isLocalProject: false,
-          },
-        );
-
-        assertEquals(response.status, 200);
-        assertEquals(await response.json(), { msg: "pages api" });
-      } finally {
-        console.warn = originalWarn;
-        restoreEnv(envSnapshot);
-        __resetLoggerConfigForTests();
-      }
-    });
-  });
-
-  describe("untrusted in-process execution warning", () => {
-    const envKeys = [
-      "WORKER_ISOLATION_ENABLED",
-      "WORKER_ISOLATION_API",
-      "LOG_FORMAT",
-      "LOG_LEVEL",
-      "NO_COLOR",
-    ];
-
-    afterEach(() => {
-      Deno.env.delete("WORKER_ISOLATION_ENABLED");
-      Deno.env.delete("WORKER_ISOLATION_API");
-      __resetPoolForTests();
-      __resetInProcessIsolationWarningForTests();
-      __resetLoggerConfigForTests();
-    });
-
-    it("warns once when a remote app route falls back to in-process execution", async () => {
-      const envSnapshot = snapshotEnv(envKeys);
-      Deno.env.delete("WORKER_ISOLATION_ENABLED");
-      Deno.env.delete("WORKER_ISOLATION_API");
-      Deno.env.set("LOG_FORMAT", "text");
-      Deno.env.set("LOG_LEVEL", "WARN");
-      Deno.env.set("NO_COLOR", "1");
-      __resetPoolForTests();
-      __resetInProcessIsolationWarningForTests();
-      __resetLoggerConfigForTests();
-
-      const captured = captureConsoleWarn();
-      try {
-        const handler = {
-          GET: () => new Response("ok"),
-        };
-        const request = new Request("http://localhost/api/test", { method: "GET" });
-        const options = {
-          modulePath: "/tmp/test/handler.ts",
-          projectDir: "/tmp/test",
-          isLocalProject: false,
-        };
-
-        const first = await executeAppRoute(
-          handler,
-          request,
-          makeMatch(),
-          "/api/test",
-          makeAdapter(),
-          options,
-        );
-        const second = await executeAppRoute(
-          handler,
-          new Request("http://localhost/api/test", { method: "GET" }),
-          makeMatch(),
-          "/api/test",
-          makeAdapter(),
-          options,
-        );
-
-        assertEquals(first.status, 200);
-        assertEquals(second.status, 200);
-        assertEquals(await first.text(), "ok");
-        assertEquals(await second.text(), "ok");
-
-        const output = captured.getOutput();
-        assertEquals((output.match(/worker isolation disabled/g) ?? []).length, 1);
-        assert(output.includes("WORKER_ISOLATION_ENABLED"));
-        assert(output.includes("WORKER_ISOLATION_API"));
-      } finally {
-        captured.restore();
-        restoreEnv(envSnapshot);
-        __resetLoggerConfigForTests();
-      }
-    });
-
-    it("does not warn for local app route in-process execution", async () => {
-      const envSnapshot = snapshotEnv(envKeys);
-      Deno.env.delete("WORKER_ISOLATION_ENABLED");
-      Deno.env.delete("WORKER_ISOLATION_API");
-      Deno.env.set("LOG_FORMAT", "text");
-      Deno.env.set("LOG_LEVEL", "WARN");
-      Deno.env.set("NO_COLOR", "1");
-      __resetPoolForTests();
-      __resetInProcessIsolationWarningForTests();
-      __resetLoggerConfigForTests();
-
-      const captured = captureConsoleWarn();
-      try {
-        const response = await executeAppRoute(
-          { GET: () => new Response("ok") },
-          new Request("http://localhost/api/test", { method: "GET" }),
-          makeMatch(),
-          "/api/test",
-          makeAdapter(),
-          {
-            modulePath: "/tmp/test/handler.ts",
-            projectDir: "/tmp/test",
-            isLocalProject: true,
-          },
-        );
-
-        assertEquals(response.status, 200);
-        assertEquals(captured.getOutput(), "");
-      } finally {
-        captured.restore();
-        restoreEnv(envSnapshot);
-        __resetLoggerConfigForTests();
-      }
-    });
   });
 
   describe("body size guard (isolated execution)", () => {
-    afterEach(() => {
+    afterEach(async () => {
       try {
         Deno.env.delete("WORKER_ISOLATION_ENABLED");
       } catch { /* ok */ }
       try {
         Deno.env.delete("WORKER_ISOLATION_API");
       } catch { /* ok */ }
-      __resetPoolForTests();
+      await __resetPoolForTests();
     });
 
     it("should reject oversized request bodies in isolated app route execution", async () => {
       // Enable worker isolation
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const handler = {
         POST: (_req: Request) => new Response("ok"),
@@ -697,13 +561,20 @@ describe("routing/api/route-executor", () => {
         body: largeBody,
       });
 
-      const response = await executeAppRoute(
-        handler,
-        request,
-        makeMatch(),
-        "/api/test",
-        makeAdapter(),
-        { modulePath: "/tmp/test/handler.ts", projectDir: "/tmp/test" },
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        async () =>
+          await executeAppRoute(
+            handler,
+            request,
+            makeMatch(),
+            "/api/test",
+            makeAdapter(),
+            await isolatedRouteOptions(
+              "export function POST() { return new Response('ok'); }",
+              "body-oversized-app",
+            ),
+          ),
       );
 
       // Should get an error response due to body size limit
@@ -714,7 +585,7 @@ describe("routing/api/route-executor", () => {
       // Enable worker isolation
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const handler = {
         POST: (_req: Request) => new Response("ok"),
@@ -727,31 +598,31 @@ describe("routing/api/route-executor", () => {
         body: smallBody,
       });
 
-      // This will fail at the worker execution level (module not found),
-      // but should NOT fail at the body size guard
-      const response = await executeAppRoute(
-        handler,
-        request,
-        makeMatch(),
-        "/api/test",
-        makeAdapter(),
-        { modulePath: "/tmp/test/handler.ts", projectDir: "/tmp/test" },
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        async () =>
+          await executeAppRoute(
+            handler,
+            request,
+            makeMatch(),
+            "/api/test",
+            makeAdapter(),
+            await isolatedRouteOptions(
+              "export function POST() { return new Response('ok'); }",
+              "body-normal-app",
+            ),
+          ),
       );
 
-      // The error should be about worker execution, not body size
-      const body = await response.json();
-      const detail = body.detail ?? "";
-      assert(
-        !detail.includes("too large"),
-        "should not reject small request bodies",
-      );
+      assertEquals(response.status, 200);
+      assertEquals(await response.text(), "ok");
     });
 
     it("should reject oversized request bodies in isolated pages route execution", async () => {
       // Enable worker isolation
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const handler = {
         POST: (_ctx: unknown) => new Response("ok"),
@@ -764,14 +635,21 @@ describe("routing/api/route-executor", () => {
         body: largeBody,
       });
 
-      const response = await executePagesRoute(
-        handler,
-        request,
-        makeMatch(),
-        "/api/test",
-        makeAdapter(),
-        undefined,
-        { modulePath: "/tmp/test/handler.ts", projectDir: "/tmp/test" },
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        async () =>
+          await executePagesRoute(
+            handler,
+            request,
+            makeMatch(),
+            "/api/test",
+            makeAdapter(),
+            undefined,
+            await isolatedRouteOptions(
+              "export function POST() { return new Response('ok'); }",
+              "body-oversized-pages",
+            ),
+          ),
       );
 
       assertEquals(response.status, 500);
@@ -781,7 +659,7 @@ describe("routing/api/route-executor", () => {
       // Enable worker isolation
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const handler = {
         POST: (_req: Request) => new Response("ok"),
@@ -795,13 +673,20 @@ describe("routing/api/route-executor", () => {
         headers: { "content-length": String(20 * 1024 * 1024) },
       });
 
-      const response = await executeAppRoute(
-        handler,
-        request,
-        makeMatch(),
-        "/api/test",
-        makeAdapter(),
-        { modulePath: "/tmp/test/handler.ts", projectDir: "/tmp/test" },
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        async () =>
+          await executeAppRoute(
+            handler,
+            request,
+            makeMatch(),
+            "/api/test",
+            makeAdapter(),
+            await isolatedRouteOptions(
+              "export function POST() { return new Response('ok'); }",
+              "body-declared-oversized",
+            ),
+          ),
       );
 
       assertEquals(response.status, 500);
@@ -810,7 +695,7 @@ describe("routing/api/route-executor", () => {
     it("should reject large body without Content-Length via fallback check", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const handler = {
         POST: (_req: Request) => new Response("ok"),
@@ -834,13 +719,20 @@ describe("routing/api/route-executor", () => {
         } as RequestInit & { duplex: "half" },
       );
 
-      const response = await executeAppRoute(
-        handler,
-        request,
-        makeMatch(),
-        "/api/test",
-        makeAdapter(),
-        { modulePath: "/tmp/test/handler.ts", projectDir: "/tmp/test" },
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        async () =>
+          await executeAppRoute(
+            handler,
+            request,
+            makeMatch(),
+            "/api/test",
+            makeAdapter(),
+            await isolatedRouteOptions(
+              "export function POST() { return new Response('ok'); }",
+              "body-stream-oversized",
+            ),
+          ),
       );
 
       assertEquals(response.status, 500);
@@ -849,7 +741,7 @@ describe("routing/api/route-executor", () => {
     it("should skip body size guard for requests without a body", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const handler = {
         GET: (_req: Request) => new Response("ok"),
@@ -858,27 +750,30 @@ describe("routing/api/route-executor", () => {
       // GET request with no body — should pass the size guard
       const request = new Request("http://localhost/api/test", { method: "GET" });
 
-      const response = await executeAppRoute(
-        handler,
-        request,
-        makeMatch(),
-        "/api/test",
-        makeAdapter(),
-        { modulePath: "/tmp/test/handler.ts", projectDir: "/tmp/test" },
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        async () =>
+          await executeAppRoute(
+            handler,
+            request,
+            makeMatch(),
+            "/api/test",
+            makeAdapter(),
+            await isolatedRouteOptions(
+              "export function GET() { return new Response('ok'); }",
+              "body-empty",
+            ),
+          ),
       );
 
-      // Error is about worker execution (module not found), not body size
-      const body = await response.json();
-      assert(
-        !(body.detail ?? "").includes("too large"),
-        "should not reject request without body",
-      );
+      assertEquals(response.status, 200);
+      assertEquals(await response.text(), "ok");
     });
 
-    it("should allow requests with malformed Content-Length header", async () => {
+    it("should reject malformed Content-Length headers", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const handler = {
         POST: (_req: Request) => new Response("ok"),
@@ -891,52 +786,73 @@ describe("routing/api/route-executor", () => {
         headers: { "content-length": "not-a-number" },
       });
 
-      const response = await executeAppRoute(
-        handler,
-        request,
-        makeMatch(),
-        "/api/test",
-        makeAdapter(),
-        { modulePath: "/tmp/test/handler.ts", projectDir: "/tmp/test" },
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        async () =>
+          await executeAppRoute(
+            handler,
+            request,
+            makeMatch(),
+            "/api/test",
+            makeAdapter(),
+            await isolatedRouteOptions(
+              "export function POST() { return new Response('ok'); }",
+              "body-invalid-content-length",
+            ),
+          ),
       );
 
-      // Should not reject — NaN comparison passes through
-      const body = await response.json();
-      assert(
-        !(body.detail ?? "").includes("too large"),
-        "should not reject malformed Content-Length",
-      );
+      assertEquals(response.status, 500);
     });
   });
 
   describe("source policy propagation (isolated execution)", () => {
-    afterEach(() => {
+    afterEach(async () => {
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_API");
-      __resetPoolForTests();
+      await __resetPoolForTests();
     });
 
     it("restores the exact source integration policy inside the worker", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const policy = normalizeSourceIntegrationPolicy({
         allow: { confluence: { allowedTools: ["get_page"] } },
       });
       const modulePath = new URL("./fixtures/source-policy-route.ts", import.meta.url).pathname;
       const projectDir = new URL("../../../", import.meta.url).pathname;
+      const sourcePolicyModuleUrl = new URL(
+        "../../integrations/source-policy-context.ts",
+        import.meta.url,
+      ).href;
 
       const response = await runWithExactSourceIntegrationPolicy(
         policy,
-        () =>
+        async () =>
           executeAppRoute(
             { GET: () => Response.json({ unreachable: true }) },
             new Request("http://localhost/api/source-policy", { method: "GET" }),
             makeMatch("/api/source-policy", modulePath),
             "/api/source-policy",
             makeAdapter(),
-            { modulePath, projectDir, isLocalProject: true },
+            {
+              modulePath,
+              projectDir,
+              isLocalProject: true,
+              preparedModule: await prepareModuleSource(
+                [
+                  `import { getActiveSourceIntegrationPolicy } from ${
+                    JSON.stringify(sourcePolicyModuleUrl)
+                  };`,
+                  "export function GET() {",
+                  "  return Response.json(getActiveSourceIntegrationPolicy());",
+                  "}",
+                ].join("\n"),
+              ),
+              executionScopeId: "route-executor-source-policy",
+            },
           ),
       );
 
@@ -946,16 +862,16 @@ describe("routing/api/route-executor", () => {
   });
 
   describe("response helpers (isolated pages execution)", () => {
-    afterEach(() => {
+    afterEach(async () => {
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_API");
-      __resetPoolForTests();
+      await __resetPoolForTests();
     });
 
     it("drops ctx.text bodies for null-body statuses", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const modulePath = new URL(
         "./fixtures/null-body-pages-route.ts",
@@ -965,7 +881,7 @@ describe("routing/api/route-executor", () => {
 
       const response = await runWithExactSourceIntegrationPolicy(
         normalizeSourceIntegrationPolicy({ allow: {} }),
-        () =>
+        async () =>
           executePagesRoute(
             { GET: () => new Response("unreachable") },
             new Request("http://localhost/api/no-content", { method: "GET" }),
@@ -973,7 +889,15 @@ describe("routing/api/route-executor", () => {
             "/api/no-content",
             makeAdapter(),
             undefined,
-            { modulePath, projectDir, isLocalProject: true },
+            {
+              modulePath,
+              projectDir,
+              isLocalProject: true,
+              preparedModule: await prepareModuleSource(
+                "export function GET(ctx) { return ctx.text('ignored', { status: 204 }); }",
+              ),
+              executionScopeId: "route-executor-null-body",
+            },
           ),
       );
 

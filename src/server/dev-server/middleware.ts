@@ -10,11 +10,14 @@ import { cors } from "#veryfront/security";
 import { getBaseLogger, type RequestContext, runWithRequestContextAsync } from "#veryfront/utils";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import { generateRequestId } from "#veryfront/utils/request-id.ts";
+import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 
 export type MiddlewareFunction = MiddlewareHandler;
 
 interface MiddlewareLoadOptions {
   throwOnError?: boolean;
+  /** Explicit host-owned capability for a trusted local or dedicated runtime. */
+  allowHostProjectCodeExecution?: boolean;
 }
 
 const baseLogger = getBaseLogger("SERVER");
@@ -102,6 +105,12 @@ export async function loadMiddlewareFile(
   adapter: RuntimeAdapter,
   options: MiddlewareLoadOptions = {},
 ): Promise<MiddlewareFunction[]> {
+  if (!isExplicitHostProjectCodeExecutionAllowed(options)) {
+    throw new TypeError(
+      "Project middleware host loading requires explicit trusted-local execution",
+    );
+  }
+
   const middlewareFiles = ["middleware.ts", "middleware.js", "middleware.mjs"];
 
   for (const middlewareFile of middlewareFiles) {

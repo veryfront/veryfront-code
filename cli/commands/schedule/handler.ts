@@ -56,7 +56,12 @@ function formatSchedule(schedule: ScheduleDefinition): string {
 async function handleScheduleList(_args: ParsedArgs): Promise<void> {
   const projectDir = Deno.cwd();
   await withProjectSourceContext(projectDir, async ({ adapter, config }) => {
-    const result = await discoverSchedules({ projectDir, adapter, config });
+    const result = await discoverSchedules({
+      projectDir,
+      adapter,
+      config,
+      allowHostProjectCodeExecution: true,
+    });
     await outputTriggerList({
       command: "schedules",
       items: result.items,
@@ -205,7 +210,12 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
   await withProjectSourceContext(projectDir, async (context) => {
     const { adapter, config, configCacheKey, projectId } = context;
     const input = opts.input ? await readJsonFile(opts.input, "--input JSON file") : undefined;
-    const result = await discoverSchedules({ projectDir, adapter, config });
+    const result = await discoverSchedules({
+      projectDir,
+      adapter,
+      config,
+      allowHostProjectCodeExecution: true,
+    });
     if (result.errors.length > 0) {
       throw DEPLOYMENT_ERROR.create({
         detail: `Schedule discovery failed: ${result.errors[0]?.message}`,

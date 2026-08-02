@@ -6,6 +6,10 @@ import { clearTrackedAgents, createProjectDiscoveryConfig } from "#veryfront/dis
 import { tryGetRegistryScopeContext } from "#veryfront/cache/cache-key-builder.ts";
 import { runWithRegistryTransaction } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
+import {
+  isExplicitlyLocalProject,
+  readOwnDataProperty,
+} from "#veryfront/security/project-locality.ts";
 import type { HandlerContext } from "../../types.ts";
 
 const logger = serverLogger.component("api-wrapper");
@@ -137,6 +141,15 @@ function shouldCacheCompletedDiscovery(ctx: HandlerContext): boolean {
  * correct project scope.
  */
 export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<DiscoveryResult> {
+  const isSharedHostedRuntime = readOwnDataProperty(ctx, "prepareHostedConfigContext") !==
+    undefined;
+  if (!isExplicitlyLocalProject(ctx) && isSharedHostedRuntime) {
+    throw INITIALIZATION_ERROR.create({
+      detail:
+        "Remote executable discovery requires an isolated project runtime and cannot run in the shared host",
+    });
+  }
+
   await ctx.adapter.fs.ensureSourceSnapshotFresh?.("primitive-discovery");
   const key = discoveryKey(ctx);
   const sourceSnapshotVersion = await ctx.adapter.fs.getSourceSnapshotVersion?.();
@@ -179,6 +192,7 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
             : `${key}:snapshot:${sourceSnapshotVersion}`,
           config: ctx.config,
           fsAdapter: ctx.adapter.fs,
+          allowHostProjectCodeExecution: true,
         });
         const result = await discoverAll(discoveryOptions);
         const shouldWarnOnEmptyAiDiscovery = discoveryOptions.toolDirs.length > 0 ||

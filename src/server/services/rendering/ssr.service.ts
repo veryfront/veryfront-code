@@ -185,12 +185,32 @@ export class SSRService implements SSRServiceLike {
   }
 
   async getRenderer(ctx: HandlerContext): Promise<RendererAdapter> {
+    if (ctx.isLocalProject !== true) {
+      throw new Error(
+        "Remote project renderers require generation-owned isolated renderer admission",
+      );
+    }
     return this.rendererProvider.getRenderer(ctx);
   }
 
   async renderPage(ctx: HandlerContext, options: SSRRenderOptions): Promise<SSRRenderResult> {
     const { request, url, slug, nonce, studioEmbed, projectId, pageId, noHmr, useNoCache } =
       options;
+
+    // Remote project source is not trusted to execute in the shared host
+    // process. The worker protocol and extension-owned renderer admission are
+    // available, but the renderer pipeline does not yet produce an isolated
+    // page/layout module graph. Fail closed until that graph is wired end to
+    // end instead of silently falling back to host-realm SSR.
+    if (ctx.isLocalProject !== true) {
+      return {
+        status: HTTP_UNAVAILABLE,
+        html: ErrorPages.serverError("Isolated rendering is temporarily unavailable."),
+        isStreaming: false,
+        cacheStrategy: "no-cache",
+        slug,
+      };
+    }
 
     const renderSessionId = `${ctx.projectSlug || "default"}-${slug || "index"}-${Date.now()}`;
     const preRenderHeap = getHeapStats();

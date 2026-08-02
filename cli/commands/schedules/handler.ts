@@ -10,7 +10,12 @@ function formatSchedule(schedule: ScheduleDefinition): string {
 export async function handleSchedulesCommand(_args: ParsedArgs): Promise<void> {
   const projectDir = Deno.cwd();
   await withProjectSourceContext(projectDir, async ({ adapter, config }) => {
-    const result = await discoverSchedules({ projectDir, adapter, config });
+    const result = await discoverSchedules({
+      projectDir,
+      adapter,
+      config,
+      allowHostProjectCodeExecution: true,
+    });
     await outputTriggerList({
       command: "schedules",
       items: result.items,

@@ -64,6 +64,7 @@ export async function taskCommand(options: TaskOptions): Promise<void> {
         fsAdapter: adapter.fs,
         cacheKey: configCacheKey,
         debug: options.debug,
+        allowHostProjectCodeExecution: true,
       });
       logRuntimeDiscoveryWarnings(discovery.errors, options.debug);
 

@@ -249,6 +249,7 @@ export function startProductionServer(
                 baseDir: discoveryConfig.baseDir,
                 fsAdapter: discoveryConfig.fsAdapter,
                 verbose: discoveryConfig.verbose ?? false,
+                allowHostProjectCodeExecution: true,
               });
             }
           } catch (error) {
