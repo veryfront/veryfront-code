@@ -83,6 +83,22 @@ describe("provider/model-registry", () => {
     assertEquals(shared.provider, "openai");
   });
 
+  it("resolves local models without credentials or an explicit registration", () => {
+    assertEquals(hasModelProvider("local"), true);
+
+    const model = resolveModel("local/qwen3.5-0.8b");
+    assertEquals(model.provider, "local");
+    assertEquals(model.modelId, "local/qwen3.5-0.8b");
+    // The runtime is only prepared, never invoked: the local engine loads its
+    // ONNX pipeline lazily and is not available in CI.
+    assertEquals(typeof model.prepare, "function");
+
+    assertEquals(
+      runWithCacheKeyContext(PROJECT_A, () => resolveModel("local/demo").provider),
+      "local",
+    );
+  });
+
   it("uses bootstrap providers as project defaults and preserves scoped overrides", () => {
     registerModelProvider("bootstrap", (id) => testRuntime("bootstrap", id));
 
@@ -143,7 +159,7 @@ describe("provider/model-registry", () => {
     );
     assertEquals(
       runWithCacheKeyContext(PROJECT_A, () => hasModelProvider("local")),
-      false,
+      true,
     );
   });
 
@@ -156,7 +172,7 @@ describe("provider/model-registry", () => {
 
     assertEquals(providers.includes("bootstrap-list"), true);
     assertEquals(providers.includes("project-list"), true);
-    assertEquals(providers.includes("local"), false);
+    assertEquals(providers.includes("local"), true);
     assertEquals(new Set(providers).size, providers.length);
   });
 
@@ -242,7 +258,7 @@ describe("provider/model-registry", () => {
 
   it("fails actionably when an explicit provider has not been composed", () => {
     assertThrows(
-      () => resolveModel("local/example"),
+      () => resolveModel("never-composed/example"),
       Error,
       "Register it during application composition with registerModelProvider()",
     );
