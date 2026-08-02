@@ -183,7 +183,7 @@ describe("cli/commands/dev", () => {
       const options = createSelectedProjectPushOptions("/tmp/project", selectedProject);
 
       assertEquals(options.branch === "main", false);
-      assertMatch(options.branch ?? "", /^push-\d{8}t\d{6}$/);
+      assertMatch(options.branch ?? "", /^push-\d{8}t\d{6}-[0-9a-f]{6}$/);
     });
   });
 

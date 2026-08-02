@@ -176,14 +176,17 @@ describe("generateBranchName", () => {
   });
 
   it("should generate a branch name with timestamp", () => {
-    assertMatch(generateBranchName(), /^push-\d{8}t\d{6}$/);
+    assertMatch(generateBranchName(), /^push-\d{8}t\d{6}-[0-9a-f]{6}$/);
   });
 
   it("should generate unique names on successive calls", () => {
+    // Two pushes within the same second share a timestamp, so without the
+    // random suffix the second upload would land in the first's staging branch.
     const name1 = generateBranchName();
     const name2 = generateBranchName();
-    assertMatch(name1, /^push-\d{8}t\d{6}$/);
-    assertMatch(name2, /^push-\d{8}t\d{6}$/);
+    assertMatch(name1, /^push-\d{8}t\d{6}-[0-9a-f]{6}$/);
+    assertMatch(name2, /^push-\d{8}t\d{6}-[0-9a-f]{6}$/);
+    assertEquals(name1 === name2, false);
   });
 
   it("stays DNS-safe so preview URLs can be built from it", () => {
@@ -207,7 +210,7 @@ describe("createStagedPushOptions", () => {
     assertEquals(options.projectDir, "/tmp/project");
     assertEquals(options.force, true);
     assertEquals(options.quiet, true);
-    assertMatch(options.branch ?? "", /^push-\d{8}t\d{6}$/);
+    assertMatch(options.branch ?? "", /^push-\d{8}t\d{6}-[0-9a-f]{6}$/);
   });
 
   it("never resolves to main, which pushCommand would overwrite in place", () => {

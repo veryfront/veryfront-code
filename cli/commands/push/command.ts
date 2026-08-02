@@ -54,6 +54,7 @@ import { buildStudioUrl } from "../studio/command.ts";
 import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 
 const PREVIEW_BRANCH_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const BRANCH_SUFFIX_LENGTH = 6;
 const PREVIEW_BRANCH_ERROR =
   "Preview branches must use 1-63 lowercase letters, numbers, or hyphens.";
 
@@ -279,12 +280,16 @@ export async function capturePushSourceSnapshot(
 /**
  * Build a timestamped isolation branch name for pushes that are staged for review.
  *
- * The lowercase timestamp keeps the name inside {@link PREVIEW_BRANCH_PATTERN} so the
- * branch can round-trip through preview DNS.
+ * The timestamp has one-second resolution, so it alone lets two pushes started in
+ * the same second share a branch and the second upload land on top of the first's
+ * staged work. The random suffix separates them. Both stay lowercase alphanumeric
+ * so the name is inside {@link PREVIEW_BRANCH_PATTERN} and can round-trip through
+ * preview DNS.
  */
 export function generateBranchName(): string {
   const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, "").toLowerCase();
-  return `push-${timestamp}`;
+  const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, BRANCH_SUFFIX_LENGTH);
+  return `push-${timestamp}-${suffix}`;
 }
 
 /**
