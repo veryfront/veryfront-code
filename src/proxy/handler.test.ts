@@ -97,6 +97,8 @@ async function mintControlPlaneJws(
     iss: string;
     aud: string;
     projectId: string;
+    requestMethod: string;
+    requestPath: string;
     iat: number;
     exp: number;
   }> = {},
@@ -117,6 +119,9 @@ async function mintControlPlaneJws(
     surface: "channels",
     project_id: overrides.projectId ?? "proj-123",
     request_hash: "n/a",
+    request_method: overrides.requestMethod ?? "POST",
+    request_path: overrides.requestPath ??
+      "/api/control-plane/runs/run_1/stream",
     iat: overrides.iat ?? now,
     exp: overrides.exp ?? now + 60,
   };

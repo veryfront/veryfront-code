@@ -33,6 +33,8 @@ async function mintJws(
     iat: number;
     exp: number;
     alg: string;
+    requestMethod: string;
+    requestPath: string;
     signingKeyPair: CryptoKeyPair;
     advertisedKeyPair: CryptoKeyPair;
   }> = {},
@@ -54,9 +56,14 @@ async function mintJws(
     iat: overrides.iat ?? now,
     exp: overrides.exp ?? now + 60,
   };
-  const claims = kind === "dispatch"
-    ? { ...base, platform: "slack", body_sha256: "n/a" }
-    : { ...base, surface: "channels", request_hash: "n/a" };
+  const claims = kind === "dispatch" ? { ...base, platform: "slack", body_sha256: "n/a" } : {
+    ...base,
+    surface: "channels",
+    request_hash: "n/a",
+    request_method: overrides.requestMethod ?? "POST",
+    request_path: overrides.requestPath ??
+      "/api/control-plane/runs/r_1/stream",
+  };
 
   const encodedHeader = base64url(JSON.stringify(header));
   const encodedPayload = base64url(JSON.stringify(claims));
@@ -183,10 +190,6 @@ describe("proxy/control-plane-signature", () => {
   });
 
   it("trusts only method/path pairs with guaranteed downstream verification", async () => {
-    const { jws, publicKeyPem } = await mintJws("control-plane");
-    Deno.env.set(PUBLIC_KEY_ENV, publicKeyPem);
-    const headers = { "x-token": "t", "x-veryfront-control-plane-jws": jws };
-
     for (
       const [method, path] of [
         ["POST", "/api/control-plane/agents/list"],
@@ -196,9 +199,19 @@ describe("proxy/control-plane-signature", () => {
         ["DELETE", "/api/control-plane/runs/r_1"],
       ] as const
     ) {
+      const { jws, publicKeyPem } = await mintJws("control-plane", {
+        requestMethod: method,
+        requestPath: path,
+      });
+      Deno.env.set(PUBLIC_KEY_ENV, publicKeyPem);
+      const headers = { "x-token": "t", "x-veryfront-control-plane-jws": jws };
       const { req, url } = requestWith(headers, `http://protected.test${path}`, method);
       assertEquals(await verifyRequest(req, url), true, `${method} ${path}`);
     }
+
+    const { jws, publicKeyPem } = await mintJws("control-plane");
+    Deno.env.set(PUBLIC_KEY_ENV, publicKeyPem);
+    const headers = { "x-token": "t", "x-veryfront-control-plane-jws": jws };
 
     for (
       const [method, path] of [
@@ -213,6 +226,63 @@ describe("proxy/control-plane-signature", () => {
       const { req, url } = requestWith(headers, `http://protected.test${path}`, method);
       assertEquals(await verifyRequest(req, url), false, `${method} ${path}`);
     }
+  });
+
+  it("rejects replay across control-plane methods and operation paths", async () => {
+    const resumePath = "/api/control-plane/runs/r_1/resume";
+    const { jws, publicKeyPem } = await mintJws("control-plane", {
+      requestMethod: "POST",
+      requestPath: resumePath,
+    });
+    Deno.env.set(PUBLIC_KEY_ENV, publicKeyPem);
+    const headers = { "x-token": "t", "x-veryfront-control-plane-jws": jws };
+
+    const resume = requestWith(headers, `http://protected.test${resumePath}`, "POST");
+    assertEquals(await verifyRequest(resume.req, resume.url), true);
+
+    const cancel = requestWith(
+      headers,
+      "http://protected.test/api/control-plane/runs/r_1",
+      "DELETE",
+    );
+    assertEquals(await verifyRequest(cancel.req, cancel.url), false);
+
+    const otherRun = requestWith(
+      headers,
+      "http://protected.test/api/control-plane/runs/r_2/resume",
+      "POST",
+    );
+    assertEquals(await verifyRequest(otherRun.req, otherRun.url), false);
+  });
+
+  it("uses canonical URL pathname while excluding origin and query", async () => {
+    const canonicalPath = "/api/control-plane/runs/r_1/resume";
+    const { jws, publicKeyPem } = await mintJws("control-plane", {
+      requestMethod: "POST",
+      requestPath: canonicalPath,
+    });
+    Deno.env.set(PUBLIC_KEY_ENV, publicKeyPem);
+    const headers = { "x-token": "t", "x-veryfront-control-plane-jws": jws };
+    const canonicalized = requestWith(
+      headers,
+      "https://another-origin.test/api/control-plane/runs/r_1/./resume?trace=ignored",
+      "POST",
+    );
+
+    assertEquals(canonicalized.url.pathname, canonicalPath);
+    assertEquals(await verifyRequest(canonicalized.req, canonicalized.url), true);
+
+    const rawDotPath = await mintJws("control-plane", {
+      requestMethod: "POST",
+      requestPath: "/api/control-plane/runs/r_1/./resume",
+    });
+    Deno.env.set(PUBLIC_KEY_ENV, rawDotPath.publicKeyPem);
+    const nonCanonical = requestWith(
+      { "x-token": "t", "x-veryfront-control-plane-jws": rawDotPath.jws },
+      `https://another-origin.test${canonicalPath}`,
+      "POST",
+    );
+    assertEquals(await verifyRequest(nonCanonical.req, nonCanonical.url), false);
   });
 
   it("does not accept a control-plane JWS on /channels/invoke", async () => {

@@ -130,5 +130,7 @@ export async function isVerifiedInternalControlPlaneRequest(
     maxAgeSeconds: MAX_SIGNATURE_AGE_SECONDS,
     audience: binding.audience,
     expectedProjectId: binding.expectedProjectId,
+    requestMethod: req.method,
+    requestPath: url.pathname,
   });
 }
