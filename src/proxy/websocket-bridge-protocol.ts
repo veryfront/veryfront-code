@@ -1,9 +1,11 @@
 import { HMR_MAX_MESSAGE_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
+import { hasProjectIdentityControlCharacters } from "#veryfront/utils/project-identity.ts";
 import { MAX_PROXY_TIMER_DELAY_MS } from "./timing.ts";
 
 const DEFAULT_MAX_QUEUED_MESSAGES = 64;
 const MAX_CONFIGURED_QUEUED_MESSAGES = 1_024;
 export const PROXY_WEBSOCKET_CONNECTION_TIMEOUT_MS = 30_000;
+const ArrayIsArray = Array.isArray;
 
 export const PROXY_WS_CONNECTING = 0;
 export const PROXY_WS_OPEN = 1;
@@ -110,6 +112,14 @@ const BRIDGE_OPTION_NAMES = new Set([
   "targetUrl",
 ]);
 
+function isArrayOrUninspectable(value: unknown): boolean {
+  try {
+    return ArrayIsArray(value);
+  } catch {
+    return true;
+  }
+}
+
 function ownDataValue(
   descriptors: PropertyDescriptorMap,
   key: string,
@@ -145,7 +155,13 @@ function resolvePositiveInteger(
 }
 
 function normalizeWebSocketTarget(value: unknown): string {
-  if (typeof value !== "string" || value === "" || value !== value.trim()) {
+  if (
+    typeof value !== "string" ||
+    value === "" ||
+    value !== value.trim() ||
+    value.includes("\\") ||
+    hasProjectIdentityControlCharacters(value)
+  ) {
     throw new TypeError("Proxy WebSocket target URL is invalid");
   }
   let target: URL;
@@ -172,7 +188,7 @@ function resolveProxyWebSocketBridgeLogger(
   value: unknown,
 ): ProxyWebSocketBridgeLogger | undefined {
   if (value === undefined) return undefined;
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!value || typeof value !== "object" || isArrayOrUninspectable(value)) {
     throw new TypeError("Proxy WebSocket bridge logger must be an object");
   }
   let info: unknown;
@@ -215,7 +231,7 @@ export function requireProxyBridgeSocket(
   value: unknown,
   label: string,
 ): ProxyBridgeSocket {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!value || typeof value !== "object" || isArrayOrUninspectable(value)) {
     throw new TypeError(`Proxy WebSocket ${label} socket is invalid`);
   }
   let close: unknown;
@@ -239,7 +255,7 @@ export function requireProxyBridgeSocket(
 export function resolveProxyWebSocketBridgeOptions(
   options: CreateProxyWebSocketBridgeOptions,
 ): ResolvedProxyWebSocketBridgeOptions {
-  if (!options || typeof options !== "object" || Array.isArray(options)) {
+  if (!options || typeof options !== "object" || isArrayOrUninspectable(options)) {
     throw new TypeError("Proxy WebSocket bridge options must be a plain object");
   }
   let prototype: object | null;

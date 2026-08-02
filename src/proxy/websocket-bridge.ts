@@ -110,7 +110,6 @@ export function createProxyWebSocketBridge(
   } = options;
   const parsedTarget = new URL(targetUrl);
   const targetLogContext = Object.freeze({
-    targetOrigin: parsedTarget.origin,
     targetPathname: parsedTarget.pathname,
   });
 

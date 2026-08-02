@@ -51,6 +51,24 @@ Deno.test("proxy outbound requests", async (t) => {
       TypeError,
       "credential-free",
     );
+    assertThrows(
+      () =>
+        createRendererTargetUrl(
+          " http://renderer.example",
+          new URL("https://public.example/"),
+        ),
+      TypeError,
+      "base URL is invalid",
+    );
+    assertThrows(
+      () =>
+        createApiTargetUrl(
+          "https:\\api.example",
+          new URL("https://public.example/_vf/api/projects"),
+        ),
+      TypeError,
+      "base URL is invalid",
+    );
   });
 
   await t.step("enforces the deadline when fetch ignores cancellation", async () => {
@@ -70,11 +88,16 @@ Deno.test("proxy outbound requests", async (t) => {
     const reason = new Error("client disconnected");
     let lateBodyCanceled = false;
     let receivedSignal: AbortSignal | undefined;
+    let markFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      markFetchStarted = resolve;
+    });
     const pending = fetchWithProxyDeadline("https://api.example", {
       timeoutMs: 100,
       signal: caller.signal,
       fetchImpl: (_input, init) => {
         receivedSignal = (init as { signal?: AbortSignal } | undefined)?.signal;
+        markFetchStarted();
         return new Promise((resolve) =>
           setTimeout(
             () =>
@@ -93,12 +116,32 @@ Deno.test("proxy outbound requests", async (t) => {
       },
     });
 
+    await fetchStarted;
     caller.abort(reason);
     const caught = await pending.catch((error) => error);
     assertStrictEquals(caught, reason);
     assertEquals(receivedSignal?.aborted, true);
     await new Promise((resolve) => setTimeout(resolve, 15));
     assertEquals(lateBodyCanceled, true);
+  });
+
+  await t.step("does not dispatch an already-canceled outbound request", async () => {
+    const caller = new AbortController();
+    const reason = new Error("request was already closed");
+    caller.abort(reason);
+    let fetchCalls = 0;
+
+    const caught = await fetchWithProxyDeadline("https://api.example", {
+      timeoutMs: 100,
+      signal: caller.signal,
+      fetchImpl: () => {
+        fetchCalls += 1;
+        return Promise.resolve(new Response());
+      },
+    }).catch((error) => error);
+
+    assertStrictEquals(caught, reason);
+    assertEquals(fetchCalls, 0);
   });
 
   await t.step("marks forwarded ReadableStream bodies as half duplex", async () => {

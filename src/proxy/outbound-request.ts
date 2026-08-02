@@ -1,4 +1,5 @@
 import { awaitAbortable, createAbortError, throwIfAborted } from "#veryfront/utils/abort.ts";
+import { hasProjectIdentityControlCharacters } from "#veryfront/utils/project-identity.ts";
 import { cancelProxyResponseBody } from "./response-body.ts";
 import { MAX_PROXY_TIMER_DELAY_MS } from "./timing.ts";
 import { normalizeProxyOriginFormPath } from "./request-path.ts";
@@ -37,7 +38,10 @@ function parseOutboundBaseUrl(baseUrl: string, allowPath: boolean): URL {
   if (
     typeof baseUrl !== "string" ||
     baseUrl.length === 0 ||
-    baseUrl.length > MAX_OUTBOUND_URL_CODE_UNITS
+    baseUrl.length > MAX_OUTBOUND_URL_CODE_UNITS ||
+    baseUrl !== baseUrl.trim() ||
+    baseUrl.includes("\\") ||
+    hasProjectIdentityControlCharacters(baseUrl)
   ) {
     throw new TypeError("Proxy outbound base URL is invalid");
   }
@@ -124,15 +128,16 @@ export async function fetchWithProxyDeadline(
   else options.signal?.addEventListener("abort", abortFromCaller, { once: true });
 
   try {
-    const request = Promise.resolve().then(() =>
-      fetchImpl(
+    const request = Promise.resolve().then(() => {
+      throwIfAborted(controller.signal);
+      return fetchImpl(
         input,
         withProxyStreamingBodyDuplex({
           ...options.init,
           signal: controller.signal,
         }),
-      )
-    );
+      );
+    });
     void request.then(
       (lateResponse) => {
         if (controller.signal.aborted) void cancelProxyResponseBody(lateResponse);

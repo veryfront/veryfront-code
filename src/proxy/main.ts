@@ -236,7 +236,6 @@ async function handleWebSocketUpgrade(req: Request, url: URL): Promise<Response>
     projectSlug,
     environment: scope,
     parsedEnvironment: context.parsedDomain.environment,
-    targetOrigin: target.origin,
     targetPathname: target.pathname,
   });
 
@@ -263,7 +262,6 @@ async function handleWebSocketUpgrade(req: Request, url: URL): Promise<Response>
       {
         projectSlug,
         environment: scope,
-        targetOrigin: target.origin,
         targetPathname: target.pathname,
       },
       error,
@@ -452,7 +450,7 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
                     `[Retry] Dedicated server unreachable, falling back to shared pool`,
                     {
                       pathname: url.pathname,
-                      dedicatedServerUrl,
+                      fallbackFromDedicated: true,
                       error: error instanceof Error ? error.message : String(error),
                     },
                   );
@@ -746,8 +744,7 @@ await initializeOTLPWithApis();
 
 proxyLogger.debug("Starting proxy server (split mode)", {
   port: PORT,
-  serverUrl: PRODUCTION_SERVER_URL,
-  apiBaseUrl: config.apiBaseUrl,
+  production: startupConfig.production,
 });
 
 // Start the HTTP server

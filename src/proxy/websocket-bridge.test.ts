@@ -524,6 +524,25 @@ describe("proxy WebSocket boundaries", () => {
   });
 
   it("rejects malformed origins and bridge policy", () => {
+    const revokedOptions = Proxy.revocable({}, {});
+    revokedOptions.revoke();
+    assertThrows(
+      () => createProxyWebSocketBridge(revokedOptions.proxy as never),
+      TypeError,
+      "plain object",
+    );
+    const revokedSocket = Proxy.revocable({}, {});
+    revokedSocket.revoke();
+    assertThrows(
+      () =>
+        createProxyWebSocketBridge({
+          clientSocket: revokedSocket.proxy as never,
+          createServerSocket: () => new FakeWebSocket(),
+          targetUrl: "ws://renderer.test/_ws",
+        }),
+      TypeError,
+      "socket is invalid",
+    );
     assertThrows(
       () =>
         createProxyWebSocketTargetUrl(
@@ -534,6 +553,27 @@ describe("proxy WebSocket boundaries", () => {
         ),
       TypeError,
       "credential-free",
+    );
+    assertThrows(
+      () =>
+        createProxyWebSocketTargetUrl(
+          " https://renderer.test",
+          new URL("https://proxy.test/_ws"),
+          "demo-project",
+          "preview",
+        ),
+      TypeError,
+      "origin is invalid",
+    );
+    assertThrows(
+      () =>
+        createProxyWebSocketBridge({
+          clientSocket: new FakeWebSocket(),
+          createServerSocket: () => new FakeWebSocket(),
+          targetUrl: "ws:\\renderer.test\\_ws",
+        }),
+      TypeError,
+      "target URL is invalid",
     );
     assertThrows(
       () =>

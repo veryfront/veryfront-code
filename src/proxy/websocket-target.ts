@@ -1,4 +1,5 @@
 import { normalizeProxyOriginFormPath } from "./request-path.ts";
+import { hasProjectIdentityControlCharacters } from "#veryfront/utils/project-identity.ts";
 
 /**
  * Build the renderer WebSocket target without permitting protocol-relative
@@ -13,7 +14,9 @@ export function createProxyWebSocketTargetUrl(
   if (
     typeof serverOrigin !== "string" ||
     serverOrigin === "" ||
-    serverOrigin !== serverOrigin.trim()
+    serverOrigin !== serverOrigin.trim() ||
+    serverOrigin.includes("\\") ||
+    hasProjectIdentityControlCharacters(serverOrigin)
   ) {
     throw new TypeError("Proxy WebSocket server origin is invalid");
   }
