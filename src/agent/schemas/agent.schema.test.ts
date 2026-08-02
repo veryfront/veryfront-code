@@ -67,18 +67,13 @@ describe("agent/schema", () => {
       assertEquals(result.success, true);
     });
 
-    it("should accept all core memory types", () => {
-      const types = ["conversation", "buffer", "summary"];
+    it("should accept all memory types", () => {
+      const types = ["conversation", "buffer", "summary", "redis"];
 
       for (const type of types) {
         const result = getMemoryConfigSchema().safeParse({ type });
         assertEquals(result.success, true, `${type} should be valid`);
       }
-    });
-
-    it("does not encode an extension implementation in the core schema", () => {
-      const result = getMemoryConfigSchema().safeParse({ type: "redis" });
-      assertEquals(result.success, false);
     });
 
     it("should accept config with only type", () => {
