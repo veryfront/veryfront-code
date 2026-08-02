@@ -225,6 +225,65 @@ describe("server/services/static/static-file.service", () => {
   });
 
   describe("resolveFile", () => {
+    it("serves project files through the scoped SecureFs boundary", async () => {
+      __injectDepsForTests({
+        manifestCache: new Map(),
+        manifestLoading: new Map(),
+      });
+
+      const fileData = new TextEncoder().encode("hello world");
+      const files = new Map<string, Uint8Array>([
+        ["/project/public/hello.txt", fileData],
+      ]);
+      const ready = Promise.resolve();
+      const adapter = {
+        fs: {
+          symlinkSemantics: "none" as const,
+          readFile: async (path: string) => {
+            const data = files.get(path);
+            if (!data) throw createFsError("not found", "ENOENT");
+            return new TextDecoder().decode(data);
+          },
+          readFileBytes: async (path: string) => {
+            const data = files.get(path);
+            if (!data) throw createFsError("not found", "ENOENT");
+            return data;
+          },
+          writeFile: async () => {},
+          exists: async (path: string) => files.has(path),
+          stat: async (path: string) => {
+            const data = files.get(path);
+            if (!data) throw createFsError("not found", "ENOENT");
+            return {
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+              size: data.byteLength,
+              mtime: new Date(0),
+            };
+          },
+          async *readDir() {},
+          mkdir: async () => {},
+          remove: async () => {},
+          makeTempDir: async (prefix: string) => `/tmp/${prefix}`,
+          watch: () => ({
+            ready,
+            done: ready,
+            close() {},
+            async *[Symbol.asyncIterator]() {},
+          }),
+        },
+      } as unknown as StaticFileOptions["adapter"];
+      const service = new StaticFileService();
+      const options = makeOptions({ adapter, isLocalProject: true });
+
+      const result = await service.resolveFile("/hello.txt", options);
+
+      assertExists(result);
+      assertEquals(result.path, "/project/public/hello.txt");
+      assertEquals(result.data, fileData);
+    });
+
     it("should return null when file does not exist", async () => {
       __injectDepsForTests({
         manifestCache: new Map(),

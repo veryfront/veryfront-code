@@ -15,6 +15,7 @@ import type { CacheStrategy } from "#veryfront/security";
 import { createSecureFs } from "#veryfront/security";
 import { serverLogger } from "#veryfront/utils";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { relative, resolve } from "#veryfront/platform/compat/path/index.ts";
 import type { FileSystemRepository } from "#veryfront/repositories/types.ts";
 import {
   getExtension,
@@ -126,11 +127,22 @@ export class StaticFileService {
   private getFileSystem(options: StaticFileOptions): FileSystemLike {
     if (this.fsRepo) return this.fsRepo;
 
-    return createSecureFs({
-      baseDir: options.projectDir,
+    const projectRoot = resolve(options.projectDir);
+    const secureFs = createSecureFs({
+      baseDir: projectRoot,
       adapter: options.adapter,
       context: "static-serving",
     });
+
+    // StaticFileService keeps absolute paths in candidates and results, while
+    // SecureFs exposes a base-directory-scoped namespace. Adapt that boundary
+    // explicitly so the static policy can continue rejecting absolute input.
+    const toProjectPath = (path: string): string => relative(projectRoot, resolve(path));
+    return {
+      readFile: (path) => secureFs.readFile(toProjectPath(path)),
+      readFileBytes: (path) => secureFs.readFileBytes(toProjectPath(path)),
+      stat: (path) => secureFs.stat(toProjectPath(path)),
+    };
   }
 
   async resolveFile(
