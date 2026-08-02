@@ -34,6 +34,7 @@ import {
 } from "#veryfront/skill/limits.ts";
 import { SKILL_READABLE_DIRS } from "#veryfront/skill/types.ts";
 import { SkillIdAdmission } from "#veryfront/skill/id-admission.ts";
+import type { SkillDocumentParserProvider } from "#veryfront/extensions/parser/skill-document-parser.ts";
 
 const PROJECT_SKILL_FETCH_CONCURRENCY = 16;
 
@@ -53,6 +54,7 @@ export type RuntimeProjectSkillCatalogOptions = {
   builtinSkills: readonly RuntimeSkillDefinition[];
   steeringPaths?: Pick<ProjectSteeringPaths, "skills">;
   logger?: RuntimeSkillMetadataLogger;
+  skillDocumentParserProvider?: SkillDocumentParserProvider;
 };
 
 /** Options accepted by runtime project instructions. */
@@ -216,6 +218,7 @@ function isImmediateDirectorySkillPath(path: string, prefixWithSlash: string): b
 export function loadRuntimeBuiltinSkillCatalog(input: {
   skillsDir: string;
   logger?: RuntimeSkillMetadataLogger;
+  skillDocumentParserProvider?: SkillDocumentParserProvider;
 }): RuntimeSkillDefinition[] {
   const entriesResult = readRuntimeBuiltinSkillEntries(input.skillsDir);
   if (!entriesResult.ok) {
@@ -236,6 +239,7 @@ export function loadRuntimeBuiltinSkillCatalog(input: {
       id,
       content,
       logger: input.logger,
+      skillDocumentParserProvider: input.skillDocumentParserProvider,
     });
     if (definition) definitionsById.set(id, definition);
   }
@@ -250,6 +254,7 @@ export function loadRuntimeBuiltinSkillCatalog(input: {
       content,
       references: listRuntimeBuiltinSkillReferences(input.skillsDir, entry.name),
       logger: input.logger,
+      skillDocumentParserProvider: input.skillDocumentParserProvider,
     });
     if (definition) definitionsById.set(entry.name, definition);
   }
@@ -378,6 +383,7 @@ export async function getRuntimeProjectSkillCatalog(
           content: file.content,
           sourcePath: candidate.path,
           logger: input.logger,
+          skillDocumentParserProvider: input.skillDocumentParserProvider,
         })
         : buildRuntimeDirectorySkillDefinition({
           id: candidate.id,
@@ -389,6 +395,7 @@ export async function getRuntimeProjectSkillCatalog(
           }),
           sourcePath: candidate.path,
           logger: input.logger,
+          skillDocumentParserProvider: input.skillDocumentParserProvider,
         });
 
       if (definition) {
@@ -485,6 +492,7 @@ export async function getRuntimeProjectSkillCatalog(
         shortName: candidate.identity.shortName,
         sourcePath: candidate.path,
         logger: input.logger,
+        skillDocumentParserProvider: input.skillDocumentParserProvider,
       });
 
       if (definition) {

@@ -73,3 +73,15 @@ export async function ensureDefaultSkillDocumentParserContract(): Promise<void> 
   });
   await activation;
 }
+
+/** Activate and capture the product distribution's immutable default parser generation. */
+export async function getDefaultSkillDocumentParserProvider(): Promise<
+  Readonly<SkillDocumentParserProvider>
+> {
+  await ensureDefaultSkillDocumentParserContract();
+  const provider = tryResolve<SkillDocumentParserProvider>(SkillDocumentParserProviderName);
+  if (provider === undefined) {
+    throw new TypeError("Default Skill document parser activation did not provide its contract");
+  }
+  return snapshotSkillDocumentParserProvider(provider);
+}

@@ -36,6 +36,7 @@ import {
   type RuntimeSkillMetadataLogger,
 } from "./skill-metadata.ts";
 import type { ResolvedSkillSelectorPolicy } from "#veryfront/skill/selector.ts";
+import type { SkillDocumentParserProvider } from "#veryfront/extensions/parser/skill-document-parser.ts";
 
 /** Fail-closed continuation note used when no delegation tool is known available. */
 export const RUNTIME_LOAD_SKILL_CONTINUATION_NOTE =
@@ -368,6 +369,7 @@ export type RuntimeLoadSkillToolOptions = {
   nextStep?: string;
   messages?: RuntimeLoadSkillToolMessages;
   logger?: RuntimeSkillMetadataLogger;
+  skillDocumentParserProvider?: SkillDocumentParserProvider;
 };
 
 export const getRuntimeLoadSkillToolInputSchema = defineSchema((v) =>
@@ -566,6 +568,11 @@ function buildLoadedSkillResponse(input: {
     "logger",
     "Runtime load skill options",
   ) as RuntimeSkillMetadataLogger | undefined;
+  const skillDocumentParserProvider = readRuntimeLoadSkillDataProperty(
+    input.options,
+    "skillDocumentParserProvider",
+    "Runtime load skill options",
+  ) as SkillDocumentParserProvider | undefined;
   const { configuredDelegationNote, messages: responseMessages } =
     snapshotRuntimeLoadSkillResponseMessages(messagesInput, availableToolNames);
   const preliminaryResponse = buildStrictRuntimeLoadedSkillResponse({
@@ -575,6 +582,7 @@ function buildLoadedSkillResponse(input: {
     messages: responseMessages,
     references: input.references,
     availableToolNames,
+    skillDocumentParserProvider,
   });
   const effectiveAvailableToolNames = getEffectiveAvailableToolNames(
     preliminaryResponse,
@@ -597,6 +605,7 @@ function buildLoadedSkillResponse(input: {
     references: input.references,
     availableToolNames,
     logger,
+    skillDocumentParserProvider,
   });
 }
 

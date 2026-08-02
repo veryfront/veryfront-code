@@ -1063,6 +1063,7 @@ type BuildRuntimeLoadedSkillResponseInput = {
   references?: readonly string[];
   availableToolNames?: readonly string[];
   logger?: RuntimeSkillMetadataLogger;
+  skillDocumentParserProvider?: SkillDocumentParserProvider;
 };
 
 const RUNTIME_LOADED_SKILL_MESSAGE_FIELDS = [
@@ -1149,6 +1150,12 @@ function snapshotRuntimeLoadedSkillResponseInput(
       "Runtime loaded skill response",
       false,
     ) as RuntimeSkillMetadataLogger | undefined,
+    skillDocumentParserProvider: readOwnDataInputProperty(
+      input,
+      "skillDocumentParserProvider",
+      "Runtime loaded skill response",
+      false,
+    ) as SkillDocumentParserProvider | undefined,
   });
 }
 
@@ -1174,6 +1181,7 @@ export function buildStrictRuntimeLoadedSkillResponse(
   }
   const parsedSource = parseStrictRuntimeSkillSource(snapshot.instructions, {
     logger: snapshot.logger,
+    skillDocumentParserProvider: snapshot.skillDocumentParserProvider,
   });
   const metadata = parsedSource?.document.metadata ?? null;
   const invalidMetadata = parsedSource === null;

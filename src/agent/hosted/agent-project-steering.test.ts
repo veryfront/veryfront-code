@@ -1,10 +1,25 @@
 import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { afterEach } from "#veryfront/testing/bdd.ts";
 import { join, resolve } from "node:path";
-import { createHostedAgentProjectSteering } from "./agent-project-steering.ts";
+import {
+  createHostedAgentProjectSteering as createHostedAgentProjectSteeringWithProvider,
+  type HostedAgentProjectSteeringOptions,
+} from "./agent-project-steering.ts";
+import { createStdYamlSkillDocumentParserProvider } from "../../../extensions/ext-yaml/src/adapter.ts";
 import { reset, tryResolve } from "../../extensions/contracts.ts";
 import type { SchemaValidator } from "../../extensions/schema/index.ts";
 import type { RuntimeProjectFilesFetch } from "../runtime/project-files-client.ts";
+
+const skillDocumentParserProvider = createStdYamlSkillDocumentParserProvider();
+
+function createHostedAgentProjectSteering(
+  options: Omit<HostedAgentProjectSteeringOptions, "skillDocumentParserProvider">,
+) {
+  return createHostedAgentProjectSteeringWithProvider({
+    ...options,
+    skillDocumentParserProvider,
+  });
+}
 
 function withTempDir(fn: (rootDir: string) => void | Promise<void>): Promise<void> {
   const rootDir = Deno.makeTempDirSync();
