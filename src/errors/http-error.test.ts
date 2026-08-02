@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { CONFIG_NOT_FOUND, UNKNOWN_ERROR } from "./error-registry.ts";
 import {
   createErrorHandler,
@@ -17,32 +17,84 @@ import {
 import { VeryfrontError } from "./types.ts";
 
 describe("http-error", () => {
-  it("should not expose unknown error details in a 500 response", async () => {
-    const response = errorToResponse(
-      new Error("postgres://admin:super-secret@db.internal/app"),
-      "/api/build",
+  describe("5xx detail filtering", () => {
+    const environmentKeys = ["VERYFRONT_ENV", "NODE_ENV", "DENO_ENV"] as const;
+    const originalEnvironment = new Map(
+      environmentKeys.map((key) => [key, Deno.env.get(key)] as const),
     );
-    const body = await response.json();
 
-    assertEquals(response.status, 500);
-    assertEquals(response.headers.get("Content-Type"), PROBLEM_JSON_CONTENT_TYPE);
-    assertEquals(body.type, "https://veryfront.com/docs/errors/unknown-error");
-    assertEquals(body.instance, "/api/build");
-    assertEquals(body.detail, undefined);
-    assertEquals(JSON.stringify(body).includes("super-secret"), false);
-  });
+    beforeEach(() => {
+      for (const key of environmentKeys) Deno.env.delete(key);
+    });
 
-  it("should omit detail and cause from registered 5xx errors", async () => {
-    const response = errorToResponse(
-      UNKNOWN_ERROR.create({
-        detail: "private implementation detail",
-        cause: "database-password",
-      }),
-    );
-    const body = await response.json();
+    afterEach(() => {
+      for (const [key, value] of originalEnvironment) {
+        if (value === undefined) Deno.env.delete(key);
+        else Deno.env.set(key, value);
+      }
+    });
 
-    assertEquals(body.detail, undefined);
-    assertEquals(body.cause, undefined);
+    it("should not expose unknown error details in a production 500 response", async () => {
+      Deno.env.set("NODE_ENV", "production");
+
+      const response = errorToResponse(
+        new Error("postgres://admin:super-secret@db.internal/app"),
+        "/api/build",
+      );
+      const body = await response.json();
+
+      assertEquals(response.status, 500);
+      assertEquals(response.headers.get("Content-Type"), PROBLEM_JSON_CONTENT_TYPE);
+      assertEquals(body.type, "https://veryfront.com/docs/errors/unknown-error");
+      assertEquals(body.instance, "/api/build");
+      assertEquals(body.detail, undefined);
+      assertEquals(JSON.stringify(body).includes("super-secret"), false);
+    });
+
+    it("should omit detail and cause from registered 5xx errors in production", async () => {
+      Deno.env.set("NODE_ENV", "production");
+
+      const response = errorToResponse(
+        UNKNOWN_ERROR.create({
+          detail: "private implementation detail",
+          cause: "database-password",
+        }),
+      );
+      const body = await response.json();
+
+      assertEquals(body.detail, undefined);
+      assertEquals(body.cause, undefined);
+    });
+
+    it("should keep 5xx detail in development while still dropping cause", async () => {
+      Deno.env.set("NODE_ENV", "development");
+
+      const response = errorToResponse(
+        UNKNOWN_ERROR.create({
+          detail: "private implementation detail",
+          cause: "database-password",
+        }),
+      );
+      const body = await response.json();
+
+      assertEquals(response.status, 500);
+      assertEquals(body.detail, "private implementation detail");
+      assertEquals(body.cause, undefined);
+      assertEquals(body.stack, undefined);
+    });
+
+    it("should still redact credentials from development 5xx detail", async () => {
+      Deno.env.set("NODE_ENV", "development");
+
+      const response = errorToResponse(
+        UNKNOWN_ERROR.create({
+          detail: "connect postgres://admin:super-secret@db.internal/app",
+        }),
+      );
+      const body = await response.json();
+
+      assertEquals(JSON.stringify(body).includes("super-secret"), false);
+    });
   });
 
   it("should preserve safe client-error details", async () => {

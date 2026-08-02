@@ -23,6 +23,7 @@ import {
   stringifySafeProblemDetails,
 } from "./safe-diagnostics.ts";
 import { extractHandlerRequestPathname } from "./request-instance.ts";
+import { isProduction } from "#veryfront/platform/environment.ts";
 
 const NativeResponse = Response;
 
@@ -102,13 +103,18 @@ export function isVeryfrontError(error: unknown): error is VeryfrontError {
  *
  * - If it's a VeryfrontError with slug, serialize directly
  * - Otherwise, wrap in a generic "unknown-error" response
+ *
+ * 5xx detail may carry internal diagnostics, so it is omitted in production and
+ * kept locally — the same environment split `errorToRFC9457Response` applies at
+ * the handler boundary, resolved here from the process environment because this
+ * entry point has no `HandlerContext` to read `isLocalProject` from.
  */
 export function errorToResponse(error: unknown, instance?: string): Response {
   const body = createSafeProblemDetails(error, instance);
   delete body.cause;
   delete body.stack;
 
-  if (body.status >= 500) {
+  if (body.status >= 500 && isProduction()) {
     delete body.detail;
   }
 

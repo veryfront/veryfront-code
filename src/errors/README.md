@@ -78,9 +78,10 @@ Choose the response helper based on the boundary:
 - `errorToRFC9457Response()` is the environment-aware HTTP boundary serializer.
   It includes stacks only for local projects, removes `cause` in production,
   and also removes `detail` from production 5xx responses.
-- `errorToResponse()` is the safe generic serializer. It removes `cause` from
-  every response, removes `detail` from every 5xx response, and never mutates
-  the source error.
+- `errorToResponse()` is the safe generic serializer for boundaries without a
+  `HandlerContext`. It removes `cause` and stacks from every response, removes
+  `detail` from 5xx responses in production, and never mutates the source
+  error. It reads the environment from the process rather than the request.
 - `createErrorResponse()` and `createProblemResponse()` are explicit low-level
   serializers. Callers are responsible for passing only response-safe fields.
 
