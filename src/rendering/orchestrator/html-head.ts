@@ -313,7 +313,10 @@ export function mergeCollectedHeadWithShell(
   };
 }
 
-export function buildHeadElements(head?: CollectedHead): { scripts: string; other: string } {
+export function buildHeadElements(
+  head?: CollectedHead,
+  nonce?: string,
+): { scripts: string; other: string } {
   if (!head) return { scripts: "", other: "" };
 
   const scriptParts: string[] = [];
@@ -323,7 +326,7 @@ export function buildHeadElements(head?: CollectedHead): { scripts: string; othe
     const descriptor = descriptorFromManagedHeadRecord(
       "script",
       script,
-      { contentProperty: "content" },
+      { contentProperty: "content", ambientNonce: nonce },
     );
     if (!descriptor) continue;
     const attrPairs: ManagedHeadAttribute[] = [
@@ -374,7 +377,7 @@ export function buildHeadElements(head?: CollectedHead): { scripts: string; othe
     const descriptor = descriptorFromManagedHeadRecord(
       "style",
       typeof style === "string" ? { content: style } : style,
-      { contentProperty: "content" },
+      { contentProperty: "content", ambientNonce: nonce },
     );
     if (!descriptor) continue;
     const attrStr = buildAttributes(Object.fromEntries([

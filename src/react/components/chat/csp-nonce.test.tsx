@@ -8,6 +8,8 @@ import { Head } from "../Head.tsx";
 import { ChatStyleProvider } from "./chat-style-provider.tsx";
 import { ChatRoot } from "./chat/composition/chat-root.tsx";
 import { ColorModeScript } from "../ui/color-mode.tsx";
+import { DesignTokenStyle } from "../ui/tokens.tsx";
+import { runWithHeadCollector } from "../../head-collector.ts";
 
 const TEST_NONCE = "nonce-123";
 
@@ -237,6 +239,15 @@ function HydratingColorModeScriptFixture(): React.ReactElement {
 }
 
 describe("getDocumentNonce hydration behavior", () => {
+  it("applies the isolated render nonce to framework-owned server styles", async () => {
+    const { result: html } = await runWithHeadCollector(
+      () => renderToString(<DesignTokenStyle />),
+      { nonce: TEST_NONCE },
+    );
+
+    assert(html.startsWith(`<style nonce="${TEST_NONCE}">`));
+  });
+
   it("preserves nonces on ChatStyleProvider style tags after hydration re-renders", async () => {
     const nonce = await hydrateAndReadStyleNonce(<HydratingChatStyleProviderFixture />);
     assertEquals(nonce, TEST_NONCE);

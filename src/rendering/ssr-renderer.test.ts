@@ -71,6 +71,34 @@ describe("rendering/ssr-renderer", () => {
     assertEquals(abortCount, 1);
   });
 
+  it("forwards the response nonce to React-owned streaming scripts", async () => {
+    let observedNonce: string | undefined;
+    __injectReactDOMServerForTests({
+      renderToString: () => "<div>unused</div>",
+      renderToStaticMarkup: () => "<div>static</div>",
+      renderToReadableStream: async (_element, options) => {
+        observedNonce = options?.nonce;
+        return new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("<div>streamed</div>"));
+            controller.close();
+          },
+        }) as Awaited<
+          ReturnType<NonNullable<ReactDOMServer["renderToReadableStream"]>>
+        >;
+      },
+    });
+
+    const renderer = new SSRRenderer("production");
+    const result = await renderer.renderToHTML(
+      React.createElement("div"),
+      { mode: "production", wantsStream: true, nonce: "response-nonce" },
+    );
+
+    assertEquals(observedNonce, "response-nonce");
+    await result.stream?.cancel();
+  });
+
   it("applies Web Stream backpressure to a pipeable producer", async () => {
     const chunkSize = 4_096;
     const totalChunks = 256;

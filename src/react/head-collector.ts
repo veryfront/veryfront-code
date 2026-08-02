@@ -60,6 +60,9 @@ export const HEAD_COLLECTOR_SYMBOL = Symbol.for("veryfront.react.collect-head");
 const HEAD_COLLECTOR_STATE_SYMBOL = Symbol.for(
   "veryfront.react.head-collector-state.v1",
 );
+const HEAD_RENDER_NONCE_SYMBOL = Symbol.for(
+  "veryfront.react.head-render-nonce.v1",
+);
 
 /**
  * Head tags that are single-valued per the HTML / Open Graph / Twitter-card
@@ -85,12 +88,17 @@ function createEmpty(): CollectedHead {
 type HeadCollector = (data: Partial<CollectedHead>) => void;
 
 interface HeadCollectorState {
-  readonly storage: AsyncLocalStorage<CollectedHead>;
+  readonly storage: AsyncLocalStorage<HeadCollectorContext>;
   readonly collect: HeadCollector;
 }
 
+type HeadCollectorContext = CollectedHead & {
+  /** Response-scoped CSP nonce available while React owns the render call. */
+  readonly [HEAD_RENDER_NONCE_SYMBOL]?: string;
+};
+
 function createHeadCollectorState(): HeadCollectorState {
-  const storage = new AsyncLocalStorage<CollectedHead>();
+  const storage = new AsyncLocalStorage<HeadCollectorContext>();
   function collectHead(data: Partial<CollectedHead>): void {
     const collected = storage.getStore();
     if (!collected) return;
@@ -172,14 +180,29 @@ globalHeadCollector[HEAD_COLLECTOR_SYMBOL] = collectHead;
 
 export async function runWithHeadCollector<T>(
   fn: () => T | Promise<T>,
+  options: { nonce?: string } = {},
 ): Promise<{ result: T; head: CollectedHead }> {
-  const head = createEmpty();
+  const head = createEmpty() as HeadCollectorContext;
+  if (options.nonce) {
+    Object.defineProperty(head, HEAD_RENDER_NONCE_SYMBOL, {
+      value: options.nonce,
+      enumerable: false,
+    });
+  }
   const result = await headStorage.run(head, fn);
   return { result, head };
 }
 
 export function getHeadCollectorContext(): CollectedHead | null {
   return headStorage.getStore() ?? null;
+}
+
+/**
+ * Return the nonce bound to the active server render. Browser builds use the
+ * no-op async-context polyfill, so this never exposes a nonce outside SSR.
+ */
+export function getHeadCollectorNonce(): string | undefined {
+  return headStorage.getStore()?.[HEAD_RENDER_NONCE_SYMBOL];
 }
 
 export function hasCollectedHead(): boolean {

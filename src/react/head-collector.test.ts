@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   collectHead,
+  getHeadCollectorNonce,
   hasCollectedHead,
   HEAD_COLLECTOR_SYMBOL,
   runWithHeadCollector,
@@ -244,6 +245,36 @@ describe("head-collector", () => {
       assertEquals(b.head.title, "B");
       assertEquals(a.result, "result-a");
       assertEquals(b.result, "result-b");
+    });
+
+    it("binds and isolates the response nonce without leaking it", async () => {
+      assertEquals(getHeadCollectorNonce(), undefined);
+
+      const firstStarted = Promise.withResolvers<void>();
+      const secondRead = Promise.withResolvers<void>();
+      const [first, second] = await Promise.all([
+        runWithHeadCollector(
+          async () => {
+            firstStarted.resolve();
+            await secondRead.promise;
+            return getHeadCollectorNonce();
+          },
+          { nonce: "nonce-a" },
+        ),
+        runWithHeadCollector(
+          async () => {
+            await firstStarted.promise;
+            const nonce = getHeadCollectorNonce();
+            secondRead.resolve();
+            return nonce;
+          },
+          { nonce: "nonce-b" },
+        ),
+      ]);
+
+      assertEquals(first.result, "nonce-a");
+      assertEquals(second.result, "nonce-b");
+      assertEquals(getHeadCollectorNonce(), undefined);
     });
   });
 

@@ -15,6 +15,8 @@ import {
   resolveProjectReactVersion,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
+import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
+import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 
 const logger = serverLogger.component("error-page-fallback");
 
@@ -352,9 +354,14 @@ async function renderErrorPage(
   );
 
   try {
-    const inner = await renderToStringAdapter(element as React.ReactElement, {
-      reactVersion,
-    });
+    const { result: inner } = await runWithHeadCollector(
+      () =>
+        renderToStringAdapter(element as React.ReactElement, {
+          nonce: builder.nonce,
+          reactVersion,
+        }),
+      { nonce: builder.nonce },
+    );
 
     const html = `<!DOCTYPE html>
 <html lang="en">
@@ -393,6 +400,6 @@ async function renderErrorPage(
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined, req)
       .withCache("no-cache")
-      .html(fallbackHtml, statusCode);
+      .html(addNonceToHtmlTags(fallbackHtml, builder.nonce), statusCode);
   }
 }

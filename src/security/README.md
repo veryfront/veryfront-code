@@ -92,6 +92,13 @@ media-provider, analytics, and API origins must be declared by the owning
 extension or explicit project CSP. The obsolete browser XSS auditor is disabled
 with `X-XSS-Protection: 0`.
 
+The response nonce is applied to framework-generated inline tags, validated
+structured `Head` script/style declarations, and explicitly source-authored
+static HTML documents. Veryfront does not add the nonce to raw SSR output,
+because doing so would authorize arbitrary application or user-controlled
+markup under CSP. Use structured `Head` declarations, external same-origin
+assets, or explicit CSP hashes for application-owned inline code.
+
 ### Paths and filesystem access
 
 Path validation canonicalizes existing ancestors, rejects traversal and

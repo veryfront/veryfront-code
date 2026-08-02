@@ -22,9 +22,9 @@ const SCAN_ROOTS = [
 
 // Lower this when you remove sanitizer opt-outs. Never raise it without a very
 // good reason — a new opt-out means a leak is being suppressed rather than fixed.
-// 406 after restoring both sanitizers for the up command integration suite, which
+// 404 after restoring both sanitizers for the up command integration suite, which
 // leaked nothing and never needed them.
-export const SANITIZER_OPT_OUT_BASELINE = 406;
+export const SANITIZER_OPT_OUT_BASELINE = 404;
 
 const OPT_OUT_PATTERN = /sanitize(?:Resources|Ops|Exit)\s*:\s*false/g;
 

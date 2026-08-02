@@ -8,6 +8,7 @@ import {
   resolveProjectReactVersion,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
+import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
 
 type AppReservedModule = typeof import("../../../../rendering/app-reserved.ts");
 type ReservedComponentLoader = AppReservedModule["tryLoadReservedInDirs"];
@@ -97,7 +98,15 @@ export async function tryNotFoundFallback(
     let inner: string;
 
     try {
-      inner = await renderToStringAdapter(element, { reactVersion });
+      const rendered = await runWithHeadCollector(
+        () =>
+          renderToStringAdapter(element, {
+            nonce: builder.nonce,
+            reactVersion,
+          }),
+        { nonce: builder.nonce },
+      );
+      inner = rendered.result;
     } catch (_) {
       /* expected: SSR render may fail, fall back to text extraction */
       inner = (await extractNotFoundText(dirs, ctx)) ?? "<p>Not Found</p>";

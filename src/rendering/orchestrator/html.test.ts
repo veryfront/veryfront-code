@@ -657,7 +657,7 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes(`localStorage.setItem('theme','dark')`), true);
     });
 
-    it("adds nonce to inline style and script tags in rendered HTML", async () => {
+    it("does not grant the response nonce to rendered application markup", async () => {
       const mockAdapter = createMockAdapter(async () => "");
 
       const generator = createHTMLGenerator({
@@ -682,11 +682,11 @@ describe("HTMLGenerator helpers", () => {
         options: { nonce: "nonce-123" },
       });
 
-      assertEquals(html.includes('<style nonce="nonce-123">.chat{color:red}</style>'), true);
-      assertEquals(
-        html.includes('<script nonce="nonce-123">window.__vf=1</script>'),
-        true,
-      );
+      assertEquals(html.includes('<style nonce="nonce-123">.chat{color:red}</style>'), false);
+      assertEquals(html.includes('<script nonce="nonce-123">window.__vf=1</script>'), false);
+      assertEquals(html.includes("<style>.chat{color:red}</style>"), true);
+      assertEquals(html.includes("<script>window.__vf=1</script>"), true);
+      assertEquals(html.includes('<script type="importmap" nonce="nonce-123">'), true);
     });
 
     it("adds nonce to collected head style and script tags", async () => {
@@ -928,7 +928,7 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes("data-vf-shell-head"), false);
     });
 
-    it("replaces existing nonce attributes with the response nonce without duplication", async () => {
+    it("does not rewrite application-owned nonce attributes", async () => {
       const mockAdapter = createMockAdapter(async () => "");
 
       const generator = createHTMLGenerator({
@@ -953,19 +953,16 @@ describe("HTMLGenerator helpers", () => {
         options: { nonce: "nonce-123" },
       });
 
+      assertEquals(html.includes('<style nonce="existing-nonce">.chat{color:red}</style>'), true);
       assertEquals(
-        html.includes('<style nonce="nonce-123">.chat{color:red}</style>'),
+        html.includes('<script nonce="existing-nonce">window.__vf=1</script>'),
         true,
       );
-      assertEquals(
-        html.includes('<script nonce="nonce-123">window.__vf=1</script>'),
-        true,
-      );
-      assertEquals(html.includes('nonce="existing-nonce"'), false);
+      assertEquals(html.includes('nonce="existing-nonce"'), true);
       assertEquals(html.includes('nonce="nonce-123" nonce="existing-nonce"'), false);
     });
 
-    it("escapes nonce values before injecting rendered tags", async () => {
+    it("escapes nonce values only on framework-generated tags", async () => {
       const mockAdapter = createMockAdapter(async () => "");
 
       const generator = createHTMLGenerator({
@@ -989,14 +986,13 @@ describe("HTMLGenerator helpers", () => {
         options: { nonce: `nonce-"<&'` },
       });
 
-      assertEquals(
-        html.includes('<style nonce="nonce-&quot;&lt;&amp;&#39;">.chat{color:red}</style>'),
-        true,
-      );
+      assertEquals(html.includes('<style nonce="nonce-&quot;&lt;&amp;&#39;">'), false);
       assertEquals(
         html.includes('<script nonce="nonce-&quot;&lt;&amp;&#39;">window.__vf=1</script>'),
-        true,
+        false,
       );
+      assertEquals(html.includes("<style>.chat{color:red}</style>"), true);
+      assertEquals(html.includes("<script>window.__vf=1</script>"), true);
       assertEquals(
         html.includes('<script type="importmap" nonce="nonce-&quot;&lt;&amp;&#39;">'),
         true,
@@ -1004,7 +1000,7 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes('nonce="nonce-"<&\'"'), false);
     });
 
-    it("does not inject nonce markup into script or style literals inside inline scripts", async () => {
+    it("leaves application script and style markup byte-for-byte unprivileged", async () => {
       const mockAdapter = createMockAdapter(async () => "");
 
       const generator = createHTMLGenerator({
@@ -1031,11 +1027,11 @@ describe("HTMLGenerator helpers", () => {
 
       assertEquals(
         html.includes(
-          '<script nonce="nonce-123">window.tpl="<script>alert(1)";window.css="<style>.x{color:red}";</script>',
+          '<script>window.tpl="<script>alert(1)";window.css="<style>.x{color:red}";</script>',
         ),
         true,
       );
-      assertEquals(html.includes('<style nonce="nonce-123">.chat{color:red}</style>'), true);
+      assertEquals(html.includes("<style>.chat{color:red}</style>"), true);
       assertEquals(html.includes('<script nonce="nonce-123">alert(1)'), false);
       assertEquals(html.includes('<style nonce="nonce-123">.x{color:red}'), false);
     });

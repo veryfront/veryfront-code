@@ -11,6 +11,8 @@ import {
   recordModuleToSession,
   startRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/render-sessions.ts";
+import { getHeadCollectorNonce } from "#veryfront/react/head-collector.ts";
+import type { SSRRenderOptions } from "../ssr-renderer.ts";
 
 function createMockConfig(overrides: Partial<SSROrchestratorConfig> = {}): SSROrchestratorConfig {
   return {
@@ -45,6 +47,40 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
   });
 
   describe("performSSRRendering", () => {
+    it("binds the response nonce only while the React render is active", async () => {
+      let observedNonce: string | undefined;
+      let forwardedNonce: string | undefined;
+      const config = createMockConfig({
+        ssrRenderer: {
+          renderToHTML: async (_element: React.ReactElement, options: SSRRenderOptions) => {
+            observedNonce = getHeadCollectorNonce();
+            forwardedNonce = options.nonce;
+            return { html: "<div>rendered</div>", stream: null };
+          },
+        } as unknown as SSROrchestratorConfig["ssrRenderer"],
+      });
+
+      const orchestrator = new SSROrchestrator(config);
+      await orchestrator.performSSRRendering(
+        React.createElement("div"),
+        {
+          meta: { title: "Test", slug: "/test" },
+          pageBundle: {
+            compiledCode: "",
+            frontmatter: {},
+            globals: {},
+            headings: [],
+            nodeMap: new Map(),
+          },
+        } as any,
+        { nonce: "response-nonce" },
+      );
+
+      assertEquals(observedNonce, "response-nonce");
+      assertEquals(forwardedNonce, "response-nonce");
+      assertEquals(getHeadCollectorNonce(), undefined);
+    });
+
     it("should render a simple element to full HTML", async () => {
       const config = createMockConfig();
       const orchestrator = new SSROrchestrator(config);

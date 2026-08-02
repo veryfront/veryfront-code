@@ -19,7 +19,6 @@ import {
 import type { MDXFrontmatter } from "#veryfront/transforms/mdx/types.ts";
 import type { RenderMetadata } from "#veryfront/types";
 import { DEFAULT_DASHBOARD_PORT, rendererLogger } from "#veryfront/utils";
-import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 import { injectElementSelectors } from "#veryfront/studio/element-selector-injector.ts";
 import { computeSourceHash } from "#veryfront/studio/hash-utils.ts";
 import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
@@ -250,7 +249,7 @@ export class HTMLGenerator {
       logger.debug("Injected element selectors for Studio");
     }
 
-    return addNonceToHtmlTags(finalHtml, effectiveContext.options?.nonce);
+    return finalHtml;
   }
 
   async generateHTMLStream(
@@ -278,12 +277,9 @@ export class HTMLGenerator {
 
     if (isFullHTMLDocument(reactContent)) {
       const encoder = new TextEncoder();
-      const fullHtml = addNonceToHtmlTags(
-        await this.handleFullHTMLDocument({
-          ...fullContext,
-        }),
-        context.options?.nonce,
-      );
+      const fullHtml = await this.handleFullHTMLDocument({
+        ...fullContext,
+      });
 
       return new ReadableStream({
         start(controller) {
@@ -314,10 +310,7 @@ export class HTMLGenerator {
     );
 
     const encoder = new TextEncoder();
-    const fullHtml = addNonceToHtmlTags(
-      `${start}${reactContent}${end}`,
-      context.options?.nonce,
-    );
+    const fullHtml = `${start}${reactContent}${end}`;
 
     return new ReadableStream({
       start(controller) {
@@ -542,7 +535,10 @@ export class HTMLGenerator {
       );
     }
 
-    const { scripts, other } = buildCollectedHeadElements(emissionHead);
+    const { scripts, other } = buildCollectedHeadElements(
+      emissionHead,
+      context.options?.nonce,
+    );
     if (!scripts && !other) return { start: modifiedStart, end };
 
     // The framework import map must precede every module script. Keep collected

@@ -365,6 +365,7 @@ export class SSRHandler extends BaseHandler {
     const result: SSRRenderResult = {
       status: 404,
       html: ErrorPages.notFound(slug || "/"),
+      htmlProvenance: "framework",
       isStreaming: false,
       cacheStrategy: "no-cache",
       failure: { kind: "not-found" },
