@@ -14,6 +14,7 @@ const inputAnchorMessageId = "10000000-1000-4000-8000-100000000003";
 const userId = "10000000-1000-4000-8000-100000000004";
 const projectId = "10000000-1000-4000-8000-100000000005";
 const branchId = "10000000-1000-4000-8000-100000000006";
+const environmentId = "10000000-1000-4000-8000-100000000007";
 
 function createInvocation(overrides: Record<string, unknown> = {}) {
   return {
@@ -272,6 +273,31 @@ describe("agent/runtime-agent-invocation-contract", () => {
       agentSource: parsed.agentSource,
       forwardedProps: parsed.forwardedProps,
     });
+  });
+
+  it("preserves the verified target environment on control-plane stream requests", () => {
+    const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      run: {
+        agentServiceId: "veryfront-platform-agent",
+        agentId: "builder",
+        conversationId,
+        runId: "run_root_1",
+        messageId,
+        inputAnchorMessageId,
+        requestedByUserId: userId,
+        project: {
+          projectId,
+          projectSlug: "demo-project",
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: environmentId,
+        },
+      },
+    }));
+
+    const request = buildRuntimeAgentControlPlaneStreamRequestFromInvocation(parsed);
+
+    assertEquals(request.runtimeTargetEnvironmentId, environmentId);
+    assertEquals(request.runtimeTargetBranchId, null);
   });
 
   it("preserves the selected project agent config on control-plane stream requests", () => {

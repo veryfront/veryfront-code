@@ -220,13 +220,18 @@ describe("model-tool-converter", () => {
     assertEquals("web_fetch" in result!, true);
   });
 
-  it("does not add provider-native web_search for non-anthropic models", () => {
-    const result = convertToolsToRuntimeTools([], {
-      model: "openai/gpt-4o-mini",
-      providerTools: ["web_search"],
-    });
+  it("uses the OpenAI-native web_search definition for direct and cloud models", () => {
+    for (const model of ["openai/gpt-4o-mini", "veryfront-cloud/openai/gpt-5.4"]) {
+      const result = convertToolsToRuntimeTools([], {
+        model,
+        providerTools: ["web_search"],
+      });
 
-    assertEquals(result, undefined);
+      assertEquals(
+        (result?.web_search as { id?: string } | undefined)?.id,
+        "openai.web_search",
+      );
+    }
   });
 
   it("does not add provider-native web_fetch for non-anthropic models", () => {
@@ -238,7 +243,7 @@ describe("model-tool-converter", () => {
     assertEquals(result, undefined);
   });
 
-  it("preserves an explicit local tool named web_search for non-Anthropic models", () => {
+  it("preserves an explicit local web_search when OpenAI native search was not requested", () => {
     const tools: ToolDefinition[] = [
       {
         name: "web_search",
@@ -249,7 +254,6 @@ describe("model-tool-converter", () => {
 
     const result = convertToolsToRuntimeTools(tools, {
       model: "openai/gpt-5.2",
-      providerTools: ["web_search"],
     });
 
     assertEquals(result !== undefined, true);

@@ -25,6 +25,7 @@ import {
   type HostedRuntimeSourceIdentity,
   snapshotHostedRuntimeSourceIdentity,
 } from "../hosted/runtime-source-binding.ts";
+import { runWithHostedRequestPreparationSignal } from "./request-preparation-context.ts";
 
 /** Public API contract for hosted agent service routes logger. */
 export type HostedAgentServiceRoutesLogger = {
@@ -250,7 +251,10 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     const runId = parsedRequest.agUiInput?.runId;
 
     try {
-      const execution = await options.prepareExecution(parsedRequest);
+      const execution = await runWithHostedRequestPreparationSignal(
+        input.request.signal,
+        () => options.prepareExecution(parsedRequest),
+      );
       return await options.streamExecutionToAgUiResponse({
         ...execution,
         requestAbortSignal: input.request.signal,
@@ -290,7 +294,11 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
       rawRequest: input.request,
       requestOrCtx: input.requestOrCtx,
       tracker: options.tracker,
-      prepareExecution: options.prepareExecution,
+      prepareExecution: (req) =>
+        runWithHostedRequestPreparationSignal(
+          input.request.signal,
+          () => options.prepareExecution(req),
+        ),
       startDetachedExecution: options.startDetachedExecution,
       cleanupExecution: options.cleanupExecution,
       resolveAuthError: (error) =>
