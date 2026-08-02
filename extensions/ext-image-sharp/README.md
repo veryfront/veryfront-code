@@ -2,9 +2,14 @@
 
 > **Category:** Build | **Contract:** `ImageOptimizationEngine` | **Explicit**
 
-Provides native raster image decoding, resizing, and encoding through Sharp.
-Veryfront core depends only on the first-party `ImageOptimizationEngine`
-contract. This extension owns the Sharp import and native library boundary.
+Provides native raster image decoding, resizing, and encoding through the exact
+Sharp dependency owned by this extension. Veryfront core depends only on the
+first-party `ImageOptimizationEngine` contract and never discovers or imports
+Sharp itself.
+
+The npm package requires Node.js 20.9 or newer, matching Sharp 0.35's native
+runtime floor. This does not change Veryfront core's runtime support because
+the extension is installed and activated only by applications that opt in.
 
 ## Registration
 
@@ -21,22 +26,33 @@ export default defineConfig({
 });
 ```
 
-The extension is not discovered or loaded by core. Enabling image optimization
-without a registered `ImageOptimizationEngine` fails before build output is
-published.
+Enabling image optimization without a registered `ImageOptimizationEngine`
+fails before build output is published. The extension statically binds its
+exact Sharp package; it never searches global installations or project
+workspaces and never uses the network to discover an implementation.
 
-## Boundary and limits
+## Output semantics
 
-Core reads and writes files, enforces input and output byte limits, validates
-dimensions and result structure, applies a deadline, and owns atomic
-publication. The extension receives immutable byte-oriented requests and owns
-only decoding, resizing, and encoding.
+For each source image, the engine emits every requested format for each unique
+target width that does not exceed the auto-oriented source width. The source
+width is always included exactly once. Variants are returned deterministically
+by ascending width and then canonical format order (`webp`, `avif`, `jpeg`,
+`png`). Sharp is always called with `withoutEnlargement: true`, and returned
+dimensions, aspect ratio, and format metadata must match the planned variant.
+The complete supported matrix is 64 configured widths plus the source width,
+across all four formats (260 variants).
 
-Each request carries an abort signal. Sharp cannot interrupt every native
-operation already in progress, but the extension checks cancellation before
-and after every native step, and core discards results that arrive after the
-deadline.
+The extension snapshots descriptor-only request data before native work and
+uses an independent Sharp pipeline for every operation. Inputs, decoded pixels,
+variant count, per-variant bytes, and aggregate output bytes are bounded. Each
+request carries an abort signal used by core for cancellation and deadlines.
+Sharp cannot interrupt every native call already in progress, so the extension
+races native steps with that signal and discards any late result. Engines are
+long-lived concurrency-safe services with no caller-managed cleanup lifecycle;
+operation-scoped resources are released when each provider Promise settles.
 
-The extension declares the single import-time environment read performed by
-Sharp (`npm_package_config_libvips`) and native FFI for the libvips module. It
-requests no network, subprocess, or project-filesystem capability.
+The extension requests only Sharp's import-time environment reads
+(`MALLOC_ARENA_MAX` and `npm_package_config_libvips`), read access to
+`/proc/self/exe` and `/usr/bin/ldd` for Linux libc detection, and native FFI for
+its packaged libvips module. It requests no network, subprocess, or project
+workspace capability.

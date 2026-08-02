@@ -9,7 +9,6 @@ export type {
   ImageOptimizationFormat,
   ImageOptimizationRequest,
   ImageOptimizationResult,
-  ImageOptimizationVariantRequest,
   ImageOptimizationVariantResult,
 } from "./image-optimization-engine.ts";
 export {

@@ -5,6 +5,7 @@ import {
   assertImageOptimizationEngine,
   captureImageOptimizationEngine,
   type ImageOptimizationEngine,
+  MAX_IMAGE_OPTIMIZATION_ENGINE_IDENTITY_CHARACTERS,
 } from "./image-optimization-engine.ts";
 
 function engine(): ImageOptimizationEngine {
@@ -36,7 +37,9 @@ describe("ImageOptimizationEngine contract", () => {
     assertEquals(
       (await captured.optimize({
         input: new Uint8Array([1]),
-        variants: Object.freeze([{ format: "png", width: 1, quality: 80 }]),
+        targetWidths: Object.freeze([1]),
+        formats: Object.freeze(["png"]),
+        quality: 80,
         signal: new AbortController().signal,
       })).sourceWidth,
       1,
@@ -67,18 +70,38 @@ describe("ImageOptimizationEngine contract", () => {
     value.optimize = () => Promise.reject(new Error("replacement invoked"));
     await captured.optimize({
       input: new Uint8Array([1]),
-      variants: Object.freeze([{ format: "png", width: 1, quality: 80 }]),
+      targetWidths: Object.freeze([1]),
+      formats: Object.freeze(["png"]),
+      quality: 80,
       signal: new AbortController().signal,
     });
     await assertRejects(
       () =>
         value.optimize({
           input: new Uint8Array([1]),
-          variants: [],
+          targetWidths: [],
+          formats: [],
+          quality: 80,
           signal: new AbortController().signal,
         }),
       Error,
       "replacement invoked",
     );
+  });
+
+  it("rejects unstable and oversized identities", () => {
+    for (
+      const cacheIdentity of [
+        "",
+        " padded ",
+        "x".repeat(MAX_IMAGE_OPTIMIZATION_ENGINE_IDENTITY_CHARACTERS + 1),
+      ]
+    ) {
+      assertThrows(
+        () => assertImageOptimizationEngine({ ...engine(), cacheIdentity }),
+        TypeError,
+        "bounded stable cacheIdentity",
+      );
+    }
   });
 });

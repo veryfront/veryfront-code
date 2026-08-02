@@ -14,7 +14,6 @@
         "keys": [
           "CSS_TRANSFORMER_WASM",
           "BROWSERSLIST_DISABLE_CACHE",
-          "BROWSERSLIST_DANGEROUS_EXTEND",
           "BROWSERSLIST_IGNORE_OLD_DATA",
           "BROWSERSLIST_TRACE_WARNING"
         ]
@@ -31,6 +30,6 @@
     "veryfront/extensions/css": "../../src/extensions/css/index.ts"
   },
   "tasks": {
-    "test": "deno test --allow-env=CSS_TRANSFORMER_WASM,BROWSERSLIST_DISABLE_CACHE,BROWSERSLIST_DANGEROUS_EXTEND,BROWSERSLIST_IGNORE_OLD_DATA,BROWSERSLIST_TRACE_WARNING --allow-ffi src/"
+    "test": "deno test --no-lock --allow-env=CSS_TRANSFORMER_WASM,BROWSERSLIST_DISABLE_CACHE,BROWSERSLIST_IGNORE_OLD_DATA,BROWSERSLIST_TRACE_WARNING --allow-ffi src/"
   }
 }
