@@ -112,6 +112,13 @@ describe("client/spa/page-data", () => {
     assertEquals(reads, 0);
   });
 
+  it("rejects non-JSON nested values instead of silently changing them", () => {
+    const pageData = validPageData();
+    pageData.props = { createdAt: new Date(0) };
+
+    assertThrows(() => snapshotPageData(pageData), TypeError);
+  });
+
   it("rejects sparse or accessor-backed arrays at admission", () => {
     const sparse = validPageData();
     sparse.providers = new Array(1);

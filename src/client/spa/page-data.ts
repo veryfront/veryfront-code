@@ -111,6 +111,16 @@ function copyJsonValue(
       return result;
     }
 
+    let prototype: object | null;
+    try {
+      prototype = Reflect.getPrototypeOf(value);
+    } catch (cause) {
+      throw new TypeError(`${fieldName} could not be inspected`, { cause });
+    }
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError(`${fieldName} must contain only plain JSON objects`);
+    }
+
     const entries = readOwnEnumerableDataEntries(value, fieldName);
     consumeValueEntries(capture, entries.length);
     const result = Object.fromEntries(
