@@ -904,7 +904,7 @@ describe("ext-llm-google/google-provider", () => {
           issue: "candidate function call arguments were not an object",
         },
         {
-          part: { functionCall: { id: "tool_1", name: "lookup" } },
+          part: { functionCall: { id: "tool_1", name: "lookup", args: null } },
           issue: "candidate function call arguments were not an object",
         },
       ];
@@ -929,6 +929,33 @@ describe("ext-llm-google/google-provider", () => {
           issue,
         );
       }
+    });
+
+    it("treats an omitted function call args field as empty arguments", async () => {
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        fetch: () =>
+          Promise.resolve(
+            googleJsonResponse({
+              candidates: [{
+                content: {
+                  role: "model",
+                  parts: [{ functionCall: { id: "tool_1", name: "ping" } }],
+                },
+                finishReason: "STOP",
+              }],
+            }),
+          ),
+      }, "gemini-3-pro");
+
+      const result = await runtime.doGenerate({ prompt: [userPrompt] });
+
+      assertEquals(result.content, [{
+        type: "tool-call",
+        toolCallId: "tool_1",
+        toolName: "ping",
+        input: "{}",
+      }]);
     });
 
     it("rejects a generation candidate with no supported output", async () => {
