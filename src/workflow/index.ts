@@ -99,11 +99,36 @@ export { hasWorkerSupport } from "./backends/types.ts";
 
 export { MemoryBackend } from "./backends/memory.ts";
 
+export { RedisBackend } from "./backends/redis.ts";
+export type { RedisAdapter, RedisBackendConfig } from "./backends/redis.ts";
+
 // =============================================================================
 // Client API
 // =============================================================================
 export { createWorkflowClient, WorkflowClient } from "./api/index.ts";
 export type { WorkflowClientConfig } from "./api/index.ts";
+
+// =============================================================================
+// React Hooks (re-exported for convenience)
+// Note: For tree-shaking, prefer importing from 'veryfront/workflow/react'
+// =============================================================================
+export {
+  useApproval,
+  useWorkflow,
+  useWorkflowList,
+  useWorkflowStart,
+} from "#veryfront/workflow/react";
+
+export type {
+  UseApprovalOptions,
+  UseApprovalResult,
+  UseWorkflowListOptions,
+  UseWorkflowListResult,
+  UseWorkflowOptions,
+  UseWorkflowResult,
+  UseWorkflowStartOptions,
+  UseWorkflowStartResult,
+} from "#veryfront/workflow/react";
 
 // =============================================================================
 // Executor
