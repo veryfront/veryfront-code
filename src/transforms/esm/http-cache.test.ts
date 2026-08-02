@@ -95,6 +95,25 @@ async function withIsolatedHttpCache<T>(
 }
 
 describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, () => {
+  it("rejects internal module URLs before invoking fetch", async () => {
+    let fetchCount = 0;
+    await withIsolatedHttpCache(
+      "vf-esm-internal-egress-",
+      (() => {
+        fetchCount += 1;
+        return Promise.resolve(new Response("unexpected"));
+      }) as typeof fetch,
+      async (tempDir) => {
+        await assertRejects(
+          () => cacheModuleToLocal("http://169.254.169.254/module.js", tempDir),
+          Error,
+          "internal host",
+        );
+      },
+    );
+    assertEquals(fetchCount, 0);
+  });
+
   it("retries transient esm.sh failures before failing a render", async () => {
     const moduleUrl = "https://esm.sh/react@19.0.0/jsx-runtime?target=es2022";
     let fetchCount = 0;
@@ -343,7 +362,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
         importMap: {
           imports: {
             react: "https://esm.sh/react@19.2.4?target=es2022",
-            unrelated: "https://cdn.example.com/a.js",
+            unrelated: "https://93.184.216.35/a.js",
           },
           scopes: {},
         },
@@ -353,7 +372,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
         importMap: {
           imports: {
             react: "https://esm.sh/react@19.2.4?target=es2022",
-            unrelated: "https://cdn.example.com/b.js",
+            unrelated: "https://93.184.216.35/b.js",
           },
           scopes: {},
         },
@@ -424,7 +443,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
   it("isolates rewritten modules with the same URL and React version by import map", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-import-map-cache-" });
     const originalFetch = globalThis.fetch;
-    const rootUrl = "https://modules.example.com/root.js";
+    const rootUrl = "https://93.184.216.34/root.js";
 
     __injectCachesForTests({
       cachedPaths: new Map(),
@@ -453,12 +472,12 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
         reactVersion: "19.0.0",
         importMap: {
           imports: {
-            "mapped-dependency": "https://cdn.example.com/dependency-a.js",
-            unused: "https://cdn.example.com/unused.js",
+            "mapped-dependency": "https://93.184.216.35/dependency-a.js",
+            unused: "https://93.184.216.35/unused.js",
           },
           scopes: {
-            "/scope-b/": { z: "https://cdn.example.com/z.js", a: "https://cdn.example.com/a.js" },
-            "/scope-a/": { x: "https://cdn.example.com/x.js" },
+            "/scope-b/": { z: "https://93.184.216.35/z.js", a: "https://93.184.216.35/a.js" },
+            "/scope-a/": { x: "https://93.184.216.35/x.js" },
           },
         },
       });
@@ -466,7 +485,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
         cacheDir: tempDir,
         reactVersion: "19.0.0",
         importMap: {
-          imports: { "mapped-dependency": "https://cdn.example.com/dependency-b.js" },
+          imports: { "mapped-dependency": "https://93.184.216.35/dependency-b.js" },
           scopes: {},
         },
       });
@@ -475,12 +494,12 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
         reactVersion: "19.0.0",
         importMap: {
           imports: {
-            unused: "https://cdn.example.com/unused.js",
-            "mapped-dependency": "https://cdn.example.com/dependency-a.js",
+            unused: "https://93.184.216.35/unused.js",
+            "mapped-dependency": "https://93.184.216.35/dependency-a.js",
           },
           scopes: {
-            "/scope-a/": { x: "https://cdn.example.com/x.js" },
-            "/scope-b/": { a: "https://cdn.example.com/a.js", z: "https://cdn.example.com/z.js" },
+            "/scope-a/": { x: "https://93.184.216.35/x.js" },
+            "/scope-b/": { a: "https://93.184.216.35/a.js", z: "https://93.184.216.35/z.js" },
           },
         },
       });
@@ -489,15 +508,15 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
         reactVersion: "19.0.0",
         importMap: {
           imports: {
-            "mapped-dependency": "https://cdn.example.com/dependency-a.js",
-            unused: "https://cdn.example.com/unused.js",
+            "mapped-dependency": "https://93.184.216.35/dependency-a.js",
+            unused: "https://93.184.216.35/unused.js",
           },
           scopes: {
             "/scope-b/": {
-              z: "https://cdn.example.com/z-v2.js",
-              a: "https://cdn.example.com/a.js",
+              z: "https://93.184.216.35/z-v2.js",
+              a: "https://93.184.216.35/a.js",
             },
-            "/scope-a/": { x: "https://cdn.example.com/x.js" },
+            "/scope-a/": { x: "https://93.184.216.35/x.js" },
           },
         },
       });
@@ -526,7 +545,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
   it("does not coalesce concurrent modules whose import maps collide under legacy hashing", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-import-map-collision-" });
     const originalFetch = globalThis.fetch;
-    const rootUrl = "https://modules.example.com/collision.js";
+    const rootUrl = "https://93.184.216.34/collision.js";
     let fetchCount = 0;
 
     __injectCachesForTests({
@@ -574,12 +593,12 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
   it("tracks circular processing by the full cache identity", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-processing-identity-" });
     const originalFetch = globalThis.fetch;
-    const rootUrl = "https://modules.example.com/circular-identity.js";
+    const rootUrl = "https://93.184.216.34/circular-identity.js";
     const options = {
       cacheDir: tempDir,
       reactVersion: "19.0.0",
       importMap: {
-        imports: { dependency: "https://cdn.example.com/dependency.js" },
+        imports: { dependency: "https://93.184.216.35/dependency.js" },
         scopes: {},
       },
     };
@@ -638,8 +657,8 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
   it("does not persist a module whose lazy dependency failed to prefetch", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-degraded-artifact-" });
     const originalFetch = globalThis.fetch;
-    const parentUrl = "https://modules.example.com/degraded-parent.js";
-    const childUrl = "https://modules.example.com/degraded-child.js";
+    const parentUrl = "https://93.184.216.34/degraded-parent.js";
+    const childUrl = "https://93.184.216.34/degraded-child.js";
     const distributed = new Map<string, string>();
     let parentFetches = 0;
 
@@ -686,8 +705,8 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
   it("persists a module whose lazy dependency prefetched successfully", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-healthy-artifact-" });
     const originalFetch = globalThis.fetch;
-    const parentUrl = "https://modules.example.com/healthy-parent.js";
-    const childUrl = "https://modules.example.com/healthy-child.js";
+    const parentUrl = "https://93.184.216.34/healthy-parent.js";
+    const childUrl = "https://93.184.216.34/healthy-child.js";
     const distributed = new Map<string, string>();
     let parentFetches = 0;
 
@@ -733,8 +752,8 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
   });
 
   it("creates the same complete manifest for network, disk, and memory cache hits", async () => {
-    const rootUrl = "https://modules.example.com/manifest-root.js";
-    const childUrl = "https://modules.example.com/manifest-child.js";
+    const rootUrl = "https://93.184.216.34/manifest-root.js";
+    const childUrl = "https://93.184.216.34/manifest-child.js";
     let fetchCount = 0;
 
     const mockFetch = ((input: string | URL | Request) => {
@@ -771,7 +790,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
   });
 
   it("creates complete manifests for every request sharing an in-flight fetch", async () => {
-    const moduleUrl = "https://modules.example.com/in-flight-manifest.js";
+    const moduleUrl = "https://93.184.216.34/in-flight-manifest.js";
     let fetchCount = 0;
     const mockFetch = (async () => {
       fetchCount += 1;
@@ -797,8 +816,8 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
   });
 
   it("reconstructs a complete manifest from distributed-cache bundles", async () => {
-    const rootUrl = "https://modules.example.com/distributed-manifest-root.js";
-    const childUrl = "https://modules.example.com/distributed-manifest-child.js";
+    const rootUrl = "https://93.184.216.34/distributed-manifest-root.js";
+    const childUrl = "https://93.184.216.34/distributed-manifest-child.js";
     const distributed = new Map<string, string>();
     let fetchCount = 0;
     const mockFetch = ((input: string | URL | Request) => {
@@ -841,9 +860,9 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
   });
 
   it("does not publish a partial manifest when one bundle is degraded", async () => {
-    const healthyUrl = "https://modules.example.com/healthy-manifest-entry.js";
-    const parentUrl = "https://modules.example.com/degraded-manifest-entry.js";
-    const childUrl = "https://modules.example.com/unavailable-lazy-entry.js";
+    const healthyUrl = "https://93.184.216.34/healthy-manifest-entry.js";
+    const parentUrl = "https://93.184.216.34/degraded-manifest-entry.js";
+    const childUrl = "https://93.184.216.34/unavailable-lazy-entry.js";
     const mockFetch = ((input: string | URL | Request) => {
       const url = String(input);
       if (url === childUrl) {

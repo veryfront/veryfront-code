@@ -12,6 +12,10 @@ import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs
 import * as pathHelper from "#veryfront/compat/path";
 import type { Message, Plugin } from "veryfront/extensions/bundler";
 import { isAllowedRemoteHost } from "./http-validator.ts";
+import {
+  guardedOutboundFetch,
+  OutboundRequestBlockedError,
+} from "#veryfront/security/http/outbound-fetch.ts";
 
 const logger = serverLogger.component("api");
 const HTTP_MODULE_CACHE_DIR = ".veryfront/cache/api-http-imports";
@@ -147,15 +151,24 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
       const resolvedUrls: string[] = [];
       const nodeMapped: Array<{ from: string; to: string }> = [];
 
+      function authorizeRemoteUrl(url: URL): void {
+        if (!allowedHosts?.length || isAllowedRemoteHost(url, allowedHosts)) return;
+        throw new OutboundRequestBlockedError(
+          `Remote import blocked by allow-list: ${url.origin}`,
+        );
+      }
+
       async function fetchWithTimeout(url: string): Promise<Response> {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), HTTP_MODULE_FETCH_TIMEOUT_MS);
 
         try {
-          return await fetch(url, {
+          return await guardedOutboundFetch(url, {
             headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
             signal: controller.signal,
             redirect: "follow",
+          }, {
+            authorizeUrl: authorizeRemoteUrl,
           });
         } finally {
           clearTimeout(timeout);
@@ -213,11 +226,12 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
 
       async function fetchRemoteModule(url: string): Promise<Response> {
         for (let attempt = 1; attempt <= HTTP_MODULE_FETCH_MAX_ATTEMPTS; attempt += 1) {
-          const response = await fetchWithTimeout(url).catch((error) =>
-            new Response(String(error?.message ?? error), {
+          const response = await fetchWithTimeout(url).catch((error) => {
+            if (error instanceof OutboundRequestBlockedError) throw error;
+            return new Response(String(error?.message ?? error), {
               status: HTTP_NETWORK_CONNECT_TIMEOUT,
-            })
-          );
+            });
+          });
           if (!shouldRetryFetch(response.status) || attempt === HTTP_MODULE_FETCH_MAX_ATTEMPTS) {
             return response;
           }
@@ -353,7 +367,8 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
                 `[http] cached URL returned ${res.status}, trying module cache: ${args.path}`,
               );
             }
-          } catch (_error) {
+          } catch (error) {
+            if (error instanceof OutboundRequestBlockedError) throw error;
             logger.warn(`[http] cached URL failed, trying module cache: ${args.path}`);
           }
 
@@ -368,7 +383,15 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
           }
         }
 
-        const res = await fetchRemoteModule(requestUrl);
+        let res: Response;
+        try {
+          res = await fetchRemoteModule(requestUrl);
+        } catch (error) {
+          if (error instanceof OutboundRequestBlockedError) {
+            return { errors: [{ text: error.message } as Message] };
+          }
+          throw error;
+        }
 
         if (!res.ok) {
           const cachedText =
