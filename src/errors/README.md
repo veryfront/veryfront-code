@@ -128,10 +128,13 @@ conversion hooks.
 
 ## Logging and tracing
 
-`logError()` emits a human-readable development record or structured production
-JSON. Structured context is copied through the shared fail-closed redactor, and
-credentials embedded in URLs, authorization values, API-key assignments, and
-cookie assignments are removed from diagnostic text.
+`logError()` emits a human-readable development record or, in production, a
+`serverLogger.error()` record carrying `slug`, `category`, `status`, and `docs`
+as structured context — so the JSON envelope and the OTel log-record bridge
+apply to errors like any other log. Structured context is copied through the
+shared fail-closed redactor, and credentials embedded in URLs, authorization
+values, API-key assignments, and cookie assignments are removed from diagnostic
+text.
 
 Tracing exports only stable identity fields:
 

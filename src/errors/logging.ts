@@ -66,22 +66,25 @@ function redactAndMergeContext(
   }
 }
 
-function stringifyErrorLogEntry(entry: ErrorLogEntry): string {
-  const serialized = jsonStringify(entry);
-  if (serialized.length <= ERROR_OUTPUT_MAX_LENGTH_CHARS) return serialized;
+/**
+ * Cap the serialized size of an entry, dropping the free-form fields first.
+ *
+ * Individual diagnostics are already bounded upstream; this guards the case
+ * where their sum still exceeds what a log sink will accept.
+ */
+function boundErrorLogEntry(entry: ErrorLogEntry): ErrorLogEntry {
+  if (jsonStringify(entry).length <= ERROR_OUTPUT_MAX_LENGTH_CHARS) return entry;
 
-  return jsonStringify(
-    {
-      level: entry.level,
-      slug: entry.slug,
-      category: entry.category,
-      title: entry.title,
-      status: entry.status,
-      docs: entry.docs,
-      timestamp: entry.timestamp,
-      context: { context_truncated: true },
-    } satisfies ErrorLogEntry,
-  );
+  return {
+    level: entry.level,
+    slug: entry.slug,
+    category: entry.category,
+    title: entry.title,
+    status: entry.status,
+    docs: entry.docs,
+    timestamp: entry.timestamp,
+    context: { context_truncated: true },
+  };
 }
 
 /**
@@ -117,9 +120,19 @@ export function logError(
   };
 
   if (isProduction()) {
-    // Direct JSON output - this module owns its own structured format
-    // (slug, category, status, docs) which differs from the logger envelope.
-    console.error(stringifyErrorLogEntry(entry));
+    // Route through the canonical logger so the JSON envelope, shared redaction
+    // pipeline, and OTel log-record bridge all apply. Error-specific fields
+    // (slug, category, status, docs) travel as structured context.
+    const bounded = boundErrorLogEntry(entry);
+    serverLogger.error(bounded.title, {
+      ...(bounded.context ?? {}),
+      slug: bounded.slug,
+      category: bounded.category,
+      ...(bounded.detail === undefined ? {} : { detail: bounded.detail }),
+      ...(bounded.suggestion === undefined ? {} : { suggestion: bounded.suggestion }),
+      status: bounded.status,
+      docs: bounded.docs,
+    });
   } else {
     // Human-readable format for development
     serverLogger.error(`[ERROR] ${entry.slug} (${entry.category}) - ${entry.title}`);

@@ -5,6 +5,11 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
+import {
+  __resetLoggerConfigForTests,
+  __subscribeLogRecordEmitter,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 import { logError, logErrorWithMessage } from "./logging.ts";
 import { CONFIG_NOT_FOUND, RENDER_ERROR } from "./error-registry.ts";
 import {
@@ -51,12 +56,16 @@ describe("logging", () => {
   afterEach(() => {
     console.error = originalConsoleError;
     restoreEnvironment();
+    // The logger caches its resolved level/format; drop the cache so the
+    // environment set by one test cannot leak into the next.
+    __resetLoggerConfigForTests();
   });
 
   describe("logError", () => {
     describe("development mode", () => {
       beforeEach(() => {
         Deno.env.set("NODE_ENV", "development");
+        __resetLoggerConfigForTests();
       });
 
       it("should log human-readable format in development", () => {
@@ -153,9 +162,10 @@ describe("logging", () => {
     describe("production mode", () => {
       beforeEach(() => {
         Deno.env.set("NODE_ENV", "production");
+        __resetLoggerConfigForTests();
       });
 
-      it("should log JSON format in production", () => {
+      it("should log the JSON logger envelope in production", () => {
         const error = CONFIG_NOT_FOUND.create({
           detail: "Missing config file",
         });
@@ -165,13 +175,37 @@ describe("logging", () => {
         const parsed = parseOnlyConsoleError();
 
         assertEquals(parsed.level, "error");
-        assertEquals(parsed.slug, "config-not-found");
-        assertEquals(parsed.category, "CONFIG");
-        assertEquals(parsed.title, "Configuration file not found");
-        assertEquals(parsed.detail, "Missing config file");
-        assertEquals(parsed.status, 404);
-        assertEquals(parsed.docs, "https://veryfront.com/docs/errors/config-not-found");
+        assertEquals(parsed.service, "server");
+        assertEquals(parsed.message, "Configuration file not found");
+        assertEquals(parsed.context.slug, "config-not-found");
+        assertEquals(parsed.context.category, "CONFIG");
+        assertEquals(parsed.context.detail, "Missing config file");
+        assertEquals(parsed.context.status, 404);
+        assertEquals(parsed.context.docs, "https://veryfront.com/docs/errors/config-not-found");
         assertEquals(typeof parsed.timestamp, "string");
+      });
+
+      it("should feed the structured log-record bridge in production", () => {
+        const records: LogEntry[] = [];
+        const unsubscribe = __subscribeLogRecordEmitter((record) => {
+          records.push(record);
+        });
+
+        try {
+          logError(CONFIG_NOT_FOUND.create({ detail: "Missing config file" }), {
+            projectPath: "/foo/bar",
+          });
+        } finally {
+          unsubscribe();
+        }
+
+        assertEquals(records.length, 1);
+        const record = records[0];
+        assert(record);
+        assertEquals(record.level, "error");
+        assertEquals(record.message, "Configuration file not found");
+        assertEquals(record.context?.slug, "config-not-found");
+        assertEquals(record.context?.projectPath, "/foo/bar");
       });
 
       it("should include context in JSON output", () => {
@@ -191,7 +225,9 @@ describe("logging", () => {
         const output = getOnlyConsoleError();
         const parsed = JSON.parse(output);
         assertEquals(parsed.context.token, "[REDACTED]");
-        assertEquals(parsed.context.userId, "u-1");
+        // The logger lifts `userId` out of the context bag into a top-level
+        // field so Loki can filter on it.
+        assertEquals(parsed.userId, "u-1");
         assertEquals(output.includes("sk-secret"), false);
       });
 
@@ -205,7 +241,7 @@ describe("logging", () => {
         const output = getOnlyConsoleError();
         const parsed = JSON.parse(output);
         assertEquals(
-          parsed.detail,
+          parsed.context.detail,
           "Failed to connect to postgres://admin:[REDACTED]@db.internal/app",
         );
         assertEquals(output.includes("super-secret"), false);
@@ -223,7 +259,7 @@ describe("logging", () => {
         logError(error);
 
         const parsed = parseOnlyConsoleError();
-        assertEquals(parsed.context, { token: "[REDACTED]" });
+        assertEquals(parsed.context.token, "[REDACTED]");
       });
 
       it("falls back safely for a proxy around a real VeryfrontError", () => {
@@ -237,8 +273,8 @@ describe("logging", () => {
         logError(hostile);
 
         const parsed = parseOnlyConsoleError();
-        assertEquals(parsed.slug, "unknown-error");
-        assertEquals(parsed.status, 500);
+        assertEquals(parsed.context.slug, "unknown-error");
+        assertEquals(parsed.context.status, 500);
       });
 
       it("redacts free-form authorization, API-key, and cookie diagnostics", () => {
@@ -250,7 +286,7 @@ describe("logging", () => {
 
         const output = getOnlyConsoleError();
         const parsed = JSON.parse(output);
-        assertStringIncludes(parsed.detail, "[REDACTED]");
+        assertStringIncludes(parsed.context.detail, "[REDACTED]");
         assertStringIncludes(parsed.context.operation, "[REDACTED]");
         for (const secret of ["auth-secret", "key-secret", "session-secret", "operation-secret"]) {
           assertEquals(output.includes(secret), false);
@@ -273,7 +309,8 @@ describe("logging", () => {
         const parsed = parseOnlyConsoleError();
         assertEquals(parsed.context.source, "error");
         assertEquals(parsed.context.shared, "override");
-        assertEquals(parsed.context.requestId, "req-123");
+        // `requestId` is one of the fields the logger lifts to the top level.
+        assertEquals(parsed.request_id, "req-123");
       });
 
       it("should use error.context in JSON when no context provided", () => {
@@ -293,8 +330,8 @@ describe("logging", () => {
         logError(error);
 
         const parsed = parseOnlyConsoleError();
-        assertEquals(parsed.slug, "render-error");
-        assertEquals(parsed.detail, undefined);
+        assertEquals(parsed.context.slug, "render-error");
+        assertEquals(parsed.context.detail, undefined);
       });
 
       it("should emit bounded valid JSON for oversized diagnostics and context", () => {
@@ -322,10 +359,10 @@ describe("logging", () => {
         const parsed = JSON.parse(output);
 
         assert(output.length <= ERROR_OUTPUT_MAX_LENGTH_CHARS);
-        assert(parsed.title.length <= ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS);
-        assert(parsed.detail.length <= ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS);
-        assert(parsed.suggestion.length <= ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS);
-        assertEquals(parsed.context, { context_truncated: true });
+        assert(parsed.message.length <= ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS);
+        assert(parsed.context.detail.length <= ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS);
+        assert(parsed.context.suggestion.length <= ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS);
+        assertEquals(parsed.context.context_truncated, true);
         for (
           const secret of [
             "slug-secret",
@@ -343,6 +380,7 @@ describe("logging", () => {
   describe("logErrorWithMessage", () => {
     beforeEach(() => {
       Deno.env.set("NODE_ENV", "production");
+      __resetLoggerConfigForTests();
     });
 
     it("should add operation message to context", () => {
@@ -381,7 +419,7 @@ describe("logging", () => {
       assertEquals(parsed.context.operation, "Failed to load config");
       assertEquals(parsed.context.source, "error");
       assertEquals(parsed.context.shared, "override");
-      assertEquals(parsed.context.requestId, "req-456");
+      assertEquals(parsed.request_id, "req-456");
     });
   });
 });
