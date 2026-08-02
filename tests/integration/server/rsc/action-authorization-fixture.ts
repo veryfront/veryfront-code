@@ -7,13 +7,15 @@ export async function installTestRscActionAuthorization(
 ): Promise<void> {
   await writeTextFile(
     join(projectDir, "rsc-action-authorization.extension.ts"),
-    `export default () => ({
+    `import { RscActionAuthorizationProviderName } from "veryfront/extensions/auth";
+
+    export default () => ({
       name: "test-rsc-action-authorization",
       version: "1.0.0",
       capabilities: [],
-      contracts: { provides: ["RscActionAuthorizationProvider"] },
+      contracts: { provides: [RscActionAuthorizationProviderName] },
       setup(context) {
-        context.provide("RscActionAuthorizationProvider", {
+        context.provide(RscActionAuthorizationProviderName, {
           authorize: () => true,
         });
       },
