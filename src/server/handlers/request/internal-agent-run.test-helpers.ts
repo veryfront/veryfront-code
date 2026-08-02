@@ -21,6 +21,8 @@ export async function createControlPlaneSignature(
   overrides: Partial<{
     audience: string;
     projectId: string;
+    requestMethod: string;
+    requestPath: string;
     requestId: string;
     surface: "studio" | "channels" | "a2a" | "mcp";
   }> = {},
@@ -42,6 +44,9 @@ export async function createControlPlaneSignature(
     surface: overrides.surface ?? "studio",
     project_id: overrides.projectId ?? "proj-1",
     request_hash: await sha256Base64url(body),
+    request_method: overrides.requestMethod ?? "POST",
+    request_path: overrides.requestPath ??
+      `/api/control-plane/runs/${overrides.requestId ?? "run-1"}/stream`,
     iat: now,
     exp: now + 60,
   }));

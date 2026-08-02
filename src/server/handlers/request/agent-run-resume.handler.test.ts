@@ -4,7 +4,21 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import { INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES } from "#veryfront/internal-agents/request-body.ts";
 import { AgentRunResumeHandler } from "./agent-run-resume.handler.ts";
-import { createControlPlaneSignature, createCtx } from "./internal-agent-run.test-helpers.ts";
+import {
+  createControlPlaneSignature as createTestControlPlaneSignature,
+  createCtx,
+} from "./internal-agent-run.test-helpers.ts";
+
+function createControlPlaneSignature(
+  body: string,
+  overrides: Parameters<typeof createTestControlPlaneSignature>[1] = {},
+): ReturnType<typeof createTestControlPlaneSignature> {
+  return createTestControlPlaneSignature(body, {
+    requestMethod: "POST",
+    requestPath: "/api/control-plane/runs/run_1/resume",
+    ...overrides,
+  });
+}
 
 describe("server/handlers/request/agent-run-resume.handler", () => {
   it("accepts a signed tool result for a waiting run", async () => {
