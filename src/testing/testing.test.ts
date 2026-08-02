@@ -5,7 +5,14 @@ import "#veryfront/schemas/_test-setup.ts";
  * This file verifies that the testing compat layer works correctly.
  */
 
-import { assert, assertEquals, assertExists, assertThrows } from "./assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "./assert.ts";
 import { describe, it } from "./bdd.ts";
 import { makeTempDir, makeTempFile, withTempDir } from "./deno-compat.ts";
 import { remove, stat } from "#veryfront/compat/fs.ts";
@@ -47,6 +54,30 @@ describe("testing/assert", () => {
       },
       TypeError,
     );
+  });
+
+  it("assertThrows returns the captured error across runtimes", () => {
+    const expected = new TypeError("captured throw");
+    const actual = assertThrows(
+      () => {
+        throw expected;
+      },
+      TypeError,
+      "captured throw",
+    );
+
+    assertStrictEquals(actual, expected);
+  });
+
+  it("assertRejects returns the captured rejection across runtimes", async () => {
+    const expected = new TypeError("captured rejection");
+    const actual = await assertRejects(
+      () => Promise.reject(expected),
+      TypeError,
+      "captured rejection",
+    );
+
+    assertStrictEquals(actual, expected);
   });
 });
 
