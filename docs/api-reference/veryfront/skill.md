@@ -13,6 +13,7 @@ import {
   createLoadSkillTool,
   filterToolsForSkill,
   getAllSkills,
+  getSkill,
 } from "veryfront/skill";
 ```
 

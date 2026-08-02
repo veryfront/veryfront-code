@@ -105,6 +105,13 @@
  */
 
 export type {
+  ModelCallContext,
+  ModelCallMessage,
+  ModelCallRecorder,
+  ModelCallTool,
+} from "../runtime/model-call-context.ts";
+
+export type {
   Agent,
   AgentConfig,
   AgentContext,

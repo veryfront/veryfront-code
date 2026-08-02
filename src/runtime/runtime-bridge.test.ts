@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateText, streamText } from "./runtime-bridge.ts";
+import { runWithModelCallRecorder } from "./model-call-recorder-context.ts";
 import {
   collectAsync,
   createGenerateModel,
@@ -9,6 +10,207 @@ import {
 } from "./runtime-bridge.test-helpers.ts";
 
 describe("runtime-bridge", () => {
+  it("records the exact normalized prompt and resolved tools before direct generate", async () => {
+    const order: string[] = [];
+    let recorded: unknown;
+    const model = createGenerateModel("test", "test/model-call-context", async (options) => {
+      order.push("dispatch");
+      assertEquals(recorded, {
+        prompt: options.prompt,
+        tools: options.tools,
+      });
+      return {
+        content: [{ type: "text", text: "done" }],
+        finishReason: "stop",
+        usage: { inputTokens: 1, outputTokens: 1 },
+      };
+    });
+
+    await generateText({
+      model,
+      system: "System instructions",
+      messages: [
+        { role: "user", content: "Load the skill" },
+        {
+          role: "assistant",
+          content: [{
+            type: "tool-call",
+            toolCallId: "skill-1",
+            toolName: "load_skill",
+            input: { id: "review" },
+          }],
+        },
+        {
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolCallId: "skill-1",
+            toolName: "load_skill",
+            output: { type: "json", value: { instructions: "Review carefully" } },
+          }],
+        },
+        { role: "assistant", content: [{ type: "text", text: "removed prefill" }] },
+      ],
+      tools: {
+        search: {
+          description: "Search",
+          inputSchema: { jsonSchema: Promise.resolve({ type: "object" }) },
+          execute: () => "secret handler",
+        },
+        web_search: {
+          type: "provider",
+          id: "anthropic.web_search_20250305",
+          args: { maxUses: 2 },
+          inputSchema: () => ({ jsonSchema: { type: "object" } }),
+        },
+      },
+      temperature: 0.7,
+      headers: { authorization: "secret" },
+      modelCallRecorder: (context) => {
+        order.push("record");
+        recorded = context;
+      },
+    });
+
+    assertEquals(order, ["record", "dispatch"]);
+    assertEquals(recorded, {
+      prompt: [
+        { role: "system", content: "System instructions" },
+        { role: "user", content: [{ type: "text", text: "Load the skill" }] },
+        {
+          role: "assistant",
+          content: [{
+            type: "tool-call",
+            toolCallId: "skill-1",
+            toolName: "load_skill",
+            input: { id: "review" },
+          }],
+        },
+        {
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolCallId: "skill-1",
+            toolName: "load_skill",
+            output: { type: "json", value: { instructions: "Review carefully" } },
+          }],
+        },
+      ],
+      tools: [
+        {
+          type: "function",
+          name: "search",
+          description: "Search",
+          inputSchema: { type: "object" },
+        },
+        {
+          type: "provider",
+          name: "web_search",
+          id: "anthropic.web_search_20250305",
+          args: { maxUses: 2 },
+        },
+      ],
+    });
+  });
+
+  it("records before stream-backed generate and direct stream dispatch", async () => {
+    for (const mode of ["generate", "stream"] as const) {
+      const order: string[] = [];
+      const model = {
+        ...createStreamModel("test", `test/${mode}-record`, async () => {
+          order.push("dispatch");
+          return {
+            stream: ReadableStream.from([
+              { type: "text-delta", delta: "ok" },
+              { type: "finish", finishReason: "stop", usage: {} },
+            ]),
+          };
+        }),
+        ...(mode === "generate" ? { _generateViaStream: true as const } : {}),
+      };
+      const options = {
+        model,
+        messages: [{ role: "user" as const, content: "Hello" }],
+        modelCallRecorder: async () => {
+          await Promise.resolve();
+          order.push("record");
+        },
+      };
+
+      if (mode === "generate") {
+        await generateText(options);
+      } else {
+        await collectAsync(streamText(options).fullStream);
+      }
+      assertEquals(order, ["record", "dispatch"]);
+    }
+  });
+
+  it("propagates recorder failures without dispatching", async () => {
+    for (const mode of ["generate", "stream"] as const) {
+      let dispatches = 0;
+      const model = createGenerateModel("test", "test/rejected-record", async () => {
+        dispatches += 1;
+        throw new Error("unexpected dispatch");
+      });
+      const error = new Error(`record ${mode} failed`);
+      const operation = mode === "generate"
+        ? async () =>
+          await generateText({
+            model,
+            messages: [{ role: "user", content: "Hello" }],
+            modelCallRecorder: () => Promise.reject(error),
+          })
+        : () =>
+          collectAsync(
+            streamText({
+              model: createStreamModel("test", "test/rejected-stream-record", async () => {
+                dispatches += 1;
+                throw new Error("unexpected dispatch");
+              }),
+              messages: [{ role: "user", content: "Hello" }],
+              modelCallRecorder: () => {
+                throw error;
+              },
+            }).fullStream,
+          );
+
+      await assertRejects(operation, Error, error.message);
+      assertEquals(dispatches, 0);
+    }
+  });
+
+  it("uses the scoped recorder instead of the configured recorder", async () => {
+    const calls: string[] = [];
+    const model = createGenerateModel("test", "test/scoped-record", async () => ({
+      content: [{ type: "text", text: "ok" }],
+      finishReason: "stop",
+      usage: {},
+    }));
+    const configuredRecorder = () => {
+      calls.push("configured");
+    };
+
+    await runWithModelCallRecorder(
+      () => {
+        calls.push("scoped");
+      },
+      () =>
+        generateText({
+          model,
+          messages: [{ role: "user", content: "inside" }],
+          modelCallRecorder: configuredRecorder,
+        }),
+    );
+    await generateText({
+      model,
+      messages: [{ role: "user", content: "outside" }],
+      modelCallRecorder: configuredRecorder,
+    });
+
+    assertEquals(calls, ["scoped", "configured"]);
+  });
+
   it("uses the direct generate path for models without tools", async () => {
     let called = false;
 
