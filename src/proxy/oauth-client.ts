@@ -132,6 +132,7 @@ export async function fetchOAuthToken(
       const timeoutId = setTimeout((): void => controller.abort(), timeoutMs);
       let abortedByCaller = false;
       const abortFromCaller = (): void => {
+        if (controller.signal.aborted) return;
         abortedByCaller = true;
         controller.abort(config.signal?.reason);
       };

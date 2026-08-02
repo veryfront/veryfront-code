@@ -327,5 +327,43 @@ describe("OAuth Client", () => {
       }
       assertEquals(error.name, "AbortError");
     });
+
+    it("keeps the timeout authoritative when a caller abort arrives later", async () => {
+      const fetchAborted = Promise.withResolvers<void>();
+      using _fetch = stub(
+        globalThis,
+        "fetch",
+        (_input, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            const signal = init?.signal;
+            if (!signal) throw new Error("Expected an OAuth request abort signal");
+            signal.addEventListener(
+              "abort",
+              () => {
+                fetchAborted.resolve();
+                setTimeout(() => reject(signal.reason), 0);
+              },
+              { once: true },
+            );
+          }),
+      );
+      const { fetchOAuthToken } = await import("./oauth-client.ts");
+      const controller = new AbortController();
+      const request = fetchOAuthToken({
+        apiBaseUrl: "https://api.example.test",
+        apiClientId: "test",
+        apiClientSecret: "test",
+        timeoutMs: 1,
+        signal: controller.signal,
+      });
+      await fetchAborted.promise;
+      controller.abort("late caller cancellation");
+
+      await assertRejects(
+        () => request,
+        Error,
+        "timed out after 1ms",
+      );
+    });
   });
 });
