@@ -25,6 +25,6 @@ export const generateHelp: CommandHelp = {
   notes: [
     "Types: page, api, layout, component, tool, agent, prompt, workflow, task, resource, skill, integration, adapter",
     "Integration type launches interactive wizard if name not provided",
-    "Adapter type vendors a veryfront/ui engine adapter into ./ui-adapters/ (engines: base-ui, radix, react-aria, ariakit)",
+    "Adapter type vendors a veryfront/ui engine adapter into ./ui-adapters/ (engines: base-ui, radix, react-aria, ariakit, vaul)",
   ],
 };
