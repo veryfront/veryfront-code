@@ -56,6 +56,12 @@ const BOUNDED_TEXT_CAPABILITY_KEYS = [
   "readFileBytesWithinLimit",
   "maxWholeFileReadBytes",
 ] as const;
+const BYTE_READ_CAPABILITY_KEYS = [
+  "readFileBytes",
+  "readFileBytesBounded",
+  "readFileBytesWithinLimit",
+  "maxWholeFileReadBytes",
+] as const;
 const SNAPSHOT_CAPABILITY_KEYS = ["readFileSnapshotWithinLimit"] as const;
 const EXCLUSIVE_CREATE_CAPABILITY_KEYS = ["createFileBytesExclusive"] as const;
 const GENERATION_CAPABILITY_KEYS = ["getSourceSnapshotVersion"] as const;
@@ -443,10 +449,14 @@ function captureWholeFileReader(
 export function captureFileSystemCapabilities(
   value: unknown,
   label = "Filesystem",
-  purpose: "legacy" | "bounded-text" = "legacy",
+  purpose: "legacy" | "bounded-text" | "byte-read" = "legacy",
 ): CapturedFileSystemCapabilities {
   requireCapabilityObject(value, label);
-  const keys = purpose === "bounded-text" ? BOUNDED_TEXT_CAPABILITY_KEYS : LEGACY_CAPABILITY_KEYS;
+  const keys = purpose === "bounded-text"
+    ? BOUNDED_TEXT_CAPABILITY_KEYS
+    : purpose === "byte-read"
+    ? BYTE_READ_CAPABILITY_KEYS
+    : LEGACY_CAPABILITY_KEYS;
   const properties = captureDataProperties(value, label, keys);
   const rawReadFileBytes = requireOptionalMethod<ByteReader>(
     properties.readFileBytes,
@@ -465,7 +475,7 @@ export function captureFileSystemCapabilities(
     label,
     "readFileBytesWithinLimit",
   );
-  const rawWriter = purpose === "bounded-text" ? undefined : requireOptionalMethod<ByteWriter>(
+  const rawWriter = purpose !== "legacy" ? undefined : requireOptionalMethod<ByteWriter>(
     properties.writeFileBytes,
     label,
     "writeFileBytes",
@@ -508,7 +518,7 @@ export function captureByteReadCapabilities(
   value: unknown,
   label = "Filesystem",
 ): CapturedByteReaders {
-  const capabilities = captureFileSystemCapabilities(value, label);
+  const capabilities = captureFileSystemCapabilities(value, label, "byte-read");
   const captured = createObject(null) as {
     unbounded?: ByteReader;
     whole?: CapturedWholeFileReader;
@@ -743,6 +753,9 @@ export function captureStaticReadCapabilities(
     };
   }
   if (whole !== undefined) virtual.whole = whole;
+  if (virtual.exact === undefined && virtual.whole === undefined) {
+    return freezeObject(captured);
+  }
   captured.virtual = freezeObject(virtual);
   return freezeObject(captured);
 }
