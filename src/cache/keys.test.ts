@@ -27,6 +27,7 @@ import {
   clearReleaseAssetManifestCache,
   configureReleaseAssetManifestFetcher,
   getReadyManifestForRender,
+  getReadyManifestForRenderAsync,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
@@ -113,19 +114,19 @@ describe("cache/keys", () => {
 
   describe("render cache prefix + manifest consumption", () => {
     const makeManifest = (): ReleaseAssetManifest => ({
-      schemaVersion: 1,
+      schemaVersion: 2,
       manifestVersion: 1,
       projectId: "proj_123",
       releaseId: "rel_456",
       releaseVersion: 1,
       builderVersion: "0.1.765",
-      sourceContentHash: "abc123",
+      sourceContentHash: "a".repeat(64),
       createdAt: "2026-06-12T00:00:00Z",
       assetBasePath: "/_vf/assets",
       modules: {},
       css: [],
       routes: {},
-      fallback: { mode: "jit" as const, gaps: [] },
+      dependencyMode: "immutable",
       dependencies: {},
     });
 
@@ -143,6 +144,7 @@ describe("cache/keys", () => {
       } catch (_) { /* ok */ }
       configureReleaseAssetManifestFetcher(async () => ({
         state: "ready",
+        manifest_version: 1,
         manifest: makeManifest(),
       }));
       // With flag off, must return null
@@ -168,7 +170,7 @@ describe("cache/keys", () => {
       });
       configureReleaseAssetManifestFetcher(async () => {
         resolvePromise();
-        return { state: "ready", manifest: makeManifest() };
+        return { state: "ready", manifest_version: 1, manifest: makeManifest() };
       });
 
       // First call: cache miss → background fetch scheduled → returns null
@@ -176,7 +178,7 @@ describe("cache/keys", () => {
 
       // Wait for the background fetch to complete
       await fetchDone;
-      await Promise.resolve();
+      await getReadyManifestForRenderAsync("rel_456");
 
       // Second call: cache hit → returns manifest
       const cached = getReadyManifestForRender("rel_456");

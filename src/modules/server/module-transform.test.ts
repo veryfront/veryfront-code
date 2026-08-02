@@ -112,6 +112,7 @@ describe(
           isSSR: false,
           releaseRewriteOptions: {
             releaseId: null, // null → rewriteReleaseDependencyImportsForModule returns early
+            dependencyCacheRoot: projectDir,
             readDependencySource: (_path) => Promise.resolve(""),
           },
         });

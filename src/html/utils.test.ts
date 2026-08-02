@@ -399,7 +399,7 @@ describe("html-generation/utils", () => {
     });
 
     it("keeps React import-map aliases on CDN URLs by default", async () => {
-      const dependencies = Object.fromEntries(
+      const dependencies: ReleaseAssetManifest["dependencies"] = Object.fromEntries(
         [
           "react",
           "react-dom",
@@ -416,20 +416,20 @@ describe("html-generation/utils", () => {
         ]),
       );
       const manifest: ReleaseAssetManifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "project-id",
         releaseId: "release-id",
         releaseVersion: 1,
         manifestVersion: 1,
         builderVersion: "0.1.802",
-        sourceContentHash: "source",
+        sourceContentHash: "a".repeat(64),
         createdAt: "2026-06-14T00:00:00.000Z",
         assetBasePath: "/_vf/assets",
         modules: {},
         css: [],
         routes: {},
         dependencies,
-        fallback: { mode: "jit", gaps: [] },
+        dependencyMode: "immutable",
       };
 
       const result = await buildImportMapJson({
@@ -447,7 +447,7 @@ describe("html-generation/utils", () => {
 
     it("rewrites React import-map aliases from manifest dependency keys when explicitly enabled", async () => {
       setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
-      const dependencies = Object.fromEntries(
+      const dependencies: ReleaseAssetManifest["dependencies"] = Object.fromEntries(
         [
           "react",
           "react-dom",
@@ -464,20 +464,20 @@ describe("html-generation/utils", () => {
         ]),
       );
       const manifest: ReleaseAssetManifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "project-id",
         releaseId: "release-id",
         releaseVersion: 1,
         manifestVersion: 1,
         builderVersion: "0.1.802",
-        sourceContentHash: "source",
+        sourceContentHash: "a".repeat(64),
         createdAt: "2026-06-14T00:00:00.000Z",
         assetBasePath: "/_vf/assets",
         modules: {},
         css: [],
         routes: {},
         dependencies,
-        fallback: { mode: "jit", gaps: [] },
+        dependencyMode: "immutable",
       };
 
       const result = await buildImportMapJson({
@@ -498,13 +498,13 @@ describe("html-generation/utils", () => {
       const headHash = "a".repeat(64);
       const workflowHash = "b".repeat(64);
       const manifest: ReleaseAssetManifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "project-id",
         releaseId: "release-id",
         releaseVersion: 1,
         manifestVersion: 1,
         builderVersion: "0.1.810",
-        sourceContentHash: "source",
+        sourceContentHash: "a".repeat(64),
         createdAt: "2026-06-15T00:00:00.000Z",
         assetBasePath: "/_vf/assets",
         modules: {},
@@ -527,7 +527,7 @@ describe("html-generation/utils", () => {
             contentType: "text/javascript",
           },
         },
-        fallback: { mode: "jit", gaps: [] },
+        dependencyMode: "immutable",
       };
 
       const result = await buildImportMapJson({
@@ -543,20 +543,20 @@ describe("html-generation/utils", () => {
 
     it("versions local module-server import-map aliases in release manifest context", async () => {
       const manifest: ReleaseAssetManifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "project-id",
         releaseId: "release-id",
         releaseVersion: 1,
         manifestVersion: 1,
         builderVersion: "0.1.810",
-        sourceContentHash: "source",
+        sourceContentHash: "a".repeat(64),
         createdAt: "2026-06-15T00:00:00.000Z",
         assetBasePath: "/_vf/assets",
         modules: {},
         css: [],
         routes: {},
         dependencies: {},
-        fallback: { mode: "jit", gaps: [] },
+        dependencyMode: "immutable",
       };
 
       const result = await buildImportMapJson({
@@ -574,20 +574,20 @@ describe("html-generation/utils", () => {
 
     it("preserves release query params when pinning local import-map aliases", async () => {
       const manifest: ReleaseAssetManifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "project-id",
         releaseId: "release-id",
         releaseVersion: 1,
         manifestVersion: 1,
         builderVersion: "0.1.810",
-        sourceContentHash: "source",
+        sourceContentHash: "a".repeat(64),
         createdAt: "2026-06-15T00:00:00.000Z",
         assetBasePath: "/_vf/assets",
         modules: {},
         css: [],
         routes: {},
         dependencies: {},
-        fallback: { mode: "jit", gaps: [] },
+        dependencyMode: "immutable",
       };
 
       const result = await buildImportMapJson({

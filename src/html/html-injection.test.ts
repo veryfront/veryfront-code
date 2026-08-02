@@ -16,13 +16,13 @@ const ABOUT_HASH = "c".repeat(64);
 
 function releaseManifest(): ReleaseAssetManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: "project-id",
     releaseId: "release-id",
     releaseVersion: 1,
     manifestVersion: 1,
     builderVersion: "0.1.765",
-    sourceContentHash: "",
+    sourceContentHash: "a".repeat(64),
     createdAt: "2026-07-27T00:00:00.000Z",
     assetBasePath: "/_vf/assets",
     modules: {
@@ -36,7 +36,7 @@ function releaseManifest(): ReleaseAssetManifest {
     css: [],
     routes: { "/": { modules: ["app/page.tsx"], css: [] } },
     dependencies: {},
-    fallback: { mode: "jit", gaps: [] },
+    dependencyMode: "immutable",
   };
 }
 
