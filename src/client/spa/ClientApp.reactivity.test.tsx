@@ -24,7 +24,10 @@ const testGlobal = globalThis as typeof globalThis & {
 };
 
 async function writeModule(tempDir: string, relativePath: string, source: string): Promise<void> {
-  const filePath = `${tempDir}/${relativePath}`;
+  // The file URL fixture models the module server after source compilation:
+  // authored source paths are requested through one canonical `.js` endpoint.
+  const compiledPath = relativePath.replace(/\.(?:tsx|ts|jsx|mdx|md)$/, ".js");
+  const filePath = `${tempDir}/${compiledPath}`;
   await mkdir(filePath.slice(0, filePath.lastIndexOf("/")), { recursive: true });
   await writeTextFile(filePath, source);
 }
