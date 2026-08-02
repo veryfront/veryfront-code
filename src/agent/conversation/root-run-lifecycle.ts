@@ -13,6 +13,10 @@ import {
 import { type ConversationRunEvent } from "./run-events.ts";
 import type { ConversationRunProjection } from "./durable.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
+import {
+  createHostedConversationRunChunkMirrorFromCapability,
+  getActiveHostedRunEventWriterCapability,
+} from "../hosted/child-run-event-writer-token.ts";
 
 /** Public API contract for conversation root run lifecycle. */
 export interface ConversationRootRunLifecycle<TMirror> extends ConversationRootRunContext {
@@ -76,8 +80,6 @@ export interface HostedConversationRootRunContext {
 /** Input payload for prepare hosted conversation root run context. */
 export interface PrepareHostedConversationRootRunContextInput {
   authToken: string;
-  /** Exact-run service credential used only for durable event appends. */
-  runEventAppendToken?: string;
   apiUrl: string;
   conversationId?: string;
   projectId?: string | null;
@@ -124,7 +126,7 @@ export async function prepareHostedConversationRootRunContext(
   options: { abortSignal: AbortSignal },
 ): Promise<HostedConversationRootRunContext> {
   let durableRunMirror: ConversationRunChunkMirror | null = null;
-  const runEventAppendToken = input.runEventAppendToken;
+  const runEventWriterCapability = getActiveHostedRunEventWriterCapability();
   const startConversationRootRun = createConversationRootRunStartAdapter({
     authToken: input.authToken,
     apiUrl: input.apiUrl,
@@ -164,14 +166,20 @@ export async function prepareHostedConversationRootRunContext(
         await durableRunMirror.appendEvents(events);
       },
       createMirror: (run) => {
-        durableRunMirror = createHostedConversationRunChunkMirror({
-          authToken: runEventAppendToken ?? input.authToken,
+        const mirrorOptions = {
           apiUrl: input.apiUrl,
           conversationId: run.conversationId,
           runId: run.runId,
           latestEventId: run.latestEventId,
           latestExternalEventSequence: run.latestExternalEventSequence,
           instrumentation: input.instrumentation,
+        };
+        durableRunMirror = createHostedConversationRunChunkMirrorFromCapability(
+          runEventWriterCapability,
+          mirrorOptions,
+        ) ?? createHostedConversationRunChunkMirror({
+          ...mirrorOptions,
+          authToken: input.authToken,
         });
 
         return durableRunMirror;
@@ -185,7 +193,7 @@ export async function prepareHostedConversationRootRunContext(
   return {
     durableRootRun: toHostedConversationRootRunState(rootRunLifecycle.run),
     durableRunMirror,
-    privateDurableRunMirror: runEventAppendToken ? durableRunMirror : null,
+    privateDurableRunMirror: runEventWriterCapability ? durableRunMirror : null,
     effectiveParentRunId: rootRunLifecycle.effectiveParentRunId,
     effectiveParentMessageId: rootRunLifecycle.effectiveParentMessageId,
     publishParentRunEvents: rootRunLifecycle.publishParentRunEvents

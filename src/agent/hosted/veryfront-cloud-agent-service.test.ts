@@ -703,6 +703,7 @@ Deno.test("hosted nested delegates inherit child scope and durable lineage", () 
   assertEquals(context.conversationId, "child-conversation");
   assertEquals(context.parentRunId, "child-run");
   assertEquals(context.parentMessageId, "child-message");
+  assertEquals("runEventAppendToken" in context, false);
 });
 
 Deno.test("hosted nested delegates clear inherited skill catalog state for empty child selectors", () => {

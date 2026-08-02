@@ -182,7 +182,6 @@ function createForkRunContext<
       : undefined;
 
   return createHostedDurableChildForkRunContext({
-    authToken: input.authToken,
     apiUrl: input.apiUrl,
     durableChildRun: input.durableChildRun,
     instrumentation,
@@ -334,8 +333,7 @@ export async function executeHostedChildForkWithPreparedTools<
   input: ExecuteHostedChildForkWithPreparedToolsInput<TAttributes>,
 ): Promise<ChildRunExecutionResult> {
   const startTime = input.startTime ?? Date.now();
-  const createRunContext = input.createRunContext ?? createForkRunContext;
-  const runContext = createRunContext({
+  const runContextInput = {
     authToken: input.authToken,
     apiUrl: input.apiUrl,
     durableChildRun: input.durableChildRun,
@@ -344,7 +342,10 @@ export async function executeHostedChildForkWithPreparedTools<
     description: input.description,
     instrumentation: input.instrumentation,
     pendingToolLogWriter: input.pendingToolLogWriter,
-  });
+  };
+  const runContext = input.createRunContext
+    ? input.createRunContext(runContextInput)
+    : createForkRunContext(runContextInput);
 
   let closeTooling: (() => Promise<void>) | undefined;
   let closeRuntime: (() => Promise<void>) | undefined;

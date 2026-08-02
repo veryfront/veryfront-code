@@ -25,6 +25,7 @@ import {
   verifyHostedRuntimeSourceBinding,
 } from "./runtime-source-binding.ts";
 import { getHostedChatUiToolIdentity } from "./chat-request-tool-part.ts";
+import { registerHostedRunEventWriterToken } from "./child-run-event-writer-token.ts";
 
 /** Internal control-plane credential for exact-run durable event appends. */
 export const RUN_EVENT_APPEND_TOKEN_HEADER = "X-Veryfront-Run-Event-Token";
@@ -52,8 +53,6 @@ export type ParsedHostedChatRequest = {
   agentId: string | undefined;
   userId: string;
   authToken: string;
-  /** Internal control-plane credential; never parsed from the public request body. */
-  runEventAppendToken?: string;
   /** True only after a server envelope credential is verified and bound to this run. */
   serverEnvelopeVerified?: true;
   messages: ChatUiMessage[];
@@ -161,14 +160,44 @@ async function withVerifiedRunEventAppendToken(
     );
   }
 
-  return {
+  const verifiedRequest: ParsedHostedChatRequest = {
     ...parsedRequest,
-    runEventAppendToken: token,
     ...(trustServerEnvelope ? { serverEnvelopeVerified: true as const } : {}),
     forwardedProps: trustServerEnvelope
       ? parsedRequest.forwardedProps
       : stripUnverifiedServerResolvedForwardedProps(parsedRequest.forwardedProps),
   };
+  registerHostedRunEventWriterToken(
+    verifiedRequest,
+    token,
+    removeRunEventAppendTokenHeader(request),
+  );
+  return verifiedRequest;
+}
+
+function removeRunEventAppendTokenHeader(request: Request): Request {
+  try {
+    request.headers.delete(RUN_EVENT_APPEND_TOKEN_HEADER);
+    if (!request.headers.has(RUN_EVENT_APPEND_TOKEN_HEADER)) return request;
+  } catch {
+    // Some host Request implementations use immutable header guards.
+  }
+
+  const headers = new Headers(request.headers);
+  headers.delete(RUN_EVENT_APPEND_TOKEN_HEADER);
+  return new Request(request.url, {
+    method: request.method,
+    headers,
+    cache: request.cache,
+    credentials: request.credentials,
+    integrity: request.integrity,
+    keepalive: request.keepalive,
+    mode: request.mode,
+    redirect: request.redirect,
+    referrer: request.referrer,
+    referrerPolicy: request.referrerPolicy,
+    signal: request.signal,
+  });
 }
 
 function stripUnverifiedServerResolvedForwardedProps(

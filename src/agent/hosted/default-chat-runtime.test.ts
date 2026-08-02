@@ -19,6 +19,11 @@ import {
 } from "./default-chat-runtime.ts";
 import { prepareHostedChatRuntimeCreationOptions } from "./chat-preparation.ts";
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
+import {
+  createHostedRunEventWriterCapability,
+  getActiveHostedRunEventWriterCapability,
+  runWithHostedRunEventWriterCapability,
+} from "./child-run-event-writer-token.ts";
 
 const unrestrictedSourceIntegrationPolicy = {
   schemaVersion: 1,
@@ -84,37 +89,48 @@ function restoreEnv(key: string, value: string | undefined): void {
 
 Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime", async () => {
   let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;
-
-  const runtime = await createDefaultHostedChatRuntime({
-    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
-    options: {
-      projectId: "project-1",
-      branchId: "branch-1",
-      authToken: "token-1",
-      instructions: "Base instructions",
-      model: "sonnet",
-      allowedTools: ["sleep"],
-      conversationId: "conversation-1",
-      userId: "user-1",
-      parentRunId: "run-1",
-      parentMessageId: "message-1",
-      submittedFormInputResult: {
-        values: { topic: "Support FAQ assistant" },
-        inputRequestId: "input-request-1",
-      },
-    },
-    config: {
-      apiUrl: "https://api.example.com",
-      apiMcpUrl: "https://api.example.com/mcp",
-      studioMcpUrl: "https://studio.example.com/mcp",
-    },
-    buildLocalTools: (taskContext) => {
-      capturedContext = taskContext;
-      return { sleep: localTool("Sleep") };
-    },
-    createRemoteToolSource: emptyRemoteSource,
-    preloadLatestConversationUserText: false,
+  let capturedCapability: unknown;
+  const runEventWriterCapability = createHostedRunEventWriterCapability({
+    apiUrl: "https://api.example.com",
+    runId: "run-1",
+    runEventAppendToken: "root-writer-token",
   });
+
+  const runtime = await runWithHostedRunEventWriterCapability(
+    runEventWriterCapability,
+    () =>
+      createDefaultHostedChatRuntime({
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+        options: {
+          projectId: "project-1",
+          branchId: "branch-1",
+          authToken: "token-1",
+          instructions: "Base instructions",
+          model: "sonnet",
+          allowedTools: ["sleep"],
+          conversationId: "conversation-1",
+          userId: "user-1",
+          parentRunId: "run-1",
+          parentMessageId: "message-1",
+          submittedFormInputResult: {
+            values: { topic: "Support FAQ assistant" },
+            inputRequestId: "input-request-1",
+          },
+        },
+        config: {
+          apiUrl: "https://api.example.com",
+          apiMcpUrl: "https://api.example.com/mcp",
+          studioMcpUrl: "https://studio.example.com/mcp",
+        },
+        buildLocalTools: (taskContext) => {
+          capturedContext = taskContext;
+          capturedCapability = getActiveHostedRunEventWriterCapability();
+          return { sleep: localTool("Sleep") };
+        },
+        createRemoteToolSource: emptyRemoteSource,
+        preloadLatestConversationUserText: false,
+      }),
+  );
 
   assertEquals(runtime.runtimeKind, "framework");
   assertEquals(runtime.modelId, "anthropic/claude-sonnet-4-6");
@@ -122,6 +138,10 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
   assertEquals(capturedContext.projectId, "project-1");
   assertEquals(capturedContext.branchId, "branch-1");
   assertEquals(capturedContext.model, "anthropic/claude-sonnet-4-6");
+  assertEquals("runEventAppendToken" in capturedContext, false);
+  assertEquals("runEventWriterCapability" in capturedContext, false);
+  assertEquals(JSON.stringify(capturedContext).includes("root-writer-token"), false);
+  assertEquals(capturedCapability, runEventWriterCapability);
   assertEquals(capturedContext.userId, "user-1");
   assertEquals(capturedContext.submittedFormInputResult, {
     values: { topic: "Support FAQ assistant" },

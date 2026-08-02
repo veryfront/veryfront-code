@@ -13,6 +13,7 @@ import {
   prepareHostedChatRuntimeMessages,
 } from "./chat-preparation.ts";
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
+import { registerHostedRunEventWriterToken } from "./child-run-event-writer-token.ts";
 
 const userMessage: ChatUiMessage = {
   id: "user-message-1",
@@ -77,9 +78,10 @@ function pendingResponseUntilAbort(signal: AbortSignal | null | undefined): Prom
 }
 
 function createParsedHostedChatRequest(
-  overrides: Partial<ParsedHostedChatRequest> = {},
+  overrides: Partial<ParsedHostedChatRequest> & { runEventAppendToken?: string } = {},
 ): ParsedHostedChatRequest {
-  return {
+  const { runEventAppendToken, ...requestOverrides } = overrides;
+  const request: ParsedHostedChatRequest = {
     agentId: undefined,
     userId: "user-1",
     authToken: "auth-token",
@@ -101,8 +103,16 @@ function createParsedHostedChatRequest(
     runtimeOverrides: undefined,
     durableRootRun: undefined,
     persistLatestUserMessageBeforeDurableRun: false,
-    ...overrides,
+    ...requestOverrides,
   };
+  if (runEventAppendToken) {
+    registerHostedRunEventWriterToken(
+      request,
+      runEventAppendToken,
+      new Request("https://agent.example.test/api/runs"),
+    );
+  }
+  return request;
 }
 
 Deno.test("normalizeParsedHostedChatRequest uses the latest user message as parent message id", () => {
@@ -183,6 +193,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
   const result = await prepareHostedChatRuntimeCreationOptions({
     request: createParsedHostedChatRequest({
       allowDelegation: false,
+      runEventAppendToken: "root-writer-token",
       model: "requested-model",
       runtimeOverrides: {
         allowedTools: ["load_skill"],
@@ -371,6 +382,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
       initialSkills: [skill],
     },
   });
+  assertEquals(JSON.stringify(result.creationOptions).includes("root-writer-token"), false);
 
   await result.creationOptions.publishParentRunEvents?.([{ type: "state_delta" }]);
   assertEquals(parentEvents, [{ type: "state_delta" }]);
@@ -977,7 +989,7 @@ Deno.test("prepareHostedChatExecution preserves allowed remote tool history", as
 Deno.test("prepareHostedChatExecution compacts oversized context and appends a durable event", async () => {
   const originalFetch = globalThis.fetch;
   const appendedBodies: unknown[] = [];
-  globalThis.fetch = (input, init): Promise<Response> => {
+  globalThis.fetch = (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     if (input.toString().endsWith("/events")) {
       appendedBodies.push(JSON.parse(String(observeFetchRequestInit(init).body ?? "{}")));
       return Promise.resolve(
@@ -1055,8 +1067,11 @@ Deno.test("prepareHostedChatExecution compacts oversized context and appends a d
           content: `${input.agentConfig.id}:${input.instructions}`,
         },
       ],
-      createRuntime: (options) =>
-        Promise.resolve({
+      createRuntime: (options) => {
+        assertEquals("runEventAppendToken" in options, false);
+        assertEquals("runEventWriterCapability" in options, false);
+        assertEquals(JSON.stringify(options).includes("run-event-service-token"), false);
+        return Promise.resolve({
           runtimeKind: "framework",
           modelId: options.model ?? "resolved:configured-model",
           cleanup: () => Promise.resolve(),
@@ -1067,7 +1082,8 @@ Deno.test("prepareHostedChatExecution compacts oversized context and appends a d
                 toUIMessageStream: async function* () {},
               }),
           },
-        }),
+        });
+      },
       contextBudget: {
         tokenBudget: 220,
         reserveTokens: 20,
@@ -1270,7 +1286,7 @@ Deno.test("prepareHostedChatExecution aborts stalled signed attachment fetch bef
   let cancelStartGuard = () => {};
   let cancelPreparationGuard = () => {};
 
-  globalThis.fetch = (input, init): Promise<Response> => {
+  globalThis.fetch = (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = input.toString();
     if (url === "https://api.example.com/projects/project-1/uploads/upload-1/url") {
       return Promise.resolve(
