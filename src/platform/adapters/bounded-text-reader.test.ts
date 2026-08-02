@@ -75,6 +75,18 @@ describe("platform/adapters/bounded-text-reader", () => {
     );
   });
 
+  it("normalizes an oversized snapshot result to the content-admission error", async () => {
+    const reader = captureSnapshotTextReader({
+      readFileSnapshotWithinLimit: () => Promise.resolve(new Uint8Array(9)),
+    }, "Snapshot text reader");
+
+    await assertRejects(
+      () => reader.readUtf8("/oversized.css", "/root", 4, "Snapshot stylesheet"),
+      TypeError,
+      "Snapshot stylesheet exceeds 4 bytes",
+    );
+  });
+
   it("captures only bounded-text read fields", async () => {
     let unrelatedReads = 0;
     const adapter = {

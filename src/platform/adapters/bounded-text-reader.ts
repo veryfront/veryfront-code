@@ -115,11 +115,22 @@ export function captureBoundedTextReader(
       const admittedMaximum = exactReader === undefined
         ? wholeFileReader!.maximumBytes
         : maximumBytes;
-      const admittedBytes = copyFixedUint8ArrayWithinLimit(
-        bytes,
-        admittedMaximum,
-        contentLabel,
-      );
+      let admittedBytes: Uint8Array;
+      try {
+        admittedBytes = copyFixedUint8ArrayWithinLimit(
+          bytes,
+          admittedMaximum,
+          contentLabel,
+        );
+      } catch (cause) {
+        // A dishonest reader result overflows during admission rather than in
+        // the reader itself; both overflows reach CSS callers as the same
+        // content-admission error.
+        if (isNativeRangeError(cause)) {
+          throw new TypeError(`${contentLabel} exceeds ${maximumBytes} bytes`, { cause });
+        }
+        throw cause;
+      }
       const byteLength = getFixedUint8ArrayByteLength(admittedBytes, contentLabel);
 
       return {

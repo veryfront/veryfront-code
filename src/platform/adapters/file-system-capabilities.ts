@@ -290,8 +290,11 @@ export function copyFixedUint8ArrayWithinLimit(
   if (byteLength === undefined) {
     throw new TypeError(`${label} reader returned invalid bytes`);
   }
+  // Size overflow is a RangeError across the bounded-read surface; a malformed
+  // or dishonest result type stays a TypeError. Boundaries that present a
+  // different class to their own callers normalize this cause themselves.
   if (byteLength > maximumBytes) {
-    throw new TypeError(`${label} exceeds ${maximumBytes} bytes`);
+    throw new RangeError(`${label} exceeds ${maximumBytes} bytes`);
   }
 
   let buffer: unknown;
