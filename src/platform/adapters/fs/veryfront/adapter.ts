@@ -952,7 +952,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
   async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
     const admittedLimit = requireBoundedFileReadLimit(byteLimit);
     await this.ensureExactReadInitialized();
-    return this.readOps.readFileBytesWithinLimit(path, admittedLimit);
+    return this.withBranchSnapshotRecovery(
+      path,
+      () => this.readOps.readFileBytesWithinLimit(path, admittedLimit),
+    );
   }
 
   async readTextFile(path: string): Promise<string> {

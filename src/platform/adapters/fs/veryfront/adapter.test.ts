@@ -147,6 +147,44 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(exactCall, ["manifest.json", 2]);
     });
 
+    it("refreshes and retries a bounded branch read after a not-found miss", async () => {
+      const adapter = new VeryfrontFSAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          projectId: "test-project-id",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      const exactCalls: Array<[string, number]> = [];
+      let refreshCalls = 0;
+      const internals = adapter as unknown as {
+        readOps: {
+          readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array>;
+        };
+      };
+      internals.readOps.readFileBytesWithinLimit = (path, byteLimit) => {
+        exactCalls.push([path, byteLimit]);
+        return exactCalls.length === 1
+          ? Promise.reject(new Error(`404 Not Found: ${path}`))
+          : Promise.resolve(new Uint8Array([9, 8]));
+      };
+      adapter.refreshSourceSnapshot = (reason) => {
+        refreshCalls++;
+        assertEquals(reason, "branch-miss:manifest.json");
+        return Promise.resolve();
+      };
+
+      assertEquals([...await adapter.readFileBytesWithinLimit("manifest.json", 2)], [9, 8]);
+      assertEquals(exactCalls, [
+        ["manifest.json", 2],
+        ["manifest.json", 2],
+      ]);
+      assertEquals(refreshCalls, 1);
+    });
+
     it("rejects an invalid limit before initialization", async () => {
       const adapter = createAdapter();
       let initializeCalls = 0;
