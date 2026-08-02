@@ -1003,6 +1003,10 @@ Deno.test("RedisCacheBackend delByPattern deletes every scanned key in bounded b
       });
     },
     expire: () => Promise.resolve(0),
+    eval: () => Promise.resolve(null),
+    incr: () => Promise.resolve(0),
+    pExpire: () => Promise.resolve(false),
+    pTTL: () => Promise.resolve(-1),
   } satisfies RedisClient;
 
   (cache as unknown as { client: RedisClient }).client = client;
@@ -1042,6 +1046,10 @@ Deno.test("RedisCacheBackend delByPattern keeps Redis delete batches bounded", a
       });
     },
     expire: () => Promise.resolve(0),
+    eval: () => Promise.resolve(null),
+    incr: () => Promise.resolve(0),
+    pExpire: () => Promise.resolve(false),
+    pTTL: () => Promise.resolve(-1),
   } satisfies RedisClient;
 
   (cache as unknown as { client: RedisClient }).client = client;
@@ -1105,6 +1113,10 @@ Deno.test("RedisCacheBackend getBatch uses one MGET call for prefixed keys", asy
     del: () => Promise.resolve(0),
     scan: () => Promise.resolve({ cursor: 0, keys: [] }),
     expire: () => Promise.resolve(0),
+    eval: () => Promise.resolve(null),
+    incr: () => Promise.resolve(0),
+    pExpire: () => Promise.resolve(false),
+    pTTL: () => Promise.resolve(-1),
   } satisfies RedisClient;
 
   (cache as unknown as { client: RedisClient }).client = client;
@@ -1139,6 +1151,10 @@ Deno.test("RedisCacheBackend getBatch falls back to GET when MGET fails", async 
     del: () => Promise.resolve(0),
     scan: () => Promise.resolve({ cursor: 0, keys: [] }),
     expire: () => Promise.resolve(0),
+    eval: () => Promise.resolve(null),
+    incr: () => Promise.resolve(0),
+    pExpire: () => Promise.resolve(false),
+    pTTL: () => Promise.resolve(-1),
   } satisfies RedisClient;
 
   (cache as unknown as { client: RedisClient }).client = client;
