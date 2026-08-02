@@ -245,7 +245,7 @@ async function materializeModuleGraph(
       }
 
       const asset: DependencyArtifactAsset = {
-        sourceId: module.id,
+        sourceId: moduleId,
         contentHash: await computeHashBytes(bytes),
         contentType: module.contentType,
         size: bytes.byteLength,

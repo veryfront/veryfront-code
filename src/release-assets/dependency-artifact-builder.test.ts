@@ -11,6 +11,7 @@ import {
   parseDependencyArtifactBuildTaskInput,
   runDependencyArtifactBuild,
 } from "./dependency-artifact-builder.ts";
+import { materializeDependencyArtifactGraph } from "./dependency-artifact-graph.ts";
 
 const encoder = new TextEncoder();
 
@@ -463,6 +464,45 @@ describe("release-assets/dependency-artifact-builder", () => {
     assertEquals(result.success, false);
     assertEquals(failureCodeOf(result), "result_state_mismatch");
     assertEquals(events.map((event) => event.kind), ["upload", "result", "result"]);
+  });
+
+  it("preserves the build failure when failure reporting is unavailable", async () => {
+    const rootUrl = dependencyArtifactUpstreamUrl(standardIdentity);
+    const metrics: string[] = [];
+    const { client } = recordingClient();
+    client.reportResult = () => Promise.reject(new Error("result API unavailable"));
+
+    const result = await runDependencyArtifactBuild(buildTaskInput(), client, {
+      fetch: fixtureFetch({
+        [rootUrl]: response("<!doctype html>", "text/html"),
+      }),
+      recordMetric: (metric) => metrics.push(`${metric.event}:${metric.failureCode ?? ""}`),
+    });
+
+    assertEquals(result.success, false);
+    assertEquals(failureCodeOf(result), "upstream_html");
+    assertEquals(metrics, ["claim:", "failure:upstream_html"]);
+  });
+
+  it("uses graph map keys as canonical source identities", async () => {
+    const graph = await materializeDependencyArtifactGraph({
+      modules: new Map([
+        [
+          "canonical-root",
+          {
+            id: "source-metadata-id",
+            code: "export const value = 42;",
+            contentType: "text/javascript" as const,
+          },
+        ],
+      ]),
+      rootId: "canonical-root",
+      maxAssetBytes: 1_024,
+      resolveImport: () => ({ kind: "external" }),
+    });
+
+    assertEquals(graph.assets[0]?.sourceId, "canonical-root");
+    assertEquals(graph.rootContentHash, graph.assets[0]?.contentHash);
   });
 
   it("validates the lease-bound task input without accepting arbitrary URLs", () => {

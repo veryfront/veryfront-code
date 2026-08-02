@@ -821,11 +821,18 @@ export async function runDependencyArtifactBuild(
       failure_code: code,
       failure_message: sanitizedFailureMessage(error),
     };
-    await client.reportResult({
-      artifactId: input.artifact_id,
-      attemptCount: input.attempt_count,
-      result,
-    });
+    try {
+      await client.reportResult({
+        artifactId: input.artifact_id,
+        attemptCount: input.attempt_count,
+        result,
+      });
+    } catch (reportingError) {
+      logger.warn("Dependency artifact failure result could not be reported", {
+        failure_code: code,
+        error: reportingError,
+      });
+    }
     const durationMs = Math.max(0, now() - startedAt);
     recordMetric({
       event: "failure",
