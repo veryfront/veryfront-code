@@ -1148,7 +1148,9 @@ export class AgentRuntime {
           supportsToolCalling,
           messages: currentMessages,
           mode: "generate",
-          providerToolNames: agentWriteFinalResponseToolGuardEnabled ? [] : providerTools,
+          providerToolNames: supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
+            ? providerTools
+            : [],
           remoteToolSources,
           sourceIntegrationPolicy,
           resolveRuntimeState: this.resolveRuntimeState.bind(this),
@@ -1176,7 +1178,9 @@ export class AgentRuntime {
           "tool.catalog.deferred_count": preparedStep.toolExposurePlan.deferred.length,
           "tool.loading.path": "framework-fallback",
         });
-        const stepProviderTools = agentWriteFinalResponseToolGuardEnabled ? [] : providerTools;
+        const stepProviderTools = supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
+          ? providerTools
+          : [];
 
         const temperature = this.resolveTemperature(
           temperatureModelString ?? effectiveModel,
@@ -1756,7 +1760,9 @@ export class AgentRuntime {
         supportsToolCalling,
         messages: currentMessages,
         mode: "stream",
-        providerToolNames: agentWriteFinalResponseToolGuardEnabled ? [] : providerTools,
+        providerToolNames: supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
+          ? providerTools
+          : [],
         remoteToolSources,
         sourceIntegrationPolicy,
         resolveRuntimeState: this.resolveRuntimeState.bind(this),
@@ -1782,7 +1788,9 @@ export class AgentRuntime {
         "tool.catalog.deferred_count": preparedStep.toolExposurePlan.deferred.length,
         "tool.loading.path": "framework-fallback",
       });
-      const stepProviderTools = agentWriteFinalResponseToolGuardEnabled ? [] : providerTools;
+      const stepProviderTools = supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
+        ? providerTools
+        : [];
 
       const runtimeTools = convertToolsToRuntimeTools(tools, {
         model: effectiveModel,

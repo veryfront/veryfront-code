@@ -995,6 +995,54 @@ it("provider-executed tools bypass local deferred exposure gating", async () => 
   assertEquals(response.toolCalls[0]?.result, { results: ["release"] });
 });
 
+it("omits provider tools when the runtime cannot call tools", async () => {
+  const observedTools: string[][] = [];
+  const observedSystems: string[] = [];
+  const model: ModelRuntime = {
+    provider: "anthropic",
+    modelId: "claude-without-tools",
+    runtimeCapabilities: { toolCalling: false },
+    async doGenerate(options: unknown) {
+      observedTools.push(toolNames(options));
+      observedSystems.push(systemPrompt(options));
+      return {
+        content: [{ type: "text", text: "done" }],
+        finishReason: "stop",
+      };
+    },
+    async doStream(options: unknown) {
+      observedTools.push(toolNames(options));
+      observedSystems.push(systemPrompt(options));
+      return {
+        stream: createRuntimeStream([
+          { type: "text-delta", text: "done" },
+          { type: "finish", finishReason: "stop" },
+        ]),
+      };
+    },
+  };
+  const assistant = agent({
+    id: "provider-tools-unsupported",
+    model: "anthropic/claude-without-tools",
+    system: flattenSystemInstructions(
+      withRuntimeToolInventory("Answer directly.", ["web_search"]),
+    ),
+    skills: false,
+    providerTools: ["web_search"],
+    maxSteps: 1,
+    resolveModelTransport: () => ({ model }),
+  });
+
+  await assistant.generate({ input: "hi" });
+  await (await assistant.stream({ input: "hi" })).toDataStreamResponse().text();
+
+  assertEquals(observedTools, [[], []]);
+  assertEquals(observedSystems.length, 2);
+  for (const system of observedSystems) {
+    assertEquals(system.includes("- web_search"), false);
+  }
+});
+
 it("veryfront-cloud Anthropic and OpenAI transports default to framework fallback", async () => {
   for (
     const modelId of [
