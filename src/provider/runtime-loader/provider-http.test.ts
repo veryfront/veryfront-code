@@ -139,7 +139,16 @@ describe("provider-http", () => {
       assertEquals(err.retryable, false);
     });
 
-    it("google 429 RESOURCE_EXHAUSTED -> non-retryable quota", async () => {
+    it("google 429 RESOURCE_EXHAUSTED without a retry delay -> non-retryable quota", async () => {
+      const err = await buildProviderError(
+        "google",
+        jsonResponse(429, { error: { status: "RESOURCE_EXHAUSTED" } }),
+      );
+      assertEquals(err instanceof ProviderQuotaError, true);
+      assertEquals(err.retryable, false);
+    });
+
+    it("google 429 RESOURCE_EXHAUSTED with Retry-After -> retryable rate limit", async () => {
       const err = await buildProviderError(
         "google",
         jsonResponse(
@@ -147,6 +156,47 @@ describe("provider-http", () => {
           { error: { status: "RESOURCE_EXHAUSTED" } },
           { "retry-after": "7" },
         ),
+      );
+      assertEquals(err instanceof ProviderRateLimitError, true);
+      assertEquals(err.retryable, true);
+      assertEquals(err.retryAfterMs, 7_000);
+    });
+
+    it("google 429 RESOURCE_EXHAUSTED with RetryInfo details -> retryable rate limit", async () => {
+      const err = await buildProviderError(
+        "google",
+        jsonResponse(429, {
+          error: {
+            status: "RESOURCE_EXHAUSTED",
+            details: [
+              {
+                "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                violations: [{ quotaMetric: "generate_requests_per_model_per_minute" }],
+              },
+              { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "23s" },
+            ],
+          },
+        }),
+      );
+      assertEquals(err instanceof ProviderRateLimitError, true);
+      assertEquals(err.retryable, true);
+      assertEquals(err.retryAfterMs, 23_000);
+    });
+
+    it("google 429 RESOURCE_EXHAUSTED with QuotaFailure but no RetryInfo -> quota", async () => {
+      const err = await buildProviderError(
+        "google",
+        jsonResponse(429, {
+          error: {
+            status: "RESOURCE_EXHAUSTED",
+            details: [
+              {
+                "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                violations: [{ quotaMetric: "generate_requests_per_model_per_day" }],
+              },
+            ],
+          },
+        }),
       );
       assertEquals(err instanceof ProviderQuotaError, true);
       assertEquals(err.retryable, false);

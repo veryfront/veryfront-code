@@ -124,6 +124,35 @@ export function parseRetryAfterMs(header: string | null): number | undefined {
   return undefined;
 }
 
+const GOOGLE_RETRY_INFO_TYPE = "type.googleapis.com/google.rpc.RetryInfo";
+const PROTOBUF_SECONDS_DURATION = /^(\d+(?:\.\d+)?)s$/;
+
+/**
+ * Read the retry delay Google attaches to an error body as a
+ * `google.rpc.RetryInfo` detail. Durations arrive in protobuf JSON form
+ * ("23s", "1.5s"); anything else is ignored so a malformed body cannot make a
+ * hard quota failure look retryable.
+ */
+function parseGoogleRetryInfoMs(
+  errorRecord: Record<string, unknown> | undefined,
+): number | undefined {
+  const details = errorRecord?.details;
+  if (!Array.isArray(details)) return undefined;
+
+  for (const detail of details) {
+    const record = readRecord(detail);
+    if (record?.["@type"] !== GOOGLE_RETRY_INFO_TYPE) continue;
+    if (typeof record.retryDelay !== "string") continue;
+    const seconds = PROTOBUF_SECONDS_DURATION.exec(record.retryDelay);
+    if (!seconds) continue;
+    const milliseconds = Math.round(Number(seconds[1]) * 1000);
+    if (Number.isSafeInteger(milliseconds) && milliseconds <= MAX_TIMER_DELAY_MS) {
+      return milliseconds;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Inspect a non-2xx response and build the most specific ProviderError
  * subclass we can. Reads the response body as text (it's already dead
@@ -229,13 +258,21 @@ export async function buildProviderError(
     });
   }
 
-  // Google 429 RESOURCE_EXHAUSTED is almost always the daily free-tier
-  // quota — surface as a hard quota error so callers don't hot-loop on
-  // retries that can't possibly succeed until midnight UTC. Other Google
-  // 429 statuses are short-window rate limits and stay retryable so
-  // callers can honor Retry-After.
+  // Google returns RESOURCE_EXHAUSTED for both the daily free-tier quota and
+  // short-window per-minute/per-token limits, so the status alone cannot
+  // separate them. A retry delay can: Google attaches Retry-After or a
+  // `google.rpc.RetryInfo` detail to the limits that clear on their own and
+  // returns neither for a quota that cannot succeed again until the daily
+  // window resets. The QuotaFailure detail names the violated metric but its
+  // wording is not a stable contract, so the delay is the signal we key on.
+  // Without one the error stays a hard quota error and callers don't hot-loop
+  // on retries that can't possibly succeed until midnight UTC.
   if (provider === "google" && status === 429) {
-    if (errorCode === "RESOURCE_EXHAUSTED") {
+    if (truncated || parsedBody === undefined) {
+      return new ProviderRequestError({ provider, status, message, retryable: false });
+    }
+    const retryDelayMs = retryAfterMs ?? parseGoogleRetryInfoMs(errorRecord);
+    if (errorCode === "RESOURCE_EXHAUSTED" && retryDelayMs === undefined) {
       return new ProviderQuotaError({
         provider,
         status,
@@ -243,15 +280,12 @@ export async function buildProviderError(
         retryable: false,
       });
     }
-    if (truncated || parsedBody === undefined) {
-      return new ProviderRequestError({ provider, status, message, retryable: false });
-    }
     return new ProviderRateLimitError({
       provider,
       status,
       message,
       retryable: true,
-      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+      ...(retryDelayMs !== undefined ? { retryAfterMs: retryDelayMs } : {}),
     });
   }
 
