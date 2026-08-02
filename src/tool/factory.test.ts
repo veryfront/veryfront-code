@@ -163,6 +163,28 @@ describe("tool factory", () => {
       });
     });
 
+    it("should accept raw JSON schemas whose only keyword is a constraint", () => {
+      // Each of these is a valid schema carrying no structural keyword, so an
+      // allowlist limited to the structural vocabulary rejects them outright.
+      const constraintSchemas = [
+        { pattern: "^[a-z]+$" },
+        { minimum: 0 },
+        { maxItems: 10 },
+        { propertyNames: { pattern: "^x-" } },
+      ];
+
+      for (const inputSchema of constraintSchemas) {
+        const t = tool({
+          id: "constraint-schema",
+          description: "desc",
+          inputSchema,
+          execute: async () => null,
+        });
+
+        assertEquals(t.inputSchemaJson, inputSchema);
+      }
+    });
+
     it("should reject schema-like raw objects by default", () => {
       assertThrows(
         () =>

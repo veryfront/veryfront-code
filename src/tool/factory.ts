@@ -30,28 +30,78 @@ function snapshotJsonSchemaObject(value: unknown): JsonSchema | undefined {
 // evidence. Without it, foreign shapes such as a Zod internal ({ _def: ... })
 // would be shipped verbatim to providers as inputSchemaJson. Unions and $ref
 // schemas legitimately omit `type`, so membership — not `type` — is the test.
+//
+// The set is the full draft 2020-12 keyword vocabulary, because a schema whose
+// only keyword is a constraint ({ pattern }, { minimum }, { maxItems }) is as
+// valid as one carrying `type`, and a partial list rejects it. Keywords are
+// grouped by the vocabulary meta-schema that defines them; `definitions` is the
+// draft-07 spelling of `$defs`, which providers still emit.
 const JSON_SCHEMA_KEYWORDS = new Set([
+  // Core
+  "$anchor",
+  "$comment",
   "$defs",
+  "$dynamicAnchor",
+  "$dynamicRef",
+  "$id",
   "$ref",
   "$schema",
+  "$vocabulary",
+  "definitions",
+  // Applicator
   "additionalProperties",
   "allOf",
   "anyOf",
-  "const",
-  "default",
-  "definitions",
-  "description",
-  "enum",
-  "format",
+  "contains",
+  "dependentSchemas",
+  "else",
+  "if",
   "items",
   "not",
   "oneOf",
   "patternProperties",
   "prefixItems",
   "properties",
+  "propertyNames",
+  "then",
+  // Unevaluated
+  "unevaluatedItems",
+  "unevaluatedProperties",
+  // Validation
+  "const",
+  "dependentRequired",
+  "enum",
+  "exclusiveMaximum",
+  "exclusiveMinimum",
+  "maxContains",
+  "maxItems",
+  "maxLength",
+  "maxProperties",
+  "maximum",
+  "minContains",
+  "minItems",
+  "minLength",
+  "minProperties",
+  "minimum",
+  "multipleOf",
+  "pattern",
   "required",
-  "title",
   "type",
+  "uniqueItems",
+  // Meta-data
+  "default",
+  "deprecated",
+  "description",
+  "examples",
+  "readOnly",
+  "title",
+  "writeOnly",
+  // Format annotation
+  "format",
+  // Content
+  "contentEncoding",
+  "contentMediaType",
+  "contentSchema",
 ]);
 
 function isInferredJsonSchemaObject(value: JsonSchema): boolean {
