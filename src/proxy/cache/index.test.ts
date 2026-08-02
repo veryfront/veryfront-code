@@ -87,7 +87,7 @@ describe("proxy cache factory", () => {
     );
   });
 
-  it("wraps a registered extension contract with stable tracing", async () => {
+  it("wraps a borrowed extension contract with stable tracing", async () => {
     const backend = new FakeTokenCache();
     register<TokenCache>("TokenCacheStore", backend);
     const cache = await createCache({ type: "extension" });
@@ -100,7 +100,7 @@ describe("proxy cache factory", () => {
     });
     assertEquals((await cache.get("key"))?.token, "token");
     await cache.close();
-    assertEquals(backend.closed, true);
+    assertEquals(backend.closed, false);
   });
 
   it("closes created Extension stores but leaves borrowed stores open", async () => {

@@ -114,7 +114,10 @@ export async function createCache(options: CacheOptions): Promise<TokenCache> {
         if (backendOptions !== undefined) {
           throw new TypeError("Extension cache configuration belongs to the selected extension");
         }
-        return new TracingTokenCache(requireTokenCacheStore());
+        return new TracingTokenCache(requireTokenCacheStore(), {
+          // Contract-registry stores are owned by the extension loader.
+          closeInner: false,
+        });
       }
       return new MemoryCache(backendOptions as MemoryCacheOptions | undefined);
     },
