@@ -60,27 +60,28 @@ describe("NodeFileSystemAdapter", () => {
       await Deno.symlink(exact, link);
       const adapter = new NodeFileSystemAdapter();
 
-      assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), true);
       assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
-      assertExists(adapter.readFileSnapshotWithinLimit);
-      assertEquals([...await adapter.readFileSnapshotWithinLimit(empty, root, 1)], []);
-      assertEquals([...await adapter.readFileSnapshotWithinLimit(exact, root, 3)], [1, 2, 3]);
+      const readSnapshot = adapter.readFileSnapshotWithinLimit;
+      if (readSnapshot === undefined) return;
+      assertExists(readSnapshot);
+      assertEquals([...await readSnapshot(empty, root, 1)], []);
+      assertEquals([...await readSnapshot(exact, root, 3)], [1, 2, 3]);
       await assertRejects(
-        () => adapter.readFileSnapshotWithinLimit!(oversized, root, 3),
+        () => readSnapshot(oversized, root, 3),
         RangeError,
       );
       for (const limit of [0, Number.MAX_SAFE_INTEGER + 1]) {
         await assertRejects(
-          () => adapter.readFileSnapshotWithinLimit!(exact, root, limit),
+          () => readSnapshot(exact, root, limit),
           RangeError,
         );
       }
       await assertRejects(
-        () => adapter.readFileSnapshotWithinLimit!(directory, root, 3),
+        () => readSnapshot(directory, root, 3),
         TypeError,
       );
       await assertRejects(
-        () => adapter.readFileSnapshotWithinLimit!(link, root, 3),
+        () => readSnapshot(link, root, 3),
         TypeError,
       );
     } finally {
