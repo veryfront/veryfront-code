@@ -11,10 +11,16 @@ extension receives only the YAML source between the delimiters and returns the
 decoded, untrusted value. Keeping that boundary narrow prevents YAML parser
 details and third-party dependencies from entering core.
 
-## Registration
+## Activation
 
-The extension factory registers `SkillDocumentParserProvider` through the
-standard Veryfront extension context.
+The package declares automatic activation. Once `@veryfront/ext-yaml` is
+installed, the standard Veryfront server bootstrap discovers it and registers
+`SkillDocumentParserProvider` before project capability discovery. Core fails
+closed when no parser extension is installed; it does not reinterpret malformed
+YAML with a partial built-in grammar.
+
+Composition roots that do not run standard extension discovery can register the
+factory explicitly:
 
 ```ts
 import extYaml from "@veryfront/ext-yaml";

@@ -4,6 +4,7 @@
   "exports": "./src/index.ts",
   "veryfront": {
     "extension": true,
+    "activation": "auto",
     "contracts": {
       "provides": ["SkillDocumentParserProvider"]
     },

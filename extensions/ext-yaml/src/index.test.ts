@@ -22,6 +22,7 @@ describe("ext-yaml", () => {
       SkillDocumentParserProviderName,
     ]);
     assertEquals(manifest.veryfront.capabilities, []);
+    assertEquals(manifest.veryfront.activation, "auto");
     assertEquals(
       manifest.imports["@std/yaml/parse"],
       "jsr:@std/yaml@1.1.0/parse",
