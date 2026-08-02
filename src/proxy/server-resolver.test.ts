@@ -510,6 +510,57 @@ Deno.test("ServerResolver", async (t) => {
     }
   });
 
+  await t.step("retains lookup capacity until an error body cancellation settles", async () => {
+    const cancellationGate = Promise.withResolvers<void>();
+    const cancellationStarted = Promise.withResolvers<void>();
+    let calls = 0;
+    const resolver = new ServerResolver(
+      "https://api.example.com",
+      "",
+      "",
+      0,
+      {
+        maxInflight: 1,
+        fetchImpl: () => {
+          calls++;
+          if (calls > 1) return Promise.resolve(Response.json({ server: null }));
+          return Promise.resolve(
+            new Response(
+              new ReadableStream({
+                cancel() {
+                  cancellationStarted.resolve();
+                  return cancellationGate.promise;
+                },
+              }),
+              { status: 500 },
+            ),
+          );
+        },
+      },
+    );
+    try {
+      const first = resolver.resolve("env-hostile-body");
+      await cancellationStarted.promise;
+
+      let firstSettled = false;
+      void first.then(() => {
+        firstSettled = true;
+      });
+      await Promise.resolve();
+      assertEquals(firstSettled, false);
+      assertEquals(await resolver.resolve("env-at-capacity"), null);
+      assertEquals(calls, 1);
+
+      cancellationGate.resolve();
+      assertEquals(await first, null);
+      assertEquals(await resolver.resolve("env-after-cancellation"), null);
+      assertEquals(calls, 2);
+    } finally {
+      cancellationGate.resolve();
+      resolver.close();
+    }
+  });
+
   await t.step("bounds a fetch implementation that ignores cancellation", async () => {
     let calls = 0;
     const resolver = new ServerResolver(
@@ -533,6 +584,55 @@ Deno.test("ServerResolver", async (t) => {
       assertEquals(await resolver.resolve("env-capacity"), null);
       assertEquals(calls, 1);
     } finally {
+      resolver.close();
+    }
+  });
+
+  await t.step("retains detached capacity until a late response cancellation settles", async () => {
+    const lateResponse = Promise.withResolvers<Response>();
+    const cancellationGate = Promise.withResolvers<void>();
+    const cancellationStarted = Promise.withResolvers<void>();
+    let calls = 0;
+    const resolver = new ServerResolver(
+      "https://api.example.com",
+      "",
+      "",
+      0,
+      {
+        maxInflight: 1,
+        requestTimeoutMs: 5,
+        fetchImpl: () => {
+          calls++;
+          if (calls === 1) return lateResponse.promise;
+          return Promise.resolve(Response.json({ server: null }));
+        },
+      },
+    );
+    try {
+      assertEquals(await resolver.resolve("env-timeout"), null);
+      assertEquals(await resolver.resolve("env-still-detached"), null);
+      assertEquals(calls, 1);
+
+      lateResponse.resolve(
+        new Response(
+          new ReadableStream({
+            cancel() {
+              cancellationStarted.resolve();
+              return cancellationGate.promise;
+            },
+          }),
+        ),
+      );
+      await cancellationStarted.promise;
+      assertEquals(await resolver.resolve("env-cancelling-late-body"), null);
+      assertEquals(calls, 1);
+
+      cancellationGate.resolve();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      assertEquals(await resolver.resolve("env-after-late-cancellation"), null);
+      assertEquals(calls, 2);
+    } finally {
+      cancellationGate.resolve();
       resolver.close();
     }
   });

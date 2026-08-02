@@ -15,16 +15,10 @@ export class ProxyResponseBodyError extends Error {
   }
 }
 
-export function cancelProxyResponseBody(response: Response): Promise<void> {
-  void settleProxyResponseBody(response);
-  return Promise.resolve();
-}
-
 /**
  * Discard a response while retaining producer ownership until cancellation
- * itself settles. Admission-controlled producers must use this variant before
- * releasing capacity; the fire-and-forget helper above is only for boundaries
- * that intentionally detach cleanup from the caller.
+ * itself settles. Admission-controlled producers must await this operation
+ * before releasing capacity.
  */
 export async function settleProxyResponseBody(response: Response): Promise<void> {
   try {

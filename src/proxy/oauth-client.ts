@@ -5,10 +5,10 @@
 import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
 import { TIMEOUT_ERROR } from "#veryfront/errors";
 import {
-  cancelProxyResponseBody,
   ProxyResponseBodyError,
   readProxyResponseJson,
   readProxyResponseText,
+  settleProxyResponseBody,
 } from "./response-body.ts";
 import { sanitizeUrlCredentials, sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 
@@ -171,7 +171,7 @@ export async function fetchOAuthToken(
         if (response.ok) {
           const contentType = response.headers.get("content-type")?.split(";")[0]?.trim();
           if (contentType !== "application/json") {
-            await cancelProxyResponseBody(response);
+            await settleProxyResponseBody(response);
             throw new TypeError("OAuth API returned an invalid token response");
           }
           return parseTokenResponse(

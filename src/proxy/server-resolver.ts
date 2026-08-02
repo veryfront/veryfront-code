@@ -13,7 +13,7 @@ import {
   hasProjectIdentityControlCharacters,
   isCanonicalOpaqueProjectIdentifier,
 } from "#veryfront/utils/project-identity.ts";
-import { cancelProxyResponseBody, readProxyResponseJson } from "./response-body.ts";
+import { readProxyResponseJson, settleProxyResponseBody } from "./response-body.ts";
 import { proxyLogger } from "./logger.ts";
 
 const DEFAULT_CACHE_TTL_MS = 30_000;
@@ -488,18 +488,16 @@ export class ServerResolver {
       );
       this.activeRequests.set(request, controller);
       void request.then(
-        (lateResponse) => {
-          this.activeRequests.delete(request);
-          this.resetCapacityWarningIfAvailable();
+        async (lateResponse) => {
           if (controller.signal.aborted) {
-            void cancelProxyResponseBody(lateResponse);
+            await settleProxyResponseBody(lateResponse);
           }
         },
-        () => {
-          this.activeRequests.delete(request);
-          this.resetCapacityWarningIfAvailable();
-        },
-      );
+        () => {},
+      ).finally(() => {
+        this.activeRequests.delete(request);
+        this.resetCapacityWarningIfAvailable();
+      });
       response = await awaitAbortable(request, controller.signal);
     } catch (error) {
       throw new ServerResolverError(
@@ -509,7 +507,7 @@ export class ServerResolver {
     }
 
     if (!response.ok) {
-      await cancelProxyResponseBody(response);
+      await settleProxyResponseBody(response);
       throw new ServerResolverError(
         `Dedicated server API returned HTTP ${response.status}`,
       );
@@ -519,7 +517,7 @@ export class ServerResolver {
       ?.trim()
       .toLowerCase();
     if (contentType !== "application/json") {
-      await cancelProxyResponseBody(response);
+      await settleProxyResponseBody(response);
       throw new ServerResolverError(
         "Dedicated server API returned an invalid content type",
       );

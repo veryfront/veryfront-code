@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
+import { stub } from "#std/testing/mock";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
 
 describe("OAuth Client", () => {
@@ -125,6 +126,55 @@ describe("OAuth Client", () => {
       } finally {
         await server.shutdown();
       }
+    });
+
+    it("settles an invalid response body before returning its failure", async () => {
+      const cancellationGate = Promise.withResolvers<void>();
+      const cancellationStarted = Promise.withResolvers<void>();
+      using _fetch = stub(
+        globalThis,
+        "fetch",
+        () =>
+          Promise.resolve(
+            new Response(
+              new ReadableStream({
+                cancel() {
+                  cancellationStarted.resolve();
+                  return cancellationGate.promise;
+                },
+              }),
+              { headers: { "Content-Type": "text/plain" } },
+            ),
+          ),
+      );
+      const { fetchOAuthToken } = await import("./oauth-client.ts");
+
+      const request = fetchOAuthToken({
+        apiBaseUrl: "https://api.example.test",
+        apiClientId: "test",
+        apiClientSecret: "test",
+      });
+      await cancellationStarted.promise;
+
+      let settled = false;
+      void request.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      await Promise.resolve();
+      const settledBeforeCancellation = settled;
+
+      cancellationGate.resolve();
+      await assertRejects(
+        () => request,
+        TypeError,
+        "invalid token response",
+      );
+      assertEquals(settledBeforeCancellation, false);
     });
 
     it("rejects an oversized successful response before JSON parsing", async () => {
