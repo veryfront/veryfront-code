@@ -19,6 +19,7 @@ import {
 } from "./limits.ts";
 import { parseBoundedSkillDocument, type ParsedSkillContent } from "./document-parser.ts";
 import type { SkillDocumentParserProvider } from "../extensions/parser/skill-document-parser.ts";
+import { ensureDefaultSkillDocumentParserContract } from "../extensions/parser/skill-defaults.ts";
 import {
   SKILL_COMPATIBILITY_MAX_LENGTH,
   SKILL_DESCRIPTION_MAX_LENGTH,
@@ -100,6 +101,7 @@ export async function parseSkillFrontmatter(
   content: string,
   provider?: SkillDocumentParserProvider,
 ): Promise<ParsedSkillContent> {
+  if (provider === undefined) await ensureDefaultSkillDocumentParserContract();
   return parseBoundedSkillDocument(content, provider);
 }
 
@@ -113,6 +115,7 @@ export async function parseSkillFileFrontmatter(
   content: string,
   provider?: SkillDocumentParserProvider,
 ): Promise<ParsedSkillContent> {
+  if (provider === undefined) await ensureDefaultSkillDocumentParserContract();
   return parseBoundedSkillDocument(content, provider);
 }
 

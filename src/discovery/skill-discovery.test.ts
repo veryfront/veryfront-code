@@ -4,6 +4,11 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { createSkillTestAdapter } from "#veryfront/skill/testing.ts";
+import { tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
+import {
+  type SkillDocumentParserProvider,
+  SkillDocumentParserProviderName,
+} from "#veryfront/extensions/parser/skill-document-parser.ts";
 import { discoverAll } from "./index.ts";
 
 describe("src/discovery/skill-discovery", () => {
@@ -12,6 +17,8 @@ describe("src/discovery/skill-discovery", () => {
   });
 
   it("keeps first duplicate skill across discovery roots and registry", async () => {
+    // Exercise the product composition path, not the test-only parser setup.
+    unregister(SkillDocumentParserProviderName);
     const files = {
       "/project/skills-a/duplicate/SKILL.md": `---
 name: duplicate
@@ -44,6 +51,9 @@ Other instructions.`,
     });
 
     const duplicate = result.skills.get("duplicate");
+    assertExists(
+      tryResolve<SkillDocumentParserProvider>(SkillDocumentParserProviderName),
+    );
     assertExists(duplicate);
     assertEquals(duplicate.metadata.description, "First copy");
 
@@ -95,4 +105,3 @@ Use this skill for support email workflows.`,
     assertEquals(result.skills.has("Process Email"), false);
   });
 });
-import "#veryfront/skill/_test-setup.ts";

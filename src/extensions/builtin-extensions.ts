@@ -73,6 +73,11 @@ export const OPTIONAL_BUILTIN_EXTENSIONS = Object.freeze(([
     sourceDirectory: "ext-parser-babel",
   },
   {
+    name: "ext-yaml",
+    origin: "veryfront/ext-yaml",
+    sourceDirectory: "ext-yaml",
+  },
+  {
     name: "ext-content-mdx",
     origin: "veryfront/ext-content-mdx",
     sourceDirectory: "ext-content-mdx",
