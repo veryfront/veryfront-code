@@ -1,6 +1,6 @@
 import { rendererLogger } from "#veryfront/utils";
 import { NETWORK_ERROR } from "#veryfront/errors/error-registry.ts";
-import { isFullHTMLDocument } from "#veryfront/html";
+import { isFullHTMLDocument } from "#veryfront/html/html-detection.ts";
 import { parsePageDataFromHTML } from "./dom-utils.ts";
 
 export type {
