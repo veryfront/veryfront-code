@@ -122,7 +122,11 @@ function sanitizeEntry(entry: LogEntry): LogEntry {
 
 function isPermissionDenied(error: unknown): boolean {
   try {
-    return error instanceof Deno.errors.PermissionDenied;
+    if (error instanceof Deno.errors.PermissionDenied) return true;
+    if (error instanceof AggregateError) {
+      return error.errors.some((failure) => isPermissionDenied(failure));
+    }
+    return false;
   } catch (_) {
     return false;
   }
@@ -258,7 +262,7 @@ export class FileLogSubscriber {
       .then(() => this.writeEntry(entry))
       .catch((error) => {
         this.recordFailure(error);
-        if (isPermissionDenied(error)) {
+        if (this.disableForPermissionFailure(error)) {
           this.reportFailure(
             `FileLogSubscriber: permission denied writing to ${this.config.path}, file logging disabled`,
             error,
@@ -284,33 +288,46 @@ export class FileLogSubscriber {
   }
 
   private async writeEntry(entry: LogEntry): Promise<void> {
-    if (!this.file) await this.openFile();
-
-    const line = this.formatter(entry) + "\n";
-    const bytes = this.encoder.encode(line);
-
-    if (this.currentSize + bytes.length > this.maxSizeBytes) {
-      await this.rotate();
-    }
-
-    const file = this.file!;
-    const recordStart = this.currentSize;
     try {
-      await writeAll(file, bytes);
-      this.currentSize += bytes.length;
-    } catch (err) {
-      const recoveryFailure = await this.rollbackPartialRecord(file, recordStart);
-      if (isPermissionDenied(err)) {
-        this.permissionFailed = true;
+      if (this.permissionFailed) return;
+      if (!this.file) await this.openFile();
+
+      const line = this.formatter(entry) + "\n";
+      const bytes = this.encoder.encode(line);
+
+      if (this.currentSize + bytes.length > this.maxSizeBytes) {
+        await this.rotate();
       }
-      if (recoveryFailure !== undefined) {
-        throw new AggregateError(
-          [err, recoveryFailure],
-          "File write failed and its partial record could not be rolled back",
-        );
+
+      const file = this.file!;
+      const recordStart = this.currentSize;
+      try {
+        await writeAll(file, bytes);
+        this.currentSize += bytes.length;
+      } catch (error) {
+        this.disableForPermissionFailure(error);
+        const recoveryFailure = await this.rollbackPartialRecord(file, recordStart);
+        if (recoveryFailure !== undefined) {
+          throw new AggregateError(
+            [error, recoveryFailure],
+            "File write failed and its partial record could not be rolled back",
+          );
+        }
+        throw error;
       }
-      throw err;
+    } catch (error) {
+      if (this.disableForPermissionFailure(error)) {
+        this.closeCurrentFileQuietly();
+        this.currentSize = 0;
+      }
+      throw error;
     }
+  }
+
+  private disableForPermissionFailure(error: unknown): boolean {
+    if (!isPermissionDenied(error)) return false;
+    this.permissionFailed = true;
+    return true;
   }
 
   private async rollbackPartialRecord(
@@ -457,6 +474,7 @@ export class FileLogSubscriber {
       try {
         await this.file.sync();
       } catch (error) {
+        this.disableForPermissionFailure(error);
         failures.push(error);
       }
     }

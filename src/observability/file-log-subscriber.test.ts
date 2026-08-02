@@ -421,6 +421,101 @@ describe("observability/file-log-subscriber", () => {
       );
     });
 
+    for (const stage of ["directory", "open/stat", "rotation", "write"] as const) {
+      it(`atomically disables file logging after a ${stage} permission denial`, async () => {
+        const dir = await makeTempDir();
+        const sub = new FileLogSubscriber(makeConfig({ path: `${dir}/permission.log` }));
+        const internals = sub as unknown as {
+          file: {
+            write(bytes: Uint8Array): Promise<number>;
+            truncate(length: number): Promise<void>;
+            seek(offset: number, whence: number): Promise<number>;
+            sync(): Promise<void>;
+            close(): void;
+          } | null;
+          currentSize: number;
+          maxSizeBytes: number;
+          ensureDir(): Promise<void>;
+          openFile(): Promise<void>;
+          rotate(): Promise<void>;
+        };
+        const denial = new Deno.errors.PermissionDenied(`${stage} denied`);
+        let filesystemCalls = 0;
+        const fakeFile = {
+          write(bytes: Uint8Array): Promise<number> {
+            filesystemCalls++;
+            return stage === "write" ? Promise.reject(denial) : Promise.resolve(bytes.length);
+          },
+          truncate(): Promise<void> {
+            filesystemCalls++;
+            return Promise.resolve();
+          },
+          seek(offset: number): Promise<number> {
+            filesystemCalls++;
+            return Promise.resolve(offset);
+          },
+          sync(): Promise<void> {
+            filesystemCalls++;
+            return Promise.resolve();
+          },
+          close(): void {
+            filesystemCalls++;
+          },
+        };
+
+        if (stage === "directory") {
+          internals.ensureDir = () => {
+            filesystemCalls++;
+            return Promise.reject(denial);
+          };
+        } else if (stage === "open/stat") {
+          internals.openFile = () => {
+            filesystemCalls++;
+            return Promise.reject(denial);
+          };
+        } else {
+          internals.file = fakeFile;
+          if (stage === "rotation") {
+            internals.currentSize = 1;
+            internals.maxSizeBytes = 1;
+            internals.rotate = () => {
+              filesystemCalls++;
+              return Promise.reject(denial);
+            };
+          }
+        }
+
+        const originalError = console.error;
+        console.error = () => {};
+        try {
+          const subscriber = sub.getSubscriber();
+          subscriber({
+            id: "denied",
+            level: "error",
+            message: "first",
+            timestamp: Date.now(),
+            source: "test",
+          });
+          await assertRejects(() => sub.flush(), Deno.errors.PermissionDenied);
+          const callsAfterDenial = filesystemCalls;
+
+          subscriber({
+            id: "ignored",
+            level: "error",
+            message: "second",
+            timestamp: Date.now(),
+            source: "test",
+          });
+          await sub.flush();
+
+          assertEquals(filesystemCalls, callsAfterDenial);
+        } finally {
+          console.error = originalError;
+          await sub.close();
+        }
+      });
+    }
+
     it("truncates a partial record and keeps a recovered handle retryable", async () => {
       const dir = await makeTempDir();
       const sub = new FileLogSubscriber(makeConfig({ path: `${dir}/partial.log` }));
