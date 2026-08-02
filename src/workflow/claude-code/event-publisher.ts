@@ -4,7 +4,11 @@
  * Provides different ways to publish Claude Code events for streaming.
  */
 
-import { logger as baseLogger } from "#veryfront/utils";
+import { ensureRedisRuntimeProvider } from "#veryfront/extensions/distributed/defaults.ts";
+import type {
+  RedisEventPublisherConfig,
+  RedisEventPublisherImplementation,
+} from "#veryfront/extensions/distributed/redis-runtime-provider.ts";
 import type {
   ClaudeCodeEvent,
   ClaudeCodeEventHandler,
@@ -13,7 +17,7 @@ import type {
 } from "./types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
-const logger = baseLogger.component("redis-event-publisher");
+export type { RedisEventPublisherConfig };
 
 // =============================================================================
 // In-Memory Publisher (for testing/single-process)
@@ -73,134 +77,68 @@ export class MemoryEventPublisher implements ClaudeCodeEventPublisher, ClaudeCod
 // =============================================================================
 
 /**
- * Redis event publisher configuration
- */
-export interface RedisEventPublisherConfig {
-  /** Redis URL */
-  url: string;
-
-  /** Channel prefix (default: "claude-code") */
-  channelPrefix?: string;
-
-  /** Enable debug logging */
-  debug?: boolean;
-}
-
-/**
  * Redis-based event publisher for distributed streaming
  * Uses Redis Pub/Sub for real-time event delivery
  */
-/** Minimal structural type for a Redis Pub/Sub client */
-interface RedisClient {
-  connect(): Promise<void>;
-  publish(channel: string, message: string): Promise<number>;
-  subscribe(channel: string, listener: (message: string) => void): Promise<void>;
-  unsubscribe(channel: string): Promise<void>;
-  close(): Promise<void>;
-}
-
 /** Implement redis event publisher. */
 export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCodeEventSubscriber {
-  private config: Required<RedisEventPublisherConfig>;
-  private publishClient: RedisClient | null = null;
-  private subscribeClient: RedisClient | null = null;
-  private initialized = false;
+  private readonly config: RedisEventPublisherConfig;
+  private implementation: RedisEventPublisherImplementation | null = null;
+  private initialization: Promise<RedisEventPublisherImplementation> | null = null;
+  private closePromise: Promise<void> | null = null;
 
   constructor(config: RedisEventPublisherConfig) {
-    this.config = {
-      channelPrefix: "claude-code",
-      debug: false,
-      ...config,
-    };
+    this.config = Object.freeze({ ...config });
   }
 
-  private async ensureInitialized(): Promise<void> {
-    if (this.initialized) return;
+  private async getImplementation(): Promise<RedisEventPublisherImplementation> {
+    if (this.closePromise) await this.closePromise;
+    if (this.implementation) return this.implementation;
+    if (this.initialization) return this.initialization;
 
-    // Dynamic import to avoid loading Redis if not used
-    const { createClient } = await import("redis");
-
-    this.publishClient = createClient({ url: this.config.url }) as unknown as RedisClient;
-    this.subscribeClient = createClient({ url: this.config.url }) as unknown as RedisClient;
-
-    await Promise.all([this.publishClient.connect(), this.subscribeClient.connect()]);
-
-    this.initialized = true;
-  }
-
-  private getChannel(runId: string): string {
-    return `${this.config.channelPrefix}:events:${runId}`;
-  }
-
-  private getPublishClient(): RedisClient {
-    if (!this.publishClient) {
-      throw new Error("Redis publish client not initialized");
-    }
-    return this.publishClient;
-  }
-
-  private getSubscribeClient(): RedisClient {
-    if (!this.subscribeClient) {
-      throw new Error("Redis subscribe client not initialized");
-    }
-    return this.subscribeClient;
+    const initialization = ensureRedisRuntimeProvider()
+      .then((provider) => provider.createEventPublisher(this.config))
+      .then((implementation) => {
+        this.implementation = implementation;
+        return implementation;
+      })
+      .finally(() => {
+        if (this.initialization === initialization) this.initialization = null;
+      });
+    this.initialization = initialization;
+    return initialization;
   }
 
   async publish(event: ClaudeCodeEvent): Promise<void> {
-    await this.ensureInitialized();
-
-    const channel = event.runId
-      ? this.getChannel(event.runId)
-      : `${this.config.channelPrefix}:events:global`;
-
-    const message = JSON.stringify(event);
-
-    await this.getPublishClient().publish(channel, message);
-
-    if (this.config.debug) {
-      logger.info("Published event", { channel, eventType: event.type });
-    }
+    const implementation = await this.getImplementation();
+    await implementation.publish(event);
   }
 
   async subscribe(runId: string, handler: ClaudeCodeEventHandler): Promise<() => void> {
-    await this.ensureInitialized();
-
-    const channel = this.getChannel(runId);
-    const subscribeClient = this.getSubscribeClient();
-
-    const listener = (message: string) => {
-      try {
-        const parsed: unknown = JSON.parse(message);
-        if (!parsed || typeof parsed !== "object") return;
-        const event = parsed as ClaudeCodeEvent;
-        handler(event);
-      } catch (error) {
-        logger.error("Failed to parse event", error);
-      }
-    };
-
-    await subscribeClient.subscribe(channel, listener);
-
-    if (this.config.debug) {
-      logger.info("Subscribed to channel", { channel });
-    }
-
-    return async () => {
-      await subscribeClient.unsubscribe(channel);
-    };
+    const implementation = await this.getImplementation();
+    return await implementation.subscribe(runId, handler);
   }
 
-  async close(): Promise<void> {
-    if (!this.initialized) return;
-
-    await Promise.all([
-      this.publishClient?.close(),
-      this.subscribeClient?.close(),
-    ]);
-
-    this.publishClient = null;
-    this.subscribeClient = null;
-    this.initialized = false;
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    const initialization = this.initialization;
+    const closing = (async () => {
+      let implementation = this.implementation;
+      if (!implementation && initialization) {
+        try {
+          implementation = await initialization;
+        } catch {
+          return;
+        }
+      }
+      if (!implementation) return;
+      await implementation.close();
+      if (this.implementation === implementation) this.implementation = null;
+    })().finally(() => {
+      if (this.closePromise === closing) this.closePromise = null;
+    });
+    this.closePromise = closing;
+    return closing;
   }
 }
 

@@ -91,6 +91,21 @@ describe("auditExtensionCapabilities", () => {
     ]);
   });
 
+  it("requires the Redis runtime network and environment capabilities", () => {
+    const capabilities = [{ type: "net:outbound", hosts: ["*"] }];
+    const issues = auditExtensionCapabilities([
+      input({
+        manifestPath: "extensions/ext-redis/deno.json",
+        manifestCapabilities: capabilities,
+        factoryCapabilities: capabilities,
+      }),
+    ]);
+
+    assertEquals(issues.map((issue) => issue.message), [
+      'extensions/ext-redis/deno.json sensitive extension "Redis distributed runtime" is missing capability {"keys":["NODE_ENV","REDIS_PASSWORD","REDIS_URL","REDIS_USERNAME"],"type":"env:read"}',
+    ]);
+  });
+
   it("requires MLflow export capabilities and forbids the exporter-id env key", () => {
     const manifestPath = "extensions/ext-eval-report-mlflow/deno.json";
     const allowedCapabilities = [

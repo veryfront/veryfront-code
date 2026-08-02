@@ -1,0 +1,34 @@
+{
+  "name": "@veryfront/ext-redis",
+  "version": "0.1.0",
+  "exports": "./src/index.ts",
+  "veryfront": {
+    "extension": true,
+    "activation": "explicit",
+    "contracts": {
+      "provides": ["RedisRuntimeProvider"]
+    },
+    "capabilities": [
+      { "type": "net:outbound", "hosts": ["*"] },
+      {
+        "type": "env:read",
+        "keys": ["NODE_ENV", "REDIS_PASSWORD", "REDIS_URL", "REDIS_USERNAME"]
+      }
+    ]
+  },
+  "imports": {
+    "@redis/client": "npm:@redis/client@1.5.8",
+    "redis": "npm:redis@5.11.0",
+    "veryfront/errors/general": "../../src/errors/error-registry/general.ts",
+    "veryfront/errors/module": "../../src/errors/error-registry/module.ts",
+    "veryfront/extensions/distributed": "../../src/extensions/distributed/index.ts",
+    "veryfront/extensions/types": "../../src/extensions/types.ts",
+    "veryfront/platform/env": "../../src/platform/compat/process/env.ts",
+    "veryfront/utils/logger": "../../src/utils/logger/index.ts",
+    "veryfront/workflow/claude-code/types": "../../src/workflow/claude-code/types.ts"
+  },
+  "tasks": {
+    "check": "deno check --no-lock src/index.ts src/*.test.ts",
+    "test": "deno test --no-lock src/"
+  }
+}

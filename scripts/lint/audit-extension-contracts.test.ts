@@ -119,11 +119,15 @@ describe("extractExtensionSourceMetadata contracts", () => {
       import {
         NodeWebSocketServerProviderName,
       } from "veryfront/extensions/websocket";
+      import {
+        RedisRuntimeProviderName,
+      } from "veryfront/extensions/distributed";
       const ext = () => ({
         contracts: {
           provides: [
             CSSProcessorName,
             NodeWebSocketServerProviderName,
+            RedisRuntimeProviderName,
             SandboxShellToolsProviderName,
           ],
           requires: [LLMProviderRegistryName],
@@ -135,6 +139,7 @@ describe("extractExtensionSourceMetadata contracts", () => {
     assertEquals(metadata.contracts?.provides, [
       "CSSProcessor",
       "NodeWebSocketServerProvider",
+      "RedisRuntimeProvider",
       "SandboxShellToolsProvider",
     ]);
     assertEquals(metadata.contracts?.requires, ["LLMProviderRegistry"]);

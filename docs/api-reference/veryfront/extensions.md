@@ -12,8 +12,8 @@ import {
   assertSystemReadCapability,
   auditCapabilities,
   captureImageOptimizationEngine,
+  captureRedisRuntimeProvider,
   composeAbortSignals,
-  detectConflicts,
 } from "veryfront/extensions";
 ```
 
@@ -44,6 +44,7 @@ await loader.teardownAll();
 | `ImageOptimizationEngineName` | Registry name used for the image optimization extension contract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/image/image-optimization-engine.ts#L22) |
 | `MAX_IMAGE_OPTIMIZATION_ENGINE_IDENTITY_CHARACTERS` | Maximum stable implementation identity accepted across the boundary. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/image/image-optimization-engine.ts#L25) |
 | `MISSING_EXTENSION_ERROR` | Shared missing extension error value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/errors.ts#L10) |
+| `RedisRuntimeProviderName` | Registry name used by the Redis runtime extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/redis-runtime-provider.ts#L18) |
 | `SandboxShellToolsProviderName` | Render sandbox shell tools provider name. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L5) |
 
 ### Functions
@@ -52,21 +53,22 @@ await loader.teardownAll();
 |------|-------------|--------|
 | `assertImageOptimizationEngine` | Validate an implementation received through the dynamic contract registry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/image/image-optimization-engine.ts#L137) |
 | `assertSystemReadCapability` | Validate the bounded scope required by a `system:read` capability. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L144) |
-| `auditCapabilities` | Log capabilities for a named extension at startup. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L222) |
+| `auditCapabilities` | Log capabilities for a named extension at startup. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L235) |
 | `captureImageOptimizationEngine` | Capture dynamic properties once so one run cannot split across mutations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/image/image-optimization-engine.ts#L144) |
+| `captureRedisRuntimeProvider` | Validate and snapshot a provider before core invokes extension-owned code. Accessors are rejected so registration cannot execute code during capture. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/redis-runtime-provider.ts#L485) |
 | `composeAbortSignals` | Compose cancellation sources without depending on `AbortSignal.any`, which is absent from early Node 18 releases still covered by the npm engine range. The first source to abort owns the exact propagated reason, and listeners on every remaining source are detached immediately. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/abort-signal.ts#L7) |
 | `detectConflicts` | Detect contract conflicts between resolved extensions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/validation.ts#L155) |
-| `discoverLocalExtensions` | Find `*.extension.ts` files in the project root. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L241) |
-| `discoverPackageExtensions` | Scan `node_modules` (including `@scoped` packages) for packages that declare veryfront extension metadata in their `package.json`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L160) |
-| `discoverProjectExtensions` | Discover project extensions living under `extensions/` in the project root. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L216) |
+| `discoverLocalExtensions` | Find `*.extension.ts` files in the project root. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L543) |
+| `discoverPackageExtensions` | Discover auto-activated package extensions without exposing identity internals. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L396) |
+| `discoverProjectExtensions` | Discover project extension paths without exposing identity internals. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L530) |
 | `formatCapabilities` | Format capabilities as human-readable strings for logging. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L23) |
-| `getRecommendation` | Return recommendation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/recommendations.ts#L33) |
+| `getRecommendation` | Return recommendation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/recommendations.ts#L34) |
 | `isSupportedDenoSystemReadApi` | Return whether a Deno system permission name is explicitly read-only. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L68) |
-| `loadExtensionFactory` | Dynamically import an extension factory from `path` and resolve it. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/factory-loader.ts#L32) |
+| `loadExtensionFactory` | Dynamically import an extension factory from `path` and resolve it. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/factory-loader.ts#L100) |
 | `mapToDenoPermissions` | Map capabilities to Deno CLI permission flags. Skips capabilities without a Deno permission mapping. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L181) |
-| `mergeExtensions` | Merge extensions from all four sources in priority order. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L93) |
-| `orchestrateExtensions` | Run the full extension pipeline against a resolved project config. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/orchestrate.ts#L103) |
-| `parsePackageMetadata` | Parse veryfront extension metadata from a package.json-like object. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L59) |
+| `mergeExtensions` | Merge extensions from all four sources in priority order. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L225) |
+| `orchestrateExtensions` | Run the full extension pipeline against a resolved project config. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/orchestrate.ts#L125) |
+| `parsePackageMetadata` | Parse veryfront extension metadata from a package.json-like object. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L185) |
 | `resolve` | Resolve path segments to an absolute path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L13) |
 | `tryResolve` | Try to resolve. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L28) |
 | `validateExtension` | Validate the shape of an extension object. Returns an array of issue descriptions (empty array = valid). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/validation.ts#L85) |
@@ -84,7 +86,9 @@ await loader.teardownAll();
 | `Capability` | Declares a system capability an extension requires. Object-based for extensibility -- scoping fields vary by type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L11) |
 | `ConflictInfo` | Information about a contract conflict between extensions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/validation.ts#L13) |
 | `CreateSandboxShellToolsInput` | Input payload for create sandbox shell tools. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L38) |
+| `DiscoveredPackageExtension` | A package extension whose manifest is bound to one physical import target. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L42) |
 | `Extension` | Public API contract for extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L46) |
+| `ExtensionActivationMode` | Controls whether installation alone may activate an extension package. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L39) |
 | `ExtensionConfigEntry` | Entry shape for extension config. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L61) |
 | `ExtensionContext` | Context for extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L27) |
 | `ExtensionContractMetadata` | Public API contract for extension contract metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L17) |
@@ -96,8 +100,9 @@ await loader.teardownAll();
 | `ImageOptimizationRequest` | Immutable byte-oriented request supplied by core. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/image/image-optimization-engine.ts#L32) |
 | `ImageOptimizationResult` | Portable result returned by an image optimization engine. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/image/image-optimization-engine.ts#L56) |
 | `ImageOptimizationVariantResult` | One encoded output returned by an image optimization engine. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/image/image-optimization-engine.ts#L48) |
-| `OrchestrateOptions` | Options for `orchestrateExtensions`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/orchestrate.ts#L29) |
-| `PackageMetadata` | Metadata extracted from a package.json that declares itself as a veryfront extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L17) |
+| `OrchestrateOptions` | Options for `orchestrateExtensions`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/orchestrate.ts#L30) |
+| `PackageMetadata` | Metadata extracted from a package.json that declares itself as a veryfront extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L27) |
+| `RedisRuntimeProvider` | Optional Redis runtime implementation supplied by an extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/redis-runtime-provider.ts#L150) |
 | `ResolvedExtension` | Public API contract for resolved extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L74) |
 | `SandboxShellClient` | Public API contract for sandbox shell client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L30) |
 | `SandboxShellToolDefinition` | Definition for sandbox shell tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L13) |
@@ -315,6 +320,39 @@ import "veryfront/extensions/database";
 | `DatabaseClient` | DatabaseClient contract interface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/database/database-client.ts#L23) |
 | `QueryResult` | Result returned from `DatabaseClient.query`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/database/database-client.ts#L10) |
 
+### `veryfront/extensions/distributed`
+
+Provider-neutral contracts for optional distributed runtime infrastructure.
+
+```ts
+import { captureRedisRuntimeProvider, RedisRuntimeProviderName } from "veryfront/extensions/distributed";
+```
+
+#### Components
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `RedisRuntimeProviderName` | Registry name used by the Redis runtime extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/redis-runtime-provider.ts#L18) |
+
+#### Functions
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `captureRedisRuntimeProvider` | Validate and snapshot a provider before core invokes extension-owned code. Accessors are rejected so registration cannot execute code during capture. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/redis-runtime-provider.ts#L485) |
+
+#### Types
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `NodeRedisClient` | Structural node-redis client surface used by the platform adapter. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/redis-runtime-provider.ts#L36) |
+| `NodeRedisModule` | Structural module surface used by the platform Redis adapter. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/redis-runtime-provider.ts#L21) |
+| `RedisClient` | Structural client surface used by core cache features. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/redis-runtime-provider.ts#L91) |
+| `RedisClientHandle` | Independently owned Redis connection returned to a core feature. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/redis-runtime-provider.ts#L116) |
+| `RedisClientOptions` | Connection options accepted by the stable core Redis client facade. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/redis-runtime-provider.ts#L122) |
+| `RedisEventPublisherConfig` | Redis Pub/Sub publisher configuration. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/redis-runtime-provider.ts#L132) |
+| `RedisEventPublisherImplementation` | Redis-backed event publisher/subscriber implementation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/redis-runtime-provider.ts#L142) |
+| `RedisRuntimeProvider` | Optional Redis runtime implementation supplied by an extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/redis-runtime-provider.ts#L150) |
+
 ### `veryfront/extensions/eval`
 
 Eval category barrel: eval report exporter contracts.
@@ -531,6 +569,29 @@ import "veryfront/extensions/schema";
 | `ValidationIssue` | A single validation issue with location context. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/schema/schema-validator.ts#L123) |
 | `ValidationResult` | Discriminated union of validation outcomes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/schema/schema-validator.ts#L149) |
 | `ValidationSuccess` | Successful validation outcome. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/schema/schema-validator.ts#L133) |
+
+### `veryfront/extensions/types`
+
+Core types for the veryfront extension system.
+
+```ts
+import "veryfront/extensions/types";
+```
+
+#### Types
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `Capability` | Declares a system capability an extension requires. Object-based for extensibility -- scoping fields vary by type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L11) |
+| `Extension` | Public API contract for extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L46) |
+| `ExtensionConfigEntry` | Entry shape for extension config. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L61) |
+| `ExtensionContext` | Context for extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L27) |
+| `ExtensionContractMetadata` | Public API contract for extension contract metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L17) |
+| `ExtensionFactory` | Public API contract for extension factory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L58) |
+| `ExtensionLogger` | Public API contract for extension logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L38) |
+| `ExtensionSource` | Public API contract for extension source. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L66) |
+| `PackageContractMetadata` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L24) |
+| `ResolvedExtension` | Public API contract for resolved extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L74) |
 
 ### `veryfront/extensions/websocket`
 

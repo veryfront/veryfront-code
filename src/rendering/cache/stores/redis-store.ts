@@ -1,19 +1,10 @@
 import type { CachePayload, CacheStore, CacheStoreStats } from "../types.ts";
+import { OwnedRedisClientConnection } from "#veryfront/extensions/distributed/owned-redis-client.ts";
+import type { RedisClient } from "#veryfront/extensions/distributed";
 import { rendererLogger } from "#veryfront/utils";
-import { createError, toError } from "#veryfront/errors";
 import { MemoryCacheStore } from "./memory-store.ts";
 
 const logger = rendererLogger.component("redis");
-
-interface RedisClient {
-  connect(): Promise<void>;
-  disconnect(): Promise<void>;
-  get(key: string): Promise<string | null>;
-  set(key: string, value: string, options?: { EX?: number }): Promise<string | null>;
-  del(key: string | string[]): Promise<number>;
-  scan(cursor: number, options?: { MATCH?: string; COUNT?: number }): Promise<[number, string[]]>;
-  on?(event: string, listener: (...args: unknown[]) => void): void;
-}
 
 /** Default TTL for Redis cache entries (1 hour) */
 const DEFAULT_TTL_SECONDS = 3_600;
@@ -33,8 +24,7 @@ export interface RedisCacheStoreOptions {
 }
 
 export class RedisCacheStore implements CacheStore {
-  private client: RedisClient | null = null;
-  private readonly url?: string;
+  private readonly connection: OwnedRedisClientConnection;
   private readonly keyPrefix: string;
   private readonly enableFallback: boolean;
   private readonly ttlSeconds: number;
@@ -43,10 +33,27 @@ export class RedisCacheStore implements CacheStore {
   private errorLogged = false;
 
   constructor(options: RedisCacheStoreOptions = {}) {
-    this.url = options.url;
     this.keyPrefix = options.keyPrefix ?? "veryfront:render:";
     this.enableFallback = options.enableFallback ?? false;
     this.ttlSeconds = options.ttlSeconds ?? DEFAULT_TTL_SECONDS;
+    this.connection = new OwnedRedisClientConnection(
+      options.url === undefined ? {} : { url: options.url },
+      {
+        onError: (error) => {
+          if (!this.errorLogged) {
+            logger.error("client error", error);
+            this.errorLogged = true;
+          }
+          this.redisUnavailable = true;
+        },
+        onEnd: () => {
+          this.redisUnavailable = true;
+        },
+        onCloseError(error) {
+          logger.warn("client close failed", { error });
+        },
+      },
+    );
   }
 
   private getFallbackStore(): MemoryCacheStore {
@@ -62,38 +69,7 @@ export class RedisCacheStore implements CacheStore {
   }
 
   private async ensureClient(): Promise<RedisClient> {
-    if (this.client) return this.client;
-
-    let createClient: ((options: { url?: string }) => RedisClient) | undefined;
-    try {
-      // Construct module name dynamically to prevent Deno static analyzer
-      // from trying to resolve this npm package during lint/check
-      const redisClientModule = ["npm:@redis/client", "@1.5.8"].join("");
-      const mod = await import(redisClientModule);
-      createClient = mod.createClient as (options: { url?: string }) => RedisClient;
-    } catch (_) {
-      /* expected: redis client package may not be installed */
-      throw toError(
-        createError({
-          type: "render",
-          message:
-            "Redis cache store requires npm:@redis/client. Install dependencies or switch cache.render.type to 'memory' or 'filesystem'.",
-        }),
-      );
-    }
-
-    const client = createClient({ url: this.url });
-    client.on?.("error", (err: unknown) => {
-      // Only log the first error to avoid flooding logs during reconnection attempts
-      if (!this.errorLogged) {
-        logger.error("client error", err);
-        this.errorLogged = true;
-      }
-      this.redisUnavailable = true;
-    });
-
-    await client.connect();
-    this.client = client;
+    const client = await this.connection.getClient();
     this.redisUnavailable = false;
     this.errorLogged = false;
     return client;
@@ -195,7 +171,7 @@ export class RedisCacheStore implements CacheStore {
       const keysToDelete: string[] = [];
 
       do {
-        const [nextCursor, keys] = await client.scan(cursor, {
+        const { cursor: nextCursor, keys } = await client.scan(cursor, {
           MATCH: `${this.keyPrefix}${prefix}*`,
           COUNT: REDIS_SCAN_COUNT,
         });
@@ -231,7 +207,7 @@ export class RedisCacheStore implements CacheStore {
       let cursor = 0;
 
       do {
-        const [nextCursor, keys] = await client.scan(cursor, {
+        const { cursor: nextCursor, keys } = await client.scan(cursor, {
           MATCH: `${this.keyPrefix}*`,
           COUNT: REDIS_CLEAR_SCAN_COUNT,
         });
@@ -259,10 +235,7 @@ export class RedisCacheStore implements CacheStore {
       this.fallbackStore = null;
     }
 
-    if (!this.client) return;
-
-    await this.client.disconnect();
-    this.client = null;
+    await this.connection.close();
   }
 
   getStats(): CacheStoreStats {

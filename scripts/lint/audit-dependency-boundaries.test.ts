@@ -74,6 +74,23 @@ function sensitiveExtensionManifests() {
         },
       ],
     },
+    {
+      sourceLocation: "extensions/ext-redis/deno.json",
+      group: "extension" as const,
+      componentCount: 2,
+      components: [
+        {
+          name: "@redis/client",
+          version: "1.5.8",
+          purl: "pkg:npm/%40redis/client@1.5.8",
+        },
+        {
+          name: "redis",
+          version: "5.11.0",
+          purl: "pkg:npm/redis@5.11.0",
+        },
+      ],
+    },
   ];
 }
 
@@ -303,6 +320,18 @@ describe("auditDependencyBoundaries", () => {
             },
           ],
         },
+        {
+          sourceLocation: "extensions/ext-redis/deno.json",
+          group: "extension",
+          componentCount: 1,
+          components: [
+            {
+              name: "redis",
+              version: "5.11.0",
+              purl: "pkg:npm/redis@5.11.0",
+            },
+          ],
+        },
       ],
     });
 
@@ -311,6 +340,7 @@ describe("auditDependencyBoundaries", () => {
       "sensitive extension native SQLite storage boundary is missing from dependency index",
       "sensitive extension document extraction boundary is missing from dependency index",
       "sensitive extension Node WebSocket transport boundary is missing from dependency index",
+      "sensitive extension Redis distributed runtime boundary is missing expected component @redis/client",
     ]);
   });
 });

@@ -11,6 +11,7 @@ import {
   manifestDependencies,
   normalizeExtensionEntryPoints,
   normalizeExtensionPackageJson,
+  type RootPackageConfig,
 } from "./npm-extension-package-metadata.ts";
 
 const rootConfig = {
@@ -110,6 +111,41 @@ describe("manifestDependencies", () => {
 });
 
 describe("createExtensionPackageSpec", () => {
+  it("externalizes Redis through dependency-free Veryfront leaf contracts", async () => {
+    const [manifest, actualRootConfig] = await Promise.all([
+      Deno.readTextFile("extensions/ext-redis/deno.json").then((source) =>
+        JSON.parse(source) as ExtensionManifest
+      ),
+      Deno.readTextFile("deno.json").then((source) =>
+        JSON.parse(source) as RootPackageConfig
+      ),
+    ]);
+
+    const spec = createExtensionPackageSpec({
+      manifestPath: "extensions/ext-redis/deno.json",
+      manifest,
+      rootConfig: actualRootConfig,
+      rootDir: "/repo",
+      version: "0.1.985",
+      license: "Apache-2.0",
+    });
+
+    assertEquals(
+      Object.values(spec.dntMappings)
+        .map((mapping) => mapping.subPath)
+        .toSorted(),
+      [
+        "errors/general",
+        "errors/module",
+        "extensions/distributed",
+        "extensions/types",
+        "platform/env",
+        "utils/logger",
+        "workflow/claude-code/types",
+      ],
+    );
+  });
+
   it("creates publishable package metadata from an extension manifest", () => {
     const manifest: ExtensionManifest = {
       name: "@veryfront/ext-sandbox-shell-tools",

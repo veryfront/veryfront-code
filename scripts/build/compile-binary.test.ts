@@ -14,6 +14,19 @@ Deno.test("compiled CLI embeds the explicit Node WebSocket extension for opt-in 
   );
 });
 
+Deno.test("compiled CLI embeds the explicit Redis extension for opt-in activation", () => {
+  const args = createCompileArgs({
+    entrypoint: "cli/main.ts",
+    extraIncludes: [],
+    output: "/tmp/veryfront",
+  });
+
+  assertEquals(
+    args.some((value) => value.includes("ext-redis")),
+    true,
+  );
+});
+
 Deno.test("compiled CLI embeds optional builtin extension source files", async () => {
   const source = await Deno.readTextFile(
     "src/extensions/builtin-extensions.ts",

@@ -229,3 +229,49 @@ throw INVALID_WIDGET.create({ detail: "The widget id is malformed." });
 | `UserFriendlyErrorSolution` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/user-friendly/error-catalog.ts#L3) |
 | `VeryfrontErrorData` | Discriminated union for serializable error data. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/veryfront-error.ts#L69) |
 | `VeryfrontErrorOptions` | Options for VeryfrontError constructor | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L91) |
+
+## Deep imports
+
+These import paths group focused functionality under this module. Each is a separate barrel; import only what you need.
+
+### `veryfront/errors/general`
+
+```ts
+import { AUTHENTICATION_REQUIRED, FILE_NOT_FOUND, GENERAL_REGISTRY } from "veryfront/errors/general";
+```
+
+#### Components
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `AUTHENTICATION_REQUIRED` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L11) |
+| `FILE_NOT_FOUND` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L27) |
+| `GENERAL_REGISTRY` | Registry fragment for GENERAL errors (slug → definition). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L111) |
+| `INITIALIZATION_ERROR` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L60) |
+| `INPUT_VALIDATION_FAILED` | HTTP request input validation failures (replaces ValidationError) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L86) |
+| `INVALID_ARGUMENT` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L43) |
+| `NOT_SUPPORTED` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L68) |
+| `PERMISSION_DENIED` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L19) |
+| `PROJECT_SOURCE_EMPTY` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L94) |
+| `RESOURCE_NOT_FOUND` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L35) |
+| `SECURITY_VIOLATION` | Path traversal / secure-fs violations (replaces SecurityError) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L77) |
+| `TIMEOUT_ERROR` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L52) |
+| `UNKNOWN_ERROR` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L3) |
+
+### `veryfront/errors/module`
+
+```ts
+import { CIRCULAR_DEPENDENCY, DEPENDENCY_MISSING, IMPORT_RESOLUTION_ERROR } from "veryfront/errors/module";
+```
+
+#### Components
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `CIRCULAR_DEPENDENCY` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L19) |
+| `DEPENDENCY_MISSING` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L35) |
+| `IMPORT_RESOLUTION_ERROR` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L11) |
+| `INVALID_IMPORT` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L27) |
+| `MODULE_NOT_FOUND` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L3) |
+| `MODULE_REGISTRY` | Registry fragment for MODULE errors (slug → definition). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L52) |
+| `VERSION_MISMATCH` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L43) |

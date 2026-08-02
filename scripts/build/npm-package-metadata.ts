@@ -15,7 +15,6 @@ import { OPAQUE_DEPENDENCY_VERSIONS } from "../../src/platform/compat/opaque-dep
 
 export const ROOT_OPTIONAL_RUNTIME_PEERS = [
 	"@huggingface/transformers",
-	"redis",
 ] as const;
 
 // Opaque imports (src/platform/compat/opaque-deps.ts) are invisible to dnt, so
@@ -58,6 +57,8 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"@opentelemetry/sdk-node",
 	"@opentelemetry/sdk-trace-base",
 	"@opentelemetry/semantic-conventions",
+	"@redis/client",
+	"redis",
 	"@sentry/deno",
 	"@sentry/node",
 	"@tailwindcss/forms",
