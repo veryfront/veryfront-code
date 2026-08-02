@@ -267,6 +267,71 @@ describe("Veryfront API transport authority and response boundaries", () => {
     }
   });
 
+  it("snapshots the success-body limit before asynchronous fetch work", async () => {
+    const originalFetch = globalThis.fetch;
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    try {
+      globalThis.fetch = (async () => {
+        await fetchGate;
+        return new Response('{"ok":true}');
+      }) as typeof fetch;
+      const transport = createVeryfrontApiTransport({
+        ...baseConfig,
+        retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+        wrapFinalError: (error) => error,
+      });
+      const init = { maxResponseBytes: 4 };
+
+      const pending = transport.request("/files", init);
+      init.maxResponseBytes = 1_024;
+      releaseFetch();
+
+      await assertRejects(
+        () => pending,
+        Error,
+        "successful response exceeded 4 bytes",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("snapshots nested bounded-field options before asynchronous fetch work", async () => {
+    const originalFetch = globalThis.fetch;
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    try {
+      globalThis.fetch = (async () => {
+        await fetchGate;
+        return new Response('{"content":"abcdef"}');
+      }) as typeof fetch;
+      const transport = createVeryfrontApiTransport({
+        ...baseConfig,
+        retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+        wrapFinalError: (error) => error,
+      });
+      const boundedField = { fieldName: "content", maximumBytes: 5 };
+      const init = {
+        maxResponseBytes: 14,
+        jsonStringFieldWithinLimit: boundedField,
+      };
+
+      const pending = transport.request("/files", init);
+      boundedField.maximumBytes = 6;
+      init.maxResponseBytes = 1_024;
+      releaseFetch();
+
+      await assertRejects(() => pending, RangeError, "exceeds 5 UTF-8 bytes");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("rejects invalid UTF-8 success bodies without retrying", async () => {
     const originalFetch = globalThis.fetch;
     let fetchCalls = 0;

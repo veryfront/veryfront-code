@@ -50,6 +50,35 @@ describe("createTokenStorageAdapter", () => {
     assertExists(adapter.delete);
   });
 
+  it("rejects cloud options without the explicit cloud discriminator", async () => {
+    await assertRejects(
+      () =>
+        createTokenStorageAdapter({
+          veryfront: {
+            apiToken: "test-token",
+            projectSlug: "test-project",
+          },
+        } as unknown as TokenStorageAdapterConfig),
+      Error,
+      'requires adapter type "veryfront-api"',
+    );
+  });
+
+  it("rejects cloud options combined with the memory discriminator", async () => {
+    await assertRejects(
+      () =>
+        createTokenStorageAdapter({
+          type: "memory",
+          veryfront: {
+            apiToken: "test-token",
+            projectSlug: "test-project",
+          },
+        } as unknown as TokenStorageAdapterConfig),
+      Error,
+      'requires adapter type "veryfront-api"',
+    );
+  });
+
   it("should return a working memory adapter", async () => {
     const adapter = await createTokenStorageAdapter({ type: "memory" });
     await adapter.set("test-key", "test-value");

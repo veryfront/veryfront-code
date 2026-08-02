@@ -102,6 +102,8 @@ function createValidatedVeryfrontApiTransport<T>(
     afterFetch,
     wrapFetch,
   } = config;
+  const defaultHeaderSnapshot = new Headers(defaultHeaders);
+  const onRetry = config.onRetry;
   const { maxRetries, initialDelay, maxDelay } = retry;
   const onResponse = config.onResponse ??
     (defaultOnResponse as (r: Response, i: TransportRequestInit, u: string) => Promise<T>);
@@ -118,15 +120,32 @@ function createValidatedVeryfrontApiTransport<T>(
       pathOrUrl: string,
       init: TransportRequestInit = {},
     ): Promise<T> {
-      init.signal?.throwIfAborted();
+      // Snapshot every caller-owned option before credentials are read or I/O
+      // begins. Retries and response parsing must not observe later mutation
+      // of the request object, its headers, or its nested byte-limit options.
+      const callerSignal = init.signal;
+      callerSignal?.throwIfAborted();
       const maxResponseBytes = requireSuccessResponseByteLimit(init.maxResponseBytes);
-      requireBoundedJsonFieldOptions(init.jsonStringFieldWithinLimit, maxResponseBytes);
-      const responseInit = init.maxResponseBytes === maxResponseBytes
-        ? init
-        : { ...init, maxResponseBytes };
+      const jsonStringFieldWithinLimit = snapshotBoundedJsonFieldOptions(
+        init.jsonStringFieldWithinLimit,
+        maxResponseBytes,
+      );
       const url = resolveRequestUrl(validatedBaseUrl, pathOrUrl);
       const method = init.method ?? "GET";
       const timeoutMs = init.timeoutMs ?? cfgTimeout;
+      const requestHeaders = new Headers(init.headers);
+      const body = init.body;
+      const responseInit: TransportRequestInit = Object.freeze({
+        method,
+        headers: new Headers(requestHeaders),
+        body,
+        returnText: init.returnText === true,
+        maxResponseBytes,
+        jsonStringFieldWithinLimit,
+        expected404: init.expected404 === true,
+        timeoutMs,
+        signal: callerSignal,
+      });
       // Capture the token once per request: retries of this request must not
       // pick up mid-flight token mutations (setRequestToken/clearRequestToken),
       // matching the pre-transport requestWithRetry semantics.
@@ -134,8 +153,8 @@ function createValidatedVeryfrontApiTransport<T>(
       return await retryWithBackoff(
         async (signal, attempt) => {
           const doFetch = async (): Promise<T> => {
-            const headers = new Headers(init.headers);
-            for (const [k, v] of Object.entries(defaultHeaders)) {
+            const headers = new Headers(requestHeaders);
+            for (const [k, v] of defaultHeaderSnapshot) {
               if (!headers.has(k)) headers.set(k, v);
             }
             headers.set("Authorization", `Bearer ${token}`);
@@ -144,7 +163,7 @@ function createValidatedVeryfrontApiTransport<T>(
             const res = await fetch(url, {
               method,
               headers,
-              body: init.body,
+              body,
               signal,
             });
             afterFetch?.(res.status, performance.now() - start);
@@ -153,22 +172,22 @@ function createValidatedVeryfrontApiTransport<T>(
           try {
             return await (wrapFetch ? wrapFetch(doFetch, url, method, attempt) : doFetch());
           } catch (error) {
-            init.signal?.throwIfAborted();
+            callerSignal?.throwIfAborted();
             throw error;
           }
         },
         {
-          abortSignal: init.signal,
+          abortSignal: callerSignal,
           maxAttempts: maxRetries + 1,
           initialDelay,
           maxDelay,
           timeoutMs,
           shouldRetry(error, attempt) {
-            return init.signal?.aborted !== true && shouldRetry(error, attempt);
+            return callerSignal?.aborted !== true && shouldRetry(error, attempt);
           },
-          onRetry: config.onRetry
+          onRetry: onRetry
             ? ({ error, attempt, delay, isTimeout }) =>
-              config.onRetry!({ error, attempt, delay, isTimeout, url, timeoutMs })
+              onRetry({ error, attempt, delay, isTimeout, url, timeoutMs })
             : ({ error, attempt, delay, isTimeout }) => {
               if (isTimeout) logTimeout(url, timeoutMs, attempt);
               log.warn("Request failed, retrying...", {
@@ -345,11 +364,11 @@ function requireSuccessResponseByteLimit(value: number | undefined): number {
  * Validate bounded JSON-field options before a request performs any I/O, so a
  * malformed selector can never reach the network or be retried.
  */
-function requireBoundedJsonFieldOptions(
+function snapshotBoundedJsonFieldOptions(
   field: TransportRequestInit["jsonStringFieldWithinLimit"],
   maxResponseBytes: number,
-): void {
-  if (field === undefined) return;
+): TransportRequestInit["jsonStringFieldWithinLimit"] {
+  if (field === undefined) return undefined;
   if (typeof field !== "object" || field === null || Array.isArray(field)) {
     throw new TypeError("Veryfront API bounded JSON field options must be an object");
   }
@@ -363,6 +382,7 @@ function requireBoundedJsonFieldOptions(
     );
   }
   maximumJsonStringDocumentBytes(maximumBytes, maxResponseBytes);
+  return Object.freeze({ fieldName, maximumBytes });
 }
 
 function successfulResponseProtocolError(

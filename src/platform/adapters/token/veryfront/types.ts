@@ -39,34 +39,37 @@ export interface TokenStorageAdapter {
   dispose?(): void;
 }
 
-/**
- * Configuration for token storage adapters
- */
-export interface TokenStorageAdapterConfig {
-  /** Storage type */
-  type?: "memory" | "veryfront-api";
-
-  /** Veryfront Cloud configuration */
-  veryfront?: {
-    /** API token for authentication */
-    apiToken?: string;
-    /** Project slug */
-    projectSlug?: string;
-    /** API base URL (defaults to production) */
-    apiBaseUrl?: string;
-    /** Per-request timeout in milliseconds. Defaults to 30000ms. */
-    timeoutMs?: number;
-    /** Retry configuration */
-    retry?: {
-      /** Retries after the initial request, from 0 through 9. */
-      maxRetries?: number;
-      /** Initial retry delay in whole milliseconds. */
-      initialDelay?: number;
-      /** Maximum retry delay in whole milliseconds. */
-      maxDelay?: number;
-    };
+/** Veryfront Cloud token-storage options. */
+export interface VeryfrontTokenStorageOptions {
+  /** API token for authentication */
+  apiToken: string;
+  /** Project slug */
+  projectSlug: string;
+  /** API base URL (defaults to production) */
+  apiBaseUrl?: string;
+  /** Per-request timeout in milliseconds. Defaults to 30000ms. */
+  timeoutMs?: number;
+  /** Retry configuration */
+  retry?: {
+    /** Retries after the initial request, from 0 through 9. */
+    maxRetries?: number;
+    /** Initial retry delay in whole milliseconds. */
+    initialDelay?: number;
+    /** Maximum retry delay in whole milliseconds. */
+    maxDelay?: number;
   };
 }
+
+/**
+ * Configuration for token storage adapters.
+ *
+ * The discriminator is optional only for the empty/default memory config.
+ * Cloud options can never be combined with, or silently downgraded to, the
+ * in-memory adapter.
+ */
+export type TokenStorageAdapterConfig =
+  | { type?: "memory"; veryfront?: never }
+  | { type: "veryfront-api"; veryfront: VeryfrontTokenStorageOptions };
 
 /**
  * Internal config with defaults applied
@@ -86,7 +89,7 @@ export interface VeryfrontTokenConfig {
 
 function requireVeryfrontConfig(
   config: TokenStorageAdapterConfig,
-): NonNullable<TokenStorageAdapterConfig["veryfront"]> {
+): VeryfrontTokenStorageOptions {
   const veryfront = config.veryfront;
   if (veryfront) return veryfront;
 

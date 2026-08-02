@@ -1330,6 +1330,7 @@ export class OAuthService extends OAuthProvider {
           requestScope.signal,
         );
       } catch (error) {
+        callerSignal?.throwIfAborted();
         throw NETWORK_ERROR.create({
           detail: `${this.serviceConfig.displayName} API request failed`,
           cause: error,
@@ -1362,6 +1363,7 @@ export class OAuthService extends OAuthProvider {
       try {
         body = await readBoundedResponseText(response, maxBytes, requestScope.signal);
       } catch (error) {
+        callerSignal?.throwIfAborted();
         throw NETWORK_ERROR.create({
           detail: `${this.serviceConfig.displayName} API response could not be read`,
           cause: error,

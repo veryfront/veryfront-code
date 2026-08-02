@@ -318,6 +318,70 @@ Deno.test("OAuthService.fetch bounds token lookup and non-cooperative API fetche
   }
 });
 
+Deno.test("OAuthService.fetch preserves caller cancellation during provider fetch", async () => {
+  const service = new OAuthService(TEST_CONFIG, makeAuthedTokenStore(), (key) => ENV[key]);
+  const original = globalThis.fetch;
+  let markFetchStarted!: () => void;
+  const fetchStarted = new Promise<void>((resolve) => {
+    markFetchStarted = resolve;
+  });
+  globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+    markFetchStarted();
+    return new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal;
+      const rejectForAbort = () => reject(signal?.reason);
+      signal?.addEventListener("abort", rejectForAbort, { once: true });
+      if (signal?.aborted) rejectForAbort();
+    });
+  }) as typeof fetch;
+
+  const controller = new AbortController();
+  const reason = new DOMException("caller cancelled provider fetch", "AbortError");
+  try {
+    const pending = service.fetch("user-1", "/v1/me", { signal: controller.signal });
+    await fetchStarted;
+    controller.abort(reason);
+
+    const error = await assertRejects(() => pending);
+    assert(error === reason);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+Deno.test("OAuthService.fetch preserves caller cancellation during provider body read", async () => {
+  const service = new OAuthService(TEST_CONFIG, makeAuthedTokenStore(), (key) => ENV[key]);
+  const original = globalThis.fetch;
+  let markBodyReadStarted!: () => void;
+  const bodyReadStarted = new Promise<void>((resolve) => {
+    markBodyReadStarted = resolve;
+  });
+  globalThis.fetch = (() =>
+    Promise.resolve(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          pull() {
+            markBodyReadStarted();
+            return new Promise<void>(() => {});
+          },
+        }),
+      ),
+    )) as typeof fetch;
+
+  const controller = new AbortController();
+  const reason = new DOMException("caller cancelled body read", "AbortError");
+  try {
+    const pending = service.fetch("user-1", "/v1/me", { signal: controller.signal });
+    await bodyReadStarted;
+    controller.abort(reason);
+
+    const error = await assertRejects(() => pending);
+    assert(error === reason);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 Deno.test("OAuthService.fetch timeout cancels a stalled API body", async () => {
   const service = new OAuthService(
     { ...TEST_CONFIG, requestTimeoutMs: 5 },
