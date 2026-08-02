@@ -18,9 +18,15 @@ import { readBoundedFilePrefix, readFileWithinLimit } from "../../bounded-file-r
 import {
   createNodeFileBytesExclusive,
   readNodeFileSnapshotWithinLimit,
+  supportsNativeFileSnapshots,
 } from "../shared/native-file-capabilities.ts";
 
 export class NodeFileSystemAdapter implements FileSystemAdapter {
+  readonly readFileSnapshotWithinLimit = supportsNativeFileSnapshots()
+    ? (path: string, containmentRoot: string, byteLimit: number) =>
+      readNodeFileSnapshotWithinLimit(path, containmentRoot, byteLimit)
+    : undefined;
+
   async readFile(path: string): Promise<string> {
     const fs = await import("node:fs/promises");
     return fs.readFile(path, "utf-8");
@@ -58,14 +64,6 @@ export class NodeFileSystemAdapter implements FileSystemAdapter {
         },
       };
     }, byteLimit);
-  }
-
-  readFileSnapshotWithinLimit(
-    path: string,
-    containmentRoot: string,
-    byteLimit: number,
-  ): Promise<Uint8Array> {
-    return readNodeFileSnapshotWithinLimit(path, containmentRoot, byteLimit);
   }
 
   async writeFile(path: string, content: string): Promise<void> {

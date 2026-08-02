@@ -239,6 +239,20 @@ describe("FSAdapterWrapper", () => {
   });
 
   describe("bounded and snapshot authority", () => {
+    it("retains exact reads when native snapshot authority is unavailable", async () => {
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter({
+        readFileBytesWithinLimit: (_path, byteLimit) =>
+          Promise.resolve(new Uint8Array([byteLimit])),
+        readFileSnapshotWithinLimit: undefined,
+      }));
+
+      assertEquals(wrapper.readFileSnapshotWithinLimit, undefined);
+      assertEquals(
+        [...await wrapper.readFileBytesWithinLimit!("/project/a", 3)],
+        [3],
+      );
+    });
+
     it("captures snapshot and exact-read methods before adapter mutation", async () => {
       let snapshotCalls = 0;
       let replacementCalls = 0;

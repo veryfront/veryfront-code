@@ -36,7 +36,10 @@ import {
 } from "../../../compat/http/native-response.ts";
 import { resolveDenoUpgradeWebSocketOptions } from "../../../compat/http/websocket.ts";
 import { readBoundedFilePrefix, readFileWithinLimit } from "../../bounded-file-read.ts";
-import { readNodeFileSnapshotWithinLimit } from "../shared/native-file-capabilities.ts";
+import {
+  readNodeFileSnapshotWithinLimit,
+  supportsNativeFileSnapshots,
+} from "../shared/native-file-capabilities.ts";
 
 const logger = serverLogger.component("deno");
 
@@ -145,6 +148,13 @@ function diffSnapshots(
 }
 
 class DenoFileSystemAdapter implements FileSystemAdapter {
+  readonly readFileSnapshotWithinLimit = supportsNativeFileSnapshots()
+    ? (path: string, containmentRoot: string, byteLimit: number) => {
+      assertDenoRuntime("DenoFileSystemAdapter", "readFileSnapshotWithinLimit");
+      return readNodeFileSnapshotWithinLimit(path, containmentRoot, byteLimit);
+    }
+    : undefined;
+
   async readFile(path: string): Promise<string> {
     assertDenoRuntime("DenoFileSystemAdapter", "readFile");
     return Deno.readTextFile(path);
@@ -169,15 +179,6 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
       const file = await Deno.open(path, { read: true });
       return { close: () => file.close(), read: (buffer) => file.read(buffer) };
     }, byteLimit);
-  }
-
-  readFileSnapshotWithinLimit(
-    path: string,
-    containmentRoot: string,
-    byteLimit: number,
-  ): Promise<Uint8Array> {
-    assertDenoRuntime("DenoFileSystemAdapter", "readFileSnapshotWithinLimit");
-    return readNodeFileSnapshotWithinLimit(path, containmentRoot, byteLimit);
   }
 
   async writeFile(path: string, content: string): Promise<void> {

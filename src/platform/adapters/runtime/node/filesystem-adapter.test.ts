@@ -68,10 +68,11 @@ describe("NodeFileSystemAdapter", () => {
     try {
       await adapter.writeFileBytes(sourcePath, new Uint8Array([1, 2, 3]));
       assertEquals([...await adapter.readFileBytesWithinLimit(sourcePath, 3)], [1, 2, 3]);
-      assertEquals(
-        [...await adapter.readFileSnapshotWithinLimit(sourcePath, tempDir, 3)],
-        [1, 2, 3],
-      );
+      const snapshotReader = adapter.readFileSnapshotWithinLimit;
+      assertEquals(snapshotReader === undefined, Deno.build.os === "windows");
+      if (snapshotReader !== undefined) {
+        assertEquals([...await snapshotReader(sourcePath, tempDir, 3)], [1, 2, 3]);
+      }
       await assertRejects(
         () => adapter.readFileBytesWithinLimit(sourcePath, 2),
         RangeError,

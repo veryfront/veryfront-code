@@ -2,7 +2,10 @@ import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 import { readFileWithinLimit } from "../adapters/bounded-file-read.ts";
-import { readNodeFileSnapshotWithinLimit } from "../adapters/runtime/shared/native-file-capabilities.ts";
+import {
+  readNodeFileSnapshotWithinLimit,
+  supportsNativeFileSnapshots,
+} from "../adapters/runtime/shared/native-file-capabilities.ts";
 
 export { isNotFoundError } from "./not-found-error.ts";
 
@@ -95,6 +98,11 @@ interface NodeFsPromises {
 }
 
 class NodeFileSystem implements FileSystem {
+  readonly readFileSnapshotWithinLimit = supportsNativeFileSnapshots()
+    ? (path: string, containmentRoot: string, byteLimit: number) =>
+      readNodeFileSnapshotWithinLimit(path, containmentRoot, byteLimit)
+    : undefined;
+
   private fs?: NodeFsPromises;
   private os?: typeof import("node:os");
   private path?: typeof import("node:path");
@@ -162,14 +170,6 @@ class NodeFileSystem implements FileSystem {
         },
       };
     }, byteLimit);
-  }
-
-  readFileSnapshotWithinLimit(
-    path: string,
-    containmentRoot: string,
-    byteLimit: number,
-  ): Promise<Uint8Array> {
-    return readNodeFileSnapshotWithinLimit(path, containmentRoot, byteLimit);
   }
 
   async writeTextFile(path: string, data: string): Promise<void> {
@@ -281,6 +281,11 @@ class NodeFileSystem implements FileSystem {
 }
 
 class DenoFileSystem implements FileSystem {
+  readonly readFileSnapshotWithinLimit = supportsNativeFileSnapshots()
+    ? (path: string, containmentRoot: string, byteLimit: number) =>
+      readNodeFileSnapshotWithinLimit(path, containmentRoot, byteLimit)
+    : undefined;
+
   readTextFile(path: string): Promise<string> {
     return denoGlobal().readTextFile(path);
   }
@@ -294,14 +299,6 @@ class DenoFileSystem implements FileSystem {
       const file = await denoGlobal().open(path, { read: true });
       return { close: () => file.close(), read: (buffer) => file.read(buffer) };
     }, byteLimit);
-  }
-
-  readFileSnapshotWithinLimit(
-    path: string,
-    containmentRoot: string,
-    byteLimit: number,
-  ): Promise<Uint8Array> {
-    return readNodeFileSnapshotWithinLimit(path, containmentRoot, byteLimit);
   }
 
   async writeTextFile(path: string, data: string): Promise<void> {

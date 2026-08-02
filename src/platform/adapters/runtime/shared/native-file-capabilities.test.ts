@@ -7,6 +7,7 @@ import {
   createNodeFileBytesExclusive,
   type NativeSnapshotOperations,
   readNodeFileSnapshotWithinLimit,
+  supportsNativeFileSnapshots,
 } from "./native-file-capabilities.ts";
 
 function snapshotStat(overrides: Partial<{
@@ -65,6 +66,11 @@ function stableOperations(
 }
 
 describe("native filesystem capabilities", () => {
+  it("advertises snapshots only where no-follow opens are supported", () => {
+    assertEquals(supportsNativeFileSnapshots("posix"), true);
+    assertEquals(supportsNativeFileSnapshots("windows"), false);
+  });
+
   it("reads exact and empty snapshots and rejects oversize, links, directories, and escapes", async () => {
     if (Deno.build.os === "windows") return;
     const root = await Deno.makeTempDir({ prefix: "vf-native-snapshot-" });
