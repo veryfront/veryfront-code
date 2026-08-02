@@ -14,7 +14,6 @@ import type {
   ExecuteAppRouteRequest,
   ExecutePagesRouteRequest,
   FetchDataRequest,
-  RenderSSRRequest,
   SerializedDataContext,
   SerializedDataResult,
   SerializedError,
@@ -25,9 +24,6 @@ import type {
   WorkerErrorResponse,
   WorkerRequest,
   WorkerResultResponse,
-  WorkerSSRResultResponse,
-  WorkerStreamChunk,
-  WorkerStreamEnd,
 } from "./worker-types.ts";
 import { installWorkerEgressGuard, type WorkerEgressGuardOptions } from "./worker-egress-guard.ts";
 import { isAbsolute, relative, resolve as resolvePath, sep as PATH_SEP } from "node:path";
@@ -137,26 +133,6 @@ export function makeProjectPathGuard(projectDir: string): (path: string) => Prom
 
     return realResolved ?? resolved;
   };
-}
-
-// Load React lazily for SSR requests. API-only workers and health checks should
-// start without resolving React, and the runtime caches dynamic imports after
-// the first SSR request.
-let _React: typeof import("react") | null = null;
-let _ReactDOMServer: typeof import("react-dom/server") | null = null;
-let _reactReady: Promise<void> | null = null;
-
-function ensureReactReady(): Promise<void> {
-  _reactReady ??= (async () => {
-    try {
-      _React = await import("react");
-      _ReactDOMServer = await import("react-dom/server");
-    } catch {
-      // React may not be available in all worker contexts (e.g., API-only workers).
-      // SSR handler will throw a clear error if React is needed but not loaded.
-    }
-  })();
-  return _reactReady;
 }
 
 // ---------------------------------------------------------------------------
@@ -508,114 +484,6 @@ async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<Serializ
 }
 
 // ---------------------------------------------------------------------------
-// SSR Rendering Handler
-// ---------------------------------------------------------------------------
-
-/**
- * Handle SSR rendering in the isolated Worker.
- *
- * Imports the page + layout components from their temp file paths,
- * constructs a React element tree (layouts wrapping page), and renders
- * to HTML string. For streaming, sends chunks via postMessage.
- *
- * The Worker gets its own React instance — safe because SSR is
- * self-contained (no hydration mismatch concern).
- */
-async function handleRenderSSR(
-  req: RenderSSRRequest,
-): Promise<{ html: string } | "streaming"> {
-  return await runWithWorkerSourceIntegrationPolicy(
-    req.sourceIntegrationPolicy,
-    async () => await renderSSR(req),
-  );
-}
-
-async function renderSSR(
-  req: RenderSSRRequest,
-): Promise<{ html: string } | "streaming"> {
-  // Load React only for SSR workers. API-only workers and health checks should
-  // not pay the React import cost or contend on it under parallel worker tests.
-  await ensureReactReady();
-
-  if (!_React || !_ReactDOMServer) {
-    throw new Error("React modules not available in this worker");
-  }
-
-  const React = _React;
-  const { renderToString } = _ReactDOMServer;
-
-  // Import the page component
-  const pageMod = await loadModule(req.pageModulePath);
-  const PageComponent = (pageMod.default ?? pageMod) as React.ComponentType<
-    Record<string, unknown>
-  >;
-
-  // Import layout components (innermost → outermost order)
-  const layoutComponents: React.ComponentType<Record<string, unknown>>[] = [];
-  for (const layoutPath of req.layoutModulePaths) {
-    const layoutMod = await loadModule(layoutPath);
-    layoutComponents.push(
-      (layoutMod.default ?? layoutMod) as React.ComponentType<
-        Record<string, unknown>
-      >,
-    );
-  }
-
-  // Build element tree: page is innermost, layouts wrap outward
-  const createElement = React.createElement as (
-    type: unknown,
-    props: Record<string, unknown> | null,
-    ...children: unknown[]
-  ) => React.ReactElement;
-
-  let element: React.ReactElement = createElement(PageComponent, req.pageProps);
-
-  for (let i = 0; i < layoutComponents.length; i++) {
-    const Layout = layoutComponents[i];
-    const layoutProps = req.layoutProps[i] ?? {};
-    element = createElement(Layout, layoutProps, element);
-  }
-
-  // Streaming mode: send chunks via postMessage
-  if (req.delivery === "stream") {
-    // Use renderToReadableStream if available (React 18+)
-    const serverModule = _ReactDOMServer as unknown as Record<string, unknown>;
-    const renderToReadableStream = serverModule.renderToReadableStream as
-      | ((element: React.ReactElement) => Promise<ReadableStream<Uint8Array>>)
-      | undefined;
-
-    if (renderToReadableStream) {
-      const stream = await renderToReadableStream(element);
-      const reader = stream.getReader();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          const endMsg: WorkerStreamEnd = { type: "stream-end", id: req.id };
-          self.postMessage(endMsg);
-          break;
-        }
-        const chunkMsg: WorkerStreamChunk = {
-          type: "stream-chunk",
-          id: req.id,
-          chunk: value,
-        };
-        // Transfer the Uint8Array for zero-copy
-        self.postMessage(chunkMsg, { transfer: [value.buffer] });
-      }
-
-      return "streaming";
-    }
-
-    // Fallback: render to string if streaming not available
-  }
-
-  // String mode (or streaming fallback): render to string
-  const html = renderToString(element);
-  return { html };
-}
-
-// ---------------------------------------------------------------------------
 // Message Handler
 // ---------------------------------------------------------------------------
 
@@ -634,22 +502,6 @@ async function processWorkerRequest(request: WorkerRequest): Promise<void> {
         result: dataResult,
       };
       self.postMessage(response);
-      return;
-    }
-
-    // SSR rendering — may stream chunks or return HTML string
-    if (request.type === "render-ssr") {
-      const ssrResult = await handleRenderSSR(request);
-
-      // If streaming, chunks were already sent via postMessage
-      if (ssrResult === "streaming") return;
-
-      const ssrResponse: WorkerSSRResultResponse = {
-        type: "ssr-result",
-        id: request.id,
-        html: ssrResult.html,
-      };
-      self.postMessage(ssrResponse);
       return;
     }
 
