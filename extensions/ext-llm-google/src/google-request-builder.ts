@@ -30,7 +30,7 @@ export interface OpenAICompatibleLanguageOptions extends ModelRuntimeCallOptions
   }>;
 }
 
-/** @deprecated Import `ModelRuntimeToolDefinition` from `veryfront/provider` instead. */
+/** @deprecated Import `ModelRuntimeToolDefinition` from `veryfront/provider/shared` instead. */
 export type RuntimeToolDefinition = ModelRuntimeToolDefinition;
 
 type WarningCollector = {
