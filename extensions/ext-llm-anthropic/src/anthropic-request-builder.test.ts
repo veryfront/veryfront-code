@@ -1601,36 +1601,32 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
         throw new Error("proxy property read");
       },
     });
-    const body = buildAnthropicMessagesRequest(
-      "claude-sonnet-4-6",
-      "anthropic",
-      {
-        prompt: [{
-          role: "assistant",
-          content: [{
-            type: "tool-call",
-            toolCallId: "server_search_proxy",
-            toolName: "web_search",
-            input: { query: "Veryfront" },
-            providerExecuted: true,
-          }],
-          providerMetadata: {
-            anthropic: { rawAssistantMessages },
+    captureThrownError(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{
+              role: "assistant",
+              content: [{
+                type: "tool-call",
+                toolCallId: "server_search_proxy",
+                toolName: "web_search",
+                input: { query: "Veryfront" },
+                providerExecuted: true,
+              }],
+              providerMetadata: {
+                anthropic: { rawAssistantMessages },
+              },
+            }],
           },
-        }],
-      },
-      false,
-      createWarningCollector(),
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "Anthropic raw assistant metadata was not valid bounded JSON",
     );
-    assertEquals(body.messages, [{
-      role: "assistant",
-      content: [{
-        type: "server_tool_use",
-        id: "server_search_proxy",
-        name: "web_search",
-        input: { query: "Veryfront" },
-      }],
-    }]);
     assertEquals(proxyPropertyReads, 0);
   });
 
