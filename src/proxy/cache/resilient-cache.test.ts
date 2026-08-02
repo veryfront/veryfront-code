@@ -277,6 +277,45 @@ describe("ResilientCache", () => {
     await cache.close();
   });
 
+  it("installs recovery ownership before an extension can re-enter", async () => {
+    let now = 0;
+    const probeGate = Promise.withResolvers<void>();
+    const probeStarted = Promise.withResolvers<void>();
+    const primary = new FakeCache("extension");
+    const fallback = new FakeCache("memory");
+    primary.failures.add("get");
+    const cache = new ResilientCache(primary, fallback, {
+      failureThreshold: 1,
+      openDurationMs: 10,
+      now: () => now,
+    });
+    await cache.get("key");
+    primary.failures.delete("get");
+    now = 10;
+    primary.hasGate = probeGate.promise;
+
+    let reentered = false;
+    let reentrantLookup: Promise<CacheStats> | undefined;
+    primary.onHas = () => {
+      if (!reentered) {
+        reentered = true;
+        reentrantLookup = cache.stats();
+      }
+      probeStarted.resolve();
+    };
+
+    const ownerLookup = cache.stats();
+    await probeStarted.promise;
+    await Promise.resolve();
+    assertEquals(primary.calls.get("has"), 1);
+
+    probeGate.resolve();
+    await Promise.all([ownerLookup, reentrantLookup!]);
+    assertEquals(primary.calls.get("has"), 1);
+    assertEquals(cache.getStatus().state, "closed");
+    await cache.close();
+  });
+
   it("replays a failed invalidation before trusting recovered primary data", async () => {
     let now = 0;
     const primary = new FakeCache("extension");

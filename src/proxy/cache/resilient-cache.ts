@@ -85,6 +85,7 @@ export class ResilientCache implements TokenCache {
   private failureCount = 0;
   private circuitOpenedAt: number | null = null;
   private recoveryPromise: Promise<boolean> | null = null;
+  private recoveryOwner: object | null = null;
   private pendingMutations = new Map<string, PendingMutation>();
   private pendingClear = false;
   private mutationTail: Promise<void> = Promise.resolve();
@@ -325,14 +326,22 @@ export class ResilientCache implements TokenCache {
     ) {
       return false;
     }
-    const recovery = this.performRecovery();
-    this.recoveryPromise = recovery;
+    const recovery = Promise.withResolvers<boolean>();
+    const owner = Object.freeze({});
+    this.recoveryOwner = owner;
+    this.recoveryPromise = recovery.promise;
+
+    // Install the shared promise before invoking the extension-owned cache.
+    // A synchronous callback into this cache must join this recovery instead
+    // of starting a competing probe before performRecovery reaches its await.
+    void this.performRecovery().then(recovery.resolve, recovery.reject);
     try {
-      return await recovery;
+      return await recovery.promise;
     } finally {
-      // This is the only path that installs a recovery promise. Concurrent
-      // callers join it above, so none can replace it before this owner exits.
-      this.recoveryPromise = null;
+      if (this.recoveryOwner === owner) {
+        this.recoveryOwner = null;
+        this.recoveryPromise = null;
+      }
     }
   }
 
