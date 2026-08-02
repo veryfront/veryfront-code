@@ -169,6 +169,42 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
       }
     });
 
+    it("blocks and skips a disabled toolbar link", () => {
+      let linkClicks = 0;
+      const { host, unmount } = render(
+        <Wrap>
+          <Toolbar>
+            <ToolbarButton>A</ToolbarButton>
+            <ToolbarLink disabled href="#danger" onClick={() => linkClicks += 1}>
+              Disabled link
+            </ToolbarLink>
+            <ToolbarButton>B</ToolbarButton>
+          </Toolbar>
+        </Wrap>,
+      );
+      try {
+        const bar = host.querySelector<HTMLElement>('[role="toolbar"]')!;
+        const [first, link, last] = Array.from(
+          host.querySelectorAll<HTMLElement>("[data-toolbar-item]"),
+        );
+        assert(link!.getAttribute("aria-disabled") === "true", "exposes disabled semantics");
+        assert(link!.getAttribute("href") === null, "removes disabled link navigation");
+        assert(link!.tabIndex === -1, "removes the disabled link from sequential focus");
+        assert(
+          link!.className.includes("aria-disabled:pointer-events-none") &&
+            link!.className.includes("aria-disabled:opacity-50"),
+          "exposes the disabled visual state",
+        );
+        click(link!);
+        assert(linkClicks === 0, "suppresses the disabled link click handler");
+        first!.focus();
+        keydown(bar, "ArrowRight");
+        assert(document.activeElement === last, "roving focus skips the disabled link");
+      } finally {
+        unmount();
+      }
+    });
+
     it("updates the resting stop on focus and isolates nested, hidden, inert, and editable content", () => {
       const { host, unmount } = render(
         <Wrap>

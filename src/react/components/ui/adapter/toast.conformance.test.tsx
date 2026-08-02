@@ -116,6 +116,19 @@ export function runToastConformance(
       }
     });
 
+    it("retains valid falsy title and description nodes", async () => {
+      const h = mount();
+      try {
+        flushSync(() => api!.toast({ title: 0, description: "", duration: Infinity }));
+        await waitFor(() => document.querySelectorAll("ol > li").length === 1);
+        const item = document.querySelector<HTMLElement>("ol > li")!;
+        assert(item.textContent?.includes("0") === true, "renders a numeric zero title");
+        assert(item.querySelector("p"), "retains an empty-string description node");
+      } finally {
+        h.cleanup();
+      }
+    });
+
     it("an action button runs its handler then dismisses", async () => {
       const h = mount();
       try {
@@ -238,6 +251,39 @@ function BuiltinWrap({ children }: { children: React.ReactNode }): React.ReactEl
 runToastConformance("builtin", BuiltinWrap);
 
 describe("Builtin Toast viewport and timer lifecycle", () => {
+  it("renders zero and empty-string structured content", () => {
+    const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
+    const restore = installDomGlobals(dom);
+    const root = createRoot(document.getElementById("root")!);
+    let api: ToastState | null = null;
+
+    function Probe(): null {
+      api = useToast();
+      return null;
+    }
+
+    try {
+      flushSync(() =>
+        root.render(
+          <ToastProvider viewport="inline">
+            <Probe />
+          </ToastProvider>,
+        )
+      );
+      flushSync(() => api!.toast({ icon: 0, title: 0, description: "", duration: Infinity }));
+      const surface = document.querySelector<HTMLElement>('li[role="status"]')!;
+      const icon = surface.querySelector<HTMLElement>('[aria-hidden="true"]')!;
+      const body = [...surface.children].find((element) => element.tagName === "DIV")!;
+      assert(icon.textContent === "0", "renders a numeric zero icon");
+      assert(body.children.length === 2, "renders both nullish-distinct content nodes");
+      assert(body.children[0]!.textContent === "0", "renders a numeric zero title");
+      assert(body.children[1]!.textContent === "", "renders an empty-string description");
+    } finally {
+      flushSync(() => root.unmount());
+      restore();
+    }
+  });
+
   it("hydrates the stable portal host without errors and removes its viewport on cleanup", async () => {
     const tree = (
       <ToastProvider>
@@ -626,6 +672,9 @@ function AltToastItem(
       {record.render ? record.render(record.id) : (
         <>
           <span>{record.options?.title}</span>
+          {record.options?.description !== null && record.options?.description !== undefined
+            ? <p>{record.options.description}</p>
+            : null}
           {record.options?.action
             ? (
               <button

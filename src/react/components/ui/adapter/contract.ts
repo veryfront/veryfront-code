@@ -62,12 +62,22 @@ export interface DisclosureParts {
    * both wrapper and child click handlers.
    */
   Trigger: React.FC<
-    & React.ButtonHTMLAttributes<HTMLButtonElement>
-    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> }
+    & Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "aria-controls">
+    & {
+      asChild?: boolean;
+      /** `null` explicitly suppresses an adapter fallback before public parts register. */
+      "aria-controls"?: string | null;
+      ref?: React.Ref<HTMLButtonElement>;
+    }
   >;
   /** The collapsible region, retained while closed with the native `hidden` attribute. */
   Content: React.FC<
-    React.HTMLAttributes<HTMLDivElement> & { ref?: React.Ref<HTMLDivElement> }
+    & Omit<React.HTMLAttributes<HTMLDivElement>, "aria-labelledby">
+    & {
+      /** `null` explicitly suppresses an adapter fallback before public parts register. */
+      "aria-labelledby"?: string | null;
+      ref?: React.Ref<HTMLDivElement>;
+    }
   >;
 }
 

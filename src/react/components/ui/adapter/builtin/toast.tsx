@@ -170,7 +170,7 @@ function ToastItem(
   const { icon, title, description, action, cancel, variant, duration } = record;
   return (
     <Toast variant={variant} duration={duration} onClose={onDismiss}>
-      {icon
+      {icon !== null && icon !== undefined
         ? (
           <span
             aria-hidden="true"
@@ -181,8 +181,10 @@ function ToastItem(
         )
         : null}
       <div className="flex-1 space-y-1">
-        {title ? <ToastTitle>{title}</ToastTitle> : null}
-        {description ? <ToastDescription>{description}</ToastDescription> : null}
+        {title !== null && title !== undefined ? <ToastTitle>{title}</ToastTitle> : null}
+        {description !== null && description !== undefined
+          ? <ToastDescription>{description}</ToastDescription>
+          : null}
         {action || cancel
           ? (
             <div className="mt-2 flex gap-2">

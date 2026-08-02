@@ -92,21 +92,27 @@ export function ToolbarButton({ className, ...props }: ToolbarButtonProps): Reac
 
 /** Props accepted by `<ToolbarLink>`. */
 export interface ToolbarLinkProps extends React.AnchorHTMLAttributes<HTMLAnchorElement> {
+  /** Remove the link from roving focus and suppress every activation path. */
+  disabled?: boolean;
   /** React 19: ref is a regular prop. */
   ref?: React.Ref<HTMLAnchorElement>;
 }
 
 /** An anchor styled like a {@link ToolbarButton} that joins the roving focus. */
-export function ToolbarLink({ className, ...props }: ToolbarLinkProps): React.ReactElement {
+export function ToolbarLink(
+  { className, disabled = false, ...props }: ToolbarLinkProps,
+): React.ReactElement {
   const { toolbar } = useAdapter();
   return (
     <toolbar.Item
       asChild
+      disabled={disabled}
       className={cn(
         "inline-flex h-8 min-w-8 items-center justify-center rounded-sm px-2 text-sm",
         "text-[var(--foreground)] no-underline transition-colors",
         "hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+        "aria-disabled:pointer-events-none aria-disabled:opacity-50",
         "[&_svg]:size-4 [&_svg]:shrink-0",
         className,
       )}

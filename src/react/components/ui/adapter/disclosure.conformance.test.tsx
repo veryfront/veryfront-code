@@ -11,12 +11,14 @@
 import * as React from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { UIAdapterProvider } from "./context.tsx";
 import { Slot } from "../slot.tsx";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../collapsible.tsx";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "../accordion.tsx";
 import type { DisclosureParts } from "./contract.ts";
 
 function installDom(dom: JSDOM): () => void {
@@ -72,6 +74,39 @@ function runDisclosureConformance(
   Wrap: React.FC<{ children: React.ReactNode }>,
 ): void {
   describe(`Disclosure adapter conformance: ${label}`, () => {
+    it("keeps root-owned Collapsible IDs wired during SSR", () => {
+      const html = renderToString(
+        <Wrap>
+          <Collapsible triggerId="ssr-trigger" contentId="ssr-content">
+            <DisclosureWrappedTrigger />
+            <DisclosureWrappedContent />
+          </Collapsible>
+        </Wrap>,
+      );
+      const document = new JSDOM(html).window.document;
+      const trigger = document.querySelector("button")!;
+      const content = document.querySelector<HTMLElement>("[role=region]")!;
+      assert(trigger.id === "ssr-trigger", "SSR realizes the root-owned trigger id");
+      assert(content.id === "ssr-content", "SSR realizes the root-owned content id");
+      assert(trigger.getAttribute("aria-controls") === content.id, "SSR trigger controls content");
+      assert(content.getAttribute("aria-labelledby") === trigger.id, "SSR content names trigger");
+    });
+
+    it("omits unresolved part-owned ID references during SSR", () => {
+      const html = renderToString(
+        <Wrap>
+          <DisclosureWrappedPartIdProbe />
+        </Wrap>,
+      );
+      const document = new JSDOM(html).window.document;
+      const trigger = document.querySelector("button")!;
+      const content = document.querySelector<HTMLElement>("[role=region]")!;
+      assert(trigger.id === "wrapped-trigger", "SSR preserves the part-owned trigger id");
+      assert(content.id === "wrapped-content", "SSR preserves the part-owned content id");
+      assert(trigger.getAttribute("aria-controls") === null, "SSR emits no dangling control id");
+      assert(content.getAttribute("aria-labelledby") === null, "SSR emits no dangling label id");
+    });
+
     it("starts closed, toggles content + aria-expanded on trigger click", () => {
       const { host, unmount } = render(
         <Wrap>
@@ -323,6 +358,57 @@ function runDisclosureConformance(
         unmount();
       }
     });
+
+    it("preserves an Accordion asChild trigger id and its region relationship", () => {
+      const { host, unmount } = render(
+        <Wrap>
+          <Accordion>
+            <AccordionItem value="shipping">
+              <AccordionTrigger asChild>
+                <a id="shipping-link" href="#shipping">Shipping</a>
+              </AccordionTrigger>
+              <AccordionContent>Body</AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        </Wrap>,
+      );
+      try {
+        const trigger = host.querySelector<HTMLAnchorElement>("a")!;
+        const content = host.querySelector<HTMLElement>("[role=region]")!;
+        assert(trigger.id === "shipping-link", "preserves the composed child id");
+        assert(
+          trigger.getAttribute("aria-controls") === content.id,
+          "the composed child controls the item region",
+        );
+        assert(
+          content.getAttribute("aria-labelledby") === trigger.id,
+          "the item region references the composed child id",
+        );
+      } finally {
+        unmount();
+      }
+    });
+
+    it("keeps an item-owned Accordion asChild id wired during SSR", () => {
+      const html = renderToString(
+        <Wrap>
+          <Accordion>
+            <AccordionItem value="shipping" triggerId="shipping-link">
+              <AccordionTrigger asChild>
+                <a id="shipping-link" href="#shipping">Shipping</a>
+              </AccordionTrigger>
+              <AccordionContent>Body</AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        </Wrap>,
+      );
+      const document = new JSDOM(html).window.document;
+      const trigger = document.querySelector<HTMLAnchorElement>("a")!;
+      const content = document.querySelector<HTMLElement>("[role=region]")!;
+      assert(trigger.id === "shipping-link", "SSR preserves the composed child id");
+      assert(trigger.getAttribute("aria-controls") === content.id, "SSR trigger controls content");
+      assert(content.getAttribute("aria-labelledby") === trigger.id, "SSR content names trigger");
+    });
   });
 }
 
@@ -437,6 +523,14 @@ function DisclosureWrappedComposedIdProbe(): React.ReactElement {
   );
 }
 
+function DisclosureWrappedTrigger(): React.ReactElement {
+  return <CollapsibleTrigger>Toggle</CollapsibleTrigger>;
+}
+
+function DisclosureWrappedContent(): React.ReactElement {
+  return <CollapsibleContent role="region">Body</CollapsibleContent>;
+}
+
 function DisclosureMultipleTriggerProbe(): React.ReactElement {
   return (
     <Collapsible>
@@ -512,7 +606,16 @@ const altDisclosure: DisclosureParts = {
       </section>
     );
   },
-  Trigger: ({ asChild, onClick, children, ref, disabled, id, ...props }) => {
+  Trigger: ({
+    asChild,
+    onClick,
+    children,
+    ref,
+    disabled,
+    id,
+    "aria-controls": ariaControls,
+    ...props
+  }) => {
     const ctx = React.useContext(AltCtx);
     const Comp = asChild ? Slot : "button";
     const isDisabled = Boolean(ctx?.disabled || disabled);
@@ -523,7 +626,7 @@ const altDisclosure: DisclosureParts = {
         ref={ref}
         id={realizedId}
         aria-expanded={ctx?.open ?? false}
-        aria-controls={ctx?.contentId}
+        aria-controls={ariaControls === null ? undefined : ariaControls ?? ctx?.contentId}
         disabled={isDisabled}
         aria-disabled={asChild && isDisabled ? true : undefined}
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
@@ -540,7 +643,7 @@ const altDisclosure: DisclosureParts = {
       </Comp>
     );
   },
-  Content: ({ children, ref, id, hidden, ...props }) => {
+  Content: ({ children, ref, id, hidden, "aria-labelledby": ariaLabelledBy, ...props }) => {
     const ctx = React.useContext(AltCtx);
     const realizedId = id ?? ctx?.contentId;
     return (
@@ -548,7 +651,7 @@ const altDisclosure: DisclosureParts = {
         {...props}
         ref={ref}
         id={realizedId}
-        aria-labelledby={props["aria-labelledby"] ?? ctx?.triggerId}
+        aria-labelledby={ariaLabelledBy === null ? undefined : ariaLabelledBy ?? ctx?.triggerId}
         data-state={ctx?.open ? "open" : "closed"}
         hidden={Boolean(hidden || !ctx?.open)}
       >

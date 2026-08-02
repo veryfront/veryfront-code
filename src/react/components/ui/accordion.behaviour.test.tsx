@@ -179,6 +179,46 @@ describe("Accordion: disclosure-slot behaviour (builtin)", () => {
     assert(content.getAttribute("aria-labelledby") === trigger.id, "opaque content names trigger");
   });
 
+  it("preserves a composed trigger child id during SSR when the item owns it", () => {
+    const html = renderToString(
+      <Accordion>
+        <AccordionItem value="shipping" triggerId="shipping-link">
+          <AccordionTrigger asChild>
+            <a id="shipping-link" href="#shipping">Shipping</a>
+          </AccordionTrigger>
+          <AccordionContent>Body</AccordionContent>
+        </AccordionItem>
+      </Accordion>,
+    );
+    const document = new JSDOM(html).window.document;
+    const trigger = document.querySelector<HTMLAnchorElement>("a")!;
+    const content = document.querySelector<HTMLElement>("[role=region]")!;
+    assert(trigger.id === "shipping-link", "SSR preserves the composed child id");
+    assert(trigger.getAttribute("aria-controls") === content.id, "SSR trigger controls content");
+    assert(content.getAttribute("aria-labelledby") === trigger.id, "SSR content names trigger");
+  });
+
+  it("keeps part-owned composed trigger references resolvable during SSR", () => {
+    const html = renderToString(
+      <Accordion>
+        <AccordionItem value="shipping">
+          <AccordionTrigger asChild>
+            <a id="shipping-link" href="#shipping">Shipping</a>
+          </AccordionTrigger>
+          <AccordionContent>Body</AccordionContent>
+        </AccordionItem>
+      </Accordion>,
+    );
+    const document = new JSDOM(html).window.document;
+    const trigger = document.querySelector<HTMLAnchorElement>("a")!;
+    const content = document.querySelector<HTMLElement>("[role=region]")!;
+    const labelId = content.getAttribute("aria-labelledby")!;
+    const label = document.getElementById(labelId);
+    assert(trigger.id === "shipping-link", "SSR preserves the composed child id");
+    assert(label?.tagName === "H3", "the containing heading labels the pre-hydration region");
+    assert(label?.contains(trigger), "the SSR label contains the composed trigger text");
+  });
+
   it("does not notify controlled or uncontrolled consumers for a non-collapsible no-op", () => {
     for (const controlled of [false, true]) {
       const values: string[] = [];

@@ -25,6 +25,8 @@
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
 import { useAdapter } from "./adapter/context.tsx";
+import { type RegisterDisclosurePart, useDisclosureIdRegistry } from "./disclosure-id-registry.ts";
+import { composeRefs } from "./slot.tsx";
 
 interface AccordionContextValue {
   value: string[];
@@ -32,7 +34,10 @@ interface AccordionContextValue {
 }
 const AccordionContext = React.createContext<AccordionContextValue | null>(null);
 interface AccordionItemContextValue {
-  triggerId: string;
+  explicitTriggerId?: string;
+  defaultTriggerId: string;
+  triggerIds: readonly string[];
+  registerTrigger: RegisterDisclosurePart;
   contentId: string;
 }
 const AccordionItemContext = React.createContext<AccordionItemContextValue | null>(null);
@@ -140,7 +145,12 @@ export function Accordion({
 export interface AccordionItemProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Identifies this section within the accordion's open value(s). */
   value: string;
-  /** Stable id for the trigger and the content's `aria-labelledby`. */
+  /**
+   * Stable id for the trigger and the content's `aria-labelledby`. Set this to
+   * a custom composed-child id when static SSR content must reference that
+   * child directly; otherwise the containing heading is the pre-hydration
+   * label.
+   */
   triggerId?: string;
   /** Stable id for the content and the trigger's `aria-controls`. */
   contentId?: string;
@@ -168,13 +178,25 @@ export function AccordionItem(
   const root = useAccordionContext();
   const open = root.value.includes(value);
   const generatedId = React.useId().replace(/[^A-Za-z0-9_-]/g, "");
-  const triggerId = explicitTriggerId ??
+  const defaultTriggerId = explicitTriggerId ??
     `vf-accordion-${generatedId}-trigger`;
   const contentId = explicitContentId ??
     `vf-accordion-${generatedId}-content`;
+  const triggerFallback = React.useMemo(() => [defaultTriggerId], [defaultTriggerId]);
+  const [triggerIds, , registerTrigger] = useDisclosureIdRegistry(
+    "trigger",
+    triggerFallback,
+  );
+  const triggerId = triggerIds.length === 1 ? triggerIds[0] : undefined;
   const itemContext = React.useMemo(
-    () => ({ triggerId, contentId }),
-    [triggerId, contentId],
+    () => ({
+      explicitTriggerId,
+      defaultTriggerId,
+      triggerIds,
+      registerTrigger,
+      contentId,
+    }),
+    [explicitTriggerId, defaultTriggerId, triggerIds, registerTrigger, contentId],
   );
   return (
     <disclosure.Root
@@ -207,20 +229,53 @@ export interface AccordionTriggerProps extends React.ButtonHTMLAttributes<HTMLBu
 
 /** The clickable header that toggles its section (via the disclosure slot). */
 export function AccordionTrigger(
-  { className, children, id, headingLevel = 3, ...props }: AccordionTriggerProps,
+  {
+    asChild,
+    className,
+    children,
+    id,
+    ref,
+    headingLevel = 3,
+    ...props
+  }: AccordionTriggerProps,
 ): React.ReactElement {
   const { disclosure } = useAdapter();
   const item = React.useContext(AccordionItemContext);
   if (!item) throw new Error("AccordionTrigger must be used within <AccordionItem>");
-  if (id !== undefined && id !== item.triggerId) {
+  const childId = asChild && React.isValidElement<{ id?: string }>(children)
+    ? children.props.id
+    : undefined;
+  if (id !== undefined && childId !== undefined && id !== childId) {
+    throw new Error("AccordionTrigger id must match its composed child's id");
+  }
+  const declaredId = id ?? childId;
+  if (
+    item.explicitTriggerId !== undefined && declaredId !== undefined &&
+    declaredId !== item.explicitTriggerId
+  ) {
     throw new Error("AccordionTrigger id must match the triggerId owned by AccordionItem");
   }
-  const realizedId = id ?? item.triggerId;
+  const realizedId = declaredId ?? item.defaultTriggerId;
+  const generatedId = React.useId().replace(/[^A-Za-z0-9_-]/g, "");
+  const registrationKey = `accordion-trigger-${generatedId}`;
+  const registrationRef = React.useCallback<React.RefCallback<HTMLButtonElement>>(
+    (node) => node === null ? undefined : item.registerTrigger(registrationKey, realizedId),
+    [item.registerTrigger, registrationKey, realizedId],
+  );
+  const composedRef = React.useMemo(
+    () => composeRefs<HTMLButtonElement>(registrationRef, ref),
+    [registrationRef, ref],
+  );
   const Heading = `h${headingLevel}` as "h2" | "h3" | "h4" | "h5" | "h6";
+  const fallbackHeadingId = realizedId === item.defaultTriggerId
+    ? undefined
+    : item.defaultTriggerId;
   return (
-    <Heading>
+    <Heading id={fallbackHeadingId}>
       <disclosure.Trigger
+        asChild={asChild}
         id={realizedId}
+        ref={composedRef}
         aria-controls={item.contentId}
         className={cn(
           "flex w-full items-center justify-between gap-2 py-3 text-left text-base font-medium",
@@ -245,7 +300,13 @@ export interface AccordionContentProps extends React.HTMLAttributes<HTMLDivEleme
 
 /** The section body: retained in the DOM and hidden while its section is closed. */
 export function AccordionContent(
-  { className, children, id, ...props }: AccordionContentProps,
+  {
+    className,
+    children,
+    id,
+    "aria-labelledby": ariaLabelledBy,
+    ...props
+  }: AccordionContentProps,
 ): React.ReactElement | null {
   const { disclosure } = useAdapter();
   const item = React.useContext(AccordionItemContext);
@@ -258,7 +319,7 @@ export function AccordionContent(
     <disclosure.Content
       id={realizedId}
       role="region"
-      aria-labelledby={item.triggerId}
+      aria-labelledby={ariaLabelledBy ?? item.triggerIds.join(" ")}
       className={cn("pb-3 text-base text-[var(--muted-foreground)]", className)}
       {...props}
     >

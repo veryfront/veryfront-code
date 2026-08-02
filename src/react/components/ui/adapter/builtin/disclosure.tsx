@@ -69,7 +69,16 @@ const DisclosureRoot: DisclosureParts["Root"] = (
 };
 
 const DisclosureTrigger: DisclosureParts["Trigger"] = (
-  { asChild, onClick, children, ref, disabled, id, ...props },
+  {
+    asChild,
+    onClick,
+    children,
+    ref,
+    disabled,
+    id,
+    "aria-controls": ariaControls,
+    ...props
+  },
 ) => {
   const ctx = useDisclosureContext("Disclosure Trigger");
   const Comp = asChild ? Slot : "button";
@@ -89,7 +98,7 @@ const DisclosureTrigger: DisclosureParts["Trigger"] = (
       ref={ref}
       id={realizedId}
       aria-expanded={ctx.open}
-      aria-controls={props["aria-controls"] ?? ctx.contentId}
+      aria-controls={ariaControls === null ? undefined : ariaControls ?? ctx.contentId}
       aria-disabled={asChild && isDisabled ? true : undefined}
       data-state={ctx.open ? "open" : "closed"}
       disabled={isDisabled}
@@ -108,7 +117,7 @@ const DisclosureTrigger: DisclosureParts["Trigger"] = (
 };
 
 const DisclosureContent: DisclosureParts["Content"] = (
-  { children, ref, id, hidden, ...props },
+  { children, ref, id, hidden, "aria-labelledby": ariaLabelledBy, ...props },
 ) => {
   const ctx = useDisclosureContext("Disclosure Content");
   const realizedId = id ?? ctx.contentId;
@@ -117,7 +126,7 @@ const DisclosureContent: DisclosureParts["Content"] = (
       {...props}
       ref={ref}
       id={realizedId}
-      aria-labelledby={props["aria-labelledby"] ?? ctx.triggerId}
+      aria-labelledby={ariaLabelledBy === null ? undefined : ariaLabelledBy ?? ctx.triggerId}
       data-state={ctx.open ? "open" : "closed"}
       hidden={Boolean(hidden || !ctx.open)}
     >
