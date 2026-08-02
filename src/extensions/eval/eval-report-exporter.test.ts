@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { EvalReport } from "veryfront/eval";
 import {
@@ -151,6 +151,47 @@ describe("EvalReportExporterRegistry", () => {
     });
   });
 
+  it("uses call-time exporter membership throughout an in-flight export", async () => {
+    const registry = createEvalReportExporterRegistry();
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const calls: string[] = [];
+
+    registry.register({
+      id: "blocking",
+      async export() {
+        calls.push("blocking");
+        started.resolve();
+        await release.promise;
+      },
+    });
+    registry.register({
+      id: "registered-at-start",
+      export() {
+        calls.push("registered-at-start");
+      },
+    });
+
+    const inFlight = registry.export(createReport());
+    await started.promise;
+
+    registry.unregister("registered-at-start");
+    registry.register({
+      id: "registered-late",
+      export() {
+        calls.push("registered-late");
+      },
+    });
+    release.resolve();
+
+    const results = await inFlight;
+    assertEquals(calls, ["blocking", "registered-at-start"]);
+    assertEquals(results.map((result) => result.exporterId), [
+      "blocking",
+      "registered-at-start",
+    ]);
+  });
+
   it("continues exporting when one exporter fails", async () => {
     const registry = createEvalReportExporterRegistry();
     let secondExporterCalled = false;
@@ -175,6 +216,77 @@ describe("EvalReportExporterRegistry", () => {
       { exporterId: "offline", ok: false, error: "backend unavailable" },
       { exporterId: "langsmith", ok: true },
     ]);
+  });
+
+  it("continues after a thrown value whose coercion also throws", async () => {
+    const registry = createEvalReportExporterRegistry();
+    let secondExporterCalled = false;
+    const hostileThrownValue = {
+      toString(): string {
+        throw new Error("coercion escaped");
+      },
+    };
+
+    registry.register({
+      id: "hostile",
+      export() {
+        throw hostileThrownValue;
+      },
+    });
+    registry.register({
+      id: "healthy",
+      export() {
+        secondExporterCalled = true;
+      },
+    });
+
+    assertEquals(await registry.export(createReport()), [
+      {
+        exporterId: "hostile",
+        ok: false,
+        error: "[unprintable thrown value]",
+      },
+      { exporterId: "healthy", ok: true },
+    ]);
+    assert(secondExporterCalled);
+  });
+
+  it("captures the exporter id once at registration", async () => {
+    const registry = createEvalReportExporterRegistry();
+    let idReads = 0;
+    const exporter = {
+      get id(): string {
+        idReads++;
+        if (idReads > 1) throw new Error("id read more than once");
+        return "stable";
+      },
+      export() {},
+    };
+
+    registry.register(exporter);
+
+    assertEquals(await registry.export(createReport()), [
+      { exporterId: "stable", ok: true },
+    ]);
+    assertEquals(idReads, 1);
+  });
+
+  it("rejects malformed exporter registrations", () => {
+    const registry = createEvalReportExporterRegistry();
+
+    assertThrows(
+      () => registry.register({ id: " ", export() {} }),
+      TypeError,
+      "non-empty canonical string",
+    );
+    assertThrows(
+      () =>
+        registry.register({
+          id: "missing-export",
+        } as never),
+      TypeError,
+      'method "export"',
+    );
   });
 
   it("redacts export context metadata unless keys are explicitly allowed", async () => {

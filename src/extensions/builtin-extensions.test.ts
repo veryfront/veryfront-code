@@ -1,8 +1,9 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { register, reset, tryResolve } from "./contracts.ts";
 import type { EvalReportExporterRegistry } from "./eval/index.ts";
 import { EvalReportExporterRegistryName } from "./eval/index.ts";
+import type { Extension } from "./types.ts";
 import type { SchemaValidator } from "./schema/index.ts";
 import {
   createBuiltinExtensions,
@@ -12,7 +13,17 @@ import {
   ensureBuiltinSchemaValidator,
   OPTIONAL_BUILTIN_EXTENSIONS,
 } from "./builtin-extensions.ts";
+import { mergeExtensions } from "./discovery.ts";
+import { getDeferredExtensionState } from "./deferred-extension.ts";
 import { createZodAdapter } from "@veryfront/ext-schema-zod";
+import { ExtensionLoader } from "./loader.ts";
+
+const noopLogger = {
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+};
 
 describe("ensureBuiltinSchemaValidator", () => {
   afterEach(() => {
@@ -86,24 +97,48 @@ describe("ensureBuiltinEvalReportExporterRegistry", () => {
 });
 
 describe("createBuiltinExtensions", () => {
-  it("declares the built-in AuthProvider extension contract", () => {
-    const authExtension = createBuiltinExtensions().find((entry) =>
+  async function loadOptionalBuiltin(name: string): Promise<Extension> {
+    const candidate = createBuiltinExtensions().find((entry) => entry.extension.name === name);
+    assert(candidate);
+    const deferred = getDeferredExtensionState(candidate);
+    assert(deferred);
+    const extension = await deferred.load(noopLogger);
+    assert(extension);
+    return extension;
+  }
+
+  it("uses the loaded AuthProvider extension contract as runtime metadata", async () => {
+    const authExtension = await loadOptionalBuiltin("ext-auth-jwt");
+
+    assertEquals(
+      Object.hasOwn(authExtension.provides ?? {}, "AuthProvider") ||
+        authExtension.contracts?.provides?.includes("AuthProvider"),
+      true,
+    );
+  });
+
+  it("uses the loaded OpenTelemetry contracts as runtime metadata", async () => {
+    const otelExtension = await loadOptionalBuiltin(
+      "ext-observability-opentelemetry",
+    );
+
+    assertEquals(
+      otelExtension.contracts?.provides?.includes("TracingExporter"),
+      true,
+    );
+    assertEquals(
+      otelExtension.contracts?.provides?.includes("NodeTelemetryProvider"),
+      true,
+    );
+  });
+
+  it("keeps optional candidates deferred until the loader selects them", () => {
+    const authCandidate = createBuiltinExtensions().find((entry) =>
       entry.extension.name === "ext-auth-jwt"
     );
 
-    assertEquals(authExtension?.extension.contracts?.provides?.includes("AuthProvider"), true);
-  });
-
-  it("declares the OpenTelemetry observability extension contracts", () => {
-    const otelExtension = createBuiltinExtensions().find((entry) =>
-      entry.extension.name === "ext-observability-opentelemetry"
-    );
-
-    assertEquals(otelExtension?.extension.contracts?.provides?.includes("TracingExporter"), true);
-    assertEquals(
-      otelExtension?.extension.contracts?.provides?.includes("NodeTelemetryProvider"),
-      true,
-    );
+    assert(authCandidate);
+    assert(getDeferredExtensionState(authCandidate));
   });
 
   it("never auto-loads the explicit Node WebSocket implementation", async () => {
@@ -133,33 +168,94 @@ describe("createBuiltinExtensions", () => {
   });
 
   it("skips unavailable optional built-in implementations", async () => {
-    const extension = createOptionalBuiltinExtension({
+    const candidate = createOptionalBuiltinExtension({
       name: "ext-missing",
       origin: "veryfront/ext-missing",
       sourceDirectory: "ext-missing",
-      contracts: { provides: ["MissingContract"] },
-      capabilities: [],
-    }).extension;
-
-    const logs: string[] = [];
-    await extension.setup?.({
-      get: () => undefined,
-      require: () => {
-        throw new Error("not used");
-      },
-      provide: () => {
-        throw new Error("should not provide when implementation is missing");
-      },
-      config: {},
-      logger: {
-        debug: (message) => logs.push(message),
-        info: () => {},
-        warn: () => {},
-        error: () => {},
-      },
     });
 
+    const logs: string[] = [];
+    const deferred = getDeferredExtensionState(candidate);
+    assert(deferred);
+    const loaded = await deferred.load({
+      debug: (message) => logs.push(message),
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+    });
+
+    assertEquals(loaded, undefined);
     assertEquals(logs.some((message) => message.includes("ext-missing")), true);
+  });
+
+  it("rejects an invalid optional built-in factory result", async () => {
+    const candidate = createOptionalBuiltinExtension({
+      name: "ext-invalid",
+      origin: "veryfront/ext-invalid",
+      sourceDirectory: "ext-invalid",
+      factory: () => null as unknown as Extension,
+    });
+
+    await assertRejects(
+      () => getDeferredExtensionState(candidate)!.load(noopLogger),
+      Error,
+      "returned an invalid extension",
+    );
+  });
+
+  it("rejects optional factory identity drift", async () => {
+    const candidate = createOptionalBuiltinExtension({
+      name: "ext-expected",
+      origin: "veryfront/ext-expected",
+      sourceDirectory: "ext-expected",
+      factory: () => ({
+        name: "ext-unexpected",
+        version: "1.0.0",
+        capabilities: [],
+      }),
+    });
+
+    await assertRejects(
+      () => getDeferredExtensionState(candidate)!.load(noopLogger),
+      Error,
+      'returned extension "ext-unexpected"',
+    );
+  });
+
+  it("does not materialize a builtin hidden by a higher-priority extension", async () => {
+    let factoryCalls = 0;
+    const deferred = createOptionalBuiltinExtension({
+      name: "ext-overridden",
+      origin: "veryfront/ext-overridden",
+      sourceDirectory: "ext-overridden",
+      factory: () => {
+        factoryCalls++;
+        return {
+          name: "ext-overridden",
+          version: "1.0.0",
+          capabilities: [],
+        };
+      },
+    });
+    const explicit: Extension = {
+      name: "ext-overridden",
+      version: "2.0.0",
+      capabilities: [],
+    };
+    const merged = mergeExtensions(
+      [{ extension: explicit, source: "config", origin: "config" }],
+      [],
+      [],
+      [],
+      undefined,
+      [deferred],
+    );
+    const loader = new ExtensionLoader(noopLogger);
+
+    await loader.setupAll(merged, {});
+
+    assertEquals(factoryCalls, 0);
+    await loader.teardownAll();
   });
 
   it("declares explicit eval exporter ids for optional exporter builtins", () => {
@@ -168,7 +264,6 @@ describe("createBuiltinExtensions", () => {
     );
 
     assertEquals(mlflow?.evalExporterId, "mlflow");
-    assertEquals(typeof mlflow?.factory, "function");
   });
 
   it("builds a minimal eval CLI builtin set for selected eval exporters", () => {
