@@ -129,6 +129,37 @@ describe("Redis runtime provider owned clients", () => {
     assertEquals(client.disconnectCalls, 1);
   });
 
+  it("treats a client closed by a failed connect as already disposed", async () => {
+    const connectError = new Error("connect failed");
+    let isOpen = true;
+    const client = createClient({
+      connect: () => {
+        isOpen = false;
+        return Promise.reject(connectError);
+      },
+      disconnect: () => Promise.reject(new Error("closed client must not be disconnected")),
+    });
+    Object.defineProperty(client, "isOpen", {
+      configurable: true,
+      get: () => isOpen,
+    });
+    const provider = createRedisRuntimeProvider({
+      clientManagerDependencies: {
+        getEnv: () => undefined,
+        loadFactory: () => Promise.resolve(() => client),
+      },
+    });
+
+    const openingError = await assertRejects(() =>
+      provider.openClient({ url: "redis://cache.example.test" })
+    );
+    assertEquals(openingError, connectError);
+
+    await provider.close();
+    await provider.close();
+    assertEquals(client.disconnectCalls, 0);
+  });
+
   it("disconnects again when an aborted connection settles late", async () => {
     let connectStartedResolve: (() => void) | undefined;
     const connectStarted = new Promise<void>((resolve) => {

@@ -19,6 +19,7 @@ interface CapturedRedisEventPublisherConfig {
 export type RedisEventListener = (message: string) => void;
 
 export interface RedisEventPublisherClient {
+  readonly isOpen?: boolean;
   on(event: "error", listener: (error: unknown) => void): unknown;
   connect(): Promise<void>;
   publish(channel: string, message: string): Promise<number>;
@@ -292,7 +293,7 @@ class InternalRedisEventPublisher implements RedisEventPublisherImplementation {
     }
 
     const attempt = Promise.resolve()
-      .then(() => client.close())
+      .then(() => client.isOpen === false ? undefined : client.close())
       .then(
         () => {
           this.resources.delete(client);
