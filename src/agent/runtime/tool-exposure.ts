@@ -324,9 +324,8 @@ export function createToolSearchDefinition(): ToolDefinition {
       properties: {
         query: {
           type: "string",
-          maxLength: TOOL_SEARCH_QUERY_MAX_BYTES,
           description:
-            "One exact tool name when known, or one short capability phrase. Do not combine alternatives.",
+            `One exact tool name when known, or one short capability phrase. UTF-8 input must be at most ${TOOL_SEARCH_QUERY_MAX_BYTES} bytes. Do not combine alternatives.`,
         },
       },
     },

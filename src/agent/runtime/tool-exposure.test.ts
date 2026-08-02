@@ -204,13 +204,30 @@ it("tool search falls back to deterministic whitespace terms after a phrase miss
 
 it("tool_search tells the model to search before declaring a requested tool unavailable", () => {
   const search = createToolSearchDefinition();
+  const querySchema = (search.parameters as {
+    properties?: { query?: { description?: string; maxLength?: number } };
+  }).properties?.query;
 
   assert(search.description.includes("before declaring a requested tool unavailable"));
   assertEquals(
-    (search.parameters as { properties?: { query?: { description?: string } } }).properties?.query
-      ?.description,
-    "One exact tool name when known, or one short capability phrase. Do not combine alternatives.",
+    querySchema?.description,
+    "One exact tool name when known, or one short capability phrase. UTF-8 input must be at most 256 bytes. Do not combine alternatives.",
   );
+  assertEquals(querySchema?.maxLength, undefined);
+});
+
+it("tool search enforces query limits in UTF-8 bytes", () => {
+  const search = (query: string) =>
+    searchToolExposure({
+      query,
+      authorized: [definition("matching_tool", query)],
+      state: createToolExposureState(),
+    }).matches.map((match) => match.name);
+
+  assertEquals(search("a".repeat(256)), ["matching_tool"]);
+  assertEquals(search("a".repeat(257)), []);
+  assertEquals(search("💥".repeat(64)), ["matching_tool"]);
+  assertEquals(search("💥".repeat(65)), []);
 });
 
 it("tool search breaks equal-rank ties by raw ASCII name order", () => {
