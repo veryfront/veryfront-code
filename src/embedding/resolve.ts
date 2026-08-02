@@ -1,6 +1,7 @@
 import { createError, toError } from "#veryfront/errors";
 import { getGoogleGenAIEnvConfig, getOpenAIEnvConfig } from "#veryfront/config/env.ts";
 import { createOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import { DEFAULT_GOOGLE_BASE_URL } from "#veryfront/provider/runtime-loader/provider-endpoints.ts";
 import { createLocalEmbeddingModel } from "#veryfront/provider/local/embedding-runtime-adapter.ts";
 import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
@@ -82,6 +83,7 @@ function autoInitializeFromEnv(): void {
       if (provider?.createEmbedding) {
         return provider.createEmbedding(id, {
           credential: config.apiKey,
+          fetch: createOriginBoundOutboundFetch(DEFAULT_GOOGLE_BASE_URL),
         });
       }
       throw toError(

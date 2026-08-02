@@ -1056,10 +1056,22 @@ export type WorkerEgressFetch = (
   init?: RequestInit,
 ) => Promise<Response>;
 
+/** DNS-pinned transport seam used after the guard validates every address. */
+export type WorkerEgressPinnedFetch = (
+  url: URL,
+  addresses: readonly string[],
+  init: RequestInit,
+) => Promise<Response>;
+
 /** Dependencies for {@link guardedEgressFetch} (injectable for tests). */
 export interface GuardedEgressFetchDeps {
   /** Underlying fetch implementation (defaults to the global `fetch`). */
   fetchImpl?: WorkerEgressFetch;
+  /**
+   * Trusted DNS-pinned transport replacement. The guard still resolves and
+   * validates every address before invoking this seam.
+   */
+  pinnedFetch?: WorkerEgressPinnedFetch;
   /** Egress options applied to the initial URL and every redirect hop. */
   options?: WorkerEgressGuardOptions;
   /**
@@ -1141,7 +1153,7 @@ export async function guardedEgressFetch(
     let tunnel: PinnedSocksTunnel | undefined;
     let client: Deno.HttpClient | undefined;
     let response: Response;
-    let pinnedResponse: Response | undefined;
+    let pinnedResponse: Promise<Response> | undefined;
     const isNetworkRequest = hostname !== null &&
       (parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:");
     const requestInit: RequestInit = {
@@ -1170,10 +1182,10 @@ export async function guardedEgressFetch(
             : parsedUrl.protocol === "https:"
             ? 443
             : 80;
-          if ((isNode || isBun) && deps.runtime === undefined) {
-            pinnedResponse = await waitForOperation(
-              fetchWithPinnedAddresses(parsedUrl, addresses, requestInit),
-              requestInit.signal ?? undefined,
+          if (deps.pinnedFetch || (isNode || isBun) && deps.runtime === undefined) {
+            const pinnedFetch = deps.pinnedFetch ?? fetchWithPinnedAddresses;
+            pinnedResponse = Promise.resolve().then(() =>
+              pinnedFetch(parsedUrl, addresses, requestInit)
             );
           } else {
             tunnel = startPinnedSocksTunnel(hostname, addresses, port, getRuntime());
@@ -1183,7 +1195,7 @@ export async function guardedEgressFetch(
       }
 
       const pendingResponse = pinnedResponse
-        ? Promise.resolve(pinnedResponse)
+        ? pinnedResponse
         : Promise.resolve().then(() =>
           doFetch(url, {
             ...requestInit,

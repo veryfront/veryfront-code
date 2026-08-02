@@ -7,6 +7,22 @@
 import type { ClientRequest, IncomingMessage, RequestOptions } from "node:http";
 import type { Readable } from "node:stream";
 
+const NULL_BODY_STATUSES = new Set([204, 205, 304]);
+
+/** @internal Construct a Fetch response without violating null-body statuses. */
+export function createPinnedFetchResponse(
+  status: number,
+  statusText: string,
+  headers: Headers,
+  body: BodyInit | null,
+): Response {
+  return new Response(NULL_BODY_STATUSES.has(status) ? null : body, {
+    status,
+    statusText,
+    headers,
+  });
+}
+
 function addressFamily(address: string): 4 | 6 {
   return address.includes(":") ? 6 : 4;
 }
@@ -171,6 +187,23 @@ export async function fetchWithPinnedAddresses(
       responseMessage = message;
       try {
         const responseHeaders = copyResponseHeaders(message);
+        const status = message.statusCode ?? 500;
+        if (NULL_BODY_STATUSES.has(status)) {
+          message.once("end", cleanupAbortListener);
+          message.once("close", cleanupAbortListener);
+          message.once("error", cleanupAbortListener);
+          // Drain any protocol-invalid payload without exposing it through the
+          // Fetch response. Response rejects stream bodies for these statuses.
+          message.resume();
+          settled = true;
+          resolve(createPinnedFetchResponse(
+            status,
+            message.statusMessage ?? "",
+            responseHeaders,
+            null,
+          ));
+          return;
+        }
         const decoded = await decodeResponseBody(message, responseHeaders);
         decoded.once("end", cleanupAbortListener);
         decoded.once("close", cleanupAbortListener);
@@ -178,13 +211,12 @@ export async function fetchWithPinnedAddresses(
         const { Readable } = await import("node:stream");
         const webBody = Readable.toWeb(decoded) as globalThis.ReadableStream<Uint8Array>;
         settled = true;
-        resolve(
-          new Response(webBody, {
-            status: message.statusCode ?? 500,
-            statusText: message.statusMessage ?? "",
-            headers: responseHeaders,
-          }),
-        );
+        resolve(createPinnedFetchResponse(
+          status,
+          message.statusMessage ?? "",
+          responseHeaders,
+          webBody,
+        ));
       } catch (error) {
         rejectBeforeResponse(error);
       }

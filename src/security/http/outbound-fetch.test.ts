@@ -113,14 +113,16 @@ describe("guardedOutboundFetch", () => {
       captured = new Request(input, init);
       return Response.json({ ok: true });
     };
-    const providerFetch = createOriginBoundOutboundFetch("https://93.184.216.34/v1");
     const request = new Request("https://93.184.216.34/v1/messages", {
       method: "POST",
       headers: { "x-api-key": "provider-secret", "content-type": "application/json" },
       body: '{"message":"hello"}',
     });
 
-    const response = await withMockFetch(fetchImpl, () => providerFetch(request));
+    const response = await withMockFetch(fetchImpl, () => {
+      const providerFetch = createOriginBoundOutboundFetch("https://93.184.216.34/v1");
+      return providerFetch(request);
+    });
 
     assertEquals(response.status, 200);
     assertEquals(captured?.method, "POST");
@@ -139,16 +141,16 @@ describe("guardedOutboundFetch", () => {
         }),
       );
     };
-    const providerFetch = createOriginBoundOutboundFetch("https://93.184.216.34/v1");
-
     await assertRejects(
       () =>
-        withMockFetch(fetchImpl, () =>
-          providerFetch("https://93.184.216.34/v1/messages", {
+        withMockFetch(fetchImpl, () => {
+          const providerFetch = createOriginBoundOutboundFetch("https://93.184.216.34/v1");
+          return providerFetch("https://93.184.216.34/v1/messages", {
             method: "POST",
             headers: { "x-api-key": "provider-secret" },
             body: "payload",
-          })),
+          });
+        }),
       OutboundRequestBlockedError,
       "unexpected redirect",
     );

@@ -473,6 +473,96 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
     return new Response(null, { status, headers: { location } });
   }
 
+  it("uses an injected pinned transport only after validating resolved addresses", async () => {
+    let fallbackFetchCalls = 0;
+    let pinnedFetchCalls = 0;
+    const response = await guardedEgressFetch(
+      "https://public.example/resource",
+      undefined,
+      {
+        fetchImpl: () => {
+          fallbackFetchCalls++;
+          return Promise.resolve(new Response("unexpected"));
+        },
+        pinnedFetch(url, addresses, init) {
+          pinnedFetchCalls++;
+          assertEquals(url.href, "https://public.example/resource");
+          assertEquals(addresses, ["93.184.216.34"]);
+          assertEquals(init.redirect, "manual");
+          return Promise.resolve(new Response("pinned"));
+        },
+        options: {
+          resolveHost: () => Promise.resolve(["93.184.216.34"]),
+        },
+      },
+    );
+
+    assertEquals(await response.text(), "pinned");
+    assertEquals(pinnedFetchCalls, 1);
+    assertEquals(fallbackFetchCalls, 0);
+  });
+
+  it("rejects unsafe addresses before invoking an injected pinned transport", async () => {
+    let pinnedFetchCalls = 0;
+    await assertRejects(
+      () =>
+        guardedEgressFetch("https://public.example/resource", undefined, {
+          pinnedFetch() {
+            pinnedFetchCalls++;
+            return Promise.resolve(new Response("unexpected"));
+          },
+          options: {
+            resolveHost: () => Promise.resolve(["10.0.0.8"]),
+          },
+        }),
+      WorkerEgressBlockedError,
+      "blocked for host",
+    );
+    assertEquals(pinnedFetchCalls, 0);
+  });
+
+  it("cancels a late pinned response when the transport ignores abort", async () => {
+    const controller = new AbortController();
+    const transportStarted = Promise.withResolvers<void>();
+    const lateResponse = Promise.withResolvers<Response>();
+    const bodyCancelled = Promise.withResolvers<void>();
+    const pending = guardedEgressFetch(
+      "https://public.example/resource",
+      { signal: controller.signal },
+      {
+        pinnedFetch() {
+          transportStarted.resolve();
+          return lateResponse.promise;
+        },
+        options: {
+          resolveHost: () => Promise.resolve(["93.184.216.34"]),
+        },
+      },
+    ).then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    await transportStarted.promise;
+    const abortReason = new Error("test abort");
+    controller.abort(abortReason);
+    assertEquals(await pending, abortReason);
+
+    lateResponse.resolve(
+      new Response(
+        new ReadableStream({
+          cancel() {
+            bodyCancelled.resolve();
+          },
+        }),
+      ),
+    );
+    await beforeDeadline(
+      bodyCancelled.promise,
+      "late pinned response body was not cancelled",
+    );
+  });
+
   it("keeps non-network fetch schemes out of the HTTP broker", async () => {
     let seenInput = "";
     const response = await guardedEgressFetch("data:text/plain,hello", undefined, {

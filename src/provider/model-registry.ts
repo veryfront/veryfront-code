@@ -23,6 +23,7 @@ import {
 import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { createOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import { DEFAULT_GOOGLE_BASE_URL } from "#veryfront/provider/runtime-loader/provider-endpoints.ts";
 import { createLocalModel } from "./local/model-runtime-adapter.ts";
 import { verifyLocalRuntime } from "./local/local-engine.ts";
 import { createVeryfrontCloudModel } from "./veryfront-cloud/provider.ts";
@@ -164,6 +165,7 @@ function autoInitializeFromEnv(): void {
       if (provider) {
         return provider.createModel(id, {
           credential: config.apiKey,
+          fetch: createOriginBoundOutboundFetch(DEFAULT_GOOGLE_BASE_URL),
         });
       }
       throw toError(

@@ -27,6 +27,21 @@ interface StoredUpload {
   createdAt: string;
 }
 
+async function beforeDeadline<T>(operation: Promise<T>, timeoutMs = 250): Promise<T> {
+  let timeout: number | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(
+      () => reject(new Error("Operation exceeded the test deadline")),
+      timeoutMs,
+    );
+  });
+  try {
+    return await Promise.race([operation, deadline]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function makeStorageKey(projectSlug: string, path: string): string {
   return `${projectSlug}:${path}`;
 }
@@ -547,6 +562,116 @@ describe("VeryfrontCloudBlobStorage", () => {
     await assertRejects(() => storage.put(input), Error, "Blob upload exceeds 5 bytes");
     assertEquals(cancelled, true);
     assertEquals(fetchCalls, 0);
+  });
+
+  it("does not await a project stream cancellation that never settles", async () => {
+    let cancelCalls = 0;
+    let fetchCalls = 0;
+    globalThis.fetch = (() => {
+      fetchCalls++;
+      return Promise.resolve(new Response("unexpected"));
+    }) as typeof fetch;
+    const input = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2]));
+      },
+      cancel() {
+        cancelCalls++;
+        return new Promise<void>(() => {});
+      },
+    });
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "vf_test",
+      projectSlug: "project",
+      maxUploadBytes: 1,
+    });
+
+    await beforeDeadline(
+      assertRejects(() => storage.put(input), Error, "Blob upload exceeds 1 bytes"),
+    );
+    assertEquals(cancelCalls, 1);
+    assertEquals(fetchCalls, 0);
+  });
+
+  it("bounds blob identity and metadata before consuming the upload stream", async () => {
+    let getterCalls = 0;
+    const accessorMetadata = Object.defineProperty({}, "secret", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return "unexpected";
+      },
+    });
+    const accessorOptions = Object.defineProperty({}, "id", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return "unexpected";
+      },
+    });
+    const cases: Array<{ options: Record<string, unknown>; message: string }> = [
+      {
+        options: { id: "a".repeat(257) },
+        message: "Blob IDs must contain at most 256",
+      },
+      {
+        options: { mimeType: "x".repeat(1_025) },
+        message: "Blob mimeType exceeds 1024 bytes",
+      },
+      {
+        options: {
+          metadata: Object.fromEntries(
+            Array.from({ length: 129 }, (_, index) => [`key-${index}`, "value"]),
+          ),
+        },
+        message: "Blob metadata must contain at most 128 entries",
+      },
+      {
+        options: { metadata: { key: "x".repeat(8 * 1024 + 1) } },
+        message: 'Blob metadata value for "key" exceeds 8192 bytes',
+      },
+      {
+        options: { metadata: accessorMetadata },
+        message: "Blob metadata must contain enumerable data properties only",
+      },
+      {
+        options: accessorOptions,
+        message: 'Blob storage option "id" must be a data property',
+      },
+    ];
+
+    for (const testCase of cases) {
+      let pulls = 0;
+      let fetchCalls = 0;
+      globalThis.fetch = (() => {
+        fetchCalls++;
+        return Promise.resolve(new Response("unexpected"));
+      }) as typeof fetch;
+      const input = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            pulls++;
+            controller.close();
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      const storage = new VeryfrontCloudBlobStorage({
+        apiBaseUrl: "https://93.184.216.34",
+        apiToken: "vf_test",
+        projectSlug: "project",
+      });
+
+      await assertRejects(
+        () => storage.put(input, testCase.options as never),
+        Error,
+        testCase.message,
+      );
+      assertEquals(pulls, 0);
+      assertEquals(fetchCalls, 0);
+    }
+    assertEquals(getterCalls, 0);
   });
 
   it("times out and cancels a stalled upload stream before network access", async () => {

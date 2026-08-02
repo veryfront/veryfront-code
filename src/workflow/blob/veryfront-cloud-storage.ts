@@ -24,6 +24,14 @@ const MAX_RESPONSE_BYTES = 128 * 1024 * 1024;
 const DEFAULT_MAX_UPLOAD_BYTES = 64 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = 128 * 1024 * 1024;
 const ERROR_RESPONSE_BYTES = 8 * 1024;
+const MAX_BLOB_MIME_TYPE_BYTES = 1_024;
+const MAX_BLOB_METADATA_ENTRIES = 128;
+const MAX_BLOB_METADATA_KEY_BYTES = 256;
+const MAX_BLOB_METADATA_VALUE_BYTES = 8 * 1024;
+const MAX_BLOB_USER_METADATA_BYTES = 64 * 1024;
+const MAX_BLOB_METADATA_ENVELOPE_BYTES = 4 * 1024;
+const MAX_BLOB_METADATA_SIDECAR_BYTES = 128 * 1024;
+const textEncoder = new TextEncoder();
 
 const getUploadCreateResponseSchema = defineSchema((v) =>
   v.object({
@@ -157,6 +165,7 @@ async function readStreamBytes(
   const chunks: Uint8Array[] = [];
   let length = 0;
   let complete = false;
+  let failure: unknown;
   const read = async (): Promise<ReadableStreamReadResult<Uint8Array>> =>
     await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
       const onAbort = () => reject(signal.reason);
@@ -183,9 +192,24 @@ async function readStreamBytes(
       chunks.push(value);
       length += value.byteLength;
     }
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
-    if (!complete) await reader.cancel().catch(() => {});
-    reader.releaseLock();
+    if (!complete) {
+      // A project-owned stream can return a cancellation promise that never
+      // settles. Start cleanup, but never let it extend the operation deadline.
+      try {
+        void reader.cancel(failure ?? signal.reason).catch(() => {});
+      } catch {
+        // Cancellation is best effort after the bounded read has failed.
+      }
+    }
+    try {
+      reader.releaseLock();
+    } catch {
+      // A pending hostile read can keep the lock until cancellation settles.
+    }
   }
   const bytes = new Uint8Array(length);
   let offset = 0;
@@ -194,6 +218,132 @@ async function readStreamBytes(
     offset += chunk.byteLength;
   }
   return bytes;
+}
+
+function invalidBlobOption(detail: string): never {
+  throw INVALID_ARGUMENT.create({ detail });
+}
+
+function boundedUtf8Length(value: string, maximumBytes: number, label: string): number {
+  // UTF-8 uses at least one byte per UTF-16 code unit for valid scalar text.
+  // Reject by code-unit length first so a huge string is never encoded merely
+  // to discover that it exceeds the byte ceiling.
+  if (value.length > maximumBytes) {
+    return invalidBlobOption(`${label} exceeds ${maximumBytes} bytes`);
+  }
+  const length = textEncoder.encode(value).byteLength;
+  if (length > maximumBytes) {
+    return invalidBlobOption(`${label} exceeds ${maximumBytes} bytes`);
+  }
+  return length;
+}
+
+function normalizeMimeType(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || value !== value.trim()) {
+    return invalidBlobOption("Blob mimeType must be a non-empty trimmed string");
+  }
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit <= 0x1f || codeUnit === 0x7f) {
+      return invalidBlobOption("Blob mimeType must not contain control characters");
+    }
+  }
+  boundedUtf8Length(value, MAX_BLOB_MIME_TYPE_BYTES, "Blob mimeType");
+  return value;
+}
+
+function snapshotBlobMetadata(
+  value: unknown,
+  maximumBytes: number,
+): Record<string, string> | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return invalidBlobOption("Blob metadata must be a plain string record");
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return invalidBlobOption("Blob metadata must be a plain string record");
+  }
+
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const keys = Reflect.ownKeys(descriptors);
+  if (keys.length > MAX_BLOB_METADATA_ENTRIES) {
+    return invalidBlobOption(
+      `Blob metadata must contain at most ${MAX_BLOB_METADATA_ENTRIES} entries`,
+    );
+  }
+
+  const snapshot = Object.create(null) as Record<string, string>;
+  let rawBytes = 0;
+  for (const key of keys) {
+    if (typeof key !== "string") {
+      return invalidBlobOption("Blob metadata keys must be strings");
+    }
+    const descriptor = descriptors[key];
+    if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+      return invalidBlobOption("Blob metadata must contain enumerable data properties only");
+    }
+    if (typeof descriptor.value !== "string") {
+      return invalidBlobOption("Blob metadata values must be strings");
+    }
+    const keyBytes = boundedUtf8Length(
+      key,
+      MAX_BLOB_METADATA_KEY_BYTES,
+      "Blob metadata key",
+    );
+    const valueBytes = boundedUtf8Length(
+      descriptor.value,
+      MAX_BLOB_METADATA_VALUE_BYTES,
+      `Blob metadata value for "${key}"`,
+    );
+    if (rawBytes > maximumBytes - keyBytes - valueBytes) {
+      return invalidBlobOption(`Blob metadata exceeds ${maximumBytes} bytes`);
+    }
+    rawBytes += keyBytes + valueBytes;
+    snapshot[key] = descriptor.value;
+  }
+
+  const serialized = JSON.stringify(snapshot);
+  boundedUtf8Length(serialized, maximumBytes, "Blob metadata");
+  return snapshot;
+}
+
+function snapshotStoreBlobOptions(value: unknown): {
+  id: unknown;
+  mimeType: unknown;
+  metadata: unknown;
+  ttl: unknown;
+} {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return invalidBlobOption("Blob storage options must be a plain object");
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return invalidBlobOption("Blob storage options must be a plain object");
+  }
+
+  const read = (name: string): unknown => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, name);
+    if (!descriptor) return undefined;
+    if (!("value" in descriptor)) {
+      return invalidBlobOption(`Blob storage option "${name}" must be a data property`);
+    }
+    return descriptor.value;
+  };
+  return {
+    id: read("id"),
+    mimeType: read("mimeType"),
+    metadata: read("metadata"),
+    ttl: read("ttl"),
+  };
+}
+
+function normalizeBlobTtl(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    return invalidBlobOption("Blob ttl must be a non-negative safe integer");
+  }
+  return value;
 }
 
 async function readErrorBody(response: Response, signal: AbortSignal): Promise<string> {
@@ -323,15 +473,23 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     const resolved = this.resolveConfig();
     const scope = createRequestScope(resolved.requestTimeoutMs);
     try {
-      const id = options.id ?? crypto.randomUUID();
-      const mimeType = options.mimeType ?? "application/octet-stream";
+      const optionSnapshot = snapshotStoreBlobOptions(options);
+      const id = optionSnapshot.id ?? crypto.randomUUID();
+      assertSafeBlobId(id);
+      const mimeType = normalizeMimeType(
+        optionSnapshot.mimeType ?? "application/octet-stream",
+      );
+      const metadata = snapshotBlobMetadata(
+        optionSnapshot.metadata,
+        Math.min(resolved.maxUploadBytes, MAX_BLOB_USER_METADATA_BYTES),
+      );
       const { body, size } = await normalizeUploadBody(
         data,
         resolved.maxUploadBytes,
         scope.signal,
       );
       const createdAt = resolved.now();
-      const ttl = options.ttl ?? resolved.defaultTtl;
+      const ttl = normalizeBlobTtl(optionSnapshot.ttl ?? resolved.defaultTtl);
       const expiresAt = ttl ? new Date(createdAt.getTime() + ttl * 1000) : undefined;
 
       const blobRef: BlobRef = {
@@ -341,7 +499,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
         mimeType,
         createdAt,
         expiresAt,
-        metadata: options.metadata,
+        metadata,
       };
 
       const metadataPayload = BlobMetadataSchema.parse({
@@ -351,12 +509,21 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
         mimeType,
         createdAt: createdAt.toISOString(),
         expiresAt: expiresAt?.toISOString(),
-        metadata: options.metadata,
+        metadata,
       });
 
       const dataPath = this.getDataPath(id, resolved.prefix);
       const metadataPath = this.getMetadataPath(id, resolved.prefix);
       const metadataBytes = new TextEncoder().encode(JSON.stringify(metadataPayload));
+      const metadataSidecarLimit = Math.min(
+        MAX_BLOB_METADATA_SIDECAR_BYTES,
+        resolved.maxUploadBytes + MAX_BLOB_METADATA_ENVELOPE_BYTES,
+      );
+      if (metadataBytes.byteLength > metadataSidecarLimit) {
+        throw INVALID_ARGUMENT.create({
+          detail: `Blob metadata sidecar exceeds ${metadataSidecarLimit} bytes`,
+        });
+      }
 
       await this.uploadFile(dataPath, mimeType, size, body, resolved, scope.signal);
 
