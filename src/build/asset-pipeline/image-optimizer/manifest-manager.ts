@@ -2,6 +2,9 @@ import { join } from "#veryfront/compat/path/index.ts";
 import { logger } from "#veryfront/utils";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
 import {
+  MAX_IMAGE_OPTIMIZATION_ENGINE_IDENTITY_CHARACTERS,
+} from "#veryfront/extensions/image/index.ts";
+import {
   createFileSystem,
   type FileSystem,
   isNotFoundError,
@@ -124,7 +127,20 @@ function isPositiveFinite(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
-function isImageVariant(value: unknown): value is ImageVariant {
+function isQuality(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 1 && (value as number) <= 100;
+}
+
+function isEngineIdentity(value: unknown): value is string {
+  return typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= MAX_IMAGE_OPTIMIZATION_ENGINE_IDENTITY_CHARACTERS &&
+    value.trim() === value &&
+    value.normalize("NFC") === value &&
+    !hasControlCharacters(value);
+}
+
+function isImageVariant(value: unknown, quality: number): value is ImageVariant {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
@@ -142,7 +158,8 @@ function isImageVariant(value: unknown): value is ImageVariant {
     variant.height! > 0 &&
     variant.height! <= MAX_IMAGE_DIMENSION &&
     Number.isSafeInteger(variant.fileSize) &&
-    variant.fileSize! > 0;
+    variant.fileSize! > 0 &&
+    variant.quality === quality;
 }
 
 function variantFingerprint(variant: ImageVariant): string {
@@ -153,6 +170,7 @@ function variantFingerprint(variant: ImageVariant): string {
     variant.height,
     variant.path,
     variant.fileSize,
+    variant.quality,
   ]);
 }
 
@@ -161,12 +179,13 @@ function normalizeLegacyDuplicateVariants(value: unknown): unknown {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
   const metadata = value as Partial<OptimizedImageMetadata>;
   if (!Array.isArray(metadata.variants)) return value;
+  if (!isQuality(metadata.quality)) return value;
 
   const fingerprints = new Set<string>();
   const variants: ImageVariant[] = [];
   let removedDuplicate = false;
   for (const candidate of metadata.variants as unknown[]) {
-    if (!isImageVariant(candidate)) return value;
+    if (!isImageVariant(candidate, metadata.quality)) return value;
     const fingerprint = variantFingerprint(candidate);
     if (fingerprints.has(fingerprint)) {
       removedDuplicate = true;
@@ -195,7 +214,9 @@ function isOptimizedImageMetadata(
     metadata.variants.length === 0 ||
     typeof metadata.defaultFormat !== "string" ||
     !supportedFormats.has(metadata.defaultFormat) ||
-    !isPositiveFinite(metadata.aspectRatio)
+    !isPositiveFinite(metadata.aspectRatio) ||
+    !isEngineIdentity(metadata.engineIdentity) ||
+    !isQuality(metadata.quality)
   ) {
     return false;
   }
@@ -204,7 +225,7 @@ function isOptimizedImageMetadata(
   const variantPaths = new Set<string>();
   let hasDefaultFormat = false;
   for (const candidate of metadata.variants as unknown[]) {
-    if (!isImageVariant(candidate)) return false;
+    if (!isImageVariant(candidate, metadata.quality)) return false;
     const variant = candidate;
 
     const identity = `${variant.format}\0${variant.size}`;

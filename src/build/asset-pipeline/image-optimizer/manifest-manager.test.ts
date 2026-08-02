@@ -24,10 +24,13 @@ describe("manifest-manager", () => {
                 height: 200,
                 path: "logo-400.webp",
                 fileSize: 1234,
+                quality: 73,
               },
             ],
             defaultFormat: "webp",
             aspectRatio: 2,
+            engineIdentity: "test-image-engine@1",
+            quality: 73,
           },
         ],
       ]);
@@ -45,7 +48,47 @@ describe("manifest-manager", () => {
 
       const loaded = await loadManifest(tmpDir);
       assertEquals(loaded.size, 1);
-      assertEquals(loaded.get("logo.png")?.defaultFormat, "webp");
+      assertEquals(loaded.get("logo.png"), manifest.get("logo.png"));
+    } finally {
+      await Deno.remove(tmpDir, { recursive: true });
+    }
+  });
+
+  it("rejects missing, invalid, or inconsistent production provenance", async () => {
+    const tmpDir = await makeTempDir();
+    const manifestPath = join(tmpDir, "image-manifest.json");
+    const valid = {
+      original: "logo.png",
+      originalSize: 2048,
+      variants: [{
+        format: "webp",
+        size: 400,
+        width: 400,
+        height: 200,
+        path: "logo-400.webp",
+        fileSize: 1234,
+        quality: 73,
+      }],
+      defaultFormat: "webp",
+      aspectRatio: 2,
+      engineIdentity: "test-image-engine@1",
+      quality: 73,
+    };
+    try {
+      for (
+        const malformed of [
+          { ...valid, engineIdentity: undefined },
+          { ...valid, engineIdentity: " test-image-engine@1" },
+          { ...valid, quality: undefined },
+          { ...valid, variants: [{ ...valid.variants[0], quality: 74 }] },
+        ]
+      ) {
+        await Deno.writeTextFile(
+          manifestPath,
+          JSON.stringify({ "logo.png": malformed }),
+        );
+        await assertRejects(() => loadManifest(tmpDir), TypeError, "malformed");
+      }
     } finally {
       await Deno.remove(tmpDir, { recursive: true });
     }
@@ -103,9 +146,12 @@ describe("manifest-manager", () => {
               height: 200,
               path: "logo-400.webp",
               fileSize: 1234,
+              quality: 73,
             }],
             defaultFormat: "webp",
             aspectRatio: 2,
+            engineIdentity: "test-image-engine@1",
+            quality: 73,
           },
         }),
       );
@@ -126,6 +172,7 @@ describe("manifest-manager", () => {
       height: 200,
       path: "logo-400.webp",
       fileSize: 1234,
+      quality: 73,
     };
     try {
       await Deno.writeTextFile(
@@ -136,6 +183,8 @@ describe("manifest-manager", () => {
             variants: [variant, { ...variant }],
             defaultFormat: "webp",
             aspectRatio: 2,
+            engineIdentity: "test-image-engine@1",
+            quality: 73,
           },
         }),
       );
@@ -163,6 +212,7 @@ describe("manifest-manager", () => {
                 height: 200,
                 path: "logo-400.webp",
                 fileSize: 1234,
+                quality: 73,
               },
               {
                 format: "webp",
@@ -171,10 +221,13 @@ describe("manifest-manager", () => {
                 height: 200,
                 path: "logo-400.webp",
                 fileSize: 4321,
+                quality: 73,
               },
             ],
             defaultFormat: "webp",
             aspectRatio: 2,
+            engineIdentity: "test-image-engine@1",
+            quality: 73,
           },
         }),
       );

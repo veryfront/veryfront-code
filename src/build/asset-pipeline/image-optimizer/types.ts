@@ -17,8 +17,12 @@ export interface OptimizedImageMetadata {
   /** Source file size in bytes. Optional for manifests produced before this field existed. */
   originalSize?: number;
   variants: ImageVariant[];
-  defaultFormat: string;
+  defaultFormat: ImageFormat;
   aspectRatio: number;
+  /** Stable identity of the extension engine that produced these bytes. */
+  engineIdentity: string;
+  /** Encoding quality applied to every emitted variant. */
+  quality: number;
 }
 
 export interface ImageVariant {
@@ -28,6 +32,8 @@ export interface ImageVariant {
   height: number;
   path: string;
   fileSize: number;
+  /** Exact encoding quality used for this variant. */
+  quality: number;
 }
 
 export interface ImageOptimizationStats {
