@@ -1,9 +1,9 @@
+import { RSC_ACTION_MAX_TOP_LEVEL_ARGUMENTS } from "#veryfront/extensions/auth/index.ts";
 import { HttpStatus, jsonErrorResponse } from "#veryfront/http/responses";
-import type { ActionBody } from "./types.ts";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import type { ActionBody } from "./types.ts";
 
 const ACTION_ID_MAX_LENGTH = 512;
-const ACTION_TOP_LEVEL_ARGS_MAX_LENGTH = 50;
 const ACTION_ID_PATTERN = /^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/;
 const arrayIsArray = Array.isArray;
 const arrayPrototype = Array.prototype;
@@ -58,7 +58,7 @@ function snapshotArgs(value: unknown): unknown[] | null {
     const length = descriptorValue(descriptors.length);
     if (
       typeof length !== "number" || !numberIsSafeInteger(length) || length < 0 ||
-      length > ACTION_TOP_LEVEL_ARGS_MAX_LENGTH ||
+      length > RSC_ACTION_MAX_TOP_LEVEL_ARGUMENTS ||
       ownKeys(descriptors).length !== length + 1
     ) return null;
 

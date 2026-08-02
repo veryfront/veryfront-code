@@ -142,7 +142,9 @@ the authorization provider does not enable or replace it.
 
 Server Action arguments must be JSON-compatible: finite primitives, dense
 arrays, and plain records. Convert `FormData`, class instances, dates, and
-other application objects before calling an action. See the
+other application objects before calling an action. Each request accepts at
+most `RSC_ACTION_MAX_TOP_LEVEL_ARGUMENTS` top-level arguments; nested arrays
+use the separately documented authorization snapshot bounds. See the
 [`veryfront/extensions/auth` reference](../api-reference/veryfront/extensions.md#veryfrontextensionsauth)
 for the exact provider DTO, bounds, outcomes, timeout, cancellation, and
 generation-retirement behavior.

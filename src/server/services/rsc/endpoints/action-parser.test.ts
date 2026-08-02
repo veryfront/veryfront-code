@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { RSC_ACTION_MAX_TOP_LEVEL_ARGUMENTS } from "#veryfront/extensions/auth/index.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parseActionBody } from "./action-parser.ts";
@@ -72,7 +73,10 @@ describe("server/services/rsc/endpoints/action-parser", () => {
     it("rejects non-array and oversized args", async () => {
       assertErrorResponse(await parseActionBody({ id: "action", args: "not-array" }), 400);
       assertErrorResponse(
-        await parseActionBody({ id: "action", args: Array.from({ length: 51 }) }),
+        await parseActionBody({
+          id: "action",
+          args: Array.from({ length: RSC_ACTION_MAX_TOP_LEVEL_ARGUMENTS + 1 }),
+        }),
         400,
       );
     });

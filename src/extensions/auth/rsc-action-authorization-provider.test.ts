@@ -9,6 +9,7 @@ import {
   RSC_ACTION_AUTHORIZATION_MAX_ARGUMENT_PROPERTIES,
   RSC_ACTION_AUTHORIZATION_TERMINATION_GRACE_MS,
   RSC_ACTION_AUTHORIZATION_TIMEOUT_MS,
+  RSC_ACTION_MAX_TOP_LEVEL_ARGUMENTS,
   RscActionAuthorizationProviderName,
   snapshotRscActionAuthorizationProvider,
 } from "./rsc-action-authorization-provider.ts";
@@ -33,6 +34,7 @@ describe("extensions/auth/rsc-action-authorization-provider", () => {
   it("publishes the exact authorization deadline and argument limits", () => {
     assertEquals(RSC_ACTION_AUTHORIZATION_TIMEOUT_MS, 30_000);
     assertEquals(RSC_ACTION_AUTHORIZATION_TERMINATION_GRACE_MS, 1_000);
+    assertEquals(RSC_ACTION_MAX_TOP_LEVEL_ARGUMENTS, 50);
     assertEquals(RSC_ACTION_AUTHORIZATION_MAX_ARGUMENT_DEPTH, 64);
     assertEquals(RSC_ACTION_AUTHORIZATION_MAX_ARGUMENT_NODES, 50_000);
     assertEquals(RSC_ACTION_AUTHORIZATION_MAX_ARGUMENT_PROPERTIES, 100_000);
