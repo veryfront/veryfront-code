@@ -2,9 +2,19 @@ import * as React from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { parseChatUploadResponse, useUpload, type UseUploadResult } from "./use-upload.ts";
+import {
+  createUploadId,
+  parseChatUploadResponse,
+  useUpload,
+  type UseUploadResult,
+} from "./use-upload.ts";
 
 class PendingXMLHttpRequest {
   static instances: PendingXMLHttpRequest[] = [];
@@ -18,6 +28,7 @@ class PendingXMLHttpRequest {
   responseText = "";
   status = 0;
   aborted = false;
+  abortError: unknown;
   url = "";
 
   constructor() {
@@ -33,6 +44,7 @@ class PendingXMLHttpRequest {
   abort(): void {
     if (this.aborted) return;
     this.aborted = true;
+    if (this.abortError !== undefined) throw this.abortError;
     this.onabort?.();
   }
 
@@ -163,6 +175,95 @@ function installDom(): {
 }
 
 describe("useUpload", () => {
+  it("creates collision-resistant attachment ids with Web Crypto", () => {
+    assertEquals(
+      createUploadId({
+        randomUUID: () => "12345678-1234-4234-8234-123456789abc",
+      }),
+      "upload-12345678-1234-4234-8234-123456789abc",
+    );
+    assertEquals(
+      createUploadId({
+        getRandomValues(array) {
+          new Uint8Array(array.buffer, array.byteOffset, array.byteLength).fill(0);
+          return array;
+        },
+      }),
+      "upload-00000000-0000-4000-8000-000000000000",
+    );
+  });
+
+  it("fails closed when Web Crypto cannot provide a safe attachment id", () => {
+    assertThrows(
+      () => createUploadId(null),
+      Error,
+      "File uploads require crypto.randomUUID() or crypto.getRandomValues()",
+    );
+    assertThrows(
+      () => createUploadId({ randomUUID: () => "" }),
+      TypeError,
+      "crypto.randomUUID() returned an invalid upload identifier",
+    );
+  });
+
+  it("preserves Web Crypto error identity", () => {
+    const expected = new Error("entropy source failed");
+    let actual: unknown;
+
+    try {
+      createUploadId({
+        getRandomValues() {
+          throw expected;
+        },
+      });
+    } catch (error) {
+      actual = error;
+    }
+
+    assertStrictEquals(actual, expected);
+  });
+
+  it("releases previews and preserves the allocation error when a batch cannot finish", () => {
+    const dom = installDom();
+    let latest: UseUploadResult | null = null;
+    const createObjectURL = URL.createObjectURL;
+    const allocationError = new Error("preview allocation failed");
+    let allocationCount = 0;
+
+    try {
+      URL.createObjectURL = (blob) => {
+        allocationCount += 1;
+        if (allocationCount === 2) throw allocationError;
+        return createObjectURL(blob);
+      };
+      const Capture = (): null => {
+        latest = useUpload({ api: "/api/uploads" });
+        return null;
+      };
+      const root = createRoot(document.getElementById("root")!);
+      flushSync(() => root.render(<Capture />));
+
+      let actual: unknown;
+      try {
+        flushSync(() =>
+          latest?.upload([
+            new File(["one"], "one.png", { type: "image/png" }),
+            new File(["two"], "two.png", { type: "image/png" }),
+          ])
+        );
+      } catch (error) {
+        actual = error;
+      }
+
+      assertStrictEquals(actual, allocationError);
+      assertEquals(dom.revokedObjectURLs, ["blob:test-preview-1"]);
+      assertEquals((latest as unknown as UseUploadResult).attachments, []);
+      flushSync(() => root.unmount());
+    } finally {
+      dom.restore();
+    }
+  });
+
   it("bounds durable response bytes rather than UTF-16 code units", () => {
     const oversizedUnicode = JSON.stringify({
       url: "/uploads/report.txt",
@@ -232,6 +333,52 @@ describe("useUpload", () => {
       assertEquals(PendingXMLHttpRequest.instances[0]?.aborted, true);
       assertEquals(dom.revokedObjectURLs, ["blob:test-preview-1"]);
     } finally {
+      dom.restore();
+    }
+  });
+
+  it("finishes clear cleanup and reports transport abort errors exactly", () => {
+    const dom = installDom();
+    PendingXMLHttpRequest.instances = [];
+    const previousReportError = (globalThis as { reportError?: (error: unknown) => void })
+      .reportError;
+    const reported: unknown[] = [];
+    (globalThis as { reportError?: (error: unknown) => void }).reportError = (error) => {
+      reported.push(error);
+    };
+    let latest: UseUploadResult | null = null;
+
+    try {
+      const Capture = (): null => {
+        latest = useUpload({ api: "/api/uploads" });
+        return null;
+      };
+      const root = createRoot(document.getElementById("root")!);
+      flushSync(() => root.render(<Capture />));
+      flushSync(() =>
+        latest?.upload([
+          new File(["one"], "one.png", { type: "image/png" }),
+          new File(["two"], "two.png", { type: "image/png" }),
+        ])
+      );
+
+      const abortError = new Error("transport abort failed");
+      PendingXMLHttpRequest.instances[0]!.abortError = abortError;
+      flushSync(() => latest?.clear());
+
+      assertEquals(PendingXMLHttpRequest.instances.map((request) => request.aborted), [true, true]);
+      assertEquals(dom.revokedObjectURLs, ["blob:test-preview-1", "blob:test-preview-2"]);
+      assertEquals((latest as unknown as UseUploadResult).attachments, []);
+      assertEquals(reported.length, 1);
+      assertStrictEquals(reported[0], abortError);
+      flushSync(() => root.unmount());
+    } finally {
+      if (previousReportError) {
+        (globalThis as { reportError?: (error: unknown) => void }).reportError =
+          previousReportError;
+      } else {
+        delete (globalThis as { reportError?: (error: unknown) => void }).reportError;
+      }
       dom.restore();
     }
   });
@@ -314,6 +461,37 @@ describe("useUpload", () => {
         (latest as unknown as UseUploadResult).attachments[0]?.url,
         "https://cdn.example.com/current.txt",
       );
+      flushSync(() => root.unmount());
+    } finally {
+      dom.restore();
+    }
+  });
+
+  it("accepts a new-scope upload from a descendant layout effect during handoff", () => {
+    const dom = installDom();
+    PendingXMLHttpRequest.instances = [];
+    let latest: UseUploadResult | null = null;
+
+    try {
+      const Child = (
+        { upload, run }: { upload: UseUploadResult["upload"]; run: boolean },
+      ): null => {
+        React.useLayoutEffect(() => {
+          if (run) upload([new File(["new"], "new.txt")]);
+        }, [run, upload]);
+        return null;
+      };
+      const Capture = ({ api, run }: { api: string; run: boolean }): React.JSX.Element => {
+        latest = useUpload({ api });
+        return <Child upload={latest.upload} run={run} />;
+      };
+      const root = createRoot(document.getElementById("root")!);
+      flushSync(() => root.render(<Capture api="/old" run={false} />));
+      flushSync(() => root.render(<Capture api="/new" run />));
+
+      assertEquals(PendingXMLHttpRequest.instances.length, 1);
+      assertEquals(PendingXMLHttpRequest.instances[0]?.url, "/new");
+      assertEquals((latest as unknown as UseUploadResult).attachments.length, 1);
       flushSync(() => root.unmount());
     } finally {
       dom.restore();

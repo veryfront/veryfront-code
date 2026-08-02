@@ -304,6 +304,71 @@ different requests would share the same store.
 Use chat context providers only when nested components need direct state access.
 Prefer preset props or composition components first.
 
+## Render Markdown directly
+
+Use `veryfront/markdown` when a page or custom message surface needs the same
+renderer without the rest of the chat composition:
+
+````tsx
+import { Markdown } from "veryfront/markdown";
+
+const answer = [
+  "# Deployment result",
+  "",
+  "| Check | Result |",
+  "| --- | --- |",
+  "| Tests | Passed |",
+  "",
+  "```ts",
+  "const release = await deploy();",
+  "```",
+].join("\n");
+
+export default function Result() {
+  return <Markdown>{answer}</Markdown>;
+}
+````
+
+CommonMark and GitHub Flavored Markdown, including tables, task lists, and
+strikethrough, are server-rendered. Fenced source is also present in the server
+HTML. Shiki highlighting and Mermaid SVG rendering are browser enhancements;
+if either enhancement cannot load or render, the source remains readable.
+
+Replace fenced-code rendering without changing inline code:
+
+```tsx
+<Markdown
+  renderCodeBlock={({ language, code }) => (
+    <pre data-language={language}>
+      <code>{code}</code>
+    </pre>
+  )}
+>
+  {answer}
+</Markdown>;
+```
+
+Use `components` to replace an HTML element renderer. Consumer entries win
+over the built-in link, table, cell, blockquote, and code-fence renderers:
+
+```tsx
+<Markdown
+  components={{
+    a: ({ href, children }) => <a href={href}>{children}</a>,
+  }}
+>
+  {"Review the [Markdown section](#render-markdown-directly)."}
+</Markdown>;
+```
+
+Raw HTML and unsafe link protocols are not emitted by the default pipeline.
+`remarkPlugins`, `rehypePlugins`, and custom components execute as trusted
+application code and can change those guarantees; never build plugin lists
+from untrusted input. Remote Markdown images can initiate browser requests, so
+override the `img` component when untrusted content needs a stricter image or
+privacy policy. Bound untrusted Markdown size before rendering when the
+application accepts arbitrarily large documents.
+
 ## Verify it worked
 
 Run `veryfront dev` and open the page that renders the chat UI:
@@ -331,4 +396,6 @@ agent errors and confirm the AG-UI route is mounted.
 ## Related
 
 - [veryfront/chat](../api-reference/veryfront/chat.md): Chat components and hooks
+- [veryfront/markdown](../api-reference/veryfront/markdown.md): Markdown props
+  and renderer extension points
 - [veryfront/agent](../api-reference/veryfront/agent.md): Agent route helpers

@@ -114,6 +114,7 @@ const MAX_REGISTRY_PAGE_REQUESTS = 100;
 const MAX_UPLOAD_ID_LENGTH = 256;
 const MAX_UPLOAD_NAME_LENGTH = 4_096;
 const MAX_UPLOAD_TYPE_LENGTH = 512;
+const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -254,7 +255,7 @@ async function readBoundedJsonResponse(
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return JSON.parse(new TextDecoder().decode(bytes));
+  return JSON.parse(UTF8_DECODER.decode(bytes));
 }
 
 function load(storageKey: string): CacheLoadResult {
@@ -458,7 +459,7 @@ export function useAttachments(
   }, [scope]);
 
   const add = React.useCallback((file: UploadedFile) => {
-    if (!mountedRef.current) return;
+    if (!isCurrentScope(scope)) return;
     const admitted = toUploadedFile(file);
     if (!admitted) return;
 
@@ -474,20 +475,20 @@ export function useAttachments(
       if (prev.some((item) => item.id === admitted.id)) return prev;
       return [admitted, ...prev];
     });
-  }, [isCurrentScope]);
+  }, [isCurrentScope, scope]);
 
   const clearUploadError = React.useCallback(() => {
-    if (mountedRef.current) setUploadError(null);
-  }, []);
+    if (isCurrentScope(scope)) setUploadError(null);
+  }, [isCurrentScope, scope]);
   const clearStorageError = React.useCallback(() => {
-    if (mountedRef.current) setStorageError(null);
-  }, []);
+    if (isCurrentScope(scope)) setStorageError(null);
+  }, [isCurrentScope, scope]);
   const clearRefreshError = React.useCallback(() => {
-    if (mountedRef.current) setRefreshError(null);
-  }, []);
+    if (isCurrentScope(scope)) setRefreshError(null);
+  }, [isCurrentScope, scope]);
   const clearRemoveError = React.useCallback(() => {
-    if (mountedRef.current) setRemoveError(null);
-  }, []);
+    if (isCurrentScope(scope)) setRemoveError(null);
+  }, [isCurrentScope, scope]);
 
   const upload = React.useCallback(
     (files: FileList | File[]) => {
@@ -584,8 +585,8 @@ export function useAttachments(
   );
 
   const clear = React.useCallback(() => {
-    if (mountedRef.current) setItems([]);
-  }, []);
+    if (isCurrentScope(scope)) setItems([]);
+  }, [isCurrentScope, scope]);
 
   // The storage adapter is the source of truth: pull the full stored list so
   // the surface shows everything (other sessions, chat uploads, this tab),

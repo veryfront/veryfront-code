@@ -329,18 +329,23 @@ describe("react/components/chat/hooks/useConversations — active conversation l
     const restoreDom = installDom();
     const alpha = conversation({ id: "a", title: "Alpha" });
     const beta = conversation({ id: "b", title: "Beta" });
+    let betaRecord = beta;
     let resolveBeta: ((value: Conversation | null) => void) | undefined;
     let betaLoads = 0;
     const store: ConversationStore = {
-      list: () => Promise.resolve([alpha, beta].map(conversationSummary)),
+      list: () => Promise.resolve([alpha, betaRecord].map(conversationSummary)),
       load: (id) => {
         if (id === "a") return Promise.resolve(alpha);
         betaLoads += 1;
+        if (betaLoads > 1) return Promise.resolve(betaRecord);
         return new Promise((resolve) => {
           resolveBeta = resolve;
         });
       },
-      save: () => Promise.resolve(),
+      save: (value) => {
+        betaRecord = structuredClone(value);
+        return Promise.resolve();
+      },
       delete: () => Promise.resolve(),
     };
     try {
@@ -616,6 +621,69 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       await settle();
       await settle();
       assertEquals((await store.load("seed"))?.title, "Renamed");
+    } finally {
+      restoreDom();
+    }
+  });
+
+  it("snapshots a save command before the caller can mutate it", async () => {
+    const restoreDom = installDom();
+    const store = memoryConversationStore([conversation()]);
+    try {
+      const view = mount(store);
+      await settle();
+
+      const command = conversation({
+        title: "Command snapshot",
+        messages: [userMsg("original")],
+        updatedAt: 9,
+      });
+      view.get().save(command);
+      command.title = "Mutated later";
+      command.messages.push(userMsg("late mutation"));
+
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      await settle();
+
+      const persisted = await store.load("seed");
+      assertEquals(persisted?.title, "Command snapshot");
+      assertEquals(persisted?.messages.length, 1);
+      assertEquals(view.get().conversations[0]?.title, "Command snapshot");
+      assertEquals(view.get().conversations[0]?.messageCount, 1);
+      flushSync(() => view.root.unmount());
+      await settle();
+    } finally {
+      restoreDom();
+    }
+  });
+
+  it("adopts an authoritative list that normalizes a successful save", async () => {
+    const restoreDom = installDom();
+    const base = memoryConversationStore([conversation()]);
+    const store: ConversationStore = {
+      list: () => base.list(),
+      load: (id) => base.load(id),
+      save: (value) =>
+        base.save({
+          ...value,
+          title: `${value.title} (server)`,
+          updatedAt: value.updatedAt + 100,
+        }),
+      delete: (id) => base.delete(id),
+    };
+    try {
+      const view = mount(store);
+      await settle();
+
+      view.get().save(conversation({ title: "Client title", updatedAt: 9 }));
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      await settle();
+
+      assertEquals(view.get().conversations[0]?.title, "Client title (server)");
+      assertEquals(view.get().conversations[0]?.updatedAt, 109);
+      assertEquals(view.get().activeConversation?.title, "Client title (server)");
+      flushSync(() => view.root.unmount());
+      await settle();
     } finally {
       restoreDom();
     }
@@ -1511,6 +1579,52 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       assertEquals(saves, []);
       assertEquals(await base.load("seed"), null);
       assertEquals(view.get().conversations.map((item) => item.id), ["other"]);
+
+      flushSync(() => view.root.unmount());
+      await settle();
+    } finally {
+      restoreDom();
+    }
+  });
+
+  it("requires an explicit same-id recreation after delete confirmation cannot refresh", async () => {
+    const restoreDom = installDom();
+    const base = memoryConversationStore([
+      conversation({ id: "seed", title: "Seed", updatedAt: 20 }),
+      conversation({ id: "other", title: "Other", updatedAt: 10 }),
+    ]);
+    let rejectLists = false;
+    const store: ConversationStore = {
+      list: () => rejectLists ? Promise.reject(new Error("list offline")) : base.list(),
+      load: (id) => base.load(id),
+      save: (value) => base.save(value),
+      delete: async (id) => {
+        await base.delete(id);
+        rejectLists = true;
+      },
+    };
+    try {
+      const view = mount(store);
+      await settle();
+
+      view.get().remove("seed");
+      await settle();
+      assertEquals(await base.load("seed"), null);
+      assertEquals(view.get().error?.operation, "list");
+
+      const recreated = conversation({
+        id: "seed",
+        title: "Explicit recreation",
+        updatedAt: 30,
+      });
+      view.get().save(recreated);
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      assertEquals(await base.load("seed"), null, "ordinary late saves stay tombstoned");
+
+      view.get().save(recreated, { recreateDeleted: true });
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      await settle();
+      assertEquals((await base.load("seed"))?.title, "Explicit recreation");
 
       flushSync(() => view.root.unmount());
       await settle();

@@ -203,6 +203,54 @@ describe("hooks-adapter", () => {
     });
   });
 
+  it("surfaces native hook failures instead of switching implementations", () => {
+    const info = getReactVersionInfo();
+    if (!info.isReact18 && !info.isReact19) return;
+
+    const captureError = (call: () => unknown): Error => {
+      try {
+        call();
+      } catch (error) {
+        assert(error instanceof Error);
+        return error;
+      }
+      throw new Error("Expected the native hook to reject an invalid call site");
+    };
+    const calls: Array<readonly [string, () => unknown, () => unknown]> = [
+      [
+        "useDeferredValue",
+        () => React.useDeferredValue("value"),
+        () => useDeferredValueCompat("value"),
+      ],
+      ["useId", () => React.useId(), () => useIdCompat()],
+      ["useTransition", () => React.useTransition(), () => useTransitionCompat()],
+    ];
+    if (hasFeature("useOptimistic") && typeof React.useOptimistic === "function") {
+      calls.push([
+        "useOptimistic",
+        () => React.useOptimistic("value"),
+        () => useOptimisticCompat("value"),
+      ]);
+    }
+    const nativeUseFormStatus = (
+      React as unknown as { useFormStatus?: () => unknown }
+    ).useFormStatus;
+    if (hasFeature("useFormStatus") && nativeUseFormStatus) {
+      calls.push([
+        "useFormStatus",
+        () => nativeUseFormStatus(),
+        () => useFormStatusCompat(),
+      ]);
+    }
+
+    for (const [hookName, nativeCall, compatCall] of calls) {
+      const nativeError = captureError(nativeCall);
+      const compatError = captureError(compatCall);
+      assertEquals(compatError.name, nativeError.name, `${hookName} error class changed`);
+      assertEquals(compatError.message, nativeError.message, `${hookName} error changed`);
+    }
+  });
+
   describe("useFormStatus", () => {
     it("returns correct structure on all versions", () => {
       let formStatus: any;

@@ -172,6 +172,11 @@ A failed save remains visible in the current React tree. Treat it as
 unsaved until the adapter completes a later save.
 Deletion is confirm-on-success: the conversation remains visible while the
 adapter is deleting it, and a rejected delete leaves it available for retry.
+After deletion succeeds, ordinary `save()` calls for that id remain suppressed
+until a later list confirms its absence, preventing late stream callbacks from
+resurrecting it. To intentionally reuse the deleted id when that confirmation
+cannot complete, call
+`conversations.save(replacement, { recreateDeleted: true })` explicitly.
 
 `conversations.isLoading` covers only the initial summary-list request. Use
 `conversations.isActiveConversationLoading` when the selected conversation's
@@ -307,6 +312,10 @@ the mounted hook. `list`, `load`, `save`, and `delete` must return rejected
 promises when they cannot complete. Implement `subscribe` only when the adapter
 delivers out-of-band changes. It must throw when setup fails and return an
 unsubscribe function after setup succeeds.
+
+`save` must not resolve until a later `list` or `load` through the same store
+instance can observe the accepted record. Those reads are authoritative and
+may contain server-normalized titles, counts, or timestamps.
 
 The hook calls that unsubscribe function when its subscription scope ends. It
 never calls an injected store's optional `dispose`, including on replacement or

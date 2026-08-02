@@ -13,8 +13,13 @@
  * @module react/components/chat/hooks/use-upload
  */
 import * as React from "react";
+import {
+  scopeCommitRequiresRenderPublication,
+  useScopeCommitEffect,
+} from "#veryfront/react/compat/scope-commit-effect.ts";
 import type { AttachmentInfo } from "../components/attachment-pill.tsx";
 import { isSafeUploadId, isSafeUploadUrl, resolveSafeUploadUrl } from "../upload-url.ts";
+import { reportUnhandledError } from "./report-unhandled-error.ts";
 
 const useIsomorphicLayoutEffect = typeof document === "undefined"
   ? React.useEffect
@@ -119,18 +124,39 @@ function isImage(file: File): boolean {
   return file.type.startsWith("image/");
 }
 
-let uploadCounter = 0;
-function nextId(): string {
-  uploadCounter += 1;
-  // `crypto.randomUUID()` is preferred for global uniqueness across tabs/sessions.
-  // The counter fallback guarantees uniqueness within the current session when
-  // the Crypto API is unavailable (e.g. insecure contexts or old environments).
-  // The counter increment runs unconditionally so the fallback branch is always
-  // deterministic and never produces duplicate IDs within a session.
-  const rand = typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : String(uploadCounter);
-  return `upload-${rand}`;
+interface UploadCrypto {
+  getRandomValues?: Crypto["getRandomValues"];
+  randomUUID?: () => string;
+}
+
+/** Create a collision-resistant local attachment id from Web Crypto. */
+export function createUploadId(
+  cryptoProvider: UploadCrypto | null | undefined = globalThis.crypto,
+): string {
+  if (typeof cryptoProvider?.randomUUID === "function") {
+    const id = cryptoProvider.randomUUID();
+    if (typeof id !== "string" || id.length === 0) {
+      throw new TypeError("crypto.randomUUID() returned an invalid upload identifier");
+    }
+    return `upload-${id}`;
+  }
+
+  if (typeof cryptoProvider?.getRandomValues === "function") {
+    const bytes = new Uint8Array(16);
+    cryptoProvider.getRandomValues(bytes);
+    // RFC 4122 version 4 / variant bits make the fallback interoperable with
+    // UUID tooling while retaining 122 bits of Web Crypto entropy.
+    bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+    bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+    const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    return `upload-${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${
+      hex.slice(16, 20)
+    }-${hex.slice(20)}`;
+  }
+
+  throw new Error(
+    "File uploads require crypto.randomUUID() or crypto.getRandomValues() for collision-resistant attachment identifiers",
+  );
 }
 
 function stableHeadersKey(headers: Record<string, string> | undefined): string {
@@ -149,6 +175,15 @@ function detachOperationHandlers(operation: UploadOperation): void {
     operation.xhr.onerror = null;
     operation.xhr.onabort = null;
     operation.xhr.upload.onprogress = null;
+  }
+}
+
+function revokePreview(preview: string | undefined): void {
+  if (!preview) return;
+  try {
+    URL.revokeObjectURL(preview);
+  } catch (cause) {
+    reportUnhandledError(cause);
   }
 }
 
@@ -222,8 +257,20 @@ export function useUpload(
     const xhr = operation.xhr;
     operation.reader = undefined;
     operation.xhr = undefined;
-    if (reader && reader.readyState === reader.LOADING) reader.abort();
-    if (xhr) xhr.abort();
+    if (reader && reader.readyState === reader.LOADING) {
+      try {
+        reader.abort();
+      } catch (cause) {
+        reportUnhandledError(cause);
+      }
+    }
+    if (xhr) {
+      try {
+        xhr.abort();
+      } catch (cause) {
+        reportUnhandledError(cause);
+      }
+    }
   }, []);
 
   const start = React.useCallback(
@@ -348,18 +395,26 @@ export function useUpload(
     (files: FileList | File[]) => {
       if (!mountedRef.current || activeScopeRef.current !== scope) return;
       const list = Array.from(files);
-      const entries: Tracked[] = list.map((file) => ({
-        file,
-        info: {
-          id: nextId(),
-          name: file.name,
-          type: file.type,
-          size: file.size,
-          state: "uploading",
-          progress: 0,
-          preview: isImage(file) ? URL.createObjectURL(file) : undefined,
-        },
-      }));
+      const entries: Tracked[] = [];
+      try {
+        for (const file of list) {
+          entries.push({
+            file,
+            info: {
+              id: createUploadId(),
+              name: file.name,
+              type: file.type,
+              size: file.size,
+              state: "uploading",
+              progress: 0,
+              preview: isImage(file) ? URL.createObjectURL(file) : undefined,
+            },
+          });
+        }
+      } catch (cause) {
+        for (const entry of entries) revokePreview(entry.info.preview);
+        throw cause;
+      }
       const next = [...trackedRef.current, ...entries];
       trackedRef.current = next;
       setTracked(next);
@@ -372,7 +427,7 @@ export function useUpload(
     if (!mountedRef.current) return;
     const entry = trackedRef.current.find((t) => t.info.id === id);
     if (entry) cancelOperation(entry);
-    if (entry?.info.preview) URL.revokeObjectURL(entry.info.preview);
+    revokePreview(entry?.info.preview);
     const next = trackedRef.current.filter((t) => t.info.id !== id);
     trackedRef.current = next;
     setTracked(next);
@@ -388,17 +443,26 @@ export function useUpload(
     if (!mountedRef.current) return;
     for (const t of trackedRef.current) {
       cancelOperation(t);
-      if (t.info.preview) URL.revokeObjectURL(t.info.preview);
+      revokePreview(t.info.preview);
     }
     trackedRef.current = [];
     setTracked([]);
   }, [cancelOperation]);
 
+  if (scopeCommitRequiresRenderPublication) {
+    activeScopeRef.current = scope;
+  }
+  useScopeCommitEffect(() => {
+    activeScopeRef.current = scope;
+    return () => {
+      if (activeScopeRef.current === scope) activeScopeRef.current = null;
+    };
+  }, [scope]);
+
   // Prop changes transfer ownership to a fresh scope. Abort the previous
   // endpoint/header work and leave each affected attachment explicitly
   // retryable; callbacks from transports that ignore abort no longer own state.
   useIsomorphicLayoutEffect(() => {
-    activeScopeRef.current = scope;
     let changed = false;
     const next = trackedRef.current.map((entry) => {
       const operation = entry.operation;
@@ -422,9 +486,6 @@ export function useUpload(
       trackedRef.current = next;
       setTracked(next);
     }
-    return () => {
-      if (activeScopeRef.current === scope) activeScopeRef.current = null;
-    };
   }, [cancelOperation, scope]);
 
   React.useEffect(() => {
@@ -433,7 +494,7 @@ export function useUpload(
       mountedRef.current = false;
       for (const entry of trackedRef.current) {
         cancelOperation(entry);
-        if (entry.info.preview) URL.revokeObjectURL(entry.info.preview);
+        revokePreview(entry.info.preview);
       }
       trackedRef.current = [];
     };

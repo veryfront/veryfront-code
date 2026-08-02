@@ -91,7 +91,11 @@ export interface ConversationStore {
    * exist; reject when persistence cannot be read or decoded.
    */
   load(id: string): Promise<Conversation | null>;
-  /** Create-or-update by id (upsert). Reject unless the write completed. */
+  /**
+   * Create-or-update by id (upsert). Reject unless the write completed and a
+   * subsequent `list`/`load` from this store instance can observe it. Providers
+   * may normalize the record; those later reads are authoritative.
+   */
   save(conversation: Conversation): Promise<void>;
   /**
    * Delete a conversation. Idempotent for a missing id; reject unless deletion

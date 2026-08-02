@@ -476,6 +476,39 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
     }
   });
 
+  it("rejects invalid UTF-8 list responses without replacing the cache", async () => {
+    const restoreDom = installDom();
+    const previousFetch = globalThis.fetch;
+    const encoder = new TextEncoder();
+    const invalidResponse = new Uint8Array([
+      ...encoder.encode('{"items":[{"id":"server","name":"'),
+      0xff,
+      ...encoder.encode('","url":"/uploads/server"}]}'),
+    ]);
+    globalThis.fetch =
+      (() => Promise.resolve(new Response(invalidResponse.slice()))) as typeof fetch;
+
+    try {
+      localStorage.setItem(
+        "test-invalid-utf8-response",
+        JSON.stringify([{
+          id: "cached",
+          name: "cached.txt",
+          url: "/uploads/cached",
+        }]),
+      );
+      const reg = mount("test-invalid-utf8-response");
+      await flush(() => {});
+
+      assertEquals(reg.get().items.map((item) => item.id), ["cached"]);
+      assert(reg.get().refreshError instanceof Error);
+      flushSync(() => reg.root.unmount());
+    } finally {
+      globalThis.fetch = previousFetch;
+      restoreDom();
+    }
+  });
+
   it("surfaces failed and duplicate refreshes without erasing the cache", async () => {
     const restoreDom = installDom();
     const previousFetch = globalThis.fetch;
@@ -882,6 +915,36 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
         ),
         ["b"],
       );
+      flushSync(() => reg.root.unmount());
+    } finally {
+      fetchStub.restore();
+      restoreDom();
+    }
+  });
+
+  it("makes retained cache commands inert after a storage-scope handoff", async () => {
+    const restoreDom = installDom();
+    const fetchStub = stubFetch();
+    try {
+      localStorage.setItem(
+        "test-retained-cache-a",
+        JSON.stringify([{ id: "a", name: "a.txt", url: "/uploads/a" }]),
+      );
+      localStorage.setItem(
+        "test-retained-cache-b",
+        JSON.stringify([{ id: "b", name: "b.txt", url: "/uploads/b" }]),
+      );
+      const reg = mountOptions({ storageKey: "test-retained-cache-a" });
+      const retained = reg.get();
+
+      reg.render({ storageKey: "test-retained-cache-b" });
+      await flush(() => {});
+      flushSync(() => {
+        retained.add({ id: "stale", name: "stale.txt", url: "/uploads/stale" });
+        retained.clear();
+      });
+
+      assertEquals(reg.get().items.map((item) => item.id), ["b"]);
       flushSync(() => reg.root.unmount());
     } finally {
       fetchStub.restore();

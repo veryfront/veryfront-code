@@ -16,6 +16,8 @@ export type AttachmentState =
 /** Public API contract for attachment info. */
 export interface AttachmentInfo {
   id: string;
+  /** Storage-issued identifier returned by the durable upload endpoint. */
+  uploadId?: string;
   name: string;
   /** Legacy two-value status; prefer `state` for the full lifecycle. */
   status?: "uploading" | "ready";

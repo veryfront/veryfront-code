@@ -13,6 +13,10 @@
  */
 import * as React from "react";
 import type { ChatMessage } from "#veryfront/agent/react";
+import {
+  scopeCommitRequiresRenderPublication,
+  useScopeCommitEffect,
+} from "#veryfront/react/compat/scope-commit-effect.ts";
 import { generateUuid } from "#veryfront/utils/id.ts";
 import {
   type Conversation,
@@ -136,6 +140,16 @@ export interface ConversationPatch {
   agentId?: string;
 }
 
+/** Options for an explicit whole-conversation upsert. */
+export interface SaveConversationOptions {
+  /**
+   * Reuse an id whose deletion already succeeded but whose absence has not yet
+   * been confirmed by `list()`. Omit for ordinary chat updates so late stream
+   * callbacks cannot resurrect a deleted conversation.
+   */
+  recreateDeleted?: boolean;
+}
+
 /** Options for {@link useConversations}. */
 export interface UseConversationsOptions {
   /** Controlled active id — YOU own the source (e.g. `router.query.thread`).
@@ -181,7 +195,7 @@ export interface UseConversationsResult {
    * and it lands in the list + persists. The conversation arrives fully formed
    * (title already derived by the emitter), so this stays dumb about titling.
    */
-  save: (conversation: Conversation) => void;
+  save: (conversation: Conversation, options?: SaveConversationOptions) => void;
   /** Persist a live chat's messages + auto-title from the first user message. */
   bind: (id: string, chat: { messages: ChatMessage[] }) => void;
 }
@@ -258,19 +272,6 @@ interface DeletionBarrier {
   deferred: DeferredDeletionMutation[];
 }
 
-function summariesMatch(
-  left: ConversationSummary | undefined,
-  right: ConversationSummary,
-): boolean {
-  return left !== undefined &&
-    left.id === right.id &&
-    left.title === right.title &&
-    left.agentId === right.agentId &&
-    left.messageCount === right.messageCount &&
-    left.createdAt === right.createdAt &&
-    left.updatedAt === right.updatedAt;
-}
-
 function applyConversationPatch(
   conversation: Conversation,
   patch: ConversationPatch,
@@ -282,6 +283,18 @@ function applyConversationPatch(
     ...(patch.messages !== undefined ? { messages: patch.messages } : {}),
     ...(patch.agentId !== undefined ? { agentId: patch.agentId } : {}),
     updatedAt,
+  };
+}
+
+function snapshotConversation(conversation: Conversation): Conversation {
+  return structuredClone(conversation);
+}
+
+function snapshotConversationPatch(patch: ConversationPatch): ConversationPatch {
+  return {
+    ...(patch.title !== undefined ? { title: patch.title } : {}),
+    ...(patch.messages !== undefined ? { messages: structuredClone(patch.messages) } : {}),
+    ...(patch.agentId !== undefined ? { agentId: patch.agentId } : {}),
   };
 }
 
@@ -328,6 +341,18 @@ export function useConversations(
   const activeLoadGenerationRef = React.useRef(0);
   const activeLoadRef = React.useRef<ActiveConversationLoad | null>(null);
   const activeConversationErrorRef = React.useRef(activeConversationError);
+  const dirtyByScopeRef = React.useRef(
+    new Map<StoreScope, Map<string, DirtyConversation>>(),
+  );
+  const pendingByScopeRef = React.useRef(
+    new Map<StoreScope, Map<string, number>>(),
+  );
+  const deletionByScopeRef = React.useRef(
+    new Map<StoreScope, Map<string, DeletionBarrier>>(),
+  );
+  const deferredRefreshScopesRef = React.useRef(new Set<StoreScope>());
+  const refreshByScopeRef = React.useRef(new Map<StoreScope, () => void>());
+  const listRequestSequenceRef = React.useRef(0);
 
   const writeSummaries = React.useCallback((next: ConversationSummary[]) => {
     summariesRef.current = next;
@@ -346,7 +371,7 @@ export function useConversations(
     setActive(next);
   }, []);
 
-  React.useInsertionEffect(() => {
+  const publishScope = React.useCallback(() => {
     controlRef.current = { isControlled, onSelect };
     onErrorRef.current = onError;
     const previous = committedScopeRef.current;
@@ -367,10 +392,17 @@ export function useConversations(
       activeRef.current = null;
       pendingScopeResetRef.current = scope;
     }
+  }, [activeId, isControlled, onError, onSelect, scope]);
+  // React 17 has no insertion phase. Its renderer is synchronous, so publish
+  // during render to let descendant layout effects use the new scope; the
+  // layout effect below republishes after React runs the previous cleanup.
+  if (scopeCommitRequiresRenderPublication) publishScope();
+  useScopeCommitEffect(() => {
+    publishScope();
     return () => {
       if (activeScopeRef.current === scope) activeScopeRef.current = null;
     };
-  }, [activeId, isControlled, onError, onSelect, scope]);
+  }, [publishScope, scope]);
   useIsomorphicLayoutEffect(() => {
     if (pendingScopeResetRef.current === scope) return;
     summariesRef.current = summaries;
@@ -463,19 +495,6 @@ export function useConversations(
     });
     return result;
   }, []);
-
-  const dirtyByScopeRef = React.useRef(
-    new Map<StoreScope, Map<string, DirtyConversation>>(),
-  );
-  const pendingByScopeRef = React.useRef(
-    new Map<StoreScope, Map<string, number>>(),
-  );
-  const deletionByScopeRef = React.useRef(
-    new Map<StoreScope, Map<string, DeletionBarrier>>(),
-  );
-  const deferredRefreshScopesRef = React.useRef(new Set<StoreScope>());
-  const refreshByScopeRef = React.useRef(new Map<StoreScope, () => void>());
-  const listRequestSequenceRef = React.useRef(0);
 
   const scopeMap = React.useCallback(<T>(
     source: Map<StoreScope, Map<string, T>>,
@@ -897,8 +916,12 @@ export function useConversations(
           entry.persisted &&
           !isIdPending(candidate, id) &&
           requestId >= entry.acknowledgeFromListRequest &&
-          summariesMatch(remote, entry.summary)
+          remote !== undefined
         ) {
+          // A list request started after save acknowledgement is authoritative.
+          // Providers may normalize titles, counts, or timestamps; retaining
+          // the client summary until exact equality would mask server truth
+          // forever and leak the dirty entry.
           dirty.delete(id);
           continue;
         }
@@ -1083,13 +1106,14 @@ export function useConversations(
     if (!isCurrentScope(candidate)) return;
     const barrier = deletionBarrier(candidate, id);
     if (barrier?.status === "deleted") return;
+    const commandPatch = snapshotConversationPatch(patch);
     const now = Date.now();
     const activeConversation = activeRef.current?.id === id ? activeRef.current : null;
     const retainedConversation = dirtyByScopeRef.current.get(candidate)?.get(id)?.conversation ??
       null;
     const localConversation = activeConversation ?? retainedConversation;
     if (localConversation) {
-      const next = applyConversationPatch(localConversation, patch, now);
+      const next = applyConversationPatch(localConversation, commandPatch, now);
       if (activeConversation || activeIdRef.current === id) {
         transitionActiveConversationLoading(candidate, null, false);
         writeActive(next);
@@ -1108,7 +1132,7 @@ export function useConversations(
       return;
     }
     if (barrier) {
-      bufferDeletionMutation(barrier, { kind: "patch", patch });
+      bufferDeletionMutation(barrier, { kind: "patch", patch: commandPatch });
       return;
     }
     if (pendingSave.current?.scope === candidate && pendingSave.current.conversation.id === id) {
@@ -1120,9 +1144,11 @@ export function useConversations(
       if (!existing) return current;
       return upsertSummary(current, {
         ...existing,
-        ...(patch.title !== undefined ? { title: patch.title } : {}),
-        ...(patch.agentId !== undefined ? { agentId: patch.agentId } : {}),
-        ...(patch.messages !== undefined ? { messageCount: patch.messages.length } : {}),
+        ...(commandPatch.title !== undefined ? { title: commandPatch.title } : {}),
+        ...(commandPatch.agentId !== undefined ? { agentId: commandPatch.agentId } : {}),
+        ...(commandPatch.messages !== undefined
+          ? { messageCount: commandPatch.messages.length }
+          : {}),
         updatedAt: now,
       });
     });
@@ -1135,7 +1161,7 @@ export function useConversations(
     const result = enqueueMutation(candidate, id, async () => {
       const loaded = await invokeStore("load", () => candidate.store.load(id));
       if (!loaded) throw new ConversationNotFoundError(id);
-      const next = applyConversationPatch(loaded, patch, now);
+      const next = applyConversationPatch(loaded, commandPatch, now);
       markDirty(candidate, revision, conversationSummary(next), next);
       await invokeStore("save", () => candidate.store.save(next));
       return next;
@@ -1208,26 +1234,35 @@ export function useConversations(
     updateForScope(scope, id, patch);
   }, [scope, updateForScope]);
 
-  const save = React.useCallback((conversation: Conversation) => {
+  const save = React.useCallback((
+    conversation: Conversation,
+    saveOptions: SaveConversationOptions = {},
+  ) => {
     if (!isCurrentScope(scope)) return;
     const barrier = deletionBarrier(scope, conversation.id);
-    if (barrier?.status === "deleted") return;
-    const summary = conversationSummary(conversation);
+    if (barrier?.status === "deleted") {
+      if (!saveOptions.recreateDeleted) return;
+      const barriers = deletionByScopeRef.current.get(scope);
+      barriers?.delete(conversation.id);
+      if (barriers?.size === 0) deletionByScopeRef.current.delete(scope);
+    }
+    const commandConversation = snapshotConversation(conversation);
+    const summary = conversationSummary(commandConversation);
     updateSummaries((current) => upsertSummary(current, summary));
     if (
-      activeRef.current?.id === conversation.id ||
-      activeIdRef.current === conversation.id
+      activeRef.current?.id === commandConversation.id ||
+      activeIdRef.current === commandConversation.id
     ) {
       transitionActiveConversationLoading(scope, null, false);
-      writeActive(conversation);
+      writeActive(commandConversation);
     }
-    if (barrier) {
-      bufferDeletionMutation(barrier, { kind: "save", conversation });
+    if (barrier?.status === "deleting") {
+      bufferDeletionMutation(barrier, { kind: "save", conversation: commandConversation });
       return;
     }
     const revision = nextRevision();
-    markDirty(scope, revision, summary, conversation);
-    scheduleSave(scope, conversation, revision);
+    markDirty(scope, revision, summary, commandConversation);
+    scheduleSave(scope, commandConversation, revision);
   }, [
     bufferDeletionMutation,
     deletionBarrier,

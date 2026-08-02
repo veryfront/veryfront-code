@@ -24,10 +24,6 @@ function supportsConcurrentHooks(): boolean {
   return isReact18 || isReact19;
 }
 
-function warnHookFallback(hookName: string, fallbackDescription: string): void {
-  logger.warn(`${hookName} not available, ${fallbackDescription}`);
-}
-
 export function createTransitionFallbackScheduler(
   onPendingChange: (pending: boolean) => void,
 ): {
@@ -65,12 +61,7 @@ export function useFormStatusCompat(): FormStatus {
     return createDefaultFormStatus();
   }
 
-  try {
-    return (React as typeof React & { useFormStatus: () => FormStatus }).useFormStatus();
-  } catch {
-    warnHookFallback("useFormStatus", "falling back to the default idle state");
-    return createDefaultFormStatus();
-  }
+  return (React as typeof React & { useFormStatus: () => FormStatus }).useFormStatus();
 }
 
 export function useOptimisticCompat<State, OptimisticState = State>(
@@ -78,18 +69,14 @@ export function useOptimisticCompat<State, OptimisticState = State>(
   updateFn?: (currentState: State, optimisticValue: OptimisticState) => State,
 ): [State, (action: OptimisticStateAction<OptimisticState>) => void] {
   if (hasFeature("useOptimistic") && hasReactHook("useOptimistic")) {
-    try {
-      return (
-        React as typeof React & {
-          useOptimistic: <S, O = S>(
-            state: S,
-            updateFn?: (currentState: S, optimisticValue: O) => S,
-          ) => [S, (action: OptimisticStateAction<O>) => void];
-        }
-      ).useOptimistic(state, updateFn);
-    } catch {
-      warnHookFallback("useOptimistic", "falling back to React.useState");
-    }
+    return (
+      React as typeof React & {
+        useOptimistic: <S, O = S>(
+          state: S,
+          updateFn?: (currentState: S, optimisticValue: O) => S,
+        ) => [S, (action: OptimisticStateAction<O>) => void];
+      }
+    ).useOptimistic(state, updateFn);
   }
 
   const [optimisticState, setOptimisticState] = React.useState(state);
@@ -127,11 +114,7 @@ export function useOptimisticCompat<State, OptimisticState = State>(
 
 export function useTransitionCompat(): ReturnType<typeof React.useTransition> {
   if (supportsConcurrentHooks()) {
-    try {
-      return React.useTransition();
-    } catch {
-      warnHookFallback("useTransition", "falling back to the timeout scheduler");
-    }
+    return React.useTransition();
   }
 
   const [isPending, setIsPending] = React.useState(false);
@@ -156,11 +139,7 @@ export function useTransitionCompat(): ReturnType<typeof React.useTransition> {
 
 export function useDeferredValueCompat<T>(value: T): T {
   if (supportsConcurrentHooks()) {
-    try {
-      return React.useDeferredValue(value);
-    } catch {
-      warnHookFallback("useDeferredValue", "returning the value directly");
-    }
+    return React.useDeferredValue(value);
   }
 
   return value;
@@ -170,11 +149,7 @@ let idCounter = 0;
 
 export function useIdCompat(): string {
   if (supportsConcurrentHooks()) {
-    try {
-      return React.useId();
-    } catch {
-      warnHookFallback("useId", "using the incremental fallback id");
-    }
+    return React.useId();
   }
 
   const [id] = React.useState(() => `:r${idCounter++}:`);
