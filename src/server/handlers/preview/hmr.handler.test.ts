@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { NOT_SUPPORTED } from "#veryfront/errors";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import type { HandlerContext } from "../types.ts";
@@ -13,24 +13,15 @@ import { HMRHandler } from "./hmr.handler.ts";
 
 const encoder = new TextEncoder();
 
-function encodePem(label: string, der: ArrayBuffer): string {
-  const base64 = btoa(String.fromCharCode(...new Uint8Array(der)));
-  const lines = base64.match(/.{1,64}/g) ?? [base64];
-  return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----`;
-}
-
 let signingKeyPair: CryptoKeyPair | undefined;
-let trustedPublicKeyPem: string | undefined;
 
 async function ensureKeyMaterial(): Promise<void> {
-  if (signingKeyPair && trustedPublicKeyPem) return;
+  if (signingKeyPair) return;
   signingKeyPair = (await crypto.subtle.generateKey(
     "Ed25519",
     true,
     ["sign", "verify"],
   )) as CryptoKeyPair;
-  const der = await crypto.subtle.exportKey("spki", signingKeyPair.publicKey);
-  trustedPublicKeyPem = encodePem("PUBLIC KEY", der);
 }
 
 async function mintTrustedDispatchJws(): Promise<string> {
@@ -71,8 +62,7 @@ function createMockAdapter(
       stat: () => Promise.resolve({ isFile: false, isDirectory: false, size: 0, mtime: null }),
     },
     env: {
-      get: (key: string) =>
-        key === "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY" ? trustedPublicKeyPem : undefined,
+      get: () => undefined,
       set: () => {},
       delete: () => {},
       toObject: () => ({}),
@@ -131,8 +121,20 @@ function createMockSocket(): {
 }
 
 describe("server/handlers/preview/hmr.handler", () => {
+  let previousProxyTrustEnv: string | undefined;
+
+  beforeEach(() => {
+    previousProxyTrustEnv = Deno.env.get("VERYFRONT_TRUST_FORWARDED_HEADERS");
+    Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+  });
+
   afterEach(() => {
     HMRHandler.shutdown();
+    if (previousProxyTrustEnv === undefined) {
+      Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+    } else {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", previousProxyTrustEnv);
+    }
   });
 
   describe("metadata", () => {
@@ -262,7 +264,7 @@ describe("server/handlers/preview/hmr.handler", () => {
       assertEquals(result.continue, false);
     });
 
-    it("proceeds when x-forwarded-host is a local preview host AND request is proxy-trusted", async () => {
+    it("ignores a local preview forwarded host when only a signed dispatch JWS is present", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://example.com/_ws", {
         headers: {
@@ -273,19 +275,19 @@ describe("server/handlers/preview/hmr.handler", () => {
       });
       const ctx = makeCtx({
         isLocalProject: false,
-        adapter: createMockAdapter({ upgradeWebSocket: undefined }),
+        requestContext: { mode: "production" } as any,
       });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, false);
+      assertEquals(result.continue, true);
     });
 
     it("continues when x-forwarded-host is external even if host header is localhost", async () => {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
       const handler = new HMRHandler();
       const req = new Request("http://example.com/_ws", {
         headers: {
           host: "localhost:3000",
           "x-forwarded-host": "evil.example.com",
-          "x-veryfront-dispatch-jws": await mintTrustedDispatchJws(),
         },
       });
       const ctx = makeCtx({
@@ -332,12 +334,12 @@ describe("server/handlers/preview/hmr.handler", () => {
     });
 
     it("HONOURS x-forwarded-host: localhost when request IS proxy-trusted", async () => {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
       const handler = new HMRHandler();
       const req = new Request("http://internal.proxy/_ws", {
         headers: {
           host: "internal.proxy:3000",
           "x-forwarded-host": "localhost",
-          "x-veryfront-dispatch-jws": await mintTrustedDispatchJws(),
         },
       });
       const ctx = makeCtx({

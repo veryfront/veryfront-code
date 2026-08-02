@@ -25,7 +25,6 @@ import { getPingIntervalMs, startPingInterval, stopPingInterval } from "./hmr-pi
 import { broadcastUpdate, getMetrics } from "./hmr-message-router.ts";
 import { getEffectiveRequestHost } from "../../utils/request-host.ts";
 import { isProxyTrusted } from "../../utils/proxy-trust.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const logger = serverLogger.component("hmr-handler");
 const HMR_WEBSOCKET_UPGRADE_OPTIONS = { idleTimeout: 0 } as const;
@@ -102,11 +101,10 @@ export class HMRHandler extends BaseHandler {
     // Honouring it unconditionally lets any remote client present `x-forwarded-host: localhost`
     // and unlock the localhost short-circuit that opens HMR (VULN-SRV-4). Only consult
     // forwarded headers when the request is proxy-trusted; otherwise use Host / url.host.
-    // Proxy trust requires a verifiable dispatch JWS (or operator opt-in). Mere header
-    // presence is not enough, since `x-veryfront-dispatch-jws` is not stripped on ingress.
-    const publicKeyPem = ctx.adapter?.env?.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
-      getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
-    const host = (await isProxyTrusted(req, { publicKeyPem }))
+    // A channel dispatch JWS does not bind this host and therefore cannot grant
+    // generic proxy trust. Only the operator's trusted-proxy topology setting
+    // can authorize forwarded routing metadata.
+    const host = (await isProxyTrusted(req))
       ? getEffectiveRequestHost(req, url, true)
       : (req.headers.get("host") ?? url.host);
     const isLocalhost = isLocalDevHost(host);

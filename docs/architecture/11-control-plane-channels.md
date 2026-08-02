@@ -40,6 +40,9 @@ Primary source areas:
   operations.
 - Conversation-scoped run APIs in Veryfront API provide run lineage, read, and
   replay for conversation-attached runs.
+- A valid channel signature authorizes only its bound request. It never grants
+  generic trust to forwarded host, path, project, or environment headers; that
+  topology decision remains operator-controlled.
 - AG-UI event encoding belongs in [AG-UI transport](./06-ag-ui-transport.md).
 - MCP JSON-RPC dispatch belongs in [MCP runtime](./10-mcp-runtime.md).
 

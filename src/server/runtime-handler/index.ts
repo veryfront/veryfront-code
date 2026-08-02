@@ -391,7 +391,6 @@ export function createVeryfrontHandler(
       req,
       url,
       isProxyMode,
-      adapterEnv: adapter.env,
     });
     const { headers, requestContext: reqCtx } = preparedRequest;
     const { proxyTrusted } = preparedRequest.proxyTrust;

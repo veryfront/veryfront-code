@@ -1,4 +1,5 @@
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
 import { parseProjectDomain } from "../utils/domain-parser.ts";
 import { getEffectiveRequestHost } from "../utils/request-host.ts";
 
@@ -21,12 +22,10 @@ export function createRequestContext(
   // x-forwarded-host is only trustworthy when the operator has explicitly opted
   // into trusting forwarded headers. A direct-access attacker cannot set this
   // env var, so gating on it prevents Host / preview-mode spoofing via a
-  // client-supplied x-forwarded-host (VULN-SRV-1 / VULN-SRV-2). Dispatch-JWS
-  // trust requires async verification, so the runtime handler passes that
-  // request-scoped result through options. Direct callers fail closed unless
-  // the operator explicitly trusts forwarded headers.
-  const trustProxy = options.proxyTrusted ??
-    getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
+  // client-supplied x-forwarded-host (VULN-SRV-1 / VULN-SRV-2). A request
+  // credential does not establish deployment topology. Callers may pass an
+  // already-resolved topology decision; direct callers use the operator flag.
+  const trustProxy = options.proxyTrusted ?? isProxyTopologyTrusted();
   const effectiveHost = getEffectiveRequestHost(req, undefined, trustProxy);
   const parsed = parseProjectDomain(effectiveHost);
   const headerProjectSlug = req.headers.get("x-project-slug")?.trim() || undefined;

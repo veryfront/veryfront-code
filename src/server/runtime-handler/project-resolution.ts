@@ -18,7 +18,7 @@ import { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environmen
 import { SpanNames, withSpan } from "./tracing.ts";
 import { isInternalHost } from "./request-utils.ts";
 import { getEffectiveRequestHost } from "../utils/request-host.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
 
 const baseLogger = getBaseLogger("SERVER");
 
@@ -73,16 +73,11 @@ interface RequestHeaders {
   projectPath: string | undefined;
 }
 
-function trustForwardedHeaders(): boolean {
-  return getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
-}
-
 function getEffectiveHost(req: Request, url: URL, proxyTrusted?: boolean): string {
   // x-forwarded-host is client-controlled and only trustworthy behind a trusted
-  // upstream proxy. Honour it only after the operator opt-in or a verified
-  // dispatch JWS, matching createRequestContext; otherwise fall back to Host.
-  // The runtime handler performs async verification and passes the result here.
-  return getEffectiveRequestHost(req, url, proxyTrusted ?? trustForwardedHeaders());
+  // upstream proxy. Honour it only after the operator opt-in; request
+  // credentials such as dispatch JWSs do not establish proxy topology.
+  return getEffectiveRequestHost(req, url, proxyTrusted ?? isProxyTopologyTrusted());
 }
 
 /**
@@ -107,7 +102,7 @@ export function extractRequestHeaders(
   const websocketEnvironment = url.pathname === "/_ws"
     ? url.searchParams.get("x-environment") ?? undefined
     : undefined;
-  const environment = (proxyTrusted ?? trustForwardedHeaders())
+  const environment = (proxyTrusted ?? isProxyTopologyTrusted())
     ? req.headers.get("x-environment") ?? url.searchParams.get("x-environment") ?? undefined
     : websocketEnvironment;
 

@@ -71,6 +71,20 @@ flowchart TD
 5. Protocol and control-plane paths enter their dedicated handlers.
 6. Response helpers normalize headers, CORS, errors, and not-found behavior.
 
+## Proxy topology boundary
+
+Routing-sensitive forwarded headers are trusted only when the runtime operator
+sets `VERYFRONT_TRUST_FORWARDED_HEADERS=1`. This setting means the runtime is
+behind a private, sanitizing proxy that replaces untrusted forwarding metadata.
+The value is matched exactly; alternative spellings and whitespace-padded
+values fail closed.
+
+A signed channel or control-plane request does not establish proxy topology.
+Those signatures authorize only the request surface and claims they bind; they
+do not authorize unrelated `x-forwarded-host`, `x-project-path`, project, or
+environment metadata. This separation prevents a valid signed request from
+being replayed to promote attacker-selected routing headers.
+
 ## Runtime caches
 
 The proxy caches routing-only project metadata from the control plane. That
@@ -149,6 +163,7 @@ prewarm.
 - Add handler tests for any route classification or response shape change.
 - Keep dev-only endpoints out of production request paths.
 - Keep public app routes, protocol routes, and control-plane routes separate.
+- Keep request authorization separate from operator-controlled proxy topology.
 
 ## Related guides
 

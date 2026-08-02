@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
@@ -37,27 +37,16 @@ async function prepareProductionHostedConfigContext() {
   };
 }
 
-function encodePem(label: string, der: ArrayBuffer): string {
-  const base64 = btoa(String.fromCharCode(...new Uint8Array(der)));
-  const lines = base64.match(/.{1,64}/g) ?? [base64];
-  return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----`;
-}
-
-// Shared Ed25519 key pair and PEM-encoded public half. Lazily generated on the
-// first makeReq({ trusted: true }) call so tests that don't need a valid JWS
-// pay nothing for the key material.
+// Shared Ed25519 key pair, generated only for the dispatch replay regression.
 let signingKeyPair: CryptoKeyPair | undefined;
-let trustedPublicKeyPem: string | undefined;
 
 async function ensureKeyMaterial(): Promise<void> {
-  if (signingKeyPair && trustedPublicKeyPem) return;
+  if (signingKeyPair) return;
   signingKeyPair = (await crypto.subtle.generateKey(
     "Ed25519",
     true,
     ["sign", "verify"],
   )) as CryptoKeyPair;
-  const der = await crypto.subtle.exportKey("spki", signingKeyPair.publicKey);
-  trustedPublicKeyPem = encodePem("PUBLIC KEY", der);
 }
 
 async function mintTrustedDispatchJws(): Promise<string> {
@@ -85,22 +74,20 @@ async function mintTrustedDispatchJws(): Promise<string> {
  * Build a Request suitable for resolveAdapter tests.
  *
  * @param options.projectPath Value for the `x-project-path` header (if provided)
- * @param options.trusted     When true, attaches a valid freshly-signed dispatch
- *                            JWS so isProxyTrusted() verifies. When "bogus",
- *                            attaches an unverifiable header value to simulate
- *                            the direct-access spoofing attack. Omit/false for
- *                            an untrusted client.
+ * @param options.dispatchJws Attach a fresh signed or malformed channel
+ *                            credential. Neither value establishes proxy
+ *                            topology.
  */
 async function makeReq(
-  options: { projectPath?: string; trusted?: boolean | "bogus" } = {},
+  options: { projectPath?: string; dispatchJws?: "valid" | "bogus" } = {},
 ): Promise<Request> {
   const headers = new Headers();
   if (options.projectPath !== undefined) {
     headers.set("x-project-path", options.projectPath);
   }
-  if (options.trusted === true) {
+  if (options.dispatchJws === "valid") {
     headers.set("x-veryfront-dispatch-jws", await mintTrustedDispatchJws());
-  } else if (options.trusted === "bogus") {
+  } else if (options.dispatchJws === "bogus") {
     headers.set("x-veryfront-dispatch-jws", "eyJhbGciOi.fake.value");
   }
   return new Request("http://example.com/", { headers });
@@ -148,8 +135,7 @@ function createMockAdapter(
       watch: () => ({ close: () => {}, [Symbol.asyncIterator]: async function* () {} }),
     },
     env: {
-      get: (key: string) =>
-        key === "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY" ? trustedPublicKeyPem : undefined,
+      get: () => undefined,
       set: () => {},
       toObject: () => ({}),
     },
@@ -166,9 +152,21 @@ function createMockAdapter(
 }
 
 describe("adapter-factory", () => {
+  let previousProxyTrustEnv: string | undefined;
+
+  beforeEach(() => {
+    previousProxyTrustEnv = Deno.env.get("VERYFRONT_TRUST_FORWARDED_HEADERS");
+    Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+  });
+
   afterEach(() => {
     localProjectCache.clear();
     localAdapterCache.clear();
+    if (previousProxyTrustEnv === undefined) {
+      Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+    } else {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", previousProxyTrustEnv);
+    }
   });
 
   it("ignores x-project-path override outside proxy mode", async () => {
@@ -178,7 +176,7 @@ describe("adapter-factory", () => {
     });
 
     const result = await resolveAdapter({
-      req: await makeReq({ projectPath: "/trusted/project", trusted: true }),
+      req: await makeReq({ projectPath: "/trusted/project", dispatchJws: "valid" }),
       projectDir: "/base/project",
       adapter,
       config: undefined,
@@ -215,7 +213,7 @@ describe("adapter-factory", () => {
     localAdapterCache.set("/trusted/project", adapter);
 
     const result = await resolveAdapter({
-      req: await makeReq({ projectPath: "/trusted/project", trusted: true }),
+      req: await makeReq({ projectPath: "/trusted/project" }),
       projectDir: "/base/project",
       adapter,
       config: undefined,
@@ -235,6 +233,7 @@ describe("adapter-factory", () => {
         allowIframeEmbed: false,
       },
       isProxyMode: true,
+      proxyTrusted: true,
       prepareHostedConfigContext: preparePreviewHostedConfigContext,
     });
 
@@ -252,7 +251,7 @@ describe("adapter-factory", () => {
     });
 
     const result = await resolveAdapter({
-      req: await makeReq({ projectPath: "/attacker/chosen/path", trusted: false }),
+      req: await makeReq({ projectPath: "/attacker/chosen/path" }),
       projectDir: "/base/project",
       adapter,
       config: undefined,
@@ -297,7 +296,7 @@ describe("adapter-factory", () => {
       });
 
       const result = await resolveAdapter({
-        req: await makeReq({ projectPath: "/attacker/chosen/path", trusted: "bogus" }),
+        req: await makeReq({ projectPath: "/attacker/chosen/path", dispatchJws: "bogus" }),
         projectDir: "/base/project",
         adapter,
         config: undefined,
@@ -325,7 +324,7 @@ describe("adapter-factory", () => {
     },
   );
 
-  it("honours x-project-path in proxy mode when dispatch-JWS header is present", async () => {
+  it("ignores x-project-path even when a fresh signed dispatch JWS is present", async () => {
     const adapter = createMockAdapter({
       "/trusted/project": { isDirectory: true },
       "/trusted/project/app": { isDirectory: true },
@@ -333,7 +332,7 @@ describe("adapter-factory", () => {
     localAdapterCache.set("/trusted/project", adapter);
 
     const result = await resolveAdapter({
-      req: await makeReq({ projectPath: "/trusted/project", trusted: true }),
+      req: await makeReq({ projectPath: "/trusted/project", dispatchJws: "valid" }),
       projectDir: "/base/project",
       adapter,
       config: undefined,
@@ -356,8 +355,8 @@ describe("adapter-factory", () => {
       prepareHostedConfigContext: preparePreviewHostedConfigContext,
     });
 
-    assertEquals(result.isLocalProject, true);
-    assertEquals(result.projectDir, "/trusted/project");
+    assertEquals(result.isLocalProject, false);
+    assertEquals(result.projectDir, "/base/project");
   });
 
   it("returns original adapter when no local project found and not proxy mode", async () => {
@@ -530,7 +529,7 @@ describe("adapter-factory", () => {
     cache.adapters.set("/trusted/project", adapter);
 
     const result = await resolveAdapter({
-      req: await makeReq({ projectPath: "/trusted/project", trusted: true }),
+      req: await makeReq({ projectPath: "/trusted/project", dispatchJws: "valid" }),
       projectDir: "/base/project",
       adapter,
       config: undefined,
@@ -550,6 +549,7 @@ describe("adapter-factory", () => {
         allowIframeEmbed: false,
       },
       isProxyMode: true,
+      proxyTrusted: true,
       cache,
       prepareHostedConfigContext: preparePreviewHostedConfigContext,
     });

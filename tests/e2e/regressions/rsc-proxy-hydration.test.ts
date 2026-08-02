@@ -16,7 +16,6 @@ import { startProductionServer } from "../../../src/server/production-server.ts"
 import { bootstrapProd } from "../../../src/server/bootstrap.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { validateVeryfrontConfig } from "#veryfront/config/schemas/index.ts";
-import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 
 const ROOT_LAYOUT_SOURCE =
   `export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -37,9 +36,8 @@ const PROXY_MODE_CONFIG_SOURCE = `export default {
           };`;
 
 const DISPATCH_PUBLIC_KEY_ENV = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
-const encoder = new TextEncoder();
+const PROXY_TRUST_ENV = "VERYFRONT_TRUST_FORWARDED_HEADERS";
 
-let trustedSigningKeyPair: CryptoKeyPair | undefined;
 let trustedPublicKeyPem: string | undefined;
 
 function encodePem(label: string, der: ArrayBuffer): string {
@@ -49,41 +47,15 @@ function encodePem(label: string, der: ArrayBuffer): string {
 }
 
 async function ensureTrustedProxyKeyMaterial(): Promise<void> {
-  if (trustedSigningKeyPair && trustedPublicKeyPem) return;
+  if (trustedPublicKeyPem) return;
 
-  trustedSigningKeyPair = (await crypto.subtle.generateKey(
+  const keyPair = (await crypto.subtle.generateKey(
     "Ed25519",
     true,
     ["sign", "verify"],
   )) as CryptoKeyPair;
-  const der = await crypto.subtle.exportKey("spki", trustedSigningKeyPair.publicKey);
+  const der = await crypto.subtle.exportKey("spki", keyPair.publicKey);
   trustedPublicKeyPem = encodePem("PUBLIC KEY", der);
-}
-
-async function mintTrustedDispatchJws(projectId: string): Promise<string> {
-  await ensureTrustedProxyKeyMaterial();
-
-  const now = Math.floor(Date.now() / 1000);
-  const header = { alg: "EdDSA", typ: "JWT" };
-  const claims = {
-    iss: "veryfront-api",
-    aud: projectId,
-    sub: "rsc-proxy-hydration-test",
-    project_id: projectId,
-    platform: "browser",
-    body_sha256: "n/a",
-    iat: now,
-    exp: now + 60,
-  };
-  const encodedHeader = base64urlEncode(JSON.stringify(header));
-  const encodedPayload = base64urlEncode(JSON.stringify(claims));
-  const signingInput = encoder.encode(`${encodedHeader}.${encodedPayload}`);
-  const signature = await crypto.subtle.sign(
-    "Ed25519",
-    trustedSigningKeyPair!.privateKey,
-    signingInput,
-  );
-  return `${encodedHeader}.${encodedPayload}.${base64urlEncodeBytes(new Uint8Array(signature))}`;
 }
 
 interface TestProjectContext {
@@ -223,8 +195,10 @@ async function withProxyBrowserPage(
   const port = await context.allocatePort();
   const controller = new AbortController();
   const previousDispatchPublicKey = Deno.env.get(DISPATCH_PUBLIC_KEY_ENV);
+  const previousProxyTrust = Deno.env.get(PROXY_TRUST_ENV);
   await ensureTrustedProxyKeyMaterial();
   Deno.env.set(DISPATCH_PUBLIC_KEY_ENV, trustedPublicKeyPem!);
+  Deno.env.set(PROXY_TRUST_ENV, "1");
 
   let server: Awaited<ReturnType<typeof startProductionServer>> | undefined;
   let disposeBootstrap: (() => void | Promise<void>) | undefined;
@@ -266,10 +240,7 @@ async function withProxyBrowserPage(
     await waitForReady(port);
 
     const browserContext = await browser.newContext({
-      extraHTTPHeaders: {
-        ...headers,
-        "x-veryfront-dispatch-jws": await mintTrustedDispatchJws(context.projectId),
-      },
+      extraHTTPHeaders: headers,
     });
     await installEsmShCorsShim(browserContext);
 
@@ -291,6 +262,11 @@ async function withProxyBrowserPage(
       Deno.env.delete(DISPATCH_PUBLIC_KEY_ENV);
     } else {
       Deno.env.set(DISPATCH_PUBLIC_KEY_ENV, previousDispatchPublicKey);
+    }
+    if (previousProxyTrust === undefined) {
+      Deno.env.delete(PROXY_TRUST_ENV);
+    } else {
+      Deno.env.set(PROXY_TRUST_ENV, previousProxyTrust);
     }
   }
 }

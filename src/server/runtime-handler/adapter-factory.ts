@@ -27,7 +27,6 @@ import {
 } from "./local-project-discovery.ts";
 import type { ParsedDomain } from "../utils/domain-parser.ts";
 import { isProxyTrusted } from "../utils/proxy-trust.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const baseLogger = getBaseLogger("SERVER");
 
@@ -141,15 +140,11 @@ export async function resolveAdapter(
   // SECURITY: `x-project-path` is a client-controlled header. Honouring it from any
   // request would let an attacker reaching the runtime directly aim project discovery
   // (and therefore `/_veryfront/fs/...`) at arbitrary filesystem paths (VULN-SRV-3).
-  // Only read it when the request is proxy-trusted: either the operator opted in via
-  // VERYFRONT_TRUST_FORWARDED_HEADERS=1, or the request carries a dispatch JWS that
-  // verifies against CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY. Mere header presence is
-  // NOT sufficient — a direct-access attacker could otherwise spoof `x-project-path`
-  // by attaching any value in `x-veryfront-dispatch-jws`.
-  const publicKeyPem = opts.adapter.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
-    getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+  // Only an explicit operator topology setting may authorize this header. A
+  // signed channel dispatch request does not bind `x-project-path` and must not
+  // be promoted into generic proxy trust.
   const proxyTrusted = opts.isProxyMode &&
-    (opts.proxyTrusted ?? await isProxyTrusted(opts.req, { publicKeyPem }));
+    (opts.proxyTrusted ?? await isProxyTrusted(opts.req));
   const trustedHeaderProjectPath = proxyTrusted
     ? opts.req.headers.get("x-project-path")?.trim() || undefined
     : undefined;

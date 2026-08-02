@@ -1,4 +1,4 @@
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
 import type { VirtualConfigSourceContext } from "#veryfront/cache/keys.ts";
@@ -16,20 +16,14 @@ import { buildHandlerContext } from "./handler-context-builder.ts";
 import { extractRequestHeaders, resolveProject } from "./project-resolution.ts";
 import { isLightweightPath, isWebSocketPath, shouldSkipEnrichedContext } from "./request-utils.ts";
 
-type AdapterEnvLike = {
-  get(key: string): string | undefined;
-};
-
 type ProxyTrustVerifier = (
   req: Request,
-  options: { publicKeyPem?: string },
 ) => Promise<boolean>;
 
 export interface PrepareProjectRequestInput {
   req: Request;
   url: URL;
   isProxyMode: boolean;
-  adapterEnv?: AdapterEnvLike;
   trustProxy?: ProxyTrustVerifier;
 }
 
@@ -137,12 +131,7 @@ export async function prepareProjectRequest(
   input: PrepareProjectRequestInput,
 ): Promise<PreparedProjectRequest> {
   const { req, url, isProxyMode } = input;
-  const proxyTrusted = isProxyMode
-    ? await (input.trustProxy ?? isProxyTrusted)(req, {
-      publicKeyPem: input.adapterEnv?.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
-        getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY"),
-    })
-    : undefined;
+  const proxyTrusted = isProxyMode ? await (input.trustProxy ?? isProxyTrusted)(req) : undefined;
   const headers = extractRequestHeaders(req, url, proxyTrusted);
   const requestContext = createRequestContext(req, { proxyTrusted });
 
@@ -267,7 +256,7 @@ export async function resolveProjectRuntimeContext(
   const host = getEffectiveRequestHost(
     input.req,
     input.url,
-    input.proxyTrust.proxyTrusted ?? getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1",
+    input.proxyTrust.proxyTrusted ?? isProxyTopologyTrusted(),
   );
   const envRes = resolveEnvironment({
     proxyEnv: projectRes.proxyEnv,
