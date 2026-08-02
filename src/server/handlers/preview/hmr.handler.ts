@@ -24,6 +24,7 @@ import { getPingIntervalMs, startPingInterval, stopPingInterval } from "./hmr-pi
 import { broadcastUpdate, getMetrics } from "./hmr-message-router.ts";
 import { isProxyTrusted } from "../../utils/proxy-trust.ts";
 import { isTrustedLocalControlRequest } from "#veryfront/security/http/local-control-request.ts";
+import { isSameProcessProxyRequest } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 const logger = serverLogger.component("hmr-handler");
 const HMR_WEBSOCKET_UPGRADE_OPTIONS = { idleTimeout: 0 } as const;
@@ -94,16 +95,19 @@ export class HMRHandler extends BaseHandler {
 
     const proxyTrusted = await isProxyTrusted(req);
     const isTrustedPreview = proxyTrusted && ctx.requestContext?.mode === "preview";
+    const isTrustedLocalProject = proxyTrusted &&
+      isSameProcessProxyRequest(req) && ctx.isLocalProject;
     const isLocalControl = isTrustedLocalControlRequest(req, {
       proxyTopologyTrusted: proxyTrusted,
     });
 
-    if (!isTrustedPreview && !isLocalControl) {
+    if (!isTrustedPreview && !isTrustedLocalProject && !isLocalControl) {
       logger.warn("Rejecting /_ws outside trusted preview or local control transport", {
         mode: ctx.requestContext?.mode,
         isLocalProject: ctx.isLocalProject,
         proxyTrusted,
         isTrustedPreview,
+        isTrustedLocalProject,
         isLocalControl,
       });
       return this.respond(new Response("Forbidden", { status: 403 }));

@@ -570,6 +570,8 @@ describe(
           };
 
           let server: Awaited<ReturnType<typeof startProductionServer>> | undefined;
+          const previousProxyTrust = Deno.env.get("VERYFRONT_TRUST_FORWARDED_HEADERS");
+          Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
           try {
             server = await startProductionServer({
               projectDir: "/app",
@@ -624,6 +626,11 @@ describe(
               "Middleware loading must use production release context",
             );
           } finally {
+            if (previousProxyTrust === undefined) {
+              Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+            } else {
+              Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", previousProxyTrust);
+            }
             invalidateProjectMiddlewareCache(projectSlug, projectId);
             await server?.stop();
             (multiProjectFs as any).manager = originalManager;

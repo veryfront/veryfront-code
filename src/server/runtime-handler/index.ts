@@ -18,6 +18,7 @@ import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
+import { getSameProcessProxyContext } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 // Re-export is at the bottom of the file
 import type { HandlerContext as _HandlerContext } from "../handlers/types.ts";
@@ -362,7 +363,11 @@ export function createVeryfrontHandler(
   }
 
   const handler = async (req: Request): Promise<Response> => {
-    const url = new URL(req.url);
+    // WebSocket upgrades must retain the native Request identity. In combined
+    // proxy mode, routing metadata therefore lives on a private sanitized
+    // context Request bound to that native object by production-server.
+    const proxyContextRequest = getSameProcessProxyContext(req) ?? req;
+    const url = new URL(proxyContextRequest.url);
     const lifecycle = startRequestLifecycle(req, url.pathname, isLightweightPath(url.pathname));
 
     // Fast path for monitoring endpoints
@@ -388,7 +393,7 @@ export function createVeryfrontHandler(
     }
 
     const preparedRequest = await prepareProjectRequest({
-      req,
+      req: proxyContextRequest,
       url,
       isProxyMode,
     });
@@ -506,7 +511,7 @@ export function createVeryfrontHandler(
             "runtime.resolve_project",
             () =>
               resolveProjectIdentity({
-                req: request,
+                req: proxyContextRequest,
                 url,
                 headers,
                 config,
@@ -542,7 +547,7 @@ export function createVeryfrontHandler(
           }
 
           const runtimeContext = await resolveProjectRuntimeContext({
-            req: request,
+            req: proxyContextRequest,
             url,
             projectDir,
             adapter,

@@ -32,6 +32,8 @@ import {
 } from "#veryfront/rendering/ssr-globals.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { snapshotNodeWebSocketServerProvider } from "#veryfront/extensions/websocket";
+import { bindSameProcessProxyContext } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import { isHMRWebSocketUpgrade } from "#veryfront/server/runtime-handler/request-utils.ts";
 
 const serverLog = logger.component("server");
 const globalLog = logger.component("global");
@@ -273,15 +275,23 @@ export function startProductionServer(
 
         const coreHandler = baseHandler;
 
-        // Wrap handler with interceptor if provided (for combined mode)
-        // WebSocket upgrade requests MUST NOT be intercepted because the interceptor
-        // creates a new Request object, which breaks Deno.upgradeWebSocket()
+        // Wrap handler with interceptor if provided (for combined mode).
+        // Deno.upgradeWebSocket must receive the exact native Request. For an
+        // upgrade, retain that object while privately binding the interceptor's
+        // sanitized replacement as routing context. The binding succeeds only
+        // when the replacement was derived from this exact transport-backed
+        // request; otherwise the core proxy guard remains fail-closed.
         const handler = requestInterceptor
           ? Object.assign(
             async (req: Request) => {
               const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
-              if (isWebSocketUpgrade) return coreHandler(req);
-              return coreHandler(await requestInterceptor(req));
+              if (!isWebSocketUpgrade) return coreHandler(await requestInterceptor(req));
+              if (!isHMRWebSocketUpgrade(req, new URL(req.url).pathname)) {
+                return coreHandler(req);
+              }
+              const intercepted = await requestInterceptor(req);
+              bindSameProcessProxyContext(req, intercepted);
+              return coreHandler(req);
             },
             { ready: coreHandler.ready },
           )

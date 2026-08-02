@@ -10,7 +10,11 @@ import {
   type WebSocketConnection,
 } from "#veryfront/platform/adapters/base.ts";
 import { HMRHandler } from "./hmr.handler.ts";
-import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import {
+  bindSameProcessProxyContext,
+  recordRequestPeerFromTransport,
+  recordSameProcessProxyRequest,
+} from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 const encoder = new TextEncoder();
 
@@ -253,6 +257,56 @@ describe("server/handlers/preview/hmr.handler", () => {
       });
       const result = await handler.handle(req, ctx);
       assertEquals(result.response?.status, 200);
+    });
+
+    it("admits a bound same-process local project without global proxy trust", async () => {
+      const handler = new HMRHandler();
+      const req = createLocalRequest("http://internal.proxy/_ws", {
+        headers: { host: "internal.proxy" },
+      });
+      const proxyContext = recordSameProcessProxyRequest(
+        req,
+        new Request(req, {
+          headers: {
+            "x-project-slug": "local-project",
+            "x-project-path": "/trusted/local-project",
+            "x-environment": "production",
+            "x-forwarded-host": "local-project.localhost",
+            "x-forwarded-proto": "http",
+          },
+        }),
+      );
+      assertEquals(bindSameProcessProxyContext(req, proxyContext), true);
+
+      const result = await handler.handle(
+        req,
+        makeCtx({
+          isLocalProject: true,
+          requestContext: { mode: "production" } as any,
+          adapter: createMockAdapter({ upgradeWebSocket: undefined }),
+        }),
+      );
+
+      assertEquals(result.response?.status, 200);
+    });
+
+    it("does not extend same-process local HMR admission to remote projects", async () => {
+      const handler = new HMRHandler();
+      const req = createLocalRequest("http://internal.proxy/_ws", {
+        headers: { host: "internal.proxy" },
+      });
+      const proxyContext = recordSameProcessProxyRequest(req, new Request(req));
+      assertEquals(bindSameProcessProxyContext(req, proxyContext), true);
+
+      const result = await handler.handle(
+        req,
+        makeCtx({
+          isLocalProject: false,
+          requestContext: { mode: "production" } as any,
+        }),
+      );
+
+      assertEquals(result.response?.status, 403);
     });
 
     it("rejects an unsigned preview query parameter", async () => {

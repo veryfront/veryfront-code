@@ -88,6 +88,14 @@ cannot reproduce that capability. Tokenless routing is limited to a local path
 that both came from this same-process proxy and exactly matches the host-seeded
 local-project map.
 
+WebSocket upgrades are the sole identity-preserving variant: Deno requires the
+exact native `Request` for the handshake. The combined server still runs the
+sanitizing proxy, verifies that its replacement was derived from that exact
+transport-authenticated request, and privately binds the replacement as routing
+context while passing the untouched native request to the upgrade API. Local
+HMR admission additionally requires that resolution selected a host-seeded
+local project. Neither headers nor dispatch credentials can create this binding.
+
 In deployed shared proxy mode, the runtime rejects every non-monitoring request
 when that topology setting is absent, including module assets and WebSocket
 requests. When it is present, all proxy-owned project, release, branch,

@@ -1,7 +1,9 @@
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  bindSameProcessProxyContext,
   getRequestPeerProvenance,
+  getSameProcessProxyContext,
   inheritRequestPeerProvenance,
   isRequestFromLoopbackPeer,
   isSameProcessProxyRequest,
@@ -113,12 +115,25 @@ describe("runtime request peer provenance", () => {
       getRequestPeerProvenance(replacement),
       getRequestPeerProvenance(source),
     );
+    assertEquals(bindSameProcessProxyContext(source, replacement), true);
+    assertStrictEquals(getSameProcessProxyContext(source), replacement);
+    assertEquals(isSameProcessProxyRequest(source), true);
+
+    const unrelatedReplacement = new Request(source);
+    assertEquals(bindSameProcessProxyContext(source, unrelatedReplacement), false);
+    assertEquals(getSameProcessProxyContext(source), undefined);
+    assertEquals(isSameProcessProxyRequest(source), false);
 
     const constructedSource = requestFromPeer();
     const constructedReplacement = requestFromPeer("203.0.113.9");
     recordSameProcessProxyRequest(constructedSource, constructedReplacement);
     assertEquals(isSameProcessProxyRequest(constructedReplacement), false);
     assertEquals(getRequestPeerProvenance(constructedReplacement), undefined);
+    assertEquals(
+      bindSameProcessProxyContext(constructedSource, constructedReplacement),
+      false,
+    );
+    assertEquals(getSameProcessProxyContext(constructedSource), undefined);
 
     recordSameProcessProxyRequest(source, source);
     assertEquals(isSameProcessProxyRequest(source), false);

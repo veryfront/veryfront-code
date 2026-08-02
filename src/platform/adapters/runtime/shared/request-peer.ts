@@ -21,6 +21,8 @@ export interface RequestPeerProvenance {
 
 const requestPeerProvenance = new WeakMap<Request, RequestPeerProvenance>();
 const sameProcessProxyRequests = new WeakSet<Request>();
+const sameProcessProxySources = new WeakMap<Request, Request>();
+const sameProcessProxyContexts = new WeakMap<Request, Request>();
 const MAX_PEER_HOSTNAME_CHARACTERS = 255;
 const DECIMAL_OCTET_PATTERN = /^(?:0|[1-9][0-9]{0,2})$/;
 const IPV4_MAPPED_IPV6_PATTERN = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/;
@@ -133,17 +135,60 @@ export function recordSameProcessProxyRequest<T extends Request>(
   if (provenance === undefined) {
     requestPeerProvenance.delete(target);
     sameProcessProxyRequests.delete(target);
+    sameProcessProxySources.delete(target);
     return target;
   }
 
   requestPeerProvenance.set(target, provenance);
   sameProcessProxyRequests.add(target);
+  sameProcessProxySources.set(target, source);
   return target;
 }
 
-/** True only for a proxy replacement bound to recorded native transport provenance. */
+/**
+ * @internal Bind sanitized proxy context back to the exact native request that
+ * must retain object identity for a WebSocket upgrade.
+ */
+export function bindSameProcessProxyContext(
+  source: Request,
+  proxyContext: Request,
+): boolean {
+  const valid = requestPeerProvenance.has(source) &&
+    requestPeerProvenance.has(proxyContext) &&
+    sameProcessProxyRequests.has(proxyContext) &&
+    sameProcessProxySources.get(proxyContext) === source;
+  if (!valid) {
+    sameProcessProxyContexts.delete(source);
+    return false;
+  }
+
+  sameProcessProxyContexts.set(source, proxyContext);
+  return true;
+}
+
+/**
+ * @internal Return sanitized same-process proxy context only when it remains
+ * bound to the exact transport-authenticated source request.
+ */
+export function getSameProcessProxyContext(request: Request): Request | undefined {
+  const proxyContext = sameProcessProxyContexts.get(request);
+  if (
+    proxyContext === undefined ||
+    !requestPeerProvenance.has(request) ||
+    !requestPeerProvenance.has(proxyContext) ||
+    !sameProcessProxyRequests.has(proxyContext) ||
+    sameProcessProxySources.get(proxyContext) !== request
+  ) {
+    sameProcessProxyContexts.delete(request);
+    return undefined;
+  }
+  return proxyContext;
+}
+
+/** True only for a proxy replacement or native request with private bound context. */
 export function isSameProcessProxyRequest(request: Request): boolean {
-  return sameProcessProxyRequests.has(request) && requestPeerProvenance.has(request);
+  return (sameProcessProxyRequests.has(request) && requestPeerProvenance.has(request)) ||
+    getSameProcessProxyContext(request) !== undefined;
 }
 
 /** @internal True for IPv4 127/8, IPv6 ::1, or mapped IPv4 127/8. */
