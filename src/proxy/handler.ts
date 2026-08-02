@@ -30,7 +30,11 @@ import {
 import { resolveProxyRequestHost } from "./request-host.ts";
 import { createProxyEndToEndHeaders } from "./hop-by-hop-headers.ts";
 import { withProxyStreamingBodyDuplex } from "./request-init.ts";
-import { getRequestPeerProvenance } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import {
+  parseTrustedIngressProxyIps,
+  ProxyIngressProvenanceError,
+  resolveProxyIngressProvenance,
+} from "./trusted-ingress.ts";
 
 export const INTERNAL_PROXY_HEADERS = [
   "forwarded",
@@ -104,6 +108,7 @@ export interface ProxyConfig {
   previewApiClientSecret: string;
   apiToken?: string;
   localProjects?: Record<string, string>;
+  trustedIngressProxyIps?: string;
 }
 
 export interface ProxyContext {
@@ -120,6 +125,8 @@ export interface ProxyContext {
   host: string;
   parsedDomain: ParsedDomain;
   isLocalProject: boolean;
+  clientIp?: string;
+  publicProtocol?: "http" | "https";
   error?: {
     status: number;
     message: string;
@@ -222,6 +229,7 @@ async function awaitForRequest<T>(
 
 export function createProxyHandler(options: ProxyHandlerOptions) {
   const { config, cache, logger } = options;
+  const trustedIngressProxyIps = parseTrustedIngressProxyIps(config.trustedIngressProxyIps);
   const routingCacheTtlMs = readBoundedNonNegativeIntegerEnv(
     "VERYFRONT_PROXY_ROUTING_CACHE_TTL_MS",
     DEFAULT_PROXY_ROUTING_CACHE_TTL_MS,
@@ -760,6 +768,17 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     const parsedDomain = parseProjectDomain(host);
     const scope = getScope(parsedDomain.environment);
     const base = { scope, host, parsedDomain };
+    let ingressProvenance: ReturnType<typeof resolveProxyIngressProvenance>;
+    try {
+      ingressProvenance = resolveProxyIngressProvenance(req, trustedIngressProxyIps);
+    } catch (error) {
+      if (!(error instanceof ProxyIngressProvenanceError)) throw error;
+      logger?.error("Trusted ingress provenance rejected", error, { host });
+      return createProxyErrorContext(base, {
+        status: 502,
+        message: "Trusted ingress provenance is invalid",
+      });
+    }
 
     const internalRouteKind = classifyInternalControlPlaneRequest(req.method, url.pathname);
     if (internalRouteKind === "reserved") {
@@ -811,6 +830,8 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         host,
         parsedDomain,
         isLocalProject: false,
+        clientIp: ingressProvenance?.clientIp,
+        publicProtocol: ingressProvenance?.publicProtocol,
       };
     }
 
@@ -1216,6 +1237,8 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       host,
       parsedDomain,
       isLocalProject,
+      clientIp: ingressProvenance?.clientIp,
+      publicProtocol: ingressProvenance?.publicProtocol,
     };
   }
 
@@ -1287,11 +1310,10 @@ export function createProxyContextHeaders(
   headers.set("x-environment", ctx.environment);
   headers.set("x-content-source-id", ctx.contentSourceId);
   headers.set("x-forwarded-host", ctx.host);
-  const peer = getRequestPeerProvenance(request);
-  if (peer) {
-    headers.set("x-forwarded-for", peer.hostname);
-    headers.set("x-real-ip", peer.hostname);
-    headers.set("x-forwarded-proto", peer.protocol.slice(0, -1));
+  if (ctx.clientIp && ctx.publicProtocol) {
+    headers.set("x-forwarded-for", ctx.clientIp);
+    headers.set("x-real-ip", ctx.clientIp);
+    headers.set("x-forwarded-proto", ctx.publicProtocol);
   }
   if (ctx.localPath) headers.set("x-project-path", ctx.localPath);
 

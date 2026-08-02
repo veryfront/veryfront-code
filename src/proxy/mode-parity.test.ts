@@ -8,9 +8,11 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 import { assertEquals, assertStrictEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import { DenoHttpServer } from "#veryfront/platform/compat/http/deno-server.ts";
 import { resolveRateLimitClientKey } from "#veryfront/security/rate-limit/client-key.ts";
 import { applyCsrfCookie } from "#veryfront/security/csrf/helpers.ts";
+import { extractRequestHeaders } from "#veryfront/server/runtime-handler/project-resolution.ts";
+import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
 import {
   createProxyHandler,
   injectContextHeaders,
@@ -18,6 +20,7 @@ import {
   type ProxyContext,
 } from "./handler.ts";
 import { createSplitForwardRequestInit } from "./split-forward-request.ts";
+import { resolveProxyIngressProvenance } from "./trusted-ingress.ts";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
 
 function extractProxyHeaders(req: Request): Record<string, string | null> {
@@ -37,66 +40,200 @@ function extractProxyHeaders(req: Request): Record<string, string | null> {
 }
 
 describe("Proxy-Renderer Mode Parity", () => {
-  describe("injectContextHeaders produces correct headers", () => {
-    it("replaces spoofed provenance with native edge identity in combined and split modes", () => {
-      const request = new Request("https://customer.example/account", {
-        headers: {
-          accept: "text/html",
-          "x-forwarded-for": "198.51.100.99",
-          "x-real-ip": "198.51.100.99",
-          "x-forwarded-proto": "http",
-        },
-      });
-      recordRequestPeerFromTransport(request, {
-        runtime: "deno",
-        transport: "tcp",
-        hostname: "203.0.113.8",
-        protocol: "https:",
-      });
-      const ctx: ProxyContext = {
-        projectSlug: "customer",
-        environment: "production",
-        contentSourceId: "release-rel-1",
-        host: "customer.example",
-        parsedDomain: {
-          slug: null,
-          isVeryfrontDomain: false,
-          environment: null,
-          branch: null,
-          isDraft: false,
-          allowIframeEmbed: false,
-        },
-        isLocalProject: false,
+  it("captures trusted ingress provenance in the proxy handler and fails closed", async () => {
+    const proxyHandler = createProxyHandler({
+      config: {
+        apiBaseUrl: "http://127.0.0.1:9",
+        apiClientId: "",
+        apiClientSecret: "",
+        previewApiClientId: "",
+        previewApiClientSecret: "",
+        trustedIngressProxyIps: "127.0.0.1",
+      },
+    });
+    const server = new DenoHttpServer();
+    let resolvePort!: (port: number) => void;
+    const listening = new Promise<number>((resolve) => {
+      resolvePort = resolve;
+    });
+    const servePromise = server.serve(
+      async (request) => {
+        const context = await proxyHandler.processRequest(request);
+        return Response.json({
+          clientIp: context.clientIp,
+          publicProtocol: context.publicProtocol,
+          error: context.error,
+        });
+      },
+      {
+        hostname: "127.0.0.1",
+        port: 0,
+        onListen: ({ port }) => resolvePort(port),
+      },
+    );
+
+    try {
+      const port = await listening;
+      const request = async (forwardedFor: string) => {
+        const connection = await Deno.connect({ hostname: "127.0.0.1", port });
+        try {
+          const rawRequest = [
+            "GET / HTTP/1.1",
+            "Host: preview.veryfront.com",
+            `X-Forwarded-For: ${forwardedFor}`,
+            "X-Forwarded-Proto: https",
+            "Connection: close",
+            "",
+            "",
+          ].join("\r\n");
+          await connection.write(new TextEncoder().encode(rawRequest));
+
+          const decoder = new TextDecoder();
+          const buffer = new Uint8Array(4_096);
+          let rawResponse = "";
+          while (true) {
+            const bytesRead = await connection.read(buffer);
+            if (bytesRead === null) break;
+            rawResponse += decoder.decode(buffer.subarray(0, bytesRead), { stream: true });
+          }
+          rawResponse += decoder.decode();
+          assertStringIncludes(rawResponse, "HTTP/1.1 200");
+          const bodyOffset = rawResponse.indexOf("\r\n\r\n");
+          if (bodyOffset < 0) throw new Error("Proxy test response has no HTTP body");
+          return JSON.parse(rawResponse.slice(bodyOffset + 4)) as {
+            clientIp?: string;
+            publicProtocol?: string;
+            error?: { status: number; message: string };
+          };
+        } finally {
+          connection.close();
+        }
       };
 
-      const combined = injectContextHeaders(request, ctx);
-      const splitInit = createSplitForwardRequestInit(
-        request,
-        ctx,
-        null,
-        new AbortController().signal,
-      );
-      const split = new Request("http://renderer.internal/account", splitInit);
+      assertEquals(await request("203.0.113.8"), {
+        clientIp: "203.0.113.8",
+        publicProtocol: "https",
+      });
+      assertEquals(await request("203.0.113.8, 198.51.100.2"), {
+        error: {
+          status: 502,
+          message: "Trusted ingress provenance is invalid",
+        },
+      });
+    } finally {
+      await server.close();
+      await servePromise;
+      await proxyHandler.close();
+    }
+  });
 
-      for (const forwarded of [combined, split]) {
-        assertEquals(forwarded.headers.get("x-forwarded-for"), "203.0.113.8");
-        assertEquals(forwarded.headers.get("x-real-ip"), "203.0.113.8");
-        assertEquals(forwarded.headers.get("x-forwarded-proto"), "https");
-        assertEquals(resolveRateLimitClientKey(forwarded, true, "anonymous"), "203.0.113.8");
-      }
-
+  describe("injectContextHeaders produces correct headers", () => {
+    it("uses trusted real-ingress identity in combined and split modes", async () => {
+      const server = new DenoHttpServer();
+      let resolvePort!: (port: number) => void;
+      const listening = new Promise<number>((resolve) => {
+        resolvePort = resolve;
+      });
       const previousTrust = Deno.env.get("VERYFRONT_TRUST_FORWARDED_HEADERS");
       Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+      const servePromise = server.serve(
+        (request) => {
+          // The portable test runner isolates environment writes per async
+          // context; configure the renderer topology in the listener context.
+          Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+          const provenance = resolveProxyIngressProvenance(
+            request,
+            new Set(["127.0.0.1"]),
+          );
+          if (!provenance) return new Response("Missing native provenance", { status: 500 });
+
+          const ctx: ProxyContext = {
+            projectSlug: "customer",
+            environment: "production",
+            contentSourceId: "release-rel-1",
+            host: "customer.example",
+            parsedDomain: {
+              slug: null,
+              isVeryfrontDomain: false,
+              environment: null,
+              branch: null,
+              isDraft: false,
+              allowIframeEmbed: false,
+            },
+            isLocalProject: false,
+            clientIp: provenance.clientIp,
+            publicProtocol: provenance.publicProtocol,
+          };
+          const combined = injectContextHeaders(request, ctx);
+          const split = new Request(
+            "http://renderer.internal/account",
+            createSplitForwardRequestInit(
+              request,
+              ctx,
+              null,
+              new AbortController().signal,
+            ),
+          );
+          const inspect = (forwarded: Request) => {
+            const rendererRequest = new Request("http://renderer.internal/account", {
+              headers: forwarded.headers,
+            });
+            const responseHeaders = new Headers();
+            applyCsrfCookie(rendererRequest, responseHeaders, { cookieName: "vf_csrf" });
+            return {
+              clientIp: resolveRateLimitClientKey(rendererRequest, true, "anonymous"),
+              forwardedFor: rendererRequest.headers.get("x-forwarded-for"),
+              realIp: rendererRequest.headers.get("x-real-ip"),
+              protocol: rendererRequest.headers.get("x-forwarded-proto"),
+              publicOrigin: extractRequestHeaders(
+                rendererRequest,
+                new URL(rendererRequest.url),
+                true,
+              ).publicOrigin,
+              csrfCookie: responseHeaders.get("set-cookie"),
+              proxyTrusted: String(isProxyTopologyTrusted()),
+            };
+          };
+          return Response.json({ combined: inspect(combined), split: inspect(split) });
+        },
+        {
+          hostname: "127.0.0.1",
+          port: 0,
+          onListen: ({ port }) => resolvePort(port),
+        },
+      );
+
       try {
-        for (const forwarded of [combined, split]) {
-          const rendererRequest = new Request("http://renderer.internal/account", {
-            headers: forwarded.headers,
+        const port = await listening;
+        const request = async (clientIp: string) => {
+          const response = await fetch(`http://127.0.0.1:${port}/account`, {
+            headers: {
+              accept: "text/html",
+              host: "customer.example",
+              "x-forwarded-for": clientIp,
+              "x-forwarded-proto": "https",
+              "x-real-ip": "198.51.100.99",
+            },
           });
-          const responseHeaders = new Headers();
-          applyCsrfCookie(rendererRequest, responseHeaders, { cookieName: "vf_csrf" });
-          assertStringIncludes(responseHeaders.get("set-cookie") ?? "", "Secure");
+          assertEquals(response.status, 200);
+          return await response.json() as Record<"combined" | "split", Record<string, string>>;
+        };
+        const first = await request("203.0.113.8");
+        const second = await request("203.0.113.9");
+
+        for (const mode of ["combined", "split"] as const) {
+          assertEquals(first[mode].clientIp, "203.0.113.8");
+          assertEquals(second[mode].clientIp, "203.0.113.9");
+          assertEquals(first[mode].forwardedFor, "203.0.113.8");
+          assertEquals(first[mode].realIp, "203.0.113.8");
+          assertEquals(first[mode].protocol, "https");
+          assertEquals(first[mode].publicOrigin, "https://customer.example");
+          assertEquals(first[mode].proxyTrusted, "true");
+          assertStringIncludes(first[mode].csrfCookie ?? "", "Secure");
         }
       } finally {
+        await server.close();
+        await servePromise;
         if (previousTrust === undefined) Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
         else Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", previousTrust);
       }

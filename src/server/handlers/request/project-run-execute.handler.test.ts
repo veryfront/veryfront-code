@@ -12,8 +12,12 @@ import { runEval as runEvalDefinition } from "#veryfront/eval/runner.ts";
 import { datasets, evalAgent, type EvalReport, metrics } from "veryfront/eval";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { DenoHttpServer } from "#veryfront/platform/compat/http/deno-server.ts";
+import { extractRequestHeaders } from "#veryfront/server/runtime-handler/project-resolution.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { toolRegistry } from "#veryfront/tool";
+import { injectContextHeaders, type ProxyContext } from "#veryfront/proxy/handler.ts";
+import { resolveProxyIngressProvenance } from "#veryfront/proxy/trusted-ingress.ts";
 import {
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
@@ -41,6 +45,73 @@ function createCtx(publicKeyPem?: string): HandlerContext {
       mode: "preview",
     },
   };
+}
+
+async function resolvePublicOriginThroughTrustedIngress(): Promise<string> {
+  const server = new DenoHttpServer();
+  let resolvePort!: (port: number) => void;
+  const listening = new Promise<number>((resolve) => {
+    resolvePort = resolve;
+  });
+  const servePromise = server.serve(
+    (request) => {
+      const provenance = resolveProxyIngressProvenance(
+        request,
+        new Set(["127.0.0.1"]),
+      );
+      if (!provenance) return new Response("Missing native provenance", { status: 500 });
+
+      const proxyContext: ProxyContext = {
+        projectSlug: "customer",
+        environment: "production",
+        contentSourceId: "release-rel-1",
+        host: "customer.example",
+        parsedDomain: {
+          slug: null,
+          isVeryfrontDomain: false,
+          environment: null,
+          branch: null,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        isLocalProject: false,
+        clientIp: provenance.clientIp,
+        publicProtocol: provenance.publicProtocol,
+      };
+      const forwarded = injectContextHeaders(request, proxyContext);
+      const rendererRequest = new Request("http://renderer.internal/", {
+        headers: forwarded.headers,
+      });
+      const { publicOrigin } = extractRequestHeaders(
+        rendererRequest,
+        new URL(rendererRequest.url),
+        true,
+      );
+      return Response.json({ publicOrigin });
+    },
+    {
+      hostname: "127.0.0.1",
+      port: 0,
+      onListen: ({ port }) => resolvePort(port),
+    },
+  );
+
+  try {
+    const port = await listening;
+    const response = await fetch(`http://127.0.0.1:${port}/`, {
+      headers: {
+        host: "customer.example",
+        "x-forwarded-for": "203.0.113.8",
+        "x-forwarded-proto": "https",
+      },
+    });
+    assertEquals(response.status, 200);
+    const body = await response.json() as { publicOrigin: string };
+    return body.publicOrigin;
+  } finally {
+    await server.close();
+    await servePromise;
+  }
 }
 
 function encodeDataStreamEvent(payload: Record<string, unknown>): Uint8Array {
@@ -1027,7 +1098,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       "http://renderer.internal",
     );
     const ctx = createCtx(publicKeyPem);
-    ctx.publicOrigin = "https://customer.example";
+    ctx.publicOrigin = await resolvePublicOriginThroughTrustedIngress();
 
     const result = await withEnvValue(
       "PORT",

@@ -12,6 +12,7 @@
  * - VERYFRONT_PROXY_API_BASE_URL: Veryfront API base URL
  * - VERYFRONT_SERVER_URL: URL of the production server service
  * - VERYFRONT_PROXY_URL: Optional proxy bind URL (e.g. http://0.0.0.0:8080)
+ * - VERYFRONT_PROXY_TRUSTED_INGRESS_IPS: Exact native peer IPs allowed to supply replaced forwarding metadata
  * - LOCAL_PROJECTS: JSON map of slug → filesystem path (for dev)
  * - CACHE_TYPE: "memory" (default) or "extension"
  * - VERYFRONT_PROXY_EXPECTED_REPLICAS: Minimum proxy replicas required to acknowledge routing changes
@@ -124,6 +125,7 @@ const config: ProxyConfig = {
   previewApiClientId: apiClientId,
   previewApiClientSecret: apiClientSecret,
   localProjects: getLocalProjects(),
+  trustedIngressProxyIps: getEnv("VERYFRONT_PROXY_TRUSTED_INGRESS_IPS"),
 };
 
 function resolveProxyBinding(): { hostname: string; port: number } {

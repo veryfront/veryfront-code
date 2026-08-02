@@ -85,14 +85,21 @@ requests. When it is present, all proxy-owned project, release, branch,
 environment, content-source, token, forwarded-host, and local-path metadata
 may be consumed as one edge-established routing context. The built-in proxy
 removes incoming `Forwarded`, `Via`, `x-forwarded-*`, `x-real-ip`, and
-`x-project-*` values before adding its authoritative context. Client address
-and public protocol come from immutable native transport provenance, never
-from the removed request headers. The renderer resolves the resulting public
-origin and content-source identity once into `HandlerContext`; downstream
-handlers must use that context instead of re-reading forwarding headers. For
-the HMR WebSocket bridge, the proxy also replaces the `x-project-slug` and
-`x-environment` query parameters with proxy-resolved values. Trusted
-third-party proxies must provide the same header and query rewrite guarantees.
+`x-project-*` values before adding its authoritative context. Direct client
+address and protocol come from immutable native transport provenance. When a
+TLS terminator or ingress sits in front of the built-in proxy, operators must
+list its exact native peer IP in `VERYFRONT_PROXY_TRUSTED_INGRESS_IPS`. Only
+those peers may provide `x-forwarded-for` and `x-forwarded-proto`, and they must
+replace both headers with one canonical client IP and exactly `http` or
+`https`; missing, appended, or malformed values fail closed. Never list a
+public client network or an address from which direct requests can arrive.
+
+The renderer resolves the resulting public origin and content-source identity
+once into `HandlerContext`; downstream handlers must use that context instead
+of re-reading forwarding headers. For the HMR WebSocket bridge, the proxy also
+replaces the `x-project-slug` and `x-environment` query parameters with
+proxy-resolved values. Trusted third-party proxies must provide the same header
+and query rewrite guarantees.
 
 A signed channel or control-plane request does not establish proxy topology.
 Those signatures authorize only the request surface and claims they bind; they
