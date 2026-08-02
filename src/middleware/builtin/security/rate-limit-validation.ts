@@ -10,6 +10,9 @@ export function requireRateLimitKey(
   if (typeof value !== "string") {
     throw new TypeError(`${name} must be a string`);
   }
+  if (value.trim().length === 0 || /\p{Cc}/u.test(value)) {
+    throw new TypeError(`${name} must contain visible text without control characters`);
+  }
   if (value.length > MAX_RATE_LIMIT_KEY_LENGTH) {
     throw new RangeError(
       `${name} must contain at most ${MAX_RATE_LIMIT_KEY_LENGTH} characters`,

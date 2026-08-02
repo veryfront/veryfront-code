@@ -257,6 +257,13 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
           RangeError,
           "1024",
         );
+        for (const invalidKey of ["", " \t ", "tenant\u0000member", "tenant\u0085member"]) {
+          await assertRejects(
+            () => rateStore.increment(invalidKey, 1000),
+            TypeError,
+            "visible text without control characters",
+          );
+        }
         await assertRejects(
           () => rateStore.increment("key", 0),
           RangeError,
