@@ -244,7 +244,10 @@ async function fetchHttpModule(url: string): Promise<HttpModuleFetchResult> {
       });
     }
     if (error instanceof OutboundRequestBlockedError) {
-      throw BUILD_FAILED.create({ detail: error.message });
+      // Preserve the policy-denial type so downstream specifier resolution can
+      // distinguish it from a transient fetch failure. Dynamic imports must
+      // never degrade into an unguarded runtime fetch after a policy denial.
+      throw error;
     }
     throw error;
   }
