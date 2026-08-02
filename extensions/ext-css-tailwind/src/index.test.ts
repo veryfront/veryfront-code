@@ -20,12 +20,8 @@ describe("ext-css-tailwind", () => {
   });
 
   it("binds cache identity to extension, compiler, base CSS, and plugin policy", () => {
-    const processor = new TailwindCSSProcessor();
-    const identity = processor.cacheIdentity;
-    assertEquals(processor.defaultStylesheet, TAILWIND_DEFAULT_STYLESHEET);
-    assertEquals(Object.isFrozen(processor), true);
-    assertEquals(Object.isFrozen(TailwindCSSProcessor.prototype), true);
-    assertEquals(Object.isFrozen(TailwindCSSProcessor), true);
+    const identity = new TailwindCSSProcessor().cacheIdentity;
+    assertEquals(new TailwindCSSProcessor().defaultStylesheet, TAILWIND_DEFAULT_STYLESHEET);
     assertStringIncludes(identity, `ext-css-tailwind@${extensionPackage.version}`);
     assertEquals(
       exactTailwindVersion(extensionPackage.imports.tailwindcss),

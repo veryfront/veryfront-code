@@ -8,15 +8,7 @@
  */
 
 import { IMAGE_OPTIMIZATION } from "#veryfront/utils/constants/build.ts";
-import {
-  applyExtensionMethod,
-  findExtensionPropertyDescriptor,
-  freezeExtensionContract,
-  getExtensionOwnPropertyDescriptor,
-  isDataPropertyDescriptor,
-  isExtensionArray,
-  isStableExtensionCacheIdentity,
-} from "../property-inspection.ts";
+import { findExtensionPropertyDescriptor } from "../property-inspection.ts";
 
 /** Registry name used for the image optimization extension contract. */
 export const ImageOptimizationEngineName = "ImageOptimizationEngine" as const;
@@ -28,18 +20,17 @@ export const MAX_IMAGE_OPTIMIZATION_ENGINE_IDENTITY_CHARACTERS =
 /** Formats core can request from an image optimization engine. */
 export type ImageOptimizationFormat = "webp" | "avif" | "jpeg" | "png";
 
+/** One immutable output requested from an image optimization engine. */
+export interface ImageOptimizationVariantRequest {
+  readonly format: ImageOptimizationFormat;
+  readonly width: number;
+  readonly quality: number;
+}
+
 /** Immutable byte-oriented request supplied by core. */
 export interface ImageOptimizationRequest {
   readonly input: Uint8Array;
-  /**
-   * Configured target widths. The engine returns each distinct width that does
-   * not exceed the decoded source width, plus the source width itself.
-   */
-  readonly targetWidths: readonly number[];
-  /** Every format to produce for each resulting width. */
-  readonly formats: readonly ImageOptimizationFormat[];
-  /** Encoding quality applied consistently across requested formats. */
-  readonly quality: number;
+  readonly variants: readonly ImageOptimizationVariantRequest[];
   /** Aborted when the caller cancels or the core operation deadline expires. */
   readonly signal: AbortSignal;
 }
@@ -59,37 +50,25 @@ export interface ImageOptimizationResult {
   readonly variants: readonly ImageOptimizationVariantResult[];
 }
 
-/**
- * Image decoder, resizer, and encoder implemented by an explicit extension.
- *
- * Implementations are long-lived, concurrency-safe services. They must not
- * require caller-managed lifecycle cleanup and must release operation-scoped
- * resources when the Promise returned by `optimize()` settles. Core may stop
- * awaiting an operation after aborting its signal, so a late result must not
- * rely on caller publication or cleanup behavior.
- */
+/** Image decoder, resizer, and encoder implemented by an explicit extension. */
 export interface ImageOptimizationEngine {
-  /**
-   * Includes every implementation/version input capable of changing output.
-   * Represented state must remain immutable for the captured engine lifetime.
-   */
+  /** Includes every implementation/version input capable of changing output. */
   readonly cacheIdentity: string;
   optimize(request: ImageOptimizationRequest): Promise<ImageOptimizationResult>;
 }
 
 function readImageOptimizationEngine(value: unknown): {
-  implementation: object;
   cacheIdentity: string;
   optimize: ImageOptimizationEngine["optimize"];
 } {
-  if (typeof value !== "object" || value === null || isExtensionArray(value)) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new TypeError("ImageOptimizationEngine must be an object");
   }
 
   let cacheIdentityDescriptor: PropertyDescriptor | undefined;
   let optimizeDescriptor: PropertyDescriptor | undefined;
   try {
-    cacheIdentityDescriptor = getExtensionOwnPropertyDescriptor(
+    cacheIdentityDescriptor = Object.getOwnPropertyDescriptor(
       value,
       "cacheIdentity",
     );
@@ -101,23 +80,28 @@ function readImageOptimizationEngine(value: unknown): {
   }
 
   if (
-    !isDataPropertyDescriptor(cacheIdentityDescriptor)
+    cacheIdentityDescriptor === undefined ||
+    !("value" in cacheIdentityDescriptor)
   ) {
     throw new TypeError(
       "ImageOptimizationEngine cacheIdentity must be an own data property",
     );
   }
-  if (!isDataPropertyDescriptor(optimizeDescriptor)) {
-    throw new TypeError("ImageOptimizationEngine optimize must be a data property");
+  if (optimizeDescriptor === undefined || !("value" in optimizeDescriptor)) {
+    throw new TypeError(
+      "ImageOptimizationEngine optimize must be a data property",
+    );
   }
 
   const cacheIdentity = cacheIdentityDescriptor.value;
   const optimize = optimizeDescriptor.value;
   if (
-    !isStableExtensionCacheIdentity(
-      cacheIdentity,
-      MAX_IMAGE_OPTIMIZATION_ENGINE_IDENTITY_CHARACTERS,
-    )
+    typeof cacheIdentity !== "string" ||
+    cacheIdentity.length === 0 ||
+    cacheIdentity.length > MAX_IMAGE_OPTIMIZATION_ENGINE_IDENTITY_CHARACTERS ||
+    cacheIdentity.trim() !== cacheIdentity ||
+    cacheIdentity.normalize("NFC") !== cacheIdentity ||
+    /\p{Cc}/u.test(cacheIdentity)
   ) {
     throw new TypeError(
       "ImageOptimizationEngine must declare a bounded stable cacheIdentity",
@@ -127,7 +111,6 @@ function readImageOptimizationEngine(value: unknown): {
     throw new TypeError("ImageOptimizationEngine must implement optimize()");
   }
   return {
-    implementation: value,
     cacheIdentity,
     optimize: optimize as ImageOptimizationEngine["optimize"],
   };
@@ -145,12 +128,12 @@ export function captureImageOptimizationEngine(
   value: unknown,
 ): ImageOptimizationEngine {
   const captured = readImageOptimizationEngine(value);
-  return freezeExtensionContract({
+  return Object.freeze({
     cacheIdentity: captured.cacheIdentity,
     optimize(
       request: ImageOptimizationRequest,
     ): Promise<ImageOptimizationResult> {
-      return applyExtensionMethod(captured.optimize, captured.implementation, [request]);
+      return Reflect.apply(captured.optimize, value, [request]);
     },
   });
 }

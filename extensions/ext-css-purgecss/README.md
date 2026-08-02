@@ -3,9 +3,9 @@
 > **Category:** Build | **Contract:** `CSSPurgingEngine` | **Explicit**
 
 Provides parser-backed unused-rule removal and critical/remaining CSS splitting
-through PurgeCSS. Veryfront core owns the dependency-free contract, request and
-result validation, resource limits, and filesystem collection. This extension
-owns the third-party implementation.
+through PurgeCSS. Veryfront core owns only the dependency-free contract,
+validation, resource limits, and filesystem collection; this extension owns the
+third-party runtime.
 
 ## Registration
 
@@ -17,19 +17,15 @@ export default defineConfig({
 });
 ```
 
-The extension is never imported, probed, or auto-loaded by core. A purge or
-critical-CSS operation fails with a missing-extension error when no
-`CSSPurgingEngine` is registered. There is no regex, no-op, dynamic-import,
-network, or workspace fallback.
+The extension is never imported or probed by core. A purge or critical-CSS
+operation fails with the `missing-extension` error when no implementation is
+registered. There is no regex, no-op, or dynamic-import fallback.
 
 ## Configuration and capabilities
 
-The factory accepts no options. It receives only bounded in-memory CSS and
-content snapshots from core. PurgeCSS loads `fast-glob`, which reads the CPU
-count to size its concurrency, so the extension requests only `system:read`
-with `apis: ["cpus"]`. In Deno this maps to `--allow-sys=cpus`. The extension
-requests no filesystem, network, environment, subprocess, or native capability.
-
-PurgeCSS does not expose an operation-level cancellation signal, so this
-contract cannot interrupt an invocation after it enters the provider. Core
-still validates all inputs before invocation and all outputs before use.
+The factory accepts no options. It consumes CSS and already-collected content
+as bounded in-memory strings. PurgeCSS loads `fast-glob`, which reads the CPU
+count to size its worker concurrency, so the extension requests only
+`system:read` with `apis: ["cpus"]`. In Deno, this maps to
+`--allow-sys=cpus`. The extension requests no filesystem, network, environment,
+subprocess, or native capability.

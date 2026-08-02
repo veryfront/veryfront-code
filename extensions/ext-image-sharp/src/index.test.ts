@@ -18,18 +18,14 @@ describe("ext-image-sharp", () => {
     assertEquals(extension.contracts?.provides, [ImageOptimizationEngineName]);
     assertEquals(extension.capabilities, [
       {
-        type: "fs:read",
-        paths: ["/proc/self/exe", "/usr/bin/ldd"],
-      },
-      {
         type: "env:read",
-        keys: ["MALLOC_ARENA_MAX", "npm_package_config_libvips"],
+        keys: ["npm_package_config_libvips"],
       },
       { type: "native:ffi" },
     ]);
   });
 
-  it("registers one explicit Sharp engine", async () => {
+  it("registers one captured Sharp engine", async () => {
     const provided = new Map<string, unknown>();
     await factory().setup?.({
       get: () => undefined,
@@ -52,60 +48,49 @@ describe("ext-image-sharp", () => {
     );
   });
 
-  it("keeps cache identity immutable and backend-specific", () => {
+  it("encodes exact requested dimensions and applies quality", async () => {
     const engine = new SharpImageOptimizationEngine();
-    assertStringIncludes(engine.cacheIdentity, "sharp@0.35.3");
-    assertStringIncludes(engine.cacheIdentity, `vips@${sharp.versions.vips}`);
-    assertEquals(Object.isFrozen(engine), true);
-    assertThrows(
-      () => {
-        (engine as { cacheIdentity: string }).cacheIdentity = "mutated";
-      },
-      TypeError,
-    );
-    assertStringIncludes(engine.cacheIdentity, "veryfront.image-sharp.v2");
-  });
-
-  it("emits exact no-upscale widths and deterministic formats", async () => {
-    const input = await sharp({
-      create: {
-        width: 3,
-        height: 2,
-        channels: 3,
-        background: { r: 25, g: 50, b: 75 },
-      },
-    }).png().toBuffer();
-    const result = await new SharpImageOptimizationEngine().optimize({
-      input,
-      targetWidths: [5, 2, 1, 2],
-      formats: ["png", "webp"],
-      quality: 67,
+    assertStringIncludes(engine.cacheIdentity, "sharp@0.34.5");
+    const result = await engine.optimize({
+      input: pixel,
+      variants: Object.freeze([
+        Object.freeze({ format: "webp", width: 2, quality: 67 }),
+        Object.freeze({ format: "jpeg", width: 3, quality: 91 }),
+      ]),
       signal: new AbortController().signal,
     });
-
-    assertEquals([result.sourceWidth, result.sourceHeight], [3, 2]);
+    assertEquals(result.sourceWidth, 1);
+    assertEquals(result.sourceHeight, 1);
     assertEquals(
       result.variants.map((variant) => [
+        variant.format,
         variant.width,
         variant.height,
-        variant.format,
       ]),
       [
-        [1, 1, "webp"],
-        [1, 1, "png"],
-        [2, 1, "webp"],
-        [2, 1, "png"],
-        [3, 2, "webp"],
-        [3, 2, "png"],
+        ["webp", 2, 2],
+        ["jpeg", 3, 3],
       ],
     );
-    assertEquals(
-      result.variants.every((variant) => variant.data.length > 0),
-      true,
+    assertEquals(result.variants.every((variant) => variant.data.length > 0), true);
+  });
+
+  it("fails before work when cancelled", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await assertRejects(
+      () =>
+        new SharpImageOptimizationEngine().optimize({
+          input: pixel,
+          variants: [{ format: "png", width: 1, quality: 80 }],
+          signal: controller.signal,
+        }),
+      Error,
+      "cancelled",
     );
   });
 
-  it("uses auto-oriented source dimensions without enlargement", async () => {
+  it("reports dimensions after EXIF orientation is applied", async () => {
     const input = await sharp({
       create: {
         width: 2,
@@ -116,37 +101,18 @@ describe("ext-image-sharp", () => {
     }).jpeg().withMetadata({ orientation: 6 }).toBuffer();
     const result = await new SharpImageOptimizationEngine().optimize({
       input,
-      targetWidths: [6, 1],
-      formats: ["webp"],
-      quality: 80,
+      variants: [{ format: "webp", width: 6, quality: 80 }],
       signal: new AbortController().signal,
     });
 
     assertEquals([result.sourceWidth, result.sourceHeight], [3, 2]);
     assertEquals(
-      result.variants.map((variant) => [variant.width, variant.height]),
-      [[1, 1], [3, 2]],
+      [result.variants[0]?.width, result.variants[0]?.height],
+      [6, 4],
     );
   });
 
-  it("fails before native work when cancelled", async () => {
-    const controller = new AbortController();
-    controller.abort();
-    await assertRejects(
-      () =>
-        new SharpImageOptimizationEngine().optimize({
-          input: pixel,
-          targetWidths: [1],
-          formats: ["png"],
-          quality: 80,
-          signal: controller.signal,
-        }),
-      Error,
-      "cancelled or exceeded its deadline",
-    );
-  });
-
-  it("rejects inherited, accessor, and unknown factory configuration", () => {
+  it("rejects inherited and unknown factory configuration", () => {
     assertThrows(
       () => factory(Object.create({ value: true })),
       TypeError,
@@ -157,14 +123,5 @@ describe("ext-image-sharp", () => {
       TypeError,
       "does not accept",
     );
-    let reads = 0;
-    const hostile = Object.defineProperty({}, "value", {
-      get() {
-        reads++;
-        return true;
-      },
-    });
-    assertThrows(() => factory(hostile), TypeError, "does not accept");
-    assertEquals(reads, 0);
   });
 });

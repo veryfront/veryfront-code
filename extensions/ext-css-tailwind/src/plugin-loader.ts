@@ -12,32 +12,20 @@ import {
   TAILWIND_PLUGIN_ALLOWLIST,
 } from "./plugin-policy.ts";
 
-function getStaticPlugin(name: string): unknown {
-  switch (name) {
-    case "@tailwindcss/forms":
-      return forms;
-    case "@tailwindcss/typography":
-      return typography;
-    case "daisyui":
-      return daisyui;
-    case "tailwind-scrollbar-hide":
-      return scrollbarHide;
-    case "tailwindcss-animate":
-      return tailwindcssAnimate;
-    default:
-      throw IMPORT_RESOLUTION_ERROR.create({
-        detail: `Tailwind plugin "${name}" is absent from the static extension registry`,
-      });
-  }
-}
+const STATIC_PLUGIN_BY_NAME: Readonly<Record<string, unknown>> = Object.freeze({
+  "@tailwindcss/forms": forms,
+  "@tailwindcss/typography": typography,
+  daisyui,
+  "tailwind-scrollbar-hide": scrollbarHide,
+  "tailwindcss-animate": tailwindcssAnimate,
+});
 
 function requirePinnedPlugin(specifier: string): string {
   try {
     return resolveTailwindPluginPolicy(specifier).name;
   } catch (cause) {
-    const displayName = typeof specifier === "string" ? bareName(specifier) : "<non-string>";
     throw SECURITY_VIOLATION.create({
-      detail: `Package "${displayName}" is not an audited ext-css-tailwind plugin`,
+      detail: `Package "${bareName(specifier)}" is not an audited ext-css-tailwind plugin`,
       cause,
     });
   }
@@ -55,14 +43,17 @@ function assertStaticPlugin(name: string, value: unknown): void {
 }
 
 function assertCompleteStaticRegistry(): void {
-  for (let index = 0; index < TAILWIND_PLUGIN_ALLOWLIST.length; index++) {
-    const name = TAILWIND_PLUGIN_ALLOWLIST[index];
-    if (name === undefined) {
-      throw IMPORT_RESOLUTION_ERROR.create({
-        detail: "ext-css-tailwind plugin policy contains an invalid entry",
-      });
-    }
-    assertStaticPlugin(name, getStaticPlugin(name));
+  const registeredNames = Object.keys(STATIC_PLUGIN_BY_NAME).sort();
+  if (
+    registeredNames.length !== TAILWIND_PLUGIN_ALLOWLIST.length ||
+    registeredNames.some((name, index) => name !== TAILWIND_PLUGIN_ALLOWLIST[index])
+  ) {
+    throw IMPORT_RESOLUTION_ERROR.create({
+      detail: "ext-css-tailwind static plugin registry does not match its audited policy",
+    });
+  }
+  for (const name of registeredNames) {
+    assertStaticPlugin(name, STATIC_PLUGIN_BY_NAME[name]);
   }
 }
 
@@ -74,7 +65,7 @@ assertCompleteStaticRegistry();
  */
 export function loadPlugin(id: string): unknown {
   const name = requirePinnedPlugin(id);
-  const plugin = getStaticPlugin(name);
+  const plugin = STATIC_PLUGIN_BY_NAME[name];
   assertStaticPlugin(name, plugin);
   return plugin;
 }

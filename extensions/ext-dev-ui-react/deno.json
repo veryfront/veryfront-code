@@ -1,0 +1,45 @@
+{
+  "name": "@veryfront/ext-dev-ui-react",
+  "version": "0.1.0",
+  "exports": "./src/index.ts",
+  "veryfront": {
+    "extension": true,
+    "activation": "auto",
+    "contracts": {
+      "provides": [
+        "DevUiAssetProvider"
+      ]
+    },
+    "capabilities": [],
+    "npm": {
+      "runtimeVersionFromManifest": true,
+      "runtimeDependencies": []
+    }
+  },
+  "imports": {
+    "@std/assert": "jsr:@std/assert@1.0.19",
+    "@std/fs/walk": "jsr:@std/fs@1.0.23/walk",
+    "@std/path": "jsr:@std/path@1.1.4",
+    "@std/testing/bdd": "jsr:@std/testing@1.0.17/bdd",
+    "react": "npm:react@19.2.4",
+    "react-dom/client": "npm:react-dom@19.2.4/client",
+    "react/jsx-runtime": "npm:react@19.2.4/jsx-runtime",
+    "veryfront/extensions": "../../src/extensions/index.ts",
+    "veryfront/extensions/dev-ui": "../../src/extensions/dev-ui/index.ts"
+  },
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "lib": [
+      "deno.window",
+      "dom",
+      "dom.iterable"
+    ]
+  },
+  "tasks": {
+    "check": "deno check src/index.ts src/**/*.test.ts && deno check --frozen --import-map=scripts/browser-import-map.json src/browser-entry.tsx",
+    "test": "deno test --allow-all src/",
+    "generate": "deno run -A scripts/generate-styles.ts && deno run -A scripts/prebundle.ts",
+    "generate:check": "deno run -A scripts/generate-styles.ts --check && deno run -A scripts/prebundle.ts --check"
+  }
+}
