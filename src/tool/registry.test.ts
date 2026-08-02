@@ -61,6 +61,9 @@ describe("tool registry", () => {
         properties: { query: { type: "string" } },
       },
       mcp: {
+        enabled: true,
+        requiresAuth: true,
+        cachePolicy: "cache-first",
         title: "Search",
         annotations: { readOnlyHint: true },
       },
@@ -113,6 +116,35 @@ describe("tool registry", () => {
       () => toolToProviderDefinition(manualTool),
       TypeError,
       "annotations",
+    );
+  });
+
+  it("rejects malformed MCP transport metadata on manually constructed tools", () => {
+    const createManualTool = (mcp: Tool["mcp"]): Tool => ({
+      id: "manual-tool",
+      type: "function",
+      description: "Manually constructed",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      inputSchemaJson: { type: "object" },
+      execute: async () => null,
+      mcp,
+    });
+
+    assertThrows(
+      () =>
+        toolToProviderDefinition(
+          createManualTool({ requiresAuth: "yes" } as unknown as Tool["mcp"]),
+        ),
+      TypeError,
+      "requiresAuth",
+    );
+    assertThrows(
+      () =>
+        toolToProviderDefinition(
+          createManualTool({ cachePolicy: "forever" } as unknown as Tool["mcp"]),
+        ),
+      TypeError,
+      "cachePolicy",
     );
   });
 

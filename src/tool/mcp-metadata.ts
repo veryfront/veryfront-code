@@ -5,6 +5,8 @@ import { getEnumerableOwnStringDataEntries } from "./data-properties.ts";
 
 const TOOL_MCP_FIELDS = new Set([
   "enabled",
+  "requiresAuth",
+  "cachePolicy",
   "title",
   "annotations",
 ]);
@@ -79,6 +81,20 @@ export function snapshotToolMcpConfig(
   const metadata = snapshot.value;
   if (metadata.enabled !== undefined && typeof metadata.enabled !== "boolean") {
     throw new TypeError(`Tool "${toolId}" MCP enabled must be a boolean`);
+  }
+  if (
+    metadata.requiresAuth !== undefined &&
+    typeof metadata.requiresAuth !== "boolean"
+  ) {
+    throw new TypeError(`Tool "${toolId}" MCP requiresAuth must be a boolean`);
+  }
+  if (
+    metadata.cachePolicy !== undefined &&
+    metadata.cachePolicy !== "no-cache" &&
+    metadata.cachePolicy !== "cache" &&
+    metadata.cachePolicy !== "cache-first"
+  ) {
+    throw new TypeError(`Tool "${toolId}" MCP cachePolicy is invalid`);
   }
   if (
     metadata.title !== undefined &&
