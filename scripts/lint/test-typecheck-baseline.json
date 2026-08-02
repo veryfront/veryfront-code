@@ -29,7 +29,6 @@
   "src/build/production-build/manifest.test.ts",
   "src/build/renderer/services/css-bundler.test.ts",
   "src/cache/registry.test.ts",
-  "src/chat/upload-handler.test.ts",
   "src/config/env.test.ts",
   "src/embedding/chunk.test.ts",
   "src/embedding/rag-store.test.ts",

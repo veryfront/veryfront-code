@@ -83,7 +83,8 @@ export type ComponentFunction = (
   props: ComponentProps,
 ) => React.ReactElement | null;
 
-export type MDXComponents = Record<string, React.ComponentType<unknown>>;
+/** React elements accepted as compiled-MDX component overrides. */
+export type MDXComponents = Record<string, React.ElementType>;
 
 /** Parsed frontmatter values from an MDX page. */
 export interface MDXFrontmatter {
