@@ -556,7 +556,11 @@ describe("agent/hosted-chat-execution-runtime", () => {
           toUIMessageStream: () =>
             (async function* () {
               lazyScopeActive = getActiveModelCallRecorder() !== undefined;
-              for await (const part of result.fullStream) {
+              const fullStream = result.fullStream as unknown as AsyncIterable<
+                | { type: "text-delta"; text: string }
+                | { type: "finish" }
+              >;
+              for await (const part of fullStream) {
                 if (part.type === "text-delta") {
                   yield { type: "text-delta", id: "root", delta: part.text } as const;
                 }

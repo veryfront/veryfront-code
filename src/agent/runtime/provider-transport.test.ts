@@ -137,7 +137,9 @@ describe("agent provider transport hooks", () => {
         model: `${provider}/context-parity`,
         system: "Follow the same instructions.",
         skills: [],
-        modelCallRecorder: (context) => contexts.push(context),
+        modelCallRecorder: (context) => {
+          contexts.push(context);
+        },
         resolveModelTransport: () => ({ model: runtime }),
       });
 
