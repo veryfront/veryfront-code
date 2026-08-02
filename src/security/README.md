@@ -175,7 +175,10 @@ Worker: API ownership returns the typed
 `project-execution-unavailable` 503 response until the request is routed to a
 genuinely external or dedicated isolated project runtime. Raw-path server-data
 modules are local-only; remote data and renderer-backed module endpoints return
-503 before resolving project modules.
+503 before resolving project modules. Shared-runtime CORS preflights never
+import route modules to discover methods, and component-snippet requests fail
+before source reads or compilation. Shared markdown previews likewise stop
+before source reads or custom not-found rendering.
 Defined invalid flags and pool limits are startup errors; they are not silently
 replaced with defaults.
 

@@ -8,7 +8,7 @@ import { runWithRegistryTransaction } from "#veryfront/registry/project-scoped-r
 import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
 import {
   isExplicitlyLocalProject,
-  readOwnDataProperty,
+  isSharedProjectRuntime,
 } from "#veryfront/security/project-locality.ts";
 import type { HandlerContext } from "../../types.ts";
 
@@ -141,9 +141,7 @@ function shouldCacheCompletedDiscovery(ctx: HandlerContext): boolean {
  * correct project scope.
  */
 export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<DiscoveryResult> {
-  const isSharedHostedRuntime = readOwnDataProperty(ctx, "prepareHostedConfigContext") !==
-    undefined;
-  if (!isExplicitlyLocalProject(ctx) && isSharedHostedRuntime) {
+  if (!isExplicitlyLocalProject(ctx) && isSharedProjectRuntime(ctx)) {
     throw INITIALIZATION_ERROR.create({
       detail:
         "Remote executable discovery requires an isolated project runtime and cannot run in the shared host",

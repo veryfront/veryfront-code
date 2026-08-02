@@ -18,6 +18,7 @@ import {
   createErrorResponseFromDefinition,
   PROJECT_EXECUTION_UNAVAILABLE,
 } from "#veryfront/errors";
+import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
 
 type FsWrapper = {
   isMultiProjectMode?: () => boolean;
@@ -84,7 +85,7 @@ export class ApiHandlerWrapper extends BaseHandler {
       typeof fsWrapper.isMultiProjectMode === "function" &&
       fsWrapper.isMultiProjectMode();
 
-    const isSharedRuntime = isMultiProject || ctx.prepareHostedConfigContext !== undefined;
+    const isSharedRuntime = isSharedProjectRuntime(ctx);
 
     if (!isMultiProject) {
       return this.handleWithContext(req, ctx, pathname, isSharedRuntime);

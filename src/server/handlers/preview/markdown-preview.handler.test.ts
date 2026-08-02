@@ -70,6 +70,35 @@ Deno.test("MarkdownPreviewHandler admits the resolver result before reading", as
   assertEquals(reads, 0);
 });
 
+Deno.test("MarkdownPreviewHandler fails closed before shared source reads", async () => {
+  let reads = 0;
+  const ctx = {
+    projectDir: "/project",
+    isLocalProject: false,
+    requestContext: { mode: "preview" },
+    adapter: {
+      fs: {
+        isMultiProjectMode: () => true,
+        readFile: () => {
+          reads++;
+          throw new Error("shared markdown preview read project source");
+        },
+      },
+    },
+    securityConfig: null,
+    cspUserHeader: null,
+  } as unknown as HandlerContext;
+
+  const result = await new MarkdownPreviewHandler().handle(
+    new Request("https://tenant.example/README.md"),
+    ctx,
+  );
+
+  assertEquals(result.response?.status, 503);
+  assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
+  assertEquals(reads, 0);
+});
+
 Deno.test("MarkdownPreviewHandler admits and reads through a real wrapped GitHub adapter", async () => {
   const originalFetch = globalThis.fetch;
   let contentReads = 0;
