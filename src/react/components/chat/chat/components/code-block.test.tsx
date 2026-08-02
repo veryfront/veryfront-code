@@ -1,5 +1,5 @@
 import { flushSync } from "react-dom";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
@@ -46,6 +46,13 @@ async function settle(): Promise<void> {
   await Promise.resolve();
   await new Promise((resolve) => setTimeout(resolve, 0));
   flushSync(() => {});
+}
+
+// Unmounting leaves a scheduler callback queued; drain it so the leak
+// sanitizer does not attribute that timer to the test.
+async function unmount(root: Root): Promise<void> {
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("RichCodeBlock — inline mode", () => {
@@ -122,7 +129,7 @@ describe("RichCodeBlock — block mode", () => {
         "Unable to copy code",
       );
       assertEquals(document.querySelectorAll("textarea").length, 0);
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       dom.restore();
     }
@@ -167,7 +174,7 @@ describe("RichCodeBlock — block mode", () => {
       assertStringIncludes(rootElement.textContent ?? "", "new code");
       assert(!(rootElement.textContent ?? "").includes("old code"));
 
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       dom.restore();
     }

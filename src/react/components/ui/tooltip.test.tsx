@@ -1,6 +1,6 @@
 import type { RefCallback } from "react";
 import { flushSync } from "react-dom";
-import { createRoot, hydrateRoot } from "react-dom/client";
+import { createRoot, hydrateRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
@@ -100,6 +100,14 @@ function escape(window: JSDOM["window"], target: EventTarget): KeyboardEvent {
   return event;
 }
 
+// Unmounting leaves a scheduler callback queued; drain it so the leak
+// sanitizer does not attribute that timer to the test.
+async function unmount(root: Root | undefined): Promise<void> {
+  if (!root) return;
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("Tooltip", () => {
   it("gives the default trigger a keyboard path and honors an explicit tab index", async () => {
     const dom = createDom();
@@ -140,7 +148,7 @@ describe("Tooltip", () => {
       assert(tooltipId);
       assertEquals(defaultTrigger.getAttribute("aria-describedby"), tooltipId);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });
@@ -225,7 +233,7 @@ describe("Tooltip", () => {
       assertEquals(childFocusCalls, 1);
       assertEquals(recoverableErrors, []);
     } finally {
-      root?.unmount();
+      await unmount(root);
       restore();
     }
   });
@@ -263,7 +271,7 @@ describe("Tooltip", () => {
       await waitFor(() => document.querySelector('[role="tooltip"]') === null);
       assertEquals(trigger.hasAttribute("aria-describedby"), false);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });
@@ -313,7 +321,7 @@ describe("Tooltip", () => {
       });
       await waitFor(() => document.querySelector('[role="tooltip"]') !== null);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });
@@ -356,7 +364,7 @@ describe("Tooltip", () => {
       assertEquals(calls, ["child", "trigger"]);
       assert(document.querySelector('[role="tooltip"]') === null);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });
@@ -391,7 +399,7 @@ describe("Tooltip", () => {
       flushSync(() => unhover(dom.window, trigger));
       await waitFor(() => document.querySelector('[role="tooltip"]') === null);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });
@@ -439,7 +447,7 @@ describe("Tooltip", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
       assert(document.querySelector('[role="tooltip"]') === null);
     } finally {
-      if (rootMounted) flushSync(() => root.unmount());
+      if (rootMounted) await unmount(root);
       restore();
     }
   });
@@ -530,7 +538,7 @@ describe("Tooltip", () => {
       flushSync(() => escape(targetDom.window, targetDocument));
       await waitFor(() => targetDocument.querySelector('[role="tooltip"]') === null);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       targetDom.window.close();
       restore();
     }
@@ -571,7 +579,7 @@ describe("Tooltip", () => {
       assertEquals(tooltip.style.overflowWrap, "normal");
       assertEquals(tooltip.style.whiteSpace, "pre-wrap");
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });
@@ -599,12 +607,12 @@ describe("Tooltip", () => {
       flushSync(() => hover(dom.window, trigger));
       await waitFor(() => document.querySelector('[role="tooltip"]') !== null);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });
 
-  it("caps excessive provider delays and cancels the owner-window timer", () => {
+  it("caps excessive provider delays and cancels the owner-window timer", async () => {
     const dom = createDom();
     const restore = installDom(dom);
     const root = createRoot(document.getElementById("root")!);
@@ -654,7 +662,7 @@ describe("Tooltip", () => {
       flushSync(() => unhover(dom.window, trigger));
       assertEquals(clearedHandles, [47]);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       if (setTimeoutDescriptor) {
         Object.defineProperty(dom.window, "setTimeout", setTimeoutDescriptor);
       } else delete (dom.window as unknown as Record<string, unknown>).setTimeout;
@@ -704,7 +712,7 @@ describe("Tooltip", () => {
       assertEquals(cleanupCalls, 0);
       assertEquals(nullCalls, 0);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       assertEquals(attachedElement, null);
       assertEquals(cleanupCalls, 1);
       assertEquals(nullCalls, 0);
@@ -754,7 +762,7 @@ describe("Tooltip", () => {
       assert(document.querySelector('[role="tooltip"]'));
       assertEquals(refCalls, ["attach:1", "cleanup:1", "attach:2"]);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       assertEquals(refCalls, [
         "attach:1",
         "cleanup:1",
