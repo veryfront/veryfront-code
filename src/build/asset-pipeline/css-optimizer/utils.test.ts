@@ -212,6 +212,30 @@ describe("CSS Optimizer Utils", () => {
       }
     });
 
+    it("applies negative extglobs to complete CSS discovery segments", async () => {
+      await cleanupTestDir();
+      try {
+        await ensureDir(join(TEST_DIR, "src", "app"));
+        await ensureDir(join(TEST_DIR, "src", "generated"));
+        await ensureDir(join(TEST_DIR, "src", "generated-extra"));
+        await ensureDir(join(TEST_DIR, "src", "vendor"));
+        await writeTextFile(join(TEST_DIR, "src", "app", "page.tsx"), "content");
+        await writeTextFile(join(TEST_DIR, "src", "generated", "page.tsx"), "content");
+        await writeTextFile(join(TEST_DIR, "src", "generated-extra", "page.tsx"), "content");
+        await writeTextFile(join(TEST_DIR, "src", "vendor", "page.tsx"), "content");
+
+        const files = await globFiles(
+          `${TEST_DIR}/src/!(generated|vendor)/**/*.tsx`,
+        );
+
+        assertEquals(files.map((file) => file.replaceAll("\\", "/")), [
+          resolve(TEST_DIR, "src", "app", "page.tsx").replaceAll("\\", "/"),
+        ]);
+      } finally {
+        await cleanupTestDir();
+      }
+    });
+
     it("rejects patterns outside the project boundary", async () => {
       const baseDir = await Deno.makeTempDir();
       try {

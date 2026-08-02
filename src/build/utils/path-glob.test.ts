@@ -63,6 +63,126 @@ describe("build/utils/path-glob", () => {
     assertMatches("*(ab)c.ts", ["c.ts", "abc.ts", "ababc.ts"], ["ac.ts"]);
     assertMatches("+(ab)c.ts", ["abc.ts", "ababc.ts"], ["c.ts", "ac.ts"]);
     assertMatches("!(test).ts", ["page.ts", "contest.ts"], ["test.ts"]);
+    assertMatches("!(|foo).ts", ["bar.ts"], [".ts", "foo.ts", "foobar.ts"]);
+  });
+
+  it("keeps normalized path semantics instead of legacy empty-segment leakage", () => {
+    assertMatches("**/!(a|b)", ["c", "x/c"], ["a", "b", "x/a", "x/b"]);
+    assertMatches("a/*", ["a/b"], ["a", "a/"]);
+  });
+
+  it("preserves captured extended-glob and globstar compatibility where semantics agree", () => {
+    const parityCases: ReadonlyArray<{
+      pattern: string;
+      matches: string[];
+      rejects: string[];
+    }> = [
+      {
+        pattern: "!(foo|bar).ts",
+        matches: ["baz.ts", "quxfoo.ts"],
+        rejects: ["foo.ts", "bar.ts", "foobar.ts"],
+      },
+      {
+        pattern: "src/!(generated|vendor)/**/*.ts",
+        matches: ["src/app/index.ts"],
+        rejects: [
+          "src/generated/index.ts",
+          "src/generated-extra/index.ts",
+          "src/vendor/a.ts",
+          "src/vendorized/a.ts",
+        ],
+      },
+      {
+        pattern: "foo!(@(bar|baz)|qux)end",
+        matches: ["fooend", "foomoreend"],
+        rejects: ["foobarend", "foobazend", "fooquxend", "foobazmoreend"],
+      },
+      {
+        pattern: "@(src|app)/**/!(*.test).@(ts|tsx)",
+        matches: ["src/a.ts", "src/x/a.tsx", "app/test.ts", "app/.ts"],
+        rejects: ["src/a.test.ts", "other/a.ts"],
+      },
+      {
+        pattern: "a/**",
+        matches: ["a/", "a/b", "a/b/c"],
+        rejects: ["a", "b"],
+      },
+      {
+        pattern: "a/**/b/**",
+        matches: ["a/b/", "a/b/c", "a/x/b/c"],
+        rejects: ["a/b", "a/x/b"],
+      },
+      {
+        pattern: "a/**/**",
+        matches: ["a/b", "a/b/c"],
+        rejects: ["a"],
+      },
+      {
+        pattern: "a/**/b",
+        matches: ["a/b", "a/x/b", "a/x/y/b"],
+        rejects: ["a", "a/x"],
+      },
+      {
+        pattern: "{src,app}/**/*.{ts,tsx}",
+        matches: ["src/a.ts", "src/x/a.tsx", "app/a.tsx"],
+        rejects: ["app/a.js", "other/a.ts"],
+      },
+    ];
+
+    for (const testCase of parityCases) {
+      assertMatches(testCase.pattern, testCase.matches, testCase.rejects);
+    }
+  });
+
+  it("treats an empty negative alternative as excluding the zero-length endpoint", () => {
+    const emptyAlternativeCases: ReadonlyArray<{
+      pattern: string;
+      matches: string[];
+      rejects: string[];
+    }> = [
+      {
+        pattern: "!(|foo).ts",
+        matches: ["bar.ts"],
+        rejects: ["foo.ts", ".ts", "foobar.ts"],
+      },
+      {
+        pattern: "!(foo|).ts",
+        matches: ["bar.ts"],
+        rejects: ["foo.ts", ".ts", "foobar.ts"],
+      },
+      {
+        pattern: "!(|).ts",
+        matches: ["bar.ts"],
+        rejects: [".ts"],
+      },
+      {
+        pattern: "a!(|b)c",
+        matches: ["axc"],
+        rejects: ["abc", "ac"],
+      },
+      // Control: the same negation without an empty alternative still
+      // excludes only the forbidden stem.
+      {
+        pattern: "!(foo).ts",
+        matches: ["bar.ts", ".ts"],
+        rejects: ["foo.ts", "foobar.ts"],
+      },
+      // Positive extglobs honor the empty alternative as a zero-length branch.
+      {
+        pattern: "@(|foo).ts",
+        matches: ["foo.ts", ".ts"],
+        rejects: ["bar.ts"],
+      },
+      {
+        pattern: "?(|foo).ts",
+        matches: ["foo.ts", ".ts"],
+        rejects: ["bar.ts"],
+      },
+    ];
+
+    for (const testCase of emptyAlternativeCases) {
+      assertMatches(testCase.pattern, testCase.matches, testCase.rejects);
+    }
   });
 
   it("supports character ranges, negation, POSIX classes, and escapes", () => {

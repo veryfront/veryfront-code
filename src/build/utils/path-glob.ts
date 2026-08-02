@@ -450,9 +450,24 @@ function compileSegment(segment: string, pattern: string): CompiledSegment {
             break;
           case "negative": {
             const excluded = evaluateAlternatives(node.alternatives, start);
-            budget.consume(value.length - start + 1);
-            for (let end = start; end <= value.length; end++) {
-              if (!excluded.has(end)) ends.add(end);
+            // A negative extglob is a negative lookahead followed by a
+            // segment-local wildcard. Any forbidden alternative that matches
+            // at this position rejects the whole node; it is not merely one
+            // disallowed end position among otherwise valid prefixes.
+            // An empty alternative excludes only the zero-length endpoint; it
+            // must not turn the entire negative group into match-nothing.
+            let excludesNonEmptyPrefix = false;
+            for (const end of excluded) {
+              if (end > start) {
+                excludesNonEmptyPrefix = true;
+                break;
+              }
+            }
+            if (!excludesNonEmptyPrefix) {
+              budget.consume(value.length - start + 1);
+              for (let end = start; end <= value.length; end++) {
+                if (!excluded.has(end)) ends.add(end);
+              }
             }
             break;
           }
@@ -531,11 +546,15 @@ function normalizePattern(value: string): { absolute: boolean; segments: string[
   };
 }
 
-function normalizeCandidatePath(value: string): { absolute: boolean; segments: string[] } {
+function normalizeCandidatePath(
+  value: string,
+): { absolute: boolean; trailingSeparator: boolean; segments: string[] } {
   const portable = value.replaceAll("\\", "/");
   return {
     absolute: portable.startsWith("/"),
-    // Repeated and trailing separators have no matching significance.
+    // A trailing separator is significant when it is the separator required
+    // before a final globstar that consumes zero complete segments.
+    trailingSeparator: portable.endsWith("/"),
     segments: portable.split("/").filter((segment) => segment.length > 0),
   };
 }
@@ -568,7 +587,8 @@ export function compilePathGlob(pattern: string): PathGlobMatcher {
     const budget = createMatchBudget(pattern);
     let reachablePathIndexes = new Set([0]);
 
-    for (const segment of compiledSegments) {
+    for (let segmentIndex = 0; segmentIndex < compiledSegments.length; segmentIndex++) {
+      const segment = compiledSegments[segmentIndex]!;
       budget.consume();
       if (segment === "globstar") {
         let firstReachable = candidate.segments.length + 1;
@@ -576,6 +596,18 @@ export function compilePathGlob(pattern: string): PathGlobMatcher {
           if (pathIndex < firstReachable) firstReachable = pathIndex;
         }
         reachablePathIndexes = new Set<number>();
+        // Every non-leading pattern segment has a separator before it. A
+        // globstar may consume zero segments only when that separator exists:
+        // either another candidate segment follows or the candidate itself
+        // ends in a separator. This preserves `a/**` != `a` while retaining
+        // the zero-segment behavior of `a/**/b` and leading `**/b`.
+        if (
+          segmentIndex > 0 &&
+          firstReachable === candidate.segments.length &&
+          !candidate.trailingSeparator
+        ) {
+          continue;
+        }
         budget.consume(candidate.segments.length - firstReachable + 1);
         for (
           let pathIndex = firstReachable;
