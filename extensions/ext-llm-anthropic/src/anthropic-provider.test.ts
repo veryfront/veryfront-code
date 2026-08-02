@@ -1603,7 +1603,7 @@ describe("anthropic-provider", () => {
     );
   });
 
-  it("bounds pause_turn continuation attempts and returns the final pause normally", async () => {
+  it("fails closed when direct pause_turn continuation exceeds its cap", async () => {
     let requestCount = 0;
     const runtime = createAnthropicModelRuntime({
       apiKey: "test-anthropic-key",
@@ -1623,14 +1623,64 @@ describe("anthropic-provider", () => {
       },
     }, "claude-sonnet-4-6");
 
-    const result = await runtime.doGenerate({
+    const error = await assertRejects(
+      () =>
+        runtime.doGenerate({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Wait" }] }],
+          maxOutputTokens: 64,
+        }),
+      ProviderRequestError,
+      "pause_turn continuation limit exceeded",
+    );
+
+    assertEquals(requestCount, 6);
+    assertEquals(error.provider, "anthropic");
+    assertEquals(error.status, 200);
+    assertEquals(error.retryable, false);
+  });
+
+  it("fails closed when streamed pause_turn continuation exceeds its cap", async () => {
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () => {
+        requestCount++;
+        return Promise.resolve(
+          new Response(
+            [
+              'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":1}}}\n\n',
+              `event: content_block_start\ndata: ${
+                JSON.stringify({
+                  type: "content_block_start",
+                  index: 0,
+                  content_block: { type: "text", text: `Waiting ${requestCount}.` },
+                })
+              }\n\n`,
+              'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+              'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"pause_turn"},"usage":{"output_tokens":1}}\n\n',
+              'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+            ].join(""),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doStream({
       prompt: [{ role: "user", content: [{ type: "text", text: "Wait" }] }],
       maxOutputTokens: 64,
     });
+    const error = await assertRejects(
+      () => collectAsync(result.stream),
+      ProviderRequestError,
+      "pause_turn continuation limit exceeded",
+    );
 
     assertEquals(requestCount, 6);
-    assertEquals(result.finishReason, "pause_turn");
-    assertEquals(result.usage, { inputTokens: 6, outputTokens: 6, totalTokens: 12 });
+    assertEquals(error.provider, "anthropic");
+    assertEquals(error.status, 200);
+    assertEquals(error.retryable, false);
   });
 
   it("stops pause_turn continuation before a follow-up request when aborted", async () => {

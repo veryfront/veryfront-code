@@ -526,12 +526,16 @@ export function createAnthropicModelRuntime(
 
         const raw = readRawAnthropicResponse(payload);
         if (raw.rawContent.length > 0) rawAssistantMessages.push(raw.rawContent);
-        if (
-          raw.rawStopReason !== "pause_turn" ||
-          raw.rawContent.length === 0 ||
-          continuationCount >= MAX_PAUSE_TURN_CONTINUATIONS
-        ) {
+        const shouldContinue = raw.rawStopReason === "pause_turn" &&
+          raw.rawContent.length > 0;
+        if (!shouldContinue) {
           break;
+        }
+        if (continuationCount >= MAX_PAUSE_TURN_CONTINUATIONS) {
+          throw invalidAnthropicResponse(
+            providerName,
+            "pause_turn continuation limit exceeded",
+          );
         }
 
         continuationCount++;
@@ -626,11 +630,11 @@ export function createAnthropicModelRuntime(
           if (completion && completion.rawContent.length > 0) {
             rawAssistantMessages.push(completion.rawContent);
           }
-          if (
-            completion?.rawStopReason !== "pause_turn" ||
-            completion.rawContent.length === 0 ||
-            continuationCount >= MAX_PAUSE_TURN_CONTINUATIONS
-          ) {
+          const continuationContent = completion?.rawStopReason === "pause_turn" &&
+              completion.rawContent.length > 0
+            ? completion.rawContent
+            : undefined;
+          if (!continuationContent) {
             const providerMetadata = createAnthropicRawAssistantMetadata(
               options.prompt,
               rawAssistantMessages,
@@ -643,9 +647,15 @@ export function createAnthropicModelRuntime(
             };
             return;
           }
+          if (continuationCount >= MAX_PAUSE_TURN_CONTINUATIONS) {
+            throw invalidAnthropicResponse(
+              providerName,
+              "pause_turn continuation limit exceeded",
+            );
+          }
 
           continuationCount++;
-          requestBody = createPauseTurnContinuationBody(requestBody, completion.rawContent);
+          requestBody = createPauseTurnContinuationBody(requestBody, continuationContent);
           throwIfAnthropicRequestAborted(providerAbortScope.controller.signal);
           responseStream = await requestStream({
             url,
