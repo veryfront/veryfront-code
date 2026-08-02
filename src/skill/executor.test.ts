@@ -173,14 +173,14 @@ describe("src/skill/executor", () => {
         scriptPath: "skills/adapter-only/scripts/run.ts",
         scriptContent: 'import { message } from "./helper.ts";\nconsole.log(message);',
         scriptSnapshot: {
-          entryPath: "scripts/run.ts",
+          entryPath: "scripts/jobs/run.ts",
           files: [
             {
-              path: "scripts/helper.ts",
+              path: "scripts/jobs/helper.ts",
               content: 'export const message = "snapshot-import";',
             },
             {
-              path: "scripts/run.ts",
+              path: "scripts/jobs/run.ts",
               content: 'import { message } from "./helper.ts";\nconsole.log(message);',
             },
           ],
@@ -360,10 +360,10 @@ describe("src/skill/executor", () => {
         scriptPath: "scripts/run.ts",
         scriptContent: 'import "./helper.ts";',
         scriptSnapshot: {
-          entryPath: "scripts/run.ts",
+          entryPath: "scripts/jobs/run.ts",
           files: [
-            { path: "scripts/helper.ts", content: "export {};" },
-            { path: "scripts/run.ts", content: 'import "./helper.ts";' },
+            { path: "scripts/jobs/helper.ts", content: "export {};" },
+            { path: "scripts/jobs/run.ts", content: 'import "./helper.ts";' },
           ],
         },
       });
@@ -373,8 +373,8 @@ describe("src/skill/executor", () => {
         files: Array<{ path: string; content: string }>;
       };
       assertEquals(body.files.length, 2);
-      assertEquals(body.files[0]!.path.endsWith("/scripts/helper.ts"), true);
-      assertEquals(body.files[1]!.path.endsWith("/scripts/run.ts"), true);
+      assertEquals(body.files[0]!.path.endsWith("/scripts/jobs/helper.ts"), true);
+      assertEquals(body.files[1]!.path.endsWith("/scripts/jobs/run.ts"), true);
       assertStringIncludes(fetchCalls[3]!.init?.body?.toString() ?? "", "cd '/tmp/");
     });
 

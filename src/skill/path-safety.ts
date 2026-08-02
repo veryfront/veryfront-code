@@ -487,6 +487,38 @@ async function assertSafeSkillDirectory(
   );
 }
 
+async function assertSafeSkillFile(
+  skillRoot: string,
+  filePath: string,
+  displayPath: string,
+  fsAdapter?: FileSystemAdapter,
+  maxDirectoryEntries = SKILL_SUBDIR_MAX_ENTRIES,
+): Promise<void> {
+  await assertIsFile(filePath, fsAdapter);
+  if (
+    await hasSymlinkInPath(
+      skillRoot,
+      filePath,
+      fsAdapter,
+      maxDirectoryEntries,
+    )
+  ) {
+    throw toError(
+      createError({
+        type: "agent",
+        message: `Skill path contains a symlink and is not allowed: "${displayPath}"`,
+      }),
+    );
+  }
+  await assertRealPathContained(
+    skillRoot,
+    filePath,
+    displayPath,
+    "path",
+    fsAdapter,
+  );
+}
+
 /**
  * Validate a requested path with the public compatibility resource policy.
  * Relative paths may contain up to 4096 characters and filesystem directory
@@ -609,31 +641,12 @@ async function validateSkillPathWithLimits(
       }),
     );
   }
-  await assertIsFile(canonicalPath, fsAdapter);
-
-  // Enforce strict no-symlink policy for skill files.
-  if (
-    await hasSymlinkInPath(
-      boundedRoot,
-      canonicalPath,
-      fsAdapter,
-      directoryMaxEntries,
-    )
-  ) {
-    throw toError(
-      createError({
-        type: "agent",
-        message: `Skill path contains a symlink and is not allowed: "${boundedRequestedPath}"`,
-      }),
-    );
-  }
-
-  await assertRealPathContained(
+  await assertSafeSkillFile(
     boundedRoot,
     canonicalPath,
     boundedRequestedPath,
-    "path",
     fsAdapter,
+    directoryMaxEntries,
   );
 
   return canonicalPath;
@@ -684,6 +697,121 @@ export async function listStrictSkillSubdir(
     SKILL_SUBDIR_MAX_ENTRIES,
     true,
   );
+}
+
+/**
+ * Recursively list a strict skill subdirectory in deterministic path order.
+ *
+ * The shared 1000-entry ceiling covers files and directories across the whole
+ * tree, not each directory independently. Every traversed directory and file
+ * is revalidated for type, root containment, and no-symlink semantics.
+ */
+export async function listStrictSkillTree(
+  skillRoot: string,
+  subdir: string,
+  fsAdapter?: FileSystemAdapter,
+  options: SkillPathOperationOptions = {},
+): Promise<string[]> {
+  assertStrictSymlinkCapabilities(fsAdapter);
+  if (options.budget) {
+    return await options.budget.run(() => listStrictSkillTree(skillRoot, subdir, fsAdapter));
+  }
+  return await listStrictSkillTreeWithLimits(
+    skillRoot,
+    subdir,
+    fsAdapter,
+    SKILL_SUBDIR_MAX_ENTRIES,
+  );
+}
+
+async function listStrictSkillTreeWithLimits(
+  skillRoot: string,
+  subdir: string,
+  fsAdapter: FileSystemAdapter | undefined,
+  maxTreeEntries: number,
+): Promise<string[]> {
+  const boundedRoot = requireBoundedSkillRoot(skillRoot, fsAdapter);
+  assertSafePathSegment(subdir, "subdirectory");
+  const rootDirPath = join(boundedRoot, subdir);
+
+  let rootExists: boolean;
+  try {
+    rootExists = fsAdapter ? await fsAdapter.exists(rootDirPath) : await exists(rootDirPath);
+  } catch (error) {
+    if (isFileNotFoundError(error)) return [];
+    throw error;
+  }
+  if (!rootExists) return [];
+
+  const pendingDirectories: string[] = [];
+  const files: string[] = [];
+  appendOwnArrayElement(pendingDirectories, subdir);
+  let pendingIndex = 0;
+  let treeEntryCount = 0;
+
+  while (pendingIndex < pendingDirectories.length) {
+    const relativeDirectory = pendingDirectories[pendingIndex++]!;
+    const directoryPath = join(boundedRoot, relativeDirectory);
+    await assertSafeSkillDirectory(
+      boundedRoot,
+      directoryPath,
+      relativeDirectory,
+      fsAdapter,
+      maxTreeEntries,
+    );
+
+    const names = new Set<string>();
+    const entries = fsAdapter ? fsAdapter.readDir(directoryPath) : readDir(directoryPath);
+    for await (const rawEntry of entries) {
+      treeEntryCount += 1;
+      if (treeEntryCount > maxTreeEntries) {
+        throw new RangeError(
+          `Skill subdirectory tree may contain at most ${maxTreeEntries} entries`,
+        );
+      }
+      const entry = captureDirectoryEntry(rawEntry);
+      assertSafeDirectoryEntryName(entry.name);
+      if (apply(setHas, names, [entry.name]) as boolean) {
+        throw new TypeError("Skill subdirectory contains a duplicate entry name");
+      }
+      apply(setAdd, names, [entry.name]);
+      const relativePath = `${relativeDirectory}/${entry.name}`;
+      if (relativePath.length > SKILL_RELATIVE_PATH_MAX_LENGTH) {
+        throw new RangeError(
+          `Skill relative paths may contain at most ${SKILL_RELATIVE_PATH_MAX_LENGTH} characters`,
+        );
+      }
+      if (entry.isSymlink) {
+        throw toError(
+          createError({
+            type: "agent",
+            message: `Skill directory entry is a symlink and is not allowed: "${relativePath}"`,
+          }),
+        );
+      }
+      if (entry.isFile === entry.isDirectory) {
+        throw new TypeError("Skill directory entry must identify exactly one file or directory");
+      }
+
+      const canonicalPath = join(boundedRoot, relativePath);
+      if (entry.isDirectory) {
+        appendOwnArrayElement(pendingDirectories, relativePath);
+        continue;
+      }
+      await assertSafeSkillFile(
+        boundedRoot,
+        canonicalPath,
+        relativePath,
+        fsAdapter,
+        maxTreeEntries,
+      );
+      appendOwnArrayElement(files, relativePath);
+    }
+  }
+
+  return apply(arraySort, files, [
+    (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0,
+  ]) as string[];
 }
 
 async function listSkillSubdirWithLimits(

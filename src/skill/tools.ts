@@ -22,7 +22,11 @@ import { createError, toError } from "#veryfront/errors";
 import { join, relative } from "#veryfront/compat/path";
 import { skillRegistryInternal } from "./registry.ts";
 import { parseSkillFrontmatter } from "./parser.ts";
-import { listStrictSkillSubdir, validateStrictSkillPath } from "./path-safety.ts";
+import {
+  listStrictSkillSubdir,
+  listStrictSkillTree,
+  validateStrictSkillPath,
+} from "./path-safety.ts";
 import { createSkillOperationBudget, type SkillOperationBudget } from "./operation-budget.ts";
 import {
   isValidSkillScriptEnvironmentKey,
@@ -232,7 +236,7 @@ async function createScriptSnapshot(
     relative(skill.rootPath, validatedEntryPath),
     ["\\", "/"],
   ) as string;
-  const listedPaths = await listStrictSkillSubdir(
+  const listedPaths = await listStrictSkillTree(
     skill.rootPath,
     SKILL_SCRIPTS_DIR,
     skill.fsAdapter,
@@ -523,7 +527,7 @@ export function createLoadSkillTool(options: SkillSelectorToolOptions = {}): Too
         skill.fsAdapter,
         { budget },
       );
-      const scripts = await listStrictSkillSubdir(
+      const scripts = await listStrictSkillTree(
         skill.rootPath,
         SKILL_SCRIPTS_DIR,
         skill.fsAdapter,

@@ -13,6 +13,7 @@ import {
 import {
   listSkillSubdir,
   listStrictSkillSubdir,
+  listStrictSkillTree,
   validateSkillPath,
   validateStrictSkillPath,
 } from "./path-safety.ts";
@@ -712,6 +713,79 @@ describe("src/skill/path-safety", () => {
           unorderedAdapter,
         ),
         ["references/a.md", "references/z.md"],
+      );
+    });
+
+    it("recursively lists a bounded strict tree in deterministic path order", async () => {
+      const adapter = createSkillTestAdapter({
+        "/project/skills/test/scripts/z.ts": "export {};",
+        "/project/skills/test/scripts/lib/b.ts": "export {};",
+        "/project/skills/test/scripts/lib/a.ts": "export {};",
+        "/project/skills/test/scripts/jobs/run.ts": "export {};",
+      });
+
+      assertEquals(
+        await listStrictSkillTree(
+          "/project/skills/test",
+          "scripts",
+          adapter,
+        ),
+        [
+          "scripts/jobs/run.ts",
+          "scripts/lib/a.ts",
+          "scripts/lib/b.ts",
+          "scripts/z.ts",
+        ],
+      );
+    });
+
+    it("rejects a nested directory that becomes a symlink during traversal", async () => {
+      const root = "/project/skills/test";
+      const adapter = createSkillTestAdapter({
+        [`${root}/scripts/lib/helper.ts`]: "export {};",
+      });
+      const racingAdapter = {
+        ...adapter,
+        async lstat(path: string) {
+          return {
+            ...await adapter.stat(path),
+            isSymlink: path === `${root}/scripts/lib`,
+          };
+        },
+        realPath: (path: string) => Promise.resolve(path),
+      };
+
+      await assertRejects(
+        () => listStrictSkillTree(root, "scripts", racingAdapter),
+        Error,
+        "symlink",
+      );
+    });
+
+    it("caps entries across the whole strict tree", async () => {
+      const files: Record<string, string> = {};
+      for (let index = 0; index < 500; index += 1) {
+        files[`/project/skills/test/scripts/a/file-${index}.ts`] = "export {};";
+      }
+      for (let index = 0; index < 499; index += 1) {
+        files[`/project/skills/test/scripts/b/file-${index}.ts`] = "export {};";
+      }
+      const adapter = createSkillTestAdapter(files);
+      const identityAwareAdapter = {
+        ...adapter,
+        lstat: (path: string) => adapter.stat(path),
+        realPath: (path: string) => Promise.resolve(path),
+      };
+
+      await assertRejects(
+        () =>
+          listStrictSkillTree(
+            "/project/skills/test",
+            "scripts",
+            identityAwareAdapter,
+          ),
+        RangeError,
+        `at most ${SKILL_SUBDIR_MAX_ENTRIES}`,
       );
     });
 

@@ -59,6 +59,7 @@ allowed-tools: Read api:*
 # Instructions
 Do work.`,
       "/project/skills/my-skill/references/guide.md": "Guide",
+      "/project/skills/my-skill/scripts/lib/helper.ts": "export {};",
       "/project/skills/my-skill/scripts/run.sh": "echo run",
     });
     registerSkill("my-skill", {
@@ -76,7 +77,7 @@ Do work.`,
     assertEquals(result.skillId, "my-skill");
     assertEquals(result.allowedTools, ["Read", "api:*"]);
     assertEquals(result.references, ["references/guide.md"]);
-    assertEquals(result.scripts, ["scripts/run.sh"]);
+    assertEquals(result.scripts, ["scripts/lib/helper.ts", "scripts/run.sh"]);
   });
 
   it("framework tools use the immutable normalized registry snapshot", async () => {
@@ -526,9 +527,9 @@ Do work.`,
 
   it("execute_skill_script snapshots adapter sibling modules", async () => {
     const fsAdapter = createSkillTestAdapter({
-      "/project/skills/my-skill/scripts/helper.ts": 'export const message = "adapter-sibling";',
+      "/project/skills/my-skill/scripts/lib/helper.ts": 'export const message = "adapter-sibling";',
       "/project/skills/my-skill/scripts/run.ts":
-        'import { message } from "./helper.ts";\nconsole.log(message);',
+        'import { message } from "./lib/helper.ts";\nconsole.log(message);',
     });
     registerSkill("my-skill", createTestSkill(fsAdapter));
 
@@ -548,13 +549,13 @@ Do work.`,
     const tempDir = await Deno.makeTempDir({ prefix: "vf-skill-sibling-" });
     try {
       const skillRoot = `${tempDir}/my-skill`;
-      await Deno.mkdir(`${skillRoot}/scripts`, { recursive: true });
+      await Deno.mkdir(`${skillRoot}/scripts/jobs`, { recursive: true });
       await Deno.writeTextFile(
-        `${skillRoot}/scripts/helper.ts`,
+        `${skillRoot}/scripts/jobs/helper.ts`,
         'export const message = "native-sibling";',
       );
       await Deno.writeTextFile(
-        `${skillRoot}/scripts/run.ts`,
+        `${skillRoot}/scripts/jobs/run.ts`,
         'import { message } from "./helper.ts";\nconsole.log(message);',
       );
       registerSkill("my-skill", {
@@ -567,7 +568,7 @@ Do work.`,
         executor: new LocalScriptExecutor(),
       }).execute({
         skillId: "my-skill",
-        script: "scripts/run.ts",
+        script: "scripts/jobs/run.ts",
       });
 
       assertEquals(result.exitCode, 0);

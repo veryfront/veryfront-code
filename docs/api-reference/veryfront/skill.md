@@ -50,9 +50,9 @@ validateSkillMetadata(parsed.frontmatter, "review");
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `createExecuteSkillScriptTool` | Create the execute_skill_script tool. Executes a script from a skill's scripts/ directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/tools.ts#L593) |
-| `createLoadSkillReferenceTool` | Create the load_skill_reference tool. Reads a reference file from a skill's references/, resources/, or assets/ directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/tools.ts#L549) |
-| `createLoadSkillTool` | Create the load_skill tool. Loads a skill's full instructions, available references, and scripts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/tools.ts#L478) |
+| `createExecuteSkillScriptTool` | Create the execute_skill_script tool. Executes a script from a skill's scripts/ directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/tools.ts#L597) |
+| `createLoadSkillReferenceTool` | Create the load_skill_reference tool. Reads a reference file from a skill's references/, resources/, or assets/ directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/tools.ts#L553) |
+| `createLoadSkillTool` | Create the load_skill tool. Loads a skill's full instructions, available references, and scripts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/tools.ts#L482) |
 | `filterToolNamesForSkill` | Filter provider-native or other name-only tool inventories through the same policy boundary. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/allowed-tools.ts#L174) |
 | `filterToolsForSkill` | Layer 1: Filter tool definitions before sending to model. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/allowed-tools.ts#L126) |
 | `getAllSkills` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L272) |
@@ -64,7 +64,7 @@ validateSkillMetadata(parsed.frontmatter, "review");
 | `isValidProviderSafeSkillId` | Framework-owned provider-safe owned skill-id grammar check. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L67) |
 | `isValidSkillName` | Framework-owned historical skill-name grammar check. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L55) |
 | `isValidStrictSkillName` | Framework-owned strict filesystem skill-name grammar check. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L61) |
-| `listSkillSubdir` | List files with the public compatibility resource policy. Enumeration is not entry-capped and preserves the filesystem adapter's iteration order. `listStrictSkillSubdir` applies the runtime filesystem ceilings and deterministic ordering. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/path-safety.ts#L653) |
+| `listSkillSubdir` | List files with the public compatibility resource policy. Enumeration is not entry-capped and preserves the filesystem adapter's iteration order. `listStrictSkillSubdir` applies the runtime filesystem ceilings and deterministic ordering. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/path-safety.ts#L666) |
 | `parseBoundedSkillDocument` | Parse one bounded Skill document with an explicit provider or the active extension contract generation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/document-parser.ts#L361) |
 | `parseSkillFileFrontmatter` | Parse and bound an untrusted SKILL.md document read from a filesystem boundary. YAML frontmatter is decoded by the explicit provider, or by the active `SkillDocumentParserProvider` registration when the argument is omitted. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/parser.ts#L114) |
 | `parseSkillFrontmatter` | Parse SKILL.md content through the bounded, fail-closed format. Malformed YAML, invalid Unicode, and oversized documents are rejected. YAML frontmatter is decoded by the explicit provider, or by the active `SkillDocumentParserProvider` registration when the argument is omitted. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/parser.ts#L100) |
@@ -73,7 +73,7 @@ validateSkillMetadata(parsed.frontmatter, "review");
 | `validateAllowedToolPatterns` | Validate allowed-tool patterns at parse time. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/allowed-tools.ts#L207) |
 | `validateSkillFileMetadata` | Validate metadata loaded from a filesystem skill. The caller-supplied directory/runtime identity remains canonical; a differing authored `name` is display metadata and never participates in lookup or authorization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/parser.ts#L463) |
 | `validateSkillMetadata` | Validate and normalize parsed frontmatter into SkillMetadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/parser.ts#L200) |
-| `validateSkillPath` | Validate a requested path with the public compatibility resource policy. Relative paths may contain up to 4096 characters and filesystem directory enumeration is not entry-capped. `validateStrictSkillPath` applies the runtime filesystem ceilings. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/path-safety.ts#L503) |
+| `validateSkillPath` | Validate a requested path with the public compatibility resource policy. Relative paths may contain up to 4096 characters and filesystem directory enumeration is not entry-capped. `validateStrictSkillPath` applies the runtime filesystem ceilings. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/path-safety.ts#L535) |
 | `validateStrictAllowedToolPatterns` | Validate bounded allowed-tool patterns at filesystem and runtime trust boundaries. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/allowed-tools.ts#L212) |
 
 ### Types
