@@ -1,4 +1,4 @@
-import React from "react";
+import type { CSSProperties, ReactElement, ReactNode } from "react";
 
 const MAX_BLUR_COLOR_CHARS = 1_024;
 
@@ -94,10 +94,10 @@ export function ResponsiveImageContainer({
 }: {
   width: number;
   height: number;
-  children: React.ReactNode;
+  children: ReactNode;
   className?: string;
-  style?: React.CSSProperties;
-}): React.ReactElement {
+  style?: CSSProperties;
+}): ReactElement {
   return (
     <div
       className={className}

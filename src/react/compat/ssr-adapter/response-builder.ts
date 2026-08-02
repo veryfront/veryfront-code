@@ -20,7 +20,19 @@ function createWrapOptions(options: SSRResponseOptions): HTMLWrapOptions {
     links: options.links ?? [],
     scripts: options.scripts ?? [],
     bootstrapScripts: options.bootstrapScripts ?? [],
+    bootstrapModules: options.bootstrapModules ?? [],
     nonce: options.nonce,
+  };
+}
+
+function createComponentRenderOptions(options: SSRResponseOptions): SSRResponseOptions {
+  return {
+    ...options,
+    // The response builder owns the surrounding document. Keep document-level
+    // bootstrap tags out of the component render so they cannot become children
+    // of the hydration root; createHTMLShell appends them after that root closes.
+    bootstrapScripts: [],
+    bootstrapModules: [],
   };
 }
 
@@ -128,12 +140,7 @@ export async function createSSRResponseFromResult(
 
   if (result.stream || result.pipe) {
     const componentStream = result.stream ?? await pipeableToReadableStream(result);
-    // React's stream renderers already emit bootstrapScripts inside their
-    // component stream. The document shell must not append them a second time.
-    const body = wrapReadableStreamInHTML(componentStream, {
-      ...wrapOptions,
-      bootstrapScripts: [],
-    });
+    const body = wrapReadableStreamInHTML(componentStream, wrapOptions);
     return new Response(body, { status: 200, headers });
   }
 
@@ -154,6 +161,6 @@ export async function createSSRResponse(
   options: SSRResponseOptions = {},
 ): Promise<Response> {
   const version = options.reactVersion ?? getReactVersionInfo().version;
-  const result = await renderToStreamAdapter(element, options);
+  const result = await renderToStreamAdapter(element, createComponentRenderOptions(options));
   return createSSRResponseFromResult(result, options, version);
 }

@@ -31,6 +31,14 @@ export function createHTMLShell(options: HTMLWrapOptions): HTMLShell {
     .map((src) => `<script ${attributes({ src, nonce: options.nonce })} async></script>`)
     .join("\n  ");
 
+  const bootstrapModuleTags = (options.bootstrapModules ?? [])
+    .map((src) =>
+      `<script ${attributes({ src, type: "module", nonce: options.nonce })} async></script>`
+    )
+    .join("\n  ");
+
+  const bootstrapTags = [bootstrapScriptTags, bootstrapModuleTags].filter(Boolean).join("\n  ");
+
   return {
     prefix: `<!DOCTYPE html>
 <html lang="en">
@@ -45,7 +53,7 @@ export function createHTMLShell(options: HTMLWrapOptions): HTMLShell {
 <body>
   <div id="root">`,
     suffix: `</div>
-  ${bootstrapScriptTags}
+  ${bootstrapTags}
 </body>
 </html>`,
   };

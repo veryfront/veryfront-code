@@ -1,10 +1,15 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createSSRResponseFromResult } from "./response-builder.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import * as React from "react";
+import { createSSRResponse, createSSRResponseFromResult } from "./response-builder.ts";
+import type { ReactDOMServer } from "./server-loader.ts";
+import { __injectReactDOMServerForTests, resetReactCache } from "./server-loader.ts";
 
 const encoder = new TextEncoder();
 
 describe("createSSRResponse", () => {
+  afterEach(() => resetReactCache());
+
   it("wraps readable renderer output in a complete HTML document", async () => {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -49,6 +54,51 @@ describe("createSSRResponse", () => {
       await response.text(),
       '<div id="root"><section>pipeable</section></div>',
     );
+  });
+
+  it("keeps document bootstrap tags outside the hydration root", async () => {
+    let rendererOptions:
+      | Parameters<NonNullable<ReactDOMServer["renderToReadableStream"]>>[1]
+      | undefined;
+    const componentStream = Object.assign(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode("<main>rendered</main>"));
+          controller.close();
+        },
+      }),
+      { allReady: Promise.resolve() },
+    );
+    const server: ReactDOMServer = {
+      renderToString: () => "<main>rendered</main>",
+      renderToStaticMarkup: () => "<main>rendered</main>",
+      renderToReadableStream(_element, options) {
+        rendererOptions = options;
+        return Promise.resolve(componentStream);
+      },
+    };
+    __injectReactDOMServerForTests(server, "19.2.4");
+
+    const response = await createSSRResponse(
+      React.createElement("main", null, "rendered"),
+      {
+        reactVersion: "19.2.4",
+        bootstrapScripts: ["/app.js"],
+        bootstrapModules: ["/app.mjs"],
+        nonce: "response-nonce",
+      },
+    );
+    const html = await response.text();
+    const rootEnd = html.indexOf("</div>");
+    const scriptTag = '<script src="/app.js" nonce="response-nonce" async></script>';
+    const moduleTag = '<script src="/app.mjs" type="module" nonce="response-nonce" async></script>';
+
+    assertEquals(html.split(scriptTag).length - 1, 1);
+    assertEquals(html.split(moduleTag).length - 1, 1);
+    assertEquals(html.indexOf(scriptTag) > rootEnd, true);
+    assertEquals(html.indexOf(moduleTag) > rootEnd, true);
+    assertEquals(rendererOptions?.bootstrapScripts, []);
+    assertEquals(rendererOptions?.bootstrapModules, []);
   });
 
   it("fails closed when a renderer violates the result contract", async () => {
