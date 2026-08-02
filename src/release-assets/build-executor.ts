@@ -2013,13 +2013,16 @@ function validateAndMergeReleaseConfig(userConfig: unknown): VeryfrontConfig {
     throw new Error(`Expected object from veryfront.config, received ${typeof userConfig}`);
   }
 
-  validateVeryfrontConfig(userConfig);
+  // Reported before schema validation: the strict schema rejects an unknown key
+  // with its own generic message, and a release build should name the typo and
+  // where to fix it.
   const unknownKeys = findUnknownTopLevelKeys(userConfig as Record<string, unknown>);
   if (unknownKeys.length > 0) {
     throw new Error(
       `Unknown config keys: ${unknownKeys.join(", ")}. Check for typos in veryfront.config.`,
     );
   }
+  validateVeryfrontConfig(userConfig);
 
   return mergeConfigs(userConfig as Partial<VeryfrontConfig>);
 }

@@ -20,7 +20,12 @@ function createMockAdapter(files: Record<string, string>): FileSystemAdapter {
   return {
     async readFile(path: string): Promise<string> {
       const content = normalizedFiles[normalize(path)];
-      if (content === undefined) throw new Error(`File not found: ${path}`);
+      // Absence must be signalled the way a real filesystem does; config
+      // discovery only moves to the next candidate on a not-found error and
+      // propagates anything else as a backend failure.
+      if (content === undefined) {
+        throw Object.assign(new Error(`File not found: ${path}`), { code: "ENOENT" });
+      }
       return content;
     },
     async exists(path: string): Promise<boolean> {
@@ -113,12 +118,22 @@ function makeTaskSource(name: string): string {
   ].join("\n");
 }
 
+/**
+ * Present the adapter as a trusted single-project virtual filesystem.
+ *
+ * Multi-project mode is not an independent flag: the real wrapper reports it
+ * only when the underlying adapter exposes `runWithContext`, and config on such
+ * a filesystem is untrusted and requires an authenticated request context.
+ * Discovery runs against a single-project API filesystem (see the workflow
+ * worker, which pins one `projectSlug` with `proxyMode: false`), so modelling
+ * it as multi-project here would describe an adapter that cannot exist.
+ */
 function markAdapterAsVirtual(adapter: RuntimeAdapter): void {
   Object.assign(adapter.fs, {
     getUnderlyingAdapter: () => adapter.fs,
     getAdapterType: () => "VeryfrontFSAdapter",
     isVeryfrontAdapter: () => true,
-    isMultiProjectMode: () => true,
+    isMultiProjectMode: () => false,
   });
 }
 
@@ -336,7 +351,7 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
     const firstAdapter = createRuntimeAdapter({
       "/veryfront.config.ts": [
         "export default {",
-        '  fs: { type: "veryfront-api" },',
+        '  fs: { type: "veryfront-api", veryfront: { projectSlug: "project-a" } },',
         '  ai: { tasks: { discovery: { paths: ["first-tasks"] } } },',
         "};",
         "",
@@ -356,7 +371,7 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
     const secondAdapter = createRuntimeAdapter({
       "/veryfront.config.ts": [
         "export default {",
-        '  fs: { type: "veryfront-api" },',
+        '  fs: { type: "veryfront-api", veryfront: { projectSlug: "project-b" } },',
         '  ai: { tasks: { discovery: { paths: ["second-tasks"] } } },',
         "};",
         "",
