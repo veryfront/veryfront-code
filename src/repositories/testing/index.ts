@@ -80,7 +80,7 @@ export class MockFileSystemRepository implements FileSystemRepository {
     return new TextEncoder().encode(content);
   }
 
-  async writeFile(path: string, content: string | Uint8Array): Promise<void> {
+  async writeFile(path: string, content: string): Promise<void> {
     this.track("writeFile", path, content);
     this.files.set(path, content);
   }

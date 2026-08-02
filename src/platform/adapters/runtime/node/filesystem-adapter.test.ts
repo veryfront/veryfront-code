@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __registerLogRecordEmitter,
@@ -55,6 +55,36 @@ describe("NodeFileSystemAdapter", () => {
       await adapter.rename(from, to);
       assertEquals(await adapter.exists(from), false);
       assertEquals(await adapter.readFile(to), "renamed");
+    } finally {
+      await adapter.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("enforces exact file limits without replacing exclusive targets", async () => {
+    const adapter = new NodeFileSystemAdapter();
+    const tempDir = await adapter.makeTempDir("vf-node-fs-bounded-");
+    const sourcePath = `${tempDir}/source.bin`;
+    const exclusivePath = `${tempDir}/exclusive.bin`;
+    try {
+      await adapter.writeFileBytes(sourcePath, new Uint8Array([1, 2, 3]));
+      assertEquals([...await adapter.readFileBytesWithinLimit(sourcePath, 3)], [1, 2, 3]);
+      const snapshotReader = adapter.readFileSnapshotWithinLimit;
+      assertEquals(snapshotReader === undefined, Deno.build.os === "windows");
+      if (snapshotReader !== undefined) {
+        assertEquals([...await snapshotReader(sourcePath, tempDir, 3)], [1, 2, 3]);
+      }
+      await assertRejects(
+        () => adapter.readFileBytesWithinLimit(sourcePath, 2),
+        RangeError,
+        "exceeds byte limit",
+      );
+
+      await adapter.createFileBytesExclusive(exclusivePath, new Uint8Array([4]));
+      await assertRejects(
+        () => adapter.createFileBytesExclusive(exclusivePath, new Uint8Array([9])),
+        Error,
+      );
+      assertEquals([...await adapter.readFileBytes(exclusivePath)], [4]);
     } finally {
       await adapter.remove(tempDir, { recursive: true });
     }

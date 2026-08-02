@@ -1,11 +1,21 @@
 import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry/general.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import type { FileChangeEvent, FileWatcher, RuntimeAdapter, WatchOptions } from "./base.ts";
+import { requireBoundedFileReadLimit } from "./bounded-file-read.ts";
+import { FileSnapshotChangedError } from "./file-snapshot-error.ts";
+import { isAbsolute, relative, resolve, sep } from "#veryfront/platform/compat/path/index.ts";
 
 export interface MockRuntimeAdapter extends RuntimeAdapter {
   fs: RuntimeAdapter["fs"] & {
     files: Map<string, string>;
     directories: Set<string>;
+    readFileBytes: NonNullable<RuntimeAdapter["fs"]["readFileBytes"]>;
+    readFileBytesBounded: NonNullable<RuntimeAdapter["fs"]["readFileBytesBounded"]>;
+    readFileBytesWithinLimit: NonNullable<RuntimeAdapter["fs"]["readFileBytesWithinLimit"]>;
+    readFileSnapshotWithinLimit: NonNullable<
+      RuntimeAdapter["fs"]["readFileSnapshotWithinLimit"]
+    >;
+    createFileBytesExclusive: NonNullable<RuntimeAdapter["fs"]["createFileBytesExclusive"]>;
   };
 }
 
@@ -18,7 +28,25 @@ function pathNotFoundError(path: string): Error {
 }
 
 export function createMockAdapter(): MockRuntimeAdapter {
-  const files = new Map<string, string>();
+  let fileGeneration = 1;
+  class GenerationMap<T> extends Map<string, T> {
+    override set(key: string, value: T): this {
+      fileGeneration++;
+      return super.set(key, value);
+    }
+
+    override delete(key: string): boolean {
+      const deleted = super.delete(key);
+      if (deleted) fileGeneration++;
+      return deleted;
+    }
+
+    override clear(): void {
+      if (this.size > 0) fileGeneration++;
+      super.clear();
+    }
+  }
+  const files = new GenerationMap<string>();
   const directories = new Set<string>();
   const envVars = new Map<string, string>();
 
@@ -63,6 +91,7 @@ export function createMockAdapter(): MockRuntimeAdapter {
       }),
     shutdown: () => Promise.resolve(),
     fs: {
+      symlinkSemantics: "none",
       files,
       directories,
       readFile: (path: string) => {
@@ -75,8 +104,58 @@ export function createMockAdapter(): MockRuntimeAdapter {
         if (content == null) return Promise.reject(fileNotFoundError(path));
         return Promise.resolve(new TextEncoder().encode(content));
       },
+      readFileBytesBounded: (path: string, byteLimit: number) => {
+        const limit = requireBoundedFileReadLimit(byteLimit);
+        const content = files.get(path);
+        if (content == null) return Promise.reject(fileNotFoundError(path));
+        return Promise.resolve(new TextEncoder().encode(content).slice(0, limit));
+      },
+      readFileBytesWithinLimit: (path: string, byteLimit: number) => {
+        const limit = requireBoundedFileReadLimit(byteLimit);
+        const content = files.get(path);
+        if (content == null) return Promise.reject(fileNotFoundError(path));
+        const bytes = new TextEncoder().encode(content);
+        if (bytes.byteLength > limit) {
+          return Promise.reject(new RangeError(`File exceeds byte limit of ${limit} bytes`));
+        }
+        return Promise.resolve(bytes);
+      },
+      readFileSnapshotWithinLimit: async (
+        path: string,
+        containmentRoot: string,
+        byteLimit: number,
+      ) => {
+        const limit = requireBoundedFileReadLimit(byteLimit);
+        const relation = relative(resolve(containmentRoot), resolve(path));
+        if (
+          relation === ".." || relation.startsWith(`..${sep}`) || isAbsolute(relation)
+        ) {
+          throw new TypeError("Snapshot path must be contained by the requested root");
+        }
+        const content = files.get(path);
+        if (content == null) throw fileNotFoundError(path);
+        const generation = fileGeneration;
+        const bytes = new TextEncoder().encode(content);
+        if (bytes.byteLength > limit) {
+          throw new RangeError(`File exceeds byte limit of ${limit} bytes`);
+        }
+        await Promise.resolve();
+        if (fileGeneration !== generation || files.get(path) !== content) {
+          throw new FileSnapshotChangedError("Mock file generation changed during snapshot read");
+        }
+        return bytes;
+      },
       writeFile: (path: string, content: string) => {
         files.set(path, content);
+        return Promise.resolve();
+      },
+      createFileBytesExclusive: (path: string, content: Uint8Array) => {
+        if (files.has(path)) {
+          return Promise.reject(
+            Object.assign(new Error(`File exists: ${path}`), { code: "EEXIST" }),
+          );
+        }
+        files.set(path, new TextDecoder("utf-8", { fatal: true }).decode(content));
         return Promise.resolve();
       },
       exists: (path: string) => Promise.resolve(hasPath(path)),
@@ -155,8 +234,7 @@ export function createMockAdapter(): MockRuntimeAdapter {
 
         return Promise.resolve();
       },
-      makeTempDir: (prefix: string) =>
-        Promise.resolve(`/tmp/${prefix}-${Math.random().toString(36).slice(2)}`),
+      makeTempDir: (prefix: string) => Promise.resolve(`/tmp/${prefix}-${crypto.randomUUID()}`),
       watch: (_paths: string | string[], _options?: WatchOptions): FileWatcher => ({
         async *[Symbol.asyncIterator](): AsyncIterator<FileChangeEvent> {
           // Mock watcher doesn't emit events

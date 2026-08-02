@@ -4,6 +4,7 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontApiClient } from "./client.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
+import type { VeryfrontAPIConfig } from "./types.ts";
 
 const baseConfig = {
   apiBaseUrl: "http://test.api",
@@ -11,7 +12,7 @@ const baseConfig = {
   projectSlug: "config-slug",
 };
 
-function createClient(config = baseConfig): VeryfrontApiClient {
+function createClient(config: VeryfrontAPIConfig = baseConfig): VeryfrontApiClient {
   return new VeryfrontApiClient(config);
 }
 
@@ -273,6 +274,87 @@ describe("VeryfrontApiClient", () => {
         VeryfrontError,
         "Cannot fetch published file without releaseId or environmentName",
       );
+    });
+
+    it("throws for bounded published reads without release or environment identity", () => {
+      const client = createClient();
+      assertThrows(
+        () => client.getPublishedFileContentBytesWithinLimit("pages/index.mdx", 1),
+        VeryfrontError,
+        "Cannot fetch published file without releaseId or environmentName",
+      );
+    });
+  });
+
+  describe("bounded content probes", () => {
+    it("forwards expected-missing options for branch and published exact reads", async () => {
+      const client = createClient();
+      const calls: Array<[string, boolean | undefined]> = [];
+      const mutable = client as unknown as {
+        operations: {
+          getBranchFileContentBytesWithinLimit: (
+            projectRef: string,
+            branchRef: string,
+            path: string,
+            maximumBytes: number,
+            options?: { expectedMissing?: boolean },
+          ) => Promise<Uint8Array>;
+          getReleaseFileContentBytesWithinLimit: (
+            projectRef: string,
+            releaseId: string,
+            path: string,
+            maximumBytes: number,
+            options?: { expectedMissing?: boolean },
+          ) => Promise<Uint8Array>;
+        };
+      };
+      mutable.operations.getBranchFileContentBytesWithinLimit = (
+        _projectRef,
+        _branchRef,
+        path,
+        _maximumBytes,
+        options,
+      ) => {
+        calls.push([path, options?.expectedMissing]);
+        return Promise.resolve(new Uint8Array([1]));
+      };
+      mutable.operations.getReleaseFileContentBytesWithinLimit = (
+        _projectRef,
+        _releaseId,
+        path,
+        _maximumBytes,
+        options,
+      ) => {
+        calls.push([path, options?.expectedMissing]);
+        return Promise.resolve(new Uint8Array([2]));
+      };
+
+      assertEquals(
+        [
+          ...await client.getFileContentBytesWithinLimit(
+            "pages/home.tsx",
+            1,
+            { expectedMissing: true },
+          ),
+        ],
+        [1],
+      );
+      assertEquals(
+        [
+          ...await client.getPublishedFileContentBytesWithinLimit(
+            "pages/home.tsx",
+            1,
+            "release-id",
+            undefined,
+            { expectedMissing: true },
+          ),
+        ],
+        [2],
+      );
+      assertEquals(calls, [
+        ["pages/home.tsx", true],
+        ["pages/home.tsx", true],
+      ]);
     });
   });
 });

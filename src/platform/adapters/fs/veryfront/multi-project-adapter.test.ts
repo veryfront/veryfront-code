@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   clearRequestScopedFileCache,
@@ -78,6 +78,49 @@ describe("MultiProjectFSAdapter", () => {
 
     it("should have readTextFile method", () => {
       withAdapter((adapter) => assertMethod(adapter, "readTextFile"));
+    });
+
+    it("should have exact bounded byte read method", () => {
+      withAdapter((adapter) => assertMethod(adapter, "readFileBytesWithinLimit"));
+    });
+
+    it("rejects an invalid exact-read limit before selecting an adapter", async () => {
+      await withAdapterAsync(async (adapter) => {
+        await assertRejects(
+          () => adapter.readFileBytesWithinLimit("asset.css", 0),
+          RangeError,
+          "positive safe integer",
+        );
+      });
+    });
+
+    it("forwards exact reads only to the selected captured authority", async () => {
+      await withAdapterAsync(async (adapter) => {
+        let exactCalls = 0;
+        let unboundedCalls = 0;
+        const source = new Uint8Array([1, 2, 3]);
+        adapter.setDefaultAdapter(
+          {
+            readFileBytesWithinLimit(path: string, byteLimit: number) {
+              exactCalls++;
+              assertEquals(path, "asset.css");
+              assertEquals(byteLimit, 3);
+              return Promise.resolve(source);
+            },
+            readFileBytes() {
+              unboundedCalls++;
+              return Promise.resolve(source);
+            },
+            dispose() {},
+          } as unknown as Parameters<MultiProjectFSAdapter["setDefaultAdapter"]>[0],
+        );
+
+        const result = await adapter.readFileBytesWithinLimit("asset.css", 3);
+        source[0] = 9;
+        assertEquals([...result], [1, 2, 3]);
+        assertEquals(exactCalls, 1);
+        assertEquals(unboundedCalls, 0);
+      });
     });
 
     it("should have readOptionalTextFile method", () => {

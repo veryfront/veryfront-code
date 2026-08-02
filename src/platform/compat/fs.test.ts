@@ -5,7 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * These tests verify the cross-runtime filesystem abstractions work correctly.
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   chmod,
@@ -49,6 +49,8 @@ describe("Filesystem Compat", () => {
 
       const methods = [
         "readTextFile",
+        "readFileBytesWithinLimit",
+        "createFileBytesExclusive",
         "writeTextFile",
         "rename",
         "exists",
@@ -60,6 +62,36 @@ describe("Filesystem Compat", () => {
       for (const method of methods) {
         assertEquals(typeof fs[method], "function");
       }
+      assertEquals(
+        typeof fs.readFileSnapshotWithinLimit,
+        Deno.build.os === "windows" ? "undefined" : "function",
+      );
+    });
+  });
+
+  describe("bounded binary capabilities", () => {
+    it("distinguishes exact-size files from overflow", async () => {
+      const fs = createFileSystem();
+      const filePath = join(testDir, "bounded-exact.bin");
+      await fs.writeFile(filePath, new Uint8Array([1, 2, 3]));
+
+      assertEquals([...await fs.readFileBytesWithinLimit!(filePath, 3)], [1, 2, 3]);
+      await assertRejects(
+        () => fs.readFileBytesWithinLimit!(filePath, 2),
+        RangeError,
+        "exceeds byte limit",
+      );
+    });
+
+    it("creates files exclusively without replacing existing content", async () => {
+      const fs = createFileSystem();
+      const filePath = join(testDir, "exclusive-create.bin");
+      await fs.createFileBytesExclusive!(filePath, new Uint8Array([4]));
+      await assertRejects(
+        () => fs.createFileBytesExclusive!(filePath, new Uint8Array([9])),
+        Error,
+      );
+      assertEquals([...await fs.readFile(filePath)], [4]);
     });
   });
 

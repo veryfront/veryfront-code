@@ -5,6 +5,7 @@ import {
 import type { CacheBackend } from "../types.ts";
 import { buildBatchResults } from "../batch-results.ts";
 import { type CacheGlob, compileCacheGlob } from "./glob.ts";
+import { assertCacheReadMaximumBytes, assertCacheValueWithinLimit } from "../bounded-read.ts";
 
 const DEFAULT_TTL_SECONDS = 300;
 const MAX_GLOB_CACHE_SIZE = 100;
@@ -45,6 +46,14 @@ export class MemoryCacheBackend implements CacheBackend {
     }
 
     return Promise.resolve(entry.value);
+  }
+
+  async getWithinLimit(key: string, maximumBytes: number): Promise<string | null> {
+    const admittedMaximum = assertCacheReadMaximumBytes(maximumBytes);
+    const value = await this.get(key);
+    if (value === null) return null;
+    assertCacheValueWithinLimit(value, admittedMaximum);
+    return value;
   }
 
   getRemainingTtlSeconds(key: string): Promise<number | null> {

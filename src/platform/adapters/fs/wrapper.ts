@@ -7,6 +7,49 @@ import type {
   WatchOptions,
 } from "../base.ts";
 import type { ContextualFSAdapter, DirectoryEntry, FSAdapter } from "./veryfront/types.ts";
+import {
+  captureByteReadCapabilities,
+  type CapturedByteReaders,
+  type CapturedWholeFileReader,
+  captureExclusiveCreateCapability,
+  captureSnapshotReadCapability,
+  copyFixedUint8ArrayWithinLimit,
+} from "../file-system-capabilities.ts";
+
+type CapturedMethod = (...args: never[]) => unknown;
+
+function captureOptionalMethod(value: object, key: string): CapturedMethod | undefined {
+  const seen = new Set<object>();
+  let owner: object | null = value;
+  for (let depth = 0; owner !== null && depth < 64; depth++) {
+    if (owner === Object.prototype) return undefined;
+    if (seen.has(owner)) throw new TypeError(`FSAdapter ${key} has an invalid prototype chain`);
+    seen.add(owner);
+    const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+    if (descriptor !== undefined) {
+      if (!("value" in descriptor)) {
+        throw new TypeError(`FSAdapter ${key} must be a data-property method`);
+      }
+      if (descriptor.value === undefined) return undefined;
+      if (typeof descriptor.value !== "function") {
+        throw new TypeError(`FSAdapter ${key} must be a function`);
+      }
+      return descriptor.value as CapturedMethod;
+    }
+    owner = Object.getPrototypeOf(owner);
+  }
+  if (owner !== null) throw new TypeError("FSAdapter prototype chain is too deep");
+  return undefined;
+}
+
+function publishFrozen(target: object, key: PropertyKey, value: unknown): void {
+  Object.defineProperty(target, key, {
+    configurable: false,
+    enumerable: true,
+    value,
+    writable: false,
+  });
+}
 
 export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
   getUnderlyingAdapter(): FSAdapter;
@@ -33,6 +76,15 @@ export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
     },
   ): Promise<T>;
   readFileBytes(path: string): Promise<Uint8Array>;
+  readonly maxWholeFileReadBytes?: number;
+  readonly readFileBytesBounded?: (path: string, byteLimit: number) => Promise<Uint8Array>;
+  readonly readFileBytesWithinLimit?: (path: string, byteLimit: number) => Promise<Uint8Array>;
+  readonly readFileSnapshotWithinLimit?: (
+    path: string,
+    containmentRoot: string,
+    byteLimit: number,
+  ) => Promise<Uint8Array>;
+  readonly createFileBytesExclusive?: (path: string, content: Uint8Array) => Promise<void>;
   readOptionalTextFile(path: string): Promise<string>;
   readdir(path: string): Promise<DirectoryEntry[]>;
   shutdown(): Promise<void>;
@@ -80,22 +132,91 @@ function isContextualAdapter(adapter: FSAdapter): adapter is ContextualFSAdapter
 
 export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   private readonly _fsAdapter: FSAdapter;
+  private readonly _unboundedFileReader?: (path: string) => Promise<Uint8Array>;
+  private readonly _wholeFileReader?: CapturedWholeFileReader;
+  readonly symlinkSemantics: "none" | undefined;
+  readonly maxWholeFileReadBytes?: number;
+  readonly readFileBytesBounded?: (path: string, byteLimit: number) => Promise<Uint8Array>;
+  readonly readFileBytesWithinLimit?: (path: string, byteLimit: number) => Promise<Uint8Array>;
+  readonly readFileSnapshotWithinLimit?: (
+    path: string,
+    containmentRoot: string,
+    byteLimit: number,
+  ) => Promise<Uint8Array>;
+  readonly createFileBytesExclusive?: (path: string, content: Uint8Array) => Promise<void>;
   readonly refreshSourceSnapshot?: (reason?: string) => Promise<void>;
   readonly ensureSourceSnapshotFresh?: (reason?: string) => Promise<void>;
   readonly getSourceSnapshotVersion?: () => number | undefined | Promise<number | undefined>;
 
   constructor(fsAdapter: FSAdapter) {
     this._fsAdapter = fsAdapter;
-    if (typeof fsAdapter.refreshSourceSnapshot === "function") {
+    const semantics = Object.getOwnPropertyDescriptor(fsAdapter, "symlinkSemantics");
+    this.symlinkSemantics = semantics && "value" in semantics && semantics.value === "none"
+      ? "none"
+      : undefined;
+
+    const snapshotReader = captureSnapshotReadCapability(fsAdapter, "FSAdapter");
+    let byteReaders: CapturedByteReaders;
+    try {
+      byteReaders = captureByteReadCapabilities(fsAdapter, "FSAdapter");
+    } catch (error) {
+      if (snapshotReader === undefined) throw error;
+      byteReaders = Object.freeze({}) as CapturedByteReaders;
+    }
+    this._unboundedFileReader = byteReaders.unbounded;
+    if (byteReaders.whole !== undefined) {
+      this._wholeFileReader = byteReaders.whole;
+      this.maxWholeFileReadBytes = byteReaders.whole.maximumBytes;
+    }
+    if (byteReaders.prefix !== undefined) this.readFileBytesBounded = byteReaders.prefix;
+    if (byteReaders.exact !== undefined) this.readFileBytesWithinLimit = byteReaders.exact;
+    if (snapshotReader !== undefined) {
+      this.readFileSnapshotWithinLimit = (path, containmentRoot, byteLimit) =>
+        snapshotReader.read(path, containmentRoot, byteLimit);
+    }
+    let exclusiveCreator;
+    try {
+      exclusiveCreator = captureExclusiveCreateCapability(fsAdapter, "FSAdapter");
+    } catch {
+      exclusiveCreator = undefined;
+    }
+    if (exclusiveCreator !== undefined) {
+      this.createFileBytesExclusive = (path, content) => exclusiveCreator.create(path, content);
+    }
+
+    const refreshSourceSnapshot = captureOptionalMethod(fsAdapter, "refreshSourceSnapshot");
+    if (refreshSourceSnapshot !== undefined) {
       this.refreshSourceSnapshot = (reason?: string) =>
-        fsAdapter.refreshSourceSnapshot!.call(fsAdapter, reason);
+        Reflect.apply(refreshSourceSnapshot, fsAdapter, [reason]) as Promise<void>;
     }
-    if (typeof fsAdapter.ensureSourceSnapshotFresh === "function") {
+    const ensureSourceSnapshotFresh = captureOptionalMethod(fsAdapter, "ensureSourceSnapshotFresh");
+    if (ensureSourceSnapshotFresh !== undefined) {
       this.ensureSourceSnapshotFresh = (reason?: string) =>
-        fsAdapter.ensureSourceSnapshotFresh!.call(fsAdapter, reason);
+        Reflect.apply(ensureSourceSnapshotFresh, fsAdapter, [reason]) as Promise<void>;
     }
-    if (typeof fsAdapter.getSourceSnapshotVersion === "function") {
-      this.getSourceSnapshotVersion = () => fsAdapter.getSourceSnapshotVersion!.call(fsAdapter);
+    const generation = captureOptionalMethod(fsAdapter, "getSourceSnapshotVersion");
+    if (generation !== undefined) {
+      this.getSourceSnapshotVersion = () =>
+        Reflect.apply(generation, fsAdapter, []) as
+          | number
+          | undefined
+          | Promise<number | undefined>;
+    }
+
+    for (
+      const key of [
+        "symlinkSemantics",
+        "maxWholeFileReadBytes",
+        "readFileBytesBounded",
+        "readFileBytesWithinLimit",
+        "readFileSnapshotWithinLimit",
+        "createFileBytesExclusive",
+        "refreshSourceSnapshot",
+        "ensureSourceSnapshotFresh",
+        "getSourceSnapshotVersion",
+      ] as const
+    ) {
+      publishFrozen(this, key, this[key]);
     }
   }
 
@@ -205,8 +326,15 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
+    if (this._wholeFileReader !== undefined) return await this._wholeFileReader.read(path);
+    if (this._unboundedFileReader !== undefined) return await this._unboundedFileReader(path);
     const result = await this._fsAdapter.readFile(path);
-    return typeof result === "string" ? new TextEncoder().encode(result) : result;
+    if (typeof result === "string") return new TextEncoder().encode(result);
+    return copyFixedUint8ArrayWithinLimit(
+      result,
+      Number.MAX_SAFE_INTEGER,
+      "FSAdapter readFile fallback",
+    );
   }
 
   async writeFile(path: string, content: string): Promise<void> {

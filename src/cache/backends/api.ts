@@ -10,6 +10,17 @@ import { buildBatchResults } from "../batch-results.ts";
 import { REQUEST_ERROR } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { getVerifiedCacheApiCredential } from "../verified-api-credential-context.ts";
+import {
+  assertCacheReadMaximumBytes,
+  assertCacheValueWithinLimit,
+  CacheValueTooLargeError,
+} from "../bounded-read.ts";
+import {
+  JsonStringValueTooLargeError,
+  maximumJsonStringDocumentBytes,
+  readResponseJsonStringWithinLimit,
+  readResponseTextPrefix,
+} from "#veryfront/utils/response-body.ts";
 
 const logger = baseLogger.component("api-cache-backend");
 
@@ -18,6 +29,8 @@ const CIRCUIT_BREAKER_RESET_TIMEOUT_MS = 15_000;
 const CIRCUIT_BREAKER_FAILURE_THRESHOLD = 10;
 const CIRCUIT_BREAKER_SUCCESS_THRESHOLD = 2;
 const ERROR_BODY_MAX_LENGTH = 500;
+const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
+const MAX_CONFIGURED_RESPONSE_BYTES = 128 * 1024 * 1024;
 
 type CacheRequestContext = {
   token?: string;
@@ -27,6 +40,7 @@ type CacheRequestContext = {
 
 type CacheRequestOptions = {
   failOnError?: boolean;
+  boundedJsonString?: { fieldName: string; maximumBytes: number };
 };
 
 let warnedMissingAdapterContract = false;
@@ -66,6 +80,7 @@ export class ApiCacheBackend implements CacheBackend {
   private apiBaseUrl: string;
   private keyPrefix: string;
   private timeoutMs: number;
+  private readonly maxResponseBytes: number;
   private circuitBreaker;
 
   constructor(
@@ -73,6 +88,7 @@ export class ApiCacheBackend implements CacheBackend {
       apiBaseUrl?: string;
       keyPrefix?: string;
       timeoutMs?: number;
+      maxResponseBytes?: number;
       circuitBreakerName?: string;
     } = {},
   ) {
@@ -82,6 +98,16 @@ export class ApiCacheBackend implements CacheBackend {
       "https://api.veryfront.com";
     this.keyPrefix = options.keyPrefix ?? "";
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
+    if (
+      !Number.isSafeInteger(maxResponseBytes) || maxResponseBytes <= 0 ||
+      maxResponseBytes > MAX_CONFIGURED_RESPONSE_BYTES
+    ) {
+      throw new RangeError(
+        `API cache maxResponseBytes must be a positive integer at most ${MAX_CONFIGURED_RESPONSE_BYTES}`,
+      );
+    }
+    this.maxResponseBytes = maxResponseBytes;
 
     const breakerName = options.circuitBreakerName ?? "api-cache";
     this.circuitBreaker = getCircuitBreaker(breakerName, {
@@ -115,6 +141,22 @@ export class ApiCacheBackend implements CacheBackend {
     body?: Record<string, unknown>,
     options: CacheRequestOptions = {},
   ): Promise<T | null> {
+    let boundedJsonString:
+      | { fieldName: string; maximumBytes: number; maximumDocumentBytes: number }
+      | undefined;
+    if (options.boundedJsonString !== undefined) {
+      const maximumBytes = assertCacheReadMaximumBytes(
+        options.boundedJsonString.maximumBytes,
+      );
+      boundedJsonString = {
+        fieldName: options.boundedJsonString.fieldName,
+        maximumBytes,
+        maximumDocumentBytes: maximumJsonStringDocumentBytes(
+          maximumBytes,
+          this.maxResponseBytes,
+        ),
+      };
+    }
     const reqCtx = getCurrentRequestContext();
     const hostToken = getHostEnv("VERYFRONT_API_TOKEN");
     const envToken = getEnvValue("VERYFRONT_API_TOKEN");
@@ -178,7 +220,12 @@ export class ApiCacheBackend implements CacheBackend {
           if (!response.ok) {
             let responseBody = "";
             try {
-              responseBody = await response.text();
+              responseBody = (await readResponseTextPrefix(
+                response,
+                ERROR_BODY_MAX_LENGTH + 1,
+                controller.signal,
+                { fatalUtf8: true },
+              )).text;
             } catch (bodyError) {
               logger.error("Failed to read API error response body", {
                 status: response.status,
@@ -190,12 +237,42 @@ export class ApiCacheBackend implements CacheBackend {
             });
           }
 
-          return (await response.json()) as T;
+          if (boundedJsonString !== undefined) {
+            try {
+              return await readResponseJsonStringWithinLimit(
+                response,
+                boundedJsonString.fieldName,
+                boundedJsonString.maximumBytes,
+                boundedJsonString.maximumDocumentBytes,
+                controller.signal,
+                this.maxResponseBytes,
+              ) as T;
+            } catch (error) {
+              if (error instanceof JsonStringValueTooLargeError) {
+                throw new CacheValueTooLargeError(boundedJsonString.maximumBytes);
+              }
+              throw error;
+            }
+          }
+
+          const { text, truncated } = await readResponseTextPrefix(
+            response,
+            this.maxResponseBytes + 1,
+            controller.signal,
+            { fatalUtf8: true },
+          );
+          if (truncated) {
+            throw REQUEST_ERROR.create({
+              detail: `Cache API response exceeded ${this.maxResponseBytes} bytes`,
+            });
+          }
+          return JSON.parse(text) as T;
         } finally {
           clearTimeout(timeoutId);
         }
-      });
+      }, { isNeutralError: (error) => error instanceof CacheValueTooLargeError });
     } catch (error) {
+      if (error instanceof CacheValueTooLargeError) throw error;
       if (error instanceof CircuitBreakerOpen) {
         logger.info("Circuit breaker open, failing fast", {
           path: sanitizeUrlForSpan(path),
@@ -226,6 +303,23 @@ export class ApiCacheBackend implements CacheBackend {
       `/get?key=${encodeURIComponent(prefixedKey)}`,
     );
     return result?.value ?? null;
+  }
+
+  async getWithinLimit(key: string, maximumBytes: number): Promise<string | null> {
+    const admittedMaximum = assertCacheReadMaximumBytes(maximumBytes);
+    const prefixedKey = await this.prefixKey(key);
+    const result = await this.request<string>(
+      "GET",
+      `/get?key=${encodeURIComponent(prefixedKey)}`,
+      undefined,
+      { boundedJsonString: { fieldName: "value", maximumBytes: admittedMaximum } },
+    );
+    if (result === null) return null;
+    if (typeof result !== "string") {
+      throw new TypeError("Cache API bounded get returned a non-string value");
+    }
+    assertCacheValueWithinLimit(result, admittedMaximum);
+    return result;
   }
 
   async getBatch(keys: string[]): Promise<Map<string, string | null>> {

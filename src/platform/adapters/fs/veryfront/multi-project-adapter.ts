@@ -5,6 +5,8 @@ import type { FileInfo, ResolveFileOptions } from "../../base.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
 import type { VeryfrontFSAdapter } from "./adapter.ts";
 import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
+import { requireBoundedFileReadLimit } from "../../bounded-file-read.ts";
+import { captureByteReadCapabilities } from "../../file-system-capabilities.ts";
 import {
   asyncLocalStorage,
   clearRequestScopedFileCache,
@@ -27,6 +29,7 @@ const DEFAULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1_000;
 const DEFAULT_MAX_IDLE_MS = 30 * 60 * 1_000;
 
 export class MultiProjectFSAdapter implements FSAdapter {
+  readonly symlinkSemantics = "none" as const;
   private manager: ProxyFSAdapterManager;
   private defaultAdapter?: VeryfrontFSAdapter;
 
@@ -178,6 +181,22 @@ export class MultiProjectFSAdapter implements FSAdapter {
   async readFile(path: string): Promise<string> {
     const adapter = await this.getAdapter();
     return adapter.readFile(path);
+  }
+
+  async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    const admittedLimit = requireBoundedFileReadLimit(byteLimit);
+    const adapter = await this.getAdapter();
+    const readers = captureByteReadCapabilities(
+      adapter,
+      "Selected Veryfront filesystem adapter",
+    );
+    if (readers.exact !== undefined) return readers.exact(path, admittedLimit);
+    if (readers.whole !== undefined && readers.whole.maximumBytes <= admittedLimit) {
+      return readers.whole.read(path);
+    }
+    throw new TypeError(
+      `Veryfront filesystem requires an exact bounded reader or a whole-file ceiling no larger than ${admittedLimit} bytes`,
+    );
   }
 
   async readTextFile(path: string): Promise<string> {
