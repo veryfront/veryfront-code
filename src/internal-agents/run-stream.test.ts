@@ -19,7 +19,7 @@ import type {
   CreateSandboxBashTool,
 } from "#veryfront/sandbox";
 import { registerSkill } from "#veryfront/skill/registry.ts";
-import type { RemoteToolSource, Tool } from "#veryfront/tool";
+import { type RemoteToolSource, type Tool, toolRegistry } from "#veryfront/tool";
 import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { AgentRunSessionManager } from "./session-manager.ts";
 import { buildMergedTools, createRuntimeAgentStreamResponse } from "./run-stream.ts";
