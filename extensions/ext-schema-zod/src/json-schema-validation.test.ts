@@ -14,7 +14,7 @@ async function validate(
 }
 
 describe("SchemaValidator.compileJsonSchema", () => {
-  it("validates Draft 2020-12 schemas without mutating accepted input", async () => {
+  it("validates Draft 2020-12 schemas through a non-mutating data snapshot", async () => {
     const compile = createZodAdapter().compileJsonSchema;
     assert(compile);
     const validator = compile({
@@ -33,6 +33,7 @@ describe("SchemaValidator.compileJsonSchema", () => {
 
     assertEquals(result, { success: true, value: input });
     assertEquals(input, { count: 2 });
+    assert(result.success && result.value !== input);
   });
 
   it("selects the compiler declared by Draft 7 and Draft 2019-09 schemas", async () => {
@@ -257,13 +258,13 @@ describe("SchemaValidator.compileJsonSchema", () => {
     const compile = createZodAdapter().compileJsonSchema;
     assert(compile);
     let deeplyNested: unknown = { type: "string" };
-    for (let depth = 0; depth < 130; depth++) {
+    for (let depth = 0; depth < 66; depth++) {
       deeplyNested = { allOf: [deeplyNested] };
     }
-    const tooManyNodes = new Array(100_001).fill(null);
-    const tooLongString = "x".repeat(1024 * 1024 + 1);
-    const tooLongKey = "k".repeat(16 * 1024 + 1);
-    const maximumString = "x".repeat(1024 * 1024);
+    const tooManyNodes = new Array(8_193).fill(null);
+    const tooLongString = "x".repeat(256 * 1024 + 1);
+    const tooLongKey = "k".repeat(4 * 1024 + 1);
+    const maximumString = "x".repeat(132 * 1024);
 
     assertThrows(
       () => compile(deeplyNested as never),
@@ -290,6 +291,151 @@ describe("SchemaValidator.compileJsonSchema", () => {
       TypeError,
       "serialized limit",
     );
+  });
+
+  it("accepts the combinator fanout boundary and rejects the next branch", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const branch = { type: "string" as const };
+    const atLimit = compile({ anyOf: new Array(256).fill(branch) });
+
+    assertEquals((await validate(atLimit, "value")).success, true);
+    assertThrows(
+      () => compile({ anyOf: new Array(257).fill(branch) }),
+      TypeError,
+      "branch fanout limit of 256",
+    );
+  });
+
+  it("rejects schemas whose nested combinators exceed the compile-work budget", () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const branch = { type: "string" as const };
+    const properties = Object.fromEntries(
+      Array.from({ length: 12 }, (_, index) => [
+        `field${index}`,
+        { anyOf: new Array(256).fill(branch) },
+      ]),
+    );
+
+    assertThrows(
+      () => compile({ type: "object", properties }),
+      TypeError,
+      "compilation work limit",
+    );
+  });
+
+  it("evicts by aggregate source weight before the entry-count ceiling", () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const firstSchema = { type: "string" as const, description: "0".repeat(240_000) };
+    const first = compile(firstSchema);
+
+    for (let index = 1; index <= 9; index++) {
+      compile({ type: "string", description: String(index).repeat(240_000) });
+    }
+
+    assertEquals(compile(firstSchema) === first, false);
+  });
+
+  it("validates realistic nested tool schemas below every compile budget", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const validator = compile({
+      type: "object",
+      properties: {
+        query: { type: "string", minLength: 1, maxLength: 4_096 },
+        filters: {
+          type: "array",
+          maxItems: 50,
+          items: {
+            type: "object",
+            properties: {
+              field: { type: "string", enum: ["status", "owner", "createdAt"] },
+              operator: { type: "string", enum: ["eq", "contains", "after"] },
+              value: { type: ["string", "number", "boolean", "null"] },
+            },
+            required: ["field", "operator", "value"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    });
+
+    assertEquals(
+      (await validate(validator, {
+        query: "production incidents",
+        filters: [{ field: "status", operator: "eq", value: "open" }],
+      })).success,
+      true,
+    );
+  });
+
+  it("rejects accessors and revoked proxies without invoking input getters", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const validator = compile({
+      type: "object",
+      properties: { value: { type: "string" } },
+      required: ["value"],
+    });
+    let getterReads = 0;
+    const accessor: Record<string, unknown> = {};
+    Object.defineProperty(accessor, "value", {
+      enumerable: true,
+      get() {
+        getterReads += 1;
+        throw new Error("must not run");
+      },
+    });
+    const revoked = Proxy.revocable({ value: "ok" }, {});
+    revoked.revoke();
+
+    const accessorResult = await validate(validator, accessor);
+    const revokedResult = await validate(validator, revoked.proxy);
+
+    assertEquals(getterReads, 0);
+    assertEquals(accessorResult.success, false);
+    assertEquals(revokedResult.success, false);
+    if (!accessorResult.success) {
+      assertEquals(accessorResult.errors[0]?.keyword, "veryfrontDataOnly");
+    }
+  });
+
+  it("validates one descriptor snapshot of stateful proxied input", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const validator = compile({
+      type: "object",
+      properties: { value: { const: "snapshot" } },
+      required: ["value"],
+    });
+    let descriptorReads = 0;
+    let valueReads = 0;
+    const input = new Proxy({ value: "target" }, {
+      getOwnPropertyDescriptor(_target, property) {
+        if (property !== "value") return undefined;
+        descriptorReads += 1;
+        return {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value: "snapshot",
+        };
+      },
+      get(target, property, receiver) {
+        if (property === "value") valueReads += 1;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    const result = await validate(validator, input);
+
+    assertEquals(result, { success: true, value: { value: "snapshot" } });
+    assertEquals(descriptorReads, 1);
+    assertEquals(valueReads, 0);
   });
 
   it("accepts null-prototype schemas and safely canonicalizes __proto__ data keys", async () => {
@@ -475,7 +621,7 @@ describe("SchemaValidator.compileJsonSchema", () => {
     );
   });
 
-  it("does not satisfy required properties from an inherited prototype", async () => {
+  it("rejects validation inputs with inherited prototypes", async () => {
     const compile = createZodAdapter().compileJsonSchema;
     assert(compile);
     const validator = compile({
@@ -490,10 +636,10 @@ describe("SchemaValidator.compileJsonSchema", () => {
 
     assertEquals(result.success, false);
     if (result.success) return;
-    assertEquals(result.errors.map((error) => error.keyword), ["required"]);
+    assertEquals(result.errors.map((error) => error.keyword), ["veryfrontDataOnly"]);
   });
 
-  it("ignores inherited keys when enforcing additionalProperties", async () => {
+  it("rejects inherited keys instead of passing them to Ajv", async () => {
     const compile = createZodAdapter().compileJsonSchema;
     assert(compile);
     const validator = compile({
@@ -509,6 +655,8 @@ describe("SchemaValidator.compileJsonSchema", () => {
 
     const result = await validate(validator, input);
 
-    assertEquals(result.success, true);
+    assertEquals(result.success, false);
+    if (result.success) return;
+    assertEquals(result.errors.map((error) => error.keyword), ["veryfrontDataOnly"]);
   });
 });

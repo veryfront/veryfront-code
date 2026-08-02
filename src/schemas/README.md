@@ -55,10 +55,26 @@ src/
 | Absolute path | Filesystem-rooted, no null bytes, at most 4,096 characters                                                                                                                                                                                                                                             |
 | JSON value    | Data-only JSON with at most 128 levels, 100,000 nodes, and 4 MiB serialized size. A string is at most 1 MiB and an object key is at most 16 KiB in UTF-8. Cycles, accessors, symbol keys, non-enumerable properties, and plain-object prototypes other than `Object.prototype` or `null` are rejected. |
 
-Raw JSON Schema compilation and adapter-generated JSON Schema documents use
-the same bounded, data-only snapshot. Only that canonical snapshot crosses the
-helper boundary, so later reads cannot observe different Proxy values. Invalid
-adapter results fail with a `TypeError`.
+Raw JSON Schema compilation uses a separate, smaller resource envelope. The
+default adapter accepts schemas with at most 64 levels, 8,192 nodes, and 512
+KiB serialized size. A schema string is at most 256 KiB and a property name is
+at most 4 KiB in UTF-8. A direct combinator or tuple fanout is at most 256, and
+nested combinators are subject to a 24,000-unit compilation-work budget.
+
+Both schema documents and validation inputs cross the adapter boundary as
+bounded, data-only snapshots. A validation input uses the JSON value limits in
+the table above. Cycles, accessors, symbols, hidden properties, revoked
+proxies, and custom object prototypes are rejected before the compiler runs.
+Successful validation returns the accepted snapshot rather than caller-owned
+state.
+
+Compiled validators are cached locally by the default adapter. The cache holds
+at most 128 entries and has a 2 MiB aggregate source-weight budget; least
+recently used entries are evicted when either limit is exceeded.
+
+Adapter-generated JSON Schema documents use the JSON value bounds. Only the
+canonical snapshot crosses the helper boundary, so later reads cannot observe
+different Proxy values. Invalid adapter results fail with a `TypeError`.
 
 ## JSON Schema conversion
 

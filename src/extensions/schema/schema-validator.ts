@@ -165,7 +165,7 @@ export interface JsonSchemaValidationIssue {
 /** Successful validation of an input against a compiled JSON Schema. */
 export interface JsonSchemaValidationSuccess<T = unknown> {
   success: true;
-  /** The accepted input. Validators must not mutate this value. */
+  /** Stable, validator-owned JSON snapshot of the accepted input. */
   value: T;
 }
 
@@ -271,6 +271,12 @@ export interface SchemaValidator {
 
   /**
    * Compile a JSON Schema into a reusable, non-mutating validator.
+   *
+   * Implementations must snapshot schemas and inputs through bounded,
+   * descriptor-based data reads before invoking a compiler. Accessors,
+   * proxies that cannot be inspected, cycles, and non-JSON object prototypes
+   * fail validation without executing caller code. Successful validation
+   * returns the accepted snapshot rather than caller-owned state.
    *
    * This capability is optional so existing third-party `SchemaValidator`
    * implementations remain source-compatible. Framework features that accept
