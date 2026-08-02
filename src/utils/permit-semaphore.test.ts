@@ -68,4 +68,28 @@ describe("PermitSemaphore", () => {
     assertEquals(await second, true);
     assertEquals(order, [1, 2]);
   });
+
+  it("normalizes primitive abort reasons before and during acquisition", async () => {
+    const semaphore = new PermitSemaphore(0);
+    const preflight = new AbortController();
+    preflight.abort("preflight cancelled");
+    await assertRejects(
+      () => semaphore.tryAcquire(Number.POSITIVE_INFINITY, { signal: preflight.signal }),
+      DOMException,
+      "preflight cancelled",
+    );
+
+    const queued = new AbortController();
+    const acquisition = semaphore.tryAcquire(Number.POSITIVE_INFINITY, {
+      signal: queued.signal,
+    });
+    assertEquals(semaphore.waiting, 1);
+    queued.abort("queued acquisition cancelled");
+    await assertRejects(
+      () => acquisition,
+      DOMException,
+      "queued acquisition cancelled",
+    );
+    assertEquals(semaphore.waiting, 0);
+  });
 });

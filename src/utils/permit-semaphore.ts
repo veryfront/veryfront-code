@@ -1,4 +1,5 @@
 import { MAX_TIMER_DELAY_MS } from "./timer.ts";
+import { createAbortError } from "./abort.ts";
 
 const DEFAULT_ACQUIRE_TIMEOUT_MS = 100;
 export const DEFAULT_PERMIT_SEMAPHORE_MAX_QUEUE_SIZE = 10_000;
@@ -67,7 +68,7 @@ export class PermitSemaphore {
     const normalizedTimeoutMs = requireAcquireTimeout(timeoutMs);
     const { signal } = options;
     if (signal?.aborted) {
-      throw signal.reason ?? new DOMException("The operation was aborted", "AbortError");
+      throw createAbortError(signal.reason);
     }
 
     if (this.permits > 0) {
@@ -102,9 +103,7 @@ export class PermitSemaphore {
         waiter.settled = true;
         removeWaiter();
         cleanup();
-        reject(
-          signal?.reason ?? new DOMException("The operation was aborted", "AbortError"),
-        );
+        reject(createAbortError(signal?.reason));
       };
       signal?.addEventListener("abort", waiter.onAbort, { once: true });
       if (signal?.aborted) {
