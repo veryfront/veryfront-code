@@ -271,8 +271,9 @@ async function applyRequestedProjectId<TContext extends DefaultHostedInvokeAgent
     "context" | "refreshProjectSkillIds"
   >,
   projectId: string,
+  projectSlug?: string,
 ): Promise<void> {
-  if (!applyAgentProjectContextChange(options.context, projectId)) {
+  if (!applyAgentProjectContextChange(options.context, projectId, projectSlug)) {
     return;
   }
 
@@ -319,7 +320,8 @@ async function prepareForkToolSources<TContext extends DefaultHostedInvokeAgentC
     createRemoteToolSource: options.createRemoteToolSource ?? createRemoteMCPToolSource,
     createToolsFromRemoteDefinitions: options.createToolsFromRemoteDefinitions ??
       createToolsFromRemoteDefinitions,
-    onConfirmedStudioProjectSwitch: (projectId) => applyRequestedProjectId(options, projectId),
+    onConfirmedStudioProjectSwitch: (project) =>
+      applyRequestedProjectId(options, project.projectId, project.projectSlug),
   });
 }
 

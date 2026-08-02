@@ -85,7 +85,7 @@ Deno.test("wrapHostedChildProjectSwitchTool leaves missing switch tools unchange
 });
 
 Deno.test("wrapHostedChildProjectSwitchTool reports confirmed project switches", async () => {
-  const switchedProjectIds: string[] = [];
+  const switchedProjects: Array<{ projectId: string; projectSlug?: string }> = [];
   const tools: HostToolSet = {
     studio_open_project: {
       execute: () => ({
@@ -96,8 +96,8 @@ Deno.test("wrapHostedChildProjectSwitchTool reports confirmed project switches",
 
   wrapHostedChildProjectSwitchTool({
     tools,
-    onConfirmedProjectSwitch: (projectId) => {
-      switchedProjectIds.push(projectId);
+    onConfirmedProjectSwitch: (project) => {
+      switchedProjects.push(project);
     },
   });
 
@@ -106,11 +106,11 @@ Deno.test("wrapHostedChildProjectSwitchTool reports confirmed project switches",
   assertEquals(result, {
     structuredContent: { success: true, project_id: "project-2", slug: "project-two" },
   });
-  assertEquals(switchedProjectIds, ["project-2"]);
+  assertEquals(switchedProjects, [{ projectId: "project-2", projectSlug: "project-two" }]);
 });
 
 Deno.test("wrapHostedChildProjectSwitchTool confirms slug requests from returned canonical project output", async () => {
-  const switchedProjectIds: string[] = [];
+  const switchedProjects: Array<{ projectId: string; projectSlug?: string }> = [];
   const tools: HostToolSet = {
     studio_open_project: {
       execute: () => ({
@@ -125,18 +125,21 @@ Deno.test("wrapHostedChildProjectSwitchTool confirms slug requests from returned
 
   wrapHostedChildProjectSwitchTool({
     tools,
-    onConfirmedProjectSwitch: (projectId) => {
-      switchedProjectIds.push(projectId);
+    onConfirmedProjectSwitch: (project) => {
+      switchedProjects.push(project);
     },
   });
 
   await tools.studio_open_project?.execute?.({ project_reference: "demo-project" });
 
-  assertEquals(switchedProjectIds, ["11111111-1111-4111-8111-111111111111"]);
+  assertEquals(switchedProjects, [{
+    projectId: "11111111-1111-4111-8111-111111111111",
+    projectSlug: "demo-project",
+  }]);
 });
 
 Deno.test("wrapHostedChildProjectSwitchTool ignores mismatched or failed project switches", async () => {
-  const switchedProjectIds: string[] = [];
+  const switchedProjects: Array<{ projectId: string; projectSlug?: string }> = [];
   const tools: HostToolSet = {
     studio_open_project: {
       execute: () => ({ structuredContent: { success: true, project_id: "project-3" } }),
@@ -145,12 +148,12 @@ Deno.test("wrapHostedChildProjectSwitchTool ignores mismatched or failed project
 
   wrapHostedChildProjectSwitchTool({
     tools,
-    onConfirmedProjectSwitch: (projectId) => {
-      switchedProjectIds.push(projectId);
+    onConfirmedProjectSwitch: (project) => {
+      switchedProjects.push(project);
     },
   });
 
   await tools.studio_open_project?.execute?.({ project_reference: "project-two" });
 
-  assertEquals(switchedProjectIds, []);
+  assertEquals(switchedProjects, []);
 });

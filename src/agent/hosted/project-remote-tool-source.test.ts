@@ -340,7 +340,7 @@ Deno.test("createHostedProjectRemoteToolSource retries thrown errors and rethrow
 });
 
 Deno.test("createHostedProjectRemoteToolSource reports project navigation and steering mutations", async () => {
-  const switchedProjects: string[] = [];
+  const switchedProjects: Array<{ projectId: string; projectSlug?: string }> = [];
   const mutations: Array<{ instructionsChanged: boolean; skillsChanged: boolean }> = [];
   const source = createHostedProjectRemoteToolSource({
     source: createRemoteSource({
@@ -356,8 +356,8 @@ Deno.test("createHostedProjectRemoteToolSource reports project navigation and st
     projectScopedRemoteToolOptions: {
       projectNavigationToolNames: ["studio_open_project"],
     },
-    onProjectSwitch: (projectId) => {
-      switchedProjects.push(projectId);
+    onProjectSwitch: (project) => {
+      switchedProjects.push(project);
     },
     onSteeringMutation: (mutation) => {
       mutations.push({
@@ -370,7 +370,7 @@ Deno.test("createHostedProjectRemoteToolSource reports project navigation and st
   await source.executeTool("studio_open_project", { project_reference: "project-two" });
   await source.executeTool("update_file", { path: "AGENTS.md" });
 
-  assertEquals(switchedProjects, ["project-2"]);
+  assertEquals(switchedProjects, [{ projectId: "project-2", projectSlug: "project-two" }]);
   assertEquals(mutations, [{ instructionsChanged: true, skillsChanged: false }]);
 });
 
@@ -831,7 +831,7 @@ Deno.test("createHostedProjectRemoteToolSources applies custom MCP server tool p
 
 Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy to created sources", async () => {
   const executed: Array<{ toolName: string; args: unknown; context?: ToolExecutionContext }> = [];
-  const switchedProjects: string[] = [];
+  const switchedProjects: Array<{ projectId: string; projectSlug?: string }> = [];
   const mutations: Array<{ instructionsChanged: boolean; skillsChanged: boolean }> = [];
   const sources = createHostedProjectRemoteToolSources({
     authToken: "token-1",
@@ -859,8 +859,8 @@ Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy t
         skillsChanged: mutation.skillsChanged,
       });
     },
-    onStudioProjectSwitch: (projectId) => {
-      switchedProjects.push(projectId);
+    onStudioProjectSwitch: (project) => {
+      switchedProjects.push(project);
     },
     createRemoteToolSource: (config) =>
       createRemoteSource({
@@ -897,7 +897,7 @@ Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy t
     },
   ]);
   assertEquals(mutations, [{ instructionsChanged: true, skillsChanged: false }]);
-  assertEquals(switchedProjects, ["project-2"]);
+  assertEquals(switchedProjects, [{ projectId: "project-2", projectSlug: "project-two" }]);
 });
 
 Deno.test("createHostedProjectRemoteToolSources composes API input preparation for integration tools", async () => {
