@@ -21,6 +21,8 @@ import { startStdioJsonRpc } from "./stdio.ts";
 import {
   buildInitializeResult,
   errorResponse,
+  internalError,
+  invalidRequestError,
   JsonRpcError,
   type JSONRPCRequest,
   JSONRPCRequestSchema,
@@ -88,7 +90,9 @@ export class MCPDevServer {
         isRunning: () => this.running,
         parseRequest: (payload) => JSONRPCRequestSchema.parse(payload),
         handleRequest: (request) => this.handleRequest(request),
-        toErrorResponse: (error) => parseError(error),
+        toParseErrorResponse: (error) => parseError(error),
+        toInvalidRequestResponse: (error) => invalidRequestError(error),
+        toErrorResponse: (_error, request) => internalError(request.id),
       });
     }
     if (this.config.httpPort) this.startHTTP(this.config.httpPort);
@@ -169,11 +173,9 @@ export class MCPDevServer {
         );
       }
 
+      let bodyText: string;
       try {
-        const bodyText = await readBodyWithLimit(req, 1_048_576);
-        const body = JSONRPCRequestSchema.parse(JSON.parse(bodyText));
-        const response = await this.handleRequest(body);
-        return new Response(JSON.stringify(response), { headers });
+        bodyText = await readBodyWithLimit(req, 1_048_576);
       } catch (e) {
         if (isRequestBodyTooLargeError(e)) {
           return new Response(
@@ -185,7 +187,37 @@ export class MCPDevServer {
             { status: 413, headers },
           );
         }
-        return new Response(JSON.stringify(parseError(e)), { status: 400, headers });
+        return new Response(JSON.stringify(invalidRequestError(e)), {
+          status: 400,
+          headers,
+        });
+      }
+
+      let payload: unknown;
+      try {
+        payload = JSON.parse(bodyText);
+      } catch (error) {
+        return new Response(JSON.stringify(parseError(error)), { status: 400, headers });
+      }
+
+      let body: JSONRPCRequest;
+      try {
+        body = JSONRPCRequestSchema.parse(payload);
+      } catch (error) {
+        return new Response(JSON.stringify(invalidRequestError(error)), {
+          status: 400,
+          headers,
+        });
+      }
+
+      try {
+        const response = await this.handleRequest(body);
+        return new Response(JSON.stringify(response), { headers });
+      } catch (_error) {
+        return new Response(JSON.stringify(internalError(body.id)), {
+          status: 500,
+          headers,
+        });
       }
     };
 
