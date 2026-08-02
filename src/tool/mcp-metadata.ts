@@ -23,7 +23,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** Validate a data-only MCP tool annotations snapshot. */
 export function isToolAnnotations(value: unknown): value is ToolAnnotations {
   if (!isRecord(value)) return false;
-  for (const [key, entry] of Object.entries(value)) {
+  let entries: Array<[string, unknown]>;
+  try {
+    entries = getEnumerableOwnStringDataEntries(value, "Tool MCP annotations");
+  } catch {
+    return false;
+  }
+  for (const [key, entry] of entries) {
     if (!TOOL_ANNOTATION_FIELDS.has(key)) return false;
     if (typeof entry !== "boolean") return false;
   }

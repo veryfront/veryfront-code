@@ -41,10 +41,10 @@ import {
 import { getSkillScriptExecutor } from "./executor.ts";
 import type { Skill, SkillContent, SkillScriptExecutor, SkillScriptResult } from "./types.ts";
 import {
+  isValidProviderSafeSkillId,
+  isValidSkillName,
   SKILL_ASSETS_DIR,
   SKILL_MD_FILENAME,
-  SKILL_NAME_REGEX,
-  SKILL_PROVIDER_SAFE_ID_REGEX,
   SKILL_REFERENCES_DIR,
   SKILL_RESOURCES_DIR,
   SKILL_SCRIPTS_DIR,
@@ -295,11 +295,11 @@ function resolveVisibleSkillOrThrow(
 }
 
 function isUnresolvedSkillSelectorValid(skillId: string): boolean {
-  if (SKILL_NAME_REGEX.test(skillId)) {
+  if (isValidSkillName(skillId as unknown)) {
     return true;
   }
 
-  return skillId.includes("--") && SKILL_PROVIDER_SAFE_ID_REGEX.test(skillId);
+  return skillId.includes("--") && isValidProviderSafeSkillId(skillId as unknown);
 }
 
 function createSkillUnavailableError(): Error {

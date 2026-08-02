@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#std/path.ts";
+import { SKILL_NAME_REGEX } from "veryfront/skill";
 import { validateSkillDirectory } from "./validate.ts";
 
 async function withTempSkill(
@@ -117,21 +118,27 @@ Process inbound email.
   });
 
   it("reports SKILL.md frontmatter name mismatch with directory", async () => {
-    await withTempSkill({
-      "SKILL.md": `---
+    const originalTest = SKILL_NAME_REGEX.test;
+    SKILL_NAME_REGEX.test = () => false;
+    try {
+      await withTempSkill({
+        "SKILL.md": `---
 name: email
 description: Mismatched name.
 ---
 
 # Email
 `,
-    }, async (dir) => {
-      const issues = await validateSkillDirectory(dir);
-      assertEquals(issues, [{
-        severity: "error",
-        message: 'Skill name "email" does not match directory name "process-email"',
-      }]);
-    }, "process-email");
+      }, async (dir) => {
+        const issues = await validateSkillDirectory(dir);
+        assertEquals(issues, [{
+          severity: "error",
+          message: 'Skill name "email" does not match directory name "process-email"',
+        }]);
+      }, "process-email");
+    } finally {
+      SKILL_NAME_REGEX.test = originalTest;
+    }
   });
 
   it("warns when SKILL.md has no instruction body", async () => {

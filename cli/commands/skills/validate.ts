@@ -10,8 +10,8 @@ import { exitProcess, logError, logSuccess, logWarning } from "#cli/utils";
 import { createFileSystem } from "veryfront/platform";
 import { basename, resolve } from "veryfront/platform/path";
 import {
+  isValidSkillName,
   parseSkillFrontmatter,
-  SKILL_NAME_REGEX,
   validateSkillFileMetadata,
 } from "veryfront/skill";
 
@@ -61,7 +61,7 @@ function validateCanonicalFrontmatterName(
   if (typeof frontmatter.name !== "string") return;
 
   const name = frontmatter.name.trim();
-  if (!SKILL_NAME_REGEX.test(name)) {
+  if (!isValidSkillName(name)) {
     return;
   }
 

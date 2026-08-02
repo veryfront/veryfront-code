@@ -16,7 +16,7 @@ import {
   createLoadSkillReferenceTool,
   createLoadSkillTool,
 } from "./tools.ts";
-import type { Skill } from "./types.ts";
+import { type Skill, SKILL_NAME_REGEX, SKILL_PROVIDER_SAFE_ID_REGEX } from "./types.ts";
 
 function makeSkill(input: {
   id: string;
@@ -311,6 +311,10 @@ Deno.test("load_skill resolves provider-safe owned short names before plain-id v
 
 Deno.test("load_skill reports provider-safe guidance for invalid owned-looking selectors", async () => {
   setupRegistry();
+  const originalNameTest = SKILL_NAME_REGEX.test;
+  const originalProviderSafeTest = SKILL_PROVIDER_SAFE_ID_REGEX.test;
+  SKILL_NAME_REGEX.test = () => true;
+  SKILL_PROVIDER_SAFE_ID_REGEX.test = () => true;
   try {
     const loadSkill = createLoadSkillTool();
 
@@ -329,6 +333,8 @@ Deno.test("load_skill reports provider-safe guidance for invalid owned-looking s
       'Invalid skill id "writer--Bad Name": must be provider-safe letters, numbers, underscores, or hyphens, 1-64 characters',
     );
   } finally {
+    SKILL_NAME_REGEX.test = originalNameTest;
+    SKILL_PROVIDER_SAFE_ID_REGEX.test = originalProviderSafeTest;
     skillRegistryInternal.clearAll();
   }
 });
