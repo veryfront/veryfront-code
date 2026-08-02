@@ -101,8 +101,8 @@ describe("ChatActions — render-or-compose", () => {
   it("recompose: a custom Trigger renders in place of the default", () => {
     const html = renderToString(
       <ChatActions.Root>
-        <ChatActions.Trigger>
-          <button type="button">custom-trigger</button>
+        <ChatActions.Trigger className="vf-custom-trigger">
+          <button type="button" className="consumer-trigger">custom-trigger</button>
         </ChatActions.Trigger>
         <ChatActions.Content>
           <ChatActions.Item onSelect={() => {}}>Row</ChatActions.Item>
@@ -111,6 +111,8 @@ describe("ChatActions — render-or-compose", () => {
     );
     // The composed trigger renders; the default `+` button does not.
     assertStringIncludes(html, "custom-trigger");
+    assertStringIncludes(html, "vf-custom-trigger");
+    assertStringIncludes(html, "consumer-trigger");
     assert(
       !html.includes("Add attachments and settings"),
       "custom Trigger must replace the default `+` button",

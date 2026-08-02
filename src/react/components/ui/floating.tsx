@@ -14,6 +14,7 @@ import { createPortal } from "react-dom";
 import { UI_SCOPE_SELECTOR } from "./design-tokens.ts";
 import { registerDismissableLayer } from "./dismissable-layer.ts";
 import { focusFirst, focusWithoutScroll } from "./focus-management.ts";
+import { composeRefs } from "./slot.tsx";
 import { useIsomorphicLayoutEffect } from "./use-isomorphic-layout-effect.ts";
 
 const VIEWPORT_PADDING_PX = 8;
@@ -40,6 +41,8 @@ export interface FloatingProps extends React.HTMLAttributes<HTMLDivElement> {
   initialFocus?: true | string;
   /** Focus target for Escape dismissal when the positioning anchor is a wrapper. */
   returnFocusRef?: React.RefObject<HTMLElement | null>;
+  /** Consumer ref for the portalled surface node. */
+  contentRef?: React.Ref<HTMLDivElement>;
 }
 
 /** Portal a positioned surface anchored to `anchorRef`. */
@@ -52,11 +55,16 @@ export function Floating({
   matchTriggerWidth,
   initialFocus,
   returnFocusRef,
+  contentRef,
   style,
   children,
   ...rest
 }: FloatingProps): React.ReactElement | null {
   const ref = React.useRef<HTMLDivElement>(null);
+  const surfaceRef = React.useMemo(
+    () => composeRefs<HTMLDivElement>(ref, contentRef),
+    [contentRef],
+  );
   const resolvedAnchor = anchorElement ?? anchorRef.current;
   // Portals have no server representation. Keep the server and the first
   // hydration render identical, then enable the portal after the component has
@@ -191,7 +199,7 @@ export function Floating({
   const container = anchor.closest<HTMLElement>("[data-vf-modal-content]") ??
     anchor.closest<HTMLElement>(UI_SCOPE_SELECTOR) ?? ownerDocument.body;
   return createPortal(
-    <div ref={ref} style={{ ...pos, ...style }} {...rest}>{children}</div>,
+    <div ref={surfaceRef} style={{ ...pos, ...style }} {...rest}>{children}</div>,
     container,
   );
 }

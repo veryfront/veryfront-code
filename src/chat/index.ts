@@ -192,6 +192,7 @@ export {
   type UseAttachmentsRequestState,
   type UseAttachmentsResult,
   type UseAttachmentsStorageState,
+  useChatSidebarItem,
   useModelSelector,
   useSources,
   useStepIndicator,
@@ -249,8 +250,13 @@ export {
   type AttachmentPillContextValue,
   type AttachmentPillProps,
   ChatInput,
+  type ChatInputActionProps,
   type ChatInputExportProps,
+  type ChatInputFieldProps,
   type ChatInputProps,
+  type ChatInputRootProps,
+  type ChatInputSubmitProps,
+  type ChatInputToolbarProps,
   Reasoning,
   type ReasoningContextValue,
   type ReasoningProps,
@@ -262,6 +268,21 @@ export {
   useAttachmentPill,
   useReasoning,
   useToolCall,
+} from "#veryfront/react/components/chat/chat.tsx";
+// RFC 2980 canonical hook + context surface (additive; old names kept @deprecated).
+export {
+  ChatInputContextProvider,
+  type ChatInputContextValue,
+  mergeProps,
+  useChatInput,
+  useChatInputContext,
+  useChatInputContextOptional,
+  type UseChatInputResult,
+  useChatScroll,
+  type UseChatScrollOptions,
+  type UseChatScrollResult,
+  useMessageBranches,
+  type UseMessageBranchesResult,
 } from "#veryfront/react/components/chat/chat.tsx";
 export { Markdown, type MarkdownProps } from "#veryfront/react/components/chat/markdown.tsx";
 

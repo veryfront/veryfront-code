@@ -47,6 +47,8 @@ export function DropdownMenuTrigger(
 export interface DropdownMenuContentProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Horizontal alignment relative to the trigger. */
   align?: "start" | "end";
+  /** Consumer ref for the rendered menu surface. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** Menu surface — rendered below the trigger while open. No border (Studio). */
@@ -180,6 +182,8 @@ export interface DropdownMenuItemProps extends React.ButtonHTMLAttributes<HTMLBu
   onSelect?: () => void;
   /** `asChild` merges item styling onto your own element. */
   asChild?: boolean;
+  /** Consumer ref for the rendered menu item. */
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 /** A selectable menu item. Icons render at `size-3.5` (14px). */

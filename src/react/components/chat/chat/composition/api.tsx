@@ -11,7 +11,16 @@ export {
   type ChatMessageListContentProps,
   type ChatMessageListProps,
 } from "./chat-message-list.tsx";
-export { ChatInput, type ChatInputExportProps, type ChatInputProps } from "./chat-composer.tsx";
+export {
+  ChatInput,
+  type ChatInputActionProps,
+  type ChatInputExportProps,
+  type ChatInputFieldProps,
+  type ChatInputProps,
+  type ChatInputRootProps,
+  type ChatInputSubmitProps,
+  type ChatInputToolbarProps,
+} from "./chat-composer.tsx";
 export { ChatEmpty, type ChatEmptyProps } from "./chat-empty.tsx";
 export {
   ChatEmptyState,

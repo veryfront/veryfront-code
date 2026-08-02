@@ -38,17 +38,67 @@ export interface MessageContextValue {
   feedback?: FeedbackValue | null;
 }
 
-const [MessageContext, useMessageContext] = createStrictContext<MessageContextValue>(
+const [MessageContext, useMessageContextStrict] = createStrictContext<MessageContextValue>(
   "useMessageContext",
   "a Message component",
 );
+const NOOP_BRANCH_NAVIGATION = (): void => undefined;
+
+/**
+ * Read the enclosing message's state (the message, role, streaming flag, parts,
+ * branch navigation, copy/edit/regenerate/feedback actions). Provided by
+ * `<Message.Root>`; throws when used outside a `<Message>`.
+ *
+ * @example
+ * ```tsx
+ * function Regenerate() {
+ *   const { onRegenerate } = useMessageContext();
+ *   return onRegenerate ? <button onClick={onRegenerate}>Retry</button> : null;
+ * }
+ * ```
+ */
+export const useMessageContext = useMessageContextStrict;
 
 /** React hook for message context optional. */
 export function useMessageContextOptional(): MessageContextValue | null {
   return React.useContext(MessageContext);
 }
 
-export { useMessageContext };
+/** Result of {@link useMessageBranches}, the message's regeneration variants. */
+export interface UseMessageBranchesResult {
+  /** 0-based index of the active branch. */
+  index: number;
+  /** Total number of branches (1 when the message has no variants). */
+  count: number;
+  /** Whether an earlier / later variant exists. */
+  hasPrevious: boolean;
+  hasNext: boolean;
+  /** Switch to the previous / next variant. No-op when unavailable. */
+  previous: () => void;
+  next: () => void;
+}
+
+/**
+ * `useMessageBranches` is a thin hook over the message context's branch state
+ * (`getBranches` / `switchBranch` on `useChat`, surfaced as `branch` +
+ * `onBranchPrev/Next`). Powers `Message.BranchPicker`; RFC 2980. Must be used
+ * within a `<Message>`.
+ */
+export function useMessageBranches(): UseMessageBranchesResult {
+  const ctx = useMessageContext();
+  const current = ctx.branch?.current ?? 1; // 1-based
+  const count = ctx.branch?.total ?? 1;
+  const previous = current > 1 ? ctx.onBranchPrev : undefined;
+  const next = current < count ? ctx.onBranchNext : undefined;
+  return {
+    index: current - 1,
+    count,
+    hasPrevious: previous !== undefined,
+    hasNext: next !== undefined,
+    previous: previous ?? NOOP_BRANCH_NAVIGATION,
+    next: next ?? NOOP_BRANCH_NAVIGATION,
+  };
+}
 
 /** The message's grouped parts exposed as headless data. */
 export interface MessagePartsData {

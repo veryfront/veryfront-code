@@ -26,8 +26,13 @@ export {
   ChatIf,
   type ChatIfProps,
   ChatInput,
+  type ChatInputActionProps,
   type ChatInputExportProps,
+  type ChatInputFieldProps,
   type ChatInputProps,
+  type ChatInputRootProps,
+  type ChatInputSubmitProps,
+  type ChatInputToolbarProps,
   ChatMessageList,
   type ChatMessageListContentProps,
   type ChatMessageListProps,
@@ -82,6 +87,8 @@ export {
 export {
   ChatContextProvider,
   type ChatContextValue,
+  ChatInputContextProvider,
+  type ChatInputContextValue,
   ComposerContextProvider,
   type ComposerContextValue,
   MessageContextProvider,
@@ -89,8 +96,12 @@ export {
   type MessagePartsData,
   useChatContext,
   useChatContextOptional,
+  useChatInputContext,
+  useChatInputContextOptional,
   useComposerContext,
   useComposerContextOptional,
+  useMessageBranches,
+  type UseMessageBranchesResult,
   useMessageContext,
   useMessageContextOptional,
   useMessageParts,
@@ -205,17 +216,25 @@ export {
   type UseAttachmentsResult,
   type UseAttachmentsResult as UseUploadsRegistryResult,
   type UseAttachmentsStorageState,
+  useChatSidebarItem,
   useReasoning,
   useSources,
   useStepIndicator,
-  useStickToBottom,
-  type UseStickToBottomOptions,
-  type UseStickToBottomResult,
   useToolCall,
   useUpload,
   type UseUploadOptions,
   type UseUploadResult,
 } from "./chat/index.tsx";
+
+export { mergeProps, useChatInput, type UseChatInputResult } from "./chat/hooks/use-chat-input.ts";
+export {
+  useChatScroll,
+  type UseChatScrollOptions,
+  type UseChatScrollResult,
+  useStickToBottom,
+  type UseStickToBottomOptions,
+  type UseStickToBottomResult,
+} from "./chat/hooks/use-stick-to-bottom.ts";
 
 // ---------------------------------------------------------------------------
 // Adjacent components

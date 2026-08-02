@@ -53,6 +53,35 @@ import { Skeleton } from "../../../ui/skeleton.tsx";
 import { ChatTokens } from "../../chat-tokens-style.tsx";
 import type { ConversationSummary } from "../persistence/conversation-store.ts";
 import { useConversationsContextOptional } from "../contexts/conversations-context.tsx";
+import { ChatSidebarRenameEditor } from "./sidebar-rename-editor.tsx";
+import type {
+  ChatSidebarContextValue,
+  ChatSidebarControlProps,
+  ChatSidebarEmptyProps,
+  ChatSidebarGroupProps,
+  ChatSidebarItemActionProps,
+  ChatSidebarItemContextValue,
+  ChatSidebarItemMenuProps,
+  ChatSidebarItemProps,
+  ChatSidebarListProps,
+  ChatSidebarNewButtonProps,
+  ChatSidebarProps,
+  ChatSidebarRootProps,
+} from "./sidebar.types.ts";
+
+export type {
+  ChatSidebarEmptyProps,
+  ChatSidebarGroupProps,
+  ChatSidebarItemActionProps,
+  ChatSidebarItemContextValue,
+  ChatSidebarItemMenuProps,
+  ChatSidebarItemProps,
+  ChatSidebarItemRenderOptions,
+  ChatSidebarListProps,
+  ChatSidebarNewButtonProps,
+  ChatSidebarProps,
+  ChatSidebarRootProps,
+} from "./sidebar.types.ts";
 
 /** Three-dots "more actions" glyph (not in the shared icons barrel). */
 function MoreGlyph({ className }: { className?: string }): React.ReactElement {
@@ -70,56 +99,9 @@ function MoreGlyph({ className }: { className?: string }): React.ReactElement {
   );
 }
 
-/** Per-row handlers/state handed to a custom {@link ChatSidebarRootProps.renderItem}. */
-export interface ChatSidebarItemRenderOptions {
-  isActive: boolean;
-  onSelect: () => void;
-  onDelete?: () => void;
-  onRename?: (title: string) => void;
-}
-
-// ---------------------------------------------------------------------------
-// Shared props — the conversation-native API
-// ---------------------------------------------------------------------------
-
-/** Data + action props shared by the preset and {@link ChatSidebarRoot}. */
-interface ChatSidebarControlProps {
-  /** Conversations to list, newest first. Defaults to the provider's list. */
-  conversations?: ConversationSummary[];
-  /** The currently selected conversation, or `null`. Defaults from context. */
-  activeId?: string | null;
-  /** Called when a conversation is chosen. Defaults to the provider's `select`. */
-  onSelect?: (id: string) => void;
-  /** Called when a conversation is deleted. Defaults to the provider's `remove`. */
-  onDelete?: (id: string) => void;
-  /** Called when a title is edited. Defaults to the provider's `rename`. */
-  onRename?: (id: string, title: string) => void;
-  /** Called to start a new conversation. Defaults to the provider's `create`. */
-  onNew?: () => void;
-  /** Render each row yourself instead of the built-in row (auto {@link ChatSidebarList}). */
-  renderItem?: (
-    conversation: ConversationSummary,
-    opts: ChatSidebarItemRenderOptions,
-  ) => React.ReactNode;
-}
-
 // ---------------------------------------------------------------------------
 // Context — shared by every ChatSidebar sub-component
 // ---------------------------------------------------------------------------
-
-interface ChatSidebarContextValue {
-  conversations: ConversationSummary[];
-  activeId: string | null;
-  onSelect: (id: string) => void;
-  onDelete: (id: string) => void;
-  onRename?: (id: string, title: string) => void;
-  onNew?: () => void;
-  loading?: boolean;
-  renderItem?: (
-    conversation: ConversationSummary,
-    opts: ChatSidebarItemRenderOptions,
-  ) => React.ReactNode;
-}
 
 const [ChatSidebarContext, useChatSidebarContext] = createStrictContext<ChatSidebarContextValue>(
   "ChatSidebar sub-components",
@@ -201,21 +183,9 @@ function groupConversations(
 // ChatSidebar.Root
 // ---------------------------------------------------------------------------
 
-/** Props accepted by {@link ChatSidebarRoot}. */
-export interface ChatSidebarRootProps extends ChatSidebarControlProps {
-  /** Show the loading skeleton while conversations are being fetched. */
-  loading?: boolean;
-  /** When `false`, the rail renders nothing. Default `true`. */
-  isOpen?: boolean;
-  /** @deprecated The root fills its parent by default. */
-  fill?: boolean;
-  className?: string;
-  children: React.ReactNode;
-}
-
 /** Context provider + outer rail container for the compound sidebar. */
 export function ChatSidebarRoot(props: ChatSidebarRootProps): React.ReactElement | null {
-  const { loading, isOpen = true, fill = false, className, children } = props;
+  const { loading, isOpen = true, fill = false, className, children, ref } = props;
   const resolved = useResolvedSidebar(props);
 
   const value = React.useMemo<ChatSidebarContextValue>(
@@ -239,6 +209,7 @@ export function ChatSidebarRoot(props: ChatSidebarRootProps): React.ReactElement
       <ChatTokens />
       <div
         {...UI_SCOPE_ATTRS}
+        ref={ref}
         // Fills its parent by default (a composed layout container provides
         // width + overlay); the standalone preset supplies its own rail chrome.
         className={cn("flex flex-col h-full", fill && "w-full", className)}
@@ -254,25 +225,18 @@ ChatSidebarRoot.displayName = "ChatSidebar.Root";
 // ChatSidebar.NewButton
 // ---------------------------------------------------------------------------
 
-/** Props accepted by {@link ChatSidebarNewButton}. */
-export interface ChatSidebarNewButtonProps {
-  /** Button label. Defaults to "New chat". */
-  children?: React.ReactNode;
-  /** Optional leading icon. */
-  icon?: React.ReactNode;
-  className?: string;
-}
-
 /** The primary "new conversation" action. Wires `onNew` from context. */
 export function ChatSidebarNewButton({
   children,
   icon,
   className,
+  ref,
 }: ChatSidebarNewButtonProps): React.ReactElement {
   const { onNew } = useChatSidebarContext();
   return (
     <div className="px-3 pt-4 pb-1">
       <Button
+        ref={ref}
         type="button"
         variant="primary"
         onClick={onNew}
@@ -290,42 +254,27 @@ ChatSidebarNewButton.displayName = "ChatSidebar.NewButton";
 // ChatSidebar.Item
 // ---------------------------------------------------------------------------
 
-/** Props accepted by {@link ChatSidebarItem}. */
-/**
- * Per-row state + actions shared with `ChatSidebar.Item.*` leaves, so a swapped
- * or extended row menu keeps rename/delete/select behaviour (the acid test).
- */
-export interface ChatSidebarItemContextValue {
-  conversation: ConversationSummary;
-  isActive: boolean;
-  /** Rename is available (the surrounding sidebar wired an `onRename`). */
-  canRename: boolean;
-  /** Enter inline-rename mode (no-op when rename is unavailable). */
-  startRename: () => void;
-  /** Delete this conversation. */
-  remove: () => void;
-  /** `…` menu open state (drives the row's active styling). */
-  menuOpen: boolean;
-  setMenuOpen: (open: boolean) => void;
-}
-
-const [ChatSidebarItemContext, useChatSidebarItem] = createStrictContext<
+const [ChatSidebarItemContext, useChatSidebarItemStrict] = createStrictContext<
   ChatSidebarItemContextValue
 >(
   "ChatSidebar.Item.*",
   "<ChatSidebar.Item>",
 );
-export { useChatSidebarItem };
 
-export interface ChatSidebarItemProps {
-  conversation: ConversationSummary;
-  className?: string;
-  /**
-   * Compose the row's action slot — typically a `<ChatSidebar.Item.Menu>`.
-   * Omit for the default `…` rename/delete menu.
-   */
-  children?: React.ReactNode;
-}
+/**
+ * Read the enclosing `<ChatSidebar.Item>`'s row state (the conversation summary,
+ * active flag, rename availability + `startRename`, `remove`, and the `…` menu
+ * open state) from a custom item sub-part. Throws outside a `<ChatSidebar.Item>`.
+ *
+ * @example
+ * ```tsx
+ * function DeleteButton() {
+ *   const { remove, conversation } = useChatSidebarItem();
+ *   return <button onClick={remove} aria-label={`Delete ${conversation.title}`}>×</button>;
+ * }
+ * ```
+ */
+export const useChatSidebarItem = useChatSidebarItemStrict;
 
 /**
  * A single conversation row — select on click, rename/delete via a "…" menu.
@@ -336,6 +285,7 @@ export function ChatSidebarItem({
   conversation,
   className,
   children,
+  ref,
 }: ChatSidebarItemProps): React.ReactElement {
   const { activeId, onSelect, onDelete, onRename } = useChatSidebarContext();
 
@@ -343,11 +293,6 @@ export function ChatSidebarItem({
   const [editing, setEditing] = React.useState(false);
   const [editValue, setEditValue] = React.useState(conversation.title);
   const [menuOpen, setMenuOpen] = React.useState(false);
-  const inputRef = React.useRef<HTMLInputElement>(null);
-
-  React.useEffect(() => {
-    if (editing) inputRef.current?.select();
-  }, [editing]);
 
   const startRename = React.useCallback((): void => {
     if (!onRename) return;
@@ -377,28 +322,22 @@ export function ChatSidebarItem({
   );
 
   if (editing) {
-    // Fixed `h-8` = the display row's height (py-1.5 + a size-5 action button),
-    // so entering rename mode never resizes the row.
     return (
-      <div className="flex h-8 items-center gap-1 rounded-[var(--radius-sm)] bg-[var(--accent)] px-2.5">
-        <input
-          ref={inputRef}
-          value={editValue}
-          onChange={(e) => setEditValue(e.target.value)}
-          onBlur={commitRename}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") commitRename();
-            if (e.key === "Escape") setEditing(false);
-          }}
-          className="min-w-0 flex-1 appearance-none border-0 bg-transparent p-0 text-[13px] leading-snug outline-none"
-        />
-      </div>
+      <ChatSidebarRenameEditor
+        ref={ref}
+        className={className}
+        value={editValue}
+        onChange={setEditValue}
+        onCommit={commitRename}
+        onCancel={() => setEditing(false)}
+      />
     );
   }
 
   return (
     <ChatSidebarItemContext.Provider value={itemContext}>
       <ListItem
+        ref={ref}
         title={conversation.title}
         active={isActive || menuOpen}
         className={className}
@@ -410,14 +349,6 @@ export function ChatSidebarItem({
   );
 }
 ChatSidebarItem.displayName = "ChatSidebar.Item";
-
-/** Props for {@link ChatSidebarItemMenu}. */
-export interface ChatSidebarItemMenuProps {
-  /** Override the trigger glyph. */
-  icon?: React.ReactNode;
-  /** Compose the entries; omit for the default `Rename` + `Delete`. */
-  children?: React.ReactNode;
-}
 
 /** The row's `…` dropdown. Reads row state from {@link useChatSidebarItem}. */
 export function ChatSidebarItemMenu({
@@ -451,23 +382,16 @@ export function ChatSidebarItemMenu({
 }
 ChatSidebarItemMenu.displayName = "ChatSidebar.Item.Menu";
 
-/** Props for {@link ChatSidebarItemRename} / {@link ChatSidebarItemDelete}. */
-export interface ChatSidebarItemActionProps {
-  /** Override the entry glyph. */
-  icon?: React.ReactNode;
-  /** Override the entry label. */
-  children?: React.ReactNode;
-}
-
 /** `Rename` menu entry — enters inline rename. Renders nothing if unavailable. */
 export function ChatSidebarItemRename({
   icon,
   children,
+  ref,
 }: ChatSidebarItemActionProps): React.ReactElement | null {
   const { canRename, startRename } = useChatSidebarItem();
   if (!canRename) return null;
   return (
-    <DropdownMenuItem onSelect={startRename}>
+    <DropdownMenuItem ref={ref} onSelect={startRename}>
       {icon ?? <PencilIcon />}
       {children ?? "Rename"}
     </DropdownMenuItem>
@@ -479,10 +403,12 @@ ChatSidebarItemRename.displayName = "ChatSidebar.Item.Rename";
 export function ChatSidebarItemDelete({
   icon,
   children,
+  ref,
 }: ChatSidebarItemActionProps): React.ReactElement {
   const { remove } = useChatSidebarItem();
   return (
     <DropdownMenuItem
+      ref={ref}
       onSelect={remove}
       className="text-[var(--destructive)] hover:bg-[color-mix(in_oklch,var(--destructive),transparent_92%)]"
     >
@@ -497,22 +423,15 @@ ChatSidebarItemDelete.displayName = "ChatSidebar.Item.Delete";
 // ChatSidebar.Group
 // ---------------------------------------------------------------------------
 
-/** Props accepted by {@link ChatSidebarGroup}. */
-export interface ChatSidebarGroupProps {
-  /** Section heading (e.g. a recency bucket). Omit for an unlabeled group. */
-  label?: React.ReactNode;
-  children: React.ReactNode;
-  className?: string;
-}
-
 /** A labeled cluster of conversation rows. */
 export function ChatSidebarGroup({
   label,
   children,
   className,
+  ref,
 }: ChatSidebarGroupProps): React.ReactElement {
   return (
-    <List className={className}>
+    <List ref={ref} className={className}>
       {label !== undefined && <ListLabel>{label}</ListLabel>}
       {children}
     </List>
@@ -524,23 +443,21 @@ ChatSidebarGroup.displayName = "ChatSidebar.Group";
 // ChatSidebar.Empty
 // ---------------------------------------------------------------------------
 
-/** Props accepted by {@link ChatSidebarEmpty}. */
-export interface ChatSidebarEmptyProps {
-  children?: React.ReactNode;
-  className?: string;
-}
-
 /** Placeholder shown when there are no conversations to list. */
 export function ChatSidebarEmpty({
   children,
   className,
+  ref,
+  ...props
 }: ChatSidebarEmptyProps): React.ReactElement {
   return (
     <div
+      ref={ref}
       className={cn(
         "flex h-full flex-col items-center justify-center px-4 text-center text-[var(--faint)]",
         className,
       )}
+      {...props}
     >
       {children ?? <p className="text-sm">No chats yet</p>}
     </div>
@@ -575,21 +492,12 @@ function ChatSidebarSkeleton(): React.ReactElement {
 // ChatSidebar.List
 // ---------------------------------------------------------------------------
 
-/** Props accepted by {@link ChatSidebarList}. */
-export interface ChatSidebarListProps {
-  /**
-   * Provide your own groups/rows. When omitted, the list auto-groups the
-   * context conversations by recency and renders {@link ChatSidebarEmpty} when
-   * empty.
-   */
-  children?: React.ReactNode;
-  className?: string;
-}
-
 /** Scrollable region. Auto-groups by recency unless given `children`. */
 export function ChatSidebarList({
   children,
   className,
+  ref,
+  ...props
 }: ChatSidebarListProps): React.ReactElement {
   const {
     conversations,
@@ -645,7 +553,9 @@ export function ChatSidebarList({
 
   return (
     <div
+      ref={ref}
       className={cn("flex-1 overflow-y-auto px-2 pt-2 pb-3 space-y-3", className)}
+      {...props}
     >
       {body}
     </div>
@@ -656,9 +566,6 @@ ChatSidebarList.displayName = "ChatSidebar.List";
 // ---------------------------------------------------------------------------
 // ChatSidebar — preset
 // ---------------------------------------------------------------------------
-
-/** Props accepted by the {@link ChatSidebar} preset. */
-export interface ChatSidebarProps extends Omit<ChatSidebarRootProps, "children"> {}
 
 /** The one-shot preset — composes Root + NewButton + auto List. */
 /**

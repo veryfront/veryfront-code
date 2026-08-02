@@ -43,6 +43,8 @@ export function PopoverTrigger(
 export interface PopoverContentProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Horizontal alignment relative to the trigger. */
   align?: "start" | "end";
+  /** Consumer ref for the rendered popover surface. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** Popover surface — rendered below the trigger while open. */

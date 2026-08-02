@@ -39,6 +39,8 @@ export interface AnchoredContentProps extends React.HTMLAttributes<HTMLDivElemen
   align?: "start" | "end";
   /** Internal focus target used by Popover and DropdownMenu skins. */
   initialFocus?: true | string;
+  /** Consumer ref for the rendered floating surface. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 function stableDomId(value: string): string {
@@ -183,6 +185,7 @@ export function createAnchoredSurfaceParts() {
       align,
       id,
       initialFocus,
+      ref,
       tabIndex,
       "aria-labelledby": labelledBy,
       ...props
@@ -209,6 +212,7 @@ export function createAnchoredSurfaceParts() {
         onDismiss={() => ctx.setOpen(false)}
         initialFocus={initialFocus}
         returnFocusRef={ctx.triggerRef}
+        contentRef={ref}
         id={resolvedId}
         aria-labelledby={labelledBy ?? ctx.triggerId}
         tabIndex={tabIndex ?? -1}

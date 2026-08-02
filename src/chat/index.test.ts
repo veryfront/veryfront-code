@@ -161,6 +161,15 @@ const expectedRuntimeExports = [
   "useModelSelector",
   "useStepIndicator",
   "useAttachmentsPanel",
+  // RFC 2980 canonical hook + context surface (additive).
+  "ChatInputContextProvider",
+  "mergeProps",
+  "useChatInput",
+  "useChatInputContext",
+  "useChatInputContextOptional",
+  "useChatScroll",
+  "useChatSidebarItem",
+  "useMessageBranches",
 ].sort();
 
 describe("chat/index.ts exports", () => {
@@ -195,9 +204,23 @@ describe("chat/index.ts exports", () => {
     );
   });
 
-  it("exports conversation chat through both component chat aliases", () => {
+  it("exports conversation chat and canonical hooks through both component aliases", () => {
     assertEquals(componentsChatModule.useConversationChat, chatUI.useConversationChat);
     assertEquals(reactComponentsChatModule.useConversationChat, chatUI.useConversationChat);
+    for (
+      const name of [
+        "ChatInputContextProvider",
+        "mergeProps",
+        "useChatInput",
+        "useChatInputContext",
+        "useChatInputContextOptional",
+        "useChatScroll",
+        "useMessageBranches",
+      ] as const
+    ) {
+      assertEquals(componentsChatModule[name], chatUI[name]);
+      assertEquals(reactComponentsChatModule[name], chatUI[name]);
+    }
   });
 
   it("exposes only canonical render-or-compose component names", () => {
