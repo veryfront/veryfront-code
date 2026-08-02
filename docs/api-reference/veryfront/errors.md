@@ -198,7 +198,7 @@ throw INVALID_WIDGET.create({ detail: "The widget id is malformed." });
 | `withErrorContextSync` | Execute sync operation with error logging and fallback | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-context.ts#L79) |
 | `wrapErrorHandler` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/user-friendly/error-wrapper.ts#L6) |
 | `wrapHandlerWithErrorBoundary` | Wrap a complete Handler object with error boundary | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/http-error-boundary.ts#L78) |
-| `wrapUnknownError` | Wrap any unknown error as a VeryfrontError with unknown-error slug | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/wrap-unknown.ts#L35) |
+| `wrapUnknownError` | Return a detached VeryfrontError, preserving safe identity fields from valid VeryfrontError inputs | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/wrap-unknown.ts#L35) |
 | `wrapWithContext` | Wrap an error with additional context | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/wrap-unknown.ts#L78) |
 
 ### Classes
