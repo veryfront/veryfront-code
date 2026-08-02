@@ -6,6 +6,7 @@ import type { HostedServiceAuthenticatedRequest } from "./auth.ts";
 import type { ParsedHostedChatRequest } from "../hosted/chat-request-parser.ts";
 import type { HostedRuntimeSourceIdentity } from "../hosted/runtime-source-binding.ts";
 import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
+import { getHostedRequestPreparationSignal } from "./request-preparation-context.ts";
 import { getServerResolvedToolExposureCheckpoint } from "../hosted/runtime-request-config.ts";
 
 const runtimeSource = { type: "release", releaseId: "release-42" } as const;
@@ -145,6 +146,30 @@ Deno.test("agent service routes stream prepared AG-UI execution", async () => {
   assertEquals(response, streamResponse);
   assertEquals(preparedRequests.length, 1);
   assertEquals(streamInputs, [{ executionId: "exec-1", agUiRunId: "run-1" }]);
+});
+
+Deno.test("agent service routes scope the exact inbound signal to all preparation paths", async () => {
+  const observedSignals: Array<AbortSignal | undefined> = [];
+  const { routeSet } = createRouteSet({
+    prepareExecution: async () => {
+      observedSignals.push(getHostedRequestPreparationSignal());
+      return { executionId: "exec-1" };
+    },
+  });
+  const agUiRequest = createAuthenticatedRequest("/api/ag-ui", createAgUiBody());
+  const durableRequest = createAuthenticatedRequest(
+    "/api/control-plane/runs/run-1/stream",
+    createRuntimeAgentInvocationBody(),
+  );
+
+  await routeSet.handleAgUiRequest(agUiRequest);
+  await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
+    request: durableRequest,
+    runId: "run-1",
+  });
+
+  assertEquals(observedSignals, [agUiRequest.signal, durableRequest.signal]);
+  assertEquals(getHostedRequestPreparationSignal(), undefined);
 });
 
 Deno.test("agent service routes preserve forwarded AG-UI target agent ids", async () => {

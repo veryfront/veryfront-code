@@ -1373,7 +1373,7 @@ describe("internal-agents/run-stream", () => {
         id: "ops-agent",
         model: "openai/gpt-5.4-nano",
         system: "test",
-        providerTools: ["web_search"],
+        providerTools: ["web_search", "web_fetch"],
       },
     } as unknown as Agent;
 
@@ -1404,7 +1404,10 @@ describe("internal-agents/run-stream", () => {
 
     assertEquals(typeof runtimeSystem, "string");
     const prompt = runtimeSystem as string;
+    // OpenAI exposes a native web_search but no native web_fetch, so only the
+    // supported half may reach the inventory.
     assertEquals(prompt.includes("- web_search"), true);
+    assertEquals(prompt.includes("- web_fetch"), false);
   });
 
   it("keeps local tools required without protecting remote placeholders from provider caps", async () => {

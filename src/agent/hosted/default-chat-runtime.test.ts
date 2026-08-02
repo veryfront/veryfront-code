@@ -11,6 +11,7 @@ import type {
 } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { runWithRequestContext as runWithProjectRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { defineSchema } from "../../schemas/define.ts";
 import {
   createDefaultHostedChatRuntime,
@@ -22,6 +23,11 @@ import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-m
 const unrestrictedSourceIntegrationPolicy = {
   schemaVersion: 1,
   mode: "unrestricted",
+} as const;
+const denyAllSourceIntegrationPolicy = {
+  schemaVersion: 1,
+  mode: "allowlist",
+  integrations: {},
 } as const;
 
 function localTool(description: string) {
@@ -122,6 +128,104 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
     inputRequestId: "input-request-1",
   });
   assertEquals(capturedContext.availableToolNames, ["sleep"]);
+});
+
+Deno.test("createDefaultHostedChatRuntime forwards project identity to tool execution", async () => {
+  await runWithProjectRequestContext(
+    {
+      projectId: "project-1",
+      projectSlug: "project-slug-1",
+      token: "token-1",
+    },
+    async () => {
+      clearModelProviders();
+      let modelCallCount = 0;
+      let capturedExecutionContext: ToolExecutionContext | undefined;
+
+      registerModelProvider("test", () => ({
+        provider: "test",
+        modelId: "test/hosted-context",
+        doGenerate: () => Promise.reject(new Error("unused")),
+        doStream() {
+          modelCallCount += 1;
+          return Promise.resolve({
+            stream: new ReadableStream<unknown>({
+              start(controller) {
+                if (modelCallCount === 1) {
+                  controller.enqueue({
+                    type: "tool-call",
+                    toolCallId: "inspect-context-1",
+                    toolName: "inspect_context",
+                    input: {},
+                  });
+                  controller.enqueue({
+                    type: "finish",
+                    finishReason: "tool-calls",
+                    usage: { inputTokens: 1, outputTokens: 1 },
+                  });
+                } else {
+                  controller.enqueue({ type: "text-delta", text: "done" });
+                  controller.enqueue({
+                    type: "finish",
+                    finishReason: "stop",
+                    usage: { inputTokens: 1, outputTokens: 1 },
+                  });
+                }
+                controller.close();
+              },
+            }),
+          });
+        },
+      }));
+
+      try {
+        const runtime = await createDefaultHostedChatRuntime({
+          sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+          options: {
+            projectId: "project-1",
+            projectSlug: "project-slug-1",
+            authToken: "token-1",
+            instructions: "Inspect the runtime context.",
+            model: "test/hosted-context",
+            allowedTools: ["inspect_context"],
+          },
+          config: {
+            apiUrl: "https://api.example.com",
+            apiMcpUrl: "https://api.example.com/mcp",
+          },
+          buildLocalTools: () => ({
+            inspect_context: {
+              ...localTool("Inspect the runtime context"),
+              execute: (_input: unknown, context?: ToolExecutionContext) => {
+                capturedExecutionContext = context;
+                return { ok: true };
+              },
+            },
+          }),
+          createRemoteToolSource: emptyRemoteSource,
+          preloadLatestConversationUserText: false,
+        });
+
+        await withMockFetch(
+          () => Promise.resolve(Response.json({ tools: [] })),
+          async () => {
+            const result = await runtime.agent.stream({
+              messages: [],
+              abortSignal: new AbortController().signal,
+            });
+            for await (const _chunk of result.toUIMessageStream()) {
+              // Consume the complete tool-call round trip.
+            }
+          },
+        );
+
+        assertEquals(capturedExecutionContext?.projectId, "project-1");
+        assertEquals(capturedExecutionContext?.projectSlug, "project-slug-1");
+      } finally {
+        clearModelProviders();
+      }
+    },
+  );
 });
 
 Deno.test("hosted first provider call filters skill tools for every tool selector", async () => {

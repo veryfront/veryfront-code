@@ -756,15 +756,17 @@ describe("agent runtime refresh hooks", () => {
     const assistant = eagerAgent({
       model: "google/gemini-3.5-flash",
       system: flattenSystemInstructions(
-        withRuntimeToolInventory("Use configured tools.", ["web_search"]),
+        withRuntimeToolInventory("Use configured tools.", ["web_search", "web_fetch"]),
       ),
-      providerTools: ["web_search"],
+      providerTools: ["web_search", "web_fetch"],
       resolveModelTransport: async () => ({ model }),
     });
 
     await assistant.generate({ input: "Search the web" });
 
+    // Google exposes neither native tool, so neither may reach the inventory.
     assertEquals(capturedSystem.includes("- web_search"), false);
+    assertEquals(capturedSystem.includes("- web_fetch"), false);
   });
 
   it("removes provider-native tools from the forced final response after create_agent", async () => {

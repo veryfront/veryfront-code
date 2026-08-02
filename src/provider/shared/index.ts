@@ -61,6 +61,7 @@ export {
   snapshotJsonValue,
   stringifyJsonValue,
   stringifyToolArguments,
+  stringifyToolResultValue,
   toOpenAICompatibleMessages,
   toOpenAICompatibleTools,
   unwrapToolInputSchema,
