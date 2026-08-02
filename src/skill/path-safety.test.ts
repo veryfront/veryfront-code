@@ -780,5 +780,46 @@ describe("src/skill/path-safety", () => {
         await remove(tempDir, { recursive: true });
       }
     });
+
+    it("rejects unsafe adapter entry names and symlinks", async () => {
+      const adapter = createSkillTestAdapter({});
+      for (const name of ["", ".", "..", "../secret.md", "bad\\name.md", "bad\nname.md"]) {
+        await assertRejects(
+          () =>
+            listSkillSubdir("/project/skills/test", "references", {
+              ...adapter,
+              exists: () => Promise.resolve(true),
+              async *readDir() {
+                yield {
+                  name,
+                  isFile: true,
+                  isDirectory: false,
+                  isSymlink: false,
+                };
+              },
+            }),
+          Error,
+          "entry name",
+        );
+      }
+
+      await assertRejects(
+        () =>
+          listSkillSubdir("/project/skills/test", "references", {
+            ...adapter,
+            exists: () => Promise.resolve(true),
+            async *readDir() {
+              yield {
+                name: "linked.md",
+                isFile: true,
+                isDirectory: false,
+                isSymlink: true,
+              };
+            },
+          }),
+        Error,
+        "symlink",
+      );
+    });
   });
 });
