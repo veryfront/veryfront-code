@@ -48,6 +48,7 @@ describe("react-paths", () => {
       const paths1 = getLocalReactPaths();
       const paths2 = getLocalReactPaths();
       assertEquals(paths1, paths2);
+      assertEquals(Object.isFrozen(paths1), true);
     });
   });
 

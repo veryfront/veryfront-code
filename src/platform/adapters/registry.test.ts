@@ -7,11 +7,25 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
-import { getLocalAdapter, resetLocalAdapter, runtime } from "./registry.ts";
+import { AdapterRegistry, getLocalAdapter, resetLocalAdapter, runtime } from "./registry.ts";
 import { createMockAdapter } from "./mock.ts";
 import type { RuntimeId } from "./base.ts";
 
 const expectedRuntime: RuntimeId = isDeno ? "deno" : isNode ? "node" : isBun ? "bun" : "deno";
+
+function createDeferred<T = void>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
 
 describe("registry.ts", () => {
   describe("runtime registry", () => {
@@ -76,6 +90,7 @@ describe("registry.ts", () => {
 
     it("should throw on invalid adapter", async () => {
       await assertRejects(() => runtime.set({} as any), Error, "Invalid adapter");
+      await assertRejects(() => runtime.set(null as never), Error, "Invalid adapter");
     });
 
     it("should replace existing adapter", async () => {
@@ -192,13 +207,19 @@ describe("registry.ts", () => {
       assertEquals(runtime.isInitialized(), true);
 
       const badAdapter = createMockAdapter();
+      let failedCandidateShutdowns = 0;
       badAdapter.initialize = () => Promise.reject(new Error("init failed"));
+      badAdapter.shutdown = () => {
+        failedCandidateShutdowns++;
+        return Promise.resolve();
+      };
 
       await assertRejects(() => runtime.set(badAdapter), Error, "init failed");
 
       // Should have rolled back to old adapter
       assertEquals(runtime.isInitialized(), true);
       assertEquals((await runtime.get()).id, "memory");
+      assertEquals(failedCandidateShutdowns, 1);
     });
 
     it("should remain uninitialized when initialize() throws with no prior adapter", async () => {
@@ -258,6 +279,133 @@ describe("registry.ts", () => {
 
       assertEquals(a, b);
       assertEquals(b, c);
+    });
+
+    it("serializes an explicit set after an in-flight automatic initialization", async () => {
+      const registry = new AdapterRegistry();
+      const loaderStarted = createDeferred();
+      const releaseLoader = createDeferred();
+      const automaticallyLoaded = createMockAdapter();
+      const explicitlySet = createMockAdapter();
+      let automaticShutdowns = 0;
+      let explicitInitializations = 0;
+
+      automaticallyLoaded.shutdown = () => {
+        automaticShutdowns++;
+        return Promise.resolve();
+      };
+      explicitlySet.initialize = () => {
+        explicitInitializations++;
+        return Promise.resolve();
+      };
+      registry.registerLoader(
+        expectedRuntime,
+        async () => {
+          loaderStarted.resolve();
+          await releaseLoader.promise;
+          return automaticallyLoaded;
+        },
+        { overwrite: true },
+      );
+
+      const automaticGet = registry.get();
+      await loaderStarted.promise;
+      const explicitSet = registry.set(explicitlySet);
+      const getAfterExplicitSet = registry.get();
+      releaseLoader.resolve();
+
+      assertEquals(await automaticGet, automaticallyLoaded);
+      await explicitSet;
+      assertEquals(await getAfterExplicitSet, explicitlySet);
+      assertEquals(await registry.get(), explicitlySet);
+      assertEquals(explicitInitializations, 1);
+      assertEquals(automaticShutdowns, 1);
+      await registry.reset();
+    });
+
+    it("does not resurrect an adapter when reset follows an in-flight get", async () => {
+      const registry = new AdapterRegistry();
+      const loaderStarted = createDeferred();
+      const releaseLoader = createDeferred();
+      const automaticallyLoaded = createMockAdapter();
+      let shutdowns = 0;
+
+      automaticallyLoaded.shutdown = () => {
+        shutdowns++;
+        return Promise.resolve();
+      };
+      registry.registerLoader(
+        expectedRuntime,
+        async () => {
+          loaderStarted.resolve();
+          await releaseLoader.promise;
+          return automaticallyLoaded;
+        },
+        { overwrite: true },
+      );
+
+      const automaticGet = registry.get();
+      await loaderStarted.promise;
+      const reset = registry.reset();
+      releaseLoader.resolve();
+
+      assertEquals(await automaticGet, automaticallyLoaded);
+      await reset;
+      assertEquals(registry.isInitialized(), false);
+      assertEquals(shutdowns, 1);
+    });
+
+    it("treats setting the active adapter as an idempotent operation", async () => {
+      const registry = new AdapterRegistry();
+      const adapter = createMockAdapter();
+      let initializations = 0;
+      let shutdowns = 0;
+
+      adapter.initialize = () => {
+        initializations++;
+        return Promise.resolve();
+      };
+      adapter.shutdown = () => {
+        shutdowns++;
+        return Promise.resolve();
+      };
+
+      await registry.set(adapter);
+      await registry.set(adapter);
+
+      assertEquals(await registry.get(), adapter);
+      assertEquals(initializations, 1);
+      assertEquals(shutdowns, 0);
+      await registry.reset();
+      assertEquals(shutdowns, 1);
+    });
+
+    it("serializes concurrent replacements and shuts down the superseded adapter", async () => {
+      const registry = new AdapterRegistry();
+      const firstInitializationStarted = createDeferred();
+      const releaseFirstInitialization = createDeferred();
+      const first = createMockAdapter();
+      const second = createMockAdapter();
+      let firstShutdowns = 0;
+
+      first.initialize = async () => {
+        firstInitializationStarted.resolve();
+        await releaseFirstInitialization.promise;
+      };
+      first.shutdown = () => {
+        firstShutdowns++;
+        return Promise.resolve();
+      };
+
+      const setFirst = registry.set(first);
+      await firstInitializationStarted.promise;
+      const setSecond = registry.set(second);
+      releaseFirstInitialization.resolve();
+
+      await Promise.all([setFirst, setSecond]);
+      assertEquals(await registry.get(), second);
+      assertEquals(firstShutdowns, 1);
+      await registry.reset();
     });
   });
 });

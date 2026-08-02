@@ -8,14 +8,13 @@ const logger = baseLogger.component("registry");
 
 type AdapterLoader = () => Promise<RuntimeAdapter>;
 
-interface AdapterInitialization {
-  promise: Promise<RuntimeAdapter>;
-}
-
-class AdapterRegistry {
+/** @internal Runtime-adapter lifecycle coordinator. */
+export class AdapterRegistry {
   private instance: RuntimeAdapter | null = null;
   private initialized = false;
-  private initializationPromise: AdapterInitialization | null = null;
+  private operationTail: Promise<void> = Promise.resolve();
+  private pendingOperations = 0;
+  private pendingGet: Promise<RuntimeAdapter> | null = null;
   private loaders = new Map<RuntimeId, AdapterLoader>();
 
   constructor() {
@@ -43,28 +42,35 @@ class AdapterRegistry {
   }
 
   async get(): Promise<RuntimeAdapter> {
-    if (this.instance && this.initialized) return this.instance;
-    if (this.initializationPromise) return this.initializationPromise.promise;
-
-    const initialization = {
-      promise: withSpan("platform.registry.get", () => this.doInitialize()),
-    };
-    this.initializationPromise = initialization;
-
-    try {
-      return await initialization.promise;
-    } catch (error) {
-      if (this.initializationPromise === initialization) {
-        this.initializationPromise = null;
-      }
-      throw error;
+    if (this.instance && this.initialized && this.pendingOperations === 0) {
+      return this.instance;
     }
+    if (this.pendingGet) return await this.pendingGet;
+
+    const pendingGet = withSpan(
+      "platform.registry.get",
+      () =>
+        this.enqueue(async () => {
+          if (this.instance && this.initialized) return this.instance;
+          return await this.doInitialize();
+        }),
+    );
+    this.pendingGet = pendingGet;
+    pendingGet.then(
+      () => {
+        if (this.pendingGet === pendingGet) this.pendingGet = null;
+      },
+      () => {
+        if (this.pendingGet === pendingGet) this.pendingGet = null;
+      },
+    );
+    return await pendingGet;
   }
 
-  private doInitialize(): Promise<RuntimeAdapter> {
+  private async doInitialize(): Promise<RuntimeAdapter> {
     const runtimeId = detectRuntime();
 
-    return withSpan(
+    return await withSpan(
       "platform.registry.doInitialize",
       async () => {
         if (runtimeId === "unknown") {
@@ -89,64 +95,58 @@ class AdapterRegistry {
           });
         }
 
-        try {
-          const adapter = await loader();
-          this.instance = adapter;
-          await adapter.initialize?.();
-          this.initialized = true;
-          return adapter;
-        } catch (error) {
-          this.instance = null;
-          this.initialized = false;
-          throw error;
-        }
+        const adapter = await loader();
+        await this.initializeAdapter(adapter);
+        this.instance = adapter;
+        this.initialized = true;
+        return adapter;
       },
       { "registry.runtime": runtimeId },
     );
   }
 
   set(adapter: RuntimeAdapter): Promise<void> {
+    // A get invoked after this set must observe the replacement operation,
+    // rather than coalescing with an earlier automatic initialization.
+    this.pendingGet = null;
     return withSpan(
       "platform.registry.set",
-      async () => {
-        if (!adapter.id || !adapter.name || !adapter.fs || !adapter.env || !adapter.server) {
-          throw INVALID_ARGUMENT.create({
-            detail:
-              "Invalid adapter: must implement RuntimeAdapter interface with id, name, fs, env, and server properties",
-          });
-        }
+      () =>
+        this.enqueue(async () => {
+          if (
+            typeof adapter !== "object" ||
+            adapter === null ||
+            !adapter.id ||
+            !adapter.name ||
+            !adapter.fs ||
+            !adapter.env ||
+            !adapter.server
+          ) {
+            throw INVALID_ARGUMENT.create({
+              detail:
+                "Invalid adapter: must implement RuntimeAdapter interface with id, name, fs, env, and server properties",
+            });
+          }
 
-        const oldAdapter = this.instance && this.initialized ? this.instance : null;
+          const oldAdapter = this.instance && this.initialized ? this.instance : null;
+          if (oldAdapter === adapter) return;
 
-        this.instance = adapter;
-        this.initialized = false;
-        this.initializationPromise = null;
-
-        try {
-          await adapter.initialize?.();
+          await this.initializeAdapter(adapter);
+          this.instance = adapter;
           this.initialized = true;
 
-          if (!oldAdapter) return;
-
-          try {
-            await oldAdapter.shutdown?.();
-          } catch (shutdownError) {
-            logger.warn("Failed to shutdown old adapter", shutdownError);
+          if (oldAdapter) {
+            await this.shutdownAdapter(oldAdapter, "Failed to shutdown old adapter");
           }
-        } catch (error) {
-          this.instance = oldAdapter;
-          this.initialized = oldAdapter != null;
-          throw error;
-        }
-      },
-      { "registry.adapter.id": adapter.id, "registry.adapter.name": adapter.name },
+        }),
     );
   }
 
   getSync(): RuntimeAdapter {
-    if (!this.instance || !this.initialized) {
+    if (!this.instance || !this.initialized || this.pendingOperations > 0) {
       throw INITIALIZATION_ERROR.create({
-        detail: "RuntimeAdapter not initialized. Call `await runtime.get()` first, " +
+        detail:
+          "RuntimeAdapter not initialized or is transitioning. Call `await runtime.get()` first, " +
           "or use `await runtime.set(adapter)` to configure manually.",
       });
     }
@@ -154,23 +154,25 @@ class AdapterRegistry {
   }
 
   isInitialized(): boolean {
-    return this.instance != null && this.initialized;
+    return this.instance != null && this.initialized && this.pendingOperations === 0;
   }
 
   reset(): Promise<void> {
-    return withSpan("platform.registry.reset", async () => {
-      if (this.instance && this.initialized) {
-        try {
-          await this.instance.shutdown?.();
-        } catch (error) {
-          logger.warn("Failed to shutdown adapter during reset", error);
-        }
-      }
+    // A later get must queue behind this reset instead of sharing an earlier get.
+    this.pendingGet = null;
+    return withSpan(
+      "platform.registry.reset",
+      () =>
+        this.enqueue(async () => {
+          const adapter = this.instance && this.initialized ? this.instance : null;
+          this.instance = null;
+          this.initialized = false;
 
-      this.instance = null;
-      this.initialized = false;
-      this.initializationPromise = null;
-    });
+          if (adapter) {
+            await this.shutdownAdapter(adapter, "Failed to shutdown adapter during reset");
+          }
+        }),
+    );
   }
 
   registerLoader(id: RuntimeId, loader: AdapterLoader, options?: { overwrite?: boolean }): void {
@@ -181,6 +183,42 @@ class AdapterRegistry {
       });
     }
     this.loaders.set(id, loader);
+  }
+
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    this.pendingOperations++;
+    const result = this.operationTail.then(async () => {
+      try {
+        return await operation();
+      } finally {
+        this.pendingOperations--;
+      }
+    });
+    this.operationTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  private async initializeAdapter(adapter: RuntimeAdapter): Promise<void> {
+    try {
+      await adapter.initialize?.();
+    } catch (error) {
+      await this.shutdownAdapter(
+        adapter,
+        "Failed to shutdown adapter after initialization failure",
+      );
+      throw error;
+    }
+  }
+
+  private async shutdownAdapter(adapter: RuntimeAdapter, message: string): Promise<void> {
+    try {
+      await adapter.shutdown?.();
+    } catch (error) {
+      logger.warn(message, error);
+    }
   }
 }
 

@@ -13,9 +13,9 @@ describe("runtime/cloudflare/index.ts exports", () => {
     ["CloudflareAdapter", exports.CloudflareAdapter],
     ["CloudflareEnvironmentAdapter", exports.CloudflareEnvironmentAdapter],
     ["CloudflareFileSystemAdapter", exports.CloudflareFileSystemAdapter],
-    ["CloudflareServer", exports.CloudflareServer],
     ["CloudflareServerAdapter", exports.CloudflareServerAdapter],
     ["CloudflareShellAdapter", exports.CloudflareShellAdapter],
+    ["createCloudflareAdapter", exports.createCloudflareAdapter],
     ["createWorker", exports.createWorker],
   ];
 

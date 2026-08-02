@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { detectRuntime } from "./runtime-detection.ts";
-import { isBun, isDeno, isNode } from "../compat/runtime.ts";
+import { runtimeKind } from "../compat/runtime.ts";
 
 describe("runtime-detection", () => {
   describe("detectRuntime", () => {
@@ -18,9 +18,7 @@ describe("runtime-detection", () => {
     });
 
     it("should detect runtime in this test environment", () => {
-      const result = detectRuntime();
-      const expected = isDeno ? "deno" : isBun ? "bun" : isNode ? "node" : "unknown";
-      assertEquals(result, expected);
+      assertEquals(detectRuntime(), runtimeKind);
     });
   });
 });

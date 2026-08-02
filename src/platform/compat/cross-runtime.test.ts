@@ -11,7 +11,7 @@ import "#veryfront/schemas/_test-setup.ts";
  *   bun test src/platform/compat/cross-runtime.test.ts
  */
 
-import { assert, assertEquals, assertExists } from "#std/assert.ts";
+import { assert, assertEquals, assertExists, assertRejects } from "#std/assert.ts";
 import { describe, it } from "#std/testing/bdd.ts";
 
 import {
@@ -42,7 +42,7 @@ import {
   unrefTimer,
 } from "./process.ts";
 
-import { createFileSystem, lstat, symlink } from "./fs.ts";
+import { createFileSystem, isAlreadyExistsError, lstat, symlink } from "./fs.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 
 function getCurrentRuntime(): string {
@@ -200,6 +200,66 @@ describe("Filesystem Operations", () => {
 
     assertEquals(await fs.exists(thisFile), true);
     assertEquals(await fs.exists("/this/path/definitely/does/not/exist/xyz123"), false);
+  });
+
+  it("fs.exists treats a child of a regular file as absent", async () => {
+    const fs = createFileSystem();
+    const directory = await fs.makeTempDir({ prefix: "veryfront-fs-enotdir-" });
+    const file = join(directory, "file.txt");
+    try {
+      await fs.writeTextFile(file, "content");
+
+      assertEquals(await fs.exists(join(file, "child.txt")), false);
+    } finally {
+      await fs.remove(directory, { recursive: true });
+    }
+  });
+
+  it("fs.exists propagates non-absence failures", async () => {
+    const fs = createFileSystem();
+
+    await assertRejects(() => fs.exists("\0"), TypeError);
+  });
+
+  it("isAlreadyExistsError treats hostile proxies as opaque", () => {
+    let trapCalls = 0;
+    const trapError = new Error("proxy trap must not run");
+    const error = new Proxy(new Error("original filesystem failure"), {
+      get(): never {
+        trapCalls += 1;
+        throw trapError;
+      },
+      getOwnPropertyDescriptor(): never {
+        trapCalls += 1;
+        throw trapError;
+      },
+      getPrototypeOf(): never {
+        trapCalls += 1;
+        throw trapError;
+      },
+    });
+
+    assertEquals(isAlreadyExistsError(error), false);
+    assertEquals(trapCalls, 0);
+  });
+
+  it("isAlreadyExistsError ignores inherited code accessors", () => {
+    let accessorCalls = 0;
+    const error = new Error("original filesystem failure");
+    Object.setPrototypeOf(
+      error,
+      Object.create(Error.prototype, {
+        code: {
+          get(): never {
+            accessorCalls += 1;
+            throw new Error("prototype accessor must not run");
+          },
+        },
+      }),
+    );
+
+    assertEquals(isAlreadyExistsError(error), false);
+    assertEquals(accessorCalls, 0);
   });
 
   it("fs.stat returns file info", async () => {

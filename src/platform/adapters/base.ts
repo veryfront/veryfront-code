@@ -186,14 +186,17 @@ export function isWebSocketUpgradeResponse(value: unknown): value is WebSocketUp
     return false;
   }
   try {
-    // Verify the native Headers internal slot without consulting hostile
-    // properties or Symbol.hasInstance hooks.
+    // A structural object with a `get()` method is not a Headers instance and
+    // can run arbitrary code when the transport clones it. Invoke a captured
+    // Web IDL primordial to verify the native internal slot without consulting
+    // attacker-controlled properties or Symbol.hasInstance hooks.
     Reflect.apply(headersGet, headers.value, ["upgrade"]);
   } catch {
     return false;
   }
 
   const body = readDataProperty(value, "body");
+
   return body.readable && body.value === null;
 }
 
@@ -222,18 +225,51 @@ export interface Server {
 }
 
 export interface FileSystemAdapter {
-  /** Explicit marker for virtual filesystems that never resolve symbolic links. */
+  /**
+   * Explicitly declares that paths in this adapter cannot traverse symbolic
+   * links. The backing store may reject links or expose them only as inert
+   * entries, but it must never resolve a path through one. Native/local
+   * adapters must omit this marker and provide lstat and realPath instead.
+   */
   readonly symlinkSemantics?: "none";
   readFile(path: string): Promise<string>;
   /** Read raw bytes when binary-safe access is required */
   readFileBytes?(path: string): Promise<Uint8Array>;
-  /** Fixed upstream whole-object ceiling, valid only with `readFileBytes`. */
+  /**
+   * Fixed whole-object ceiling enforced by the backing store or transport
+   * before a complete response can be materialized.
+   *
+   * This capability is distinct from `readFileBytesBounded`: the caller does
+   * not choose the read size, and the implementation may materialize up to
+   * this advertised ceiling even for a smaller file. It may be advertised
+   * only alongside `readFileBytes` and only when the upstream boundary itself
+   * rejects larger objects before returning them.
+   */
   readonly maxWholeFileReadBytes?: number;
-  /** Read at most a caller-selected byte prefix without materializing the whole source. */
+  /**
+   * Read a prefix without materializing more than `byteLimit` bytes.
+   *
+   * Implementations must enforce the limit while reading from their backing
+   * store and continue until EOF or `byteLimit`; reading the complete object
+   * and slicing afterward does not satisfy this capability. Callers can
+   * request their accepted maximum plus one byte to distinguish an exact-size
+   * file from an oversized file. Non-native adapters used for bounded Skill
+   * discovery or strict Skill runtime reads must implement this capability.
+   */
   readFileBytesBounded?(path: string, byteLimit: number): Promise<Uint8Array>;
-  /** Read a complete file only when it fits within the caller-selected limit. */
+  /**
+   * Read the complete file only when it is no larger than `byteLimit`.
+   *
+   * Implementations must enforce the limit while reading and reject when the
+   * source has even one additional byte. They must not implement this by
+   * materializing the whole object or by retaining a `byteLimit + 1` prefix.
+   * Oversized sources reject with `RangeError`; other I/O failures propagate.
+   */
   readFileBytesWithinLimit?(path: string, byteLimit: number): Promise<Uint8Array>;
-  /** Read one verified native snapshot beneath `containmentRoot`. */
+  /**
+   * Read one stable file snapshot beneath `containmentRoot` without following
+   * links and only when its complete contents fit within `byteLimit`.
+   */
   readFileSnapshotWithinLimit?(
     path: string,
     containmentRoot: string,
@@ -242,7 +278,7 @@ export interface FileSystemAdapter {
   writeFile(path: string, content: string): Promise<void>;
   /** Write raw bytes when binary-safe output is required. */
   writeFileBytes?(path: string, content: Uint8Array): Promise<void>;
-  /** Create a new file atomically, refusing to replace an existing path. */
+  /** Create a new byte file without replacing an existing path. */
   createFileBytesExclusive?(path: string, content: Uint8Array): Promise<void>;
   /** Atomically replace a path when the runtime supports same-filesystem rename. */
   rename?(from: string, to: string): Promise<void>;
@@ -285,10 +321,12 @@ export interface FileSystemAdapter {
   getSourceSnapshotVersion?(): number | undefined | Promise<number | undefined>;
 }
 
+/** A filesystem adapter that advertises genuine bounded byte reads. */
 export type BoundedFileSystemAdapter =
   & FileSystemAdapter
   & Required<Pick<FileSystemAdapter, "readFileBytesBounded">>;
 
+/** A filesystem adapter that can return only complete, size-admitted files. */
 export type ExactBoundedFileSystemAdapter =
   & FileSystemAdapter
   & Required<Pick<FileSystemAdapter, "readFileBytesWithinLimit">>;
@@ -333,10 +371,17 @@ export interface FileChangeEvent {
 export interface FileWatcher extends AsyncIterable<FileChangeEvent> {
   close(): void;
   /**
+   * Resolves once the underlying watcher has been installed and can observe
+   * subsequent filesystem changes. Rejects when any requested watch root
+   * cannot be acquired; callers must not advertise watching before it resolves.
+   */
+  ready?: Promise<void>;
+  /**
    * Resolves once the watcher's internal loop has fully stopped, including
    * any in-flight filesystem operations. close() only signals shutdown;
    * await this to guarantee no pending async ops remain (e.g. before test
-   * sanitizer checks or process exit).
+   * sanitizer checks or process exit). Rejects when the native watcher fails
+   * or teardown cannot complete cleanly.
    */
   done?: Promise<void>;
 }

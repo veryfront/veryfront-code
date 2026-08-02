@@ -51,4 +51,9 @@ describe("runtime/node/index.ts exports", () => {
   it("should export createNodeServer function", () => {
     assertExportedFunction(createNodeServer);
   });
+
+  it("does not expose the internal startup ownership factory", async () => {
+    const exports = await import("./index.ts");
+    assertEquals("createNodeServerWithStartupOwner" in exports, false);
+  });
 });

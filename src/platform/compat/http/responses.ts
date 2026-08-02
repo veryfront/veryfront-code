@@ -23,7 +23,7 @@ export const HttpStatus = {
 
 export type HttpStatusCode = (typeof HttpStatus)[keyof typeof HttpStatus];
 
-interface ResponseOptions extends ResponseInit {
+export interface ResponseOptions extends ResponseInit {
   headers?: HeadersInit;
   correlationId?: string;
 }
@@ -69,23 +69,28 @@ export function jsonResponse<T>(
   status: HttpStatusCode = HttpStatus.OK,
   options?: ResponseOptions,
 ): Response {
-  const headers = createHeaders(options, (h) => {
-    h.set("Content-Type", "application/json; charset=utf-8");
-  });
-
+  let body: string;
   try {
-    return new Response(JSON.stringify(data), {
-      ...options,
-      status,
-      headers,
-    });
+    const serialized = JSON.stringify(data);
+    if (serialized === undefined) throw new TypeError("Value has no JSON representation");
+    body = serialized;
   } catch (_) {
     /* expected: JSON.stringify may fail on circular or non-serializable data */
     return errorResponse(
       HttpStatus.INTERNAL_SERVER_ERROR,
       "Failed to serialize response data",
+      options,
     );
   }
+
+  const headers = createHeaders(options, (h) => {
+    h.set("Content-Type", "application/json; charset=utf-8");
+  });
+  return new Response(body, {
+    ...options,
+    status,
+    headers,
+  });
 }
 
 /** Create an HTTP redirect response. */
@@ -95,7 +100,7 @@ export function redirectResponse(
   options?: ResponseOptions,
 ): Response {
   if (!isValidRedirectUrl(url)) {
-    return errorResponse(HttpStatus.BAD_REQUEST, "Invalid redirect URL");
+    return errorResponse(HttpStatus.BAD_REQUEST, "Invalid redirect URL", options);
   }
 
   const status = permanent ? HttpStatus.MOVED_PERMANENTLY : HttpStatus.FOUND;
@@ -157,7 +162,10 @@ export function methodNotAllowed(allowed: string[], options?: ResponseOptions): 
 }
 
 export function ok<T>(data?: T, options?: ResponseOptions): Response {
-  if (data === undefined) return new Response(null, { status: HttpStatus.OK, ...options });
+  if (data === undefined) {
+    const headers = createHeaders(options);
+    return new Response(null, { ...options, status: HttpStatus.OK, headers });
+  }
   return jsonResponse(data, HttpStatus.OK, options);
 }
 
@@ -167,14 +175,15 @@ export function created<T>(data?: T, location?: string, options?: ResponseOption
   });
 
   if (data === undefined) {
-    return new Response(null, { status: HttpStatus.CREATED, headers, ...options });
+    return new Response(null, { ...options, status: HttpStatus.CREATED, headers });
   }
 
   return jsonResponse(data, HttpStatus.CREATED, { ...options, headers });
 }
 
 export function noContent(options?: ResponseOptions): Response {
-  return new Response(null, { status: HttpStatus.NO_CONTENT, ...options });
+  const headers = createHeaders(options);
+  return new Response(null, { ...options, status: HttpStatus.NO_CONTENT, headers });
 }
 
 export function jsonErrorResponse(

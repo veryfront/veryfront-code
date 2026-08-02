@@ -40,6 +40,7 @@ export {
   notFound,
   ok,
   redirectResponse,
+  type ResponseOptions,
   serviceUnavailable,
   unauthorized,
 } from "./responses.ts";

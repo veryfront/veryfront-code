@@ -87,6 +87,15 @@ describe("convertNodeRequestToWebRequest", () => {
     assertEquals(result.body, null);
   });
 
+  it("treats a whitespace-padded zero content length as bodyless", () => {
+    const result = convertNodeRequestToWebRequest(
+      createMockReq("POST", { "content-length": " 0 " }) as never,
+      "http://localhost/api/control-plane/runs/run_1/stream",
+    );
+
+    assertEquals(result.body, null);
+  });
+
   it("should attach a body stream for chunked POST requests", async () => {
     const result = convertNodeRequestToWebRequest(
       createMockReq("POST", { "transfer-encoding": "chunked" }, ["chunk"]) as never,
@@ -108,5 +117,59 @@ describe("convertNodeRequestToWebRequest", () => {
 
     assertEquals(result.headers.get("x-custom-header"), "custom-value");
     assertEquals(result.headers.get("authorization"), "Bearer token");
+  });
+
+  it("destroys the Node request when the web body consumer cancels", async () => {
+    const stream = new Readable({
+      read() {
+        // Keep the request open until cancellation.
+      },
+    });
+    const request = Object.assign(stream, {
+      method: "POST",
+      headers: { "content-length": "10" },
+    });
+    const result = convertNodeRequestToWebRequest(
+      request as never,
+      "http://localhost/upload",
+    );
+
+    await result.body?.cancel("consumer stopped reading");
+
+    assertEquals(stream.destroyed, true);
+  });
+
+  it("rejects the web body when the Node request closes prematurely", async () => {
+    const stream = new Readable({
+      read() {
+        // Keep the request open until the simulated disconnect.
+      },
+    });
+    const request = Object.assign(stream, {
+      method: "POST",
+      headers: { "content-length": "10" },
+    });
+    const result = convertNodeRequestToWebRequest(
+      request as never,
+      "http://localhost/upload",
+    );
+    const reader = result.body!.getReader();
+    const readOutcome = reader.read().then(
+      () => "resolved",
+      () => "rejected",
+    );
+
+    stream.destroy();
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const outcome = await Promise.race([
+      readOutcome,
+      new Promise<"timeout">((resolve) => {
+        timeoutId = setTimeout(() => resolve("timeout"), 100);
+      }),
+    ]);
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+    if (outcome === "timeout") await reader.cancel();
+
+    assertEquals(outcome, "rejected");
   });
 });

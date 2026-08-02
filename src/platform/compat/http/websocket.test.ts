@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   isWebSocketUpgrade,
@@ -72,6 +72,30 @@ describe("platform/compat/http/websocket", () => {
         protocol: "hmr",
         idleTimeout: 60,
       });
+    });
+
+    it("rejects invalid Deno idle timeouts before native coercion", () => {
+      assertThrows(
+        () => resolveDenoUpgradeWebSocketOptions({ idleTimeout: Number.NaN }),
+        Error,
+        "non-negative finite number",
+      );
+      assertThrows(
+        () => resolveDenoUpgradeWebSocketOptions({ idleTimeout: -1 }),
+        Error,
+        "non-negative finite number",
+      );
+    });
+
+    it("rejects response headers that Deno cannot apply", () => {
+      assertThrows(
+        () =>
+          resolveDenoUpgradeWebSocketOptions({
+            headers: { "X-Application-Header": "value" },
+          }),
+        Error,
+        "does not support custom WebSocket response headers",
+      );
     });
   });
 });

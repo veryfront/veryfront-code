@@ -82,16 +82,26 @@ function viewBytes(value: Uint8Array, start: number, byteLength: number): Uint8A
 // bounded by the caller's limit.
 const BOUNDED_FILE_READ_CHUNK_BYTES = 64 * 1024;
 
-async function readAndCloseHandle<T>(
-  openHandle: () => Promise<BoundedFileReadHandle>,
-  read: (handle: BoundedFileReadHandle) => Promise<T>,
-): Promise<T> {
+/**
+ * Run one operation against one opened file handle, then close it exactly once.
+ *
+ * When the operation and cleanup both fail, the aggregate retains the primary
+ * operation failure first and the cleanup failure second.
+ */
+export async function withFileHandle<
+  THandle extends { close(): void | Promise<void> },
+  TResult,
+>(
+  openHandle: () => Promise<THandle>,
+  operation: (handle: THandle) => Promise<TResult>,
+  aggregateFailureMessage: string,
+): Promise<TResult> {
   const handle = await openHandle();
-  let result: T | undefined;
+  let result: TResult | undefined;
   let primaryFailure: unknown;
   let primaryFailed = false;
   try {
-    result = await read(handle);
+    result = await operation(handle);
   } catch (error) {
     primaryFailed = true;
     primaryFailure = error;
@@ -103,14 +113,14 @@ async function readAndCloseHandle<T>(
     if (primaryFailed) {
       throw new AggregateError(
         [primaryFailure, cleanupFailure],
-        "Filesystem read and handle cleanup both failed",
+        aggregateFailureMessage,
       );
     }
     throw cleanupFailure;
   }
 
   if (primaryFailed) throw primaryFailure;
-  return result as T;
+  return result as TResult;
 }
 
 export function requireBoundedFileReadLimit(byteLimit: unknown): number {
@@ -132,9 +142,10 @@ export async function readBoundedFilePrefix(
   byteLimit: number,
 ): Promise<Uint8Array> {
   const boundedLimit = requireBoundedFileReadLimit(byteLimit);
-  return await readAndCloseHandle(
+  return await withFileHandle(
     openHandle,
     (handle) => readBoundedFileHandlePrefix(handle, boundedLimit),
+    "Filesystem read and handle cleanup both failed",
   );
 }
 
@@ -150,9 +161,10 @@ export async function readFileWithinLimit(
   byteLimit: number,
 ): Promise<Uint8Array> {
   const boundedLimit = requireBoundedFileReadLimit(byteLimit);
-  return await readAndCloseHandle(
+  return await withFileHandle(
     openHandle,
     (handle) => readFileHandleWithinLimit(handle, boundedLimit),
+    "Filesystem read and handle cleanup both failed",
   );
 }
 
