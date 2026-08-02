@@ -23,6 +23,7 @@ const FNV_OFFSET_BASIS = 0xcbf29ce484222325n;
 const FNV_PRIME = 0x100000001b3n;
 const JUMP_HASH_MULTIPLIER = 2_862_933_555_777_941_757n;
 const JUMP_HASH_SCALE = 2_147_483_648;
+const UINT64_MODULUS = 0x1_0000_0000_0000_0000n;
 
 const logger = proxyLogger.child({ module: "renderer-router" });
 const EMPTY_TARGETS: readonly string[] = Object.freeze([]);
@@ -47,7 +48,7 @@ function fnv1a64(input: string): bigint {
   let hash = FNV_OFFSET_BASIS;
   for (let index = 0; index < input.length; index++) {
     hash ^= BigInt(input.charCodeAt(index));
-    hash = BigInt.asUintN(64, hash * FNV_PRIME);
+    hash = (hash * FNV_PRIME) % UINT64_MODULUS;
   }
   return hash;
 }
@@ -72,7 +73,7 @@ export function jumpHash(keyValue: string, numBuckets: number): number {
   const bucketCount = BigInt(numBuckets);
   while (next < bucketCount) {
     previous = next;
-    key = BigInt.asUintN(64, (key * JUMP_HASH_MULTIPLIER) + 1n);
+    key = ((key * JUMP_HASH_MULTIPLIER) + 1n) % UINT64_MODULUS;
     next = BigInt(
       Math.floor(
         Number(previous + 1n) * JUMP_HASH_SCALE /
