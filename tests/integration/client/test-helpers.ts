@@ -352,11 +352,13 @@ function createMinimalDocument(): any {
     _children: [] as MockElement[],
     appendChild(child: MockElement) {
       this._children.push(child);
+      child.parentElement = this as unknown as MockElement;
       return child;
     },
     removeChild(child: MockElement) {
       const index = this._children.indexOf(child);
       if (index > -1) this._children.splice(index, 1);
+      child.parentElement = null;
       return child;
     },
     querySelector(selector: string) {
@@ -415,7 +417,6 @@ function createMinimalDocument(): any {
   const doc: any = {
     head,
     body,
-    title: "",
     addEventListener: (_type: string, _listener: unknown) => {},
     removeEventListener: (_type: string, _listener: unknown) => {},
     createElement: (tag: string): MockElement => {
@@ -559,6 +560,22 @@ function createMinimalDocument(): any {
       createHTMLDocument: (_title: string) => createMinimalDocument(),
     },
   };
+
+  Object.defineProperty(doc, "title", {
+    configurable: true,
+    enumerable: true,
+    get(): string {
+      return head._children.find((element) => element.tagName === "TITLE")?.textContent ?? "";
+    },
+    set(value: string) {
+      let title = head._children.find((element) => element.tagName === "TITLE");
+      if (!title) {
+        title = doc.createElement("title");
+        head.appendChild(title);
+      }
+      title.textContent = String(value);
+    },
+  });
 
   return doc;
 }
