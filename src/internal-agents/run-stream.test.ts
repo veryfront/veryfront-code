@@ -197,7 +197,7 @@ describe("internal-agents/run-stream", () => {
     }
   });
 
-  it("keeps visible registry tools authoritative over same-named injected tools", () => {
+  it("keeps injected studio waits authoritative over same-named registry tools", () => {
     const sessionManager = new AgentRunSessionManager();
     const projectTool = {
       id: "number-generator",
@@ -232,7 +232,99 @@ describe("internal-agents/run-stream", () => {
         sessionManager,
       );
 
-      assertEquals(mergedTools?.["number-generator"], true);
+      const entry = mergedTools?.["number-generator"];
+      assertEquals(typeof entry, "object");
+      assertEquals((entry as Tool).description, "Caller-supplied shadow definition");
+      assertEquals(entry === projectTool, false);
+    } finally {
+      toolRegistry.delete("number-generator");
+    }
+  });
+
+  it("keeps injected studio waits authoritative for tools: true agents", () => {
+    const sessionManager = new AgentRunSessionManager();
+    const projectTool = {
+      id: "number-generator",
+      type: "function",
+      description: "Generate a number",
+      inputSchema: {} as never,
+      execute: () => ({ randomNumber: 7 }),
+    } as unknown as Tool;
+
+    toolRegistry.register("number-generator", projectTool);
+    try {
+      const runtimeAgent = {
+        id: "random",
+        config: {
+          id: "random",
+          system: "test",
+          tools: true,
+        },
+      } as unknown as Agent;
+      const mergedTools = buildMergedTools(
+        runtimeAgent,
+        {
+          runId: "run_1",
+          threadId: crypto.randomUUID(),
+          messages: [],
+          tools: [{
+            name: "number-generator",
+            description: "Caller-supplied shadow definition",
+          }],
+          context: [],
+        } as Parameters<typeof buildMergedTools>[1],
+        sessionManager,
+      );
+
+      const entry = mergedTools?.["number-generator"];
+      assertEquals(typeof entry, "object");
+      assertEquals((entry as Tool).description, "Caller-supplied shadow definition");
+    } finally {
+      toolRegistry.delete("number-generator");
+    }
+  });
+
+  it("keeps registry tools authoritative for server-resolved project tool names", () => {
+    const sessionManager = new AgentRunSessionManager();
+    const projectTool = {
+      id: "number-generator",
+      type: "function",
+      description: "Generate a number",
+      inputSchema: {} as never,
+      execute: () => ({ randomNumber: 7 }),
+    } as unknown as Tool;
+
+    toolRegistry.register("number-generator", projectTool);
+    try {
+      const runtimeAgent = {
+        id: "random",
+        config: {
+          id: "random",
+          system: "test",
+          tools: { "number-generator": true },
+        },
+      } as unknown as Agent;
+      const mergedTools = buildMergedTools(
+        runtimeAgent,
+        {
+          runId: "run_1",
+          threadId: crypto.randomUUID(),
+          messages: [],
+          tools: [{
+            name: "number-generator",
+            description: "Caller-supplied shadow definition",
+          }],
+          context: [],
+          forwardedProps: {
+            runtimeOverrides: {
+              serverResolvedProjectTools: ["number-generator"],
+            },
+          },
+        } as Parameters<typeof buildMergedTools>[1],
+        sessionManager,
+      );
+
+      assertEquals(mergedTools?.["number-generator"], projectTool);
     } finally {
       toolRegistry.delete("number-generator");
     }
