@@ -258,6 +258,39 @@ describe("observability/sentry", () => {
     assertEquals(state.config?.dsn, "https://public@errors.example.test/42");
   });
 
+  it("a reset initialization cannot clear the replacement initialization", async () => {
+    resetSentryForTests();
+    const { load } = createSentryExtension();
+    let resolveFirst: (() => void) | undefined;
+    let resolveSecond: (() => void) | undefined;
+    let secondLoadCount = 0;
+    const firstLoad = async () => {
+      await new Promise<void>((resolve) => {
+        resolveFirst = resolve;
+      });
+      return await load();
+    };
+    const secondLoad = async () => {
+      secondLoadCount += 1;
+      await new Promise<void>((resolve) => {
+        resolveSecond = resolve;
+      });
+      return await load();
+    };
+    const config = { dsn: "https://public@errors.example.test/42" };
+
+    const superseded = initializeSentry(config, firstLoad);
+    resetSentryForTests();
+    const replacement = initializeSentry(config, secondLoad);
+    resolveFirst?.();
+
+    assertEquals(await superseded, false);
+    const concurrent = initializeSentry(config, secondLoad);
+    assertEquals(secondLoadCount, 1);
+    resolveSecond?.();
+    assertEquals(await Promise.all([replacement, concurrent]), [true, true]);
+  });
+
   it("Sentry captures service and Grafana trace correlation", async () => {
     resetSentryForTests();
     const { load, state } = createSentryExtension();

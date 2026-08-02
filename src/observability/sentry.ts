@@ -31,6 +31,7 @@ type SentryExtensionLoader = () => Promise<SentryExtensionModule>;
 let initialized = false;
 let initializationGeneration = 0;
 let initializationPromise: Promise<boolean> | undefined;
+let initializationOwner: symbol | undefined;
 let missingDsnWarningEmitted = false;
 
 /**
@@ -99,6 +100,7 @@ export async function initializeSentry(
   if (initializationPromise) return await initializationPromise;
 
   const generation = initializationGeneration;
+  const owner = Symbol("sentry-initialization");
   const pending = (async () => {
     const extension = await loadExtension();
     if (generation !== initializationGeneration) return false;
@@ -114,16 +116,21 @@ export async function initializeSentry(
     return true;
   })();
   initializationPromise = pending;
+  initializationOwner = owner;
   try {
     return await pending;
   } finally {
-    if (initializationPromise === pending) initializationPromise = undefined;
+    if (generation === initializationGeneration && initializationOwner === owner) {
+      initializationPromise = undefined;
+      initializationOwner = undefined;
+    }
   }
 }
 
 export function resetSentryForTests(): void {
   initializationGeneration += 1;
   initializationPromise = undefined;
+  initializationOwner = undefined;
   missingDsnWarningEmitted = false;
   initialized = false;
   setApplicationErrorReporter(undefined);
