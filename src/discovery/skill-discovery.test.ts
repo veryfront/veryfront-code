@@ -95,3 +95,4 @@ Use this skill for support email workflows.`,
     assertEquals(result.skills.has("Process Email"), false);
   });
 });
+import "#veryfront/skill/_test-setup.ts";

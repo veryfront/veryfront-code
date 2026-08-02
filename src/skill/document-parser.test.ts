@@ -5,11 +5,7 @@ import {
   type SkillDocumentParserProvider,
   SkillDocumentParserProviderName,
 } from "../extensions/parser/skill-document-parser.ts";
-import {
-  parseBoundedSkillDocument,
-  parseUnsafeLegacySkillDocument,
-  snapshotSkillFrontmatterMapping,
-} from "./document-parser.ts";
+import { parseBoundedSkillDocument, snapshotSkillFrontmatterMapping } from "./document-parser.ts";
 
 Deno.test("bounded Skill document parsing owns the envelope and passes only YAML to the provider", () => {
   let received = "";
@@ -56,22 +52,15 @@ Deno.test("Skill document parsing rejects an explicit null provider instead of r
   );
 
   try {
-    for (
-      const parse of [
-        parseBoundedSkillDocument,
-        parseUnsafeLegacySkillDocument,
-      ]
-    ) {
-      assertThrows(
-        () =>
-          parse(
-            "---\nname: authored\n---\nBody",
-            null as unknown as SkillDocumentParserProvider,
-          ),
-        TypeError,
-        "provider must be a plain object",
-      );
-    }
+    assertThrows(
+      () =>
+        parseBoundedSkillDocument(
+          "---\nname: authored\n---\nBody",
+          null as unknown as SkillDocumentParserProvider,
+        ),
+      TypeError,
+      "provider must be a plain object",
+    );
   } finally {
     unregister(SkillDocumentParserProviderName);
     if (previous !== undefined) {
@@ -260,49 +249,6 @@ Deno.test("bounded Skill document parsing detaches provider failures", () => {
   assertEquals(error?.message, "Skill frontmatter could not be decoded");
   assertEquals(error?.message.includes("TOP_SECRET_42"), false);
   assertEquals(error?.message.includes("\u001b"), false);
-});
-
-Deno.test("legacy Skill document parsing reuses the extension decoder without strict bounds", () => {
-  let received = "";
-  const decoded = { model: "x".repeat(1_048_577) };
-  const provider = createSkillDocumentParserProvider((source) => {
-    received = source;
-    return decoded;
-  });
-
-  const parsed = parseUnsafeLegacySkillDocument(
-    `---\nmodel: ${decoded.model}\n---\nBody`,
-    provider,
-  );
-
-  assertEquals(received, `model: ${decoded.model}`);
-  assertEquals(parsed.frontmatter, decoded);
-  assertEquals(parsed.body, "Body");
-});
-
-Deno.test("legacy Skill document parsing retains the dependency-free scalar fallback", () => {
-  const previous = tryResolve<SkillDocumentParserProvider>(
-    SkillDocumentParserProviderName,
-  );
-  unregister(SkillDocumentParserProviderName);
-  try {
-    assertEquals(
-      parseUnsafeLegacySkillDocument(
-        "---\nname: legacy\ndescription: Scalar fallback\n---\nBody",
-      ),
-      {
-        frontmatter: {
-          name: "legacy",
-          description: "Scalar fallback",
-        },
-        body: "Body",
-      },
-    );
-  } finally {
-    if (previous !== undefined) {
-      register(SkillDocumentParserProviderName, previous);
-    }
-  }
 });
 
 Deno.test("Skill document parsing does not consult replaced global constructors", () => {

@@ -5,11 +5,9 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   parseSkillFileFrontmatter,
   parseSkillFrontmatter,
-  parseUnsafeLegacySkillFrontmatter,
   validateSkillFileMetadata,
   validateSkillMetadata,
 } from "./parser.ts";
-import * as skillParser from "./parser.ts";
 import {
   SKILL_ALLOWED_TOOL_MAX_PATTERNS,
   SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH,
@@ -71,60 +69,15 @@ description: [unterminated
 Body`),
         Error,
       );
-
-      const unsafeParser = (
-        skillParser as typeof skillParser & {
-          parseUnsafeLegacySkillFrontmatter?: typeof parseSkillFrontmatter;
-        }
-      ).parseUnsafeLegacySkillFrontmatter;
-      assertEquals(typeof unsafeParser, "function");
-      const result = await unsafeParser!(`---
-name: malformed
-description: [unterminated
----
-Body`);
-      assertEquals(result.frontmatter, {
-        name: "malformed",
-        description: "[unterminated",
-      });
-      assertEquals(result.body, "Body");
     });
 
-    it("preserves structured YAML through the public legacy parser", async () => {
-      const result = await parseUnsafeLegacySkillFrontmatter(`---
-name: legacy
-description: "Quoted: value"
-allowed-tools:
-  - Read
-  - Bash(git:*)
-metadata:
-  owner: platform
----
-Body`);
-
-      assertEquals(result.frontmatter, {
-        name: "legacy",
-        description: "Quoted: value",
-        "allowed-tools": ["Read", "Bash(git:*)"],
-        metadata: { owner: "platform" },
-      });
-      assertEquals(result.body, "Body");
-    });
-
-    it("bounds public documents while retaining an explicitly unsafe compatibility parser", async () => {
+    it("bounds public documents", async () => {
       const content = "x".repeat(1_048_577);
       await assertRejects(
         () => parseSkillFrontmatter(content),
         RangeError,
         "exceeds",
       );
-      const unsafeParser = (
-        skillParser as typeof skillParser & {
-          parseUnsafeLegacySkillFrontmatter?: typeof parseSkillFrontmatter;
-        }
-      ).parseUnsafeLegacySkillFrontmatter;
-      assertEquals(typeof unsafeParser, "function");
-      assertEquals((await unsafeParser!(content)).body, content);
     });
 
     it("strict file parsing rejects malformed and oversized documents", async () => {

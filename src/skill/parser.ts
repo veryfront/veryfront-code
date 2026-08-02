@@ -17,12 +17,7 @@ import {
   SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH,
   SKILL_ID_MAX_LENGTH,
 } from "./limits.ts";
-import {
-  parseBoundedSkillDocument,
-  type ParsedSkillContent,
-  parseUnsafeLegacySkillDocument,
-  parseUnsafeLegacySkillDocumentFallback,
-} from "./document-parser.ts";
+import { parseBoundedSkillDocument, type ParsedSkillContent } from "./document-parser.ts";
 import type { SkillDocumentParserProvider } from "../extensions/parser/skill-document-parser.ts";
 import {
   SKILL_COMPATIBILITY_MAX_LENGTH,
@@ -106,25 +101,6 @@ export async function parseSkillFrontmatter(
   provider?: SkillDocumentParserProvider,
 ): Promise<ParsedSkillContent> {
   return parseBoundedSkillDocument(content, provider);
-}
-
-/**
- * Parse using the historical unbounded YAML contract, retaining its lossy
- * line-oriented fallback only when the decoder is unavailable or rejects the
- * input.
- *
- * @deprecated This parser can reinterpret malformed YAML. Use
- * {@link parseSkillFrontmatter} or {@link parseSkillFileFrontmatter}.
- */
-export async function parseUnsafeLegacySkillFrontmatter(
-  content: string,
-  provider?: SkillDocumentParserProvider,
-): Promise<ParsedSkillContent> {
-  try {
-    return parseUnsafeLegacySkillDocument(content, provider);
-  } catch {
-    return parseUnsafeLegacySkillDocumentFallback(content);
-  }
 }
 
 /**

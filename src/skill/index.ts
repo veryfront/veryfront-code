@@ -61,7 +61,6 @@ export {
 export {
   parseSkillFileFrontmatter,
   parseSkillFrontmatter,
-  parseUnsafeLegacySkillFrontmatter,
   validateSkillFileMetadata,
   validateSkillMetadata,
 } from "./parser.ts";
@@ -90,8 +89,4 @@ export {
 } from "./allowed-tools.ts";
 
 export type { ParsedSkillContent } from "./document-parser.ts";
-export {
-  parseBoundedSkillDocument,
-  parseUnsafeLegacySkillDocument,
-  parseUnsafeLegacySkillDocumentFallback,
-} from "./document-parser.ts";
+export { parseBoundedSkillDocument } from "./document-parser.ts";
