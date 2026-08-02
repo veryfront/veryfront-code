@@ -104,7 +104,13 @@ function createParsedHostedChatRequest(
     persistLatestUserMessageBeforeDurableRun: false,
     ...requestOverrides,
   };
-  if (runEventAppendToken) registerHostedRunEventWriterToken(request, runEventAppendToken);
+  if (runEventAppendToken) {
+    registerHostedRunEventWriterToken(
+      request,
+      runEventAppendToken,
+      new Request("https://agent.example.test/api/runs"),
+    );
+  }
   return request;
 }
 
@@ -982,7 +988,7 @@ Deno.test("prepareHostedChatExecution preserves allowed remote tool history", as
 Deno.test("prepareHostedChatExecution compacts oversized context and appends a durable event", async () => {
   const originalFetch = globalThis.fetch;
   const appendedBodies: unknown[] = [];
-  globalThis.fetch = (input, init): Promise<Response> => {
+  globalThis.fetch = (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     if (input.toString().endsWith("/events")) {
       appendedBodies.push(JSON.parse(String(init?.body ?? "{}")));
       return Promise.resolve(
@@ -1279,7 +1285,7 @@ Deno.test("prepareHostedChatExecution aborts stalled signed attachment fetch bef
   let cancelStartGuard = () => {};
   let cancelPreparationGuard = () => {};
 
-  globalThis.fetch = (input, init): Promise<Response> => {
+  globalThis.fetch = (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = input.toString();
     if (url === "https://api.example.com/projects/project-1/uploads/upload-1/url") {
       return Promise.resolve(
