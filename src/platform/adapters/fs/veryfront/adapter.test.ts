@@ -14,6 +14,7 @@ import {
 import {
   clearReleaseAssetManifestCache,
   getReadyManifestForRender,
+  getReadyManifestForRenderAsync,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 
@@ -332,16 +333,18 @@ describe("VeryfrontFSAdapter", () => {
         assertEquals(requestedReleaseId, releaseId);
         return {
           state: "ready",
+          manifest_version: 2,
           manifest: {
-            schemaVersion: 1,
+            schemaVersion: 2,
             projectId: "project-123",
             releaseId,
             releaseVersion: 1,
             manifestVersion: 2,
             builderVersion: "0.1.765",
-            sourceContentHash: "",
+            sourceContentHash: "a".repeat(64),
             createdAt: "2026-06-12T00:00:00.000Z",
             assetBasePath: "/_vf/assets",
+            dependencyMode: "source",
             modules: {
               "pages/index.tsx": {
                 contentHash,
@@ -352,7 +355,6 @@ describe("VeryfrontFSAdapter", () => {
             css: [],
             routes: { "/": { modules: ["pages/index.tsx"], css: [] } },
             dependencies: {},
-            fallback: { mode: "jit", gaps: [] },
           },
         };
       };
@@ -367,6 +369,48 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(getReadyManifestForRender(releaseId), null);
       await waitFor(async () => getReadyManifestForRender(releaseId)?.manifestVersion === 2);
       assertEquals(fetchCount, 1);
+    });
+
+    it("should stop awaiting a manifest request when the release context loses ownership", async () => {
+      setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+      const releaseId = "release-env-abort";
+      const adapter = createAdapter();
+      let requestStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        requestStarted = resolve;
+      });
+      const neverSettles = new Promise<never>(() => {});
+      let requestSignal: AbortSignal | undefined;
+
+      (adapter.getClient() as unknown as {
+        getReleaseAssetManifest: (
+          releaseId: string,
+          projectRef?: string,
+          signal?: AbortSignal,
+        ) => Promise<never>;
+      }).getReleaseAssetManifest = (requestedReleaseId, _projectRef, signal) => {
+        assertEquals(requestedReleaseId, releaseId);
+        requestSignal = signal;
+        requestStarted();
+        return neverSettles;
+      };
+
+      adapter.setContentContext({
+        sourceType: "release",
+        projectSlug: "test-project",
+        releaseId,
+      });
+      const manifest = getReadyManifestForRenderAsync(releaseId);
+      await started;
+
+      adapter.setContentContext({
+        sourceType: "release",
+        projectSlug: "test-project",
+        releaseId: "release-env-next",
+      });
+
+      assertEquals(requestSignal?.aborted, true);
+      assertEquals(await manifest, null);
     });
 
     it("should register a release asset manifest fetcher when initialize resolves the release id", async () => {
@@ -429,16 +473,18 @@ describe("VeryfrontFSAdapter", () => {
         assertEquals(requestedReleaseId, releaseId);
         return {
           state: "ready",
+          manifest_version: 3,
           manifest: {
-            schemaVersion: 1,
+            schemaVersion: 2,
             projectId: "project-123",
             releaseId,
             releaseVersion: 1,
             manifestVersion: 3,
             builderVersion: "0.1.792",
-            sourceContentHash: "",
+            sourceContentHash: "a".repeat(64),
             createdAt: "2026-06-12T00:00:00.000Z",
             assetBasePath: "/_vf/assets",
+            dependencyMode: "source",
             modules: {
               "pages/index.tsx": {
                 contentHash,
@@ -449,7 +495,6 @@ describe("VeryfrontFSAdapter", () => {
             css: [],
             routes: { "/": { modules: ["pages/index.tsx"], css: [] } },
             dependencies: {},
-            fallback: { mode: "jit", gaps: [] },
           },
         };
       };
@@ -482,16 +527,18 @@ describe("VeryfrontFSAdapter", () => {
         assertEquals(requestedReleaseId, releaseId);
         return {
           state: "ready",
+          manifest_version: 1,
           manifest: {
-            schemaVersion: 1,
+            schemaVersion: 2,
             projectId: "project-123",
             releaseId,
             releaseVersion: 1,
             manifestVersion: 1,
             builderVersion: "0.1.765",
-            sourceContentHash: "",
+            sourceContentHash: "a".repeat(64),
             createdAt: "2026-06-12T00:00:00.000Z",
             assetBasePath: "/_vf/assets",
+            dependencyMode: "source",
             modules: {
               "pages/index.tsx": {
                 contentHash,
@@ -502,7 +549,6 @@ describe("VeryfrontFSAdapter", () => {
             css: [],
             routes: { "/": { modules: ["pages/index.tsx"], css: [] } },
             dependencies: {},
-            fallback: { mode: "jit", gaps: [] },
           },
         };
       };

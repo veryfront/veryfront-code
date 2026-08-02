@@ -15,7 +15,7 @@ import {
 } from "#veryfront/release-assets/constants.ts";
 import {
   clearReleaseAssetManifestCache,
-  configureReleaseAssetManifestFetcher,
+  registerManifestFetcherForRelease,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
@@ -44,13 +44,13 @@ const PIN_KEY_B = "on:3w5e11264sgsf";
 
 function releaseManifest(): ReleaseAssetManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: "p",
     releaseId: "rel-1",
     releaseVersion: 1,
     manifestVersion: 1,
     builderVersion: "0.1.800",
-    sourceContentHash: "",
+    sourceContentHash: "a".repeat(64),
     createdAt: "2026-06-12T00:00:00.000Z",
     assetBasePath: "/_vf/assets",
     modules: {},
@@ -63,7 +63,7 @@ function releaseManifest(): ReleaseAssetManifest {
         contentType: "text/javascript",
       },
     },
-    fallback: { mode: "jit", gaps: [] },
+    dependencyMode: "immutable",
   };
 }
 
@@ -74,7 +74,6 @@ describe("HTMLGenerator helpers", () => {
   afterEach(() => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalManifestFlag ?? "");
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalDependencyFlag ?? "");
-    configureReleaseAssetManifestFetcher(undefined);
     clearReleaseAssetManifestCache();
     clearCSSCache();
   });
@@ -452,8 +451,9 @@ describe("HTMLGenerator helpers", () => {
     it("treats an undefined manifest option as absent for full HTML import maps", async () => {
       setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
       setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
-      configureReleaseAssetManifestFetcher(() =>
-        Promise.resolve({ state: "ready", manifest: releaseManifest() })
+      registerManifestFetcherForRelease(
+        "rel-1",
+        () => Promise.resolve({ state: "ready", manifest_version: 1, manifest: releaseManifest() }),
       );
       const generator = createHTMLGenerator({
         readFile: async (path: string) => path.endsWith("/app/page.tsx") ? `'use client';` : "",

@@ -1,3 +1,6 @@
+import { hasControlCharacters } from "./string-validation.ts";
+import { RELEASE_ASSET_MANIFEST_LIMITS } from "./constants.ts";
+
 const PAGE_MODULE_EXTENSION = /\.(tsx|ts|jsx|mdx|js)$/;
 const DECLARATION_MODULE_EXTENSION = /\.d\.(tsx|ts)$/;
 
@@ -45,11 +48,29 @@ export function configuredRoutePath(
 
 /** Derive a route path from a page module logical path. */
 export function routeForPage(logicalPath: string): string | null {
+  if (
+    typeof logicalPath !== "string" ||
+    logicalPath.length > RELEASE_ASSET_MANIFEST_LIMITS.manifestKeyLength ||
+    logicalPath.includes("\\") ||
+    logicalPath.includes("?") ||
+    logicalPath.includes("#") ||
+    hasControlCharacters(logicalPath)
+  ) {
+    return null;
+  }
+
+  const pathSegments = logicalPath.split("/");
+  if (
+    pathSegments.some((segment) => segment.length === 0 || segment === "." || segment === "..")
+  ) {
+    return null;
+  }
+
   if (logicalPath.startsWith("pages/")) {
     const withoutPrefix = logicalPath.slice("pages/".length);
     const withoutExt = stripPageModuleExtension(withoutPrefix);
     if (withoutExt === null) return null;
-    const segments = withoutExt.split("/").filter(Boolean);
+    const segments = withoutExt.split("/");
     if (
       segments.length === 0 ||
       segments[0] === "api" ||
@@ -72,7 +93,14 @@ export function routeForPage(logicalPath: string): string | null {
       .replace(/^page$/, "")
       .split("/")
       .filter(Boolean);
-    if (segments.some((segment) => segment.startsWith("@") || segment.startsWith("_"))) {
+    if (
+      segments.some((segment) =>
+        segment.startsWith("@") ||
+        segment.startsWith("_") ||
+        (segment.startsWith("(") &&
+          (!segment.endsWith(")") || segment.length === 2))
+      )
+    ) {
       return null;
     }
 

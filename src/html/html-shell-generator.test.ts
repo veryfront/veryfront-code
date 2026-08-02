@@ -423,16 +423,16 @@ describe("html-generation/html-shell-generator", () => {
       );
     });
 
-    it("escapes release-manifest URLs in modulepreload attributes", async () => {
+    it("rejects invalid release-manifest asset hashes before generating preload URLs", async () => {
       const hostileHash = 'hash"><script>alert(1)</script>';
       const manifest: ReleaseAssetManifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "project",
         releaseId: "release",
         releaseVersion: 1,
         manifestVersion: 1,
         builderVersion: "test",
-        sourceContentHash: "source",
+        sourceContentHash: "a".repeat(64),
         createdAt: "2026-01-01T00:00:00.000Z",
         assetBasePath: "/_vf/assets",
         modules: {
@@ -447,7 +447,7 @@ describe("html-generation/html-shell-generator", () => {
           "/dashboard": { modules: ["pages/dashboard.tsx"], css: [] },
         },
         dependencies: {},
-        fallback: { mode: "jit", gaps: [] },
+        dependencyMode: "immutable",
       };
       const options = {
         ...createOptions({
@@ -462,14 +462,11 @@ describe("html-generation/html-shell-generator", () => {
         options,
       );
 
-      assertStringIncludes(
-        result,
-        'href="/_vf/assets/hash&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;.js"',
-      );
       assertEquals(
-        result.includes('href="/_vf/assets/hash"><script>alert(1)</script>.js"'),
+        result.includes("/_vf/assets/hash"),
         false,
       );
+      assertStringIncludes(result, 'href="/_vf_modules/pages/dashboard.js"');
     });
 
     it("should include Tailwind CSS link in development mode", async () => {

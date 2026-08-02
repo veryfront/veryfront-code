@@ -200,13 +200,13 @@ Deno.test({
       const jsxRuntimeHash = "4".repeat(64);
       const jsxDevRuntimeHash = "5".repeat(64);
       const manifest: ReleaseAssetManifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "local-project",
         releaseId: "standalone-dev",
         releaseVersion: 0,
         manifestVersion: 1,
         builderVersion: "0.1.810",
-        sourceContentHash: "source",
+        sourceContentHash: "a".repeat(64),
         createdAt: "2026-06-15T00:00:00.000Z",
         assetBasePath: "/_vf/assets",
         modules: {},
@@ -239,7 +239,7 @@ Deno.test({
             contentType: "text/javascript",
           },
         },
-        fallback: { mode: "jit", gaps: [] },
+        dependencyMode: "immutable",
       };
       const releaseHtml = await renderAppRouteToHTML({
         adapter: denoAdapter,

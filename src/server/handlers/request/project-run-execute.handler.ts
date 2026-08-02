@@ -1086,6 +1086,7 @@ async function executeReleaseAssetBuildRun(input: {
       "#veryfront/platform/adapters/veryfront-api-client/client.ts"
     );
     const { runReleaseAssetBuild } = await import("#veryfront/release-assets/build-executor.ts");
+    const { transformToESM } = await import("#veryfront/transforms/esm-transform.ts");
     const { createCompileProjectCss } = await import(
       "#veryfront/release-assets/css-compile.ts"
     );
@@ -1104,6 +1105,10 @@ async function executeReleaseAssetBuildRun(input: {
     apiClient.setProjectSlug(projectReference);
 
     const releaseVersionRef = releaseId;
+    const releaseConfig = input.ctx.config;
+    if (!releaseConfig) {
+      throw INVALID_ARGUMENT.create({ detail: "Missing validated project config" });
+    }
 
     // Production CSS compiler: compiles the project's Tailwind CSS in-runtime
     // via the pure `generateTailwindCSS` primitive (no distributed-cache /
@@ -1111,7 +1116,6 @@ async function executeReleaseAssetBuildRun(input: {
     // propagate to the executor, which records an explicit CSS gap.
     const compileProjectCss = createCompileProjectCss({
       projectScope: projectReference,
-      config: input.ctx.config,
     });
 
     const result = await runReleaseAssetBuild({
@@ -1121,10 +1125,34 @@ async function executeReleaseAssetBuildRun(input: {
       releaseVersion,
       releaseVersionRef,
       adapter: input.ctx.adapter,
+      dependencyMode: "source",
+      transform: (source, sourceFile, projectDir, adapter, options) =>
+        transformToESM(source, sourceFile, projectDir, adapter, {
+          projectId: options.projectId,
+          dev: options.dev,
+          ssr: options.ssr,
+          studioEmbed: false,
+          reactVersion: options.reactVersion,
+          dependencyPinningCacheKey: options.dependencyPinningSnapshot?.cacheKey,
+          dependencyPinningDependencies: options.dependencyPinningSnapshot?.dependencies,
+          dependencyPinningSource: options.dependencyPinningSource,
+        }),
+      loadConfig: () => Promise.resolve(releaseConfig),
       client: {
         beginReleaseAssetManifestBuild: (version) =>
           apiClient.beginReleaseAssetManifestBuild(version),
-        listAllReleaseFiles: (version) => apiClient.listAllReleaseFiles(version),
+        listAllReleaseFiles: async (version) => {
+          const files = await apiClient.listAllReleaseFiles(version);
+          return files.map((file) => {
+            if (typeof file.content !== "string") {
+              throw API_CLIENT_ERROR.create({
+                detail: "Release file list omitted file content",
+                status: 502,
+              });
+            }
+            return { path: file.path, content: file.content };
+          });
+        },
         uploadReleaseAsset: (version, hash, contentType, bytes) =>
           apiClient.uploadReleaseAsset(version, hash, contentType, bytes),
         putReleaseAssetManifest: (version, manifest) =>

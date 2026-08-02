@@ -12,10 +12,10 @@ import {
   prefetchBuiltinContentProcessor,
 } from "./ensure-content-processor.ts";
 import { join } from "veryfront/platform/path";
-import { parseReleaseAssetManifest } from "veryfront/release-assets";
 import {
   clearReleaseAssetManifestCache,
-  configureReleaseAssetManifestFetcher,
+  parseReleaseAssetManifest,
+  registerManifestFetcherForRelease,
 } from "veryfront/release-assets";
 import { LOCAL_RELEASE_ASSET_MANIFEST_PATH } from "veryfront/build";
 
@@ -122,7 +122,7 @@ export async function startCliProductionServer(
 ): Promise<Awaited<ReturnType<typeof startProductionServer>>> {
   const adapter = options.adapter ?? (await runtime.get());
   const manifestPath = join(options.projectDir, "dist", LOCAL_RELEASE_ASSET_MANIFEST_PATH);
-  let registeredLocalManifest = false;
+  let unregisterLocalManifest: (() => void) | undefined;
   let localReleaseId: string | undefined;
 
   try {
@@ -130,8 +130,15 @@ export async function startCliProductionServer(
     const manifest = parseReleaseAssetManifest(JSON.parse(manifestRaw));
     if (manifest) {
       clearReleaseAssetManifestCache();
-      configureReleaseAssetManifestFetcher(() => Promise.resolve({ state: "ready", manifest }));
-      registeredLocalManifest = true;
+      unregisterLocalManifest = registerManifestFetcherForRelease(
+        manifest.releaseId,
+        () =>
+          Promise.resolve({
+            state: "ready",
+            manifest_version: manifest.manifestVersion,
+            manifest,
+          }),
+      );
       localReleaseId = manifest.releaseId;
     }
   } catch (_) {
@@ -164,8 +171,8 @@ export async function startCliProductionServer(
   return {
     ...result,
     stop: async () => {
-      if (registeredLocalManifest) {
-        configureReleaseAssetManifestFetcher(undefined);
+      if (unregisterLocalManifest) {
+        unregisterLocalManifest();
         clearReleaseAssetManifestCache();
       }
       await result.stop();

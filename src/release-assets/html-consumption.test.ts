@@ -16,24 +16,27 @@ import {
 import {
   clearCachedReleaseAssetManifests,
   clearReleaseAssetManifestCache,
-  configureReleaseAssetManifestFetcher,
   getReadyManifestForRender,
   getReadyManifestForRenderAsync,
+  registerManifestFetcherForRelease,
 } from "./manifest-cache.ts";
-import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "./constants.ts";
+import {
+  RELEASE_ASSET_MANIFEST_ENV_FLAG,
+  RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
+} from "./constants.ts";
 import type { ReleaseAssetManifest } from "./manifest-schema.ts";
 
 const MOD_HASH = "a".repeat(64);
 
 function manifest(contentHash = MOD_HASH, manifestVersion = 3): ReleaseAssetManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
     projectId: "p",
     releaseId: "r",
     releaseVersion: 1,
     manifestVersion,
     builderVersion: "0.1.765",
-    sourceContentHash: "",
+    sourceContentHash: "f".repeat(64),
     createdAt: "2026-06-12T00:00:00.000Z",
     assetBasePath: "/_vf/assets",
     modules: {
@@ -41,9 +44,21 @@ function manifest(contentHash = MOD_HASH, manifestVersion = 3): ReleaseAssetMani
     },
     css: [],
     routes: { "/": { modules: ["pages/index.tsx"], css: [] } },
+    dependencyMode: "source",
     dependencies: {},
-    fallback: { mode: "jit", gaps: [] },
   };
+}
+
+function manifestResponse(state: string, value: ReleaseAssetManifest | null) {
+  return {
+    state,
+    manifest_version: value?.manifestVersion ?? 0,
+    manifest: value,
+  };
+}
+
+function readyManifestResponse(value = manifest()) {
+  return manifestResponse("ready", value);
 }
 
 describe("html consumption helpers", () => {
@@ -91,6 +106,40 @@ describe("html consumption helpers", () => {
   it("returns no preloads for an uncovered route", () => {
     assertEquals(resolveManifestRoutePreloadUrls(manifest(), "/other"), []);
   });
+
+  it("ignores inherited route and module entries", () => {
+    const inheritedRoutes = Object.create({
+      "/inherited": { modules: ["pages/index.tsx"], css: [] },
+    }) as ReleaseAssetManifest["routes"];
+    const inheritedModules = Object.create({
+      "pages/inherited.tsx": {
+        contentHash: MOD_HASH,
+        size: 1,
+        contentType: "text/javascript",
+      },
+    }) as ReleaseAssetManifest["modules"];
+    const value = manifest();
+    value.routes = inheritedRoutes;
+    value.modules = inheritedModules;
+
+    assertEquals(resolveManifestRoutePreloadUrls(value, "/inherited"), []);
+    assertEquals(resolveManifestModuleUrl(value, "pages/inherited.tsx"), null);
+  });
+
+  it("deduplicates repeated preload identities", () => {
+    const value = manifest();
+    value.routes["/"]!.modules.push("pages/index.tsx");
+    assertEquals(resolveManifestRoutePreloadUrls(value, "/"), [
+      `/_vf/assets/${MOD_HASH}.js`,
+    ]);
+  });
+
+  it("falls back instead of emitting a malformed content hash", () => {
+    const value = manifest();
+    value.modules["pages/index.tsx"]!.contentHash = "../asset";
+    assertEquals(resolveManifestModuleUrl(value, "pages/index.tsx"), null);
+    assertEquals(resolveManifestRoutePreloadUrls(value, "/"), []);
+  });
 });
 
 describe("manifest cache gating", () => {
@@ -99,29 +148,24 @@ describe("manifest cache gating", () => {
   afterEach(() => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalFlag ?? "");
     Deno.env.delete("VERYFRONT_ENABLE_SERVER_TIMING");
-    configureReleaseAssetManifestFetcher(undefined);
     clearReleaseAssetManifestCache();
     resetRequestProfiles();
   });
 
   it("returns null when the flag is off (byte-identical fallback)", () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "");
-    configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "ready", manifest: manifest() })
-    );
+    registerManifestFetcherForRelease("r", () => Promise.resolve(readyManifestResponse()));
     assertEquals(getReadyManifestForRender("r"), null);
   });
 
   it("returns null when no fetcher is registered", () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
-    configureReleaseAssetManifestFetcher(undefined);
     assertEquals(getReadyManifestForRender("r"), null);
   });
 
   it("marks the no-fetcher fallback reason during profiled async reads", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     Deno.env.set("VERYFRONT_ENABLE_SERVER_TIMING", "1");
-    configureReleaseAssetManifestFetcher(undefined);
 
     const record = await runWithRequestProfiling(
       { category: "html", method: "GET", pathname: "/" },
@@ -137,9 +181,7 @@ describe("manifest cache gating", () => {
   it("marks ready manifest fetches during profiled async reads", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     Deno.env.set("VERYFRONT_ENABLE_SERVER_TIMING", "1");
-    configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "ready", manifest: manifest() })
-    );
+    registerManifestFetcherForRelease("r", () => Promise.resolve(readyManifestResponse()));
 
     const record = await runWithRequestProfiling(
       { category: "html", method: "GET", pathname: "/" },
@@ -152,29 +194,31 @@ describe("manifest cache gating", () => {
     assertEquals(record?.phases["release_manifest.fetch_ready"], 0);
   });
 
-  it("uses partial manifests that include a manifest body", async () => {
+  it("rejects partial manifests even when they include a manifest body", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     Deno.env.set("VERYFRONT_ENABLE_SERVER_TIMING", "1");
-    configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "partial", manifest: manifest() })
+    registerManifestFetcherForRelease(
+      "r",
+      () => Promise.resolve(manifestResponse("partial", manifest())),
     );
 
     const record = await runWithRequestProfiling(
       { category: "html", method: "GET", pathname: "/" },
       async () => {
-        assertEquals((await getReadyManifestForRenderAsync("r"))?.manifestVersion, 3);
+        assertEquals(await getReadyManifestForRenderAsync("r"), null);
         return finalizeRequestProfiling(200);
       },
     );
 
     assertEquals(record?.phases["release_manifest.fetch_partial"], 0);
-    assertEquals(getReadyManifestForRender("r")?.manifestVersion, 3);
+    assertEquals(record?.phases["release_manifest.fetch_not_ready"], 0);
+    assertEquals(getReadyManifestForRender("r"), null);
   });
 
   it("marks manifest fetch failures during profiled async reads", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     Deno.env.set("VERYFRONT_ENABLE_SERVER_TIMING", "1");
-    configureReleaseAssetManifestFetcher(() => Promise.reject(new Error("boom")));
+    registerManifestFetcherForRelease("r", () => Promise.reject(new Error("boom")));
 
     const record = await runWithRequestProfiling(
       { category: "html", method: "GET", pathname: "/" },
@@ -191,9 +235,9 @@ describe("manifest cache gating", () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     let resolveFetch: () => void = () => {};
     const gate = new Promise<void>((r) => (resolveFetch = r));
-    configureReleaseAssetManifestFetcher(async () => {
+    registerManifestFetcherForRelease("r", async () => {
       await gate;
-      return { state: "ready", manifest: manifest() };
+      return readyManifestResponse();
     });
 
     // First call schedules the fetch and returns null.
@@ -208,9 +252,7 @@ describe("manifest cache gating", () => {
 
   it("awaits a ready manifest on the first async read", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
-    configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "ready", manifest: manifest() })
-    );
+    registerManifestFetcherForRelease("r", () => Promise.resolve(readyManifestResponse()));
 
     const ready = await getReadyManifestForRenderAsync("r");
 
@@ -224,10 +266,10 @@ describe("manifest cache gating", () => {
     const gate = new Promise<void>((resolve) => (resolveFetch = resolve));
     let fetchCount = 0;
 
-    configureReleaseAssetManifestFetcher(async () => {
+    registerManifestFetcherForRelease("r", async () => {
       fetchCount++;
       await gate;
-      return { state: "ready", manifest: manifest() };
+      return readyManifestResponse();
     });
 
     const first = getReadyManifestForRenderAsync("r");
@@ -250,11 +292,9 @@ describe("manifest cache gating", () => {
 
     try {
       let fetchCount = 0;
-      configureReleaseAssetManifestFetcher(async () => {
+      registerManifestFetcherForRelease("r", async () => {
         fetchCount++;
-        return fetchCount === 1
-          ? { state: "building", manifest: null }
-          : { state: "ready", manifest: manifest() };
+        return fetchCount === 1 ? manifestResponse("building", null) : readyManifestResponse();
       });
 
       assertEquals(await getReadyManifestForRenderAsync("r"), null);
@@ -286,15 +326,15 @@ describe("manifest cache gating", () => {
     const secondGate = new Promise<void>((resolve) => (resolveSecond = resolve));
     let fetchCount = 0;
 
-    configureReleaseAssetManifestFetcher(async () => {
+    registerManifestFetcherForRelease("r", async () => {
       fetchCount++;
       if (fetchCount === 1) {
         await firstGate;
-        return { state: "ready", manifest: manifest(firstHash) };
+        return readyManifestResponse(manifest(firstHash));
       }
 
       await secondGate;
-      return { state: "ready", manifest: manifest(secondHash) };
+      return readyManifestResponse(manifest(secondHash));
     });
 
     assertEquals(getReadyManifestForRender("r"), null);
@@ -331,11 +371,11 @@ describe("manifest cache gating", () => {
 
     try {
       let fetchCount = 0;
-      configureReleaseAssetManifestFetcher(async () => {
+      registerManifestFetcherForRelease("r", async () => {
         fetchCount++;
         return fetchCount === 1
-          ? { state: "ready", manifest: manifest(firstHash, 3) }
-          : { state: "ready", manifest: manifest(secondHash, 4) };
+          ? readyManifestResponse(manifest(firstHash, 3))
+          : readyManifestResponse(manifest(secondHash, 4));
       });
 
       assertEquals(getReadyManifestForRender("r"), null);
@@ -354,6 +394,57 @@ describe("manifest cache gating", () => {
     }
   });
 
+  const invalidatingRefreshes = [
+    {
+      name: "a partial response",
+      response: () => manifestResponse("partial", manifest("b".repeat(64), 4)),
+    },
+    {
+      name: "a terminal failed response",
+      response: () => manifestResponse("failed", manifest("b".repeat(64), 4)),
+    },
+    {
+      name: "a ready response with a mismatched envelope generation",
+      response: () => ({
+        state: "ready",
+        manifest_version: 3,
+        manifest: manifest("b".repeat(64), 4),
+      }),
+    },
+  ];
+
+  for (const invalidatingRefresh of invalidatingRefreshes) {
+    it(`evicts a cached ready manifest after ${invalidatingRefresh.name}`, async () => {
+      setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+      let now = 1_000;
+      const originalDateNow = Date.now;
+      Date.now = () => now;
+
+      try {
+        let fetchCount = 0;
+        registerManifestFetcherForRelease("r", async () => {
+          fetchCount++;
+          return fetchCount === 1
+            ? readyManifestResponse(manifest("a".repeat(64), 3))
+            : invalidatingRefresh.response();
+        });
+
+        assertEquals(getReadyManifestForRender("r"), null);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        assertEquals(getReadyManifestForRender("r")?.manifestVersion, 3);
+
+        now += 61_000;
+        assertEquals(getReadyManifestForRender("r")?.manifestVersion, 3);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        assertEquals(fetchCount, 2);
+        assertEquals(getReadyManifestForRender("r"), null);
+      } finally {
+        Date.now = originalDateNow;
+      }
+    });
+  }
+
   it("throttles failed ready-manifest revalidation while serving the stale ready manifest", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     let now = 1_000;
@@ -362,9 +453,12 @@ describe("manifest cache gating", () => {
 
     try {
       let fetchCount = 0;
-      configureReleaseAssetManifestFetcher(async () => {
+      registerManifestFetcherForRelease("r", async () => {
         fetchCount++;
-        return fetchCount === 1 ? { state: "ready", manifest: manifest("a".repeat(64), 3) } : null;
+        if (fetchCount === 1) {
+          return readyManifestResponse(manifest("a".repeat(64), 3));
+        }
+        throw new Error("temporary control-plane outage");
       });
 
       assertEquals(getReadyManifestForRender("r"), null);

@@ -802,13 +802,14 @@ export class VeryfrontAPIOperations {
   async getReleaseAssetManifest(
     projectRef: string,
     version: string,
+    signal?: AbortSignal,
   ): Promise<ReleaseAssetManifestApiResponse> {
     const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
       encodeURIComponent(version)
     }/asset-manifest`;
     logger.debug("getReleaseAssetManifest", { projectRef, version });
 
-    const raw = await this.request(url);
+    const raw = await this.request(url, { signal });
     return getReleaseAssetManifestResponseSchema().parse(raw);
   }
 

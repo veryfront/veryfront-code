@@ -304,6 +304,7 @@ describe("build/production-build/local-release-assets", () => {
           vendorHttpImports: () => {
             throw new Error("esm.sh unavailable");
           },
+          frameworkTransform: fakeFrameworkTransform,
         }),
       Error,
       "Failed to generate local release dependency assets",
