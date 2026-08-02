@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertMatch, assertRejects, assertThrows } from "@std/assert";
 import { join } from "#veryfront/compat/path/index.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { logger } from "#veryfront/utils";
 import { DiskCacheBackend } from "./disk.ts";
 import { CacheValueTooLargeError } from "../bounded-read.ts";
@@ -217,11 +218,24 @@ Deno.test("DiskCacheBackend", async (t) => {
     const debugCapture = captureDebugLogs();
     try {
       assertEquals(await backend.get(key), null);
-      await new Promise((r) => setTimeout(r, 5));
+      await waitFor(
+        () =>
+          debugCapture.entries.some((entry) =>
+            entry.message === "[DiskCache] Expired entry cleanup failed"
+          ),
+        {
+          interval: 1,
+          timeout: 1_000,
+          message: "expired-entry cleanup diagnostic was not emitted",
+        },
+      );
 
       // The digest is the prefix of the SHA-256 that names the file, so an
       // operator can still walk from a log line to the entry on disk.
-      const context = debugCapture.entries[0]?.args[0] as Record<string, unknown> | undefined;
+      const diagnostic = debugCapture.entries.find((entry) =>
+        entry.message === "[DiskCache] Expired entry cleanup failed"
+      );
+      const context = diagnostic?.args[0] as Record<string, unknown> | undefined;
       assertEquals(fileName.startsWith(String(context?.keyDigest)), true);
     } finally {
       debugCapture.restore();
