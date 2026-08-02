@@ -19,6 +19,13 @@ import type {
   ModelRuntimeGenerateResult,
 } from "#veryfront/provider/types.ts";
 import type { RuntimeReasoningOption } from "#veryfront/agent/types.ts";
+import type {
+  ModelCallContext,
+  ModelCallMessage,
+  ModelCallRecorder,
+  ModelCallTool,
+} from "./model-call-context.ts";
+import { resolveModelCallRecorder } from "./model-call-recorder-context.ts";
 
 type GenerateTextOptions = {
   model: ModelRuntime;
@@ -39,6 +46,7 @@ type GenerateTextOptions = {
   providerOptions?: Record<string, unknown>;
   reasoning?: RuntimeReasoningOption;
   abortSignal?: AbortSignal;
+  modelCallRecorder?: ModelCallRecorder;
 };
 
 type StreamTextOptions = {
@@ -61,6 +69,7 @@ type StreamTextOptions = {
   reasoning?: RuntimeReasoningOption;
   includeRawChunks?: boolean;
   abortSignal?: AbortSignal;
+  modelCallRecorder?: ModelCallRecorder;
 };
 
 type EmbedOptions = {
@@ -74,38 +83,6 @@ type EmbedManyOptions = {
   values: string[];
   abortSignal?: AbortSignal;
 };
-
-type RuntimePromptMessage =
-  | { role: "system"; content: string }
-  | {
-    role: "user";
-    content: Array<
-      | { type: "text"; text: string }
-      | { type: "image" | "file"; mediaType: string; url: string; filename?: string }
-    >;
-  }
-  | {
-    role: "assistant";
-    content: Array<
-      | { type: "text"; text: string }
-      | {
-        type: "tool-call";
-        toolCallId: string;
-        toolName: string;
-        input: unknown;
-        providerExecuted?: boolean;
-      }
-    >;
-  }
-  | {
-    role: "tool";
-    content: Array<{
-      type: "tool-result";
-      toolCallId: string;
-      toolName: string;
-      output: { type: "json"; value: unknown };
-    }>;
-  };
 
 type DirectGenerateUsage = {
   inputTokens?: number;
@@ -151,21 +128,11 @@ type DirectGenerateResult = {
 type DirectStreamResult = {
   stream: ReadableStream<unknown>;
 };
-type DirectToolDefinition =
-  | {
-    type: "function";
-    name: string;
-    description?: string;
-    inputSchema: unknown;
-  }
-  | {
-    type: "provider";
-    name: string;
-    id: `${string}.${string}`;
-    args: Record<string, unknown>;
-  };
-
 type DirectTextOptions = GenerateTextOptions | StreamTextOptions;
+type DirectModelOptions = Record<string, unknown> & {
+  prompt: ModelCallMessage[];
+  tools?: ModelCallTool[];
+};
 
 function normalizeSystemPrompt(system: GenerateTextOptions["system"]): string | undefined {
   if (typeof system === "string") {
@@ -208,8 +175,8 @@ function getProviderRequestMessages(
 function toRuntimePrompt(
   system: string | undefined,
   messages: TextGenerationRuntimeMessage[],
-): RuntimePromptMessage[] {
-  const prompt: RuntimePromptMessage[] = [];
+): ModelCallMessage[] {
+  const prompt: ModelCallMessage[] = [];
 
   if (system && system.length > 0) {
     prompt.push({ role: "system", content: system });
@@ -449,12 +416,12 @@ function isRuntimeFunctionToolDefinition(
 
 async function resolveDirectTools(
   tools: RuntimeToolSet | undefined,
-): Promise<DirectToolDefinition[] | undefined> {
+): Promise<ModelCallTool[] | undefined> {
   if (!tools) {
     return undefined;
   }
 
-  const resolvedTools: DirectToolDefinition[] = [];
+  const resolvedTools: ModelCallTool[] = [];
 
   for (const [name, definition] of Object.entries(tools)) {
     if (isRuntimeProviderToolDefinition(definition)) {
@@ -487,8 +454,8 @@ async function resolveDirectTools(
 
 function buildDirectModelOptions(
   options: DirectTextOptions,
-  tools: DirectToolDefinition[] | undefined,
-): Record<string, unknown> {
+  tools: ModelCallTool[] | undefined,
+): DirectModelOptions {
   return {
     prompt: toRuntimePrompt(
       normalizeSystemPrompt(options.system),
@@ -514,6 +481,20 @@ function buildDirectModelOptions(
       : {}),
     abortSignal: options.abortSignal,
   };
+}
+
+async function recordModelCallContext(
+  options: DirectTextOptions,
+  directOptions: DirectModelOptions,
+): Promise<void> {
+  const recorder = resolveModelCallRecorder(options.modelCallRecorder);
+  if (!recorder) return;
+
+  const context: ModelCallContext = {
+    messages: directOptions.prompt,
+    ...(directOptions.tools ? { tools: directOptions.tools } : {}),
+  };
+  await recorder(structuredClone(context));
 }
 
 function isDirectToolCallPart(
@@ -891,8 +872,9 @@ async function* textDeltasFromStream(stream: ReadableStream<unknown>): AsyncIter
 }
 
 export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeGenerateTextResult> {
-  return resolveDirectTools(options.tools).then((tools) => {
+  return resolveDirectTools(options.tools).then(async (tools) => {
     const directOptions = buildDirectModelOptions(options, tools);
+    await recordModelCallContext(options, directOptions);
     if (shouldGenerateViaStream(options.model)) {
       return options.model.doStream(directOptions).then(({ stream }) =>
         buildGenerateResultFromStream(stream)
@@ -904,9 +886,11 @@ export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeG
 }
 
 export function streamText(options: StreamTextOptions): RuntimeStreamResult {
-  const directResultPromise = resolveDirectTools(options.tools).then((tools) =>
-    options.model.doStream(buildDirectModelOptions(options, tools))
-  );
+  const directResultPromise = resolveDirectTools(options.tools).then(async (tools) => {
+    const directOptions = buildDirectModelOptions(options, tools);
+    await recordModelCallContext(options, directOptions);
+    return options.model.doStream(directOptions);
+  });
   // Guard against an unhandled rejection when a branch is consumed lazily (or a
   // branch is never consumed at all) and doStream rejects.
   directResultPromise.catch(() => {});

@@ -1,6 +1,14 @@
 import { type ConversationRunEventQueueController } from "./durable.ts";
 import { agentLogger } from "#veryfront/utils";
 
+export type ConversationRunMirrorDisableReason =
+  | "cursor_resyncs_exhausted"
+  | "cursor_mismatch_ambiguous"
+  | "non_appendable"
+  | "ignorable_append_rejection"
+  | "payload_too_large"
+  | "auth_rejected";
+
 /** Public API contract for conversation run mirror snapshot. */
 export interface ConversationRunMirrorSnapshot {
   latestEventId: number;
@@ -11,25 +19,24 @@ export interface ConversationRunMirrorSnapshot {
   hasFlushTimer: boolean;
   hasRetryTimer: boolean;
   inFlight: boolean;
+  appendRequestCount?: number;
+  disableReason?: ConversationRunMirrorDisableReason;
 }
 
 /** State for conversation run mirror stopped. */
 export interface ConversationRunMirrorStoppedState {
+  outcome: "stopped";
   latestEventId: number;
   latestExternalEventSequence: number;
   pendingEventCount: 0;
   consecutiveFailures: number;
   disabled: true;
-  disableReason?:
-    | "cursor_resyncs_exhausted"
-    | "non_appendable"
-    | "ignorable_append_rejection"
-    | "payload_too_large"
-    | "auth_rejected";
+  disableReason?: ConversationRunMirrorDisableReason;
 }
 
 /** State for conversation run mirror retry scheduled. */
 export interface ConversationRunMirrorRetryScheduledState {
+  outcome: "retry_scheduled";
   latestEventId: number;
   latestExternalEventSequence: number;
   pendingEventCount: number;
@@ -51,7 +58,7 @@ export interface ConversationRunMirrorHighBacklogState {
 /** Public API contract for conversation run mirror. */
 export interface ConversationRunMirror {
   enqueue(events: unknown[]): void;
-  flush(): Promise<ConversationRunMirrorSnapshot>;
+  flush(options?: { abortSignal?: AbortSignal }): Promise<ConversationRunMirrorSnapshot>;
   getSnapshot(): ConversationRunMirrorSnapshot;
   dispose(): void;
 }
@@ -101,6 +108,8 @@ export function createConversationRunMirror(input: {
   // while its last events are still queued.
   let escapedFlushFailures = 0;
   let escapedFlushError: { error: unknown } | null = null;
+  let disposed = false;
+  const lifecycleAbortController = new AbortController();
 
   function getSnapshot(): ConversationRunMirrorSnapshot {
     const snapshot = input.queueController.getSnapshot();
@@ -122,7 +131,7 @@ export function createConversationRunMirror(input: {
 
   function shouldSkipScheduledFlush(delayMs: number): boolean {
     const snapshot = getSnapshot();
-    if (snapshot.disabled || snapshot.pendingEventCount === 0) {
+    if (disposed || snapshot.disabled || snapshot.pendingEventCount === 0) {
       return true;
     }
 
@@ -139,12 +148,13 @@ export function createConversationRunMirror(input: {
 
   function shouldStartFlushLoop(): boolean {
     const snapshot = getSnapshot();
-    return !snapshot.disabled && !snapshot.inFlight && snapshot.pendingEventCount > 0;
+    return !disposed && !snapshot.disabled && !snapshot.inFlight && snapshot.pendingEventCount > 0;
   }
 
   function shouldContinueFlushLoop(): boolean {
     const snapshot = getSnapshot();
-    return !snapshot.disabled && snapshot.consecutiveFailures === 0 && !snapshot.hasRetryTimer &&
+    return !disposed && !snapshot.disabled && snapshot.consecutiveFailures === 0 &&
+      !snapshot.hasRetryTimer &&
       snapshot.pendingEventCount > 0;
   }
 
@@ -174,7 +184,7 @@ export function createConversationRunMirror(input: {
 
   function scheduleRetry(): void {
     const snapshot = getSnapshot();
-    if (snapshot.disabled || snapshot.pendingEventCount === 0) {
+    if (disposed || snapshot.disabled || snapshot.pendingEventCount === 0) {
       return;
     }
 
@@ -191,9 +201,11 @@ export function createConversationRunMirror(input: {
     });
   }
 
-  async function runFlushLoop(): Promise<void> {
+  async function runFlushLoop(abortSignal?: AbortSignal): Promise<void> {
     emitHighBacklogIfNeeded();
-    const flushed = await input.queueController.flush();
+    const flushed = await input.queueController.flush({
+      abortSignal: abortSignal ?? lifecycleAbortController.signal,
+    });
     escapedFlushFailures = 0;
     escapedFlushError = null;
 
@@ -220,12 +232,12 @@ export function createConversationRunMirror(input: {
     scheduleRetry();
   }
 
-  function startFlushLoop(): void {
+  function startFlushLoop(abortSignal?: AbortSignal): void {
     if (!shouldStartFlushLoop()) {
       return;
     }
 
-    inFlightFlush = runFlushLoop()
+    inFlightFlush = runFlushLoop(abortSignal)
       .catch((error) => {
         // The queue controller re-queues its events before rethrowing, so an
         // error escaping here (unexpected controller failure or a throwing
@@ -234,12 +246,12 @@ export function createConversationRunMirror(input: {
         // flush() rethrows it from the recorded value.
         escapedFlushFailures += 1;
         escapedFlushError = { error };
-        scheduleRetry();
+        if (!disposed) scheduleRetry();
       })
       .finally(() => {
         inFlightFlush = null;
         if (shouldContinueFlushLoop()) {
-          startFlushLoop();
+          startFlushLoop(abortSignal);
         }
       });
   }
@@ -269,7 +281,7 @@ export function createConversationRunMirror(input: {
   return {
     enqueue(events) {
       const snapshot = getSnapshot();
-      if (snapshot.disabled || events.length === 0) {
+      if (disposed || snapshot.disabled || events.length === 0) {
         return;
       }
 
@@ -282,11 +294,13 @@ export function createConversationRunMirror(input: {
 
       scheduleFlush(flushDelayMs);
     },
-    async flush() {
+    async flush(options) {
       clearFlushTimer();
       clearRetryTimer();
       const snapshot = getSnapshot();
-      if (snapshot.disabled || (snapshot.pendingEventCount === 0 && !snapshot.inFlight)) {
+      if (
+        disposed || snapshot.disabled || (snapshot.pendingEventCount === 0 && !snapshot.inFlight)
+      ) {
         return snapshot;
       }
 
@@ -294,12 +308,12 @@ export function createConversationRunMirror(input: {
       // caller's events were enqueued, and its completion can chain another
       // loop; keep draining until the queue is empty or a retry backoff or
       // stop takes over.
-      startFlushLoop();
+      startFlushLoop(options?.abortSignal);
       while (inFlightFlush !== null) {
         await inFlightFlush;
         const drained = getSnapshot();
         if (!drained.disabled && drained.pendingEventCount > 0 && !drained.hasRetryTimer) {
-          startFlushLoop();
+          startFlushLoop(options?.abortSignal);
         }
       }
 
@@ -314,8 +328,14 @@ export function createConversationRunMirror(input: {
     },
     getSnapshot,
     dispose() {
+      if (disposed) return;
+      disposed = true;
+      lifecycleAbortController.abort(
+        new DOMException("Conversation run mirror was disposed", "AbortError"),
+      );
       clearFlushTimer();
       clearRetryTimer();
+      input.queueController.dispose?.();
       // A retry scheduled after an escaped flush error is cancelled above; if
       // events are still queued they will never be flushed, so surface the
       // loss loudly instead of dropping it silently.

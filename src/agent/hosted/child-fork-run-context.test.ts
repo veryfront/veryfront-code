@@ -92,6 +92,7 @@ Deno.test("createHostedDurableChildForkRunContext wires conversation mirror and 
     inFlight: false,
     hasFlushTimer: false,
     hasRetryTimer: false,
+    appendRequestCount: 0,
   });
   assertEquals(context.streamMirrorContext.durableRunMirror, true);
   assertEquals(context.streamMirrorContext.durableMessageId, "child-message-1");

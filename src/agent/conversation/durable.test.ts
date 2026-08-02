@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import {
   appendConversationRunEvents,
   AppendConversationRunEventsError,
@@ -25,6 +26,7 @@ import {
   resolveConversationRunTargets,
   resyncConversationRunAppendCursor,
 } from "./durable.ts";
+import { createModelCallContextRunEvents } from "../hosted/model-call-context-run-event-recorder.ts";
 
 const API_URL = "https://api.example.com";
 const AUTH_TOKEN = "token-123";
@@ -102,6 +104,16 @@ function stubFetchSequence(...steps: Response[]): FetchCall[] {
 
     return next;
   });
+}
+
+function stubFetchUntilAborted(): void {
+  globalThis.fetch =
+    ((_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (!signal) throw new Error("expected request abort signal");
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      })) as typeof fetch;
 }
 
 describe("agent/durable", () => {
@@ -564,6 +576,286 @@ describe("agent/durable", () => {
     });
   });
 
+  it("forces durable event-id cursor mode for model-call context and mixed batches", async () => {
+    const [modelCallContextEvent] = await createModelCallContextRunEvents({
+      messages: [{ role: "system", content: "exact" }],
+    });
+    if (!modelCallContextEvent) throw new Error("expected model-call context event");
+    const fetchCalls = stubFetchSequence(jsonResponse({
+      latest_event_id: 8,
+      latest_external_event_sequence: 4,
+      appended_count: 2,
+      run: {
+        run_id: "run_mcc_cursor",
+        conversation_id: CONVERSATION_ID,
+        latest_event_id: 8,
+        latest_external_event_sequence: 4,
+      },
+    }, 200));
+
+    await appendConversationRunEvents({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_mcc_cursor",
+      expectedPreviousEventId: 6,
+      expectedPreviousExternalEventSequence: 99,
+      events: [{ type: "STATE_DELTA" }, modelCallContextEvent],
+    });
+
+    const body = JSON.parse(String(fetchCalls[0]?.[1]?.body));
+    assertEquals(body.expected_previous_event_id, 6);
+    assertEquals("expected_previous_external_event_sequence" in body, false);
+  });
+
+  it("rejects a mixed model-call context response without an advanced external cursor", async () => {
+    const [modelCallContextEvent] = await createModelCallContextRunEvents({
+      messages: [{ role: "system", content: "exact" }],
+    });
+    if (!modelCallContextEvent) throw new Error("expected model-call context event");
+    stubFetchSequence(jsonResponse({
+      latest_event_id: 8,
+      appended_count: 2,
+      run: {
+        run_id: "run_mcc_malformed_mixed",
+        conversation_id: CONVERSATION_ID,
+        latest_event_id: 8,
+      },
+    }, 200));
+
+    await assertRejects(
+      () =>
+        appendConversationRunEvents({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          runId: "run_mcc_malformed_mixed",
+          expectedPreviousEventId: 6,
+          expectedPreviousExternalEventSequence: 4,
+          events: [{ type: "STATE_DELTA" }, modelCallContextEvent],
+        }),
+      Error,
+    );
+  });
+
+  it("reports an append deadline as a typed timeout", async () => {
+    using time = new FakeTime();
+    stubFetchUntilAborted();
+
+    const assertion = assertRejects(
+      () =>
+        appendConversationRunEvents({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          runId: "run_mcc_timeout",
+          expectedPreviousEventId: 0,
+          expectedPreviousExternalEventSequence: 0,
+          events: [{ type: "STATE_DELTA" }],
+        }),
+      Error,
+      "Append conversation run events timed out after 15000ms",
+    );
+
+    await time.tickAsync(15_000);
+    await assertion;
+  });
+
+  it("reports a control-plane deadline as a typed timeout", async () => {
+    using time = new FakeTime();
+    stubFetchUntilAborted();
+
+    const assertion = assertRejects(
+      () =>
+        getConversationRun({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          runId: "run_lookup_timeout",
+        }),
+      Error,
+      "Read conversation durable run projection timed out after 15000ms",
+    );
+
+    await time.tickAsync(15_000);
+    await assertion;
+  });
+
+  it("fails closed without projection resync on ambiguous durable-ID replay", async () => {
+    const [event] = await createModelCallContextRunEvents({
+      messages: [{ role: "system", content: "A then B" }],
+    });
+    if (!event) throw new Error("expected model-call context event");
+    let requestCount = 0;
+    globalThis.fetch = (async () => {
+      requestCount += 1;
+      return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
+    }) as typeof fetch;
+
+    const result = await flushConversationRunEventBatches({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_mcc_ambiguous",
+      latestEventId: 6,
+      latestExternalEventSequence: 4,
+      events: [event],
+      maxEventsPerBatch: 2,
+      maxCursorResyncsPerFlush: 3,
+    });
+
+    assertEquals(result, {
+      outcome: "stopped",
+      latestEventId: 6,
+      latestExternalEventSequence: 4,
+      disableReason: "cursor_mismatch_ambiguous",
+    });
+    assertEquals(requestCount, 1);
+  });
+
+  it("accepts API-proven exact replay as an ordinary successful durable-ID append", async () => {
+    const [event] = await createModelCallContextRunEvents({
+      messages: [{ role: "system", content: "already committed" }],
+    });
+    if (!event) throw new Error("expected model-call context event");
+    stubFetchSequence(jsonResponse({
+      latest_event_id: 7,
+      appended_count: 0,
+      run: {
+        run_id: "run_mcc_replay",
+        conversation_id: CONVERSATION_ID,
+        latest_event_id: 7,
+      },
+    }, 200));
+
+    assertEquals(
+      await flushConversationRunEventBatches({
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_mcc_replay",
+        latestEventId: 6,
+        latestExternalEventSequence: 4,
+        events: [event],
+        maxEventsPerBatch: 2,
+        maxCursorResyncsPerFlush: 3,
+      }),
+      {
+        outcome: "flushed",
+        latestEventId: 7,
+        latestExternalEventSequence: 4,
+      },
+    );
+  });
+
+  it("stops an ambiguous A-B replay after response loss and an interleaved event", async () => {
+    const events = await createModelCallContextRunEvents(
+      { messages: [{ role: "system", content: "x".repeat(600) }] },
+      { singleEventByteLimit: 1, chunkEventByteLimit: 800 },
+    );
+    assertEquals(events.length, 2);
+    const committed: unknown[] = Array.from({ length: 6 }, (_, index) => ({
+      type: "EXISTING",
+      index,
+    }));
+    const requests: Array<{ expected_previous_event_id: number; events: unknown[] }> = [];
+    let runLookupCount = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(input).endsWith("/events")) {
+        runLookupCount += 1;
+        throw new Error("durable replay must not resync through the run projection");
+      }
+      const body = JSON.parse(String(init?.body)) as {
+        expected_previous_event_id: number;
+        events: unknown[];
+      };
+      requests.push(body);
+      if (body.expected_previous_event_id !== committed.length) {
+        return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
+      }
+      committed.push(...body.events);
+      throw new Error("append response lost after A and B committed");
+    }) as typeof fetch;
+    const controller = createConversationRunEventQueueController({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_mcc_interleaved_replay",
+      latestEventId: 6,
+      latestExternalEventSequence: 0,
+      maxEventsPerBatch: 2,
+    });
+    controller.enqueue(events);
+
+    assertEquals((await controller.flush()).outcome, "retry_scheduled");
+    committed.push({ type: "X", source: "interleaved writer" });
+    const retried = await controller.flush();
+    let providerDispatchCount = 0;
+    if (retried.outcome === "flushed" || retried.outcome === "idle") {
+      providerDispatchCount += 1;
+    }
+
+    assertEquals(retried, {
+      outcome: "stopped",
+      latestEventId: 6,
+      latestExternalEventSequence: 0,
+      pendingEventCount: 0,
+      consecutiveFailures: 1,
+      disabled: true,
+      disableReason: "cursor_mismatch_ambiguous",
+    });
+    assertEquals(requests.length, 2);
+    assertEquals(requests[0]?.events, events);
+    assertEquals(requests[1]?.events, events);
+    assertEquals(committed.slice(6), [...events, { type: "X", source: "interleaved writer" }]);
+    assertEquals(runLookupCount, 0);
+    assertEquals(providerDispatchCount, 0);
+  });
+
+  it("persists the exact 32-part maximum in 16 requests and never starts request 17", async () => {
+    const events = await createModelCallContextRunEvents(
+      { messages: [{ role: "system", content: "x".repeat(4 * 1024 * 1024 - 128) }] },
+      { singleEventByteLimit: 1, chunkEventByteLimit: 132 * 1024 },
+    );
+    assertEquals(events.length, 32);
+    let requestCount = 0;
+    let latestEventId = 0;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestCount += 1;
+      if (requestCount === 17) {
+        throw new Error("request 17 is impossible for the maximum supported context");
+      }
+      const body = JSON.parse(String(init?.body)) as { events: unknown[] };
+      assertEquals(body.events.length, 2);
+      latestEventId += body.events.length;
+      return jsonResponse({
+        latest_event_id: latestEventId,
+        latest_external_event_sequence: 0,
+        appended_count: body.events.length,
+        run: {
+          run_id: "run_mcc_bounded",
+          conversation_id: CONVERSATION_ID,
+          latest_event_id: latestEventId,
+          latest_external_event_sequence: 0,
+        },
+      }, 200);
+    }) as typeof fetch;
+
+    const result = await flushConversationRunEventBatches({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_mcc_bounded",
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+      events,
+      maxEventsPerBatch: 2,
+      maxCursorResyncsPerFlush: 3,
+    });
+    assertEquals(result.outcome, "flushed");
+    assertEquals(requestCount, 16);
+  });
+
   it("flushes conversation run event batches and returns the final cursors", async () => {
     stubFetchSequence(
       jsonResponse(
@@ -839,6 +1131,7 @@ describe("agent/durable", () => {
       pendingEventCount: 2,
       consecutiveFailures: 0,
       disabled: false,
+      appendRequestCount: 0,
     });
 
     const result = await controller.flush();
@@ -857,6 +1150,7 @@ describe("agent/durable", () => {
       pendingEventCount: 0,
       consecutiveFailures: 0,
       disabled: false,
+      appendRequestCount: 2,
     });
   });
 
@@ -914,6 +1208,8 @@ describe("agent/durable", () => {
       pendingEventCount: 0,
       consecutiveFailures: 0,
       disabled: true,
+      appendRequestCount: 1,
+      disableReason: "auth_rejected",
     });
 
     const stopController = createConversationRunEventQueueController({
@@ -959,6 +1255,8 @@ describe("agent/durable", () => {
       pendingEventCount: 0,
       consecutiveFailures: 0,
       disabled: true,
+      appendRequestCount: 1,
+      disableReason: "non_appendable",
     });
   });
 
@@ -1007,6 +1305,7 @@ describe("agent/durable", () => {
       pendingEventCount: 2,
       consecutiveFailures: 1,
       disabled: false,
+      appendRequestCount: 1,
     });
   });
 
@@ -1046,6 +1345,7 @@ describe("agent/durable", () => {
       pendingEventCount: 2,
       consecutiveFailures: 0,
       disabled: false,
+      appendRequestCount: 1,
     });
   });
 
