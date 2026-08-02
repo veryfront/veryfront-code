@@ -525,7 +525,6 @@ function createFreshDefaults(): Partial<VeryfrontConfig> {
         ttl: undefined,
         maxEntries: DEFAULT_RENDER_CACHE_MAX_ENTRIES,
         kvPath: undefined,
-        keyPrefix: undefined,
       },
     },
     dev: {

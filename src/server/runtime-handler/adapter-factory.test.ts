@@ -2,6 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import { resolveAdapter } from "./adapter-factory.ts";
 import { defaultDiscoveryCache, ProjectDiscoveryCache } from "./local-project-discovery.ts";
@@ -10,6 +12,30 @@ const localProjectCache = defaultDiscoveryCache.projects;
 const localAdapterCache = defaultDiscoveryCache.adapters;
 
 const encoder = new TextEncoder();
+
+async function preparePreviewHostedConfigContext() {
+  return {
+    sourceContext: { productionMode: false, branch: "main" } as const,
+    preparedContext: await prepareDeclarativeConfigContext({
+      environmentName: "preview",
+      environment: {},
+    }),
+  };
+}
+
+async function prepareProductionHostedConfigContext() {
+  return {
+    sourceContext: {
+      productionMode: true,
+      releaseId: "rel-1",
+      environmentName: "staging",
+    } as const,
+    preparedContext: await prepareDeclarativeConfigContext({
+      environmentName: "staging",
+      environment: {},
+    }),
+  };
+}
 
 function encodePem(label: string, der: ArrayBuffer): string {
   const base64 = btoa(String.fromCharCode(...new Uint8Array(der)));
@@ -98,7 +124,10 @@ function createMockAdapter(
       writableFs: true,
     },
     fs: {
-      readFile: async () => "",
+      readFile: (path: string) =>
+        path in files
+          ? Promise.resolve("")
+          : Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`)),
       writeFile: async () => {},
       exists: async (path: string) => path in files,
       readDir: async function* () {},
@@ -206,6 +235,7 @@ describe("adapter-factory", () => {
         allowIframeEmbed: false,
       },
       isProxyMode: true,
+      prepareHostedConfigContext: preparePreviewHostedConfigContext,
     });
 
     assertEquals(result.isLocalProject, true);
@@ -242,6 +272,7 @@ describe("adapter-factory", () => {
         allowIframeEmbed: false,
       },
       isProxyMode: true,
+      prepareHostedConfigContext: preparePreviewHostedConfigContext,
     });
 
     // The attacker-supplied path must not be adopted as the project root.
@@ -322,6 +353,7 @@ describe("adapter-factory", () => {
         allowIframeEmbed: false,
       },
       isProxyMode: true,
+      prepareHostedConfigContext: preparePreviewHostedConfigContext,
     });
 
     assertEquals(result.isLocalProject, true);
@@ -519,6 +551,7 @@ describe("adapter-factory", () => {
       },
       isProxyMode: true,
       cache,
+      prepareHostedConfigContext: preparePreviewHostedConfigContext,
     });
 
     assertEquals(result.isLocalProject, true);
@@ -628,10 +661,18 @@ describe("adapter-factory", () => {
           token: string,
           fn: () => Promise<unknown>,
           projectId?: string,
-          opts?: unknown,
+          opts?: {
+            productionMode?: boolean;
+            releaseId?: string | null;
+            branch?: string | null;
+            environmentName?: string | null;
+          },
         ) => {
           calls.runWithContext = [slug, token, projectId, opts];
-          return fn();
+          return runWithRequestContext(
+            { projectSlug: slug, token, projectId, ...opts },
+            fn,
+          );
         },
       };
       return {
@@ -640,41 +681,45 @@ describe("adapter-factory", () => {
       };
     }
 
-    it("enters proxy mode config path when isProxyMode + slug + token", async () => {
+    it("binds authenticated production source context to hosted config", async () => {
       const { adapter, calls } = createExtendedMockAdapter();
 
-      // Proxy mode with slug + token enters the config loading path.
-      // getConfig will either succeed (returning config) or throw (re-thrown in proxy mode).
-      let threw = false;
-      try {
-        await resolveAdapter({
-          projectDir: "/base/project",
-          adapter,
-          config: undefined,
-          projectSlug: "proxy-slug",
-          projectId: "proj_proxy",
-          proxyToken: "tok-123",
-          releaseId: "rel-1",
-          proxyEnv: "production",
-          branch: "main",
-          environmentName: "staging",
-          parsedDomain: {
-            slug: null,
-            branch: null,
-            environment: null,
-            isVeryfrontDomain: false,
-            isDraft: false,
-            allowIframeEmbed: false,
-          },
-          req: await makeReq(),
-          isProxyMode: true,
-        });
-      } catch {
-        threw = true;
-      }
+      const result = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "proxy-slug",
+        projectId: "proj_proxy",
+        proxyToken: "tok-123",
+        releaseId: "rel-1",
+        proxyEnv: "production",
+        branch: "main",
+        environmentName: "staging",
+        parsedDomain: {
+          slug: null,
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req: await makeReq(),
+        isProxyMode: true,
+        prepareHostedConfigContext: prepareProductionHostedConfigContext,
+      });
 
-      // Verify the proxy config path was entered: runWithContext should have been called
-      assertEquals(calls.runWithContext !== undefined || threw, true);
+      assertEquals(result.config?.title, "Veryfront App");
+      assertEquals(calls.runWithContext, [
+        "proxy-slug",
+        "tok-123",
+        "proj_proxy",
+        {
+          productionMode: true,
+          releaseId: "rel-1",
+          branch: undefined,
+          environmentName: "staging",
+        },
+      ]);
     });
 
     it("refreshes mutable source before loading proxy config", async () => {
@@ -691,17 +736,30 @@ describe("adapter-factory", () => {
           _slug: string,
           _token: string,
           fn: () => Promise<unknown>,
-        ) => fn(),
+          projectId?: string,
+          opts?: {
+            productionMode?: boolean;
+            releaseId?: string | null;
+            branch?: string | null;
+            environmentName?: string | null;
+          },
+        ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
         ensureSourceSnapshotFresh: () => {
           sourceFresh = true;
           return Promise.resolve();
         },
         readFile: (path: string) => {
           if (path !== "/veryfront.config.ts") {
-            return Promise.reject(new Error(`Not found: ${path}`));
+            return Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
           }
           return Promise.resolve(
-            `export default { router: "${sourceFresh ? "pages" : "app"}" };`,
+            `
+              import { defineConfigWithEnv, getEnv } from "veryfront";
+              export default defineConfigWithEnv((environmentName) => ({
+                router: "${sourceFresh ? "pages" : "app"}",
+                title: environmentName + ":" + getEnv("TENANT"),
+              }));
+            `,
           );
         },
       };
@@ -728,10 +786,18 @@ describe("adapter-factory", () => {
         },
         req: await makeReq(),
         isProxyMode: true,
+        prepareHostedConfigContext: async () => ({
+          sourceContext: { productionMode: false, branch: "main" },
+          preparedContext: await prepareDeclarativeConfigContext({
+            environmentName: "preview",
+            environment: { TENANT: "tenant-value" },
+          }),
+        }),
       });
 
       assertEquals(sourceFresh, true);
       assertEquals(result.config?.router, "pages");
+      assertEquals(result.config?.title, "preview:tenant-value");
     });
 
     it("re-throws config loading errors in proxy mode", async () => {
@@ -772,6 +838,7 @@ describe("adapter-factory", () => {
             },
             req,
             isProxyMode: true,
+            prepareHostedConfigContext: preparePreviewHostedConfigContext,
           }),
         Error,
         "proxy config fail",
@@ -871,6 +938,18 @@ describe("adapter-factory", () => {
             req,
             pathname: "/api/control-plane/runs/run_1/execute",
             isProxyMode: true,
+            prepareHostedConfigContext: async () => ({
+              ...(await prepareProductionHostedConfigContext()),
+              sourceContext: {
+                productionMode: true,
+                releaseId: "rel-stale",
+                environmentName: "production",
+              },
+              preparedContext: await prepareDeclarativeConfigContext({
+                environmentName: "production",
+                environment: {},
+              }),
+            }),
           }),
         Error,
         "execute config fail",

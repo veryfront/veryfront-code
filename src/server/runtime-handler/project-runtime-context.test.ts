@@ -53,7 +53,10 @@ function createMockAdapter(
       writableFs: true,
     },
     fs: {
-      readFile: async () => "",
+      readFile: (path: string) =>
+        path in files
+          ? Promise.resolve("")
+          : Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`)),
       writeFile: async () => {},
       exists: async (path: string) => path in files,
       readDir: async function* () {},
@@ -650,19 +653,31 @@ describe("resolveProjectRuntimeContext", () => {
     const adapter = createMockAdapter({
       "/attacker/chosen/path": { isDirectory: true },
       "/attacker/chosen/path/app": { isDirectory: true },
+      "/base/project/veryfront.config.ts": { isDirectory: false, isFile: true },
     });
+    adapter.fs.readFile = (path: string) =>
+      path === "/base/project/veryfront.config.ts"
+        ? Promise.resolve(`
+          import { defineConfigWithEnv, getEnv } from "veryfront";
+          export default defineConfigWithEnv((environmentName) => ({
+            title: environmentName + ":" + getEnv("TENANT"),
+          }));
+        `)
+        : Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
     defaultDiscoveryCache.adapters.set("/attacker/chosen/path", adapter);
     const req = new Request("http://localhost/page", {
       headers: {
         "x-project-slug": "remote-project",
         "x-project-id": "proj-remote",
         "x-token": "proxy-token",
+        "x-environment-id": "env-remote",
         "x-project-path": "/attacker/chosen/path",
       },
     });
     const url = new URL(req.url);
     const headers = extractRequestHeaders(req, url, false);
 
+    let envLoadCount = 0;
     const result = await resolveProjectRuntimeContext(makeRuntimeContextInput({
       req,
       url,
@@ -679,11 +694,20 @@ describe("resolveProjectRuntimeContext", () => {
         proxyEnv: "preview",
         parsedDomain: defaultParsedDomain,
       },
+      envVarCache: {
+        get: () => {
+          envLoadCount += 1;
+          return Promise.resolve({ TENANT: "tenant-value" });
+        },
+      },
     }));
 
+    assertEquals(envLoadCount, 1);
     assertEquals(result.adapter.isLocalProject, false);
     assertEquals(result.adapter.projectDir, "/base/project");
     assertEquals(defaultDiscoveryCache.projects.has("remote-project"), false);
+    assertEquals(result.handlerContext?.config?.title, "preview:tenant-value");
+    assertEquals(result.rawEnvVars, { TENANT: "tenant-value" });
   });
 
   it("returns production 404 responses and standalone synthetic fallback from environment resolution", async () => {
