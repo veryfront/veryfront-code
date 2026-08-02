@@ -3,10 +3,91 @@ import { describe, it } from "#veryfront/testing/bdd";
 import {
   buildProxyAuthRedirectUrl,
   checkProtectedProxyAccess,
+  extractUserIdFromToken,
   isProjectMember,
 } from "./proxy-access-control.ts";
+import { register, reset } from "../extensions/contracts.ts";
+import type { AuthProvider } from "../extensions/auth/index.ts";
+
+function createAuthProvider(userId: string): AuthProvider {
+  const payload = { sub: userId, userId };
+  return {
+    sign: () => Promise.resolve("signed"),
+    verify: () => Promise.resolve(payload),
+    verifyWithJwks: () => Promise.resolve(payload),
+    verifyWithPublicKey: () => Promise.resolve(payload),
+    decode: () => ({ alg: "HS256" }),
+  };
+}
 
 describe("proxy/proxy-access-control", () => {
+  it("resolves the current AuthProvider contract after registry replacement", async () => {
+    const previousSecret = Deno.env.get("JWT_SECRET");
+    Deno.env.set("JWT_SECRET", "test-secret");
+    try {
+      register<AuthProvider>("AuthProvider", createAuthProvider("first-user"));
+      assertEquals(
+        await extractUserIdFromToken(
+          "first-token",
+          "https://api.example.com",
+        ),
+        "first-user",
+      );
+
+      register<AuthProvider>("AuthProvider", createAuthProvider("second-user"));
+      assertEquals(
+        await extractUserIdFromToken(
+          "second-token",
+          "https://api.example.com",
+        ),
+        "second-user",
+      );
+    } finally {
+      reset();
+      if (previousSecret === undefined) Deno.env.delete("JWT_SECRET");
+      else Deno.env.set("JWT_SECRET", previousSecret);
+    }
+  });
+
+  it("contains decode failures and never invokes verified payload accessors", async () => {
+    let userIdReads = 0;
+    const provider = createAuthProvider("unused");
+    provider.decode = () => {
+      throw new Error("malformed token");
+    };
+    register<AuthProvider>("AuthProvider", provider);
+    assertEquals(
+      await extractUserIdFromToken("bad-token", "https://api.example.com"),
+      undefined,
+    );
+
+    provider.decode = () => ({ alg: "HS256" });
+    provider.verify = () => {
+      const payload = { sub: "user" };
+      Object.defineProperty(payload, "userId", {
+        enumerable: true,
+        get() {
+          userIdReads += 1;
+          return "attacker";
+        },
+      });
+      return Promise.resolve(payload);
+    };
+    const previousSecret = Deno.env.get("JWT_SECRET");
+    Deno.env.set("JWT_SECRET", "test-secret");
+    try {
+      assertEquals(
+        await extractUserIdFromToken("token", "https://api.example.com"),
+        undefined,
+      );
+      assertEquals(userIdReads, 0);
+    } finally {
+      reset();
+      if (previousSecret === undefined) Deno.env.delete("JWT_SECRET");
+      else Deno.env.set("JWT_SECRET", previousSecret);
+    }
+  });
+
   it("builds sign-in redirect URLs without allowing protocol-relative return paths", () => {
     assertEquals(
       buildProxyAuthRedirectUrl(new URL("https://app.preview.veryfront.com//evil.com?a=1")),
@@ -36,7 +117,6 @@ describe("proxy/proxy-access-control", () => {
 
     assertEquals(
       await checkProtectedProxyAccess({
-        req,
         url,
         matchingEnv: { name: "preview", protected: false },
         userToken: undefined,
@@ -49,7 +129,6 @@ describe("proxy/proxy-access-control", () => {
     );
     assertEquals(
       await checkProtectedProxyAccess({
-        req,
         url,
         matchingEnv: { name: "preview", protected: true },
         userToken: undefined,
@@ -70,7 +149,6 @@ describe("proxy/proxy-access-control", () => {
 
     assertEquals(
       await checkProtectedProxyAccess({
-        req,
         url,
         matchingEnv,
         userToken: undefined,
@@ -88,7 +166,6 @@ describe("proxy/proxy-access-control", () => {
 
     assertEquals(
       await checkProtectedProxyAccess({
-        req,
         url,
         matchingEnv,
         userToken: "invalid-token",
@@ -106,7 +183,6 @@ describe("proxy/proxy-access-control", () => {
 
     assertEquals(
       await checkProtectedProxyAccess({
-        req,
         url,
         matchingEnv,
         userToken: "user-token",
@@ -120,7 +196,6 @@ describe("proxy/proxy-access-control", () => {
 
     assertEquals(
       await checkProtectedProxyAccess({
-        req,
         url,
         matchingEnv,
         userToken: "user-token",

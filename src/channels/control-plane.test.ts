@@ -12,6 +12,7 @@ import {
   resolveAgentSkills,
   RuntimeAgentListResponseSchema,
   verifyControlPlaneJws,
+  verifyControlPlaneJwsSignature,
 } from "./control-plane.ts";
 
 const encoder = new TextEncoder();
@@ -211,6 +212,67 @@ describe("channels/control-plane", () => {
           publicKeyPem,
           maxAgeSeconds: 60,
         })
+      );
+    });
+  });
+
+  describe("verifyControlPlaneJwsSignature", () => {
+    it("accepts an authentic, fresh control-plane signature", async () => {
+      const { jws, publicKeyPem } = await createControlPlaneSignature("ignored body");
+
+      assertEquals(
+        await verifyControlPlaneJwsSignature(jws, {
+          publicKeyPem,
+          maxAgeSeconds: 60,
+        }),
+        true,
+      );
+    });
+
+    it("rejects stale, future, forged, and malformed signatures", async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const stale = await createControlPlaneSignature("ignored body", {
+        iat: now - 120,
+        exp: now + 60,
+      });
+      const future = await createControlPlaneSignature("ignored body", {
+        iat: now + 30,
+        exp: now + 90,
+      });
+      const valid = await createControlPlaneSignature("ignored body");
+      const signatureStart = valid.jws.lastIndexOf(".") + 1;
+      const signature = valid.jws.slice(signatureStart);
+      const forged = `${valid.jws.slice(0, signatureStart)}${
+        signature.startsWith("A") ? "B" : "A"
+      }${signature.slice(1)}`;
+
+      for (
+        const { jws, publicKeyPem } of [
+          stale,
+          future,
+          { jws: forged, publicKeyPem: valid.publicKeyPem },
+          { jws: "not-a-jws", publicKeyPem: valid.publicKeyPem },
+        ]
+      ) {
+        assertEquals(
+          await verifyControlPlaneJwsSignature(jws, {
+            publicKeyPem,
+            maxAgeSeconds: 60,
+          }),
+          false,
+        );
+      }
+    });
+
+    it("rejects invalid freshness policies", async () => {
+      const { jws, publicKeyPem } = await createControlPlaneSignature("ignored body");
+
+      assertEquals(
+        await verifyControlPlaneJwsSignature(jws, {
+          publicKeyPem,
+          maxAgeSeconds: Number.NaN,
+        }),
+        false,
       );
     });
   });

@@ -36,6 +36,7 @@ describe("serve-split command", () => {
 
       assertEquals(env.VERYFRONT_TRUST_FORWARDED_HEADERS, "1");
       assertEquals(env.VERYFRONT_SERVER_URL, "http://localhost:3000");
+      assertEquals(env.CACHE_TYPE, undefined);
     });
   });
 

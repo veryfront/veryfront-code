@@ -14,7 +14,13 @@ describe("LRUCache", () => {
   });
 
   function createCache<K, V>(
-    options?: { maxEntries?: number; ttlMs?: number; cleanupIntervalMs?: number },
+    options?: {
+      maxEntries?: number;
+      maxSizeBytes?: number;
+      ttlMs?: number;
+      cleanupIntervalMs?: number;
+      estimateSizeOf?: (value: V) => number;
+    },
   ): LRUCache<K, V> {
     const cache = new LRUCache<K, V>(options);
     caches.push(cache);
@@ -120,6 +126,20 @@ describe("LRUCache", () => {
   });
 
   describe("LRU eviction", () => {
+    it("uses the configured value-size estimator for byte-bound eviction", (): void => {
+      const cache = createCache<string, { retainedBytes: number }>({
+        maxEntries: 3,
+        maxSizeBytes: 10,
+        estimateSizeOf: (value) => value.retainedBytes,
+      });
+
+      cache.set("a", { retainedBytes: 6 });
+      cache.set("b", { retainedBytes: 6 });
+
+      assertEquals(cache.get("a"), undefined);
+      assertEquals(cache.get("b"), { retainedBytes: 6 });
+    });
+
     it("prune respects maxEntries (LRU order)", async (): Promise<void> => {
       const cache = createCache<string, number>({ maxEntries: 2, ttlMs: 1000 });
 

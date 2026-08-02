@@ -1,13 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals } from "#veryfront/testing/assert";
+import {
+  assertEquals,
+  assertNotEquals,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
-import {
-  __resetCachedAuthProviderForTests,
-  createProxyHandler,
-  injectContextHeaders,
-  type ProxyContext,
-} from "./handler.ts";
+import { createProxyHandler, injectContextHeaders, type ProxyContext } from "./handler.ts";
 import { register, reset } from "../extensions/contracts.ts";
 import type { AuthProvider, TokenHeader, TokenPayload } from "../extensions/auth/index.ts";
 
@@ -227,7 +227,7 @@ function createRecordingLogger() {
       warn(message: string, extra?: Record<string, unknown>) {
         entries.push({ level: "warn", message, extra });
       },
-      error(message: string, _error?: Error, extra?: Record<string, unknown>) {
+      error(message: string, _error?: unknown, extra?: Record<string, unknown>) {
         entries.push({ level: "error", message, extra });
       },
     },
@@ -261,17 +261,42 @@ function forgeRs256Token(kid: string, userId: string): string {
 
 beforeEach(() => {
   reset();
-  __resetCachedAuthProviderForTests();
   jwksVerifiers.clear();
   register<AuthProvider>("AuthProvider", createMockAuthProvider({ jwksVerifiers }));
 });
 
 afterEach(() => {
   reset();
-  __resetCachedAuthProviderForTests();
 });
 
 describe("Proxy Handler", () => {
+  it("rejects invalid routing cache configuration at construction", () => {
+    const previous = Deno.env.get("VERYFRONT_PROXY_ROUTING_CACHE_MAX_ENTRIES");
+    Deno.env.set("VERYFRONT_PROXY_ROUTING_CACHE_MAX_ENTRIES", "10001");
+    try {
+      assertThrows(
+        () =>
+          createProxyHandler({
+            config: {
+              apiBaseUrl: "https://api.example.com",
+              apiClientId: "",
+              apiClientSecret: "",
+              previewApiClientId: "",
+              previewApiClientSecret: "",
+            },
+          }),
+        RangeError,
+        "cannot exceed 10000",
+      );
+    } finally {
+      if (previous === undefined) {
+        Deno.env.delete("VERYFRONT_PROXY_ROUTING_CACHE_MAX_ENTRIES");
+      } else {
+        Deno.env.set("VERYFRONT_PROXY_ROUTING_CACHE_MAX_ENTRIES", previous);
+      }
+    }
+  });
+
   it("uses a pre-parsed request URL when provided", async () => {
     const handler = createProxyHandler({
       config: {
@@ -317,6 +342,7 @@ describe("Proxy Handler", () => {
         const { pathname } = new URL(req.url);
 
         if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/-/")) return createNotFoundResponse();
 
         if (pathname.startsWith("/projects/")) {
           return Response.json({
@@ -348,6 +374,101 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.error, undefined);
         assertEquals(ctx.token, "test-token");
 
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("fails closed when routing metadata has an operational failure", async () => {
+      let fullProjectLookups = 0;
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          return new Response("Unavailable", { status: 503 });
+        }
+        if (pathname.startsWith("/projects/")) {
+          fullProjectLookups++;
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              active_release_id: "rel-123",
+            }],
+          });
+        }
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+        const ctx = await handler.processRequest(
+          new Request("http://example.com/page", {
+            headers: { host: "example.com" },
+          }),
+        );
+
+        assertEquals(ctx.error?.status, 502);
+        assertEquals(ctx.error?.message, "Proxy routing metadata request was rejected");
+        assertEquals(fullProjectLookups, 0);
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("fails closed when access metadata omits its protection decision", async () => {
+      let fullProjectLookups = 0;
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              active_release_id: "rel-123",
+            }],
+          });
+        }
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+            }],
+          });
+        }
+        if (pathname.startsWith("/projects/")) {
+          fullProjectLookups++;
+          return createNotFoundResponse();
+        }
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+        const ctx = await handler.processRequest(
+          new Request("http://example.com/page", {
+            headers: { host: "example.com" },
+          }),
+        );
+
+        assertEquals(ctx.error?.status, 502);
+        assertEquals(ctx.error?.message, "Proxy access metadata returned an invalid response");
+        assertEquals(fullProjectLookups, 0);
         await handler.close();
       } finally {
         await server.shutdown();
@@ -693,6 +814,93 @@ describe("Proxy Handler", () => {
         await handler.close();
       } finally {
         releaseFirstLookup();
+        await server.shutdown();
+      }
+    });
+
+    it("detaches an aborted caller without cancelling its shared routing lookup", async () => {
+      let routingLookups = 0;
+      let releaseLookup!: () => void;
+      let markLookupStarted!: () => void;
+      let markLookupJoined!: () => void;
+      const lookupStarted = new Promise<void>((resolve) => {
+        markLookupStarted = resolve;
+      });
+      const lookupJoined = new Promise<void>((resolve) => {
+        markLookupJoined = resolve;
+      });
+      const lookupRelease = new Promise<void>((resolve) => {
+        releaseLookup = resolve;
+      });
+      const { logger } = createRecordingLogger();
+      const recordDebug = logger.debug;
+      logger.debug = (message, extra) => {
+        recordDebug(message, extra);
+        if (message === "Proxy routing metadata lookup joined in-flight request") {
+          markLookupJoined();
+        }
+      };
+
+      const { server, port } = createMockServer(async (req: Request) => {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
+          markLookupStarted();
+          await lookupRelease;
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              active_release_id: null,
+            }],
+          });
+        }
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              protected: false,
+            }],
+          });
+        }
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port, "", logger);
+        const url = "http://my-project.staging.veryfront.com/page";
+        const headers = { host: "my-project.staging.veryfront.com" };
+        const owner = handler.processRequest(new Request(url, { headers }));
+        await lookupStarted;
+
+        const controller = new AbortController();
+        const joined = handler.processRequest(
+          new Request(url, { headers, signal: controller.signal }),
+        );
+        await lookupJoined;
+        controller.abort(new Error("joined request aborted"));
+
+        const error = await assertRejects(
+          () => joined,
+          Error,
+          "joined request aborted",
+        );
+        assertEquals(error, controller.signal.reason);
+        assertEquals(routingLookups, 1);
+
+        releaseLookup();
+        assertEquals((await owner).error?.status, 404);
+        assertEquals(routingLookups, 1);
+        await handler.close();
+      } finally {
+        releaseLookup();
         await server.shutdown();
       }
     });
@@ -1634,6 +1842,8 @@ describe("Proxy Handler", () => {
           return createTokenResponse();
         }
 
+        if (pathname.startsWith("/projects/-/")) return createNotFoundResponse();
+
         if (pathname.startsWith("/projects/")) {
           return Response.json({
             id: "proj-123",
@@ -1723,6 +1933,7 @@ describe("Proxy Handler", () => {
     });
 
     it("falls back to the request URL host when the Host header is absent", async () => {
+      const localPath = Deno.cwd();
       const handler = createProxyHandler({
         config: {
           apiBaseUrl: "http://localhost:9999",
@@ -1731,7 +1942,7 @@ describe("Proxy Handler", () => {
           previewApiClientId: "",
           previewApiClientSecret: "",
           localProjects: {
-            "my-project": ".",
+            "my-project": localPath,
           },
         },
       });
@@ -1742,7 +1953,7 @@ describe("Proxy Handler", () => {
 
       assertEquals(ctx.projectSlug, "my-project");
       assertEquals(ctx.environment, "preview");
-      assertEquals(ctx.localPath, ".");
+      assertEquals(ctx.localPath, localPath);
       assertEquals(ctx.error, undefined);
 
       await handler.close();
@@ -2589,6 +2800,42 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.error?.message, "Preview project not found");
         assertEquals(ctx.error?.slug, "project-not-found");
 
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("returns 404 when a project has no preview environment", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "production-only",
+            environments: [{
+              id: "env-production",
+              name: "production",
+              active_release_id: "rel-123",
+              protected: false,
+            }],
+          });
+        }
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+        const ctx = await handler.processRequest(
+          new Request("http://production-only.preview.veryfront.com/page", {
+            headers: { host: "production-only.preview.veryfront.com" },
+          }),
+        );
+
+        assertEquals(ctx.error?.status, 404);
+        assertEquals(ctx.error?.message, "Preview project not found");
         await handler.close();
       } finally {
         await server.shutdown();

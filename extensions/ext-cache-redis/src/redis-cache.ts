@@ -34,7 +34,6 @@ export interface RedisTokenCacheStoreOptions {
   password?: string;
   username?: string;
 }
-
 /** Minimal logger surface; satisfies the `ExtensionLogger` shape. */
 export interface RedisCacheLogger {
   debug(message: string, ...args: unknown[]): void;
@@ -222,7 +221,7 @@ export class RedisTokenCacheStore implements TokenCacheStore {
       });
     }
 
-    return { hits: this.hits, misses: this.misses, size, type: "redis" as const };
+    return { hits: this.hits, misses: this.misses, size, type: "extension" as const };
   }
 
   async close(): Promise<void> {

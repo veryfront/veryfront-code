@@ -13,8 +13,7 @@
  * - VERYFRONT_SERVER_URL: URL of the production server service
  * - VERYFRONT_PROXY_URL: Optional proxy bind URL (e.g. http://0.0.0.0:8080)
  * - LOCAL_PROJECTS: JSON map of slug → filesystem path (for dev)
- * - CACHE_TYPE: "memory" (default) or "redis"
- * - REDIS_URL: Redis connection URL (required if CACHE_TYPE=redis)
+ * - CACHE_TYPE: "memory" (default) or "extension"
  * - VERYFRONT_PROXY_EXPECTED_REPLICAS: Minimum proxy replicas required to acknowledge routing changes
  * - VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET: HMAC secret for Redis routing events and acknowledgements
  * - VERYFRONT_API_INTERNAL_URL: API URL for internal endpoints (falls back to VERYFRONT_PROXY_API_BASE_URL)
@@ -54,7 +53,7 @@ import {
 } from "./tracing.ts";
 import { proxyLogger, runWithProxyRequestContext } from "./logger.ts";
 import { getProxyFailureLogLevel } from "./log-noise.ts";
-import { RendererRouter } from "./renderer-router.ts";
+import { createRendererRouterFromEnvironment } from "./renderer-router.ts";
 import { ServerResolver } from "./server-resolver.ts";
 import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isProduction } from "#veryfront/platform/environment.ts";
@@ -141,15 +140,7 @@ if (!serverUrlFromEnv && isProduction()) {
 }
 const PRODUCTION_SERVER_URL = serverUrlFromEnv || "http://localhost:3001";
 
-const discoveryHost = getEnv("VERYFRONT_SERVER_DISCOVERY_HOST");
-const staticTargets = getEnv("VERYFRONT_SERVER_TARGETS");
-const rendererRouter = (discoveryHost || staticTargets)
-  ? new RendererRouter(
-    discoveryHost || "static-targets",
-    PRODUCTION_SERVER_URL,
-    parseInt(getEnv("VERYFRONT_SERVER_DISCOVERY_INTERVAL_MS") || "15000") || 15_000,
-  )
-  : null;
+const rendererRouter = createRendererRouterFromEnvironment(PRODUCTION_SERVER_URL);
 
 // Dedicated server resolver: routes environments to their dedicated server if assigned
 const apiInternalUrl = getEnv("VERYFRONT_API_INTERNAL_URL") || config.apiBaseUrl;
@@ -216,7 +207,7 @@ const routingInvalidationLogger = {
   debug: (msg: string, extra?: Record<string, unknown>) => proxyLogger.debug(msg, extra),
   info: (msg: string, extra?: Record<string, unknown>) => proxyLogger.info(msg, extra),
   warn: (msg: string, extra?: Record<string, unknown>) => proxyLogger.warn(msg, extra),
-  error: (msg: string, error?: Error, extra?: Record<string, unknown>) =>
+  error: (msg: string, error?: unknown, extra?: Record<string, unknown>) =>
     proxyLogger.error(msg, extra ?? {}, error),
 };
 const proxyHandler = createProxyHandler({
@@ -750,7 +741,7 @@ async function router(req: Request): Promise<Response> {
     } else if (url.pathname.startsWith("/_vf/api/")) {
       response = await handleApiProxy(req, url);
     } else if (isReleaseAssetPath(url.pathname)) {
-      response = await handleReleaseAssetRequest(url, { apiBaseUrl: config.apiBaseUrl }) ??
+      response = await handleReleaseAssetRequest(req, url, { apiBaseUrl: config.apiBaseUrl }) ??
         await forwardToServer(req, url);
     } else {
       response = await forwardToServer(req, url);

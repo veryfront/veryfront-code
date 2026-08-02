@@ -6,7 +6,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * Verifies: Combined mode and split mode produce identical header values
  * for the same input request.
  */
-import { assertEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
   createProxyHandler,
@@ -266,6 +266,109 @@ describe("Proxy-Renderer Mode Parity", () => {
       assertEquals(headers["x-branch-name"], "feature-branch");
       assertEquals(injected.headers.get("accept"), "text/html");
     });
+
+    it("preserves request cancellation in the injected request", () => {
+      const controller = new AbortController();
+      const original = new Request("http://proj.preview.veryfront.com/page", {
+        signal: controller.signal,
+      });
+      const injected = injectContextHeaders(original, {
+        projectSlug: "proj",
+        environment: "preview",
+        contentSourceId: "preview-main",
+        host: "proj.preview.veryfront.com",
+        parsedDomain: {
+          slug: "proj",
+          isVeryfrontDomain: true,
+          environment: "preview",
+          branch: null,
+          isDraft: true,
+          allowIframeEmbed: true,
+        },
+        isLocalProject: false,
+      });
+
+      controller.abort(new Error("client disconnected"));
+
+      assertEquals(injected.signal.aborted, true);
+      assertEquals(
+        injected.signal.reason instanceof Error
+          ? injected.signal.reason.message
+          : injected.signal.reason,
+        "client disconnected",
+      );
+    });
+
+    it("forwards a streaming body without changing its ownership", async () => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("streamed body"));
+          controller.close();
+        },
+      });
+      const original = new Request(
+        "http://proj.preview.veryfront.com/upload",
+        {
+          method: "POST",
+          body,
+          duplex: "half",
+        } as RequestInit & { duplex: "half" },
+      );
+
+      const injected = injectContextHeaders(original, {
+        projectSlug: "proj",
+        environment: "preview",
+        contentSourceId: "preview-main",
+        host: "proj.preview.veryfront.com",
+        parsedDomain: {
+          slug: "proj",
+          isVeryfrontDomain: true,
+          environment: "preview",
+          branch: null,
+          isDraft: true,
+          allowIframeEmbed: true,
+        },
+        isLocalProject: false,
+      });
+
+      assertStrictEquals(injected.body, original.body);
+      assertEquals(await injected.text(), "streamed body");
+    });
+  });
+
+  it("strips hop-by-hop and Connection-owned request headers", () => {
+    const req = new Request("https://example.com/", {
+      headers: {
+        Connection: "keep-alive, x-remove-me",
+        "Keep-Alive": "timeout=5",
+        "Proxy-Authorization": "Basic secret",
+        "Transfer-Encoding": "chunked",
+        "X-Remove-Me": "connection-owned",
+        "X-Preserve-Me": "end-to-end",
+      },
+    });
+    const injected = injectContextHeaders(req, {
+      projectSlug: "project",
+      environment: "preview",
+      contentSourceId: "preview-main",
+      host: "project.preview.veryfront.com",
+      parsedDomain: {
+        slug: "project",
+        isVeryfrontDomain: true,
+        environment: "preview",
+        branch: null,
+        isDraft: true,
+        allowIframeEmbed: true,
+      },
+      isLocalProject: false,
+    });
+
+    assertEquals(injected.headers.get("connection"), null);
+    assertEquals(injected.headers.get("keep-alive"), null);
+    assertEquals(injected.headers.get("proxy-authorization"), null);
+    assertEquals(injected.headers.get("transfer-encoding"), null);
+    assertEquals(injected.headers.get("x-remove-me"), null);
+    assertEquals(injected.headers.get("x-preserve-me"), "end-to-end");
   });
 
   describe("combined mode produces same context as split mode", () => {

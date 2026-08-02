@@ -7,14 +7,44 @@ import {
   handleReleaseAssetRequest,
   isReleaseAssetPath,
 } from "./asset-handler.ts";
+import { computeHashBytes } from "#veryfront/utils/hash-utils.ts";
+import { RELEASE_ASSET_MAX_SIZE_BYTES } from "#veryfront/release-assets/constants.ts";
 
 const API_BASE = "https://api.example.com";
 const HASH = "a".repeat(64);
+const textEncoder = new TextEncoder();
 
 function makeFetch(
-  handler: (url: string) => Response | Promise<Response>,
+  handler: (url: string, init?: RequestInit) => Response | Promise<Response>,
 ): typeof fetch {
-  return ((input: RequestInfo | URL) => Promise.resolve(handler(String(input)))) as typeof fetch;
+  return ((input: RequestInfo | URL, init?: RequestInit) =>
+    Promise.resolve(handler(String(input), init))) as typeof fetch;
+}
+
+async function assetUrl(body: string, extension: "js" | "css"): Promise<URL> {
+  const hash = await computeHashBytes(textEncoder.encode(body));
+  return new URL(`https://site.example/_vf/assets/${hash}.${extension}`);
+}
+
+function handle(
+  url: URL,
+  options: Parameters<typeof handleReleaseAssetRequest>[2],
+  method = "GET",
+): Promise<Response | null> {
+  return handleReleaseAssetRequest(new Request(url, { method }), url, options);
+}
+
+function handleWithSignal(
+  url: URL,
+  options: Parameters<typeof handleReleaseAssetRequest>[2],
+  signal: AbortSignal,
+): Promise<Response | null> {
+  return handleReleaseAssetRequest(new Request(url, { signal }), url, options);
+}
+
+async function flushAsyncWork(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 describe("proxy release asset handler", () => {
@@ -26,25 +56,22 @@ describe("proxy release asset handler", () => {
   });
 
   it("returns null for non-asset paths", async () => {
-    const result = await handleReleaseAssetRequest(
-      new URL("https://site.example/page"),
-      { apiBaseUrl: API_BASE },
-    );
+    const url = new URL("https://site.example/page");
+    const result = await handle(url, { apiBaseUrl: API_BASE });
     assertEquals(result, null);
   });
 
   it("serves a JS asset with immutable + nosniff headers (happy path)", async () => {
+    const source = "export const x = 1;";
     const fetchImpl = makeFetch(() =>
-      new Response("export const x = 1;", {
+      new Response(source, {
         status: 200,
         headers: { "Content-Type": "text/javascript" },
       })
     );
+    const url = await assetUrl(source, "js");
 
-    const res = await handleReleaseAssetRequest(
-      new URL(`https://site.example/_vf/assets/${HASH}.js`),
-      { apiBaseUrl: API_BASE, fetchImpl },
-    );
+    const res = await handle(url, { apiBaseUrl: API_BASE, fetchImpl });
 
     assertEquals(res?.status, 200);
     assertEquals(res?.headers.get("Content-Type"), "text/javascript");
@@ -57,44 +84,43 @@ describe("proxy release asset handler", () => {
   });
 
   it("serves a CSS asset with the css content type", async () => {
+    const source = ".a{color:red}";
     const fetchImpl = makeFetch(() =>
-      new Response(".a{color:red}", {
+      new Response(source, {
         status: 200,
         headers: { "Content-Type": "text/css" },
       })
     );
+    const url = await assetUrl(source, "css");
 
-    const res = await handleReleaseAssetRequest(
-      new URL(`https://site.example/_vf/assets/${HASH}.css`),
-      { apiBaseUrl: API_BASE, fetchImpl },
-    );
+    const res = await handle(url, { apiBaseUrl: API_BASE, fetchImpl });
 
     assertEquals(res?.status, 200);
     assertEquals(res?.headers.get("Content-Type"), "text/css");
   });
 
   it("returns 400 for a bad hash", async () => {
-    const res = await handleReleaseAssetRequest(
-      new URL("https://site.example/_vf/assets/NOTHEX.js"),
-      { apiBaseUrl: API_BASE, fetchImpl: makeFetch(() => new Response("nope")) },
-    );
+    const url = new URL("https://site.example/_vf/assets/NOTHEX.js");
+    const res = await handle(url, {
+      apiBaseUrl: API_BASE,
+      fetchImpl: makeFetch(() => new Response("nope")),
+    });
     assertEquals(res?.status, 400);
   });
 
   it("returns 400 for a disallowed extension", async () => {
-    const res = await handleReleaseAssetRequest(
-      new URL(`https://site.example/_vf/assets/${HASH}.png`),
-      { apiBaseUrl: API_BASE, fetchImpl: makeFetch(() => new Response("nope")) },
-    );
+    const url = new URL(`https://site.example/_vf/assets/${HASH}.png`);
+    const res = await handle(url, {
+      apiBaseUrl: API_BASE,
+      fetchImpl: makeFetch(() => new Response("nope")),
+    });
     assertEquals(res?.status, 400);
   });
 
   it("returns a no-cache 404 when upstream is missing", async () => {
     const fetchImpl = makeFetch(() => new Response("missing", { status: 404 }));
-    const res = await handleReleaseAssetRequest(
-      new URL(`https://site.example/_vf/assets/${HASH}.js`),
-      { apiBaseUrl: API_BASE, fetchImpl },
-    );
+    const url = new URL(`https://site.example/_vf/assets/${HASH}.js`);
+    const res = await handle(url, { apiBaseUrl: API_BASE, fetchImpl });
     assertEquals(res?.status, 404);
     assertEquals(res?.headers.get("Cache-Control"), "no-cache");
   });
@@ -103,26 +129,520 @@ describe("proxy release asset handler", () => {
     const fetchImpl = makeFetch(() =>
       new Response("<html>", { status: 200, headers: { "Content-Type": "text/html" } })
     );
-    const res = await handleReleaseAssetRequest(
-      new URL(`https://site.example/_vf/assets/${HASH}.js`),
-      { apiBaseUrl: API_BASE, fetchImpl },
-    );
+    const url = new URL(`https://site.example/_vf/assets/${HASH}.js`);
+    const res = await handle(url, { apiBaseUrl: API_BASE, fetchImpl });
     assertEquals(res?.status, 502);
   });
 
-  it("serves cached bytes on a second request without re-fetching", async () => {
+  it("rejects an upstream content type that does not match the requested extension", async () => {
+    const source = "export const x = 1;";
+    const fetchImpl = makeFetch(() =>
+      new Response(source, { status: 200, headers: { "Content-Type": "text/css" } })
+    );
+    const url = await assetUrl(source, "js");
+
+    const res = await handle(url, { apiBaseUrl: API_BASE, fetchImpl });
+    assertEquals(res?.status, 502);
+  });
+
+  it("rejects bytes that do not match the requested content hash and never caches them", async () => {
     let calls = 0;
     const fetchImpl = makeFetch(() => {
       calls++;
-      return new Response("export const x = 1;", {
+      return new Response("tampered", {
         status: 200,
         headers: { "Content-Type": "text/javascript" },
       });
     });
     const url = new URL(`https://site.example/_vf/assets/${HASH}.js`);
 
-    await handleReleaseAssetRequest(url, { apiBaseUrl: API_BASE, fetchImpl });
-    await handleReleaseAssetRequest(url, { apiBaseUrl: API_BASE, fetchImpl });
+    assertEquals((await handle(url, { apiBaseUrl: API_BASE, fetchImpl }))?.status, 502);
+    assertEquals((await handle(url, { apiBaseUrl: API_BASE, fetchImpl }))?.status, 502);
+    assertEquals(calls, 2);
+  });
+
+  it("coalesces concurrent requests for the same content hash", async () => {
+    const source = "export const shared = true;";
+    const gate = Promise.withResolvers<void>();
+    let calls = 0;
+    const fetchImpl = makeFetch(async () => {
+      calls++;
+      await gate.promise;
+      return new Response(source, {
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+    const url = await assetUrl(source, "js");
+
+    const pending = Array.from(
+      { length: 20 },
+      () => handle(url, { apiBaseUrl: API_BASE, fetchImpl }),
+    );
+    await flushAsyncWork();
     assertEquals(calls, 1);
+
+    gate.resolve();
+    const responses = await Promise.all(pending);
+    assertEquals(responses.map((response) => response?.status), Array(20).fill(200));
+    assertEquals(calls, 1);
+  });
+
+  it("coalesces by hash without serving bytes under the wrong extension", async () => {
+    const source = "export const typed = true;";
+    const gate = Promise.withResolvers<void>();
+    let calls = 0;
+    const fetchImpl = makeFetch(async () => {
+      calls++;
+      await gate.promise;
+      return new Response(source, {
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+    const jsUrl = await assetUrl(source, "js");
+    const cssUrl = await assetUrl(source, "css");
+    const javascript = handle(jsUrl, { apiBaseUrl: API_BASE, fetchImpl });
+    const stylesheet = handle(cssUrl, { apiBaseUrl: API_BASE, fetchImpl });
+    await flushAsyncWork();
+    assertEquals(calls, 1);
+
+    gate.resolve();
+    assertEquals((await javascript)?.status, 200);
+    assertEquals((await stylesheet)?.status, 502);
+    assertEquals(calls, 1);
+  });
+
+  it("lets one follower abort without cancelling surviving consumers", async () => {
+    const source = "export const survivor = true;";
+    const gate = Promise.withResolvers<void>();
+    let calls = 0;
+    const upstreamSignals: AbortSignal[] = [];
+    const fetchImpl = makeFetch(async (_url, init) => {
+      calls++;
+      if (init?.signal) upstreamSignals.push(init.signal);
+      await gate.promise;
+      return new Response(source, {
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+    const url = await assetUrl(source, "js");
+    const survivor = handle(url, { apiBaseUrl: API_BASE, fetchImpl });
+    const followerController = new AbortController();
+    const follower = handleWithSignal(
+      url,
+      { apiBaseUrl: API_BASE, fetchImpl },
+      followerController.signal,
+    );
+    await flushAsyncWork();
+
+    followerController.abort(new Error("client disconnected"));
+    assertEquals((await follower)?.status, 499);
+    assertEquals(upstreamSignals[0]?.aborted, false);
+
+    gate.resolve();
+    assertEquals((await survivor)?.status, 200);
+    assertEquals(
+      (await handle(url, { apiBaseUrl: API_BASE, fetchImpl }))?.status,
+      200,
+    );
+    assertEquals(calls, 1);
+  });
+
+  it("times out one follower without cancelling a longer-lived consumer", async () => {
+    const source = "export const patientSurvivor = true;";
+    const gate = Promise.withResolvers<void>();
+    const upstreamSignals: AbortSignal[] = [];
+    const fetchImpl = makeFetch(async (_url, init) => {
+      if (init?.signal) upstreamSignals.push(init.signal);
+      await gate.promise;
+      return new Response(source, {
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+    const url = await assetUrl(source, "js");
+    const survivor = handle(url, {
+      apiBaseUrl: API_BASE,
+      fetchImpl,
+      timeoutMs: 100,
+    });
+    const follower = handle(url, {
+      apiBaseUrl: API_BASE,
+      fetchImpl,
+      timeoutMs: 5,
+    });
+    const releaseId = setTimeout(() => gate.resolve(), 25);
+
+    assertEquals((await follower)?.status, 504);
+    assertEquals(upstreamSignals[0]?.aborted, false);
+    assertEquals((await survivor)?.status, 200);
+    clearTimeout(releaseId);
+  });
+
+  it("lets a longer-lived follower outlast the initiating caller", async () => {
+    const source = "export const lateSurvivor = true;";
+    const gate = Promise.withResolvers<void>();
+    const upstreamSignals: AbortSignal[] = [];
+    const fetchImpl = makeFetch(async (_url, init) => {
+      if (init?.signal) upstreamSignals.push(init.signal);
+      await gate.promise;
+      return new Response(source, {
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+    const url = await assetUrl(source, "js");
+    const initiatingCaller = handle(url, {
+      apiBaseUrl: API_BASE,
+      fetchImpl,
+      timeoutMs: 5,
+    });
+    const follower = handle(url, {
+      apiBaseUrl: API_BASE,
+      fetchImpl,
+      timeoutMs: 100,
+    });
+    const releaseId = setTimeout(() => gate.resolve(), 25);
+
+    const [initiatingResponse, followerResponse] = await Promise.all([
+      initiatingCaller,
+      follower,
+    ]);
+    assertEquals(initiatingResponse?.status, 504);
+    assertEquals(followerResponse?.status, 200);
+    assertEquals(upstreamSignals[0]?.aborted, false);
+    clearTimeout(releaseId);
+  });
+
+  it("abandons and replaces an active load after its sole caller aborts", async () => {
+    const source = "export const replacement = true;";
+    let calls = 0;
+    const abandonedSignals: AbortSignal[] = [];
+    const fetchImpl = makeFetch((_url, init) => {
+      calls++;
+      if (calls === 1) {
+        if (init?.signal) abandonedSignals.push(init.signal);
+        return new Promise<Response>(() => {});
+      }
+      return new Response(source, {
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+    const url = await assetUrl(source, "js");
+    const controller = new AbortController();
+    const abandoned = handleWithSignal(
+      url,
+      { apiBaseUrl: API_BASE, fetchImpl },
+      controller.signal,
+    );
+    await flushAsyncWork();
+    assertEquals(calls, 1);
+
+    controller.abort(new Error("sole caller disconnected"));
+    assertEquals((await abandoned)?.status, 499);
+    assertEquals(abandonedSignals[0]?.aborted, true);
+    assertEquals(
+      (await handle(url, { apiBaseUrl: API_BASE, fetchImpl }))?.status,
+      200,
+    );
+    assertEquals(calls, 2);
+  });
+
+  it("cancels a late response when an abandoned upstream fetch ignores abort", async () => {
+    const source = "export const abandonedResponse = true;";
+    const lateResponse = Promise.withResolvers<Response>();
+    let bodyCancelled = false;
+    let upstreamSignal: AbortSignal | undefined;
+    const fetchImpl = makeFetch((_url, init) => {
+      upstreamSignal = init?.signal ?? undefined;
+      return lateResponse.promise;
+    });
+    const url = await assetUrl(source, "js");
+    const controller = new AbortController();
+    const abandoned = handleWithSignal(
+      url,
+      { apiBaseUrl: API_BASE, fetchImpl },
+      controller.signal,
+    );
+    await flushAsyncWork();
+
+    controller.abort(new Error("sole caller disconnected"));
+    assertEquals((await abandoned)?.status, 499);
+    assertEquals(upstreamSignal?.aborted, true);
+
+    lateResponse.resolve(
+      new Response(
+        new ReadableStream({
+          cancel() {
+            bodyCancelled = true;
+          },
+        }),
+        { headers: { "Content-Type": "text/javascript" } },
+      ),
+    );
+    await flushAsyncWork();
+    assertEquals(bodyCancelled, true);
+  });
+
+  it("rejects oversized upstream bodies before buffering declared bytes", async () => {
+    const fetchImpl = makeFetch(() =>
+      new Response("small", {
+        status: 200,
+        headers: {
+          "Content-Type": "text/javascript",
+          "Content-Length": String(RELEASE_ASSET_MAX_SIZE_BYTES + 1),
+        },
+      })
+    );
+    const url = new URL(`https://site.example/_vf/assets/${HASH}.js`);
+
+    assertEquals((await handle(url, { apiBaseUrl: API_BASE, fetchImpl }))?.status, 502);
+  });
+
+  it("rejects oversized streamed bodies when content-length is absent", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(RELEASE_ASSET_MAX_SIZE_BYTES + 1));
+        controller.close();
+      },
+    });
+    const fetchImpl = makeFetch(() =>
+      new Response(stream, {
+        status: 200,
+        headers: { "Content-Type": "text/javascript" },
+      })
+    );
+    const url = new URL(`https://site.example/_vf/assets/${HASH}.js`);
+
+    assertEquals((await handle(url, { apiBaseUrl: API_BASE, fetchImpl }))?.status, 502);
+  });
+
+  it("bounds an upstream fetch that never settles", async () => {
+    let calls = 0;
+    const fetchImpl = makeFetch((_url, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        calls++;
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("Aborted", "AbortError")),
+          { once: true },
+        );
+      })
+    );
+    const url = new URL(`https://site.example/_vf/assets/${HASH}.js`);
+
+    assertEquals(
+      (await handle(url, { apiBaseUrl: API_BASE, fetchImpl, timeoutMs: 1 }))?.status,
+      504,
+    );
+    assertEquals(
+      (await handle(url, { apiBaseUrl: API_BASE, fetchImpl, timeoutMs: 1 }))?.status,
+      504,
+    );
+    assertEquals(calls, 2);
+  });
+
+  it("bounds an upstream response body that never settles", async () => {
+    const fetchImpl = makeFetch(() =>
+      new Response(new ReadableStream<Uint8Array>(), {
+        status: 200,
+        headers: { "Content-Type": "text/javascript" },
+      })
+    );
+    const url = new URL(`https://site.example/_vf/assets/${HASH}.js`);
+
+    assertEquals(
+      (await handle(url, { apiBaseUrl: API_BASE, fetchImpl, timeoutMs: 1 }))?.status,
+      504,
+    );
+  });
+
+  it("bounds aggregate cold loads, queued work, and aborts queued callers", async () => {
+    const gate = Promise.withResolvers<void>();
+    const sources = Array.from(
+      { length: 51 },
+      (_, index) => `export const asset${index} = ${index};`,
+    );
+    const urls = await Promise.all(sources.map((source) => assetUrl(source, "js")));
+    const sourceByHash = new Map(
+      urls.map((url, index) => [
+        url.pathname.slice("/_vf/assets/".length, -".js".length),
+        sources[index]!,
+      ]),
+    );
+    let active = 0;
+    let maxActive = 0;
+    let calls = 0;
+    const fetchImpl = makeFetch(async (input) => {
+      calls++;
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await gate.promise;
+      active--;
+      const hash = new URL(input).pathname.split("/").at(-1)!;
+      return new Response(sourceByHash.get(hash), {
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+    const queuedController = new AbortController();
+    const pending = urls.slice(0, 50).map((url, index) =>
+      index === 4
+        ? handleWithSignal(
+          url,
+          { apiBaseUrl: API_BASE, fetchImpl },
+          queuedController.signal,
+        )
+        : handle(url, { apiBaseUrl: API_BASE, fetchImpl })
+    );
+    await flushAsyncWork();
+    assertEquals(calls, 4);
+    assertEquals(maxActive, 4);
+
+    queuedController.abort(new Error("queued caller disconnected"));
+    assertEquals((await pending[4])?.status, 499);
+    const replacement = handle(urls[50]!, { apiBaseUrl: API_BASE, fetchImpl });
+
+    gate.resolve();
+    const responses = await Promise.all(pending);
+    assertEquals((await replacement)?.status, 200);
+    assertEquals(
+      responses.filter((response) => response?.status === 200).length,
+      19,
+    );
+    assertEquals(
+      responses.filter((response) => response?.status === 503).length,
+      30,
+    );
+    assertEquals(
+      responses.filter((response) => response?.status === 499).length,
+      1,
+    );
+    assertEquals(
+      responses
+        .filter((response) => response?.status === 503)
+        .every((response) => response?.headers.get("Retry-After") === "1"),
+      true,
+    );
+    assertEquals(maxActive, 4);
+    assertEquals(calls, 20);
+
+    assertEquals(
+      (await handle(urls[49]!, { apiBaseUrl: API_BASE, fetchImpl }))?.status,
+      200,
+    );
+    assertEquals(calls, 21);
+  });
+
+  it("bounds same-hash followers while retaining one upstream load", async () => {
+    const source = "export const boundedFollowers = true;";
+    const gate = Promise.withResolvers<void>();
+    let calls = 0;
+    const fetchImpl = makeFetch(async () => {
+      calls++;
+      await gate.promise;
+      return new Response(source, {
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+    const url = await assetUrl(source, "js");
+    const pending = Array.from(
+      { length: 80 },
+      () => handle(url, { apiBaseUrl: API_BASE, fetchImpl }),
+    );
+    await flushAsyncWork();
+    assertEquals(calls, 1);
+
+    gate.resolve();
+    const responses = await Promise.all(pending);
+    assertEquals(
+      responses.filter((response) => response?.status === 200).length,
+      64,
+    );
+    assertEquals(
+      responses.filter((response) => response?.status === 503).length,
+      16,
+    );
+    assertEquals(calls, 1);
+  });
+
+  it("allows only GET and HEAD on the immutable asset endpoint", async () => {
+    let calls = 0;
+    const fetchImpl = makeFetch(() => {
+      calls++;
+      return new Response("unused");
+    });
+    const url = new URL(`https://site.example/_vf/assets/${HASH}.js`);
+
+    const response = await handle(url, { apiBaseUrl: API_BASE, fetchImpl }, "POST");
+    assertEquals(response?.status, 405);
+    assertEquals(response?.headers.get("Allow"), "GET, HEAD");
+    assertEquals(calls, 0);
+  });
+
+  it("serves HEAD metadata without a response body", async () => {
+    const source = "export const x = 1;";
+    const fetchImpl = makeFetch(() =>
+      new Response(source, {
+        status: 200,
+        headers: { "Content-Type": "text/javascript" },
+      })
+    );
+    const url = await assetUrl(source, "js");
+
+    const response = await handle(url, { apiBaseUrl: API_BASE, fetchImpl }, "HEAD");
+    assertEquals(response?.status, 200);
+    assertEquals(response?.body, null);
+    assertEquals(response?.headers.get("Content-Type"), "text/javascript");
+  });
+
+  it("serves cached bytes on a second request without re-fetching", async () => {
+    const source = "export const x = 1;";
+    let calls = 0;
+    const fetchImpl = makeFetch(() => {
+      calls++;
+      return new Response(source, {
+        status: 200,
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+    const url = await assetUrl(source, "js");
+
+    await handle(url, { apiBaseUrl: API_BASE, fetchImpl });
+    await handle(url, { apiBaseUrl: API_BASE, fetchImpl });
+    assertEquals(calls, 1);
+  });
+
+  it("evicts completed assets by aggregate byte weight", async () => {
+    const bodySize = 8 * 1024 * 1024;
+    const sources = Array.from(
+      { length: 4 },
+      (_, index) => String(index).repeat(bodySize),
+    );
+    const urls = await Promise.all(sources.map((source) => assetUrl(source, "js")));
+    const sourceByHash = new Map(
+      urls.map((url, index) => [
+        url.pathname.slice("/_vf/assets/".length, -".js".length),
+        sources[index]!,
+      ]),
+    );
+    let calls = 0;
+    const fetchImpl = makeFetch((input) => {
+      calls++;
+      const hash = new URL(input).pathname.split("/").at(-1)!;
+      return new Response(sourceByHash.get(hash), {
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+
+    for (const url of urls) {
+      assertEquals(
+        (await handle(url, { apiBaseUrl: API_BASE, fetchImpl }))?.status,
+        200,
+      );
+    }
+    assertEquals(calls, 4);
+
+    assertEquals(
+      (await handle(urls[0]!, { apiBaseUrl: API_BASE, fetchImpl }))?.status,
+      200,
+    );
+    assertEquals(calls, 5);
   });
 });
