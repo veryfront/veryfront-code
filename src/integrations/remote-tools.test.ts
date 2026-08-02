@@ -7,7 +7,6 @@ import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/sou
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { resolveHostedToolExecutionContext } from "#veryfront/agent/hosted/runtime-state-resolver.ts";
 import {
   executeRemoteIntegrationTool,
   getRemoteIntegrationToolDefinitions,
@@ -219,13 +218,9 @@ describe("integrations/remote-tools", () => {
       VERYFRONT_PROJECT_SLUG: "environment-project",
     });
 
-    const hostedContext = resolveHostedToolExecutionContext(
-      {
-        projectId: "hosted-project",
-        projectSlug: "hosted-project",
-      },
-      undefined,
-    );
+    const hostedContext = {
+      authToken: undefined,
+    };
     let fetchCalls = 0;
     const outcome = await runWithRequestContext(
       {

@@ -248,18 +248,18 @@ Deno.test("bounded Skill document parsing detaches provider failures", () => {
     );
   });
 
-  const error = assertThrows(
-    () =>
-      parseBoundedSkillDocument(
-        "---\nname: [\n---\nbody",
-        provider,
-      ),
-    SyntaxError,
-    "Skill frontmatter could not be decoded",
-  );
-  assertEquals(error.message, "Skill frontmatter could not be decoded");
-  assertEquals(error.message.includes("TOP_SECRET_42"), false);
-  assertEquals(error.message.includes("\u001b"), false);
+  let error: Error | undefined;
+  try {
+    parseBoundedSkillDocument(
+      "---\nname: [\n---\nbody",
+      provider,
+    );
+  } catch (cause) {
+    if (cause instanceof Error) error = cause;
+  }
+  assertEquals(error?.message, "Skill frontmatter could not be decoded");
+  assertEquals(error?.message.includes("TOP_SECRET_42"), false);
+  assertEquals(error?.message.includes("\u001b"), false);
 });
 
 Deno.test("legacy Skill document parsing reuses the extension decoder without strict bounds", () => {

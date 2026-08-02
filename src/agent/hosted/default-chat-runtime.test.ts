@@ -1,3 +1,4 @@
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
@@ -306,7 +307,7 @@ Deno.test("hosted first provider call filters skill tools for every tool selecto
       await runtime.cleanup();
     }
   } finally {
-    await toolRegistry.clearAll();
+    await toolRegistryInternal.clearAll();
   }
 });
 
@@ -379,7 +380,7 @@ Deno.test("createDefaultHostedChatRuntime forwards hosted project slug to integr
     assertEquals(authorizationHeader, "Bearer user-scoped-token");
     assertEquals(projectSlugHeader, "authorized-project");
   } finally {
-    await toolRegistry.clearAll();
+    await toolRegistryInternal.clearAll();
     clearModelProviders();
     restoreEnv("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
     restoreEnv("VERYFRONT_API_TOKEN", previousApiToken);
@@ -419,7 +420,7 @@ Deno.test("createDefaultHostedChatRuntime keeps per-run host tools out of the gl
 
     assertEquals(toolRegistry.getOwn("load_skill"), undefined);
   } finally {
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
   }
 });
 

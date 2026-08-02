@@ -1,3 +1,5 @@
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { getAgent } from "#veryfront/agent";
 import { toolRegistry } from "#veryfront/tool";
@@ -103,7 +105,7 @@ describe(
 
     it("re-runs preview discovery after source changes", async () => {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       const ctx = createHandlerContext("/preview-project", "preview-project", "preview");
       const agentId = "preview-agent";
@@ -125,8 +127,8 @@ describe(
 
     it("reuses unchanged preview primitive modules across requests", async () => {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
-      skillRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      skillRegistryInternal.clearAll();
 
       const ctx = createHandlerContext(
         "/preview-module-cache-project",
@@ -169,8 +171,8 @@ describe(
 
     it("does not reuse API-backed modules across projects", async () => {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
-      skillRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      skillRegistryInternal.clearAll();
 
       const firstCtx = createHandlerContext("/runtime/first", "first-project", "preview");
       const secondCtx = createHandlerContext("/runtime/second", "second-project", "preview");
@@ -214,8 +216,8 @@ describe(
 
     it("invalidates extensionless import resolution after a source snapshot change", async () => {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
-      skillRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      skillRegistryInternal.clearAll();
 
       const ctx = createHandlerContext(
         "/runtime/resolution",
@@ -268,7 +270,7 @@ describe(
 
     it("reuses preview discovery for one source snapshot generation", async () => {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       const ctx = createHandlerContext(
         "/versioned-preview-project",
@@ -303,7 +305,7 @@ describe(
 
     it("keeps a newer source generation cached when an older discovery fails", async () => {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       const ctx = createHandlerContext(
         "/overlapping-preview-project",
@@ -361,7 +363,7 @@ describe(
 
     it("keeps production discovery cached for the same release", async () => {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       const ctx = createHandlerContext(
         "/production-project",
@@ -388,7 +390,7 @@ describe(
 
     it("invalidates fallback discovery by canonical project id", async () => {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       const ctx = createHandlerContext(
         "/project-id-invalidation",
@@ -419,7 +421,7 @@ describe(
 
     it("does not cache completed production discovery without a release id", async () => {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       const ctx = createHandlerContext(
         "/production-missing-release-project",
@@ -445,8 +447,8 @@ describe(
 
     it("keeps the live skill registry available until mutable rediscovery commits", async () => {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
-      skillRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      skillRegistryInternal.clearAll();
 
       const ctx = createHandlerContext(
         "/atomic-discovery-project",
@@ -504,8 +506,8 @@ describe(
 
     it("preserves the live skill registry when mutable rediscovery fails", async () => {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
-      skillRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      skillRegistryInternal.clearAll();
 
       const ctx = createHandlerContext(
         "/failed-atomic-discovery-project",
@@ -546,8 +548,8 @@ describe(
 
     it("does not deduplicate release-less discovery across environments", async () => {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
-      skillRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      skillRegistryInternal.clearAll();
 
       const firstCtx = createHandlerContext(
         "/shared-project-development",
@@ -634,8 +636,8 @@ describe(
 
     it("uses cache-key context to isolate production discovery by release", async () => {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
-      skillRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      skillRegistryInternal.clearAll();
 
       const ctx = createHandlerContext(
         "/production-scope-project",
@@ -681,8 +683,8 @@ describe(
 
     it("respects configured custom discovery paths for request-time discovery", async () => {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
-      skillRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      skillRegistryInternal.clearAll();
 
       const ctx = createHandlerContext("/custom-paths-project", "custom-paths-project", "preview");
       ctx.config = {
@@ -745,8 +747,8 @@ describe(
 
     it("uses relative discovery paths for API-backed project files", async () => {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
-      skillRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      skillRegistryInternal.clearAll();
 
       const ctx = createHandlerContext(
         "/runtime/project",
@@ -781,8 +783,8 @@ describe(
 
     it("warns with safe diagnostics when primitive discovery succeeds partially", async () => {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
-      skillRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      skillRegistryInternal.clearAll();
 
       const ctx = createHandlerContext(
         "/partial-discovery-project",
@@ -836,8 +838,8 @@ describe(
 
     it("retries partial discovery within the same source snapshot", async () => {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
-      skillRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      skillRegistryInternal.clearAll();
 
       const ctx = createHandlerContext(
         "/partial-discovery-retry-project",
@@ -882,8 +884,8 @@ describe(
 
     it("rethrows hard primitive discovery failures instead of returning an empty result", async () => {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
-      skillRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      skillRegistryInternal.clearAll();
 
       const ctx = createHandlerContext(
         "/hard-failure-project",
@@ -908,8 +910,8 @@ describe(
 
     it("does not warn about zero agents and tools when AI primitive discovery is disabled", async () => {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
-      skillRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      skillRegistryInternal.clearAll();
 
       const ctx = createHandlerContext(
         "/disabled-ai-discovery-project",
@@ -946,8 +948,8 @@ describe(
 
     it("keeps explicit tool ids available for request-time project-agent runs", async () => {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
-      skillRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      skillRegistryInternal.clearAll();
 
       const ctx = createHandlerContext(
         "/explicit-tool-id-project",
@@ -997,8 +999,8 @@ describe(
 
     it("keeps explicit generated-looking tool ids available for request-time project-agent runs", async () => {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
-      skillRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      skillRegistryInternal.clearAll();
 
       const ctx = createHandlerContext(
         "/explicit-generated-looking-tool-id-project",
@@ -1048,8 +1050,8 @@ describe(
 
     it("keeps object-spread overridden tool ids available for request-time project-agent runs", async () => {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
-      skillRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      skillRegistryInternal.clearAll();
 
       const ctx = createHandlerContext(
         "/explicit-spread-tool-id-project",

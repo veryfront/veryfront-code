@@ -1,3 +1,5 @@
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
@@ -67,8 +69,8 @@ function createLoadSkillModel(skillId: string): ModelRuntime {
 describe("agent factory", () => {
   beforeEach(() => {
     agentRegistry.clearAll();
-    skillRegistry.clearAll();
-    toolRegistry.clearAll();
+    skillRegistryInternal.clearAll();
+    toolRegistryInternal.clearAll();
   });
 
   it("bootstraps schema validation before registering universal skill tools", () => {

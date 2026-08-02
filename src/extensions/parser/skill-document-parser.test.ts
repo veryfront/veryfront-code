@@ -308,6 +308,11 @@ Deno.test("Skill document parser provider preserves parser failures exactly", ()
     throw failure;
   });
 
-  const thrown = assertThrows(() => parser.parseFrontmatter("["));
+  let thrown: unknown;
+  try {
+    parser.parseFrontmatter("[");
+  } catch (error) {
+    thrown = error;
+  }
   assertStrictEquals(thrown, failure);
 });

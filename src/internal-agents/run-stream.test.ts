@@ -1,3 +1,5 @@
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -164,11 +166,11 @@ async function withJsonDebugLogFormat<T>(fn: () => Promise<T>): Promise<T> {
 describe("internal-agents/run-stream", () => {
   afterEach(() => {
     _resetShimForTests();
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   });
 
   it("includes skill infrastructure for tools: true agents without a skills selector", () => {
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
     try {
       const runtimeAgent = createAgent({
         id: "universal-skill-agent",
@@ -193,7 +195,7 @@ describe("internal-agents/run-stream", () => {
         "load_skill_reference",
       ]);
     } finally {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
     }
   });
 

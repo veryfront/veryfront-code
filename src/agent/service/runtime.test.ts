@@ -1,3 +1,4 @@
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
@@ -84,7 +85,7 @@ describe("agent/agent-service-runtime", () => {
   });
 
   it("preserves configured skills and tools on the service agent", () => {
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
     registerSkill("support-triage", {
       id: "support-triage",
       metadata: { name: "support-triage", description: "Triage support requests" },

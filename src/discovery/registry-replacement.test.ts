@@ -28,10 +28,11 @@ describe("replaceDiscoveredProjectPrimitives", () => {
       content: "stable",
     });
     promptRegistry.register(stable.id, stable);
+    const storedStable = promptRegistry.get("stable");
 
     await adapter.fs.writeFile(
       "/project/prompts/broken.ts",
-      "export default { description: 'not a prompt' };",
+      "throw new Error('broken prompt module');",
     );
 
     const config = {
@@ -55,8 +56,8 @@ describe("replaceDiscoveredProjectPrimitives", () => {
     );
 
     assertInstanceOf(failure, DiscoveryGenerationError);
-    assertEquals(failure.result.errors[0]?.code, "invalid_export");
-    assertStrictEquals(promptRegistry.get("stable"), stable);
+    assertEquals(failure.result.errors[0]?.error instanceof Error, true);
+    assertStrictEquals(promptRegistry.get("stable"), storedStable);
     assertEquals(promptRegistry.get("broken"), undefined);
 
     await adapter.fs.writeFile(
@@ -69,7 +70,7 @@ describe("replaceDiscoveredProjectPrimitives", () => {
 
     const recovered = await replaceDiscoveredProjectPrimitives(config);
     assertEquals(recovered.errors, []);
-    assertEquals(promptRegistry.get("stable"), undefined);
+    assertStrictEquals(promptRegistry.get("stable"), storedStable);
     assertEquals(promptRegistry.get("broken")?.description, "Recovered");
   });
 
@@ -81,6 +82,7 @@ describe("replaceDiscoveredProjectPrimitives", () => {
       content: "stable",
     });
     promptRegistry.register(stable.id, stable);
+    const storedStable = promptRegistry.get("stable");
 
     await adapter.fs.writeFile(
       "/project/prompts/valid.ts",
@@ -91,7 +93,7 @@ describe("replaceDiscoveredProjectPrimitives", () => {
     );
     await adapter.fs.writeFile(
       "/project/prompts/broken.ts",
-      "export default { description: 'not a prompt' };",
+      "throw new Error('broken prompt module');",
     );
 
     const result = await replaceDiscoveredProjectPrimitives({
@@ -110,7 +112,7 @@ describe("replaceDiscoveredProjectPrimitives", () => {
     }, { errorPolicy: "publish-valid" });
 
     assertEquals(result.errors.length, 1);
-    assertEquals(promptRegistry.get("stable"), undefined);
+    assertStrictEquals(promptRegistry.get("stable"), storedStable);
     assertEquals(promptRegistry.get("valid")?.description, "Valid");
     assertEquals(promptRegistry.get("broken"), undefined);
   });

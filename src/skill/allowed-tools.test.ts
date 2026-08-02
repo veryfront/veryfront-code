@@ -371,13 +371,15 @@ describe("src/skill/allowed-tools", () => {
   describe("validateAllowedToolPatterns", () => {
     it("does not echo control-bearing policy text in validation errors", () => {
       const token = "TOP_SECRET_POLICY";
-      const error = assertThrows(
-        () => validateStrictAllowedToolPatterns([`Read\u001b[31m${token}`]),
-        Error,
-      );
+      let error: Error | undefined;
+      try {
+        validateStrictAllowedToolPatterns([`Read\u001b[31m${token}`]);
+      } catch (cause) {
+        if (cause instanceof Error) error = cause;
+      }
 
-      assertEquals(error.message.includes("\u001b"), false);
-      assertEquals(error.message.includes(token), false);
+      assertEquals(error?.message.includes("\u001b"), false);
+      assertEquals(error?.message.includes(token), false);
     });
 
     it("should accept valid patterns", () => {
