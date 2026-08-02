@@ -252,7 +252,7 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
   });
 
   describe("action endpoint", () => {
-    it("rejects non-POST with 405", async () => {
+    it("rejects non-POST without permitting the response to be cached", async () => {
       const result = await handleRSCEndpoint(
         makeParams({
           pathname: "/_veryfront/rsc/action",
@@ -262,6 +262,8 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       );
       assertEquals(result instanceof Response, true);
       assertEquals(result!.status, 405);
+      assertEquals(result!.headers.get("cache-control"), "no-store");
+      assertEquals(result!.headers.get("vary"), RSC_DEPENDENCY_PINNING_HEADER);
       const body = await result!.text();
       assertStringIncludes(body, "Method Not Allowed");
     });

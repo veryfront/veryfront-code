@@ -201,7 +201,11 @@ export async function handleRSCEndpoint(
 
     if (sub === "action") {
       if (req.method !== "POST") {
-        return new Response("Method Not Allowed", { status: 405 });
+        return withDependencyPinningVary(
+          new Response("Method Not Allowed", {
+            status: HttpStatus.METHOD_NOT_ALLOWED,
+          }),
+        );
       }
 
       metrics.recordRSC("action");
