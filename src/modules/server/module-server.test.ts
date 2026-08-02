@@ -547,6 +547,168 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
+  it("admits the exact resolved source instead of a same-stem manifest entry", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-browser-module-exact-source-" });
+    const releaseId = `rel-browser-exact-${crypto.randomUUID()}`;
+    const hash = "c".repeat(64);
+
+    try {
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/Collision.ts`,
+        `export const source = "manifested-ts";`,
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/components/Collision.tsx`,
+        `export const source = "unmanifested-tsx";`,
+      );
+      registerManifestFetcherForRelease(releaseId, () =>
+        Promise.resolve({
+          state: "ready",
+          manifest_version: 1,
+          manifest: manifest({}, releaseId, "source", {
+            "components/Collision.ts": {
+              contentHash: hash,
+              size: 1,
+              contentType: "text/javascript",
+            },
+          }),
+        }));
+
+      const { serveModule } = await import("./module-server.ts");
+      const options = {
+        projectId: "test",
+        projectDir,
+        adapter: denoAdapter,
+        dev: false,
+        mode: "production",
+        releaseId,
+      } as const;
+
+      const ambiguous = await serveModule(
+        new Request("http://localhost:3000/_vf_modules/components/Collision.js"),
+        options,
+      );
+      assertEquals(ambiguous.status, 404);
+      assertEquals(ambiguous.headers.get("cache-control"), "no-store");
+      assertEquals((await ambiguous.text()).includes("unmanifested-tsx"), false);
+
+      const exact = await serveModule(
+        new Request("http://localhost:3000/_vf_modules/components/Collision.ts"),
+        options,
+      );
+      assertEquals(exact.status, 200);
+      assertStringIncludes(await exact.text(), "manifested-ts");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("does not resolve tenant source through reserved framework namespaces in production", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-browser-module-reserved-" });
+    const releaseId = `rel-browser-reserved-${crypto.randomUUID()}`;
+    const privateSource = `export const secret = "tenant-private-source";`;
+    const reservedPaths = [
+      "deps/security-review-private.ts",
+      "react/security-review-private.ts",
+      "_veryfront/security-review-private.ts",
+      "_dnt.security-review-private.ts",
+    ];
+
+    try {
+      for (const path of reservedPaths) {
+        const slash = path.lastIndexOf("/");
+        if (slash >= 0) {
+          await Deno.mkdir(`${projectDir}/${path.slice(0, slash)}`, { recursive: true });
+        }
+        await Deno.writeTextFile(`${projectDir}/${path}`, privateSource);
+      }
+      // This was previously considered an extra framework lookup directory,
+      // which could misclassify tenant source as framework-owned.
+      await Deno.mkdir(`${projectDir}/src`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/src/security-review-src-alias.ts`,
+        privateSource,
+      );
+
+      registerManifestFetcherForRelease(releaseId, () =>
+        Promise.resolve({
+          state: "ready",
+          manifest_version: 1,
+          manifest: manifest({}, releaseId, "source"),
+        }));
+
+      const { serveModule } = await import("./module-server.ts");
+      const options = {
+        projectId: "test",
+        projectDir,
+        adapter: denoAdapter,
+        dev: false,
+        mode: "production",
+        releaseId,
+      } as const;
+
+      for (
+        const path of [
+          "deps/security-review-private.js",
+          "react/security-review-private.js",
+          "_veryfront/security-review-private.js",
+          "_veryfront/security-review-src-alias.js",
+          "_dnt.security-review-private.js",
+        ]
+      ) {
+        const response = await serveModule(
+          new Request(`http://localhost:3000/_vf_modules/${path}`),
+          options,
+        );
+        assertEquals(response.status, 404, path);
+        assertEquals(response.headers.get("cache-control"), "no-store", path);
+        assertEquals((await response.text()).includes("tenant-private-source"), false, path);
+      }
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("keeps known framework assets available without a production manifest", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-browser-framework-assets-" });
+    const releaseId = `rel-browser-framework-${crypto.randomUUID()}`;
+
+    try {
+      registerManifestFetcherForRelease(
+        releaseId,
+        () => Promise.resolve({ state: "building", manifest_version: 1, manifest: null }),
+      );
+
+      const { serveModule } = await import("./module-server.ts");
+      const options = {
+        projectId: "test",
+        projectDir,
+        adapter: denoAdapter,
+        dev: false,
+        mode: "production",
+        releaseId,
+      } as const;
+
+      for (
+        const path of [
+          "_veryfront/_dnt.shims.js",
+          "_dnt.polyfills.js",
+          "react/react.js",
+          "deno.js",
+        ]
+      ) {
+        const response = await serveModule(
+          new Request(`http://localhost:3000/_vf_modules/${path}`),
+          options,
+        );
+        assertEquals(response.status, 200, path);
+      }
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("should serve _dnt.shims.js with _veryfront/ prefix", async () => {
     const response = await serve(
       new Request("http://localhost:3000/_vf_modules/_veryfront/_dnt.shims.js"),

@@ -1,6 +1,6 @@
 /** Module Server - serves transformed ESM modules at /_vf_modules/* URLs */
 
-import { join } from "#veryfront/compat/path/index.ts";
+import { isAbsolute, join, relative } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { TransformOptions } from "#veryfront/transforms/esm-transform.ts";
@@ -42,7 +42,6 @@ import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-sc
 import {
   getReadyManifestForBrowserModuleAdmission,
 } from "#veryfront/release-assets/manifest-cache.ts";
-import { resolveManifestModuleUrl } from "#veryfront/release-assets/html-consumption.ts";
 import {
   DEPENDENCY_PINNING_ENV_FLAG,
   RELEASE_ASSET_IMMUTABLE_MAX_AGE_SECONDS,
@@ -197,12 +196,30 @@ function isSSRModuleRequest(
   return url.searchParams.get("ssr") === "true" || userAgent.startsWith("Deno/");
 }
 
-function isFrameworkBrowserModulePath(modulePath: string): boolean {
-  return modulePath.startsWith("_veryfront/") ||
-    modulePath.startsWith("react/") ||
-    modulePath.startsWith("deps/") ||
-    modulePath.startsWith("_dnt.") ||
-    modulePath === "deno";
+function isReservedFrameworkModulePath(modulePathWithoutJsExtension: string): boolean {
+  return modulePathWithoutJsExtension.startsWith("_veryfront/") ||
+    modulePathWithoutJsExtension.startsWith("react/") ||
+    modulePathWithoutJsExtension.startsWith("deps/") ||
+    modulePathWithoutJsExtension.startsWith("_dnt.") ||
+    modulePathWithoutJsExtension === "deno";
+}
+
+function projectSourceManifestKey(projectDir: string, sourceFile: string): string | null {
+  const relativePath = relative(projectDir, sourceFile).replaceAll("\\", "/");
+  if (
+    relativePath.length === 0 ||
+    relativePath === "." ||
+    relativePath === ".." ||
+    relativePath.startsWith("../") ||
+    isAbsolute(relativePath)
+  ) {
+    return null;
+  }
+
+  const segments = relativePath.split("/");
+  return segments.every((segment) => segment.length > 0 && segment !== "." && segment !== "..")
+    ? relativePath
+    : null;
 }
 
 function isScriptModuleSource(path: string): boolean {
@@ -255,6 +272,12 @@ interface SourceLookupContext {
   branch?: string | null;
   releaseId?: string | null;
   reactVersion?: string;
+  /**
+   * Whether a reserved framework request may fall back to project-owned source.
+   * Production browser requests disable this so a missing framework asset
+   * cannot silently change provenance to tenant code.
+   */
+  allowReservedProjectFallback?: boolean;
 }
 
 export interface ModuleServerOptions {
@@ -698,45 +721,10 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         });
       }
 
-      if (
-        !isSSR &&
+      const requiresProductionManifestAdmission = !isSSR &&
         options.mode === "production" &&
-        options.releaseId &&
-        !isFrameworkBrowserModulePath(modulePath)
-      ) {
-        const admissionManifest = await getReadyManifestForBrowserModuleAdmission(
-          options.releaseId,
-          {
-            refreshCachedNull: true,
-          },
-        );
-        if (!admissionManifest) {
-          logger.error("Production browser module manifest is unavailable", {
-            modulePath,
-            releaseId: options.releaseId,
-          });
-          return createModuleResponse(
-            method,
-            "Browser module manifest unavailable",
-            HttpStatus.SERVICE_UNAVAILABLE,
-            {
-              "Content-Type": "text/plain; charset=utf-8",
-              "Cache-Control": "no-store",
-            },
-          );
-        }
-        if (!resolveManifestModuleUrl(admissionManifest, modulePath)) {
-          logger.warn("Rejected production browser module absent from release manifest", {
-            modulePath,
-            releaseId: options.releaseId,
-            manifestVersion: admissionManifest.manifestVersion,
-          });
-          return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
-            "Content-Type": "text/plain; charset=utf-8",
-            "Cache-Control": "no-store",
-          });
-        }
-      }
+        typeof options.releaseId === "string" &&
+        options.releaseId.length > 0;
 
       const canUseReleaseModuleResponseCache = method === "GET" || method === "HEAD";
       const canCacheReleaseVersionedModule = canUseReleaseModuleResponseCache &&
@@ -770,7 +758,9 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         })
         : null;
 
-      if (releaseModuleResponseCacheKey) {
+      const readCachedReleaseModule = async (): Promise<Response | null> => {
+        if (!releaseModuleResponseCacheKey) return null;
+
         const cachedResponse = await getReleaseModuleResponse(releaseModuleResponseCacheKey);
         if (cachedResponse?.entry) {
           const canUseCachedResponse = !releaseDependencyRewriteEnabled ||
@@ -790,6 +780,12 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           markRequestProfilePhase("module.response_cache_dependency_blocked");
         }
         markRequestProfilePhase("module.response_cache_miss");
+        return null;
+      };
+
+      if (!requiresProductionManifestAdmission) {
+        const cachedResponse = await readCachedReleaseModule();
+        if (cachedResponse) return cachedResponse;
       }
 
       try {
@@ -806,6 +802,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
                 branch,
                 releaseId: options.releaseId,
                 reactVersion,
+                allowReservedProjectFallback: !requiresProductionManifestAdmission,
               },
               modulePath,
             ),
@@ -818,11 +815,54 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             projectDir,
           });
           return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
-            "Content-Type": "text/plain",
+            "Content-Type": "text/plain; charset=utf-8",
+            "Cache-Control": "no-store",
           });
         }
 
         const { path: sourceFile, isFrameworkFile, embeddedContent } = findResult;
+
+        if (requiresProductionManifestAdmission && !isFrameworkFile) {
+          const exactSourceKey = projectSourceManifestKey(projectDir, sourceFile);
+          const admissionManifest = await getReadyManifestForBrowserModuleAdmission(
+            options.releaseId!,
+            { refreshCachedNull: true },
+          );
+          if (!admissionManifest) {
+            logger.error("Production browser module manifest is unavailable", {
+              modulePath,
+              sourceFile,
+              releaseId: options.releaseId,
+            });
+            return createModuleResponse(
+              method,
+              "Browser module manifest unavailable",
+              HttpStatus.SERVICE_UNAVAILABLE,
+              {
+                "Content-Type": "text/plain; charset=utf-8",
+                "Cache-Control": "no-store",
+              },
+            );
+          }
+          if (!exactSourceKey || !Object.hasOwn(admissionManifest.modules, exactSourceKey)) {
+            logger.warn("Rejected production browser source absent from release manifest", {
+              modulePath,
+              sourceFile,
+              exactSourceKey,
+              releaseId: options.releaseId,
+              manifestVersion: admissionManifest.manifestVersion,
+            });
+            return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
+              "Content-Type": "text/plain; charset=utf-8",
+              "Cache-Control": "no-store",
+            });
+          }
+        }
+
+        if (requiresProductionManifestAdmission) {
+          const cachedResponse = await readCachedReleaseModule();
+          if (cachedResponse) return cachedResponse;
+        }
 
         let code = "";
         let inspectedBrowserSource: string | undefined;
@@ -1127,6 +1167,7 @@ async function findSourceFile(
   requestedModulePath = basePath,
 ): Promise<FindSourceFileResult | null> {
   const { reactVersion } = context;
+  const allowReservedProjectFallback = context.allowReservedProjectFallback !== false;
   // Extensions including .src for compiled binary embedded sources
   const extensions = [
     ".json",
@@ -1182,7 +1223,8 @@ async function findSourceFile(
   // Note: checked before isFrameworkPath guard because relative imports from
   // deeply nested modules (e.g. ../../../../_dnt.shims.js) resolve outside
   // the _veryfront/ prefix.
-  const embeddedContent = PROJECT_FALLBACK_EMBEDDED_POLYFILLS.has(basePathWithoutExt)
+  const embeddedContent = allowReservedProjectFallback &&
+      PROJECT_FALLBACK_EMBEDDED_POLYFILLS.has(basePathWithoutExt)
     ? undefined
     : EMBEDDED_POLYFILLS[basePathWithoutExt];
   if (embeddedContent) {
@@ -1216,13 +1258,15 @@ async function findSourceFile(
     if (packageAssetPath) {
       return { path: packageAssetPath, isFrameworkFile: true };
     }
+
+    if (!allowReservedProjectFallback) return null;
   }
 
   if (isFrameworkPath) {
     const frameworkResult = await resolveFrameworkSourcePath(
       basePathWithoutExt.slice("_veryfront/".length),
       {
-        extraLookupDirs: [join(projectDir, "src")],
+        extraLookupDirs: allowReservedProjectFallback ? [join(projectDir, "src")] : [],
         extensions,
       },
     );
@@ -1235,12 +1279,19 @@ async function findSourceFile(
       return { path: frameworkResult.path, isFrameworkFile: true };
     }
 
-    // Framework path not found locally - log warning and fall back to project lookups
+    // A production browser request must not silently change provenance from
+    // a reserved framework namespace to tenant source.
     logger.warn("Framework file not found locally", {
       basePath: basePathWithoutExt,
       frameworkRoot: FRAMEWORK_ROOT,
     });
+    if (!allowReservedProjectFallback) return null;
   }
+
+  if (
+    !allowReservedProjectFallback &&
+    isReservedFrameworkModulePath(basePathWithoutExt)
+  ) return null;
 
   if (hasKnownExt) {
     const fullPath = join(projectDir, basePath);
