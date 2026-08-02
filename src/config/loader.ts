@@ -1778,6 +1778,20 @@ export interface HostedConfigOptions {
   readonly signal?: AbortSignal;
 }
 
+/**
+ * Authenticated source and environment binding for one hosted evaluation.
+ *
+ * A composition root derives this once from control-plane state and threads it
+ * to every consumer of that request's configuration. Nothing downstream may
+ * re-derive source or environment identity for itself.
+ *
+ * @internal
+ */
+export type PreparedHostedConfigContext = Pick<
+  HostedConfigOptions,
+  "sourceContext" | "preparedContext"
+>;
+
 /** Exact declarative source selected by a trusted composition boundary. */
 export type HostedConfigSource = Readonly<{
   source: string;

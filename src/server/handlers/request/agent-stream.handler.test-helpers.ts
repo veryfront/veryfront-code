@@ -109,7 +109,11 @@ export function createNoopFsAdapter(
   }>,
 ): SourceContextTestFsAdapter {
   const adapter: SourceContextTestFsAdapter = {
-    readFile: async () => "",
+    // This adapter holds no files, so reads report absence the way a real
+    // filesystem does rather than returning empty content that hosted config
+    // evaluation would treat as a present, unparseable source.
+    readFile: (path: string) =>
+      Promise.reject(Object.assign(new Error(`File not found: ${path}`), { code: "ENOENT" })),
     writeFile: async () => {},
     exists: async () => false,
     async *readDir() {},

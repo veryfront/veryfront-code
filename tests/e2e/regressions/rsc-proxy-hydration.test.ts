@@ -13,6 +13,9 @@ import {
 } from "../../_helpers/playwright.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 import { startProductionServer } from "../../../src/server/production-server.ts";
+import { bootstrapProd } from "../../../src/server/bootstrap.ts";
+import { runtime } from "#veryfront/platform/adapters/detect.ts";
+import { validateVeryfrontConfig } from "#veryfront/config/schemas/index.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 
 const ROOT_LAYOUT_SOURCE =
@@ -25,6 +28,7 @@ const LOCAL_RSC_CONFIG_SOURCE = `export default { experimental: { rsc: true } };
 const PROXY_MODE_CONFIG_SOURCE = `export default {
             experimental: { rsc: true },
             fs: {
+              type: "veryfront-api",
               veryfront: {
                 proxyMode: true,
                 apiBaseUrl: "https://api.veryfront.com"
@@ -223,8 +227,31 @@ async function withProxyBrowserPage(
   Deno.env.set(DISPATCH_PUBLIC_KEY_ENV, trustedPublicKeyPem!);
 
   let server: Awaited<ReturnType<typeof startProductionServer>> | undefined;
+  let disposeBootstrap: (() => void | Promise<void>) | undefined;
 
   try {
+    await writeTextFile(
+      join(context.projectDir, "veryfront.config.js"),
+      LOCAL_RSC_CONFIG_SOURCE,
+    );
+    const adapter = await runtime.get();
+    const bootstrap = await bootstrapProd(context.projectDir, adapter);
+    disposeBootstrap = bootstrap.dispose;
+    bootstrap.config = validateVeryfrontConfig({
+      experimental: { rsc: true },
+      fs: {
+        type: "veryfront-api",
+        veryfront: {
+          proxyMode: true,
+          apiBaseUrl: "https://api.veryfront.com",
+        },
+      },
+    });
+    await writeTextFile(
+      join(context.projectDir, "veryfront.config.js"),
+      PROXY_MODE_CONFIG_SOURCE,
+    );
+
     server = await startProductionServer({
       projectDir: context.projectDir,
       port,
@@ -232,6 +259,7 @@ async function withProxyBrowserPage(
       signal: controller.signal,
       defaultProjectSlug: context.projectId,
       defaultProjectId: context.projectId,
+      bootstrapResult: bootstrap,
     });
     await server.ready;
     await registerTailwindExtension();
@@ -258,6 +286,7 @@ async function withProxyBrowserPage(
   } finally {
     controller.abort();
     await server?.stop();
+    await disposeBootstrap?.();
     if (previousDispatchPublicKey === undefined) {
       Deno.env.delete(DISPATCH_PUBLIC_KEY_ENV);
     } else {

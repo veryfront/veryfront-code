@@ -58,6 +58,11 @@ export interface HandlerContextOptions {
   environmentId: string | undefined;
   /** Skip render-specific enriched context requirements for non-render control-plane routes */
   skipEnrichedContext?: boolean;
+  /**
+   * Prepares the authenticated hosted evaluation context for this request.
+   * Supplied only for shared multi-project runtimes.
+   */
+  prepareHostedConfigContext?: HandlerContext["prepareHostedConfigContext"];
 }
 
 /**
@@ -112,6 +117,7 @@ export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext
     routeRegistry: opts.routeRegistry,
     isLocalProject: opts.isLocalProject,
     environmentId: opts.environmentId,
+    prepareHostedConfigContext: opts.prepareHostedConfigContext,
     enriched: enrichedContext,
   };
 }

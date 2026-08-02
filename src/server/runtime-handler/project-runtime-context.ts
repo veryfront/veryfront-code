@@ -314,6 +314,13 @@ export async function resolveProjectRuntimeContext(
     moduleServerUrl: input.moduleServerUrl,
     environmentId: input.environmentId ?? input.headers.environmentId,
     skipEnrichedContext: input.skipEnrichedContext ?? shouldSkipEnrichedContext(input.url.pathname),
+    // Handlers that load config themselves reuse this request's identity
+    // instead of deriving their own.
+    ...(input.isProxyMode
+      ? {
+        prepareHostedConfigContext: () => prepareHostedConfigContext(adapterRes.isLocalProject),
+      }
+      : {}),
   });
 
   let rawEnvVars: Record<string, string> = hostedConfigLoadPromise

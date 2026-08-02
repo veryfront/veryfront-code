@@ -12,10 +12,12 @@ import { CACHE_INVARIANT_VIOLATION, getErrorMessage } from "#veryfront/errors";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { getConfig, getHostedConfig } from "#veryfront/config/loader.ts";
-import type { PreparedDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
+import {
+  getConfig,
+  getHostedConfig,
+  type PreparedHostedConfigContext,
+} from "#veryfront/config/loader.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import type { VirtualConfigSourceContext } from "#veryfront/cache/keys.ts";
 import { isConfigOptionalControlPlaneRunRequest } from "#veryfront/channels/control-plane.ts";
 import { timeAsync } from "./request-lifecycle.ts";
 import {
@@ -40,11 +42,6 @@ interface AdapterResolutionResult {
   config: VeryfrontConfig | undefined;
   /** Whether this is a local project (filesystem-first) */
   isLocalProject: boolean;
-}
-
-interface PreparedHostedConfigLoad {
-  readonly sourceContext: VirtualConfigSourceContext;
-  readonly preparedContext: PreparedDeclarativeConfigContext;
 }
 
 interface AdapterResolutionOptions {
@@ -89,7 +86,7 @@ interface AdapterResolutionOptions {
    */
   prepareHostedConfigContext?: (
     isLocalProject: boolean,
-  ) => Promise<PreparedHostedConfigLoad>;
+  ) => Promise<PreparedHostedConfigContext>;
 }
 
 function usesExactSourceConfig(opts: AdapterResolutionOptions): boolean {
@@ -110,7 +107,7 @@ function shouldDeferConfigLoad(opts: AdapterResolutionOptions): boolean {
 async function prepareProxyConfigLoad(
   opts: AdapterResolutionOptions,
   isLocalProject: boolean,
-): Promise<PreparedHostedConfigLoad & { cacheKey: string }> {
+): Promise<PreparedHostedConfigContext & { cacheKey: string }> {
   if (!opts.projectSlug || !opts.prepareHostedConfigContext) {
     throw CACHE_INVARIANT_VIOLATION.create({
       detail: "Proxy project config requires an authenticated declarative evaluation context",
