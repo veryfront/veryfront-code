@@ -374,9 +374,9 @@ function buildAgentSourceEnvironmentName(sourceContext: RuntimeAgentSourceContex
 /**
  * Load the project environment this agent source may read.
  *
- * Control-plane requests don't go through the proxy and therefore don't carry
- * x-environment-id, so the production environment ID is discovered from the API
- * (one fetch per project per server lifetime, then cached).
+ * Control-plane requests bind a validated runtime target environment to the
+ * request context. Runs without one discover the production environment from
+ * the API (one fetch per project per server lifetime, then cached).
  */
 async function resolveAgentSourceEnvironment(
   ctx: HandlerContext,
@@ -723,6 +723,9 @@ export class AgentStreamHandler extends BaseHandler {
       const requestScopedContext: HandlerContext = {
         ...ctx,
         proxyToken: apiAuthToken || undefined,
+        // The signed invocation is authoritative. Never promote an unrelated
+        // request header into the environment used for hosted evaluation.
+        environmentId: payload.runtimeTargetEnvironmentId ?? undefined,
         requestContext: ctx.requestContext
           ? { ...ctx.requestContext, token: apiAuthToken }
           : ctx.requestContext,
