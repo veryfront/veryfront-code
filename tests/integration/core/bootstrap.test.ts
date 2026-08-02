@@ -253,7 +253,7 @@ describe("bootstrap - FSAdapter Initialization", {
     });
   });
 
-  it("should skip FSAdapter when fs.type is undefined", async () => {
+  it("should reject backend options when fs.type is undefined", async () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("undefined_type", async (projectDir) => {
@@ -266,13 +266,15 @@ describe("bootstrap - FSAdapter Initialization", {
         };`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertEquals(result.usingFSAdapter, false);
+      await assertRejects(
+        () => bootstrap(projectDir, adapter),
+        Error,
+        "Filesystem options must belong to the selected backend type",
+      );
     });
   });
 
-  it("should handle fs config with missing credentials gracefully", async () => {
+  it("should reject incomplete remote filesystem config", async () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("missing_creds", async (projectDir) => {
@@ -285,13 +287,15 @@ describe("bootstrap - FSAdapter Initialization", {
         };`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertExists(result);
+      await assertRejects(
+        () => bootstrap(projectDir, adapter),
+        Error,
+        "Filesystem options must belong to the selected backend type",
+      );
     });
   });
 
-  it("should handle FSAdapter initialization errors gracefully", async () => {
+  it("should reject options that do not belong to the selected FSAdapter", async () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("fs_error", async (projectDir) => {
@@ -301,11 +305,11 @@ describe("bootstrap - FSAdapter Initialization", {
         createBasicConfig({ fsType: "memory" }),
       );
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertExists(result);
-      assertExists(result.config);
-      assertEquals(result.usingFSAdapter, false);
+      await assertRejects(
+        () => bootstrap(projectDir, adapter),
+        Error,
+        "Invalid veryfront.config at fs.veryfront",
+      );
     });
   });
 
@@ -676,7 +680,7 @@ describe("bootstrap - Error Handling", () => {
         };`,
       );
 
-      await assertRejects(() => bootstrap(projectDir, adapter), Error, "security.cors.origin");
+      await assertRejects(() => bootstrap(projectDir, adapter), Error, "security.cors");
     });
   });
 
@@ -760,7 +764,7 @@ describe("bootstrap - Error Handling", () => {
          export default config;`,
       );
 
-      await assertRejects(() => bootstrap(projectDir, adapter), Error, "Unknown config keys: self");
+      await assertRejects(() => bootstrap(projectDir, adapter), Error, 'Unrecognized key: "self"');
     });
   });
 
@@ -780,7 +784,7 @@ describe("bootstrap - Error Handling", () => {
       await assertRejects(
         () => bootstrap(projectDir, adapter),
         Error,
-        "Unknown config keys: onBuild",
+        'Unrecognized key: "onBuild"',
       );
     });
   });

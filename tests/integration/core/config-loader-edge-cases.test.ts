@@ -64,20 +64,28 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
         await assertRejects(
           () => getConfig(projectDir, adapter),
           Error,
-          "Expected object, received string",
+          "expected object, received string",
         );
       });
     });
 
     it("should reject null config export", async () => {
       await withConfigTest("export default null;", async ({ projectDir, adapter }) => {
-        await assertRejects(() => getConfig(projectDir, adapter), Error, "Unknown config keys");
+        await assertRejects(
+          () => getConfig(projectDir, adapter),
+          Error,
+          "expected object, received null",
+        );
       });
     });
 
     it("should reject undefined config export", async () => {
       await withConfigTest("export default undefined;", async ({ projectDir, adapter }) => {
-        await assertRejects(() => getConfig(projectDir, adapter), Error, "Unknown config keys");
+        await assertRejects(
+          () => getConfig(projectDir, adapter),
+          Error,
+          "expected object, received undefined",
+        );
       });
     });
 
@@ -120,12 +128,12 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
         };
       `,
         async ({ projectDir, adapter }) => {
-          await assertRejects(() => getConfig(projectDir, adapter), Error, "security.cors.origin");
+          await assertRejects(() => getConfig(projectDir, adapter), Error, "security.cors");
         },
       );
     });
 
-    it("should reject array as cors.origin", async () => {
+    it("should accept an origin allowlist", async () => {
       await withConfigTest(
         `
         export default {
@@ -137,7 +145,10 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
         };
       `,
         async ({ projectDir, adapter }) => {
-          await assertRejects(() => getConfig(projectDir, adapter), Error, "security.cors.origin");
+          const config = await getConfig(projectDir, adapter);
+          assertEquals(config.security?.cors, {
+            origin: ["http://localhost:3000"],
+          });
         },
       );
     });
@@ -154,7 +165,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
         };
       `,
         async ({ projectDir, adapter }) => {
-          await assertRejects(() => getConfig(projectDir, adapter), Error, "security.cors.origin");
+          await assertRejects(() => getConfig(projectDir, adapter), Error, "security.cors");
         },
       );
     });
@@ -221,7 +232,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
         };
       `,
         async ({ projectDir, adapter }) => {
-          await assertRejects(() => getConfig(projectDir, adapter), Error, "Unknown config keys");
+          await assertRejects(() => getConfig(projectDir, adapter), Error, "Unrecognized keys");
         },
       );
     });
@@ -235,7 +246,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
         };
       `,
         async ({ projectDir, adapter }) => {
-          await assertRejects(() => getConfig(projectDir, adapter), Error, "Unknown config keys");
+          await assertRejects(() => getConfig(projectDir, adapter), Error, "Unrecognized keys");
         },
       );
     });
@@ -473,7 +484,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
           await assertRejects(
             () => getConfig(projectDir, adapter),
             Error,
-            "Unknown config keys: self",
+            'Unrecognized key: "self"',
           );
         },
       );
@@ -491,7 +502,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
         };
       `,
         async ({ projectDir, adapter }) => {
-          await assertRejects(() => getConfig(projectDir, adapter), Error, "Unknown config keys");
+          await assertRejects(() => getConfig(projectDir, adapter), Error, "Unrecognized keys");
         },
       );
     });
@@ -573,7 +584,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
           await assertRejects(
             () => getConfig(projectDir, adapter),
             Error,
-            "Unknown config keys: port",
+            'Unrecognized key: "port"',
           );
         },
       );

@@ -117,7 +117,7 @@ describe("config/loader", () => {
       );
 
       clearConfigCache();
-      await expectConfigError(context.projectDir, ["security.cors.origin", "must be a string"]);
+      await expectConfigError(context.projectDir, ["Invalid veryfront.config at security.cors"]);
     });
   });
 
@@ -136,7 +136,7 @@ describe("config/loader", () => {
       await assertRejects(
         () => getConfig(context.projectDir, adapter),
         Error,
-        "Unknown config keys: unknownKey, anotherUnknown",
+        'Unrecognized keys: "unknownKey", "anotherUnknown"',
       );
     });
   });
