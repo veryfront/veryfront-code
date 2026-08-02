@@ -1,12 +1,43 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert";
-import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert";
+import {
+  buildVersionedRegistryScopeId,
+  runWithCacheKeyContext,
+} from "#veryfront/cache/cache-key-builder.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import {
+  clearProjectRegistryScopes,
+  clearRegistryScope,
   ProjectScopedRegistryManager,
+  registerRegistryScopeEvictionListener,
   runWithRegistryTransaction,
 } from "./project-scoped-registry-manager.ts";
+
+async function withEmptyPublicMapIterator<T>(
+  operation: () => T | Promise<T>,
+): Promise<{ iteratorCalls: number; value: T }> {
+  const originalIterator = Object.getOwnPropertyDescriptor(Map.prototype, Symbol.iterator);
+  let iteratorCalls = 0;
+  try {
+    Object.defineProperty(Map.prototype, Symbol.iterator, {
+      configurable: true,
+      value: function* () {
+        iteratorCalls += 1;
+        yield* [];
+      },
+      writable: true,
+    });
+    const value = await operation();
+    return { iteratorCalls, value };
+  } finally {
+    if (originalIterator) {
+      Object.defineProperty(Map.prototype, Symbol.iterator, originalIterator);
+    } else {
+      Reflect.deleteProperty(Map.prototype, Symbol.iterator);
+    }
+  }
+}
 
 describe("ProjectScopedRegistryManager", () => {
   function createManager<T>(name: string): ProjectScopedRegistryManager<T> {
@@ -46,6 +77,19 @@ describe("ProjectScopedRegistryManager", () => {
       assertEquals(manager.get("agent-1"), agent);
     });
 
+    it("keeps same-object replacement ownership distinct", () => {
+      const manager = createManager<object>("agent");
+      const item = {};
+      const disposeFirst = manager.registerOwned("agent-1", item);
+      const disposeSecond = manager.registerOwned("agent-1", item);
+
+      disposeFirst();
+      assertEquals(manager.get("agent-1"), item);
+
+      disposeSecond();
+      assertEquals(manager.get("agent-1"), undefined);
+    });
+
     it("isolates registries by cache scope for the same project", () => {
       const manager = createManager<string>("tool");
 
@@ -72,42 +116,24 @@ describe("ProjectScopedRegistryManager", () => {
         () => assertEquals(manager.get("shared-tool"), "feature-value"),
       );
     });
-  });
 
-  describe("registerOwned", () => {
-    it("keeps an equal primitive replacement when the earlier owner disposes", () => {
-      const manager = createManager<string>("provider");
-      const disposeFirst = manager.registerOwned("local", "same-value");
-      const disposeSecond = manager.registerOwned("local", "same-value");
+    it("preserves existing candidates independently of public Map iteration", async () => {
+      const manager = new ProjectScopedRegistryManager<string>("tool", {
+        validateRegistryCandidate: (registry, id) => {
+          if (id === "second" && registry.get("first") !== "one") {
+            throw new Error("effective registry lost its existing candidate");
+          }
+        },
+      });
+      manager.register("first", "one");
 
-      disposeFirst();
-      disposeFirst();
-      assertEquals(manager.get("local"), "same-value");
+      const result = await withEmptyPublicMapIterator(() => {
+        manager.register("second", "two");
+        return manager.get("second");
+      });
 
-      disposeSecond();
-      assertEquals(manager.get("local"), undefined);
-    });
-
-    it("keeps a same-object replacement when the earlier owner disposes", () => {
-      const manager = createManager<object>("provider");
-      const provider = { name: "shared-instance" };
-      const disposeFirst = manager.registerOwned("local", provider);
-      const disposeSecond = manager.registerOwned("local", provider);
-
-      disposeFirst();
-      assert(manager.get("local") === provider);
-
-      disposeSecond();
-      assertEquals(manager.get("local"), undefined);
-    });
-
-    it("does not own a later plain registration of the same value", () => {
-      const manager = createManager<string>("provider");
-      const disposeOwned = manager.registerOwned("local", "same-value");
-      manager.register("local", "same-value");
-
-      disposeOwned();
-      assertEquals(manager.get("local"), "same-value");
+      assertEquals(result.value, "two");
+      assertEquals(result.iteratorCalls, 0);
     });
   });
 
@@ -125,11 +151,73 @@ describe("ProjectScopedRegistryManager", () => {
       assertEquals(manager.get("shared-tool"), "second");
     });
 
+    it("applies configured conflict validation to shared registrations", () => {
+      const manager = new ProjectScopedRegistryManager<string>("tool", {
+        validateRegistration: (id, existing, incoming) => {
+          if (existing !== incoming) {
+            throw new Error(`conflicting shared registration: ${id}`);
+          }
+        },
+      });
+      manager.registerShared("shared-tool", "first");
+
+      assertThrows(
+        () => manager.registerShared("shared-tool", "second"),
+        Error,
+        "conflicting shared registration: shared-tool",
+      );
+      assertEquals(manager.get("shared-tool"), "first");
+    });
+
+    it("validates a shared candidate against every live project scope", () => {
+      const manager = new ProjectScopedRegistryManager<string>("tool", {
+        validateRegistry: (registry) => {
+          const values = Array.from(registry.values());
+          if (new Set(values).size !== values.length) {
+            throw new Error("duplicate effective value");
+          }
+        },
+      });
+      const projectScope = {
+        projectId: "shared-validation-project",
+        mode: "preview" as const,
+        versionId: "main",
+      };
+      runWithCacheKeyContext(
+        projectScope,
+        () => manager.register("project-tool", "duplicate"),
+      );
+
+      assertThrows(
+        () => manager.registerShared("shared-tool", "duplicate"),
+        Error,
+        "duplicate effective value",
+      );
+      assertEquals(manager.get("shared-tool"), undefined);
+      runWithCacheKeyContext(
+        projectScope,
+        () => assertEquals(manager.get("project-tool"), "duplicate"),
+      );
+    });
+
     it("should prefer project-specific item over shared item", () => {
       const manager = createManager<string>("tool");
       manager.registerShared("tool-x", "shared-version");
       manager.register("tool-x", "project-version");
       assertEquals(manager.get("tool-x"), "project-version");
+    });
+
+    it("treats nullish project items as explicit shared-item overrides", () => {
+      const manager = createManager<string | null | undefined>("tool");
+      manager.registerShared("null-item", "shared-null-fallback");
+      manager.registerShared("undefined-item", "shared-undefined-fallback");
+      manager.register("null-item", null);
+      manager.register("undefined-item", undefined);
+
+      assertEquals(manager.get("null-item"), null);
+      assertEquals(manager.get("undefined-item"), undefined);
+      assertEquals(manager.has("null-item"), true);
+      assertEquals(manager.has("undefined-item"), true);
     });
 
     it("should fall back to shared when project item not found", () => {
@@ -307,11 +395,209 @@ describe("ProjectScopedRegistryManager", () => {
       assertEquals(manager.get("shared-a"), "value");
       assertEquals(manager.get("proj-a"), undefined);
     });
+
+    it("publishes registrations made after a request clears its current generation", async () => {
+      const manager = createManager<string>("tool");
+      const requestOptions = {
+        projectSlug: "clear-replace-project",
+        projectId: "clear-replace-project-id",
+        token: "clear-replace-token",
+        branch: "main",
+      };
+
+      await runWithRequestContext(requestOptions, async () => {
+        manager.register("old", "old");
+        manager.clear();
+        manager.register("new", "new");
+        assertEquals(manager.get("old"), undefined);
+        assertEquals(manager.get("new"), "new");
+      });
+
+      await runWithRequestContext(requestOptions, async () => {
+        assertEquals(manager.get("old"), undefined);
+        assertEquals(manager.get("new"), "new");
+      });
+    });
+  });
+
+  describe("clearProject", () => {
+    it("clears every encoded scope for one project without clearing a prefix neighbor", () => {
+      const manager = createManager<string>("tool");
+      const projectScope = (versionId: string) => ({
+        projectId: "project:alpha",
+        mode: "preview" as const,
+        versionId,
+      });
+      const neighboringScope = {
+        projectId: "project",
+        mode: "preview" as const,
+        versionId: "alpha:preview:main",
+      };
+
+      runWithCacheKeyContext(projectScope("main"), () => manager.register("item", "main"));
+      runWithCacheKeyContext(
+        projectScope("feature:branch"),
+        () => manager.register("item", "feature"),
+      );
+      runWithCacheKeyContext(neighboringScope, () => manager.register("item", "neighbor"));
+
+      manager.clearProject("project:alpha");
+
+      runWithCacheKeyContext(
+        projectScope("main"),
+        () => assertEquals(manager.get("item"), undefined),
+      );
+      runWithCacheKeyContext(
+        projectScope("feature:branch"),
+        () => assertEquals(manager.get("item"), undefined),
+      );
+      runWithCacheKeyContext(
+        neighboringScope,
+        () => assertEquals(manager.get("item"), "neighbor"),
+      );
+    });
+
+    it("does not treat a raw project ID as another project's complete scope ID", () => {
+      const manager = createManager<string>("tool");
+      const shortProjectScope = {
+        projectId: "a",
+        mode: "preview" as const,
+        versionId: "x",
+      };
+      const delimiterProjectScope = {
+        projectId: "a:preview:x",
+        mode: "preview" as const,
+        versionId: "main",
+      };
+
+      runWithCacheKeyContext(shortProjectScope, () => manager.register("item", "short"));
+      runWithCacheKeyContext(
+        delimiterProjectScope,
+        () => manager.register("item", "delimiter"),
+      );
+
+      manager.clearProject("a:preview:x");
+
+      runWithCacheKeyContext(
+        shortProjectScope,
+        () => assertEquals(manager.get("item"), "short"),
+      );
+      runWithCacheKeyContext(
+        delimiterProjectScope,
+        () => assertEquals(manager.get("item"), undefined),
+      );
+    });
+
+    it("keeps an active request on its captured generation while new requests see the clear", async () => {
+      const manager = createManager<string>("tool");
+      const requestOptions = {
+        projectSlug: "snapshot-project",
+        projectId: "snapshot-project-id",
+        token: "snapshot-token",
+        branch: "main",
+      };
+      const generationReady = Promise.withResolvers<void>();
+      const releaseRequest = Promise.withResolvers<void>();
+
+      const activeRequest = runWithRequestContext(requestOptions, async () => {
+        manager.register("item", "captured");
+        generationReady.resolve();
+        await releaseRequest.promise;
+        assertEquals(manager.get("item"), "captured");
+        manager.clear();
+        manager.register("stale-item", "stale");
+      });
+
+      await generationReady.promise;
+      manager.clearProject(requestOptions.projectId);
+
+      await runWithRequestContext(requestOptions, async () => {
+        assertEquals(manager.get("item"), undefined);
+        manager.register("current-item", "current");
+      });
+
+      releaseRequest.resolve();
+      await activeRequest;
+
+      await runWithRequestContext(requestOptions, async () => {
+        assertEquals(manager.get("current-item"), "current");
+        assertEquals(manager.get("stale-item"), undefined);
+      });
+    });
+
+    it("retires every project scope before surfacing a lifecycle listener failure", () => {
+      const manager = createManager<string>("tool");
+      const projectId = "lifecycle-error-project";
+      const mainScope = {
+        projectId,
+        mode: "preview" as const,
+        versionId: "main",
+      };
+      const featureScope = {
+        projectId,
+        mode: "preview" as const,
+        versionId: "feature",
+      };
+      runWithCacheKeyContext(mainScope, () => manager.register("item", "main"));
+      runWithCacheKeyContext(featureScope, () => manager.register("item", "feature"));
+
+      const failingScopeId = buildVersionedRegistryScopeId(
+        projectId,
+        "preview",
+        "main",
+      );
+      const disposeListener = registerRegistryScopeEvictionListener((scopeId) => {
+        if (scopeId === failingScopeId) throw new Error("listener cleanup failed");
+      });
+      try {
+        assertThrows(
+          () => clearProjectRegistryScopes(projectId),
+          Error,
+          "listener cleanup failed",
+        );
+      } finally {
+        disposeListener();
+      }
+
+      runWithCacheKeyContext(
+        mainScope,
+        () => assertEquals(manager.get("item"), undefined),
+      );
+      runWithCacheKeyContext(
+        featureScope,
+        () => assertEquals(manager.get("item"), undefined),
+      );
+    });
   });
 });
 
 describe("ProjectScopedRegistryManager transactions", () => {
   const scope = { projectId: "project-transaction", mode: "preview" as const, versionId: "main" };
+
+  it("preserves same-object replacement ownership across a committed transaction", async () => {
+    const manager = new ProjectScopedRegistryManager<object>("provider");
+    const item = {};
+    let disposeFirst = () => {};
+    let disposeSecond = () => {};
+
+    runWithCacheKeyContext(scope, () => {
+      disposeFirst = manager.registerOwned("local", item);
+    });
+    await runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(() => {
+          disposeSecond = manager.registerOwned("local", item);
+          return Promise.resolve();
+        }),
+    );
+
+    disposeFirst();
+    runWithCacheKeyContext(scope, () => assertEquals(manager.get("local"), item));
+
+    disposeSecond();
+    runWithCacheKeyContext(scope, () => assertEquals(manager.get("local"), undefined));
+  });
 
   it("can dispose an owned registration before its transaction commits", async () => {
     const manager = new ProjectScopedRegistryManager<string>("provider");
@@ -333,85 +619,31 @@ describe("ProjectScopedRegistryManager transactions", () => {
     });
   });
 
-  it("keeps a same-value replacement when its previous owner disposes in the transaction", async () => {
-    const manager = new ProjectScopedRegistryManager<string>("provider");
-
-    await runWithCacheKeyContext(
-      scope,
-      () =>
-        runWithRegistryTransaction(async () => {
-          const disposeFirst = manager.registerOwned("local", "same-value");
-          const disposeSecond = manager.registerOwned("local", "same-value");
-
-          disposeFirst();
-          assertEquals(manager.get("local"), "same-value");
-          disposeSecond();
-          assertEquals(manager.get("local"), undefined);
-        }),
-    );
-  });
-
-  it("does not let an aborted same-object generation dispose the live owner", async () => {
-    const manager = new ProjectScopedRegistryManager<object>("provider");
-    const provider = { generation: "same-instance" };
-    let disposeLive = () => {};
-    let disposeAborted = () => {};
-    runWithCacheKeyContext(scope, () => {
-      disposeLive = manager.registerOwned("local", provider);
+  it("preserves transaction candidates independently of public Map iteration", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("provider", {
+      validateRegistryCandidate: (registry, id) => {
+        if (id === "second" && registry.get("first") !== "one") {
+          throw new Error("transaction registry lost its existing candidate");
+        }
+      },
     });
+    runWithCacheKeyContext(scope, () => manager.register("first", "one"));
 
-    await assertRejects(
-      () =>
-        runWithCacheKeyContext(
-          scope,
-          () =>
-            runWithRegistryTransaction(async () => {
-              disposeAborted = manager.registerOwned("local", provider);
-              throw new Error("abort same-object replacement");
-            }),
-        ),
-      Error,
-      "abort same-object replacement",
+    const result = await withEmptyPublicMapIterator(() =>
+      runWithCacheKeyContext(
+        scope,
+        () =>
+          runWithRegistryTransaction(async () => {
+            manager.register("second", "two");
+            assertEquals(manager.get("first"), "one");
+          }),
+      )
     );
 
-    disposeAborted();
+    assertEquals(result.iteratorCalls, 0);
     runWithCacheKeyContext(scope, () => {
-      assert(manager.get("local") === provider);
-    });
-    disposeLive();
-    runWithCacheKeyContext(scope, () => {
-      assertEquals(manager.get("local"), undefined);
-    });
-  });
-
-  it("keeps a staged replacement when the previous live owner disposes concurrently", async () => {
-    const manager = new ProjectScopedRegistryManager<object>("provider");
-    const first = { generation: 1 };
-    const second = { generation: 2 };
-    let disposeFirst = () => {};
-    runWithCacheKeyContext(scope, () => {
-      disposeFirst = manager.registerOwned("local", first);
-    });
-
-    const stageReady = Promise.withResolvers<void>();
-    const releaseStage = Promise.withResolvers<void>();
-    const transaction = runWithCacheKeyContext(
-      scope,
-      () =>
-        runWithRegistryTransaction(async () => {
-          manager.registerOwned("local", second);
-          stageReady.resolve();
-          await releaseStage.promise;
-        }),
-    );
-
-    await stageReady.promise;
-    disposeFirst();
-    releaseStage.resolve();
-    await transaction;
-
-    runWithCacheKeyContext(scope, () => {
-      assert(manager.get("local") === second);
+      assertEquals(manager.get("first"), "one");
+      assertEquals(manager.get("second"), "two");
     });
   });
 
@@ -598,6 +830,36 @@ describe("ProjectScopedRegistryManager transactions", () => {
     });
   });
 
+  it("rejects a generation invalidated by authoritative project cleanup", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("agent");
+    const stageReady = Promise.withResolvers<void>();
+    const releaseStage = Promise.withResolvers<void>();
+    const transaction = runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          manager.register("staged-agent", "staged");
+          stageReady.resolve();
+          await releaseStage.promise;
+          manager.register("late-agent", "late");
+        }),
+    );
+
+    await stageReady.promise;
+    manager.clearProject(scope.projectId);
+    releaseStage.resolve();
+
+    await assertRejects(
+      () => transaction,
+      Error,
+      "invalidated",
+    );
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("staged-agent"), undefined);
+      assertEquals(manager.get("late-agent"), undefined);
+    });
+  });
+
   it("serializes concurrent transactions for the same registry scope", async () => {
     const manager = new ProjectScopedRegistryManager<string>("agent");
     const firstStarted = Promise.withResolvers<void>();
@@ -632,6 +894,68 @@ describe("ProjectScopedRegistryManager transactions", () => {
     runWithCacheKeyContext(scope, () => {
       assertEquals(manager.get("first-agent"), "first");
       assertEquals(manager.get("second-agent"), "second");
+    });
+  });
+
+  it("invalidates active and queued transactions when their scope is retired", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("agent");
+    const scopeId = buildVersionedRegistryScopeId(
+      scope.projectId,
+      scope.mode,
+      scope.versionId,
+    );
+    const firstStarted = Promise.withResolvers<void>();
+    const releaseFirst = Promise.withResolvers<void>();
+    let queuedStarted = false;
+
+    const first = runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          manager.register("first-agent", "first");
+          firstStarted.resolve();
+          await releaseFirst.promise;
+        }),
+    );
+    await firstStarted.promise;
+
+    const queued = runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          queuedStarted = true;
+          manager.register("queued-agent", "queued");
+        }),
+    );
+    await Promise.resolve();
+    assertEquals(queuedStarted, false);
+
+    const firstRejection = assertRejects(
+      () => first,
+      Error,
+      "invalidated",
+    );
+    const queuedRejection = assertRejects(
+      () => queued,
+      Error,
+      "invalidated while waiting",
+    );
+    clearRegistryScope(scopeId);
+    const retry = runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          manager.register("retry-agent", "retry");
+        }),
+    );
+    releaseFirst.resolve();
+    await Promise.all([firstRejection, queuedRejection, retry]);
+
+    assertEquals(queuedStarted, false);
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("first-agent"), undefined);
+      assertEquals(manager.get("queued-agent"), undefined);
+      assertEquals(manager.get("retry-agent"), "retry");
     });
   });
 

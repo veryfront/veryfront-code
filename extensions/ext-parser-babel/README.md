@@ -25,6 +25,15 @@ export default defineConfig({
 
 Core's `src/transforms/plugins/babel-node-positions.ts` is a thin shim that resolves this contract at call time. When the extension is not installed and the shim is invoked, Veryfront throws an install-suggestion error directing the user to add `@veryfront/ext-parser-babel`.
 
+## Parser-only entry
+
+Permission-constrained workers that only need AST parsing can import
+`BabelParseOnlyParser` from `@veryfront/ext-parser-babel/parser-only`. This
+entry preserves the full parser's language and file-extension behavior without
+loading Babel traversal, code generation, JSX transformation, extension
+lifecycle, or debug dependencies. It does not read environment variables or
+request filesystem/network permissions.
+
 ## Configuration
 
-No factory options. The extension reads no environment variables and takes no config.
+No factory options. The extension takes no config.

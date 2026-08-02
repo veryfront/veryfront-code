@@ -70,4 +70,52 @@ describe("LLMProviderRegistry", () => {
     reg.register(fakeProvider("google"));
     assertEquals(reg.list().map((p) => p.id), ["openai", "anthropic", "google"]);
   });
+
+  it("captures provider identity once at registration", () => {
+    const reg = createLLMProviderRegistry();
+    let idReads = 0;
+    const provider = {
+      get id(): string {
+        idReads++;
+        if (idReads > 1) throw new Error("id read more than once");
+        return "stable";
+      },
+      createModel: () => {
+        throw new Error("not used");
+      },
+    };
+
+    reg.register(provider);
+
+    assertEquals(reg.get("stable"), provider);
+    assertEquals(reg.has("stable"), true);
+    assertEquals(idReads, 1);
+  });
+
+  it("rejects malformed provider registrations", () => {
+    const reg = createLLMProviderRegistry();
+
+    assertThrows(
+      () => reg.register(fakeProvider("  ")),
+      TypeError,
+      "non-empty canonical string",
+    );
+    assertThrows(
+      () =>
+        reg.register({
+          id: "missing-create-model",
+        } as never),
+      TypeError,
+      'method "createModel"',
+    );
+    assertThrows(
+      () =>
+        reg.register({
+          ...fakeProvider("bad-optional-method"),
+          createEmbedding: "not a function",
+        } as never),
+      TypeError,
+      'optional method "createEmbedding"',
+    );
+  });
 });

@@ -27,6 +27,10 @@ export type PackageContractMetadata = ExtensionContractMetadata;
 export interface ExtensionContext {
   get<T>(contract: string): T | undefined;
   require<T>(contract: string): T;
+  /**
+   * Publish a contract declared by this extension through
+   * `contracts.provides` or static `provides`.
+   */
   provide<T>(contract: string, impl: T): void;
   /** Optional lifecycle cancellation supplied by abort-aware orchestrators. */
   readonly signal?: AbortSignal;

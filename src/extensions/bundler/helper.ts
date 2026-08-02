@@ -36,7 +36,7 @@ export function transform(
   code: string,
   options: Omit<TransformOptions, "code"> = {},
 ): Promise<TransformResult> {
-  return getBundler().transform({ code, ...options });
+  return getBundler().transform({ ...options, code });
 }
 
 /**
