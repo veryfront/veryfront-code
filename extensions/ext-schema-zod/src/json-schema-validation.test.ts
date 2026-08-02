@@ -307,6 +307,36 @@ describe("SchemaValidator.compileJsonSchema", () => {
     );
   });
 
+  it("applies the tuple fanout boundary to Draft 7 items arrays", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const branch = { type: "string" as const };
+    const draft7 = "http://json-schema.org/draft-07/schema#";
+    const atLimit = compile({
+      $schema: draft7,
+      type: "array",
+      items: new Array(256).fill(branch),
+      minItems: 256,
+      maxItems: 256,
+      additionalItems: false,
+    });
+
+    assertEquals((await validate(atLimit, new Array(256).fill("value"))).success, true);
+    assertThrows(
+      () =>
+        compile({
+          $schema: draft7,
+          type: "array",
+          items: new Array(257).fill(branch),
+          minItems: 257,
+          maxItems: 257,
+          additionalItems: false,
+        }),
+      TypeError,
+      "branch fanout limit of 256",
+    );
+  });
+
   it("rejects schemas whose nested combinators exceed the compile-work budget", () => {
     const compile = createZodAdapter().compileJsonSchema;
     assert(compile);

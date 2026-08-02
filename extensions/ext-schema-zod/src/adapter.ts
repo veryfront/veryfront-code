@@ -581,10 +581,12 @@ function estimateCompilationWork(schema: JsonSchema): number {
           );
         }
         addWork(keywordValue.length * 8);
-      } else if (keyword === "prefixItems" && Array.isArray(keywordValue)) {
+      } else if (
+        (keyword === "prefixItems" || keyword === "items") && Array.isArray(keywordValue)
+      ) {
         if (keywordValue.length > JSON_SCHEMA_MAX_COMBINATOR_FANOUT) {
           throw new TypeError(
-            `JSON Schema prefixItems exceeds the branch fanout limit of ${JSON_SCHEMA_MAX_COMBINATOR_FANOUT}`,
+            `JSON Schema ${keyword} exceeds the branch fanout limit of ${JSON_SCHEMA_MAX_COMBINATOR_FANOUT}`,
           );
         }
         addWork(keywordValue.length * 2);
