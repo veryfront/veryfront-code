@@ -18,10 +18,10 @@ import {
   MAX_TELEMETRY_ATTRIBUTE_KEY_LENGTH,
 } from "./limits.ts";
 import {
-  canInspectErrorStackDescriptorWithoutHooks,
   isNativeErrorWithoutHooks,
   isProxyWithoutHooks,
   readNativeErrorNameWithoutHooks,
+  readNativeErrorStackWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
 
 const apply = Reflect.apply;
@@ -84,11 +84,10 @@ function readNativeErrorMessage(error: Error): string {
 }
 
 function readNativeErrorStack(error: Error): string | undefined {
-  // Some engines materialize lazy stacks while producing their descriptor.
-  // The module-init behavior probe disables source stack inspection there.
-  if (!canInspectErrorStackDescriptorWithoutHooks) return undefined;
-  const ownStack = readOwnErrorString(error, "stack");
-  return typeof ownStack === "string" ? ownStack : undefined;
+  // Real runtime errors expose `stack` as an accessor, so the descriptor's
+  // value alone never carries one. The compat reader invokes the runtime's own
+  // getter behind a shadowed formatter and fails closed on foreign accessors.
+  return readNativeErrorStackWithoutHooks(error);
 }
 
 function primitiveErrorMessage(error: unknown): string {
