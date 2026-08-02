@@ -68,15 +68,32 @@ export function normalizeVeryfrontCloudProviderAlias(
 ): VeryfrontCloudProviderId | undefined {
   return VERYFRONT_CLOUD_PROVIDER_ALIASES.get(provider);
 }
+
+type VeryfrontCloudModelTransportCapabilities = {
+  readonly anthropicThinkingMode?: "adaptive";
+};
+
 /**
- * Anthropic models that use the adaptive thinking API (type: "adaptive").
- * New Opus/Sonnet versions supporting adaptive thinking must be added here,
- * otherwise they fall back to the standard budget-token thinking path.
+ * Model-specific transport capabilities that cannot be inferred from the
+ * provider family. Both provider-specific and provider-neutral option
+ * resolution must consult this catalog so the two representations cannot
+ * contradict each other.
  */
-const ANTHROPIC_ADAPTIVE_THINKING_ONLY_MODELS = new Set([
-  "anthropic/claude-opus-4-7",
-  "anthropic/claude-opus-4-8",
+const VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES = new Map<
+  string,
+  Readonly<VeryfrontCloudModelTransportCapabilities>
+>([
+  ["anthropic/claude-opus-4-7", Object.freeze({ anthropicThinkingMode: "adaptive" })],
+  ["anthropic/claude-opus-4-8", Object.freeze({ anthropicThinkingMode: "adaptive" })],
 ]);
+
+function getVeryfrontCloudModelTransportCapabilities(
+  modelId: string,
+): Readonly<VeryfrontCloudModelTransportCapabilities> | undefined {
+  return VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES.get(
+    normalizeVeryfrontCloudModelId(modelId),
+  );
+}
 
 /** Returns true if the given model ID is a Mistral model in the catalog. */
 export function isSupportedMistralModelId(modelId: string): boolean {
@@ -384,6 +401,11 @@ export function resolveVeryfrontCloudReasoningOption(
   }
 
   const budgetTokens = requireThinkingBudgetTokens(thinking.budgetTokens);
+  const capabilities = getVeryfrontCloudModelTransportCapabilities(modelId);
+  if (capabilities?.anthropicThinkingMode === "adaptive") {
+    return undefined;
+  }
+
   return {
     enabled: true,
     ...(thinking.effort ? { effort: thinking.effort } : {}),
@@ -405,8 +427,8 @@ export function resolveVeryfrontCloudThinkingProviderOptions(
     return undefined;
   }
 
-  const normalizedModelId = normalizeVeryfrontCloudModelId(modelId);
-  if (ANTHROPIC_ADAPTIVE_THINKING_ONLY_MODELS.has(normalizedModelId)) {
+  const capabilities = getVeryfrontCloudModelTransportCapabilities(modelId);
+  if (capabilities?.anthropicThinkingMode === "adaptive") {
     requireThinkingBudgetTokens(thinking.budgetTokens);
     return {
       anthropic: {
