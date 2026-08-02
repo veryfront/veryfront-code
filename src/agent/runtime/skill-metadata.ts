@@ -65,20 +65,6 @@ export function isValidRuntimeSkillModel(value: unknown): value is string {
     !hasControlCharacters(value);
 }
 
-function normalizeLegacyAllowedTools(value: string | string[] | undefined): string[] {
-  if (value === undefined) {
-    return [];
-  }
-
-  const values = Array.isArray(value)
-    ? value
-    : value.includes(",")
-    ? value.split(",")
-    : value.split(/\s+/);
-
-  return values.map((entry) => entry.trim()).filter((entry) => entry.length > 0);
-}
-
 function normalizeStrictAllowedTools(value: string | string[]): string[] {
   const values = Array.isArray(value)
     ? value
@@ -92,27 +78,6 @@ function normalizeStrictAllowedTools(value: string | string[]): string[] {
   }
 
   return validateStrictAllowedToolPatterns(patterns.filter((entry) => entry.length > 0));
-}
-
-function normalizeOptionalString(value: unknown): string | undefined {
-  return (typeof value === "string" ? value.trim() : undefined) || undefined;
-}
-
-function normalizeMetadata(value: unknown): Record<string, string> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-
-  const entries = Object.entries(value as Record<string, unknown>);
-  if (entries.length === 0) {
-    return undefined;
-  }
-
-  const metadata: Record<string, string> = {};
-  for (const [key, rawValue] of entries) {
-    metadata[key] = String(rawValue);
-  }
-  return metadata;
 }
 
 function normalizeStrictMetadata(value: unknown): Record<string, string> | undefined {
@@ -185,37 +150,6 @@ export interface RuntimeSkillFrontmatter {
   thinking: false | number | undefined;
   maxSteps: number | undefined;
 }
-
-const getUnsafeLegacyRuntimeSkillFrontmatterSchema = defineSchema((v) =>
-  v
-    .object({
-      name: v.string().optional(),
-      description: v.string().optional(),
-      "allowed-tools": v.union([v.string(), v.array(v.string())]).optional(),
-      allowed_tools: v.union([v.string(), v.array(v.string())]).optional(),
-      model: v.string().optional(),
-      metadata: v.record(v.string(), v.unknown()).optional(),
-      thinking: v.union([v.literal(false), v.coerce.number().int().positive()]).optional(),
-      "max-steps": v.coerce.number().int().positive().optional(),
-    })
-    .passthrough()
-    .transform((data): RuntimeSkillFrontmatter => {
-      const d = data as Record<string, unknown>;
-      const metadata = normalizeMetadata(d.metadata);
-      return {
-        name: normalizeOptionalString(d.name),
-        description: (typeof d.description === "string" ? d.description.trim() : undefined) ||
-          undefined,
-        allowedTools: normalizeLegacyAllowedTools(
-          (d["allowed-tools"] ?? d.allowed_tools) as string | string[] | undefined,
-        ),
-        metadata,
-        model: (typeof d.model === "string" ? d.model.trim() : undefined) || undefined,
-        thinking: d.thinking as false | number | undefined,
-        maxSteps: d["max-steps"] as number | undefined,
-      };
-    })
-);
 
 /** Strict schema factory for bounded runtime skill frontmatter. */
 export const getRuntimeSkillFrontmatterSchema = defineSchema((v) => {
@@ -303,7 +237,7 @@ export const getRuntimeSkillFrontmatterSchema = defineSchema((v) => {
  * @deprecated Use {@link getRuntimeSkillFrontmatterSchema}.
  */
 export const RuntimeSkillFrontmatterSchema = lazySchema(
-  getUnsafeLegacyRuntimeSkillFrontmatterSchema,
+  getRuntimeSkillFrontmatterSchema,
 );
 
 /** Definition for runtime skill. */
@@ -476,22 +410,6 @@ function canUseLegacyInvokeAgent(availableToolNameSet: ReadonlySet<string> | nul
   return availableToolNameSet?.has("invoke_agent") === true;
 }
 
-function canUnsafeLegacyUseInvokeAgent(
-  availableToolNameSet: ReadonlySet<string> | null,
-): boolean {
-  return availableToolNameSet === null || availableToolNameSet.has("invoke_agent");
-}
-
-function hasUnsafeLegacyAvailableDelegationTool(
-  availableToolNameSet: ReadonlySet<string> | null,
-): boolean {
-  if (availableToolNameSet === null || availableToolNameSet.has("invoke_agent")) return true;
-  for (const toolName of availableToolNameSet) {
-    if (toolName.startsWith("agent_")) return true;
-  }
-  return false;
-}
-
 function isDelegationToolName(toolName: string): boolean {
   return toolName === "invoke_agent" || toolName.startsWith("agent_");
 }
@@ -609,52 +527,6 @@ function hasDeclaredAllowedTools(frontmatter: Record<string, unknown>): boolean 
     Object.prototype.hasOwnProperty.call(frontmatter, "allowed_tools");
 }
 
-function parseLegacyRuntimeSkillSource(
-  content: string,
-  options: RuntimeSkillMetadataParseOptions = {},
-): ParsedRuntimeSkillSource | null {
-  const configuredProvider = options.skillDocumentParserProvider === undefined
-    ? tryResolve<SkillDocumentParserProvider>(SkillDocumentParserProviderName)
-    : options.skillDocumentParserProvider;
-  const parser = configuredProvider === undefined
-    ? undefined
-    : snapshotSkillDocumentParserProvider(configuredProvider);
-  try {
-    // Compatibility applies only to the legacy metadata shape. Document
-    // splitting, bounds, and YAML decoding remain on the strict extension-owned
-    // parser contract; core never falls back to a private YAML grammar.
-    const parsed = parseBoundedSkillDocument(
-      content,
-      parser,
-    );
-    const result = getUnsafeLegacyRuntimeSkillFrontmatterSchema().safeParse(parsed.frontmatter);
-
-    if (!result.success) {
-      options.logger?.error?.("Invalid skill frontmatter; skipping skill", {
-        error: result.issues?.map((i) => i.message).join("; ") ?? "validation failed",
-      });
-      return null;
-    }
-
-    return {
-      document: {
-        metadata: result.data,
-        body: parsed.body,
-      },
-      frontmatter: parsed.frontmatter,
-      allowedToolsDeclared: hasDeclaredAllowedTools(parsed.frontmatter),
-    };
-  } catch (error) {
-    if (snapshotVeryfrontError(error)?.slug === "missing-extension") {
-      throw error;
-    }
-    options.logger?.error?.("Invalid skill frontmatter; skipping skill", {
-      error: snapshotThrowableDiagnostic(error),
-    });
-    return null;
-  }
-}
-
 function parseStrictRuntimeSkillSource(
   content: string,
   options: RuntimeSkillMetadataParseOptions = {},
@@ -733,30 +605,6 @@ export function isValidStrictRuntimeSkillFileDocument(
   options: RuntimeSkillMetadataParseOptions = {},
 ): boolean {
   return parseStrictRuntimeSkillFileSource(content, canonicalName, options) !== null;
-}
-
-/**
- * Parses runtime skill document through the historical permissive contract.
- *
- * @deprecated Use {@link parseRuntimeSkillDocument}.
- */
-export function parseUnsafeLegacyRuntimeSkillDocument(
-  content: string,
-  options: RuntimeSkillMetadataParseOptions = {},
-): ParsedRuntimeSkillDocument | null {
-  return parseLegacyRuntimeSkillSource(content, options)?.document ?? null;
-}
-
-/**
- * Parses runtime skill metadata through the historical permissive contract.
- *
- * @deprecated Use {@link parseRuntimeSkillMetadata}.
- */
-export function parseUnsafeLegacyRuntimeSkillMetadata(
-  content: string,
-  options: RuntimeSkillMetadataParseOptions = {},
-): RuntimeSkillFrontmatter | null {
-  return parseUnsafeLegacyRuntimeSkillDocument(content, options)?.metadata ?? null;
 }
 
 /** Parses a bounded runtime skill document and fails closed on invalid input. */
@@ -1119,41 +967,6 @@ export function buildRuntimeSkillDefinition(
   );
 }
 
-/**
- * Build a runtime skill definition through the historical permissive contract.
- *
- * @deprecated This builder accepts unbounded mutable programmatic inputs. Use
- * {@link buildRuntimeSkillDefinition}.
- */
-export function buildUnsafeLegacyRuntimeSkillDefinition(
-  input: BuildRuntimeSkillDefinitionInput,
-): RuntimeSkillDefinition | null {
-  const source = parseLegacyRuntimeSkillSource(input.content, {
-    logger: input.logger,
-    skillDocumentParserProvider: input.skillDocumentParserProvider,
-  });
-  if (!source) return null;
-
-  const { metadata, body } = source.document;
-  return {
-    id: input.id,
-    name: metadata.name ?? input.id,
-    description: metadata.description ?? extractDescriptionFromMarkdown(body, input.id),
-    instructions: input.content,
-    allowedTools: metadata.allowedTools,
-    ...(metadata.metadata ? { metadata: metadata.metadata } : {}),
-    ...(metadata.model ? { model: metadata.model } : {}),
-    ...(metadata.thinking !== undefined ? { thinking: metadata.thinking } : {}),
-    ...(metadata.maxSteps !== undefined ? { maxSteps: metadata.maxSteps } : {}),
-    ...(input.references && input.references.length > 0
-      ? { references: [...input.references] }
-      : {}),
-    ...(input.ownerAgentId === undefined ? {} : { ownerAgentId: input.ownerAgentId }),
-    ...(input.shortName === undefined ? {} : { shortName: input.shortName }),
-    ...(input.sourcePath === undefined ? {} : { sourcePath: input.sourcePath }),
-  };
-}
-
 /** Build a strict, immutable Agent Skills directory definition for discovery. */
 export function buildRuntimeDirectorySkillDefinition(
   input: BuildRuntimeSkillDefinitionInput,
@@ -1187,12 +1000,7 @@ export function buildLegacyRuntimeFlatSkillDefinition(
   );
 }
 
-/**
- * Normalizes a runtime skill reference path through the historical contract.
- *
- * @deprecated Use {@link normalizeRuntimeSkillReferencePath}.
- */
-export function normalizeUnsafeLegacyRuntimeSkillReferencePath(path: string): string | null {
+function normalizeRuntimeSkillReferenceSegments(path: string): string | null {
   const normalized = path.trim().replaceAll("\\", "/");
 
   if (normalized.length === 0 || normalized.startsWith("/")) {
@@ -1220,7 +1028,7 @@ export function normalizeStrictRuntimeSkillReferencePath(path: string): string |
   ) {
     return null;
   }
-  const normalized = normalizeUnsafeLegacyRuntimeSkillReferencePath(path);
+  const normalized = normalizeRuntimeSkillReferenceSegments(path);
 
   if (
     normalized === null ||
@@ -1342,70 +1150,6 @@ function snapshotRuntimeLoadedSkillResponseInput(
       false,
     ) as RuntimeSkillMetadataLogger | undefined,
   });
-}
-
-/**
- * Build a loaded-skill response through the historical permissive contract.
- *
- * @deprecated This builder accepts unbounded mutable programmatic inputs. Use
- * {@link buildRuntimeLoadedSkillResponse}.
- */
-export function buildUnsafeLegacyRuntimeLoadedSkillResponse(
-  input: BuildRuntimeLoadedSkillResponseInput,
-): RuntimeLoadedSkillResponse {
-  const metadata = parseUnsafeLegacyRuntimeSkillMetadata(input.instructions, {
-    logger: input.logger,
-  });
-  const declaredAllowedTools = metadata?.allowedTools ?? [];
-  const availableToolNameSet = input.availableToolNames !== undefined
-    ? new Set(input.availableToolNames)
-    : null;
-  const currentRunAllowedTools = availableToolNameSet
-    ? declaredAllowedTools.filter((toolName) => availableToolNameSet.has(toolName))
-    : declaredAllowedTools;
-  const unavailableCurrentRunTools = availableToolNameSet && declaredAllowedTools.length > 0
-    ? declaredAllowedTools.filter((toolName) => !availableToolNameSet.has(toolName))
-    : [];
-  const hasOverrides = metadata?.model !== undefined || metadata?.thinking !== undefined ||
-    metadata?.maxSteps !== undefined;
-  const hasDeclaredAllowedTools = declaredAllowedTools.length > 0;
-
-  return {
-    skillId: input.skillId,
-    instructions: input.instructions,
-    nextStep: input.nextStep,
-    ...(hasDeclaredAllowedTools
-      ? {
-        allowedTools: currentRunAllowedTools,
-        note: currentRunAllowedTools.length > 0
-          ? input.messages.allowedToolsNote
-          : input.messages.noCurrentRunToolsNote,
-      }
-      : {}),
-    ...(hasDeclaredAllowedTools ? { delegationTools: declaredAllowedTools } : {}),
-    ...(unavailableCurrentRunTools.length > 0
-      ? {
-        unavailableCurrentRunTools,
-        ...(hasUnsafeLegacyAvailableDelegationTool(availableToolNameSet)
-          ? { delegationNote: input.messages.unavailableCurrentRunToolsDelegationNote }
-          : {}),
-      }
-      : {}),
-    ...(metadata?.model ? { model: metadata.model } : {}),
-    ...(metadata?.thinking !== undefined ? { thinking: metadata.thinking } : {}),
-    ...(metadata?.maxSteps !== undefined ? { maxSteps: metadata.maxSteps } : {}),
-    ...(hasOverrides && canUnsafeLegacyUseInvokeAgent(availableToolNameSet)
-      ? {
-        overrideNote: input.messages.overrideNote,
-      }
-      : {}),
-    ...(input.references && input.references.length > 0
-      ? {
-        references: [...input.references],
-        referenceNote: input.messages.referenceNote,
-      }
-      : {}),
-  };
 }
 
 /** Build a bounded loaded-skill response at hosted and filesystem trust boundaries. */
