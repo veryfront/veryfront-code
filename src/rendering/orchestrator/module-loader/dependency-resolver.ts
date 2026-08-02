@@ -6,10 +6,33 @@ import {
   findStaticImportFromSpans,
   replaceSourceSpans,
   type SourceSpanReplacement,
+  type StaticImportSpan,
 } from "#veryfront/transforms/mdx/esm-module-loader/utils/source-spans.ts";
 import { findSourceFile } from "../file-resolver/index.ts";
 
 const logger = rendererLogger.component("module-loader");
+const MAX_IMPORTS_PER_KIND = 500;
+
+/**
+ * Collect one kind of import span, failing closed past the per-kind bound.
+ *
+ * The scanner is asked for one span more than the bound so that an over-budget
+ * module is rejected rather than resolved from a truncated prefix: every span
+ * collected here is rewritten to a temp-file URL later, so dropping the tail
+ * would leave those imports pointing at specifiers that no longer resolve.
+ */
+function collectBoundedSpans(
+  scan: (maxMatches: number) => StaticImportSpan[],
+  kind: string,
+): StaticImportSpan[] {
+  const spans = scan(MAX_IMPORTS_PER_KIND + 1);
+  if (spans.length > MAX_IMPORTS_PER_KIND) {
+    throw new RangeError(
+      `Module contains more than ${MAX_IMPORTS_PER_KIND} ${kind} imports`,
+    );
+  }
+  return spans;
+}
 
 type AliasImport = {
   full: string;
@@ -68,8 +91,14 @@ function collectAliasImports(fileContent: string): AliasImport[] {
   ): AliasImport => ({ full: original, path, start, end, isDynamic });
 
   return [
-    ...findStaticImportFromSpans(fileContent, matchAlias).map(toAlias(false)),
-    ...findDynamicImportSpans(fileContent, matchAlias).map(toAlias(true)),
+    ...collectBoundedSpans(
+      (maxMatches) => findStaticImportFromSpans(fileContent, matchAlias, maxMatches),
+      "static alias",
+    ).map(toAlias(false)),
+    ...collectBoundedSpans(
+      (maxMatches) => findDynamicImportSpans(fileContent, matchAlias, maxMatches),
+      "dynamic alias",
+    ).map(toAlias(true)),
   ];
 }
 
@@ -85,8 +114,14 @@ function collectRelativeImports(fileContent: string, fileDir: string): RelativeI
   ): RelativeImport => ({ full: original, path, fromDir: fileDir, start, end, isDynamic });
 
   return [
-    ...findStaticImportFromSpans(fileContent, matchRelative).map(toRelative(false)),
-    ...findDynamicImportSpans(fileContent, matchRelative).map(toRelative(true)),
+    ...collectBoundedSpans(
+      (maxMatches) => findStaticImportFromSpans(fileContent, matchRelative, maxMatches),
+      "static relative",
+    ).map(toRelative(false)),
+    ...collectBoundedSpans(
+      (maxMatches) => findDynamicImportSpans(fileContent, matchRelative, maxMatches),
+      "dynamic relative",
+    ).map(toRelative(true)),
   ]
     // Ignore already-transformed file:// imports.
     .filter((imp) => !imp.path.includes("file://"));

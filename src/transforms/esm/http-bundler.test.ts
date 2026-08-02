@@ -1,7 +1,33 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { bundleHttpImports, hasHttpImports } from "./http-bundler.ts";
+import { bundleHttpImports, createHTTPPlugin, hasHttpImports } from "./http-bundler.ts";
+import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
+
+type HttpOnLoadResult = {
+  contents?: string;
+  errors?: Array<{ text: string }>;
+};
+
+function captureHttpOnLoad(
+  options: Parameters<typeof createHTTPPlugin>[0],
+): (args: { path: string }) => Promise<HttpOnLoadResult> {
+  let callback:
+    | ((args: { path: string }) => Promise<HttpOnLoadResult> | HttpOnLoadResult)
+    | undefined;
+  const plugin = createHTTPPlugin(options);
+  plugin.setup(
+    {
+      onResolve() {},
+      onLoad(_filter: unknown, handler: typeof callback) {
+        callback = handler;
+      },
+    } as unknown as Parameters<typeof plugin.setup>[0],
+  );
+
+  assert(callback);
+  return async (args) => await callback!(args);
+}
 
 describe("transforms/esm/http-bundler", () => {
   describe("hasHttpImports", () => {
@@ -97,6 +123,35 @@ describe("transforms/esm/http-bundler", () => {
       const code = `import lib from "https://esm.sh/lodash@4";`;
       const result = await bundleHttpImports(code, "/tmp/cache", "abc123", "19.0.0");
       assertEquals(result.includes("react@19.0.0"), true);
+    });
+  });
+
+  describe("createHTTPPlugin", () => {
+    it("rejects and cancels an oversized module response", async () => {
+      let cancelled = false;
+      const onLoad = captureHttpOnLoad({
+        timeoutMs: 1_000,
+        fetchFn: (() =>
+          Promise.resolve(
+            new Response(
+              new ReadableStream({
+                cancel() {
+                  cancelled = true;
+                },
+              }),
+              {
+                headers: {
+                  "content-length": String(MAX_BUNDLE_CHUNK_SIZE_BYTES + 1),
+                },
+              },
+            ),
+          )) as typeof fetch,
+      });
+
+      const result = await onLoad({ path: "https://cdn.example/module.js" });
+
+      assert(result.errors?.[0]?.text.includes("response exceeds"));
+      assertEquals(cancelled, true);
     });
   });
 });

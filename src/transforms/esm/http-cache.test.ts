@@ -32,6 +32,7 @@ import type { CacheBackend } from "#veryfront/cache/types.ts";
 import { buildHttpCacheIdentity } from "./http-cache-helpers.ts";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
 
 /** Duplicated from http-cache.ts for isolated unit testing of the pattern. */
 const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
@@ -183,6 +184,40 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
 
       assert(cachedUrl.startsWith("file://"));
       assertEquals(fetchCount, 2);
+    });
+  });
+
+  it("rejects an oversized module body without retrying", async () => {
+    let fetchCount = 0;
+    let bodyCancelled = false;
+    const mockFetch = (() => {
+      fetchCount += 1;
+      return Promise.resolve(
+        new Response(
+          new ReadableStream({
+            cancel() {
+              bodyCancelled = true;
+            },
+          }),
+          {
+            headers: {
+              "content-length": String(MAX_BUNDLE_CHUNK_SIZE_BYTES + 1),
+            },
+          },
+        ),
+      );
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-oversized-response-", mockFetch, async (tempDir) => {
+      const error = await assertRejects(
+        () => cacheModuleToLocal("https://esm.sh/oversized", tempDir),
+        Error,
+        `response exceeds ${MAX_BUNDLE_CHUNK_SIZE_BYTES} bytes`,
+      );
+
+      assertInstanceOf(error, Error);
+      assertEquals(fetchCount, 1);
+      assertEquals(bodyCancelled, true);
     });
   });
 
@@ -695,6 +730,147 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       __clearInFlightHttpFetches();
       await remove(tempDir, { recursive: true });
     }
+  });
+
+  it("creates the same complete manifest for network, disk, and memory cache hits", async () => {
+    const rootUrl = "https://modules.example.com/manifest-root.js";
+    const childUrl = "https://modules.example.com/manifest-child.js";
+    let fetchCount = 0;
+
+    const mockFetch = ((input: string | URL | Request) => {
+      fetchCount += 1;
+      const code = String(input) === rootUrl
+        ? `import { child } from "${childUrl}"; export { child };`
+        : "export const child = true;";
+      return Promise.resolve(
+        new Response(code, {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-complete-manifest-", mockFetch, async (tempDir) => {
+      const source = `import { child } from "${rootUrl}"; export { child };`;
+      const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+
+      const networkResult = await cacheHttpImportsToLocal(source, options);
+      assert(networkResult.bundleManifestId, "Expected a manifest after the network fetch");
+
+      __injectCachesForTests({
+        cachedPaths: new Map(),
+        processingStack: new Set(),
+        lastDistributedRefresh: new Map(),
+      });
+      const diskResult = await cacheHttpImportsToLocal(source, options);
+      assertEquals(diskResult.bundleManifestId, networkResult.bundleManifestId);
+
+      const memoryResult = await cacheHttpImportsToLocal(source, options);
+      assertEquals(memoryResult.bundleManifestId, networkResult.bundleManifestId);
+      assertEquals(fetchCount, 2, "Expected one network request per module");
+    });
+  });
+
+  it("creates complete manifests for every request sharing an in-flight fetch", async () => {
+    const moduleUrl = "https://modules.example.com/in-flight-manifest.js";
+    let fetchCount = 0;
+    const mockFetch = (async () => {
+      fetchCount += 1;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return new Response("export const value = true;", {
+        headers: { "content-type": "application/javascript" },
+      });
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-in-flight-manifest-", mockFetch, async (tempDir) => {
+      const source = `import { value } from "${moduleUrl}"; export { value };`;
+      const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+
+      const [first, second] = await Promise.all([
+        cacheHttpImportsToLocal(source, options),
+        cacheHttpImportsToLocal(source, options),
+      ]);
+
+      assert(first.bundleManifestId);
+      assertEquals(second.bundleManifestId, first.bundleManifestId);
+      assertEquals(fetchCount, 1);
+    });
+  });
+
+  it("reconstructs a complete manifest from distributed-cache bundles", async () => {
+    const rootUrl = "https://modules.example.com/distributed-manifest-root.js";
+    const childUrl = "https://modules.example.com/distributed-manifest-child.js";
+    const distributed = new Map<string, string>();
+    let fetchCount = 0;
+    const mockFetch = ((input: string | URL | Request) => {
+      fetchCount += 1;
+      const code = String(input) === rootUrl
+        ? `import { child } from "${childUrl}"; export { child };`
+        : "export const child = true;";
+      return Promise.resolve(
+        new Response(code, {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-distributed-manifest-", mockFetch, async (tempDir) => {
+      __setDistributedCacheAccessorForTests(() =>
+        Promise.resolve(createMemoryBackend(distributed))
+      );
+      const source = `import { child } from "${rootUrl}"; export { child };`;
+      const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+      const networkResult = await cacheHttpImportsToLocal(source, options);
+      assert(networkResult.bundleManifestId);
+
+      for await (const entry of readDir(tempDir)) {
+        if (entry.isFile && entry.name.endsWith(".mjs")) {
+          await remove(join(tempDir, entry.name));
+        }
+      }
+      __injectCachesForTests({
+        cachedPaths: new Map(),
+        processingStack: new Set(),
+        lastDistributedRefresh: new Map(),
+      });
+
+      const distributedResult = await cacheHttpImportsToLocal(source, options);
+
+      assertEquals(distributedResult.bundleManifestId, networkResult.bundleManifestId);
+      assertEquals(fetchCount, 2, "Expected the second transform to avoid network requests");
+    });
+  });
+
+  it("does not publish a partial manifest when one bundle is degraded", async () => {
+    const healthyUrl = "https://modules.example.com/healthy-manifest-entry.js";
+    const parentUrl = "https://modules.example.com/degraded-manifest-entry.js";
+    const childUrl = "https://modules.example.com/unavailable-lazy-entry.js";
+    const mockFetch = ((input: string | URL | Request) => {
+      const url = String(input);
+      if (url === childUrl) {
+        return Promise.resolve(new Response("upstream failure", { status: 502 }));
+      }
+      const code = url === parentUrl
+        ? `export const load = () => import("${childUrl}");`
+        : "export const healthy = true;";
+      return Promise.resolve(
+        new Response(code, {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-partial-manifest-", mockFetch, async (tempDir) => {
+      const result = await cacheHttpImportsToLocal(
+        [
+          `import { healthy } from "${healthyUrl}";`,
+          `import { load } from "${parentUrl}";`,
+          "export { healthy, load };",
+        ].join("\n"),
+        { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } },
+      );
+
+      assertEquals(result.bundleManifestId, undefined);
+    });
   });
 
   it("rewrites react-dom dependencies with the requested React version", async () => {

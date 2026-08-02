@@ -212,10 +212,30 @@ function findFromSpan(
   return null;
 }
 
+/**
+ * Validate the match bound every scanner requires.
+ *
+ * The bound is required rather than defaulted because these scanners run over
+ * fetched, untrusted module source: a caller that forgot to bound itself would
+ * let one file allocate a span per import without limit. Reaching the bound
+ * returns a truncated prefix, so a caller that rewrites every span it collects
+ * must ask for one more than it will accept and reject the source when the
+ * extra span comes back — otherwise the dropped imports are silently left
+ * pointing at unresolved specifiers.
+ */
+function assertMaxMatches(maxMatches: number): void {
+  if (!Number.isSafeInteger(maxMatches) || maxMatches <= 0) {
+    throw new RangeError("maxMatches must be a positive safe integer");
+  }
+}
+
 export function findStaticImportFromSpans(
   source: string,
   matcher: SpecifierMatcher,
+  maxMatches: number,
 ): StaticImportSpan[] {
+  assertMaxMatches(maxMatches);
+
   const spans: StaticImportSpan[] = [];
   let cursor = 0;
 
@@ -243,6 +263,7 @@ export function findStaticImportFromSpans(
     const span = findFromSpan(source, afterKeyword, matcher);
     if (span) {
       spans.push(span);
+      if (spans.length >= maxMatches) return spans;
       cursor = span.end;
       continue;
     }
@@ -262,11 +283,17 @@ export function findStaticImportFromSpans(
  * their target is only known at runtime. That includes an argument the literal
  * merely starts: rewriting the `"./foo"` in `import("./foo" + suffix)` would
  * build a path out of a resolved prefix and an unresolved tail.
+ *
+ * `maxMatches` bounds the scan on the same terms as
+ * {@link findStaticImportFromSpans}.
  */
 export function findDynamicImportSpans(
   source: string,
   matcher: SpecifierMatcher,
+  maxMatches: number,
 ): StaticImportSpan[] {
+  assertMaxMatches(maxMatches);
+
   const spans: StaticImportSpan[] = [];
   let cursor = 0;
 
@@ -316,6 +343,7 @@ export function findDynamicImportSpans(
         start: quoteIndex,
         end: quoted.end,
       });
+      if (spans.length >= maxMatches) return spans;
     }
 
     cursor = quoted.end;
@@ -324,10 +352,19 @@ export function findDynamicImportSpans(
   return spans;
 }
 
+/**
+ * Find bare `import "…"` side-effect statements.
+ *
+ * `maxMatches` bounds the scan on the same terms as
+ * {@link findStaticImportFromSpans}.
+ */
 export function findStaticSideEffectImportSpans(
   source: string,
   matcher: SpecifierMatcher,
+  maxMatches: number,
 ): StaticImportSpan[] {
+  assertMaxMatches(maxMatches);
+
   const spans: StaticImportSpan[] = [];
   let cursor = 0;
 
@@ -358,6 +395,7 @@ export function findStaticSideEffectImportSpans(
         start: cursor,
         end: quoted.end,
       });
+      if (spans.length >= maxMatches) return spans;
     }
 
     cursor = quoted.end;

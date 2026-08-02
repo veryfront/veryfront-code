@@ -154,7 +154,7 @@ function matchUnresolvedVfModuleSpecifier(specifier: string): string | null {
  * Returns true if any unresolved or malformed imports are found.
  */
 function hasUnresolvedVfModules(code: string): boolean {
-  const matches = findStaticImportFromSpans(code, matchUnresolvedVfModuleSpecifier);
+  const matches = findStaticImportFromSpans(code, matchUnresolvedVfModuleSpecifier, 1);
   const first = matches[0];
   if (first) {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Cached module has unresolved _vf_modules import`, {

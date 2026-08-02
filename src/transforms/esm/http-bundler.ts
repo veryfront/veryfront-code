@@ -15,6 +15,11 @@ import {
 } from "#veryfront/config/environment-config.ts";
 import { isReactSpecifier } from "#veryfront/platform/compat/react-paths.ts";
 import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
+import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
+import { readHttpModuleText } from "../shared/http-module-response.ts";
+import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
+import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/constants/limits.ts";
 
 const LOG_PREFIX = "[HTTP-HANDLER]";
 
@@ -42,10 +47,32 @@ export function hasHttpImports(code: string): boolean {
 /** Re-export getReactUrls for backwards compatibility */
 export { getReactUrls };
 
+export interface HttpPluginOptions {
+  fetchFn?: typeof fetch;
+  timeoutMs?: number;
+}
+
+function requireHttpTimeout(timeoutMs: number): number {
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs <= 0 ||
+    timeoutMs > MAX_TIMER_DELAY_MS
+  ) {
+    throw new RangeError(
+      `HTTP plugin timeout must be an integer between 1 and ${MAX_TIMER_DELAY_MS}`,
+    );
+  }
+  return timeoutMs;
+}
+
 /**
  * esbuild plugin that fetches HTTP imports and rewrites esm.sh URLs.
  */
-export function createHTTPPlugin(): Plugin {
+export function createHTTPPlugin(options: HttpPluginOptions = {}): Plugin {
+  const configuredTimeoutMs = options.timeoutMs === undefined
+    ? undefined
+    : requireHttpTimeout(options.timeoutMs);
+
   return {
     name: "vf-http-fetch",
     setup(build: Parameters<Plugin["setup"]>[0]) {
@@ -90,6 +117,7 @@ export function createHTTPPlugin(): Plugin {
 
       build.onLoad({ filter: /.*/, namespace: "http-url" }, async (args) => {
         let requestUrl = args.path;
+        const safeUrl = sanitizeUrlForSpan(args.path);
 
         try {
           const url = new URL(args.path);
@@ -103,25 +131,36 @@ export function createHTTPPlugin(): Plugin {
             requestUrl = url.toString();
           }
         } catch (urlError) {
-          logger.debug(`${LOG_PREFIX} URL parse error for ${args.path}:`, urlError);
+          logger.debug(`${LOG_PREFIX} URL parse error for ${safeUrl}:`, urlError);
         }
 
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), getHttpTimeout());
+        const timeoutMs = configuredTimeoutMs ?? requireHttpTimeout(getHttpTimeout());
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
         try {
-          const res = await fetch(requestUrl, {
+          const res = await (options.fetchFn ?? fetch)(requestUrl, {
             headers: { "user-agent": HTTP_USER_AGENT },
             signal: controller.signal,
             redirect: "follow",
           });
 
           if (!res.ok) {
-            logger.warn(`${LOG_PREFIX} HTTP ${res.status} fetching ${args.path}`);
-            return { errors: [{ text: `Failed to fetch ${args.path}: ${res.status}` }] };
+            try {
+              const cancellation = res.body?.cancel();
+              if (cancellation) void cancellation.catch(() => undefined);
+            } catch {
+              /* cancellation is best-effort cleanup */
+            }
+            logger.warn(`${LOG_PREFIX} HTTP ${res.status} fetching ${safeUrl}`);
+            return { errors: [{ text: `Failed to fetch ${safeUrl}: ${res.status}` }] };
           }
 
-          const contents = await res.text();
+          const contents = await readHttpModuleText(
+            res,
+            MAX_BUNDLE_CHUNK_SIZE_BYTES,
+            controller.signal,
+          );
 
           // Validate response is JavaScript, not an HTML error page.
           // esm.sh can return HTTP 200 with HTML error pages when packages fail to build.
@@ -134,20 +173,20 @@ export function createHTTPPlugin(): Plugin {
             /<title>ESM[^<]*<\/title>/i.test(contents.slice(0, 500));
 
           if (isHtmlContent) {
-            logger.warn(`${LOG_PREFIX} Received HTML instead of JS for ${args.path}`);
+            logger.warn(`${LOG_PREFIX} Received HTML instead of JS for ${safeUrl}`);
             return {
               errors: [{
                 text:
-                  `Received HTML instead of JavaScript from ${args.path}. Package may not exist or failed to build on esm.sh.`,
+                  `Received HTML instead of JavaScript from ${safeUrl}. Package may not exist or failed to build on esm.sh.`,
               }],
             };
           }
 
           return { contents, loader: "js" };
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          logger.warn(`${LOG_PREFIX} Network error fetching ${args.path}: ${errorMessage}`);
-          return { errors: [{ text: `Network error fetching ${args.path}: ${errorMessage}` }] };
+          const errorMessage = snapshotThrowableDiagnostic(error);
+          logger.warn(`${LOG_PREFIX} Network error fetching ${safeUrl}: ${errorMessage}`);
+          return { errors: [{ text: `Network error fetching ${safeUrl}: ${errorMessage}` }] };
         } finally {
           clearTimeout(timeout);
         }

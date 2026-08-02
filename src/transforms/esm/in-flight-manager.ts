@@ -8,21 +8,17 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { HTTP_MODULE_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { httpBundleCache } from "./http-cache-wrapper.ts";
 import { asLocalModuleCode } from "./http-cache-invariants.ts";
 import { getManifestIdForHash, refreshManifestTTL } from "./bundle-manifest-ttl.ts";
-import type { BundleEntry } from "./bundle-manifest-types.ts";
 import type { HttpCacheIdentityMetadata, HttpCacheLike } from "./http-cache-helpers.ts";
 
 const logger = rendererLogger.component("http-cache");
 
 const DISTRIBUTED_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
-/** Per-request accumulator for bundle metadata during cacheHttpImportsToLocal. */
-export const bundleAccumulatorStorage = new AsyncLocalStorage<BundleEntry[]>();
 /** Per-request stack used to detect circular HTTP module dependencies. */
 export const processingStackStorage = new AsyncLocalStorage<Set<string>>();
 /** Deduplicate concurrent HTTP module fetches to avoid races. */
@@ -118,29 +114,4 @@ export function refreshDistributedCacheAsync(
   })().catch((err) => {
     logger.debug("Distributed cache async refresh error", { err });
   });
-}
-
-/**
- * Track bundle for manifest accumulation if in accumulation context.
- */
-export function trackBundleAccumulator(
-  hash: string,
-  normalizedUrl: string,
-  cachePath: string,
-): void {
-  const accumulator = bundleAccumulatorStorage.getStore();
-  if (accumulator) {
-    void (async () => {
-      try {
-        const stat = await createFileSystem().stat(cachePath);
-        accumulator.push({
-          hash: String(hash),
-          url: normalizedUrl,
-          sizeBytes: stat?.size ?? 0,
-        });
-      } catch {
-        // Ignore stat errors
-      }
-    })();
-  }
 }

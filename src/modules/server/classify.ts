@@ -10,15 +10,28 @@
 
 /** Prefix for dev-module URLs; exported for path stripping in module-server. */
 export const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
-const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;
+const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]{1,128})\.js$/;
 // Cross-project import patterns: /_vf_modules/_cross/<slug>[@<version>]/@/<path>
 const CROSS_PROJECT_VERSIONED_PREFIX =
-  /^\/_vf_modules\/_cross\/([a-z0-9-]+)@([\d^~x][\d.x^~-]*)\/\@\/(.+)$/;
-const CROSS_PROJECT_LATEST_PREFIX = /^\/_vf_modules\/_cross\/([a-z0-9-]+)\/\@\/(.+)$/;
+  /^\/_vf_modules\/_cross\/([a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?)@([\d^~x][\d.x^~-]{0,127})\/\@\/(.+)$/;
+const CROSS_PROJECT_LATEST_PREFIX =
+  /^\/_vf_modules\/_cross\/([a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?)\/\@\/(.+)$/;
+const RESERVED_SNIPPET_NAMESPACE = "/_vf_modules/_snippets";
+const RESERVED_CROSS_PROJECT_NAMESPACE = "/_vf_modules/_cross";
+
+function isInNamespace(pathname: string, namespace: string): boolean {
+  return pathname === namespace || pathname.startsWith(`${namespace}/`);
+}
 
 /** URL does not start with any module prefix — not a module request. */
 export interface NotModuleKind {
   kind: "not-module";
+}
+
+/** A request entered a framework-owned namespace but did not match its grammar. */
+export interface InvalidModuleKind {
+  kind: "invalid-module";
+  namespace: "cross-project" | "snippet";
 }
 
 /** A compiled snippet module identified by its content hash. */
@@ -55,6 +68,7 @@ export interface DevModuleKind {
  */
 export type ModuleRequestKind =
   | NotModuleKind
+  | InvalidModuleKind
   | SnippetKind
   | CrossProjectVersionedKind
   | CrossProjectLatestKind
@@ -95,6 +109,13 @@ export function classifyModuleRequest(url: URL): ModuleRequestKind {
       slug: latestMatch[1] ?? "",
       path: latestMatch[2] ?? "",
     };
+  }
+
+  if (isInNamespace(url.pathname, RESERVED_SNIPPET_NAMESPACE)) {
+    return { kind: "invalid-module", namespace: "snippet" };
+  }
+  if (isInNamespace(url.pathname, RESERVED_CROSS_PROJECT_NAMESPACE)) {
+    return { kind: "invalid-module", namespace: "cross-project" };
   }
 
   return { kind: "dev-module" };
