@@ -219,6 +219,180 @@ describe("Head client management", () => {
     }
   });
 
+  it("adopts destination route directives and restores their baseline on unmount", async () => {
+    const scriptContent = '{"source":"route"}';
+    const { restore } = installDom({
+      body: `<div id="root"></div><div id="route"><vf-head>
+        <title>Route title</title>
+        <meta name="description" content="Route description">
+        <link rel="canonical" href="https://example.com/route">
+        <script id="route-state" type="application/json">${scriptContent}</script>
+      </vf-head></div>`,
+    });
+    let root: Root | undefined;
+    try {
+      const routeContainer = document.getElementById("route");
+      assert(routeContainer instanceof HTMLElement);
+      applyHeadDirectives(routeContainer);
+
+      const routeTitle = document.head.querySelector("title");
+      const routeDescription = document.head.querySelector('meta[name="description"]');
+      const routeCanonical = document.head.querySelector('link[rel="canonical"]');
+      const routeScript = document.getElementById("route-state");
+      assert(routeTitle && routeDescription && routeCanonical && routeScript);
+      for (const element of [routeTitle, routeDescription, routeCanonical, routeScript]) {
+        assertEquals(element.getAttribute("data-vf-route-head"), "true");
+      }
+
+      root = createRoot(rootElement());
+      flushSync(() => {
+        root?.render(
+          <Head>
+            <title>Route title</title>
+            <meta name="description" content="Route description" />
+            <link rel="canonical" href="https://example.com/route" />
+            <script
+              id="route-state"
+              type="application/json"
+              dangerouslySetInnerHTML={{ __html: scriptContent }}
+            />
+          </Head>,
+        );
+      });
+      await waitFor(() => routeTitle.getAttribute("data-vf-react-head") === "true");
+
+      assertStrictEquals(document.head.querySelector("title"), routeTitle);
+      assertStrictEquals(document.head.querySelector('meta[name="description"]'), routeDescription);
+      assertStrictEquals(document.head.querySelector('link[rel="canonical"]'), routeCanonical);
+      assertStrictEquals(document.getElementById("route-state"), routeScript);
+      assertEquals(document.head.querySelectorAll("title").length, 1);
+      assertEquals(document.head.querySelectorAll('meta[name="description"]').length, 1);
+      assertEquals(document.head.querySelectorAll('link[rel="canonical"]').length, 1);
+      assertEquals(document.head.querySelectorAll("#route-state").length, 1);
+
+      await unmount(root);
+      root = undefined;
+
+      for (const element of [routeTitle, routeDescription, routeCanonical, routeScript]) {
+        assertEquals(element.isConnected, true);
+        assertEquals(element.getAttribute("data-vf-route-head"), "true");
+        assertEquals(element.getAttribute("data-veryfront-managed"), "1");
+        assertEquals(element.getAttribute("data-vf-head"), null);
+        assertEquals(element.getAttribute("data-vf-react-head"), null);
+      }
+      assertEquals(document.title, "Route title");
+      assertEquals(routeDescription.getAttribute("content"), "Route description");
+      assertEquals(routeCanonical.getAttribute("href"), "https://example.com/route");
+      assertEquals(routeScript.textContent, scriptContent);
+    } finally {
+      await unmount(root);
+      restore();
+    }
+  });
+
+  it("does not reexecute a mismatched route-directive script on first React adoption", async () => {
+    const { dom, restore } = installDom({
+      runScripts: "dangerously",
+      body: `<div id="root"></div><div id="route"><vf-head>
+        <script id="route-exec">window.__routeExecRuns=(window.__routeExecRuns||0)+1;</script>
+      </vf-head></div>`,
+    });
+    let root: Root | undefined;
+    try {
+      const scriptWindow = dom.window as typeof dom.window & { __routeExecRuns?: number };
+      const routeContainer = document.getElementById("route");
+      assert(routeContainer instanceof HTMLElement);
+      applyHeadDirectives(routeContainer);
+      const routeScript = document.getElementById("route-exec");
+      assert(routeScript);
+      assertEquals(scriptWindow.__routeExecRuns, 1);
+
+      root = createRoot(rootElement());
+      flushSync(() => {
+        root?.render(
+          <Head>
+            <script id="route-exec">
+              {"window.__routeExecRuns=(window.__routeExecRuns||0)+100;"}
+            </script>
+          </Head>,
+        );
+      });
+      await waitFor(() => routeScript.getAttribute("data-vf-react-head") === "true");
+
+      assertEquals(scriptWindow.__routeExecRuns, 1);
+      assertEquals(document.head.querySelectorAll("#route-exec").length, 1);
+      assertStrictEquals(document.getElementById("route-exec"), routeScript);
+
+      await unmount(root);
+      root = undefined;
+
+      assertEquals(scriptWindow.__routeExecRuns, 1);
+      assertEquals(routeScript.getAttribute("data-vf-route-head"), "true");
+      assertEquals(
+        routeScript.textContent,
+        "window.__routeExecRuns=(window.__routeExecRuns||0)+1;",
+      );
+    } finally {
+      await unmount(root);
+      restore();
+    }
+  });
+
+  it("retires page head while preserving app-wide viewport and manifest state", async () => {
+    const { restore } = installDom({
+      head: `
+        <title data-vf-shell-head="true">Previous title</title>
+        <meta data-vf-shell-head="true" name="description" content="Previous description">
+        <link data-vf-shell-head="true" rel="canonical" href="https://example.com/previous">
+        <meta data-vf-shell-head="true" name="viewport" content="width=device-width">
+        <style data-veryfront-managed="1">.previous{color:red}</style>
+        <meta id="third-party" name="author" content="Third party">`,
+    });
+    let root: Root | undefined;
+    try {
+      const shellViewport = document.head.querySelector('meta[name="viewport"]');
+      const thirdParty = document.getElementById("third-party");
+      assert(shellViewport && thirdParty);
+
+      root = createRoot(rootElement());
+      flushSync(() => {
+        root?.render(
+          <Head>
+            <meta name="viewport" content="width=900" />
+            <link rel="manifest" href="/app.webmanifest" />
+          </Head>,
+        );
+      });
+      await waitFor(() =>
+        document.head.querySelector('link[rel="manifest"]')?.getAttribute(
+          "data-vf-react-head",
+        ) === "true"
+      );
+
+      const managedManifest = document.head.querySelector('link[rel="manifest"]');
+      assert(managedManifest);
+      assertStrictEquals(document.head.querySelector('meta[name="viewport"]'), shellViewport);
+      assertEquals(shellViewport.getAttribute("content"), "width=900");
+
+      retireClientHeadOwnership(document);
+
+      assertEquals(document.head.querySelector("title"), null);
+      assertEquals(document.head.querySelector('meta[name="description"]'), null);
+      assertEquals(document.head.querySelector('link[rel="canonical"]'), null);
+      assertEquals(document.head.querySelector("style"), null);
+      assertStrictEquals(document.head.querySelector('meta[name="viewport"]'), shellViewport);
+      assertEquals(shellViewport.getAttribute("content"), "width=device-width");
+      assertEquals(shellViewport.getAttribute("data-vf-shell-head"), "true");
+      assertStrictEquals(document.head.querySelector('link[rel="manifest"]'), managedManifest);
+      assertEquals(managedManifest.getAttribute("data-vf-shell-head"), "true");
+      assertEquals(managedManifest.getAttribute("data-vf-react-head"), null);
+      assertStrictEquals(document.getElementById("third-party"), thirdParty);
+    } finally {
+      await unmount(root);
+      restore();
+    }
+  });
+
   it("hydrates by adopting matching SSR title, meta, link, style, and script nodes", async () => {
     const scriptContent = 'window.__adopted = "</script>";';
     const { restore } = installDom({

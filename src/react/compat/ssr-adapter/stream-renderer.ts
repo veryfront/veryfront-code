@@ -16,6 +16,55 @@ interface VeryfrontGlobal {
   __VERYFRONT_DEBUG__?: boolean;
 }
 
+interface AbsoluteSetupDeadline {
+  readonly error: Error;
+  readonly expiresAt: number;
+  readonly promise: Promise<never>;
+  readonly expired: boolean;
+  throwIfExpired(): void;
+  dispose(): void;
+}
+
+function createAbsoluteSetupDeadline(
+  timeoutMs: number,
+  message: string,
+  onExpire: (error: Error) => void,
+): AbsoluteSetupDeadline {
+  const error = new Error(message);
+  const expiresAt = performance.now() + timeoutMs;
+  let expired = false;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let rejectTimeout!: (error: Error) => void;
+  const promise = new Promise<never>((_, reject) => {
+    rejectTimeout = reject;
+  });
+  const expire = () => {
+    if (expired) return;
+    expired = true;
+    onExpire(error);
+    rejectTimeout(error);
+  };
+  timeoutId = setTimeout(expire, timeoutMs);
+
+  return {
+    error,
+    expiresAt,
+    promise,
+    get expired() {
+      return expired;
+    },
+    throwIfExpired() {
+      if (!expired && performance.now() < expiresAt) return;
+      expire();
+      throw error;
+    },
+    dispose() {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+      timeoutId = undefined;
+    },
+  };
+}
+
 function isDebugMode(): boolean {
   return Boolean((globalThis as VeryfrontGlobal).__VERYFRONT_DEBUG__ || isDebugEnvEnabled());
 }
@@ -72,20 +121,26 @@ async function renderToReadableStreamImpl(
   const reportError = createErrorReporter(options.onError);
 
   const controller = new AbortController();
-  // Track whether the abort was triggered by our own timeout so we can detect
-  // it reliably in the catch block without string-matching error messages.
-  let timedOut = false;
-  let rejectTimeout!: (error: Error) => void;
-  const timeoutPromise = new Promise<never>((_resolve, reject) => {
-    rejectTimeout = reject;
-  });
-  const timeoutId = setTimeout(() => {
-    timedOut = true;
-    logger.error("SSR_TIMEOUT aborting React render", { timeoutMs });
-    const error = new Error(`SSR timeout: React render exceeded ${timeoutMs}ms`);
-    controller.abort(error);
-    rejectTimeout(error);
-  }, timeoutMs);
+  const deadline = createAbsoluteSetupDeadline(
+    timeoutMs,
+    `SSR timeout: React render exceeded ${timeoutMs}ms`,
+    (error) => {
+      logger.error("SSR_TIMEOUT aborting React render", { timeoutMs });
+      if (!controller.signal.aborted) controller.abort(error);
+    },
+  );
+  let cancelledStream: ReadableStream<Uint8Array> | undefined;
+  const cancelTimedOutStream = (stream: ReadableStream<Uint8Array>) => {
+    if (cancelledStream === stream) return;
+    cancelledStream = stream;
+    try {
+      stream.cancel(deadline.error).catch(() => {
+        /* expected: the late stream may already be closed or locked */
+      });
+    } catch {
+      /* expected: a non-conforming stream may throw during cancellation */
+    }
+  };
 
   try {
     if (debug) logger.info("SSR renderToReadableStream started");
@@ -98,6 +153,7 @@ async function renderToReadableStreamImpl(
       namespaceURI: options.namespaceURI,
       nonce: options.nonce,
       onError: (error: unknown) => {
+        if (deadline.expired) return;
         if (error instanceof Error && error.name === "AbortError") {
           logger.warn("SSR_ABORT React render aborted due to timeout");
           return;
@@ -114,23 +170,20 @@ async function renderToReadableStreamImpl(
     // rendering work into the request lifecycle.
     setupPromise.then(
       (lateStream) => {
-        if (!timedOut) return;
-        try {
-          lateStream.cancel(controller.signal.reason).catch(() => {
-            /* expected: the late stream may already be closed or locked */
-          });
-        } catch {
-          /* expected: a non-conforming stream may throw during cancellation */
-        }
+        if (deadline.expired) cancelTimedOutStream(lateStream);
       },
       () => {
         /* the race below owns setup failures */
       },
     );
 
-    const stream = await Promise.race([setupPromise, timeoutPromise]);
-
-    clearTimeout(timeoutId);
+    const stream = await Promise.race([setupPromise, deadline.promise]);
+    try {
+      deadline.throwIfExpired();
+    } catch (error) {
+      cancelTimedOutStream(stream);
+      throw error;
+    }
 
     if (debug) {
       const durationMs = Math.round(performance.now() - start);
@@ -142,13 +195,11 @@ async function renderToReadableStreamImpl(
       allReady: (stream as ReadableStream<Uint8Array> & { allReady?: Promise<unknown> }).allReady,
     };
   } catch (error) {
-    clearTimeout(timeoutId);
-
     const durationMs = Math.round(performance.now() - start);
     // Detect abort via our own flag (most reliable) or the standard AbortError
     // name. Avoids brittle substring matching on error messages that could
     // false-positive on unrelated errors mentioning "aborted".
-    const isAbort = timedOut || (error instanceof Error && error.name === "AbortError");
+    const isAbort = deadline.expired || (error instanceof Error && error.name === "AbortError");
 
     if (isAbort) {
       logger.error("SSR_TIMEOUT React render was aborted", {
@@ -161,6 +212,8 @@ async function renderToReadableStreamImpl(
     logger.error("SSR_ERROR renderToReadableStream failed", { durationMs }, error);
     reportError(error);
     throw error;
+  } finally {
+    deadline.dispose();
   }
 }
 
@@ -183,58 +236,64 @@ function renderToPipeableStreamImpl(
   const start = performance.now();
   const timeoutMs = getSSRAdapterTimeoutMs();
   const reportError = createErrorReporter(options.onError);
-  // Track whether the rejection was caused by our own timeout so the catch
-  // block can detect it without string-matching the error message.
-  let timedOut = false;
+  let abortFn: (() => void) | undefined;
+  let abortCalled = false;
+  let pipeFn: ((writable: NodeJS.WritableStream) => void) | undefined;
+  let shellReadyBeforeRendererReturned = false;
+  let settled = false;
+  let rejectSetup: ((error: unknown) => void) | undefined;
+  let resolveAllReady!: () => void;
+  let rejectAllReady!: (error: unknown) => void;
+  const allReady = new Promise<void>((resolve, reject) => {
+    resolveAllReady = resolve;
+    rejectAllReady = reject;
+  });
+  // Consumers are not required to await allReady. Keep its rejection observed
+  // while retaining the original promise and error identity for those that do.
+  allReady.catch(() => {});
+
+  const abortOnce = () => {
+    if (abortCalled || !abortFn) return;
+    abortCalled = true;
+    try {
+      abortFn();
+    } catch (error) {
+      logger.warn("SSR_ABORT error calling abort", error);
+    }
+  };
+  const deadline = createAbsoluteSetupDeadline(
+    timeoutMs,
+    `SSR timeout: React render exceeded ${timeoutMs}ms - likely a hanging data fetch`,
+    (error) => {
+      settled = true;
+      logger.error("SSR_TIMEOUT aborting pipeable React render", { timeoutMs });
+      abortOnce();
+      rejectAllReady(error);
+      rejectSetup?.(error);
+    },
+  );
 
   const promise = new Promise<SSRResult>((resolve, reject) => {
-    let abortFn: (() => void) | undefined;
-    let pipeFn: ((writable: NodeJS.WritableStream) => void) | undefined;
-    let shellReadyBeforeRendererReturned = false;
-    let settled = false;
-    let resolveAllReady: (() => void) | undefined;
-    let rejectAllReady: ((error: unknown) => void) | undefined;
-    const allReady = new Promise<void>((resolve, reject) => {
-      resolveAllReady = resolve;
-      rejectAllReady = reject;
-    });
-    allReady.catch(() => {});
+    rejectSetup = reject;
 
     const settleShellReady = () => {
-      if (settled) return;
+      if (settled || deadline.expired) return;
       if (!pipeFn || !abortFn) {
         shellReadyBeforeRendererReturned = true;
         return;
       }
 
+      try {
+        deadline.throwIfExpired();
+      } catch {
+        return;
+      }
+
       settled = true;
-      clearTimeout(timeoutId);
       logger.debug("SSR pipeable stream shell ready");
       resolve({ pipe: pipeFn, abort: abortFn, allReady });
       notifyObserver("onShellReady", options.onShellReady);
     };
-
-    const timeoutId = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      timedOut = true;
-
-      logger.error("SSR_TIMEOUT aborting pipeable React render", { timeoutMs });
-
-      if (abortFn) {
-        try {
-          abortFn();
-        } catch (e) {
-          logger.warn("SSR_ABORT error calling abort", e);
-        }
-      }
-
-      reject(
-        new Error(
-          `SSR timeout: React render exceeded ${timeoutMs}ms - likely a hanging data fetch`,
-        ),
-      );
-    }, timeoutMs);
 
     try {
       const { pipe, abort } = renderToPipeableStream(element, {
@@ -244,44 +303,66 @@ function renderToPipeableStreamImpl(
         namespaceURI: options.namespaceURI,
         nonce: options.nonce,
         onError: (error: unknown) => {
+          if (deadline.expired) return;
           logger.error("SSR_ERROR pipeable stream error", error);
-          rejectAllReady?.(error);
+          rejectAllReady(error);
           reportError(error);
         },
         onAllReady: () => {
+          if (deadline.expired) return;
           logger.debug("SSR pipeable stream all ready");
-          resolveAllReady?.();
+          resolveAllReady();
           notifyObserver("onAllReady", options.onAllReady);
         },
         onShellReady: settleShellReady,
         onShellError: (error: unknown) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timeoutId);
+          if (settled || deadline.expired) return;
+          try {
+            deadline.throwIfExpired();
+          } catch {
+            return;
+          }
 
+          settled = true;
           logger.error("SSR_ERROR pipeable stream shell error", error);
           reject(error);
-          notifyObserver("onShellError", options.onShellError, error as Error);
+          notifyObserver("onShellError", options.onShellError, ensureError(error));
         },
         progressiveChunkSize: options.progressiveChunkSize,
       });
 
       pipeFn = pipe;
       abortFn = abort;
+      try {
+        deadline.throwIfExpired();
+      } catch {
+        abortOnce();
+        return;
+      }
       if (shellReadyBeforeRendererReturned) settleShellReady();
     } catch (error) {
-      clearTimeout(timeoutId);
+      try {
+        deadline.throwIfExpired();
+      } catch {
+        abortOnce();
+        return;
+      }
+      settled = true;
       reject(error);
     }
   });
 
-  return promise.catch((error) => {
-    const durationMs = Math.round(performance.now() - start);
+  return Promise.race([promise, deadline.promise])
+    .catch((error) => {
+      const durationMs = Math.round(performance.now() - start);
 
-    if (!timedOut) logger.error("SSR_ERROR renderToPipeableStream failed", { durationMs }, error);
-    reportError(error);
-    throw error;
-  });
+      if (!deadline.expired) {
+        logger.error("SSR_ERROR renderToPipeableStream failed", { durationMs }, error);
+      }
+      reportError(error);
+      throw error;
+    })
+    .finally(() => deadline.dispose());
 }
 
 export async function renderToStreamAdapter(

@@ -7,6 +7,7 @@ import {
   HEAD_PROVENANCE_ATTRIBUTE,
   HEAD_REACT_MANAGED_ATTRIBUTE,
   HEAD_REACT_OWNER_ATTRIBUTE,
+  HEAD_ROUTE_MANAGED_ATTRIBUTE,
   HEAD_SHELL_PROVENANCE_ATTRIBUTE,
   headLinkSingletonKeyFromRecord,
   headMetaSingletonKeyFromRecord,
@@ -20,6 +21,14 @@ const HEAD_MANAGER_STATE_SYMBOL = Symbol.for(
   "veryfront.client-head-manager.v2",
 );
 
+// SPA route payloads do not carry a complete normalized document head. Keep
+// app-wide singletons that the destination cannot reconstruct; every other
+// framework-owned node is page authority and must be retired at handoff.
+const CROSS_PAGE_PRESERVED_SINGLETON_KEYS = new Set([
+  "meta:viewport",
+  "link:manifest",
+]);
+
 interface ClientHeadRegistration {
   anchor: Element | null;
   descriptors: readonly ManagedHeadDescriptor[];
@@ -30,15 +39,16 @@ interface ClientHeadRegistration {
 interface ClientHeadRecord {
   readonly descriptor: ManagedHeadDescriptor;
   readonly element: Element;
-  /** Original framework-shell singleton restored when React releases it. */
-  readonly shellFallback?: ShellHeadSnapshot;
+  /** Original shell or route node restored when React releases ownership. */
+  readonly baselineFallback?: HeadBaselineSnapshot;
   /** A mismatched SSR script retained to avoid executing client code twice. */
   readonly retainedHydrationScript?: boolean;
 }
 
-interface ShellHeadSnapshot {
+interface HeadBaselineSnapshot {
   readonly attributes: readonly ManagedHeadAttribute[];
   readonly content: string;
+  readonly provenance: "route" | "shell";
 }
 
 export interface ClientHeadManager {
@@ -165,23 +175,26 @@ function elementScriptKeys(element: Element): readonly string[] {
 
 function markHeadElementManaged(element: Element): void {
   element.removeAttribute(HEAD_SHELL_PROVENANCE_ATTRIBUTE);
+  element.removeAttribute(HEAD_ROUTE_MANAGED_ATTRIBUTE);
   element.setAttribute(HEAD_PROVENANCE_ATTRIBUTE, "true");
   element.setAttribute(HEAD_LEGACY_MANAGED_ATTRIBUTE, "1");
   element.setAttribute(HEAD_REACT_MANAGED_ATTRIBUTE, "true");
 }
 
-function captureShellHeadSnapshot(element: Element): ShellHeadSnapshot | undefined {
-  if (element.getAttribute(HEAD_SHELL_PROVENANCE_ATTRIBUTE) !== "true") return undefined;
-  if (!elementSingletonKey(element)) return undefined;
+function captureHeadBaselineSnapshot(element: Element): HeadBaselineSnapshot | undefined {
+  const routeOwned = element.getAttribute(HEAD_ROUTE_MANAGED_ATTRIBUTE) === "true";
+  const shellOwned = element.getAttribute(HEAD_SHELL_PROVENANCE_ATTRIBUTE) === "true";
+  if (!routeOwned && (!shellOwned || !elementSingletonKey(element))) return undefined;
   return {
     attributes: readElementAttributes(element),
     content: element.textContent ?? "",
+    provenance: routeOwned ? "route" : "shell",
   };
 }
 
-function restoreShellHeadSnapshot(
+function restoreHeadBaselineSnapshot(
   element: Element,
-  snapshot: ShellHeadSnapshot,
+  snapshot: HeadBaselineSnapshot,
 ): void {
   for (const attribute of [...element.attributes]) {
     element.removeAttribute(attribute.name);
@@ -189,17 +202,56 @@ function restoreShellHeadSnapshot(
   for (const [name, value] of snapshot.attributes) element.setAttribute(name, value);
   element.textContent = snapshot.content;
   element.removeAttribute(HEAD_PROVENANCE_ATTRIBUTE);
-  element.removeAttribute(HEAD_LEGACY_MANAGED_ATTRIBUTE);
   element.removeAttribute(HEAD_REACT_MANAGED_ATTRIBUTE);
+  if (snapshot.provenance === "route") {
+    element.setAttribute(HEAD_LEGACY_MANAGED_ATTRIBUTE, "1");
+    element.setAttribute(HEAD_ROUTE_MANAGED_ATTRIBUTE, "true");
+  } else {
+    element.removeAttribute(HEAD_LEGACY_MANAGED_ATTRIBUTE);
+    element.setAttribute(HEAD_SHELL_PROVENANCE_ATTRIBUTE, "true");
+  }
+}
+
+function promoteToShellHeadBaseline(element: Element): void {
+  for (const attribute of [...element.attributes]) {
+    if (isHeadFrameworkAttribute(attribute.name)) {
+      element.removeAttribute(attribute.name);
+    }
+  }
   element.setAttribute(HEAD_SHELL_PROVENANCE_ATTRIBUTE, "true");
+}
+
+function isCrossPagePreservedSingleton(
+  element: Element,
+  singletonKey = elementSingletonKey(element),
+): boolean {
+  return element.parentElement !== null &&
+    singletonKey !== undefined &&
+    CROSS_PAGE_PRESERVED_SINGLETON_KEYS.has(singletonKey);
+}
+
+function isFrameworkOwnedHeadElement(element: Element): boolean {
+  return element.getAttribute(HEAD_PROVENANCE_ATTRIBUTE) === "true" ||
+    element.getAttribute(HEAD_REACT_MANAGED_ATTRIBUTE) === "true" ||
+    element.getAttribute(HEAD_LEGACY_MANAGED_ATTRIBUTE) === "1" ||
+    element.getAttribute(HEAD_ROUTE_MANAGED_ATTRIBUTE) === "true" ||
+    element.getAttribute(HEAD_SHELL_PROVENANCE_ATTRIBUTE) === "true";
+}
+
+function retireFrameworkHeadElement(element: Element): void {
+  if (isCrossPagePreservedSingleton(element)) {
+    promoteToShellHeadBaseline(element);
+    return;
+  }
+  element.remove();
 }
 
 function releaseHeadRecord(record: ClientHeadRecord, targetDocument: Document): void {
   if (
-    record.shellFallback &&
+    record.baselineFallback &&
     record.element.parentElement === targetDocument.head
   ) {
-    restoreShellHeadSnapshot(record.element, record.shellFallback);
+    restoreHeadBaselineSnapshot(record.element, record.baselineFallback);
     return;
   }
   record.element.remove();
@@ -241,6 +293,7 @@ function createClientHeadManager(targetDocument: Document): ClientHeadManager {
     descriptor: ManagedHeadDescriptor,
   ): boolean {
     if (element.getAttribute(HEAD_PROVENANCE_ATTRIBUTE) === "true") return true;
+    if (element.getAttribute(HEAD_ROUTE_MANAGED_ATTRIBUTE) === "true") return true;
     return descriptor.singletonKey !== undefined &&
       element.getAttribute(HEAD_SHELL_PROVENANCE_ATTRIBUTE) === "true" &&
       elementSingletonKey(element) === descriptor.singletonKey;
@@ -308,13 +361,19 @@ function createClientHeadManager(targetDocument: Document): ClientHeadManager {
     }
   }
 
-  function findUnclaimedInitialScript(
+  function findUnclaimedExecutedScript(
     descriptor: ManagedHeadDescriptor,
     unavailable: ReadonlySet<Element>,
     previouslyManaged: ReadonlySet<Element>,
   ): Element | undefined {
     if (descriptor.tagName !== "script") return undefined;
-    for (const element of initialSSRElements) {
+    for (const element of [...targetDocument.head.children]) {
+      if (
+        !initialSSRElements.has(element) &&
+        element.getAttribute(HEAD_ROUTE_MANAGED_ATTRIBUTE) !== "true"
+      ) {
+        continue;
+      }
       if (
         unavailable.has(element) ||
         previouslyManaged.has(element) ||
@@ -375,9 +434,9 @@ function createClientHeadManager(targetDocument: Document): ClientHeadManager {
 
     for (const [descriptorIndex, descriptor] of descriptors.entries()) {
       let element = exactReservations.get(descriptorIndex);
-      let shellFallback = element
-        ? records.find((record) => record.element === element)?.shellFallback ??
-          captureShellHeadSnapshot(element)
+      let baselineFallback = element
+        ? records.find((record) => record.element === element)?.baselineFallback ??
+          captureHeadBaselineSnapshot(element)
         : undefined;
       if (element) {
         reservedElements.delete(element);
@@ -397,7 +456,7 @@ function createClientHeadManager(targetDocument: Document): ClientHeadManager {
           )
         );
       element ??= reusableRecord?.element;
-      shellFallback ??= reusableRecord?.shellFallback;
+      baselineFallback ??= reusableRecord?.baselineFallback;
       let retainedHydrationScript = reusableRecord?.retainedHydrationScript === true;
 
       if (
@@ -412,7 +471,7 @@ function createClientHeadManager(targetDocument: Document): ClientHeadManager {
           record.element.parentElement === targetDocument.head
         );
         element = singletonRecord?.element;
-        shellFallback ??= singletonRecord?.shellFallback;
+        baselineFallback ??= singletonRecord?.baselineFallback;
         if (element) applyDescriptorToElement(element, descriptor);
       }
 
@@ -420,7 +479,7 @@ function createClientHeadManager(targetDocument: Document): ClientHeadManager {
       if (!element) {
         element = findMarkedElement(descriptor, unavailable(), false);
         if (element) {
-          shellFallback ??= captureShellHeadSnapshot(element);
+          baselineFallback ??= captureHeadBaselineSnapshot(element);
           markHeadElementManaged(element);
         }
       }
@@ -432,7 +491,7 @@ function createClientHeadManager(targetDocument: Document): ClientHeadManager {
       ) {
         element = findMarkedElement(descriptor, unavailable(), true);
         if (element) {
-          shellFallback ??= captureShellHeadSnapshot(element);
+          baselineFallback ??= captureHeadBaselineSnapshot(element);
           applyDescriptorToElement(element, descriptor);
         }
       }
@@ -443,14 +502,16 @@ function createClientHeadManager(targetDocument: Document): ClientHeadManager {
       }
 
       if (!element) {
-        element = findUnclaimedInitialScript(
+        element = findUnclaimedExecutedScript(
           descriptor,
           unavailable(),
           previouslyManaged,
         );
         if (element) {
-          // This server script already executed. Retain it fail-closed during
-          // initial hydration; only a later prop update may replace it.
+          // This SSR or route-directive script already executed. Retain it
+          // fail-closed during the first React adoption; only a later prop
+          // update may replace it.
+          baselineFallback ??= captureHeadBaselineSnapshot(element);
           markHeadElementManaged(element);
           retainedHydrationScript = true;
         }
@@ -467,7 +528,7 @@ function createClientHeadManager(targetDocument: Document): ClientHeadManager {
       nextRecords.push({
         descriptor,
         element,
-        ...(shellFallback && { shellFallback }),
+        ...(baselineFallback && { baselineFallback }),
         ...(retainedHydrationScript && { retainedHydrationScript: true }),
       });
     }
@@ -567,17 +628,28 @@ function createClientHeadManager(targetDocument: Document): ClientHeadManager {
     retire() {
       registrations.clear();
       // Retirement is a cross-page authority handoff, not an in-page overlay
-      // release. Never resurrect the previous page's shell baseline here.
-      for (const record of records) record.element.remove();
+      // release. Only app-wide state that route payloads cannot reconstruct is
+      // restored or promoted; all page-specific baselines are discarded.
+      for (const record of records) {
+        if (
+          isCrossPagePreservedSingleton(
+            record.element,
+            record.descriptor.singletonKey,
+          )
+        ) {
+          if (record.baselineFallback) {
+            restoreHeadBaselineSnapshot(record.element, record.baselineFallback);
+          } else {
+            promoteToShellHeadBaseline(record.element);
+          }
+        } else {
+          record.element.remove();
+        }
+      }
       records = [];
       initialSSRElements.clear();
       for (const element of [...targetDocument.head.children]) {
-        if (
-          element.getAttribute(HEAD_PROVENANCE_ATTRIBUTE) === "true" ||
-          element.getAttribute(HEAD_REACT_MANAGED_ATTRIBUTE) === "true"
-        ) {
-          element.remove();
-        }
+        if (isFrameworkOwnedHeadElement(element)) retireFrameworkHeadElement(element);
       }
     },
   };
@@ -611,11 +683,6 @@ export function retireClientHeadOwnership(targetDocument: Document): void {
   // A navigation can happen before the React runtime evaluates. SSR provenance
   // still belongs to the previous page and must not survive the handoff.
   for (const element of [...(targetDocument.head?.children ?? [])]) {
-    if (
-      element.getAttribute(HEAD_PROVENANCE_ATTRIBUTE) === "true" ||
-      element.getAttribute(HEAD_REACT_MANAGED_ATTRIBUTE) === "true"
-    ) {
-      element.remove();
-    }
+    if (isFrameworkOwnedHeadElement(element)) retireFrameworkHeadElement(element);
   }
 }

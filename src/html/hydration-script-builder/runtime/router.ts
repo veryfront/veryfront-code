@@ -31,6 +31,7 @@ import {
   buildPinnedRscModuleUrl,
   pageDataCacheIdentity as buildPageDataCacheIdentity,
 } from "./module-urls.ts";
+import { handoffClientRouteMetadata } from "#veryfront/html/client-route-head.ts";
 
 const FETCH_TIMEOUT_MS = 10000;
 const MAX_RETRIES = 2;
@@ -677,14 +678,10 @@ export function createRouterRuntime(deps: RouterRuntimeDeps): RouterRuntime {
       throw new Error("Failed to load page component: " + pageData.pagePath);
     }
 
-    if (pageData.frontmatter?.title) {
-      document.title = pageData.frontmatter.title as string;
-    }
-
-    if (pageData.frontmatter?.description) {
-      const metaDesc = document.querySelector('meta[name="description"]');
-      metaDesc?.setAttribute("content", pageData.frontmatter.description as string);
-    }
+    handoffClientRouteMetadata(
+      pageData.frontmatter ?? {},
+      document as unknown as Document,
+    );
 
     if (pageData.css) {
       const existingStyle = document.getElementById("veryfront-spa-css");

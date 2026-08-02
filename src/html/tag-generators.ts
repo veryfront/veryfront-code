@@ -189,6 +189,20 @@ function markShellSingleton(
   return { ...attributes, [HEAD_SHELL_PROVENANCE_ATTRIBUTE]: "true" };
 }
 
+function declaresDocumentEncoding(attributes: Readonly<Record<string, string>>): boolean {
+  for (const [name, value] of Object.entries(attributes)) {
+    const normalizedName = name.toLowerCase();
+    if (normalizedName === "charset") return true;
+    if (
+      normalizedName === "http-equiv" &&
+      value.trim().toLowerCase() === "content-type"
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function generateMetaTags(metadata: HTMLMetadata): string {
   const record = metadataRecord(metadata);
   const tags: string[] = ['<meta charset="UTF-8">'];
@@ -224,8 +238,10 @@ export function generateMetaTags(metadata: HTMLMetadata): string {
     )
   ) {
     if (!isPlainRecord(meta, "HTML tag attributes cannot be inspected")) continue;
+    const attributes = filterAttrs(meta, []);
+    if (declaresDocumentEncoding(attributes)) continue;
     tags.push(
-      `<meta ${buildAttributes(markShellSingleton("meta", filterAttrs(meta, [])))}>`,
+      `<meta ${buildAttributes(markShellSingleton("meta", attributes))}>`,
     );
   }
 

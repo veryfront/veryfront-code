@@ -29,39 +29,65 @@ function pipeToReadableStream(
 ): ReadableStream<Uint8Array> {
   let passThrough: import("node:stream").PassThrough | null = null;
   let cancelled = false;
+  let settled = false;
+  let abortCalled = false;
+
+  const abortOnce = () => {
+    if (abortCalled || !abortFn) return;
+    abortCalled = true;
+    try {
+      abortFn();
+    } catch (error) {
+      logger.warn("Error aborting pipeable SSR stream", error);
+    }
+  };
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       const { PassThrough } = await import("node:stream");
       passThrough = new PassThrough();
+      if (cancelled) {
+        passThrough.destroy();
+        return;
+      }
 
       passThrough.on("data", (chunk: Uint8Array) => {
-        if (cancelled) return;
+        if (cancelled || settled) return;
         controller.enqueue(new Uint8Array(chunk));
+        if ((controller.desiredSize ?? 0) <= 0) passThrough?.pause();
       });
       passThrough.on("end", () => {
-        if (!cancelled) controller.close();
+        if (cancelled || settled) return;
+        settled = true;
+        controller.close();
       });
       passThrough.on("error", (err: Error) => {
-        if (!cancelled) controller.error(err);
+        if (cancelled || settled) return;
+        settled = true;
+        abortOnce();
+        controller.error(err);
       });
 
       try {
         pipeFn(passThrough);
       } catch (error) {
-        if (!cancelled) controller.error(error);
-      }
-    },
-    cancel(reason) {
-      cancelled = true;
-
-      if (abortFn) {
-        try {
-          abortFn();
-        } catch (error) {
-          logger.warn("Error aborting pipeable SSR stream", error);
+        if (cancelled || settled) return;
+        settled = true;
+        abortOnce();
+        controller.error(error);
+        if (!passThrough.destroyed) {
+          passThrough.destroy(error instanceof Error ? error : undefined);
         }
       }
+    },
+    pull() {
+      if (!cancelled && !settled) passThrough?.resume();
+    },
+    cancel(reason) {
+      if (cancelled) return;
+      cancelled = true;
+      settled = true;
+      abortOnce();
 
       if (passThrough && !passThrough.destroyed) {
         passThrough.destroy(reason instanceof Error ? reason : undefined);

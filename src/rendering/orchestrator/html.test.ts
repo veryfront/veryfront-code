@@ -1,6 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../html/styles-builder/__tests__/css-processor-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import {
@@ -17,6 +23,7 @@ import { clearCSSCache, getCSSByHash } from "#veryfront/html/styles-builder/inde
 import { HTMLGenerator, type HTMLGeneratorConfig } from "./html.ts";
 import { buildHeadElements, mergeFrontmatter } from "./html-head.ts";
 import { mergeImportedCSS } from "./html-imported-css.ts";
+import { StreamTimeoutError } from "../utils/stream-utils.ts";
 import {
   createHTMLContext,
   createHTMLGenerator,
@@ -279,6 +286,26 @@ describe("HTMLGenerator helpers", () => {
   });
 
   describe("generateFullHTML", () => {
+    it("fails closed when a full-document component also declares React Head", async () => {
+      const generator = createHTMLGenerator();
+
+      await assertRejects(
+        () =>
+          generator.generateFullHTML(createHTMLContext({
+            collectedHead: {
+              title: "Conflicting title",
+              description: undefined,
+              metas: [],
+              links: [],
+              styles: [],
+              scripts: [],
+            },
+          })),
+        Error,
+        "React <Head> cannot be combined with a component-authored full HTML document",
+      );
+    });
+
     it("does not hydrate full documents for non-prologue use-client text", async () => {
       const serverSources = [
         "// 'use client';\nexport default function Page() {}",
@@ -690,7 +717,10 @@ describe("HTMLGenerator helpers", () => {
           metas: [{ charset: "utf-8" }],
           links: [],
           styles: [".from-head{color:blue}"],
-          scripts: [{ content: "window.__HEAD_OK__=true" }],
+          scripts: [{
+            type: "module",
+            content: "import React from 'react'; window.__HEAD_OK__=Boolean(React)",
+          }],
         },
       });
 
@@ -701,11 +731,27 @@ describe("HTMLGenerator helpers", () => {
         true,
       );
       assertEquals(html.includes('<script data-vf-head="true"'), true);
-      assertEquals(html.includes('nonce="nonce-123">window.__HEAD_OK__=true</script>'), true);
-      assertEquals((html.match(/<meta charset=/gi) ?? []).length, 1);
       assertEquals(
-        html.indexOf('<meta charset="UTF-8">') <
-          html.indexOf('<script data-vf-head="true"'),
+        html.includes(
+          `import React from 'react'; window.__HEAD_OK__=Boolean(React)</script>`,
+        ),
+        true,
+      );
+      assertEquals((html.match(/<meta charset=/gi) ?? []).length, 1);
+      const charsetIndex = html.indexOf('<meta charset="UTF-8">');
+      const importMapIndex = html.indexOf('<script type="importmap"');
+      const importMapEnd = html.indexOf("</script>", importMapIndex);
+      const collectedModuleIndex = html.indexOf('<script data-vf-head="true"');
+      const collectedModuleOpenEnd = html.indexOf(">", collectedModuleIndex);
+      const collectedModuleOpen = html.slice(collectedModuleIndex, collectedModuleOpenEnd + 1);
+      const cssIndex = html.indexOf("<!-- Tailwind CSS:");
+      assertEquals(collectedModuleOpen.includes('type="module"'), true);
+      assertEquals(collectedModuleOpen.includes('nonce="nonce-123"'), true);
+      assertEquals(
+        charsetIndex < importMapIndex &&
+          importMapIndex < importMapEnd &&
+          importMapEnd < collectedModuleIndex &&
+          collectedModuleIndex < cssIndex,
         true,
       );
     });
@@ -996,6 +1042,31 @@ describe("HTMLGenerator helpers", () => {
   });
 
   describe("generateHTMLStream", () => {
+    it("fails closed with the exact timeout instead of returning partial HTML", async () => {
+      const generator = createHTMLGenerator();
+      const timeout = new StreamTimeoutError(
+        1,
+        "<!DOCTYPE html><html><body>incomplete response",
+      );
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(timeout);
+        },
+      });
+      let responseStream: ReadableStream | undefined;
+      let rejection: unknown;
+
+      try {
+        responseStream = await generator.generateHTMLStream(stream, createHTMLContext());
+      } catch (error) {
+        rejection = error;
+      }
+
+      assertStrictEquals(rejection, timeout);
+      assertStrictEquals(responseStream, undefined);
+      assertEquals(timeout.partialContent.includes("incomplete response"), true);
+    });
+
     it("preserves full-document layout output when streaming app-router pages", async () => {
       const mockAdapter = createMockAdapter(async () => `'use client';`);
 

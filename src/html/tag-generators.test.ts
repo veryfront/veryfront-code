@@ -15,6 +15,7 @@ describe("tag-generators", () => {
       "data-vf-react-head": "spoofed",
       "Data-Vf-React-Head-Owner": "spoofed",
       "data-vf-shell-head": "spoofed",
+      "data-vf-route-head": "spoofed",
       "data-veryfront-managed": "spoofed",
       "DATA-VF-HASH": "spoofed",
     };
@@ -89,6 +90,19 @@ describe("tag-generators", () => {
       /<link rel="icon"[^>]*data-vf-shell-head/.test(links),
       false,
     );
+  });
+
+  it("keeps document encoding exclusively shell-owned", () => {
+    const metas = generateMetaTags({
+      meta: [
+        { CHARSET: "ISO-8859-1" },
+        { "HTTP-EQUIV": "Content-Type", content: "text/html; charset=windows-1252" },
+      ],
+    } as never);
+
+    assertEquals((metas.match(/<meta\b[^>]*\bcharset=/gi) ?? []).length, 1);
+    assertEquals(metas.includes("ISO-8859-1"), false);
+    assertEquals(metas.includes("windows-1252"), false);
   });
 
   describe("generateMetaTags", () => {
