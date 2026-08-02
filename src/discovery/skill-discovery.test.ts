@@ -1,6 +1,6 @@
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { createSkillTestAdapter } from "#veryfront/skill/testing.ts";
@@ -103,5 +103,35 @@ Use this skill for support email workflows.`,
     assertExists(registrySkill);
     assertEquals(registrySkill.metadata.displayName, "Support Email Processor");
     assertEquals(result.skills.has("Process Email"), false);
+  });
+
+  it("publishes skills from an adapter-relative project namespace", async () => {
+    const adapter = createSkillTestAdapter({
+      "skills/cloud-skill/SKILL.md": `---
+name: cloud-skill
+description: Adapter-relative skill
+---
+Use the cloud-backed skill.`,
+    });
+
+    const result = await discoverAll({
+      baseDir: "",
+      toolDirs: [],
+      agentDirs: [],
+      resourceDirs: [],
+      promptDirs: [],
+      workflowDirs: [],
+      taskDirs: [],
+      skillDirs: ["skills"],
+      fsAdapter: adapter,
+      verbose: false,
+    });
+
+    assertEquals(result.errors, []);
+    assertEquals(result.skills.get("cloud-skill")?.rootPath, "skills/cloud-skill");
+    assertStrictEquals(
+      skillRegistryInternal.get("cloud-skill")?.fsAdapter,
+      adapter,
+    );
   });
 });

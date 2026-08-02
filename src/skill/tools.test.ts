@@ -3,7 +3,7 @@ import "./_test-setup.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { registerSkill, skillRegistry } from "./registry.ts";
+import { registerSkill } from "./registry.ts";
 import {
   createExecuteSkillScriptTool,
   createLoadSkillReferenceTool,

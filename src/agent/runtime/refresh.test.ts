@@ -5,7 +5,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type ModelRuntime } from "#veryfront/provider";
 import { type RemoteToolSource, tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
+import { registerSkill } from "#veryfront/skill/registry.ts";
 import { agent } from "../index.ts";
 import type {
   AgentConfig,

@@ -2,8 +2,7 @@ import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { toolRegistry } from "#veryfront/tool";
-import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
+import { registerSkill } from "#veryfront/skill/registry.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "./agent-markdown-adapter.ts";
 import { getEffectiveAgentSystem } from "./effective-agent-system.ts";
 
