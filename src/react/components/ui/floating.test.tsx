@@ -1,6 +1,6 @@
 import * as React from "react";
 import { flushSync } from "react-dom";
-import { createRoot, hydrateRoot } from "react-dom/client";
+import { createRoot, hydrateRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
@@ -100,6 +100,18 @@ const surfaceCases: SurfaceCase[] = [
   },
 ];
 
+/**
+ * Unmount and drain the scheduler task React leaves behind.
+ *
+ * React's scheduler holds a `setImmediate` until it next runs. It completes on
+ * its own, but the test has to yield once more or Deno's leak sanitizer sees
+ * the timer still pending.
+ */
+async function unmount(root: Root): Promise<void> {
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("Floating SSR and hydration", () => {
   for (const surfaceCase of surfaceCases) {
     it(`keeps default-open ${surfaceCase.name} deterministic and portals after hydration`, async () => {
@@ -145,13 +157,13 @@ describe("Floating SSR and hydration", () => {
         );
         assertEquals(recoverableErrors, []);
 
-        root.unmount();
+        await unmount(root);
         root = undefined;
         await waitFor(() =>
           document.querySelector(`[data-floating-surface="${surfaceId}"]`) === null
         );
       } finally {
-        root?.unmount();
+        if (root) await unmount(root);
         restore();
       }
     });
@@ -194,7 +206,7 @@ describe("Floating SSR and hydration", () => {
       assertEquals(rootElement.contains(surface), false);
       assertEquals(recoverableErrors, []);
     } finally {
-      root?.unmount();
+      if (root) await unmount(root);
       restore();
     }
   });
@@ -278,7 +290,7 @@ describe("Floating SSR and hydration", () => {
       await waitFor(() => document.querySelector('[data-floating-surface="geometry"]') === null);
       await waitFor(() => document.activeElement === trigger);
     } finally {
-      root?.unmount();
+      if (root) await unmount(root);
       restore();
     }
   });
@@ -342,7 +354,7 @@ describe("Floating SSR and hydration", () => {
       await waitFor(() => ownerDom.window.document.querySelector("[data-owner-surface]") === null);
       assertEquals(reasons, ["escape"]);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
       ownerDom.window.close();
     }

@@ -1,4 +1,4 @@
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
@@ -40,6 +40,20 @@ function installDom(): { restore: () => void; window: JSDOM["window"] } {
       dom.window.close();
     },
   };
+}
+
+/**
+ * Unmount and drain the one-shot tasks the runtime leaves behind.
+ *
+ * The `execCommand` copy fallback selects a textarea, and jsdom queues that
+ * `select` event on a bare `setTimeout` it never registers with the window, so
+ * `window.close()` cannot clear it. React's scheduler likewise holds a
+ * `setImmediate` until it next runs. Both complete on their own, but the test
+ * has to yield once more or Deno's leak sanitizer sees them still pending.
+ */
+async function unmount(root: Root): Promise<void> {
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("MessageActionBar", () => {
@@ -139,7 +153,7 @@ describe("MessageActionBar", () => {
       assert(rootElement.querySelector('[data-testid="custom-copy"]'));
       assert(!rootElement.querySelector('[data-testid="custom-copied"]'));
 
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       dom.restore();
     }
@@ -186,7 +200,7 @@ describe("MessageActionBar", () => {
       );
       assertEquals(document.querySelectorAll("textarea").length, 0);
 
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       dom.restore();
     }

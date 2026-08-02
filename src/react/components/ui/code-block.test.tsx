@@ -1,6 +1,6 @@
 import * as React from "react";
 import { flushSync } from "react-dom";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import {
@@ -60,6 +60,20 @@ async function settle(): Promise<void> {
   await Promise.resolve();
   await new Promise((resolve) => setTimeout(resolve, 0));
   flushSync(() => {});
+}
+
+/**
+ * Unmount and drain the one-shot tasks the runtime leaves behind.
+ *
+ * The `execCommand` copy fallback selects a textarea, and jsdom queues that
+ * `select` event on a bare `setTimeout` it never registers with the window, so
+ * `window.close()` cannot clear it. React's scheduler likewise holds a
+ * `setImmediate` until it next runs. Both complete on their own, but the test
+ * has to yield once more or Deno's leak sanitizer sees them still pending.
+ */
+async function unmount(root: Root): Promise<void> {
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("CodeBlock renderer boundary", () => {
@@ -181,7 +195,7 @@ describe("CodeBlock clipboard integration", () => {
       assert(interceptedEvent.isDefaultPrevented(), "the React event remains usable");
       assertEquals(writes, ["const value = 1;"]);
 
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       dom.restore();
     }
@@ -227,7 +241,7 @@ describe("CodeBlock clipboard integration", () => {
 
       assertEquals(interceptions, 0);
       assertEquals(writes, 0);
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       dom.restore();
     }
@@ -286,7 +300,7 @@ describe("CodeBlock clipboard integration", () => {
 
       assertEquals(targetWrites, ["flat target", "collapsible target"]);
       assertEquals(globalWrites, []);
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       restore();
       targetDom.window.close();
@@ -333,7 +347,7 @@ describe("CodeBlock clipboard integration", () => {
       assertEquals(button.dataset.failed, "true");
       assertEquals(document.querySelectorAll("textarea").length, 0);
 
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       dom.restore();
     }
@@ -366,7 +380,7 @@ describe("CodeBlock clipboard integration", () => {
         rootElement.querySelector('[role="status"]')?.textContent,
         "Unable to copy code",
       );
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       dom.restore();
     }

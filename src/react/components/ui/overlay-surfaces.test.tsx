@@ -1,5 +1,5 @@
 import { flushSync } from "react-dom";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
@@ -94,6 +94,18 @@ function keydown(
   return event;
 }
 
+/**
+ * Unmount and drain the scheduler task React leaves behind.
+ *
+ * React's scheduler holds a `setImmediate` until it next runs. It completes on
+ * its own, but the test has to yield once more or Deno's leak sanitizer sees
+ * the timer still pending.
+ */
+async function unmount(root: Root): Promise<void> {
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("modal surfaces", () => {
   it("wires ARIA, traps focus, restores focus, and balances scroll locking", async () => {
     const dom = createDom();
@@ -181,7 +193,7 @@ describe("modal surfaces", () => {
       assertEquals(trigger.getAttribute("aria-expanded"), "false");
       assertEquals(document.body.style.overflow, "");
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });
@@ -213,7 +225,7 @@ describe("modal surfaces", () => {
       assertEquals(document.querySelector('[role="dialog"]'), null);
       assertEquals(trigger.getAttribute("aria-expanded"), "false");
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });
@@ -301,7 +313,7 @@ describe("dropdown menu keyboard contract", () => {
       );
       assertEquals(document.activeElement, after);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });
