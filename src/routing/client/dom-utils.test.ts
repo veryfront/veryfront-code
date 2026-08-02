@@ -1377,6 +1377,10 @@ describe("DOM Utils", () => {
         // indistinguishable from an intentionally empty route and would blank
         // the live app on the next soft transition.
         assertEquals(result.content, undefined, "Should report absent content");
+        // Skipping the transition is not enough: the router would still commit
+        // the navigation and leave the old page under the new URL. The
+        // destination belongs to the browser's document loader.
+        assertEquals(result.pageData.requiresFullDocumentNavigation, true);
       } finally {
         mocks.cleanup();
       }

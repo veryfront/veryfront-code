@@ -354,8 +354,13 @@ export function parsePageDataFromHTML(html: string): {
 
   const managedHead = snapshotClientRouteHead(doc);
   if (
+    // A response without an app root is a whole page of its own (proxy
+    // interstitial, custom error page). Skipping the soft transition alone
+    // would leave the previous route mounted under the destination's URL, so
+    // the browser's document loader has to commit it.
+    !root ||
     managedHead.some((entry) => entry.tagName === "script") ||
-    (typeof root?.querySelector === "function" && root.querySelector("script"))
+    (typeof root.querySelector === "function" && root.querySelector("script"))
   ) {
     pageData = { ...pageData, requiresFullDocumentNavigation: true };
   }

@@ -306,6 +306,10 @@ describe("routing/client/page-loader", () => {
       try {
         const data = await new PageLoader().fetchPageData("/about");
 
+        // Reporting absent content alone still lets the router commit the
+        // navigation and advance the URL over the old page. The destination has
+        // to reach the browser's document loader so the interstitial runs.
+        assertEquals(data.requiresFullDocumentNavigation, true);
         // `html: ""` would be read downstream as an intentionally empty route
         // and would clear the mounted app; absent html skips the transition.
         assertEquals(data.html, undefined);

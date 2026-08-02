@@ -34,6 +34,20 @@ function installDom(url: string): () => void {
   };
 }
 
+/** Route parsing needs a DOMParser; JSDOM's globals do not install one. */
+function installJSDOMParser(): () => void {
+  const globalWithDOMParser = globalThis as typeof globalThis & {
+    DOMParser: typeof DOMParser;
+  };
+  const originalDOMParser = globalWithDOMParser.DOMParser;
+  const owner = new JSDOM("");
+  globalWithDOMParser.DOMParser = owner.window.DOMParser as unknown as typeof DOMParser;
+  return () => {
+    globalWithDOMParser.DOMParser = originalDOMParser;
+    owner.window.close();
+  };
+}
+
 /** Replace the private page loaders with spies so we can observe refetches. */
 function spyOnLoaders(router: VeryfrontRouter): string[] {
   const loads: string[] = [];
@@ -206,6 +220,60 @@ describe("rendering/client/VeryfrontRouter — soft same-route navigation", () =
       globalThis.fetch = originalFetch;
       if (originalLocation) Object.defineProperty(globalThis, "location", originalLocation);
       else delete (globalThis as Record<string, unknown>).location;
+      restore();
+    }
+  });
+
+  it("hands a response without an app root to the document loader", async () => {
+    const restore = installDom("https://example.com/current");
+    const restoreDOMParser = installJSDOMParser();
+    const originalLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
+    const originalFetch = globalThis.fetch;
+    try {
+      const errors: Error[] = [];
+      const router = new VeryfrontRouter({
+        baseUrl: "https://example.com",
+        onError: (error) => errors.push(error),
+      });
+      // deno-lint-ignore no-explicit-any
+      (router as any).root = {};
+      document.getElementById("root")!.innerHTML = "Live app";
+      // A proxy interstitial: a 200 that is a complete document but never
+      // mounts the app, so it has no route content the router can commit.
+      const interstitial = `<!doctype html><html><head><title>Just a moment</title></head><body>
+          <div class="interstitial"><h1>Checking your browser</h1></div>
+        </body></html>`;
+      globalThis.fetch = ((input: URL | RequestInfo) =>
+        Promise.resolve(
+          String(input).startsWith("/_veryfront/data")
+            ? new Response("Not Found", { status: 404 })
+            : new Response(interstitial, { headers: { "content-type": "text/html" } }),
+        )) as typeof fetch;
+      const assigned: string[] = [];
+      Object.defineProperty(globalThis, "location", {
+        configurable: true,
+        value: {
+          origin: "https://example.com",
+          pathname: "/current",
+          search: "",
+          hash: "",
+          assign: (url: string) => assigned.push(url),
+        },
+      });
+
+      await router.navigate("/gated");
+
+      // Without the handoff the router completes the navigation: the URL
+      // advances to /gated while the previous page stays mounted, and the
+      // interstitial's own scripts never run.
+      assertEquals(assigned, ["/gated"]);
+      assertEquals(errors, []);
+      assertEquals(document.getElementById("root")?.innerHTML, "Live app");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalLocation) Object.defineProperty(globalThis, "location", originalLocation);
+      else delete (globalThis as Record<string, unknown>).location;
+      restoreDOMParser();
       restore();
     }
   });

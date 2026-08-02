@@ -794,6 +794,9 @@ describe("PageTransition", () => {
     it(
       "should keep the current route when the destination reported no html",
       withMocks(async (mocks) => {
+        // A backstop: a destination with no route content is handed to the
+        // document loader before it reaches a soft transition. If one ever
+        // arrives here anyway, it must not blank the mounted app.
         const pageTransition = new PageTransition(() => {});
         mocks.mockRoot.innerHTML = "Previous content";
         const data: RouteData = { html: undefined, frontmatter: {} };
