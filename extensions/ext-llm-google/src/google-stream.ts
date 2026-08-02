@@ -315,7 +315,7 @@ export async function* streamGoogleCompatibleParts(
       throw invalidGoogleStream(context, "candidate had neither content nor a finish reason");
     }
 
-    for (const rawPart of parts) {
+    for (const [candidatePartIndex, rawPart] of parts.entries()) {
       const part = readRecord(rawPart);
       if (!part) {
         throw invalidGoogleStream(context, "candidate content part was not an object");
@@ -434,7 +434,10 @@ export async function* streamGoogleCompatibleParts(
         }
         const providerId = typeof functionCall.id === "string" ? functionCall.id : undefined;
         const rawPartIndex = rawAssistantParts.length;
-        const deduplicationKey = providerId ?? `anonymous-${rawPartIndex}`;
+        // Gemini may replay an anonymous function call in later candidate
+        // envelopes. Its candidate-part position is stable across those
+        // cumulative snapshots; our growing retained-output index is not.
+        const deduplicationKey = providerId ?? `anonymous-${candidatePartIndex}`;
         const callShape = `${functionCall.name}\u0000${serializedInput}`;
         const previousToolCall = seenToolCalls.get(deduplicationKey);
         if (previousToolCall !== undefined) {

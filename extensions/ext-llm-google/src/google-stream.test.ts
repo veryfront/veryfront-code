@@ -431,6 +431,42 @@ describe("ext-llm-google/google-stream", () => {
     }]);
   });
 
+  it("coalesces replayed anonymous function calls by candidate position", async () => {
+    const functionCall = {
+      functionCall: {
+        name: "lookup",
+        args: { city: "Paris" },
+      },
+    };
+    const parts = await collectParts(streamFromText([
+      data({
+        candidates: [{ content: { role: "model", parts: [functionCall] } }],
+      }),
+      data({
+        candidates: [{
+          content: { role: "model", parts: [functionCall] },
+          finishReason: "STOP",
+        }],
+      }),
+      "data: [DONE]\r\n\r\n",
+    ].join("")));
+
+    assertEquals(
+      parts.filter((part) =>
+        typeof part === "object" &&
+        part !== null &&
+        "type" in part &&
+        part.type === "tool-call"
+      ),
+      [{
+        type: "tool-call",
+        toolCallId: "tool-0",
+        toolName: "lookup",
+        input: '{"city":"Paris"}',
+      }],
+    );
+  });
+
   it("rejects a provider id that collides with an anonymous raw-position id", async () => {
     await assertRejects(
       () =>
