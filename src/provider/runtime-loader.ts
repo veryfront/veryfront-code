@@ -159,6 +159,11 @@ export function stringifyJsonValue(value: unknown): string {
   }
 }
 
+/** Preserve provider-native argument text while serializing structured tool inputs. */
+export function stringifyToolArguments(value: unknown): string {
+  return typeof value === "string" ? value : stringifyJsonValue(value);
+}
+
 /** Read text content parts from provider messages. */
 export function readTextParts(
   parts: readonly { type: string; text?: string }[],
@@ -249,7 +254,7 @@ export function toOpenAICompatibleMessages(
             type: "function",
             function: {
               name: part.toolName,
-              arguments: stringifyJsonValue(part.input),
+              arguments: stringifyToolArguments(part.input),
             },
           });
         }

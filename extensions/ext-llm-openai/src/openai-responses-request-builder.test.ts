@@ -166,6 +166,49 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
     assertEquals(Object.hasOwn(generated, "stream"), false);
   });
 
+  it("preserves Responses function argument text and serializes structured inputs", () => {
+    const body = buildOpenAIResponsesRequest(
+      "gpt-5.5",
+      "openai",
+      {
+        prompt: [{
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-text",
+              toolName: "lookup",
+              input: '{"id":"text"}',
+            },
+            {
+              type: "tool-call",
+              toolCallId: "call-object",
+              toolName: "lookup",
+              input: { id: "object" },
+            },
+          ],
+        }],
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.input, [
+      {
+        type: "function_call",
+        call_id: "call-text",
+        name: "lookup",
+        arguments: '{"id":"text"}',
+      },
+      {
+        type: "function_call",
+        call_id: "call-object",
+        name: "lookup",
+        arguments: '{"id":"object"}',
+      },
+    ]);
+  });
+
   it("replays exact validated response output items before the next user turn", () => {
     const rawOutputItems = [
       {

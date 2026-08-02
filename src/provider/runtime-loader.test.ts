@@ -146,6 +146,44 @@ describe("provider/runtime-loader", () => {
     }
   });
 
+  it("preserves OpenAI-compatible tool argument text and serializes structured inputs", () => {
+    assertEquals(
+      toOpenAICompatibleMessages([{
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-text",
+            toolName: "lookup",
+            input: '{"id":"text"}',
+          },
+          {
+            type: "tool-call",
+            toolCallId: "call-object",
+            toolName: "lookup",
+            input: { id: "object" },
+          },
+        ],
+      }]),
+      [{
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "call-text",
+            type: "function",
+            function: { name: "lookup", arguments: '{"id":"text"}' },
+          },
+          {
+            id: "call-object",
+            type: "function",
+            function: { name: "lookup", arguments: '{"id":"object"}' },
+          },
+        ],
+      }],
+    );
+  });
+
   it("emits pending_input and streaming_input transitions when tool input goes silent and resumes", async () => {
     const pendingAfterStart = deferred("pending_input after tool-input-start");
     const pendingAfterDelta = deferred("pending_input after tool-input-delta");

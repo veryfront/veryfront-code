@@ -2,6 +2,7 @@ import {
   jsonValuesEqual,
   readProviderOptions,
   stringifyJsonValue,
+  stringifyToolArguments,
   unwrapToolInputSchema,
 } from "veryfront/provider/shared";
 import type {
@@ -371,7 +372,7 @@ function toOpenAIResponsesInput(
             type: "function_call",
             call_id: part.toolCallId,
             name: part.toolName,
-            arguments: stringifyJsonValue(part.input),
+            arguments: stringifyToolArguments(part.input),
           });
         }
         if (messageContent.length > 0) {

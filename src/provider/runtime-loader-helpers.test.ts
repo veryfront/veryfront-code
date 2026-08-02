@@ -7,6 +7,7 @@ import {
   readProviderOptions,
   snapshotJsonValue,
   stringifyJsonValue,
+  stringifyToolArguments,
   unwrapToolInputSchema,
 } from "./runtime-loader.ts";
 
@@ -52,6 +53,11 @@ describe("provider/runtime-loader helpers", () => {
     assertEquals(stringifyJsonValue({ ok: true }), '{"ok":true}');
     assertEquals(stringifyJsonValue("text"), '"text"');
     assertEquals(stringifyJsonValue(null), "null");
+  });
+
+  it("preserves provider-native tool argument text without weakening structured serialization", () => {
+    assertEquals(stringifyToolArguments('{"id":"one"}'), '{"id":"one"}');
+    assertEquals(stringifyToolArguments({ id: "one" }), '{"id":"one"}');
   });
 
   it("rejects provider tool values without a JSON representation", () => {

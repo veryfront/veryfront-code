@@ -60,6 +60,7 @@ export {
   requestStream,
   snapshotJsonValue,
   stringifyJsonValue,
+  stringifyToolArguments,
   toOpenAICompatibleMessages,
   toOpenAICompatibleTools,
   unwrapToolInputSchema,
