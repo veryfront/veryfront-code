@@ -132,6 +132,62 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(discoveryCalls, 0);
   });
 
+  it("accepts a non-main default branch only when it matches trusted proxy metadata", async () => {
+    let discoveryCalls = 0;
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    const body = createAgentStreamRequestBody({
+      project: {
+        runtimeTargetKind: "main_branch",
+        runtimeTargetBranchId: null,
+      },
+      agentSource: { type: "branch", branch: "trunk" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+    const ctx = createCtx(publicKeyPem);
+    ctx.defaultBranchName = "trunk";
+
+    const accepted = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      ctx,
+    );
+    assertExists(accepted.response);
+    assertEquals(accepted.response.status, 404);
+    assertEquals(discoveryCalls, 1);
+
+    discoveryCalls = 0;
+    ctx.defaultBranchName = "main";
+    const rejected = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      ctx,
+    );
+    assertExists(rejected.response);
+    assertEquals(rejected.response.status, 403);
+    assertEquals(discoveryCalls, 0);
+  });
+
   it("streams AG-UI events for a valid signed request", async () => {
     let discoveryCalls = 0;
     let streamContext: Record<string, unknown> | undefined;

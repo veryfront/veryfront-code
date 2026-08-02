@@ -234,17 +234,9 @@ export function validateRuntimeAgentSourceTargetBinding(
     });
   }
 
-  if (
-    sourceType === "branch" &&
-    kind === "main_branch" &&
-    input.agentSource.branch !== "main"
-  ) {
-    ctx.addIssue({
-      code: "custom",
-      message: "main-branch runtime target requires the canonical main branch source",
-      path: ["agentSource", "branch"],
-    });
-  }
+  // A project's default branch is platform metadata, not a framework literal.
+  // Hosted runtimes compare branch sources with the trusted default branch
+  // supplied by the proxy after body-bound control-plane verification.
 }
 
 export const getRuntimeAgentProjectContextSchema = defineSchema((v) =>

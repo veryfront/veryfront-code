@@ -102,6 +102,10 @@ describe("agent/runtime-agent-invocation-contract", () => {
     }));
 
     assertEquals(parsed.run.project.runtimeTargetKind, "main_branch");
+    const nonMainDefault = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      agentSource: { type: "branch", branch: "trunk" },
+    }));
+    assertEquals(nonMainDefault.agentSource, { type: "branch", branch: "trunk" });
     assertThrows(() =>
       RuntimeAgentRunInvocationSchema.parse(createInvocation({
         run: {
@@ -174,25 +178,6 @@ describe("agent/runtime-agent-invocation-contract", () => {
         })),
       Error,
       "environment runtime target requires an environment agent source",
-    );
-  });
-
-  it("rejects a non-main source for the canonical main-branch target", () => {
-    assertThrows(
-      () =>
-        RuntimeAgentRunInvocationSchema.parse(createInvocation({
-          run: {
-            ...createInvocation().run,
-            project: {
-              projectId,
-              projectSlug: "demo-project",
-              runtimeTargetKind: "main_branch",
-            },
-          },
-          agentSource: { type: "branch", branch: "feature-private" },
-        })),
-      Error,
-      "main-branch runtime target requires the canonical main branch source",
     );
   });
 

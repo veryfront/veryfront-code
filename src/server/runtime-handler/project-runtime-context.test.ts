@@ -141,6 +141,7 @@ function makeRuntimeContextInput(
       "x-token": "proxy-token",
       "x-environment-id": "env-remote",
       "x-environment-name": "preview",
+      "x-default-branch-name": "trunk",
     },
   });
   const url = new URL(req.url);
@@ -812,6 +813,7 @@ describe("resolveProjectRuntimeContext", () => {
     assertEquals(ctx.releaseId, "rel-remote");
     assertEquals(ctx.proxyToken, "proxy-token");
     assertEquals(ctx.environmentId, "env-remote");
+    assertEquals(ctx.defaultBranchName, "trunk");
     assertEquals(ctx.moduleServerUrl, "https://modules.example.test");
     assertEquals(ctx.requestContext?.mode, "preview");
     assertEquals(result.environment.resolvedEnvironment, "preview");

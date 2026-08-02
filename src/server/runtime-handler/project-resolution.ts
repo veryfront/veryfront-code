@@ -61,6 +61,8 @@ interface RequestHeaders {
   branchId: string | undefined;
   /** Branch name from x-branch-name header */
   branchName: string | undefined;
+  /** Project default branch name from x-default-branch-name header */
+  defaultBranchName: string | undefined;
   /** Environment from x-environment header */
   environment: string | undefined;
   /** Environment ID from x-environment-id header (for env var resolution) */
@@ -116,6 +118,9 @@ export function extractRequestHeaders(
     releaseId: req.headers.get("x-release-id") ?? undefined,
     branchId: identityHeadersTrusted ? req.headers.get("x-branch-id") ?? undefined : undefined,
     branchName: identityHeadersTrusted ? req.headers.get("x-branch-name") ?? undefined : undefined,
+    defaultBranchName: identityHeadersTrusted
+      ? req.headers.get("x-default-branch-name")?.trim() || undefined
+      : undefined,
     environment,
     environmentId: identityHeadersTrusted
       ? req.headers.get("x-environment-id") ?? undefined

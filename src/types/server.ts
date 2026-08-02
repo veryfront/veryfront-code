@@ -58,6 +58,8 @@ export interface HandlerContext {
   branchId?: string;
   /** Canonical branch name paired with branchId by the operator-authenticated proxy. */
   branchName?: string;
+  /** Canonical project default branch name supplied by the operator-authenticated proxy. */
+  defaultBranchName?: string;
   /** OAuth token from proxy (via x-token header) */
   proxyToken?: string;
   /** Actual environment name from API (e.g., "Development", "Production") */

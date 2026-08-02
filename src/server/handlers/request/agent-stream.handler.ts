@@ -601,17 +601,28 @@ function assertAgentSourceMatchesHostedTarget(
 ): void {
   const fsWrapper = ctx.adapter.fs as SourceContextFsWrapper;
   if (!fsWrapper.isMultiProjectMode?.()) return;
-  if (payload.runtimeTargetKind !== "preview_branch") return;
+  if (payload.runtimeTargetKind === "preview_branch") {
+    if (
+      payload.agentSource.type !== "branch" ||
+      !ctx.branchId ||
+      !ctx.branchName ||
+      payload.runtimeTargetBranchId !== ctx.branchId ||
+      payload.agentSource.branch !== ctx.branchName
+    ) {
+      throw PERMISSION_DENIED.create({
+        detail: "Signed agent source does not match the trusted preview branch target",
+      });
+    }
+    return;
+  }
 
   if (
-    payload.agentSource.type !== "branch" ||
-    !ctx.branchId ||
-    !ctx.branchName ||
-    payload.runtimeTargetBranchId !== ctx.branchId ||
-    payload.agentSource.branch !== ctx.branchName
+    payload.runtimeTargetKind === "main_branch" &&
+    payload.agentSource.type === "branch" &&
+    (!ctx.defaultBranchName || payload.agentSource.branch !== ctx.defaultBranchName)
   ) {
     throw PERMISSION_DENIED.create({
-      detail: "Signed agent source does not match the trusted preview branch target",
+      detail: "Signed agent source does not match the trusted default branch target",
     });
   }
 }

@@ -24,9 +24,13 @@
 
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import {
+  verifyControlPlaneJwsRequestSignature,
   verifyControlPlaneJwsSignature,
   verifyDispatchJwsSignature,
 } from "#veryfront/channels/control-plane.ts";
+import { isRequestBodyTooLargeError, readBodyWithLimit } from "#veryfront/security/index.ts";
+import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
+import { isCanonicalOpaqueProjectIdentifier } from "#veryfront/utils/project-identity.ts";
 
 const CONTROL_PLANE_JWS_HEADER = "x-veryfront-control-plane-jws";
 const DISPATCH_JWS_HEADER = "x-veryfront-dispatch-jws";
@@ -39,6 +43,7 @@ export const INTERNAL_CONTROL_PLANE_SIGNATURE_HEADERS = [
 
 const PUBLIC_KEY_ENV_VAR = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
 const MAX_SIGNATURE_AGE_SECONDS = 60;
+const MAX_BRANCH_NAME_CODE_UNITS = 255;
 
 export type InternalControlPlaneRouteKind = "dispatch" | "control-plane" | "reserved" | "public";
 
@@ -87,6 +92,139 @@ export function classifyInternalControlPlaneRequest(
 export interface InternalControlPlaneProjectBinding {
   audience: string;
   expectedProjectId?: string;
+}
+
+export interface VerifiedControlPlaneBranchBinding {
+  branchId?: string;
+  branchName?: string;
+  defaultBranchName?: string;
+}
+
+export class ControlPlaneBranchBindingError extends Error {
+  constructor(
+    readonly status: 400 | 401 | 413,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ControlPlaneBranchBindingError";
+  }
+}
+
+function requireBranchName(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_BRANCH_NAME_CODE_UNITS ||
+    value !== value.trim()
+  ) {
+    throw new ControlPlaneBranchBindingError(400, "Invalid control-plane branch target");
+  }
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) {
+      throw new ControlPlaneBranchBindingError(400, "Invalid control-plane branch target");
+    }
+  }
+  return value;
+}
+
+function parseVerifiedBranchBinding(rawBody: string): VerifiedControlPlaneBranchBinding {
+  let value: unknown;
+  try {
+    value = JSON.parse(rawBody);
+  } catch {
+    throw new ControlPlaneBranchBindingError(400, "Invalid control-plane request body");
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ControlPlaneBranchBindingError(400, "Invalid control-plane request body");
+  }
+
+  const request = value as Record<string, unknown>;
+  const source = request.agentSource;
+  if (!source || typeof source !== "object" || Array.isArray(source)) {
+    throw new ControlPlaneBranchBindingError(400, "Invalid control-plane source target");
+  }
+  const sourceRecord = source as Record<string, unknown>;
+
+  switch (request.runtimeTargetKind) {
+    case "preview_branch": {
+      if (
+        sourceRecord.type !== "branch" ||
+        !isCanonicalOpaqueProjectIdentifier(request.runtimeTargetBranchId)
+      ) {
+        throw new ControlPlaneBranchBindingError(400, "Invalid control-plane preview target");
+      }
+      return Object.freeze({
+        branchId: request.runtimeTargetBranchId,
+        branchName: requireBranchName(sourceRecord.branch),
+      });
+    }
+    case "main_branch":
+      if (request.runtimeTargetBranchId !== null && request.runtimeTargetBranchId !== undefined) {
+        throw new ControlPlaneBranchBindingError(
+          400,
+          "Invalid control-plane default branch target",
+        );
+      }
+      if (sourceRecord.type === "branch") {
+        return Object.freeze({ defaultBranchName: requireBranchName(sourceRecord.branch) });
+      }
+      if (sourceRecord.type === "release") return Object.freeze({});
+      throw new ControlPlaneBranchBindingError(400, "Invalid control-plane default branch source");
+    case "environment":
+      if (sourceRecord.type !== "environment") {
+        throw new ControlPlaneBranchBindingError(400, "Invalid control-plane environment source");
+      }
+      return Object.freeze({});
+    default:
+      throw new ControlPlaneBranchBindingError(400, "Invalid control-plane runtime target");
+  }
+}
+
+/**
+ * Resolve branch identity only from a body-bound control-plane signature.
+ * Caller-provided branch headers are never consulted.
+ */
+export async function resolveVerifiedControlPlaneBranchBinding(
+  req: Request,
+  url: URL,
+  binding: InternalControlPlaneProjectBinding,
+): Promise<VerifiedControlPlaneBranchBinding | undefined> {
+  if (
+    req.method.toUpperCase() !== "POST" ||
+    !/^\/api\/control-plane\/runs\/[^/]+\/stream$/u.test(url.pathname)
+  ) {
+    return undefined;
+  }
+
+  const jws = req.headers.get(CONTROL_PLANE_JWS_HEADER);
+  const publicKeyPem = getHostEnv(PUBLIC_KEY_ENV_VAR);
+  if (!jws || !publicKeyPem) {
+    throw new ControlPlaneBranchBindingError(401, "Invalid control-plane signature");
+  }
+
+  let rawBody: string;
+  try {
+    rawBody = await readBodyWithLimit(req.clone(), DEFAULT_MAX_BODY_SIZE_BYTES);
+  } catch (error) {
+    if (isRequestBodyTooLargeError(error)) {
+      throw new ControlPlaneBranchBindingError(413, "Control-plane request body is too large");
+    }
+    throw error;
+  }
+
+  const verified = await verifyControlPlaneJwsRequestSignature(jws, rawBody, {
+    publicKeyPem,
+    maxAgeSeconds: MAX_SIGNATURE_AGE_SECONDS,
+    audience: binding.audience,
+    expectedProjectId: binding.expectedProjectId,
+    requestMethod: req.method,
+    requestPath: url.pathname,
+  });
+  if (!verified) {
+    throw new ControlPlaneBranchBindingError(401, "Invalid control-plane signature");
+  }
+  return parseVerifiedBranchBinding(rawBody);
 }
 
 async function verifyInternalControlPlaneSignature(

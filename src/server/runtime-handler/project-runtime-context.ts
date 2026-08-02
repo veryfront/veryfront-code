@@ -118,6 +118,7 @@ interface RequestContextFacts {
   releaseId: string | undefined;
   branchId: string | undefined;
   branchName: string | undefined;
+  defaultBranchName: string | undefined;
   pathname: string;
 }
 
@@ -164,6 +165,7 @@ export async function prepareProjectRequest(
       releaseId: headers.releaseId,
       branchId: headers.branchId,
       branchName: headers.branchName,
+      defaultBranchName: headers.defaultBranchName,
       pathname: url.pathname,
     },
     trackingFacts: {
@@ -334,6 +336,7 @@ export async function resolveProjectRuntimeContext(
     releaseId: envRes.releaseId,
     branchId: input.headers.branchId,
     branchName: input.headers.branchName,
+    defaultBranchName: input.headers.defaultBranchName,
     proxyToken: reqCtx.token,
     environmentName: projectRes.environmentName,
     resolvedEnvironment: envRes.resolvedEnvironment ?? "preview",

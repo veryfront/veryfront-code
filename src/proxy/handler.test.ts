@@ -8,6 +8,7 @@ import {
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
 import { createProxyHandler, injectContextHeaders, type ProxyContext } from "./handler.ts";
+import { extractRequestHeaders } from "#veryfront/server/runtime-handler/project-resolution.ts";
 import { register, reset } from "../extensions/contracts.ts";
 import type { AuthProvider, TokenHeader, TokenPayload } from "../extensions/auth/index.ts";
 
@@ -94,6 +95,7 @@ function base64urlBytes(bytes: Uint8Array): string {
  */
 async function mintControlPlaneJws(
   overrides: Partial<{
+    body: string;
     iss: string;
     aud: string;
     projectId: string;
@@ -111,6 +113,10 @@ async function mintControlPlaneJws(
   const publicKeyPem = encodePem("PUBLIC KEY", der);
 
   const now = Math.floor(Date.now() / 1000);
+  const body = overrides.body ?? "";
+  const requestHash = base64urlBytes(
+    new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body))),
+  );
   const header = { alg: "EdDSA", typ: "JWT" };
   const claims = {
     iss: overrides.iss ?? "veryfront-api",
@@ -118,7 +124,7 @@ async function mintControlPlaneJws(
     sub: "control-plane",
     surface: "channels",
     project_id: overrides.projectId ?? "proj-123",
-    request_hash: "n/a",
+    request_hash: requestHash,
     request_method: overrides.requestMethod ?? "POST",
     request_path: overrides.requestPath ??
       "/api/control-plane/runs/run_1/stream",
@@ -133,6 +139,25 @@ async function mintControlPlaneJws(
     publicKeyPem,
     jws: `${encodedHeader}.${encodedPayload}.${base64urlBytes(new Uint8Array(signature))}`,
   };
+}
+
+function createSignedPreviewTargetBody(
+  branchId = "10000000-1000-4000-8000-100000000006",
+  branchName = "feature-branch",
+): string {
+  return JSON.stringify({
+    runtimeTargetKind: "preview_branch",
+    runtimeTargetBranchId: branchId,
+    agentSource: { type: "branch", branch: branchName },
+  });
+}
+
+function createSignedDefaultBranchTargetBody(branchName = "trunk"): string {
+  return JSON.stringify({
+    runtimeTargetKind: "main_branch",
+    runtimeTargetBranchId: null,
+    agentSource: { type: "branch", branch: branchName },
+  });
 }
 
 function createMockAuthProvider(options: MockAuthOptions = {}): AuthProvider {
@@ -2178,27 +2203,39 @@ describe("Proxy Handler", () => {
       const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
       let handler: ReturnType<typeof createHandler> | undefined;
       try {
-        const { jws, publicKeyPem } = await mintControlPlaneJws();
+        const body = createSignedDefaultBranchTargetBody();
+        const { jws, publicKeyPem } = await mintControlPlaneJws({ body });
         Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
         handler = createHandler(port);
-        const ctx = await handler.processRequest(
-          new Request(
-            "http://protected.example.com/api/control-plane/runs/run_1/stream",
-            {
-              method: "POST",
-              headers: {
-                host: "protected.example.com",
-                "x-token": "project-agent-token",
-                "x-veryfront-control-plane-jws": jws,
-              },
+        const req = new Request(
+          "http://protected.example.com/api/control-plane/runs/run_1/stream",
+          {
+            method: "POST",
+            headers: {
+              host: "protected.example.com",
+              "x-token": "project-agent-token",
+              "x-veryfront-control-plane-jws": jws,
             },
-          ),
+            body,
+          },
         );
+        const ctx = await handler.processRequest(req);
 
         assertEquals(ctx.error, undefined);
         assertEquals(ctx.projectSlug, "protected-project");
         assertEquals(ctx.projectId, "proj-123");
         assertEquals(ctx.releaseId, "rel-123");
+        assertEquals(ctx.defaultBranchName, "trunk");
+        const forwarded = injectContextHeaders(req, ctx);
+        const runtimeHeaders = extractRequestHeaders(
+          forwarded,
+          new URL(forwarded.url),
+          true,
+          true,
+        );
+        assertEquals(runtimeHeaders.defaultBranchName, "trunk");
+        assertEquals(runtimeHeaders.branchId, undefined);
+        assertEquals(runtimeHeaders.branchName, undefined);
         assertEquals(ctx.token, "project-agent-token");
         assertEquals(metadataAuthorization, new Set(["Bearer project-agent-token"]));
         assertEquals(tokenEndpointHits, 0);
@@ -2988,7 +3025,6 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.projectSlug, "protected-project");
         assertEquals(ctx.environmentId, "env-1");
         assertEquals(ctx.environmentName, "preview");
-
         await handler.close();
       } finally {
         await server.shutdown();
@@ -3024,7 +3060,8 @@ describe("Proxy Handler", () => {
 
       const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
       try {
-        const { jws, publicKeyPem } = await mintControlPlaneJws();
+        const body = createSignedPreviewTargetBody();
+        const { jws, publicKeyPem } = await mintControlPlaneJws({ body });
         Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
         const handler = createHandler(port);
 
@@ -3037,6 +3074,7 @@ describe("Proxy Handler", () => {
               "x-token": "project-agent-token",
               "x-veryfront-control-plane-jws": jws,
             },
+            body,
           },
         );
 
@@ -3046,6 +3084,18 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.projectSlug, "protected-project");
         assertEquals(ctx.environmentId, "env-1");
         assertEquals(ctx.environmentName, "preview");
+        assertEquals(ctx.branchId, "10000000-1000-4000-8000-100000000006");
+        assertEquals(ctx.branchName, "feature-branch");
+        const forwarded = injectContextHeaders(req, ctx);
+        const runtimeHeaders = extractRequestHeaders(
+          forwarded,
+          new URL(forwarded.url),
+          true,
+          true,
+        );
+        assertEquals(runtimeHeaders.branchId, ctx.branchId);
+        assertEquals(runtimeHeaders.branchName, ctx.branchName);
+        assertEquals(runtimeHeaders.defaultBranchName, undefined);
         assertEquals(ctx.token, "project-agent-token");
         assertEquals(tokenEndpointHits, 0);
 
@@ -3764,6 +3814,42 @@ describe("Proxy Handler", () => {
         () => injectContextHeaders(req, ctx),
         TypeError,
         "requires both environmentId and environmentName",
+      );
+    });
+
+    it("refuses partial or ambiguous branch identity", () => {
+      const req = new Request("http://example.com/api/test");
+      const base: ProxyContext = {
+        projectSlug: "my-project",
+        environment: "preview",
+        contentSourceId: "cs-123",
+        host: "example.com",
+        parsedDomain: {
+          slug: "my-project",
+          branch: null,
+          environment: "preview",
+          isVeryfrontDomain: true,
+          isDraft: true,
+          allowIframeEmbed: true,
+        },
+        isLocalProject: false,
+      };
+
+      assertThrows(
+        () => injectContextHeaders(req, { ...base, branchId: "branch-1" }),
+        TypeError,
+        "requires both branchId and branchName",
+      );
+      assertThrows(
+        () =>
+          injectContextHeaders(req, {
+            ...base,
+            branchId: "branch-1",
+            branchName: "feature",
+            defaultBranchName: "trunk",
+          }),
+        TypeError,
+        "cannot be both preview and default",
       );
     });
   });

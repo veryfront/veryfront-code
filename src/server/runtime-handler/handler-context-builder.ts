@@ -44,6 +44,8 @@ export interface HandlerContextOptions {
   branchId?: string;
   /** Canonical branch name from the trusted proxy boundary. */
   branchName?: string;
+  /** Canonical project default branch name from the trusted proxy boundary. */
+  defaultBranchName?: string;
   /** Proxy token (undefined for local projects) */
   proxyToken: string | undefined;
   /** Environment name */
@@ -119,6 +121,7 @@ export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext
     releaseId: opts.releaseId,
     branchId: opts.branchId,
     branchName: opts.branchName,
+    defaultBranchName: opts.defaultBranchName,
     proxyToken: opts.isLocalProject ? undefined : opts.proxyToken,
     environmentName: opts.environmentName,
     resolvedEnvironment: opts.resolvedEnvironment,

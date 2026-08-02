@@ -162,6 +162,7 @@ export function createSourceCapableAgentStreamContext(
     ...context,
     branchId: "10000000-1000-4000-8000-100000000006",
     branchName: "main",
+    defaultBranchName: "main",
     adapter: {
       ...context.adapter,
       fs: createNoopFsAdapter(runWithContextCalls),
