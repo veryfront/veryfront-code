@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { createMockServer } from "../../../tests/_helpers/utils.ts";
 import { fetchProjectEnvVars, PROJECT_ENV_RESPONSE_MAX_BYTES } from "./fetcher.ts";
@@ -325,6 +325,7 @@ describe("project-env/fetcher", () => {
           controller.signal,
         )
       );
+      assertInstanceOf(error, Error);
       assertEquals(error.message, "management timeout");
       assertEquals(paths, ["/projects/my-project/environment-variables"]);
     } finally {
