@@ -13,7 +13,7 @@ describe("proxy main request URL parsing", () => {
     const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
 
     assertStringIncludes(source, "getReplayableRequestBodies(req, maxRetries)");
-    assertStringIncludes(source, "body: upstreamBodies[attempt] ?? null");
+    assertStringIncludes(source, "upstreamBodies[attempt] ?? null");
   });
 
   it("drains tracked responses before closing the proxy server", async () => {

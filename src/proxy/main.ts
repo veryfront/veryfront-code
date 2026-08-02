@@ -22,7 +22,7 @@
  * - SHUTDOWN_DRAIN_TIMEOUT_MS: Time to wait for active SSE responses during shutdown
  */
 
-import { createProxyHandler, INTERNAL_PROXY_HEADERS, type ProxyConfig } from "./handler.ts";
+import { createProxyHandler, type ProxyConfig } from "./handler.ts";
 import { createCacheFromEnv } from "./cache/index.ts";
 import { acquireExtensionTokenCacheStoreFromEnv } from "./cache/extension-store.ts";
 import {
@@ -45,7 +45,6 @@ import {
   endSpan,
   extractContext,
   initializeOTLPWithApis,
-  injectContext,
   ProxySpanNames,
   shutdownOTLP,
   startServerSpan,
@@ -92,6 +91,7 @@ import {
 } from "#veryfront/observability/application-errors.ts";
 import { initializeSentryFromEnv } from "#veryfront/observability/sentry.ts";
 import { getTraceContext } from "./tracing.ts";
+import { createSplitForwardRequestInit } from "./split-forward-request.ts";
 
 await initializeSentryFromEnv("veryfront-proxy");
 
@@ -444,22 +444,6 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
             env: ctx.environment,
           });
 
-          const newHeaders = new Headers(req.headers);
-          for (const header of INTERNAL_PROXY_HEADERS) newHeaders.delete(header);
-          if (ctx.token) newHeaders.set("x-token", ctx.token);
-          newHeaders.set("x-project-slug", ctx.projectSlug || "");
-          newHeaders.set("x-environment", ctx.environment);
-          newHeaders.set("x-forwarded-host", ctx.host);
-          if (ctx.localPath) newHeaders.set("x-project-path", ctx.localPath);
-          if (ctx.projectId) newHeaders.set("x-project-id", ctx.projectId);
-          if (ctx.releaseId) newHeaders.set("x-release-id", ctx.releaseId);
-          if (ctx.environmentId) newHeaders.set("x-environment-id", ctx.environmentId);
-          if (ctx.branchId) newHeaders.set("x-branch-id", ctx.branchId);
-          if (ctx.branchName) newHeaders.set("x-branch-name", ctx.branchName);
-          newHeaders.delete("host");
-
-          injectContext(newHeaders);
-
           const maxRetries = getUpstreamRetryCount(
             req,
             url.pathname,
@@ -516,13 +500,15 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
                   withSpan(
                     ProxySpanNames.HTTP_CLIENT_FETCH,
                     () =>
-                      fetch(serverUrl.toString(), {
-                        method: req.method,
-                        headers: newHeaders,
-                        body: upstreamBodies[attempt] ?? null,
-                        redirect: "manual",
-                        signal: abortController.signal,
-                      }),
+                      fetch(
+                        serverUrl.toString(),
+                        createSplitForwardRequestInit(
+                          req,
+                          ctx,
+                          upstreamBodies[attempt] ?? null,
+                          abortController.signal,
+                        ),
+                      ),
                     {
                       "http.method": req.method,
                       "http.url": serverUrl.toString(),
