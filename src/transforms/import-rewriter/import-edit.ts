@@ -163,15 +163,22 @@ function ${name}HasPrefixAt(value, prefix, offset) {
   }
   return true;
 }
-function ${name}HasPrefix(value, prefix) {
-  return ${name}HasPrefixAt(value, prefix, 0);
+function ${name}TrimLeadingSpecifierControls(value) {
+  let start = 0;
+  while (start < value.length && value.charCodeAt(start) <= 0x20) start++;
+  return start === 0 ? value : value.slice(start);
+}
+function ${name}IsUnsafePathSegment(value, start, end) {
+  const segmentLength = end - start;
+  return (segmentLength === 1 && value[start] === ".") ||
+    (segmentLength === 2 && value[start] === "." && value[start + 1] === ".");
 }
 function ${name}IsSafeModulePath(value, offset) {
   const modulePrefix = "/_vf_modules/";
   if (!${name}HasPrefixAt(value, modulePrefix, offset)) return false;
 
   let segmentStart = offset + 1;
-  for (let index = offset; index <= value.length; index++) {
+  for (let index = offset; index < value.length; index++) {
     const character = value[index];
     if (character === "\\\\") return false;
     if (character === "%") {
@@ -182,19 +189,16 @@ function ${name}IsSafeModulePath(value, offset) {
       const encodedBackslash = high === "5" && (low === "c" || low === "C");
       if (encodedDotOrSlash || encodedBackslash) return false;
     }
-    if (character === "?" || character === "#" || character === "/" || character === undefined) {
-      const segmentLength = index - segmentStart;
-      if (
-        (segmentLength === 1 && value[segmentStart] === ".") ||
-        (segmentLength === 2 && value[segmentStart] === "." && value[segmentStart + 1] === ".")
-      ) return false;
-      if (character === "?" || character === "#" || character === undefined) break;
+    if (character === "?" || character === "#" || character === "/") {
+      if (${name}IsUnsafePathSegment(value, segmentStart, index)) return false;
+      if (character === "?" || character === "#") break;
       segmentStart = index + 1;
     }
   }
-  return true;
+  return !${name}IsUnsafePathSegment(value, segmentStart, value.length);
 }
 function ${name}IsFilesystemSpecifier(value) {
+  value = ${name}TrimLeadingSpecifierControls(value);
   const isFileUrl = value.length >= 5 &&
     (value[0] === "f" || value[0] === "F") &&
     (value[1] === "i" || value[1] === "I") &&
@@ -204,6 +208,10 @@ function ${name}IsFilesystemSpecifier(value) {
   if (isFileUrl || value[0] === "\\\\") return true;
   if (value[0] === "/") {
     if (value[1] !== "/") return !${name}IsSafeModulePath(value, 0);
+    if (
+      value[2] !== undefined && value[2] !== "/" && value[2] !== "\\\\" &&
+      value[2] !== "?" && value[2] !== "#"
+    ) return false;
     let pathStart = 2;
     while (
       pathStart < value.length && value[pathStart] !== "/" &&

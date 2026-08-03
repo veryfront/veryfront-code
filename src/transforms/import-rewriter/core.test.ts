@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import {
@@ -355,6 +360,51 @@ describe("import rewrite core runner", () => {
         "Computed #veryfront imports must use a string literal",
       );
     }
+  });
+
+  it("rejects computed filesystem imports after trimming leading controls", async () => {
+    const source = [
+      `const target = "\\u0000 \\tfile:///tmp/private.ts";`,
+      `export const load = () => import(target);`,
+    ].join("\n");
+    const out = await rewriteWithImportRewriteCore({
+      code: source,
+      strategies: [veryfrontStrategy],
+      context: createRewriteContext({ target: "ssr" }),
+    });
+    const moduleUrl = `data:text/javascript,${encodeURIComponent(out)}#${crypto.randomUUID()}`;
+    const loaded = await import(moduleUrl) as { load: () => Promise<unknown> };
+
+    await assertRejects(
+      async () => await loaded.load(),
+      TypeError,
+      "Computed filesystem imports must use a string literal",
+    );
+  });
+
+  it("does not treat protocol-relative computed imports as filesystem paths", async () => {
+    const source = [
+      `const target = "//cdn.example.com/mod.js";`,
+      `export const load = () => import(target);`,
+    ].join("\n");
+    const out = await rewriteWithImportRewriteCore({
+      code: source,
+      strategies: [veryfrontStrategy],
+      context: createRewriteContext({ target: "ssr" }),
+    });
+    const moduleUrl = `data:text/javascript,${encodeURIComponent(out)}#${crypto.randomUUID()}`;
+    const loaded = await import(moduleUrl) as { load: () => Promise<unknown> };
+
+    const error = await assertRejects(
+      async () => await loaded.load(),
+      Error,
+    );
+
+    assertInstanceOf(error, Error);
+    assertEquals(
+      error.message.includes("Computed filesystem imports must use a string literal"),
+      false,
+    );
   });
 
   it("runs strategies in caller-provided order even when priority would sort differently", async () => {
