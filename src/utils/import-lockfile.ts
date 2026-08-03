@@ -98,30 +98,40 @@ function parseLockfile(content: string, lockfilePath: string): LockfileData {
     throw lockfileReadError(lockfilePath, "invalid-json", cause);
   }
 
-  if (!isRecord(parsed) || !("version" in parsed)) {
+  if (!isRecord(parsed)) {
     throw lockfileReadError(lockfilePath, "invalid-structure");
   }
-  if (typeof parsed.version !== "number" || !Number.isSafeInteger(parsed.version)) {
+  const versionDescriptor = Object.getOwnPropertyDescriptor(parsed, "version");
+  if (versionDescriptor === undefined || !Object.hasOwn(versionDescriptor, "value")) {
     throw lockfileReadError(lockfilePath, "invalid-structure");
   }
-  if (parsed.version !== LOCKFILE_VERSION) {
+  const version = versionDescriptor.value;
+  if (typeof version !== "number" || !Number.isSafeInteger(version)) {
+    throw lockfileReadError(lockfilePath, "invalid-structure");
+  }
+  if (version !== LOCKFILE_VERSION) {
     throw LOCKFILE_FORMAT_MISMATCH.create({
-      detail: `The lockfile uses format version ${parsed.version}, but this ` +
+      detail: `The lockfile uses format version ${version}, but this ` +
         `Veryfront build supports version ${LOCKFILE_VERSION}. The file was left untouched. ` +
         "Upgrade Veryfront or migrate the lockfile before reading or modifying it.",
       context: {
         lockfilePath,
         expectedVersion: LOCKFILE_VERSION,
-        actualVersion: parsed.version,
+        actualVersion: version,
       },
     });
   }
-  if (!isRecord(parsed.imports)) {
+  const importsDescriptor = Object.getOwnPropertyDescriptor(parsed, "imports");
+  if (
+    importsDescriptor === undefined ||
+    !Object.hasOwn(importsDescriptor, "value") ||
+    !isRecord(importsDescriptor.value)
+  ) {
     throw lockfileReadError(lockfilePath, "invalid-structure");
   }
 
   const imports: Array<[string, LockfileEntry]> = [];
-  for (const [url, entry] of Object.entries(parsed.imports)) {
+  for (const [url, entry] of Object.entries(importsDescriptor.value)) {
     if (!isLockfileEntry(entry)) {
       throw lockfileReadError(lockfilePath, "invalid-structure");
     }

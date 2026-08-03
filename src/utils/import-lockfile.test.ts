@@ -358,6 +358,52 @@ describe("import-lockfile", () => {
       assertEquals(context.reason, "invalid-structure");
     });
 
+    it("should reject a missing version inherited from Object.prototype", async () => {
+      const previousVersion = Object.getOwnPropertyDescriptor(Object.prototype, "version");
+      Object.defineProperty(Object.prototype, "version", {
+        configurable: true,
+        value: 1,
+      });
+
+      try {
+        const fs = createMockFS({ "/project/veryfront.lock": JSON.stringify({ imports: {} }) });
+        const mgr = createLockfileManager("/project", fs);
+
+        const error = await assertRejects(() => mgr.read(), VeryfrontError);
+
+        assertExists(error);
+        if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
+        assertEquals(error.slug, "lockfile-read-error");
+        assertEquals((error.context as { reason?: string }).reason, "invalid-structure");
+      } finally {
+        if (previousVersion === undefined) Reflect.deleteProperty(Object.prototype, "version");
+        else Object.defineProperty(Object.prototype, "version", previousVersion);
+      }
+    });
+
+    it("should reject missing imports inherited from Object.prototype", async () => {
+      const previousImports = Object.getOwnPropertyDescriptor(Object.prototype, "imports");
+      Object.defineProperty(Object.prototype, "imports", {
+        configurable: true,
+        value: {},
+      });
+
+      try {
+        const fs = createMockFS({ "/project/veryfront.lock": JSON.stringify({ version: 1 }) });
+        const mgr = createLockfileManager("/project", fs);
+
+        const error = await assertRejects(() => mgr.read(), VeryfrontError);
+
+        assertExists(error);
+        if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
+        assertEquals(error.slug, "lockfile-read-error");
+        assertEquals((error.context as { reason?: string }).reason, "invalid-structure");
+      } finally {
+        if (previousImports === undefined) Reflect.deleteProperty(Object.prototype, "imports");
+        else Object.defineProperty(Object.prototype, "imports", previousImports);
+      }
+    });
+
     it("should preserve a newer-format lockfile on disk after a format mismatch", async () => {
       const fs = createMockFS();
       const mgr = createLockfileManager("/project", fs);
