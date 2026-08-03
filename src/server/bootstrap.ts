@@ -615,7 +615,10 @@ function validateProductionEnvironment(): void {
     if (!isProxyTopologyTrusted()) {
       logger.error(
         "[Bootstrap:Prod] CRITICAL: proxy mode does not trust its upstream topology. " +
-          "Set VERYFRONT_TRUST_FORWARDED_HEADERS=1 only when this process is private behind a sanitising edge.",
+          "Set VERYFRONT_TRUST_FORWARDED_HEADERS=1 only when this process is private behind a sanitising edge. " +
+          "Existing hosted deployments must set this variable on the runtime environment before rolling out " +
+          "this version, and must upgrade the proxy tier before (or together with) the runtime tier. " +
+          "See src/security/README.md, 'Rollout ordering for hosted identity changes'.",
       );
       throw INVALID_ARGUMENT.create({
         detail:
