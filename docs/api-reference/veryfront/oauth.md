@@ -63,8 +63,8 @@ export const GET = createOAuthCallbackHandler(gmailConfig, { tokenStore });
 | Name | Description | Source |
 |------|-------------|--------|
 | `MemoryTokenStore` | In-memory TokenStore keyed by `(serviceId, userId)`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/token-store/memory.ts#L93) |
-| `OAuthProvider` | Implement oauth provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/base.ts#L421) |
-| `OAuthService` | Implement oauth service. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/base.ts#L1035) |
+| `OAuthProvider` | Implement oauth provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/base.ts#L422) |
+| `OAuthService` | Implement oauth service. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/base.ts#L1036) |
 
 ### Types
 

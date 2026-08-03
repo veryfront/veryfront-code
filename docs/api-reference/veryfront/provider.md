@@ -73,20 +73,20 @@ Clear all registered model providers and reset lazy built-ins (for testing).
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `clearModelProviders` | Clear all registered model providers and reset lazy built-ins (for testing). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L391) |
-| `ensureModelReady` | Eagerly verify that the resolved model's runtime is available. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L378) |
+| `clearModelProviders` | Clear all registered model providers and reset lazy built-ins (for testing). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L403) |
+| `ensureModelReady` | Eagerly verify that the resolved model's runtime is available. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L390) |
 | `findVeryfrontCloudModel` | Find Veryfront Cloud model. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L266) |
 | `findVeryfrontCloudModelByModelId` | Find Veryfront Cloud model by model ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L278) |
 | `getCurrentVeryfrontCloudContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/context.ts#L31) |
-| `getRegisteredModelProviders` | Get provider names available in the current scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L366) |
+| `getRegisteredModelProviders` | Get provider names available in the current scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L378) |
 | `getVeryfrontCloudBootstrap` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/cloud/resolver.ts#L121) |
 | `getVeryfrontCloudProviderFromModelId` | Return Veryfront Cloud provider from model ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L286) |
 | `groupVeryfrontCloudModelsByProvider` | Group Veryfront Cloud models by provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L477) |
-| `hasModelProvider` | Check whether a model provider is available in the current scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L352) |
+| `hasModelProvider` | Check whether a model provider is available in the current scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L364) |
 | `markCurrentVeryfrontCloudBillingGroupUsed` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/context.ts#L35) |
 | `normalizeVeryfrontCloudModelId` | Normalizes Veryfront Cloud model ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L271) |
-| `registerModelProvider` | Register a custom model provider factory for the active project scope or application bootstrap. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L118) |
-| `resolveModel` | Resolve a "provider/model" string to a framework-compatible model runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L293) |
+| `registerModelProvider` | Register a custom model provider factory for the active project scope or application bootstrap. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L120) |
+| `resolveModel` | Resolve a "provider/model" string to a framework-compatible model runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L305) |
 | `resolveVeryfrontCloudGatewayModelId` | Resolves Veryfront Cloud gateway model ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L337) |
 | `resolveVeryfrontCloudModelId` | Resolves Veryfront Cloud model ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L311) |
 | `resolveVeryfrontCloudModelThinking` | Resolves Veryfront Cloud model thinking. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L363) |
@@ -100,8 +100,8 @@ Clear all registered model providers and reset lazy built-ins (for testing).
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ModelProviderFactory` | Public API contract for model provider factory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L31) |
-| `ModelProviderRegistrationDisposer` | Idempotent teardown returned by `registerModelProvider`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L33) |
+| `ModelProviderFactory` | Public API contract for model provider factory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L33) |
+| `ModelProviderRegistrationDisposer` | Idempotent teardown returned by `registerModelProvider`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L35) |
 | `ModelRuntime` | Public API contract for model runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L207) |
 | `VeryfrontCloudBootstrap` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/cloud/resolver.ts#L49) |
 | `VeryfrontCloudChatModel` | Public API contract for Veryfront Cloud chat model. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L19) |
@@ -138,7 +138,7 @@ import { buildProviderError, createAnthropicRequestInit, createGoogleRequestInit
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `buildProviderError` | Inspect a non-2xx response and build the most specific ProviderError subclass we can. Reads the response body as text (it's already dead on the wire by this point). Body classification handles the cases where HTTP status alone is ambiguous - notably OpenAI `insufficient_quota` vs `rate_limit_exceeded` both arriving as 429. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts#L128) |
+| `buildProviderError` | Inspect a non-2xx response and build the most specific ProviderError subclass we can. Reads the response body as text (it's already dead on the wire by this point). Body classification handles the cases where HTTP status alone is ambiguous - notably OpenAI `insufficient_quota` vs `rate_limit_exceeded` both arriving as 429. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts#L163) |
 | `createAnthropicRequestInit` | Create Anthropic request init. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-request-init.ts#L131) |
 | `createGoogleRequestInit` | Create Google request init. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-request-init.ts#L155) |
 | `createOpenAIRequestInit` | Create request init options for OpenAI-compatible providers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-request-init.ts#L111) |
@@ -154,14 +154,14 @@ import { buildProviderError, createAnthropicRequestInit, createGoogleRequestInit
 | `jsonValuesEqual` | Compare JSON-compatible values independently of object key order. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/json-snapshot.ts#L514) |
 | `mergeUsage` | Merge provider usage counters. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-usage.ts#L120) |
 | `parseFinalSseChunk` | Parse the final unterminated SSE block without making the synthetic frame delimiter count against the caller-visible retention boundary. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-sse.ts#L38) |
-| `parseRetryAfterMs` | Parses retry after ms. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts#L96) |
+| `parseRetryAfterMs` | Parses retry after ms. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts#L102) |
 | `parseSseChunk` | Parse a bounded provider SSE buffer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-sse.ts#L27) |
 | `readGatewayBillingMode` | Read a trusted gateway billing mode from provider metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-usage.ts#L107) |
 | `readProviderOptions` | Options accepted by read provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader.ts#L314) |
 | `readRecord` | Record shape for read. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-records.ts#L2) |
 | `readTextParts` | Read text content parts from provider messages. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader.ts#L173) |
-| `requestJson` | Request and parse a bounded JSON response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts#L613) |
-| `requestStream` | Request a streaming response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts#L683) |
+| `requestJson` | Request and parse a bounded JSON response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts#L662) |
+| `requestStream` | Request a streaming response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts#L732) |
 | `snapshotJsonValue` | Create a bounded, deeply owned, accessor-free snapshot of a JSON value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/json-snapshot.ts#L493) |
 | `stringifyJsonValue` | Serialize a JSON-compatible value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader.ts#L147) |
 | `stringifyToolArguments` | Preserve provider-native argument text while serializing structured tool inputs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader.ts#L163) |
@@ -175,11 +175,11 @@ import { buildProviderError, createAnthropicRequestInit, createGoogleRequestInit
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ProviderError` | Base class for typed provider errors. The `retryable` flag is the primary signal for callers (or a retry wrapper) to decide whether to re-issue the request. `retryAfterMs` is set when the provider gave an explicit delay hint (Retry-After header, Retry-Info trailer). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts#L41) |
-| `ProviderOverloadedError` | Provider reports it is overloaded (Anthropic 529, OpenAI/Google 503). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts#L71) |
-| `ProviderQuotaError` | Provider account quota is exhausted - non-retryable. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts#L77) |
-| `ProviderRateLimitError` | Provider is rate limiting this API key (OpenAI/Google 429 with Retry-After). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts#L74) |
-| `ProviderRequestError` | Non-retryable 4xx/5xx that doesn't fit another bucket. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts#L80) |
+| `ProviderError` | Base class for typed provider errors. The `retryable` flag is the primary signal for callers (or a retry wrapper) to decide whether to re-issue the request. `retryAfterMs` is set when the provider gave an explicit delay hint (Retry-After header, Retry-Info trailer). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts#L47) |
+| `ProviderOverloadedError` | Provider reports it is overloaded (Anthropic 529, OpenAI/Google 503). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts#L77) |
+| `ProviderQuotaError` | Provider account quota is exhausted - non-retryable. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts#L83) |
+| `ProviderRateLimitError` | Provider is rate limiting this API key (OpenAI/Google 429 with Retry-After). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts#L80) |
+| `ProviderRequestError` | Non-retryable 4xx/5xx that doesn't fit another bucket. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts#L86) |
 
 #### Types
 
@@ -202,7 +202,7 @@ import { buildProviderError, createAnthropicRequestInit, createGoogleRequestInit
 ### `veryfront/provider/types`
 
 ```ts
-import "veryfront/provider/types";
+import type { EmbeddingRuntime, ModelRuntime, ModelRuntimeCallOptions } from "veryfront/provider/types";
 ```
 
 #### Types

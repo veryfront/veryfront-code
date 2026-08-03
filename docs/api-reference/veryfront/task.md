@@ -38,14 +38,14 @@ export default {
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `deriveTaskId` | Derive task ID from file path (e.g., "tasks/sync-data.ts" -&gt; "sync-data"). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/discovery.ts#L233) |
-| `discoverProjectTaskRuntime` | Discover project tasks and the colocated runtime primitives they may use. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/project-runtime.ts#L45) |
-| `discoverTasks` | Discover all tasks in a project with the legacy file-based path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/discovery.ts#L248) |
-| `findProjectRuntimeTask` | Find one task by its stable project-runtime ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/project-runtime.ts#L81) |
-| `findTaskById` | Find a specific task by ID through the legacy file-based path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/discovery.ts#L322) |
-| `formatProjectRuntimeDiscoveryErrors` | Format project-runtime discovery failures for CLI and operator diagnostics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/project-runtime.ts#L38) |
+| `deriveTaskId` | Derive task ID from file path (e.g., "tasks/sync-data.ts" -&gt; "sync-data"). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/discovery.ts#L238) |
+| `discoverProjectTaskRuntime` | Discover project tasks and the colocated runtime primitives they may use. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/project-runtime.ts#L47) |
+| `discoverTasks` | Discover all tasks in a project with the legacy file-based path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/discovery.ts#L253) |
+| `findProjectRuntimeTask` | Find one task by its stable project-runtime ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/project-runtime.ts#L84) |
+| `findTaskById` | Find a specific task by ID through the legacy file-based path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/discovery.ts#L329) |
+| `formatProjectRuntimeDiscoveryErrors` | Format project-runtime discovery failures for CLI and operator diagnostics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/project-runtime.ts#L40) |
 | `isTaskDefinition` | Return true only when the runnable and every declared task metadata field match the public `TaskDefinition` contract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/types.ts#L61) |
-| `listProjectRuntimeTasks` | List project-runtime tasks in deterministic ID order. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/project-runtime.ts#L96) |
+| `listProjectRuntimeTasks` | List project-runtime tasks in deterministic ID order. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/project-runtime.ts#L99) |
 | `runTask` | Run a task with the given options | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/runner.ts#L96) |
 
 ### Types
@@ -60,5 +60,5 @@ export default {
 | `TaskContext` | Context passed to task run() function | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/types.ts#L12) |
 | `TaskDefinition` | Task definition exported from a tasks/ file | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/types.ts#L28) |
 | `TaskDiscoveryOptions` | Options for file-based task discovery. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/discovery.ts#L81) |
-| `TaskDiscoveryResult` | Result of file-based task discovery. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/discovery.ts#L103) |
+| `TaskDiscoveryResult` | Result of file-based task discovery. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/discovery.ts#L106) |
 | `TaskRunResult` | Result of running a task | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/runner.ts#L57) |

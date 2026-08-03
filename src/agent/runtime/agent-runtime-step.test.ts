@@ -479,7 +479,7 @@ describe("agent/runtime-step", () => {
         __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages,
       mode: "stream",
       remoteToolSources: [],
