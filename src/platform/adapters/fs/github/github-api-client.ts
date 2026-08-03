@@ -61,8 +61,10 @@ export class GitHubApiClient {
   ): Promise<GitHubContentItem | GitHubContentItem[]> {
     const contentRef = ref ?? this.config.ref;
     const normalizedPath = path.replace(/^\/+/, "");
-    const endpoint =
-      `/repos/${this.config.owner}/${this.config.repo}/contents/${normalizedPath}?ref=${contentRef}`;
+    const encodedPath = normalizedPath.split("/").map(encodeURIComponent).join("/");
+    const endpoint = `/repos/${this.config.owner}/${this.config.repo}/contents/${encodedPath}?ref=${
+      encodeURIComponent(contentRef)
+    }`;
 
     logger.debug(`${LOG_PREFIX} Fetching contents`, { path: normalizedPath });
 
