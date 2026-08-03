@@ -1944,6 +1944,28 @@ describe("import-lockfile", () => {
         "invalid-structure",
       );
       assertEquals(await fs.readFile("/project/veryfront.lock"), existingLockfile);
+
+      let importGetterCalls = 0;
+      const accessorImports: Record<string, LockfileEntry> = {};
+      Object.defineProperty(accessorImports, "https://cdn.com/accessor.ts", {
+        enumerable: true,
+        get() {
+          importGetterCalls++;
+          throw new Error("import getter must not run");
+        },
+      });
+      const accessorError = await assertRejects(
+        () =>
+          mgr.write({
+            version: 1,
+            imports: accessorImports,
+          }),
+        VeryfrontError,
+      );
+      if (!(accessorError instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
+      assertEquals(accessorError.slug, "lockfile-read-error");
+      assertEquals(importGetterCalls, 0);
+      assertEquals(await fs.readFile("/project/veryfront.lock"), existingLockfile);
     });
 
     it("should reject invalid public set entry fields before touching disk", async () => {
@@ -1961,6 +1983,15 @@ describe("import-lockfile", () => {
         },
       };
       const mgr = createLockfileManager("/project", fs);
+      let dependencyGetterCalls = 0;
+      const accessorDependencies = ["placeholder"];
+      Object.defineProperty(accessorDependencies, 0, {
+        enumerable: true,
+        get() {
+          dependencyGetterCalls++;
+          throw new Error("dependency getter must not run");
+        },
+      });
 
       const invalidEntries = [
         Object.create({
@@ -1977,6 +2008,11 @@ describe("import-lockfile", () => {
           integrity: "sha256-bad-fetched-at",
           fetchedAt: 1_234,
         } as unknown as LockfileEntry,
+        {
+          resolved: "https://cdn.com/accessor-dependencies.ts",
+          integrity: "sha256-accessor-dependencies",
+          dependencies: accessorDependencies,
+        },
       ];
 
       for (const entry of invalidEntries) {
@@ -1988,6 +2024,7 @@ describe("import-lockfile", () => {
         assertEquals(error.slug, "lockfile-read-error");
         assertEquals((error.context as { reason?: string }).reason, "invalid-structure");
       }
+      assertEquals(dependencyGetterCalls, 0);
       assertEquals(existsCalls, 0);
       assertEquals(writeCalls, 0);
     });

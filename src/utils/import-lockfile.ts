@@ -84,13 +84,6 @@ const weakRefDeref = WeakRef.prototype.deref;
 const urlToString = URL.prototype.toString;
 const dateNow = Date.now;
 
-function cloneStringArray(values: readonly string[]): string[] {
-  const clone: string[] = [];
-  clone.length = values.length;
-  for (let index = 0; index < values.length; index++) clone[index] = values[index]!;
-  return clone;
-}
-
 function getMapValue<K, V>(map: Map<K, V>, key: K): V | undefined {
   return apply(mapGet, map, [key]) as V | undefined;
 }
@@ -313,11 +306,11 @@ function sanitizeLockfileEntry(value: unknown): LockfileEntry | null {
   if (typeof resolved !== "string" || typeof integrity !== "string") return null;
 
   const dependencies = getOwnDataProperty(value, "dependencies")?.value;
-  if (
-    dependencies !== undefined &&
-    (!arrayIsArray(dependencies) || !hasOnlyStringValues(dependencies))
-  ) {
-    return null;
+  let sanitizedDependencies: string[] | undefined;
+  if (dependencies !== undefined) {
+    const sanitized = sanitizeStringArray(dependencies);
+    if (sanitized === null) return null;
+    sanitizedDependencies = sanitized;
   }
 
   const fetchedAt = getOwnDataProperty(value, "fetchedAt")?.value;
@@ -326,16 +319,33 @@ function sanitizeLockfileEntry(value: unknown): LockfileEntry | null {
   return {
     resolved,
     integrity,
-    ...(dependencies === undefined ? {} : { dependencies: cloneStringArray(dependencies) }),
+    ...(sanitizedDependencies === undefined ? {} : { dependencies: sanitizedDependencies }),
     ...(fetchedAt === undefined ? {} : { fetchedAt }),
   };
 }
 
-function hasOnlyStringValues(values: readonly unknown[]): values is readonly string[] {
-  for (let index = 0; index < values.length; index++) {
-    if (typeof values[index] !== "string") return false;
+function sanitizeStringArray(value: unknown): string[] | null {
+  if (!arrayIsArray(value)) return null;
+  const length = getOwnDataProperty(value, "length")?.value;
+  if (typeof length !== "number" || !numberIsSafeInteger(length) || length < 0) return null;
+
+  const sanitized: string[] = [];
+  let index = 0;
+  const keys = objectKeys(value);
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+    const key = keys[keyIndex]!;
+    if (key !== String(index)) continue;
+    const item = getOwnDataProperty(value, key)?.value;
+    if (typeof item !== "string") return null;
+    objectDefineProperty(sanitized, index, {
+      value: item,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    index++;
   }
-  return true;
+  return index === length ? sanitized : null;
 }
 
 function lockfileReadError(
@@ -396,14 +406,15 @@ function sanitizeLockfileData(value: unknown, lockfilePath: string): LockfileDat
   }
 
   const imports: Array<[string, LockfileEntry]> = [];
-  const parsedEntries = objectEntries(parsedImports);
-  for (let index = 0; index < parsedEntries.length; index++) {
-    const parsedEntry = parsedEntries[index]!;
-    const sanitizedEntry = sanitizeLockfileEntry(parsedEntry[1]);
+  const urls = objectKeys(parsedImports);
+  for (let index = 0; index < urls.length; index++) {
+    const url = urls[index]!;
+    const entry = getOwnDataProperty(parsedImports, url)?.value;
+    const sanitizedEntry = sanitizeLockfileEntry(entry);
     if (sanitizedEntry === null) {
       throw lockfileReadError(lockfilePath, "invalid-structure");
     }
-    imports[imports.length] = [parsedEntry[0], sanitizedEntry];
+    imports[imports.length] = [url, sanitizedEntry];
   }
   return { version: LOCKFILE_VERSION, imports: createImportDictionary(imports) };
 }
