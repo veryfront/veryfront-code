@@ -848,7 +848,7 @@ export function createDurableRunCanaryRunner(
       }
     }
 
-    if (completedSuccessfully && !config.keepSuccessfulEvidence && prepared) {
+    if (prepared && (!completedSuccessfully || !config.keepSuccessfulEvidence)) {
       try {
         await prepared.cleanup({ runId });
       } catch (error) {
