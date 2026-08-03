@@ -5,6 +5,7 @@ import { EXPERIMENTAL_INTEGRATIONS_ENV } from "../../src/integrations/feature-fl
 import {
   ALL_AVAILABLE_INTEGRATIONS,
   getAvailableIntegrations,
+  loadIntegrations,
   validateIntegrations,
 } from "./integration-loader.ts";
 
@@ -33,5 +34,56 @@ describe("cli/templates/integration-loader feature gates", () => {
     assertEquals(validateIntegrations(["salesforce"]).valid, false);
     assertEquals(validateIntegrations(["sap"]).valid, true);
     assertEquals(validateIntegrations(["persona"]).valid, true);
+  });
+});
+
+describe("cli/templates/integration-loader file namespacing", () => {
+  it("keeps both tool modules when two integrations ship the same tool filename", async () => {
+    const { files, errors } = await loadIntegrations(["github", "bitbucket"]);
+
+    assertEquals(errors, []);
+
+    const listIssues = files.filter((file) => file.path.endsWith("list-issues.ts"));
+    assertEquals(listIssues.map((file) => file.path), [
+      "tools/bitbucket-list-issues.ts",
+      "tools/github-list-issues.ts",
+    ]);
+  });
+
+  it("keeps per-provider env examples off the generated root .env.example path", async () => {
+    const { files } = await loadIntegrations(["drive", "slack"]);
+
+    assertEquals(files.some((file) => file.path === ".env.example"), false);
+    assertEquals(
+      files.some((file) => file.path === "examples/env/drive.env.example"),
+      true,
+    );
+  });
+
+  it("keeps relocated Deno tool imports extensionful", async () => {
+    const { files } = await loadIntegrations(["aws", "anthropic"]);
+    const extensionlessRelativeImports = files
+      .filter((file) => file.path.startsWith("tools/"))
+      .flatMap((file) =>
+        [...file.content.matchAll(/from\s+["'](\.\.?\/[^"']+)["']/g)]
+          .map((match) => ({ path: file.path, specifier: match[1] }))
+      )
+      .filter(({ specifier }) => !/\.[cm]?[jt]sx?$/.test(specifier ?? ""));
+
+    assertEquals(extensionlessRelativeImports, []);
+  });
+
+  it("drops no tool module when every available integration is generated together", async () => {
+    const { integrations, files } = await loadIntegrations(getAvailableIntegrations());
+
+    const expectedToolCount = integrations.reduce(
+      (total, integration) =>
+        total + integration.files.filter((file) => file.path.startsWith("tools/")).length,
+      0,
+    );
+    const toolPaths = files.filter((file) => file.path.startsWith("tools/")).map((f) => f.path);
+
+    assertEquals(toolPaths.length, expectedToolCount);
+    assertEquals(new Set(toolPaths).size, expectedToolCount);
   });
 });

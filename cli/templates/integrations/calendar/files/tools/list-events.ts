@@ -1,7 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createCalendarClient } from "../../lib/calendar-client.ts";
-import { requireUserIdFromContext } from "../../lib/user-id.ts";
+import { createCalendarClient } from "../lib/calendar-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 type CalendarEvent = {
   id: string;
@@ -16,7 +16,7 @@ type CalendarEvent = {
 };
 
 export default tool({
-  id: "list-events",
+  id: "calendar-list-events",
   description: "List upcoming calendar events. By default shows events from now onwards.",
   inputSchema: defineSchema((v) => v.object({
     maxResults: v

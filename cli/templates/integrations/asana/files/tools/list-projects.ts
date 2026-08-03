@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listProjects, listWorkspaces } from "../../lib/asana-client.ts";
+import { listProjects, listWorkspaces } from "../lib/asana-client.ts";
 
 export default tool({
-  id: "list-projects",
+  id: "asana-list-projects",
   description: "List all projects in the Asana workspace.",
   inputSchema: defineSchema((v) => v.object({
     limit: v

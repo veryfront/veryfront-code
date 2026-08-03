@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { postComment } from "../../lib/figma-client.ts";
+import { postComment } from "../lib/figma-client.ts";
 
 export default tool({
-  id: "post-comment",
+  id: "figma-post-comment",
   description:
     "Post a comment on a Figma file. Can be a new comment or a reply to an existing comment thread.",
   inputSchema: defineSchema((v) => v.object({

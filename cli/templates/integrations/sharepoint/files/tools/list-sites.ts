@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listSites } from "../../lib/sharepoint-client.ts";
+import { listSites } from "../lib/sharepoint-client.ts";
 
 export default tool({
-  id: "list-sites",
+  id: "sharepoint-list-sites",
   description:
     "List all SharePoint sites the user has access to. Returns site names, URLs, and IDs.",
   inputSchema: defineSchema((v) => v.object({

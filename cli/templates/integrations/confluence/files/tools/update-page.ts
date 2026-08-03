@@ -1,6 +1,6 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { formatAsStorage, getPage, updatePage } from "../../lib/confluence-client.ts";
+import { formatAsStorage, getPage, updatePage } from "../lib/confluence-client.ts";
 
 function toStorageContent(content?: string): string | undefined {
   if (!content || !content.trim()) return undefined;
@@ -16,7 +16,7 @@ function nonEmpty(value: string | undefined): string | undefined {
 }
 
 export default tool({
-  id: "update-page",
+  id: "confluence-update-page",
   description:
     "Update the content or title of an existing Confluence page. Requires the current version number.",
   inputSchema: defineSchema((v) => v.object({

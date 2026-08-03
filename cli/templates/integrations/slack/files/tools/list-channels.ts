@@ -1,7 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createSlackClient } from "../../lib/slack-client.ts";
-import { requireUserIdFromContext } from "../../lib/user-id.ts";
+import { createSlackClient } from "../lib/slack-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 type SlackChannel = {
   id: string;
@@ -13,7 +13,7 @@ type SlackChannel = {
 };
 
 export default tool({
-  id: "list-channels",
+  id: "slack-list-channels",
   description: "List Slack channels the user is a member of",
   inputSchema: defineSchema((v) => v.object({
     limit: v

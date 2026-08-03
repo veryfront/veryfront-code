@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { insertRow } from "../../lib/supabase-client.ts";
+import { insertRow } from "../lib/supabase-client.ts";
 
 export default tool({
-  id: "insert-row",
+  id: "supabase-insert-row",
   description: "Insert a new row into a Supabase table. Returns the created row.",
   inputSchema: defineSchema((v) => v.object({
     tableName: v.string().describe("The name of the table to insert into"),

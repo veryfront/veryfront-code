@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createPage, formatAsStorage } from "../../lib/confluence-client.ts";
+import { createPage, formatAsStorage } from "../lib/confluence-client.ts";
 
 export default tool({
-  id: "create-page",
+  id: "confluence-create-page",
   description:
     "Create a new page in a Confluence space. Can optionally be created as a child of an existing page.",
   inputSchema: defineSchema((v) => v.object({

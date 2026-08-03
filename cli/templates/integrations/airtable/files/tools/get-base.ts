@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getBase } from "../../lib/airtable-client.ts";
+import { getBase } from "../lib/airtable-client.ts";
 
 export default tool({
-  id: "get-base",
+  id: "airtable-get-base",
   description:
     "Get the schema and structure of an Airtable base, including all tables, fields, and views. Useful for understanding the data model before querying or creating records.",
   inputSchema: defineSchema((v) => v.object({

@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { downloadFile, formatFileSize } from "../../lib/onedrive-client.ts";
+import { downloadFile, formatFileSize } from "../lib/onedrive-client.ts";
 
 export default tool({
-  id: "download-file",
+  id: "onedrive-download-file",
   description: "Download file content from OneDrive. Returns the file content and metadata.",
   inputSchema: defineSchema((v) => v.object({
     itemId: v.string().describe("The ID of the file to download"),

@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getPage, getPageTitle } from "../../lib/notion-client.ts";
+import { getPage, getPageTitle } from "../lib/notion-client.ts";
 
 export default tool({
-  id: "get-page",
+  id: "notion-get-page",
   description: "Get Notion page metadata and properties without reading child block content.",
   inputSchema: defineSchema((v) => v.object({
     pageId: v.string().describe("The ID of the Notion page to retrieve"),

@@ -4,7 +4,7 @@ import { createDocsClient, type Request } from "../lib/docs-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "update-document",
+  id: "docs-google-update-document",
   description:
     "Update a Google Docs document using batch requests. Supports inserting text, deleting content, replacing text, and more.",
   inputSchema: defineSchema((v) =>

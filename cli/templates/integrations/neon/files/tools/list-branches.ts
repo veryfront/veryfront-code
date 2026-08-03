@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listBranches } from "../../lib/neon-client.ts";
+import { listBranches } from "../lib/neon-client.ts";
 
 export default tool({
-  id: "list-branches",
+  id: "neon-list-branches",
   description:
     "List all branches for a specific Neon project. Branches are isolated database environments that can be created from any point in time.",
   inputSchema: defineSchema((v) => v.object({
