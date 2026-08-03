@@ -3,6 +3,7 @@ import {
   assertEquals,
   assertMatch,
   assertStringIncludes,
+  assertThrows,
 } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import { parse } from "#std/yaml/parse";
@@ -17,6 +18,8 @@ const CACHE_SAVE_ACTION =
 const MAX_SETUP_MINUTES = 5;
 const MAX_CACHE_SETUP_MINUTES = 10;
 const CACHE_PRODUCER_JOB = "tests";
+const CHROMIUM_STEP_MINUTES = 15;
+const CHROMIUM_OVERHEAD_MARGIN_SECONDS = 120;
 
 type YamlRecord = Record<string, unknown>;
 
@@ -31,6 +34,25 @@ function asRecord(value: unknown, context: string): YamlRecord {
 function asSteps(value: unknown, context: string): YamlRecord[] {
   assert(Array.isArray(value), `${context} must be an array`);
   return value.map((step, index) => asRecord(step, `${context}[${index}]`));
+}
+
+function isReusableWorkflowCall(value: unknown): value is string {
+  return typeof value === "string" &&
+    (/^\.\/\.github\/workflows\/[^/]+\.ya?ml$/.test(value) ||
+      /^[^/\s]+\/[^/\s]+\/\.github\/workflows\/[^/@\s]+\.ya?ml@[^@\s]+$/.test(
+        value,
+      ));
+}
+
+function stepsForSetupScan(job: YamlRecord, context: string): YamlRecord[] {
+  if (job.steps === undefined && isReusableWorkflowCall(job.uses)) return [];
+  return asSteps(job.steps, `${context}.steps`);
+}
+
+function shellInteger(script: string, name: string): number {
+  const match = script.match(new RegExp(`^\\s*readonly ${name}=(\\d+)$`, "m"));
+  assert(match, `Chromium installer must declare ${name}`);
+  return Number(match[1]);
 }
 
 async function parseYamlFile(path: string): Promise<YamlRecord> {
@@ -50,6 +72,39 @@ async function workflowPathsUsingSetupDeno(): Promise<string[]> {
 }
 
 describe("setup-deno CI contract", () => {
+  it("skips only reusable-workflow jobs without steps", () => {
+    assertEquals(
+      stepsForSetupScan(
+        { uses: "./.github/workflows/reusable.yml" },
+        "reusable job",
+      ),
+      [],
+    );
+    assertThrows(
+      () => stepsForSetupScan({ "runs-on": "ubuntu-latest" }, "ordinary job"),
+      Error,
+      "ordinary job.steps must be an array",
+    );
+    assertThrows(
+      () =>
+        stepsForSetupScan(
+          { uses: "actions/checkout@v7" },
+          "invalid job-level action",
+        ),
+      Error,
+      "invalid job-level action.steps must be an array",
+    );
+    assertThrows(
+      () =>
+        stepsForSetupScan(
+          { uses: "./.github/workflows/reusable.yml", steps: "invalid" },
+          "malformed reusable job",
+        ),
+      Error,
+      "malformed reusable job.steps must be an array",
+    );
+  });
+
   it("uses a pinned cache and bounded, frozen dependency warming", async () => {
     const action = await parseYamlFile(ACTION_PATH);
     const runs = asRecord(action.runs, `${ACTION_PATH}.runs`);
@@ -168,7 +223,7 @@ describe("setup-deno CI contract", () => {
       const jobs = asRecord(workflow.jobs, `${path}.jobs`);
       for (const [jobName, value] of Object.entries(jobs)) {
         const job = asRecord(value, `${path}.jobs.${jobName}`);
-        const steps = asSteps(job.steps, `${path}.jobs.${jobName}.steps`);
+        const steps = stepsForSetupScan(job, `${path}.jobs.${jobName}`);
         const setupSteps = steps.filter((step) => step.uses === LOCAL_ACTION);
         for (const step of setupSteps) {
           setupCalls++;
@@ -239,12 +294,43 @@ describe("setup-deno CI contract", () => {
       assert(chromiumInstall, `${jobName} must install Chromium`);
       assertEquals(
         chromiumInstall["timeout-minutes"],
-        15,
+        CHROMIUM_STEP_MINUTES,
         `${jobName} Chromium provisioning needs a total step deadline`,
       );
-      assertMatch(
-        String(chromiumInstall.run),
-        /timeout --signal=TERM --kill-after=15s 10m\s+\\\s+deno run/,
+      const install = String(chromiumInstall.run);
+      for (
+        const expected of [
+          'for attempt in $(seq 1 "${install_attempts}")',
+          '--kill-after="${install_kill_grace_seconds}s" "${install_timeout_minutes}m"',
+          'for _ in $(seq 1 "${apt_lock_attempts}")',
+          'sleep "${apt_lock_sleep_seconds}"',
+          'sleep "${retry_backoff_seconds}"',
+        ]
+      ) {
+        assertStringIncludes(install, expected);
+      }
+      assertEquals(install.includes("apt-get clean"), false);
+      assertEquals(install.includes("rm -rf /var/lib/apt/lists"), false);
+
+      const attempts = shellInteger(install, "install_attempts");
+      const installSeconds = shellInteger(
+        install,
+        "install_timeout_minutes",
+      ) * 60;
+      const installKillGrace = shellInteger(
+        install,
+        "install_kill_grace_seconds",
+      );
+      const aptLockSeconds = shellInteger(install, "apt_lock_attempts") *
+        shellInteger(install, "apt_lock_sleep_seconds");
+      const backoffSeconds = shellInteger(install, "retry_backoff_seconds");
+      const worstCaseSeconds = attempts *
+          (aptLockSeconds + installSeconds + installKillGrace) +
+        (attempts - 1) * backoffSeconds;
+      assert(
+        worstCaseSeconds <=
+          CHROMIUM_STEP_MINUTES * 60 - CHROMIUM_OVERHEAD_MARGIN_SECONDS,
+        `${jobName} Chromium retries need at least ${CHROMIUM_OVERHEAD_MARGIN_SECONDS}s of outer-step overhead margin; budget is ${worstCaseSeconds}s`,
       );
     }
   });

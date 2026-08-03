@@ -171,30 +171,37 @@ jobs:
       - name: Install Chromium
         timeout-minutes: 15
         run: |
+          readonly install_attempts=2
+          readonly install_timeout_minutes=5
+          readonly install_kill_grace_seconds=15
+          readonly apt_lock_attempts=12
+          readonly apt_lock_sleep_seconds=5
+          readonly retry_backoff_seconds=20
+
           wait_for_apt_locks() {
-            for _ in $(seq 1 60); do
+            for _ in $(seq 1 "${apt_lock_attempts}"); do
               if ! sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; then
                 return 0
               fi
-              sleep 5
+              sleep "${apt_lock_sleep_seconds}"
             done
             return 1
           }
 
-          for attempt in 1 2 3; do
-            wait_for_apt_locks
-            timeout --signal=TERM --kill-after=15s 10m \
+          for attempt in $(seq 1 "${install_attempts}"); do
+            if ! wait_for_apt_locks; then
+              echo "::error::Timed out waiting for apt/dpkg locks"
+              exit 1
+            fi
+            timeout --signal=TERM --kill-after="${install_kill_grace_seconds}s" "${install_timeout_minutes}m" \
               deno run -A npm:playwright install --with-deps chromium && exit 0
             status=$?
 
-            if [ "$attempt" -eq 3 ]; then
+            if [ "$attempt" -eq "${install_attempts}" ]; then
               exit "$status"
             fi
 
-            wait_for_apt_locks || true
-            sudo apt-get clean || true
-            sudo rm -rf /var/lib/apt/lists/* || true
-            sleep $((attempt * 20))
+            sleep "${retry_backoff_seconds}"
           done
       - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
         with:
@@ -231,30 +238,37 @@ jobs:
       - name: Install Chromium
         timeout-minutes: 15
         run: |
+          readonly install_attempts=2
+          readonly install_timeout_minutes=5
+          readonly install_kill_grace_seconds=15
+          readonly apt_lock_attempts=12
+          readonly apt_lock_sleep_seconds=5
+          readonly retry_backoff_seconds=20
+
           wait_for_apt_locks() {
-            for _ in $(seq 1 60); do
+            for _ in $(seq 1 "${apt_lock_attempts}"); do
               if ! sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; then
                 return 0
               fi
-              sleep 5
+              sleep "${apt_lock_sleep_seconds}"
             done
             return 1
           }
 
-          for attempt in 1 2 3; do
-            wait_for_apt_locks
-            timeout --signal=TERM --kill-after=15s 10m \
+          for attempt in $(seq 1 "${install_attempts}"); do
+            if ! wait_for_apt_locks; then
+              echo "::error::Timed out waiting for apt/dpkg locks"
+              exit 1
+            fi
+            timeout --signal=TERM --kill-after="${install_kill_grace_seconds}s" "${install_timeout_minutes}m" \
               deno run -A npm:playwright install --with-deps chromium && exit 0
             status=$?
 
-            if [ "$attempt" -eq 3 ]; then
+            if [ "$attempt" -eq "${install_attempts}" ]; then
               exit "$status"
             fi
 
-            wait_for_apt_locks || true
-            sudo apt-get clean || true
-            sudo rm -rf /var/lib/apt/lists/* || true
-            sleep $((attempt * 20))
+            sleep "${retry_backoff_seconds}"
           done
       - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
         with:
