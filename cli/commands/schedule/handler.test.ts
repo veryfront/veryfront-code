@@ -16,7 +16,10 @@ import {
   waitForRemoteScheduleRun,
 } from "./handler.ts";
 
-const originalCwd = Deno.cwd();
+// Derived from the module URL rather than load-time Deno.cwd(): under
+// `deno test --parallel` this module can be evaluated while a sibling test
+// file is chdir'd into a soon-to-be-deleted temp directory.
+const originalCwd = new URL("../../../", import.meta.url);
 const originalExit = Deno.exit;
 const originalFetch = globalThis.fetch;
 const originalConsoleLog = console.log;
@@ -334,6 +337,7 @@ describe("schedule command", () => {
         signalPresent: true,
       });
     } finally {
+      Deno.chdir(originalCwd);
       await stopEsbuild();
       await Deno.remove(projectDir, { recursive: true });
     }

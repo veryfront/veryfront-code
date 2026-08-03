@@ -8,7 +8,10 @@ import { setJsonMode } from "../../shared/json-output.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
 import { handleWebhookCommand } from "./handler.ts";
 
-const originalCwd = Deno.cwd();
+// Derived from the module URL rather than load-time Deno.cwd(): under
+// `deno test --parallel` this module can be evaluated while a sibling test
+// file is chdir'd into a soon-to-be-deleted temp directory.
+const originalCwd = new URL("../../../", import.meta.url);
 const originalExit = Deno.exit;
 const originalConsoleLog = console.log;
 
@@ -108,6 +111,7 @@ describe("webhook command", () => {
         },
       });
     } finally {
+      Deno.chdir(originalCwd);
       await Deno.remove(projectDir, { recursive: true });
     }
   });
@@ -190,6 +194,7 @@ describe("webhook command", () => {
         },
       });
     } finally {
+      Deno.chdir(originalCwd);
       await Deno.remove(projectDir, { recursive: true });
     }
   });
