@@ -1,4 +1,5 @@
 import { assertEquals, assertStringIncludes } from "#std/assert";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 
 const scriptPath = `${Deno.cwd()}/scripts/ci/publish-npm-packages.sh`;
 const decoder = new TextDecoder();
@@ -142,113 +143,123 @@ Deno.test("npm release rerun skips a package already published for the commit", 
   }
 });
 
-Deno.test("npm release preflight rejects an E404 unbootstrapped package name", async () => {
-  const stateDir = await Deno.makeTempDir();
-  const npmLog = `${stateDir}/npm.log`;
-  await Deno.writeTextFile(npmLog, "");
+describe("npm release preflight", () => {
+  it("rejects an E404 unbootstrapped package name", async () => {
+    const stateDir = await Deno.makeTempDir();
+    const npmLog = `${stateDir}/npm.log`;
+    await Deno.writeTextFile(npmLog, "");
 
-  try {
-    const output = await runBash(
-      [
-        "set -euo pipefail",
-        'source "$SCRIPT_PATH"',
-        "package_names_from_workspace() {",
-        '  printf "%s\\n" "@veryfront/ext-existing" "@veryfront/ext-new"',
-        "}",
-        "npm() {",
-        '  printf "%s\\n" "$*" >> "$NPM_LOG"',
-        '  if [ "$1" = "view" ] && [ "$2" = "@veryfront/ext-existing@*" ] && [ "$3" = "name" ]; then',
-        '    printf "%s\\n" "@veryfront/ext-existing"',
-        "    return 0",
-        "  fi",
-        '  printf "%s\\n" "npm error code E404" >&2',
-        '  printf "%s\\n" "npm error 404 Not Found - GET https://registry.npmjs.org/@veryfront%2fext-new - Not found" >&2',
-        "  return 1",
-        "}",
-        "run_preflight",
-      ].join("\n"),
-      {
-        GITHUB_SHA: "expected-commit",
-        NPM_LOG: npmLog,
-        VERSION: "0.1.1189",
-      },
-    );
+    try {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "package_names_from_workspace() {",
+          '  printf "%s\\n" "@veryfront/ext-existing" "@veryfront/ext-new"',
+          "}",
+          "npm() {",
+          '  printf "%s\\n" "$*" >> "$NPM_LOG"',
+          '  if [ "$1" = "view" ] && [ "$2" = "@veryfront/ext-existing@*" ] && [ "$3" = "name" ]; then',
+          '    printf "%s\\n" "@veryfront/ext-existing"',
+          "    return 0",
+          "  fi",
+          '  printf "%s\\n" "npm error code E404" >&2',
+          '  printf "%s\\n" "npm error 404 Not Found - GET https://registry.npmjs.org/@veryfront%2fext-new - Not found" >&2',
+          "  return 1",
+          "}",
+          "run_preflight",
+        ].join("\n"),
+        {
+          GITHUB_SHA: "expected-commit",
+          NPM_LOG: npmLog,
+          VERSION: "0.1.1189",
+        },
+      );
 
-    assertEquals(output.code, 1, decoder.decode(output.stderr));
-    assertStringIncludes(
-      decoder.decode(output.stderr),
-      "@veryfront/ext-new is not registered on npm",
-    );
-    assertStringIncludes(
-      decoder.decode(output.stderr),
-      "Publish each package once with a prerelease version and a non-latest dist-tag",
-    );
-    assertEquals(
-      decoder.decode(output.stderr).includes("npm registry lookup failed"),
-      false,
-    );
-    const calls = (await Deno.readTextFile(npmLog)).trim().split("\n");
-    assertEquals(calls, [
-      "view @veryfront/ext-existing@* name",
-      "view @veryfront/ext-new@* name",
-    ]);
-  } finally {
-    await Deno.remove(stateDir, { recursive: true });
-  }
-});
+      assertEquals(output.code, 1, decoder.decode(output.stderr));
+      assertStringIncludes(
+        decoder.decode(output.stderr),
+        "@veryfront/ext-new is not registered on npm",
+      );
+      assertStringIncludes(
+        decoder.decode(output.stderr),
+        "Publish each package once with a prerelease version and a non-latest dist-tag",
+      );
+      assertEquals(
+        decoder.decode(output.stderr).includes("npm registry lookup failed"),
+        false,
+      );
+      const calls = (await Deno.readTextFile(npmLog)).trim().split("\n");
+      assertEquals(calls, [
+        "view @veryfront/ext-existing@* name",
+        "view @veryfront/ext-new@* name",
+      ]);
+    } finally {
+      await Deno.remove(stateDir, { recursive: true });
+    }
+  });
 
-Deno.test("npm release preflight reports non-E404 registry lookup failures", async () => {
-  const stateDir = await Deno.makeTempDir();
-  const npmLog = `${stateDir}/npm.log`;
-  await Deno.writeTextFile(npmLog, "");
+  it("reports sanitized non-E404 registry lookup failures", async () => {
+    const stateDir = await Deno.makeTempDir();
+    const npmLog = `${stateDir}/npm.log`;
+    await Deno.writeTextFile(npmLog, "");
 
-  try {
-    const output = await runBash(
-      [
-        "set -euo pipefail",
-        'source "$SCRIPT_PATH"',
-        "package_names_from_workspace() {",
-        '  printf "%s\\n" "@veryfront/ext-existing" "@veryfront/ext-flaky"',
-        "}",
-        "npm() {",
-        '  printf "%s\\n" "$*" >> "$NPM_LOG"',
-        '  if [ "$1" = "view" ] && [ "$2" = "@veryfront/ext-existing@*" ] && [ "$3" = "name" ]; then',
-        '    printf "%s\\n" "@veryfront/ext-existing"',
-        "    return 0",
-        "  fi",
-        '  printf "%s\\n" "npm error code E503" >&2',
-        '  printf "%s\\n" "npm error 503 Service Unavailable" >&2',
-        '  printf "%s\\n" "npm error A complete log of this run can be found in: /Users/<REDACTED>/.npm/_logs/debug.log" >&2',
-        "  return 42",
-        "}",
-        "run_preflight",
-      ].join("\n"),
-      {
-        GITHUB_SHA: "expected-commit",
-        NPM_LOG: npmLog,
-        VERSION: "0.1.1189",
-      },
-    );
+    try {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "package_names_from_workspace() {",
+          '  printf "%s\\n" "@veryfront/ext-existing" "@veryfront/ext-flaky"',
+          "}",
+          "npm() {",
+          '  printf "%s\\n" "$*" >> "$NPM_LOG"',
+          '  if [ "$1" = "view" ] && [ "$2" = "@veryfront/ext-existing@*" ] && [ "$3" = "name" ]; then',
+          '    printf "%s\\n" "@veryfront/ext-existing"',
+          "    return 0",
+          "  fi",
+          '  printf "%s\\n" "npm error code E503" >&2',
+          '  printf "%s\\n" "npm error 503 Service Unavailable" >&2',
+          '  printf "%s\\n" "npm error A complete log of this run can be found in: /Users/<REDACTED>/.npm/_logs/debug.log" >&2',
+          '  printf "%s\\n" "npm error authorization Bearer token-part/with=suffix" >&2',
+          '  printf "%s\\n" "npm error cache path=/tmp/npm-cache/debug.log" >&2',
+          '  printf "%s\\n" "npm error cache path=C:\\\\runner\\\\npm-cache\\\\debug.log" >&2',
+          "  return 42",
+          "}",
+          "run_preflight",
+        ].join("\n"),
+        {
+          GITHUB_SHA: "expected-commit",
+          NPM_LOG: npmLog,
+          VERSION: "0.1.1189",
+        },
+      );
 
-    assertEquals(output.code, 1, decoder.decode(output.stderr));
-    const stderr = decoder.decode(output.stderr);
-    assertStringIncludes(
-      stderr,
-      "npm registry lookup failed for @veryfront/ext-flaky (status 42)",
-    );
-    assertStringIncludes(stderr, "npm error code E503");
-    assertEquals(stderr.includes("is not registered on npm"), false);
-    assertEquals(
-      stderr.includes("Publish each package once with a prerelease version"),
-      false,
-    );
-    assertEquals(stderr.includes("/Users/"), false);
-    const calls = (await Deno.readTextFile(npmLog)).trim().split("\n");
-    assertEquals(calls, [
-      "view @veryfront/ext-existing@* name",
-      "view @veryfront/ext-flaky@* name",
-    ]);
-  } finally {
-    await Deno.remove(stateDir, { recursive: true });
-  }
+      assertEquals(output.code, 1, decoder.decode(output.stderr));
+      const stderr = decoder.decode(output.stderr);
+      assertStringIncludes(
+        stderr,
+        "npm registry lookup failed for @veryfront/ext-flaky (status 42)",
+      );
+      assertStringIncludes(stderr, "npm error code E503");
+      assertEquals(stderr.includes("is not registered on npm"), false);
+      assertEquals(
+        stderr.includes("Publish each package once with a prerelease version"),
+        false,
+      );
+      assertEquals(stderr.includes("/Users/"), false);
+      assertEquals(stderr.includes("token-part"), false);
+      assertEquals(stderr.includes("with=suffix"), false);
+      assertEquals(stderr.includes("/tmp/"), false);
+      assertEquals(stderr.includes("C:\\runner"), false);
+      assertStringIncludes(stderr, "Bearer <REDACTED>");
+      const calls = (await Deno.readTextFile(npmLog)).trim().split("\n");
+      assertEquals(calls, [
+        "view @veryfront/ext-existing@* name",
+        "view @veryfront/ext-flaky@* name",
+      ]);
+    } finally {
+      await Deno.remove(stateDir, { recursive: true });
+    }
+  });
 });
