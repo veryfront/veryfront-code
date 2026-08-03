@@ -1495,6 +1495,38 @@ describe("import-lockfile", () => {
       assertEquals(await fs.readFile("/project/veryfront.lock"), existingLockfile);
     });
 
+    it("should reject inherited public set entry fields before touching disk", async () => {
+      let existsCalls = 0;
+      let writeCalls = 0;
+      const fs: FSAdapter = {
+        exists: () => {
+          existsCalls++;
+          return Promise.resolve(false);
+        },
+        readFile: () => Promise.reject(new Error("unexpected read")),
+        writeFile: () => {
+          writeCalls++;
+          return Promise.resolve();
+        },
+      };
+      const inheritedEntry = Object.create({
+        resolved: "https://cdn.com/inherited.ts",
+        integrity: "sha256-inherited",
+      }) as LockfileEntry;
+      const mgr = createLockfileManager("/project", fs);
+
+      const error = await assertRejects(
+        () => mgr.set("https://cdn.com/inherited.ts", inheritedEntry),
+        VeryfrontError,
+      );
+
+      if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
+      assertEquals(error.slug, "lockfile-read-error");
+      assertEquals((error.context as { reason?: string }).reason, "invalid-structure");
+      assertEquals(existsCalls, 0);
+      assertEquals(writeCalls, 0);
+    });
+
     it("should fail closed on write but allow clear to remove an unreadable lockfile", async () => {
       let writes = 0;
       let removals = 0;

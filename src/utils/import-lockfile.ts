@@ -38,13 +38,18 @@ const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectHasOwn = Object.hasOwn;
 
 function cloneLockfileEntry(entry: LockfileEntry): LockfileEntry {
+  const resolved = getOwnDataProperty(entry, "resolved")?.value;
+  const integrity = getOwnDataProperty(entry, "integrity")?.value;
+  if (typeof resolved !== "string" || typeof integrity !== "string") {
+    throw lockfileInputError("invalid-structure");
+  }
   const dependencies = getOwnDataProperty(entry, "dependencies")?.value as
     | string[]
     | undefined;
   const fetchedAt = getOwnDataProperty(entry, "fetchedAt")?.value as string | undefined;
   return {
-    resolved: entry.resolved,
-    integrity: entry.integrity,
+    resolved,
+    integrity,
     ...(dependencies === undefined ? {} : { dependencies: [...dependencies] }),
     ...(fetchedAt === undefined ? {} : { fetchedAt }),
   };
@@ -146,6 +151,17 @@ function lockfileReadError(
     detail: `The lockfile ${description}. The file was left untouched.`,
     cause,
     context: { lockfilePath, reason },
+  });
+}
+
+function lockfileInputError(
+  reason: "invalid-structure",
+  cause?: unknown,
+) {
+  return LOCKFILE_READ_ERROR.create({
+    detail: "The provided lockfile data has an invalid structure. The file was left untouched.",
+    cause,
+    context: { reason },
   });
 }
 
@@ -824,7 +840,12 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   }
 
   function set(url: string, entry: LockfileEntry): Promise<void> {
-    const snapshot = cloneLockfileEntry(entry);
+    let snapshot: LockfileEntry;
+    try {
+      snapshot = cloneLockfileEntry(entry);
+    } catch (error) {
+      return Promise.reject(error);
+    }
     return serializeManagerOperation(() =>
       withLockfileAccess(async (state) => {
         const data = (await readCurrentUnderAccess(state)) ?? createInternalLockfile();
@@ -861,8 +882,9 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
           }
         }
 
-        // State changes only after validation and any requested deletion have
-        // succeeded, so a failed clear leaves both memory and disk untouched.
+        // State changes only after the access check and any requested deletion
+        // or fallback write have succeeded, so a failed clear leaves memory and
+        // disk untouched.
         cache = cleared;
         pendingEntries.clear();
         state.lastClearSequence = nextLockfileMutationSequence++;
