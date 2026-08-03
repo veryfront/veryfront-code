@@ -7,14 +7,7 @@ order: 11
 ## Import
 
 ```ts
-import {
-  readTextFile,
-  writeTextFile,
-  join,
-  resolve,
-  exists,
-  mkdir,
-} from "veryfront/fs";
+import { exists, join, mkdir, readTextFile, resolve, writeTextFile } from "veryfront/fs";
 ```
 
 ## Examples
@@ -32,7 +25,7 @@ await writeTextFile("./output/result.json", JSON.stringify(data));
 ### Path utilities
 
 ```ts
-import { join, resolve, dirname, basename, extname } from "veryfront/fs";
+import { basename, dirname, extname, join, resolve } from "veryfront/fs";
 
 const filePath = join("src", "pages", "index.tsx");
 const dir = dirname(filePath); // "src/pages"
@@ -50,34 +43,34 @@ const configPath = resolve(cwd(), "veryfront.config.ts");
 
 ### Functions
 
-| Name | Description | Source |
-|------|-------------|--------|
-| `basename` | Return the last path segment. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L43) |
-| `createFileSystem` | Create the runtime-native filesystem implementation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L438) |
-| `cwd` | Return the current working directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L26) |
-| `dirname` | Return the parent directory path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L36) |
-| `exists` | Return false for a missing path and propagate every other filesystem error. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L511) |
-| `extname` | Return the file extension for a path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L51) |
-| `isFileSnapshotChangedError` | Return whether a value is a framework-created file snapshot change error. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/file-snapshot-error.ts#L32) |
-| `isNotFoundError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/not-found-error.ts#L210) |
-| `join` | Join and normalize path segments using their detected path flavor. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L23) |
-| `lstat` | Read file metadata without following a terminal symbolic link. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L521) |
-| `mkdir` | Create a directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L561) |
-| `readDir` | Read directory entries. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L571) |
-| `readTextFile` | Read a file as text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L491) |
-| `realPath` | Resolve a path to its canonical absolute form, following symlinks. Throws if the path does not exist. Useful for containment checks where a symlink could otherwise escape an intended directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L607) |
-| `remove` | Remove a file or directory, rejecting when the path does not exist. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L566) |
-| `resolve` | Resolve path segments to an absolute, normalized path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/resolution.ts#L24) |
-| `writeTextFile` | Write text to a file. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L501) |
+| Name                         | Description                                                                                                                                                                                       | Source                                                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `basename`                   | Return the last path segment.                                                                                                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L43) |
+| `createFileSystem`           | Create the runtime-native filesystem implementation.                                                                                                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L438)                   |
+| `cwd`                        | Return the current working directory.                                                                                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L26)     |
+| `dirname`                    | Return the parent directory path.                                                                                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L36) |
+| `exists`                     | Return false for a missing path and propagate every other filesystem error.                                                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L511)                   |
+| `extname`                    | Return the file extension for a path.                                                                                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L51) |
+| `isFileSnapshotChangedError` | Return whether a value is a framework-created file snapshot change error.                                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/file-snapshot-error.ts#L32) |
+| `isNotFoundError`            |                                                                                                                                                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/not-found-error.ts#L210)      |
+| `join`                       | Join and normalize path segments using their detected path flavor.                                                                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L23) |
+| `lstat`                      | Read file metadata without following a terminal symbolic link.                                                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L521)                   |
+| `mkdir`                      | Create a directory.                                                                                                                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L561)                   |
+| `readDir`                    | Read directory entries.                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L571)                   |
+| `readTextFile`               | Read a file as text.                                                                                                                                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L491)                   |
+| `realPath`                   | Resolve a path to its canonical absolute form, following symlinks. Throws if the path does not exist. Useful for containment checks where a symlink could otherwise escape an intended directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L607)                   |
+| `remove`                     | Remove a file or directory, rejecting when the path does not exist.                                                                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L566)                   |
+| `resolve`                    | Resolve path segments to an absolute, normalized path.                                                                                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/resolution.ts#L24)       |
+| `writeTextFile`              | Write text to a file.                                                                                                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L501)                   |
 
 ### Classes
 
-| Name | Description | Source |
-|------|-------------|--------|
+| Name                       | Description                                                             | Source                                                                                                           |
+| -------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `FileSnapshotChangedError` | Error raised when a file changes while a stable snapshot is being read. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/file-snapshot-error.ts#L22) |
 
 ### Types
 
-| Name | Description | Source |
-|------|-------------|--------|
+| Name         | Description                          | Source                                                                                        |
+| ------------ | ------------------------------------ | --------------------------------------------------------------------------------------------- |
 | `FileSystem` | Runtime-neutral filesystem contract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L83) |

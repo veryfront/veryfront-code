@@ -131,13 +131,13 @@ export class MemoryRateLimitStore implements RateLimitStore {
 export interface MemoryRateLimitStoreOptions {
   /**
    * Maximum number of active identities retained by the store.
-   *
-   * Size this above the peak number of distinct identities expected during one
-   * complete rate-limit window, including burst headroom. New identities fail
-   * closed when every entry is active; active limits are never evicted because
-   * eviction would let identity-flooding attackers reset their quota. When
-   * used through `rateLimit()`, capacity exhaustion logs structured failure
-   * details for the middleware request path.
+   * Defaults to 10,000. Size this above the peak number of distinct identities
+   * expected during one complete rate-limit window, including burst headroom.
+   * At capacity, increments for identities without an active entry fail.
+   * Active entries are never evicted because identity flooding could otherwise
+   * reset an attacker's quota. When used through `rateLimit()`, capacity
+   * exhaustion logs `stage=store-increment`,
+   * `failureKind=capacity-exhausted`, and the configured `capacity`.
    */
   maxEntries?: number;
 }
@@ -148,10 +148,12 @@ export interface RateLimitOptions {
   windowMs?: number;
   store?: RateLimitStore;
   /**
-   * Capacity of the default in-memory store. It must exceed the peak distinct
-   * identities expected in one complete window plus burst headroom. Capacity
-   * exhaustion denies only previously unseen identities with HTTP 503.
-   * Cannot be combined with a caller-provided `store`.
+   * Maximum active identities retained by the default in-memory store.
+   * Defaults to 10,000. At capacity, requests for identities without an active
+   * entry receive HTTP 503. Active entries are not evicted because doing so
+   * would let identity floods reset quotas. Capacity failures log
+   * `stage=store-increment`, `failureKind=capacity-exhausted`, and the
+   * configured `capacity`. Incompatible with a caller-provided `store`.
    */
   maxEntries?: number;
   keyGenerator?: (req: Request) => string;
@@ -168,7 +170,10 @@ export interface RateLimitOptions {
 export interface AuthRateLimitOptions {
   /** Storage backend. Existing callers can also pass the store directly. */
   store?: RateLimitStore;
-  /** Capacity of the default in-memory store; see `RateLimitOptions.maxEntries`. */
+  /**
+   * Maximum active identities retained by the preset's default in-memory store.
+   * See `RateLimitOptions.maxEntries` for capacity behavior and defaults.
+   */
   maxEntries?: number;
   /** Function to derive a stable client key from the request. */
   keyGenerator?: (req: Request) => string;
