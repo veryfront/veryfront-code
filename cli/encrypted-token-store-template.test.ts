@@ -603,6 +603,73 @@ describe("generated encrypted OAuth token store", () => {
     );
   });
 
+  it("rejects sparse OAuth state metadata arrays before allocating a snapshot", async () => {
+    const store = createEncryptedTokenStore(createMemoryKvBackend());
+    const sparseValues: unknown[] = [];
+    sparseValues.length = 0xffff_ffff;
+
+    await assertRejects(
+      () =>
+        store.setState("state-with-sparse-metadata", {
+          ...oauthState("alice"),
+          metadata: { values: sparseValues },
+        }),
+      RangeError,
+      "too many JSON values",
+    );
+  });
+
+  it("rejects oversized metadata strings before JSON serialization", async () => {
+    const store = createEncryptedTokenStore(createMemoryKvBackend());
+
+    await assertRejects(
+      () =>
+        store.setState("state-with-oversized-metadata", {
+          ...oauthState("alice"),
+          metadata: { value: "x".repeat(65_537) },
+        }),
+      RangeError,
+      "too much JSON string data",
+    );
+  });
+
+  it("rejects cyclic OAuth state metadata deterministically", async () => {
+    const store = createEncryptedTokenStore(createMemoryKvBackend());
+    const metadata: Record<string, unknown> = {};
+    metadata.self = metadata;
+
+    await assertRejects(
+      () =>
+        store.setState("state-with-cyclic-metadata", {
+          ...oauthState("alice"),
+          metadata,
+        }),
+      TypeError,
+      "cyclic JSON data",
+    );
+  });
+
+  it("rejects excessively nested OAuth state metadata", async () => {
+    const store = createEncryptedTokenStore(createMemoryKvBackend());
+    const metadata: Record<string, unknown> = {};
+    let cursor = metadata;
+    for (let depth = 0; depth < 64; depth++) {
+      const child: Record<string, unknown> = {};
+      cursor.child = child;
+      cursor = child;
+    }
+
+    await assertRejects(
+      () =>
+        store.setState("state-with-deep-metadata", {
+          ...oauthState("alice"),
+          metadata,
+        }),
+      RangeError,
+      "maximum JSON nesting depth",
+    );
+  });
+
   it("preserves own metadata keys named __proto__ across runtimes", async () => {
     const store = createEncryptedTokenStore(createMemoryKvBackend());
     const metadata = JSON.parse('{"__proto__":{"tenant":"north"},"ok":true}');

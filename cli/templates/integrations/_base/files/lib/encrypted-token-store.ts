@@ -105,6 +105,12 @@ const MAX_REDIRECT_URI_LENGTH = 8_192;
 const MAX_TOKEN_VALUE_LENGTH = 65_536;
 const MAX_TOKEN_TYPE_LENGTH = 256;
 const MAX_SCOPE_WIRE_LENGTH = 4_096;
+// A JSON array containing one-character values needs two bytes per value once
+// separators are included. Bounding the traversal before cloning therefore
+// prevents sparse arrays or deeply nested metadata from consuming memory
+// before the final plaintext-size check can run.
+const MAX_JSON_VALUE_COUNT = Math.floor((MAX_PLAINTEXT_BYTES + 1) / 2);
+const MAX_JSON_NESTING_DEPTH = 64;
 
 const SERVICE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const SCOPE_TOKEN_PATTERN = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
@@ -311,45 +317,48 @@ function hasAsciiControlCharacter(value: string): boolean {
   return false;
 }
 
-function requireJsonDataValue(value: unknown, label: string): unknown {
-  if (value === null || typeof value === "string" || typeof value === "boolean") {
-    return value;
-  }
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) {
-      throw new TypeError(`${label} must contain only finite JSON numbers`);
-    }
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return Array.from({ length: value.length }, (_, index) => {
-      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
-      if (!descriptor || !("value" in descriptor)) {
-        throw new TypeError(`${label} must contain only own data values`);
-      }
-      return requireJsonDataValue(descriptor.value, label);
-    });
-  }
-  if (!value || typeof value !== "object") {
-    throw new TypeError(`${label} must contain only JSON data values`);
-  }
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) {
-    throw new TypeError(`${label} must contain only plain JSON data objects`);
-  }
-  const snapshot: Record<string, unknown> = Object.create(null);
-  for (const key of Object.keys(value)) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor || !("value" in descriptor)) {
-      throw new TypeError(`${label} must contain only own data values`);
-    }
-    snapshot[key] = requireJsonDataValue(descriptor.value, label);
-  }
-  return snapshot;
+interface JsonTraversalState {
+  ancestors: WeakSet<object>;
+  depth: number;
+  remainingStringCodeUnits: number;
+  remainingValues: number;
 }
 
-function snapshotForJsonStringify(value: unknown, label: string): unknown {
-  if (value === null || typeof value === "string" || typeof value === "boolean") {
+function createJsonTraversalState(): JsonTraversalState {
+  return {
+    ancestors: new WeakSet(),
+    depth: 0,
+    remainingStringCodeUnits: MAX_PLAINTEXT_BYTES,
+    remainingValues: MAX_JSON_VALUE_COUNT,
+  };
+}
+
+function consumeJsonStringBudget(
+  state: JsonTraversalState,
+  value: string,
+  label: string,
+): void {
+  if (value.length > state.remainingStringCodeUnits) {
+    throw new RangeError(`${label} contains too much JSON string data`);
+  }
+  state.remainingStringCodeUnits -= value.length;
+}
+
+function snapshotJsonData(
+  value: unknown,
+  label: string,
+  state = createJsonTraversalState(),
+): unknown {
+  if (state.remainingValues === 0) {
+    throw new RangeError(`${label} contains too many JSON values`);
+  }
+  state.remainingValues--;
+
+  if (value === null || typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    consumeJsonStringBudget(state, value, label);
     return value;
   }
   if (typeof value === "number") {
@@ -358,37 +367,73 @@ function snapshotForJsonStringify(value: unknown, label: string): unknown {
     }
     return value;
   }
-  if (Array.isArray(value)) {
-    const snapshot = Array.from({ length: value.length }, (_, index) => {
-      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
-      if (!descriptor || !("value" in descriptor)) {
-        throw new TypeError(`${label} must contain only own data values`);
-      }
-      return snapshotForJsonStringify(descriptor.value, label);
-    });
-    Object.defineProperty(snapshot, "toJSON", {
-      configurable: true,
-      enumerable: false,
-      value: undefined,
-    });
-    return snapshot;
-  }
   if (!value || typeof value !== "object") {
     throw new TypeError(`${label} must contain only JSON data values`);
   }
-  const snapshot: Record<string, unknown> = Object.create(null);
-  for (const key of Object.keys(value)) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor || !("value" in descriptor)) {
-      throw new TypeError(`${label} must contain only own data values`);
-    }
-    snapshot[key] = snapshotForJsonStringify(descriptor.value, label);
+  if (state.depth >= MAX_JSON_NESTING_DEPTH) {
+    throw new RangeError(
+      `${label} exceeds the maximum JSON nesting depth of ${MAX_JSON_NESTING_DEPTH}`,
+    );
   }
-  return snapshot;
+  if (state.ancestors.has(value)) {
+    throw new TypeError(`${label} must not contain cyclic JSON data`);
+  }
+  state.ancestors.add(value);
+  state.depth++;
+
+  try {
+    if (Array.isArray(value)) {
+      if (value.length > state.remainingValues) {
+        throw new RangeError(`${label} contains too many JSON values`);
+      }
+      const snapshot: unknown[] = [];
+      snapshot.length = value.length;
+      for (let index = 0; index < value.length; index++) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+        if (!descriptor || !("value" in descriptor)) {
+          throw new TypeError(`${label} must contain only own data values`);
+        }
+        Object.defineProperty(snapshot, String(index), {
+          configurable: true,
+          enumerable: true,
+          value: snapshotJsonData(descriptor.value, label, state),
+          writable: true,
+        });
+      }
+      Object.defineProperty(snapshot, "toJSON", {
+        configurable: true,
+        enumerable: false,
+        value: undefined,
+      });
+      return snapshot;
+    }
+
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError(`${label} must contain only plain JSON data objects`);
+    }
+    const keys = Object.keys(value);
+    if (keys.length > state.remainingValues) {
+      throw new RangeError(`${label} contains too many JSON values`);
+    }
+    const snapshot: Record<string, unknown> = Object.create(null);
+    for (const key of keys) {
+      consumeJsonStringBudget(state, key, label);
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !("value" in descriptor)) {
+        throw new TypeError(`${label} must contain only own data values`);
+      }
+      snapshot[key] = snapshotJsonData(descriptor.value, label, state);
+    }
+    return snapshot;
+  } finally {
+    state.depth--;
+    state.ancestors.delete(value);
+  }
 }
 
 function stringifyJsonData(value: unknown): string {
-  return JSON.stringify(snapshotForJsonStringify(value, "Stored OAuth value"));
+  return JSON.stringify(snapshotJsonData(value, "Stored OAuth value"));
 }
 
 function requireMetadata(value: unknown): Record<string, unknown> | undefined {
@@ -396,7 +441,7 @@ function requireMetadata(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError("Stored OAuth state metadata must be a plain object");
   }
-  return requireJsonDataValue(value, "Stored OAuth state metadata") as Record<string, unknown>;
+  return snapshotJsonData(value, "Stored OAuth state metadata") as Record<string, unknown>;
 }
 
 function requireOptionalTokenString(
