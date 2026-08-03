@@ -65,8 +65,8 @@ export interface CacheLookupResult {
 
 export class CacheCoordinator {
   private store: CacheStore;
-  private ttlMs: number | undefined;
-  private staleMs: number;
+  private readonly ttlMs: number;
+  private readonly staleMs: number;
   private readonly defaultTtlMs = DEFAULT_CACHE_TTL_MS;
   private readonly projectId: string | undefined;
   private readonly contentSourceId: string | undefined;
@@ -125,7 +125,7 @@ export class CacheCoordinator {
         // A stored value that fails validation is unusable; drop it so the next
         // render repopulates the key instead of replaying corrupt data.
         if (stored !== undefined && cached === undefined) {
-          await this.store.delete(key);
+          await this.evictBestEffort(key, "invalid payload");
         }
 
         if (!cached) {
@@ -160,7 +160,7 @@ export class CacheCoordinator {
             };
           }
 
-          await this.store.delete(key);
+          await this.evictBestEffort(key, "expired payload");
           const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
           recordCacheLookup("expired", lookupDurationMs);
           return {
@@ -217,8 +217,8 @@ export class CacheCoordinator {
             : { htmlNoncePlaceholder: sealedHtml.placeholder }),
           nodeMapEntries: result.nodeMap ? Array.from(result.nodeMap.entries()) : undefined,
           storedAt: now,
-          expiresAt: this.ttlMs ? now + this.ttlMs : undefined,
-          staleUntil: this.ttlMs && this.staleMs > 0 ? now + this.ttlMs + this.staleMs : undefined,
+          expiresAt: now + this.ttlMs,
+          staleUntil: this.staleMs > 0 ? now + this.ttlMs + this.staleMs : undefined,
         };
 
         // Caching is best-effort: a result too large to snapshot, or a store
@@ -269,7 +269,19 @@ export class CacheCoordinator {
   }
 
   private isExpired(entry: CachePayload): boolean {
-    return typeof entry.expiresAt === "number" && Date.now() > entry.expiresAt;
+    return typeof entry.expiresAt === "number" && Date.now() >= entry.expiresAt;
+  }
+
+  private async evictBestEffort(key: string, reason: string): Promise<void> {
+    try {
+      await this.store.delete(key);
+    } catch (error) {
+      logger.warn("[CacheCoordinator] Cache eviction failed", {
+        key,
+        reason,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private isStaleUsable(entry: CachePayload): boolean {

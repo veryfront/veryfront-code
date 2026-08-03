@@ -84,6 +84,22 @@ describe("CacheCoordinator", () => {
     assertEquals(deletedKey, "project:draft:malformed");
   });
 
+  it("treats malformed store values as misses when eviction fails", async () => {
+    const store: CacheStore = {
+      get: () => Promise.resolve({} as CachePayload),
+      set: () => Promise.resolve(),
+      delete: () => Promise.reject(new Error("delete unavailable")),
+      clear: () => Promise.resolve(),
+      destroy: () => Promise.resolve(),
+    };
+    const coordinator = new CacheCoordinator({ store, projectId: "project" });
+
+    const lookup = await coordinator.checkCache("malformed");
+
+    assertEquals(lookup.cacheStatus, "miss");
+    assertEquals(lookup.cachedResult, undefined);
+  });
+
   it("skips caching when a result cannot be snapshotted", async () => {
     let setCalls = 0;
     const data = new Map<string, CachePayload>();
@@ -282,6 +298,39 @@ describe("CacheCoordinator", () => {
 
     await coordinator.destroy();
   });
+
+  it("treats a zero TTL as immediate expiry", async () => {
+    const coordinator = new CacheCoordinator({ ttlMs: 0, projectId: "immediate" });
+
+    await coordinator.persistResult(makeResult("never fresh"), "zero-ttl");
+    const lookup = await coordinator.checkCache("zero-ttl");
+
+    assertEquals(lookup.cachedResult, undefined);
+    assertEquals(lookup.cacheStatus, "expired");
+    await coordinator.destroy();
+  });
+
+  it("reports an expired entry when eviction fails", async () => {
+    const payload: CachePayload = {
+      result: makeResult("expired"),
+      storedAt: 0,
+      expiresAt: 0,
+    };
+    const store: CacheStore = {
+      get: () => Promise.resolve(payload),
+      set: () => Promise.resolve(),
+      delete: () => Promise.reject(new Error("delete unavailable")),
+      clear: () => Promise.resolve(),
+      destroy: () => Promise.resolve(),
+    };
+    const coordinator = new CacheCoordinator({ store, projectId: "expired" });
+
+    const lookup = await coordinator.checkCache("entry");
+
+    assertEquals(lookup.cachedResult, undefined);
+    assertEquals(lookup.cacheStatus, "expired");
+  });
+
   it("serves recently expired entries as stale while refresh can run", async () => {
     const coordinator = new CacheCoordinator({
       ttlMs: scaleMs(20),
