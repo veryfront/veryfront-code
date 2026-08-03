@@ -20,6 +20,7 @@ const CONCEPT_FILES = new Set<string>([
   "concepts/eval.md",
   "concepts/run.md",
   "concepts/schedule.md",
+  "concepts/webhook.md",
   "concepts/prompt.md",
   "concepts/resource.md",
   "concepts/skill.md",
@@ -478,6 +479,12 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
     snippets: ["schedule", "runs", "trigger"],
   },
+  "concepts/webhook.md": {
+    references: [
+      "../api-reference/veryfront/webhook.md",
+    ],
+    snippets: ["eventFilter", "promptTemplate", "64 KiB", "filtered event is ignored"],
+  },
   "concepts/prompt.md": {
     references: ["../api-reference/veryfront/prompt.md"],
     snippets: ["instruction text", "template variables", "MCP"],
@@ -588,11 +595,22 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/context.md",
       "../api-reference/veryfront/mdx.md",
     ],
-    snippets: ["app router", "useRouter", "Link"],
+    snippets: ["app router", "useRouter", "Link", "MDXProvider"],
   },
   "guides/project-structure.md": {
     references: ["../api-reference/veryfront/index.md"],
     snippets: ["app/", "agents/", "tools/"],
+  },
+  "guides/project-knowledge.md": {
+    references: ["../api-reference/veryfront/knowledge.md"],
+    snippets: [
+      "projectKnowledge",
+      "createSearchKnowledgeTool",
+      'mode: "browse"',
+      "release-backed content",
+      "lookup_target",
+      "page_info.next",
+    ],
   },
   "guides/project-metrics.md": {
     references: ["../api-reference/veryfront/observability.md"],

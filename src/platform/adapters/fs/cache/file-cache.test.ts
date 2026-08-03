@@ -6,6 +6,7 @@ import {
   initializeFileCacheBackend,
   isFileCacheDistributedEnabled,
 } from "./file-cache.ts";
+import { CacheBackends } from "#veryfront/cache/backend.ts";
 
 describe("FileCache", () => {
   let cache: FileCache;
@@ -327,6 +328,51 @@ describe("Distributed cache functions", () => {
     it("should export initializeFileCacheBackend function", () => {
       assertExists(initializeFileCacheBackend);
       assertEquals(typeof initializeFileCacheBackend, "function");
+    });
+
+    it("skips non-serializable synchronous writes to a distributed backend", async () => {
+      // A query-qualified import gives this regression its own module-scoped
+      // backend state, so the fake distributed backend cannot leak into other
+      // file-cache tests in the same Deno process.
+      const distributedModule = await import(
+        "./file-cache.ts?distributed-serialization-regression"
+      );
+      const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
+      assertExists(descriptor);
+      let backendWrites = 0;
+      Object.defineProperty(CacheBackends, "file", {
+        ...descriptor,
+        value: () =>
+          Promise.resolve({
+            type: "redis",
+            size: 0,
+            get: () => Promise.resolve(null),
+            set: () => {
+              backendWrites += 1;
+              return Promise.resolve();
+            },
+            del: () => Promise.resolve(false),
+            clear: () => Promise.resolve(),
+          } as never),
+      });
+
+      try {
+        assertEquals(await distributedModule.initializeFileCacheBackend(), true);
+      } finally {
+        Object.defineProperty(CacheBackends, "file", descriptor);
+      }
+
+      const distributedCache = new distributedModule.FileCache();
+      const circular: Record<string, unknown> = {};
+      circular.self = circular;
+      distributedCache.set("cyclic", circular);
+      assertEquals(backendWrites, 0);
+
+      // Positive control: a serializable entry must reach the fake backend,
+      // proving the harness is live and the zero-write assertion above is not
+      // vacuously passing because the backend was never wired up.
+      distributedCache.set("serializable", { ok: true });
+      assertEquals(backendWrites, 1);
     });
 
     it("should return boolean", async () => {

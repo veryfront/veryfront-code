@@ -1207,9 +1207,6 @@ export class AgentRuntime {
             ...(headers ? { headers } : {}),
             ...(providerOptions ? { providerOptions } : {}),
             ...(reasoning ? { reasoning } : {}),
-            ...(this.config.modelCallRecorder
-              ? { modelCallRecorder: this.config.modelCallRecorder }
-              : {}),
             abortSignal,
           });
           setSpanAttributes(span, buildRuntimeUsageTraceAttributes(result.usage));
@@ -1819,9 +1816,6 @@ export class AgentRuntime {
           ...(headers ? { headers } : {}),
           ...(providerOptions ? { providerOptions } : {}),
           ...(reasoning ? { reasoning } : {}),
-          ...(this.config.modelCallRecorder
-            ? { modelCallRecorder: this.config.modelCallRecorder }
-            : {}),
           abortSignal: streamSignal,
         })
       );

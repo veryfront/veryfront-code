@@ -14,6 +14,7 @@ import {
   resolveAgentSkills,
   RuntimeAgentListResponseSchema,
   verifyControlPlaneJws,
+  verifyControlPlaneJwsRequestSignature,
   verifyControlPlaneJwsSignature,
 } from "./control-plane.ts";
 
@@ -401,6 +402,28 @@ describe("channels/control-plane", () => {
           requestMethod: "POST",
           requestPath: CONTROL_PLANE_AGENTS_LIST_PATH,
         }),
+        false,
+      );
+    });
+
+    it("binds the proxy-safe verifier to the exact request body", async () => {
+      const body = JSON.stringify({ runtimeTargetKind: "main_branch" });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body);
+      const options = {
+        audience: "demo-project",
+        expectedProjectId: "proj-1",
+        publicKeyPem,
+        maxAgeSeconds: 60,
+        requestMethod: "POST",
+        requestPath: CONTROL_PLANE_AGENTS_LIST_PATH,
+      };
+
+      assertEquals(
+        await verifyControlPlaneJwsRequestSignature(jws, body, options),
+        true,
+      );
+      assertEquals(
+        await verifyControlPlaneJwsRequestSignature(jws, `${body} `, options),
         false,
       );
     });

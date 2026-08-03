@@ -147,7 +147,7 @@ export class ApiHandlerWrapper extends BaseHandler {
 
           let isPageRequest = false;
           if (canResolveAsPage) {
-            isPageRequest = await this.isPageRequest(pathname, ctx);
+            isPageRequest = await this.isPageRequest(pathname, ctx, req.signal);
           }
 
           if (isPageRequest) {
@@ -192,6 +192,7 @@ export class ApiHandlerWrapper extends BaseHandler {
 
           return this.respond(finalRes);
         } catch (error) {
+          if (req.signal.aborted) throw error;
           this.logDebug(
             "[API-Wrapper] API handler error - falling through to next handler",
             {
@@ -235,7 +236,11 @@ export class ApiHandlerWrapper extends BaseHandler {
     return this.respond(response, { executionTopology: "dedicated-runtime-required" });
   }
 
-  private async isPageRequest(pathname: string, ctx: HandlerContext): Promise<boolean> {
+  private async isPageRequest(
+    pathname: string,
+    ctx: HandlerContext,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
     const slug = pathname === "/" ? "" : pathname.replace(/^\/+|\/+$/g, "");
     const pageResolver = new PageResolver({
       projectDir: ctx.projectDir,
@@ -245,8 +250,9 @@ export class ApiHandlerWrapper extends BaseHandler {
     });
 
     try {
-      return await pageResolver.pageExists(slug);
+      return await pageResolver.pageExists(slug, { signal });
     } catch (error) {
+      if (signal?.aborted) throw error;
       this.logDebug(
         "[API-Wrapper] Page ownership is indeterminate; preserving API discovery",
         {

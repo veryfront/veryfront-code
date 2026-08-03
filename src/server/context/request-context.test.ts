@@ -284,6 +284,20 @@ describe("createRequestContext", () => {
       assertEquals(typeof ctx.token, "string");
     });
 
+    it("disables host-token fallback for shared proxy admission", () => {
+      Deno.env.set("VERYFRONT_API_TOKEN", "host-only-secret");
+      try {
+        const req = makeRequest("https://example.com/page", {
+          host: "example.com",
+          "x-project-slug": "attacker-selected-project",
+        });
+        const ctx = createRequestContext(req, { allowHostTokenFallback: false });
+        assertEquals(ctx.token, "");
+      } finally {
+        Deno.env.delete("VERYFRONT_API_TOKEN");
+      }
+    });
+
     it("defaults slug to empty string when no header and no domain slug", () => {
       const req = makeRequest("https://example.com/page", {
         host: "example.com",

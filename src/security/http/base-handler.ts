@@ -140,9 +140,11 @@ export abstract class BaseHandler implements Handler {
       );
     }
 
-    // Framework-owned token: bypass project env overlay so proxy mode works
-    // when a remote project overlay is active.
-    const effectiveToken = ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "";
+    // Credential selection happens once at request admission. Falling back to
+    // the process token here would combine attacker-selected tenant identity
+    // with a host credential on routes that reached this helper without a
+    // trusted proxy context.
+    const effectiveToken = ctx.proxyToken || "";
     const fsWrapper = ctx.adapter.fs as {
       setRequestToken?: (t: string) => void;
       setRequestBranch?: (b: string | null) => void;

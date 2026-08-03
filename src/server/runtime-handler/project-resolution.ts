@@ -19,6 +19,7 @@ import { SpanNames, withSpan } from "./tracing.ts";
 import { isInternalHost } from "./request-utils.ts";
 import { getEffectiveRequestHost } from "../utils/request-host.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { decodeIdentityHeaderValue } from "#veryfront/utils/header-identity.ts";
 
 const baseLogger = getBaseLogger("SERVER");
 
@@ -61,10 +62,14 @@ interface RequestHeaders {
   branchId: string | undefined;
   /** Branch name from x-branch-name header */
   branchName: string | undefined;
+  /** Project default branch name from x-default-branch-name header */
+  defaultBranchName: string | undefined;
   /** Environment from x-environment header */
   environment: string | undefined;
   /** Environment ID from x-environment-id header (for env var resolution) */
   environmentId: string | undefined;
+  /** Canonical environment name paired with x-environment-id by the trusted proxy */
+  environmentName: string | undefined;
   /** Token from authorization header */
   token: string | undefined;
   /** Content source ID from x-content-source-id header */
@@ -79,9 +84,8 @@ function trustForwardedHeaders(): boolean {
 
 function getEffectiveHost(req: Request, url: URL, proxyTrusted?: boolean): string {
   // x-forwarded-host is client-controlled and only trustworthy behind a trusted
-  // upstream proxy. Honour it only after the operator opt-in or a verified
-  // dispatch JWS, matching createRequestContext; otherwise fall back to Host.
-  // The runtime handler performs async verification and passes the result here.
+  // upstream proxy. Honour it only after the operator opt-in; otherwise fall
+  // back to Host. Signed application requests are not general proxy authority.
   return getEffectiveRequestHost(req, url, proxyTrusted ?? trustForwardedHeaders());
 }
 
@@ -97,28 +101,43 @@ export function extractRequestHeaders(
   req: Request,
   url: URL,
   proxyTrusted?: boolean,
+  identityHeadersTrusted = trustForwardedHeaders(),
 ): RequestHeaders {
   const host = getEffectiveHost(req, url, proxyTrusted);
   const parsedDomain = parseProjectDomain(host);
   const projectSlugHeader = req.headers.get("x-project-slug")?.trim() || undefined;
-  // The WebSocket endpoint uses this query parameter for its existing HMR
-  // handshake. Other routes must not let client-controlled query/header values
-  // override the host-derived environment unless a trusted proxy supplied them.
-  const websocketEnvironment = url.pathname === "/_ws"
-    ? url.searchParams.get("x-environment") ?? undefined
-    : undefined;
+  // Routing identity supplied in a header or query is meaningful only behind
+  // the operator-declared sanitising edge. WebSocket query parameters are
+  // browser-controlled and must not independently unlock preview behavior.
   const environment = (proxyTrusted ?? trustForwardedHeaders())
     ? req.headers.get("x-environment") ?? url.searchParams.get("x-environment") ?? undefined
-    : websocketEnvironment;
+    : undefined;
 
+  // `x-release-id`, `x-content-source-id`, and `x-project-path` are read
+  // without the identity-trust gate deliberately: local single-project and
+  // eval flows supply them directly, `x-project-path` is re-guarded by the
+  // adapter factory behind the same proxy trust check, and proxy mode rejects
+  // every untrusted request outright in createProxyGuard before these values
+  // can select tenant identity. Do not add tenant-identity headers here
+  // without gating them on identityHeadersTrusted.
   return {
     projectSlug: projectSlugHeader ?? parsedDomain.slug ?? undefined,
-    projectId: req.headers.get("x-project-id") ?? undefined,
+    projectId: identityHeadersTrusted ? req.headers.get("x-project-id") ?? undefined : undefined,
     releaseId: req.headers.get("x-release-id") ?? undefined,
-    branchId: req.headers.get("x-branch-id") ?? undefined,
-    branchName: req.headers.get("x-branch-name") ?? undefined,
+    branchId: identityHeadersTrusted ? req.headers.get("x-branch-id") ?? undefined : undefined,
+    branchName: identityHeadersTrusted
+      ? decodeIdentityHeaderValue(req.headers.get("x-branch-name"))?.trim() || undefined
+      : undefined,
+    defaultBranchName: identityHeadersTrusted
+      ? decodeIdentityHeaderValue(req.headers.get("x-default-branch-name"))?.trim() || undefined
+      : undefined,
     environment,
-    environmentId: req.headers.get("x-environment-id") ?? undefined,
+    environmentId: identityHeadersTrusted
+      ? req.headers.get("x-environment-id") ?? undefined
+      : undefined,
+    environmentName: identityHeadersTrusted
+      ? req.headers.get("x-environment-name")?.trim() || undefined
+      : undefined,
     token: undefined, // Extracted separately from request context
     contentSourceId: req.headers.get("x-content-source-id") ?? undefined,
     projectPath: req.headers.get("x-project-path") ?? undefined,
@@ -196,7 +215,7 @@ export async function resolveProject(
   let projectId: string | undefined = headers.projectId ??
     (slugMatchesDefault ? opts.defaultProjectId : undefined);
   let releaseId: string | undefined = headers.releaseId ?? opts.defaultReleaseId;
-  let environmentName: string | undefined;
+  let environmentName: string | undefined = headers.environmentName;
   let proxyEnv = parseProxyEnvironment(headers.environment ?? null);
 
   const shouldSkipDomainLookup = isInternalHost(host);

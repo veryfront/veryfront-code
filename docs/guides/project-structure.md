@@ -4,9 +4,10 @@ description: "Where to put routes, AI primitives, shared code, and configuration
 order: 8
 ---
 
-A Veryfront project keeps routes in `app/` or `pages/`. Keep AI primitives at
-the project root: `agents/`, `tools/`, `prompts/`, `workflows/`, `resources/`,
-and `skills/`. Veryfront discovers those directories on startup.
+A Veryfront project keeps routes in `app/` or `pages/`. Keep runtime primitives
+at the project root: `agents/`, `tools/`, `prompts/`, `workflows/`,
+`resources/`, `skills/`, `tasks/`, `schedules/`, `webhooks/`, and `evals/`.
+Veryfront discovers those directories on startup.
 
 The examples use the default app router. Set `router: "pages"` in
 `veryfront.config.ts` to use the pages router.
@@ -50,6 +51,10 @@ my-app/
         triage.sh
       assets/
         checklist.txt
+  tasks/                # Background task definitions (auto-discovered)
+  schedules/            # Schedule definitions (auto-discovered)
+  webhooks/             # Webhook trigger definitions (auto-discovered)
+  evals/                # Agent and workflow eval definitions (auto-discovered)
   components/           # Shared React components
     Header.tsx
   lib/                  # Shared utilities
@@ -102,8 +107,8 @@ dynamic params, and MDX.
 ## Auto-discovered directories
 
 These directories are scanned automatically at startup.
-For TypeScript-based primitives, files with a default export are registered.
-For skills, directories containing `SKILL.md` are registered.
+For TypeScript-based primitives, valid default or named exports are registered.
+For skills, immediate child directories containing `SKILL.md` are registered.
 
 | Directory    | Purpose                           | Import                           |
 | ------------ | --------------------------------- | -------------------------------- |
@@ -113,14 +118,22 @@ For skills, directories containing `SKILL.md` are registered.
 | `workflows/` | Multi-step workflow DAGs          | `veryfront/workflow`             |
 | `resources/` | MCP-exposable resources           | `veryfront/resource`             |
 | `skills/`    | Skill packs advertised to agents  | Loaded with built-in skill tools |
+| `tasks/`     | Background task definitions       | `veryfront/task`                 |
+| `schedules/` | Scheduled trigger definitions     | `veryfront/schedule`             |
+| `webhooks/`  | Webhook trigger definitions       | `veryfront/webhook`              |
+| `evals/`     | Agent and workflow evaluations    | `veryfront/eval`                 |
 
-TypeScript primitives are registered from their exported definitions. Agents can
-use the filename as the ID when no explicit ID is provided.
+TypeScript primitives are registered from their exported definitions. Discovery
+scans `.ts` and `.tsx` files. Agents can use the filename as the ID when no
+explicit ID is provided.
 
 Agent discovery also supports `agents/assistant.md`. Use frontmatter for
 metadata and the markdown body for system instructions.
 
-For skills, the directory name is the skill ID. For example, `skills/incident-response/SKILL.md` registers as `"incident-response"`.
+For skills, the directory name is always the skill ID; a differing legacy or
+display-style frontmatter `name` is treated as presentation metadata and never
+changes lookup. For example, `skills/incident-response/SKILL.md` registers as
+`"incident-response"`.
 
 Verify discovery by starting the dev server after adding an agent, tool, or
 workflow:

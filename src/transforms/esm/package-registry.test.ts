@@ -583,6 +583,35 @@ describe("package-registry adapter-backed snapshot sources", () => {
     );
   });
 
+  it("never treats a missing mtime as package-version freshness authority", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
+    let content = JSON.stringify({ dependencies: { react: "19.1.0" } });
+    let reads = 0;
+    const source: DependencyPinningSource = {
+      projectDir: "/shared/proxy-project",
+      cacheNamespace: "missing-mtime-freshness",
+      fs: {
+        readFile: () => {
+          reads += 1;
+          return Promise.resolve(content);
+        },
+        stat: () =>
+          Promise.resolve({
+            size: content.length,
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            mtime: null,
+          }),
+      },
+    };
+
+    assertEquals((await readProjectDependencyVersions(source)).react, "19.1.0");
+    content = JSON.stringify({ dependencies: { react: "19.2.0" } });
+    assertEquals((await readProjectDependencyVersions(source)).react, "19.2.0");
+    assertEquals(reads, 2);
+  });
+
   it("captures config versions in the token and keeps historical config authoritative", async () => {
     const state = {
       content: JSON.stringify({ dependencies: { tenant: "1.0.0" } }),

@@ -9,6 +9,7 @@
 
 import { getBaseLogger, type RequestContext, runWithRequestContextAsync } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { inheritRequestPeerProvenance } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getConfig } from "#veryfront/config/loader.ts";
 import { errorToRFC9457Response, getErrorMessage, UNKNOWN_ERROR } from "#veryfront/errors";
@@ -67,6 +68,12 @@ import { ProjectRunExecuteHandler } from "../handlers/request/project-run-execut
 import { ChannelInvokeHandler } from "../handlers/request/channel-invoke.handler.ts";
 import { DevDashboardHandler } from "../handlers/dev/dashboard/index.ts";
 import { ProjectsHandler } from "../handlers/dev/projects/index.ts";
+import { tryResolve } from "veryfront/extensions";
+import {
+  type DevUiAssetProvider,
+  DevUiAssetProviderName,
+  snapshotDevUiAssetProvider,
+} from "#veryfront/extensions/dev-ui";
 
 // Extracted modules
 import {
@@ -92,7 +99,6 @@ import {
 } from "./request-lifecycle.ts";
 import {
   checkRequestIsolation,
-  completeIsolatedRequest,
   completeIsolatedRequestOnSettlement,
   createIsolationErrorResponse,
   startIsolatedRequest,
@@ -183,6 +189,20 @@ export interface HandlerDependencies {
   debug?: boolean;
 }
 
+/**
+ * Resolve the registered development UI asset provider, if an extension
+ * provided one during bootstrap. Handlers degrade gracefully (fail closed)
+ * when no provider is registered, e.g. in tests without extension setup.
+ *
+ * The snapshot is taken once at handler-registry construction and is not
+ * refreshed across bootstrap regenerations; a provider registered by a later
+ * extension generation is only picked up by a new registry.
+ */
+function resolveDevUiAssetProvider(): Readonly<DevUiAssetProvider> | undefined {
+  const provider = tryResolve<unknown>(DevUiAssetProviderName);
+  return provider === undefined ? undefined : snapshotDevUiAssetProvider(provider);
+}
+
 /** Factory for each handler. Only called when no override is provided (lazy instantiation). */
 const handlerFactories: Record<
   HandlerName,
@@ -209,8 +229,8 @@ const handlerFactories: Record<
   AgentRunCancelHandler: () => new AgentRunCancelHandler(),
   ProjectRunExecuteHandler: () => new ProjectRunExecuteHandler(),
   ChannelInvokeHandler: () => new ChannelInvokeHandler(),
-  DevDashboardHandler: () => new DevDashboardHandler(),
-  ProjectsHandler: () => new ProjectsHandler(),
+  DevDashboardHandler: () => new DevDashboardHandler(resolveDevUiAssetProvider()),
+  ProjectsHandler: () => new ProjectsHandler(resolveDevUiAssetProvider()),
   StudioBridgeModulesHandler: () => new StudioBridgeModulesHandler(),
   ProdHydrationModuleHandler: () => new ProdHydrationModuleHandler(),
   CSSHandler: () => new CSSHandler(),
@@ -334,8 +354,8 @@ export function createVeryfrontHandler(
   // Per-project environment variable cache (fetches from API, caches with 60s TTL)
   const apiBaseUrl = adapter.env.get("VERYFRONT_API_BASE_URL") ?? "https://api.veryfront.com/api";
   const envVarCache = new EnvironmentVariableCache(
-    (environmentId, token, projectSlug) =>
-      fetchProjectEnvVars(apiBaseUrl, projectSlug, environmentId, token),
+    ({ environmentId, token, projectSlug }, signal) =>
+      fetchProjectEnvVars(apiBaseUrl, projectSlug, environmentId, token, signal),
   );
 
   let config: VeryfrontConfig | undefined = opts.config;
@@ -393,7 +413,6 @@ export function createVeryfrontHandler(
       req,
       url,
       isProxyMode,
-      adapterEnv: adapter.env,
     });
     const { headers, requestContext: reqCtx } = preparedRequest;
     const { proxyTrusted } = preparedRequest.proxyTrust;
@@ -419,6 +438,26 @@ export function createVeryfrontHandler(
     return runWithRequestContextAsync(loggerContext, async () => {
       const spanInfo = startRequestTracing(req, url.pathname);
       setRequestAttributes(spanInfo.span, req, url);
+
+      // Reject untrusted/malformed proxy identity before any project-keyed
+      // accounting is touched. In particular, isolation creates per-slug
+      // state on first access; admitting attacker-controlled slugs there would
+      // let rejected requests grow shared-process state indefinitely.
+      if (preparedRequest.proxyGuard) {
+        try {
+          logger.warn(preparedRequest.proxyGuard.detail, {
+            pathname: url.pathname,
+            domain: preparedRequest.loggerFacts.domain,
+            projectSlug: headers.projectSlug,
+            host: req.headers.get("host"),
+            forwardedHost: req.headers.get("x-forwarded-host"),
+          });
+          endRequestTracing(spanInfo.span, preparedRequest.proxyGuard.response.status);
+          return preparedRequest.proxyGuard.response;
+        } finally {
+          endRequestLifecycle(lifecycle);
+        }
+      }
 
       startRequestTracking(
         lifecycle.requestId,
@@ -453,25 +492,6 @@ export function createVeryfrontHandler(
       startIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation);
 
       try {
-        if (preparedRequest.proxyGuard) {
-          logger.warn(preparedRequest.proxyGuard.detail, {
-            pathname: url.pathname,
-            domain: preparedRequest.loggerFacts.domain,
-            projectSlug: headers.projectSlug,
-            host: req.headers.get("host"),
-            forwardedHost: req.headers.get("x-forwarded-host"),
-          });
-          endContentMetrics({
-            requestId: lifecycle.requestId,
-            pathname: url.pathname,
-            mode: "proxy",
-          });
-          completeRequestTracking(lifecycle.requestId, 502, false);
-          completeIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation, false);
-          endRequestTracing(spanInfo.span, 502);
-          return preparedRequest.proxyGuard.response;
-        }
-
         const profileCategory = url.pathname.startsWith("/_vf_styles/")
           ? "css"
           : url.pathname.startsWith("/_vf_modules/")
@@ -500,7 +520,10 @@ export function createVeryfrontHandler(
               await configPromise;
             }));
 
-          const wsSlugOverride = url.searchParams.get("x-project-slug") || undefined;
+          // Browser-controlled WebSocket query parameters cannot select tenant
+          // identity. Local development uses the configured default project;
+          // hosted requests use the edge-derived header or routed host.
+          const wsSlugOverride = undefined;
 
           // Resolve project from various sources
           const projectRes = await profilePhase(
@@ -637,7 +660,7 @@ export function createVeryfrontHandler(
             // closes with an unexpected EOF.
             const timeoutRequest = isHMRWebSocketUpgrade(req, url.pathname)
               ? req
-              : new Request(req, { signal });
+              : inheritRequestPeerProvenance(req, new Request(req, { signal }));
             return runWithRequestProfiling(
               {
                 category: profileCategory,

@@ -60,5 +60,34 @@ describe("GitHubDirectoryOperations", () => {
     it("should return empty array for non-existent directory", () => {
       assertEquals(createOps().readdir("/non-existent"), []);
     });
+
+    it("isolates directory cache entries by repository", () => {
+      const cache = new FileCache();
+      const first = new GitHubDirectoryOperations(
+        mockConfig,
+        cache,
+        {
+          isDirectory: () => true,
+          getFilesInDirectory: () => [
+            { path: "src/first.ts", sha: "first", size: 1, type: "blob" },
+          ],
+          getSubdirectories: () => [],
+        } as any,
+      );
+      const second = new GitHubDirectoryOperations(
+        { ...mockConfig, repo: "other-repo" },
+        cache,
+        {
+          isDirectory: () => true,
+          getFilesInDirectory: () => [
+            { path: "src/second.ts", sha: "second", size: 1, type: "blob" },
+          ],
+          getSubdirectories: () => [],
+        } as any,
+      );
+
+      assertEquals(first.readdir("src")[0]?.name, "first.ts");
+      assertEquals(second.readdir("src")[0]?.name, "second.ts");
+    });
   });
 });

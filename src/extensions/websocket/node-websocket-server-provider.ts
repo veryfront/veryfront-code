@@ -1,9 +1,9 @@
 /**
  * Dependency-free contract for Node.js WebSocket server implementations.
  *
- * Core owns HTTP upgrade authorization and lifecycle. An explicitly composed
- * extension owns the protocol implementation used to complete an authorized
- * upgrade on an existing Node socket.
+ * Core owns HTTP upgrade authorization and lifecycle. An extension owns the
+ * protocol implementation used to complete an authorized upgrade on an
+ * existing Node socket.
  */
 
 import { types as nodeUtilTypes } from "node:util";
@@ -11,7 +11,7 @@ import { types as nodeUtilTypes } from "node:util";
 export const NodeWebSocketServerProviderName = "NodeWebSocketServerProvider";
 export const NODE_WEBSOCKET_SERVER_PROVIDER_PACKAGE = "@veryfront/ext-node-websocket-ws";
 export const NODE_WEBSOCKET_SERVER_PROVIDER_MISSING_MESSAGE =
-  `Node.js WebSocket upgrades require an explicitly enabled ${NODE_WEBSOCKET_SERVER_PROVIDER_PACKAGE} extension.`;
+  `Node.js WebSocket upgrades require ${NODE_WEBSOCKET_SERVER_PROVIDER_PACKAGE}; install it or remove the extension disable directive.`;
 
 const isProxy = nodeUtilTypes.isProxy;
 

@@ -43,6 +43,7 @@ const validationEnvKeys = [
   "PROXY_MODE",
   "VERYFRONT_CLI_LOCAL_PROXY_MODE",
   "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY",
+  "VERYFRONT_TRUST_FORWARDED_HEADERS",
 ] as const;
 const originalValidationEnv = new Map(
   validationEnvKeys.map((key) => [key, Deno.env.get(key)]),
@@ -299,6 +300,7 @@ describe("validateProductionEnvironmentForTests()", () => {
     Deno.env.set("NODE_ENV", "staging");
     Deno.env.delete("DENO_ENV");
     Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", "test-public-key");
+    Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
 
     const warnings = captureWarns(() => validateProductionEnvironmentForTests());
 
@@ -307,6 +309,21 @@ describe("validateProductionEnvironmentForTests()", () => {
       true,
     );
     assertEquals(warnings.some((message) => message.includes("%s")), false);
+  });
+
+  it("rejects hosted proxy mode without an explicit trusted topology", () => {
+    Deno.env.set("PROXY_MODE", "1");
+    Deno.env.delete("VERYFRONT_CLI_LOCAL_PROXY_MODE");
+    Deno.env.set("NODE_ENV", "production");
+    Deno.env.delete("DENO_ENV");
+    Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", "test-public-key");
+    Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+
+    assertThrows(
+      () => validateProductionEnvironmentForTests(),
+      Error,
+      "VERYFRONT_TRUST_FORWARDED_HEADERS must be exactly '1'",
+    );
   });
 });
 

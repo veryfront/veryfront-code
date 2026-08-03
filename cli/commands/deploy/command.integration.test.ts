@@ -13,6 +13,7 @@ import type { DeploymentRoutingConvergence } from "../../shared/deployment/contr
 import { FakeTime } from "#std/testing/time";
 import { stripAnsi } from "../../ui/ansi.ts";
 import { setVerboseMode } from "../../utils/index.ts";
+import { RELEASE_ASSET_MANIFEST_SCHEMA_VERSION } from "veryfront/release-assets";
 
 /**
  * The real Deploy Execution module with test-bounded polling: these suites
@@ -209,20 +210,20 @@ function createDeployFetchHandler(options: {
         state: "ready",
         manifest_version: 1,
         manifest: {
-          schemaVersion: 1,
+          schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
           projectId: PROJECT_ID,
           releaseId: RELEASE_ID,
           releaseVersion: 41,
           manifestVersion: 1,
           builderVersion: "test",
-          sourceContentHash: options.sourceDigest,
+          sourceContentHash: options.sourceDigest.slice("sha256:".length),
           createdAt: "2026-07-10T09:20:00.000Z",
           assetBasePath: "/_vf/assets",
           modules: {},
           css: [],
           routes: {},
+          dependencyMode: "source",
           dependencies: {},
-          fallback: { mode: "jit", gaps: [] },
         },
       });
     }
@@ -838,13 +839,13 @@ it("uses canonical production read-back in human and JSON modes", async () => {
           state: "ready",
           manifest_version: 1,
           manifest: {
-            schemaVersion: 1,
+            schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
             projectId: PROJECT_ID,
             releaseId: RELEASE_ID,
             releaseVersion: 41,
             manifestVersion: 1,
             builderVersion: "test",
-            sourceContentHash: sourceDigest,
+            sourceContentHash: sourceDigest.slice("sha256:".length),
             createdAt: "2026-07-10T09:20:00.000Z",
             assetBasePath: "/_vf/assets",
             modules: {
@@ -858,10 +859,11 @@ it("uses canonical production read-back in human and JSON modes", async () => {
             routes: {
               "/dashboard": {
                 modules: ["pages/dashboard.tsx"],
+                css: [],
               },
             },
+            dependencyMode: "source",
             dependencies: {},
-            fallback: { mode: "jit", gaps: [] },
           },
         });
       }
@@ -1064,7 +1066,10 @@ it("uses canonical production read-back in human and JSON modes", async () => {
       await time.tickAsync(0);
       for (
         let tick = 0;
-        releaseSourceReads < 20 && tick < 40;
+        // The deploy flow now does more pre-mutation verification before this
+        // poll starts. Keep the read budget fixed at 20, but allow enough fake
+        // clock ticks for the async chain to issue all reads under load.
+        releaseSourceReads < 20 && tick < 60;
         tick++
       ) {
         await time.tickAsync(500);
@@ -1208,13 +1213,13 @@ it("deploys production from a dirty worktree when the pushed digest matches the 
           state: "ready",
           manifest_version: 1,
           manifest: {
-            schemaVersion: 1,
+            schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
             projectId: PROJECT_ID,
             releaseId: RELEASE_ID,
             releaseVersion: 41,
             manifestVersion: 1,
             builderVersion: "test",
-            sourceContentHash: sourceDigest,
+            sourceContentHash: sourceDigest.slice("sha256:".length),
             createdAt: "2026-07-10T09:20:00.000Z",
             assetBasePath: "/_vf/assets",
             modules: {
@@ -1228,10 +1233,11 @@ it("deploys production from a dirty worktree when the pushed digest matches the 
             routes: {
               "/dashboard": {
                 modules: ["pages/dashboard.tsx"],
+                css: [],
               },
             },
+            dependencyMode: "source",
             dependencies: {},
-            fallback: { mode: "jit", gaps: [] },
           },
         });
       }
@@ -1569,20 +1575,20 @@ it("uses an alternative slug when inferred first deploy project creation conflic
           state: "ready",
           manifest_version: 1,
           manifest: {
-            schemaVersion: 1,
+            schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
             projectId: PROJECT_ID,
             releaseId: RELEASE_ID,
             releaseVersion: 41,
             manifestVersion: 1,
             builderVersion: "test",
-            sourceContentHash: sourceDigest,
+            sourceContentHash: sourceDigest.slice("sha256:".length),
             createdAt: "2026-07-10T09:20:00.000Z",
             assetBasePath: "/_vf/assets",
             modules: {},
             css: [],
             routes: {},
+            dependencyMode: "source",
             dependencies: {},
-            fallback: { mode: "jit", gaps: [] },
           },
         });
       }
@@ -1754,20 +1760,20 @@ it("collects configured app and pages routes when projectDir has a trailing slas
           state: "ready",
           manifest_version: 1,
           manifest: {
-            schemaVersion: 1,
+            schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
             projectId: PROJECT_ID,
             releaseId: RELEASE_ID,
             releaseVersion: 41,
             manifestVersion: 1,
             builderVersion: "test",
-            sourceContentHash: sourceDigest,
+            sourceContentHash: sourceDigest.slice("sha256:".length),
             createdAt: "2026-07-10T09:20:00.000Z",
             assetBasePath: "/_vf/assets",
             modules: {},
             css: [],
             routes: {},
+            dependencyMode: "source",
             dependencies: {},
-            fallback: { mode: "jit", gaps: [] },
           },
         }));
       }

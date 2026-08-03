@@ -18,7 +18,12 @@ import {
   type VeryfrontRunsClient,
 } from "veryfront/runs";
 import { discoverSchedules, type ScheduleDefinition } from "veryfront/schedule";
-import { runTriggerTarget, type TriggerTarget } from "veryfront/trigger";
+import {
+  isTriggerId,
+  isTriggerTarget,
+  runTriggerTarget,
+  type TriggerTarget,
+} from "veryfront/trigger";
 import { outputTriggerList, outputTriggerRun, readJsonFile } from "../trigger-utils.ts";
 
 const REMOTE_SCHEDULE_POLL_INTERVAL_MS = 1_000;
@@ -26,6 +31,10 @@ const REMOTE_SCHEDULE_TIMEOUT_GRACE_MS = 30_000;
 // Bound how long the CLI waits for dispatch without consuming the cloud run's
 // execution budget. The run remains durable in Veryfront if this wait expires.
 const REMOTE_SCHEDULE_QUEUE_WAIT_TIMEOUT_MS = 5 * 60_000;
+// Deno and Node both clamp longer setTimeout delays. Chaining bounded chunks
+// preserves the authored timeout instead of firing early after host coercion.
+const MAX_HOST_TIMER_DELAY_MS = 2 ** 31 - 1;
+const MAX_TIMER_DELAY_SECONDS = Math.floor(MAX_HOST_TIMER_DELAY_MS / 1_000);
 
 const getScheduleArgsSchema = defineSchema((v) =>
   v.object({
@@ -76,11 +85,99 @@ interface RemoteSchedulePollOptions {
   sleep?: (delayMs: number) => Promise<void>;
 }
 
+interface LocalScheduleTimeoutOptions {
+  maxDelaySeconds?: number;
+  setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
+  clearTimer?: (timerId: ReturnType<typeof setTimeout>) => void;
+}
+
+export interface LocalScheduleTimeout {
+  readonly signal: AbortSignal | undefined;
+  dispose(): void;
+}
+
+/**
+ * Create a disposable cooperative timeout for one local schedule execution.
+ *
+ * Long durations are armed in bounded chunks so timer coercion cannot shorten
+ * the configured deadline.
+ */
+export function createLocalScheduleTimeout(
+  timeoutSeconds: number | undefined,
+  options: LocalScheduleTimeoutOptions = {},
+): LocalScheduleTimeout {
+  if (timeoutSeconds === undefined) {
+    return { signal: undefined, dispose() {} };
+  }
+  if (!Number.isSafeInteger(timeoutSeconds) || timeoutSeconds <= 0) {
+    throw new TypeError("Local schedule timeout must be a positive safe integer.");
+  }
+
+  const maxDelaySeconds = options.maxDelaySeconds ?? MAX_TIMER_DELAY_SECONDS;
+  if (!Number.isSafeInteger(maxDelaySeconds) || maxDelaySeconds <= 0) {
+    throw new TypeError("Local schedule timer chunk must be a positive safe integer.");
+  }
+
+  const setTimer = options.setTimer ?? globalThis.setTimeout;
+  const clearTimer = options.clearTimer ?? globalThis.clearTimeout;
+  const controller = new AbortController();
+  let remainingSeconds = timeoutSeconds;
+  let timerId: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
+
+  const armNextChunk = (): void => {
+    if (disposed || controller.signal.aborted) return;
+    const delaySeconds = Math.min(remainingSeconds, maxDelaySeconds);
+    remainingSeconds -= delaySeconds;
+    timerId = setTimer(() => {
+      timerId = undefined;
+      if (disposed) return;
+      if (remainingSeconds > 0) {
+        armNextChunk();
+        return;
+      }
+      controller.abort(
+        new DOMException(
+          "Local schedule execution exceeded its configured timeout.",
+          "TimeoutError",
+        ),
+      );
+    }, delaySeconds * 1_000);
+  };
+
+  armNextChunk();
+  return {
+    signal: controller.signal,
+    dispose(): void {
+      disposed = true;
+      if (timerId !== undefined) {
+        clearTimer(timerId);
+        timerId = undefined;
+      }
+    },
+  };
+}
+
+export function normalizeLocalScheduleInput(value: unknown): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw INVALID_ARGUMENT.create({
+      detail: "--input JSON file must contain a JSON object.",
+    });
+  }
+  return value as Record<string, unknown>;
+}
+
 export async function waitForRemoteScheduleRun(
   client: Pick<VeryfrontRunsClient, "get">,
   accepted: CreateScheduleRunFromSourceResult,
   options: RemoteSchedulePollOptions = {},
 ): Promise<Run> {
+  if (
+    !Number.isSafeInteger(accepted.timeoutSeconds) ||
+    accepted.timeoutSeconds <= 0
+  ) {
+    throw new Error("Remote schedule returned an invalid execution timeout.");
+  }
   const now = options.now ?? Date.now;
   const sleep = options.sleep ??
     ((delayMs: number) => new Promise((resolve) => setTimeout(resolve, delayMs)));
@@ -109,7 +206,8 @@ export async function waitForRemoteScheduleRun(
       throw DEPLOYMENT_ERROR.create({ detail: `Scheduled run was cancelled: ${runId}` });
     }
     const recordedTimeoutSeconds = run.timeout_seconds;
-    const executionTimeoutSeconds = recordedTimeoutSeconds !== null &&
+    const executionTimeoutSeconds = Number.isSafeInteger(recordedTimeoutSeconds) &&
+        recordedTimeoutSeconds !== null &&
         recordedTimeoutSeconds > 0
       ? recordedTimeoutSeconds
       : accepted.timeoutSeconds;
@@ -141,15 +239,22 @@ export function formatRemoteScheduleRunOutput(run: Run): Record<string, unknown>
 }
 
 export function resolveRemoteScheduleTarget(run: Run, fallback: TriggerTarget): TriggerTarget {
-  if (!run.target) return fallback;
+  const fallbackTarget = isTriggerTarget(fallback) ? { ...fallback } : null;
+  if (!run.target) {
+    if (fallbackTarget !== null) return fallbackTarget;
+    throw new Error("Remote schedule returned an invalid target.");
+  }
   const separator = run.target.indexOf(":");
-  if (separator < 1) return fallback;
+  if (separator < 1) {
+    if (fallbackTarget !== null) return fallbackTarget;
+    throw new Error("Remote schedule returned an invalid target.");
+  }
   const kind = run.target.slice(0, separator);
   const id = run.target.slice(separator + 1).trim();
-  if ((kind !== "agent" && kind !== "task" && kind !== "workflow") || id.length === 0) {
-    return fallback;
-  }
-  return { kind, id };
+  const candidate = { kind, id };
+  if (isTriggerTarget(candidate)) return candidate;
+  if (fallbackTarget !== null) return fallbackTarget;
+  throw new Error("Remote schedule returned an invalid target.");
 }
 
 async function runRemoteSchedule(
@@ -167,6 +272,9 @@ async function runRemoteSchedule(
     sourceTriggerId: opts.id,
     idempotencyKey: `schedule-cli:${crypto.randomUUID()}`,
   });
+  if (!isTriggerTarget(accepted.target)) {
+    throw new Error("Remote schedule returned an invalid target.");
+  }
   const remoteRun = await waitForRemoteScheduleRun(
     client,
     accepted,
@@ -195,7 +303,10 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
   }
 
   const projectDir = Deno.cwd();
-  if (opts.remote && opts.input) {
+  if (!isTriggerId(opts.id)) {
+    throw INVALID_ARGUMENT.create({ detail: `Invalid schedule id: "${opts.id}".` });
+  }
+  if (opts.remote && opts.input !== undefined) {
     throw INVALID_ARGUMENT.create({
       detail:
         "Remote schedule runs use the source already pushed to Veryfront and do not accept --input.",
@@ -209,7 +320,9 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
 
   await withProjectSourceContext(projectDir, async (context) => {
     const { adapter, config, configCacheKey, projectId } = context;
-    const input = opts.input ? await readJsonFile(opts.input, "--input JSON file") : undefined;
+    const input = opts.input !== undefined
+      ? await readJsonFile(opts.input, "--input JSON file")
+      : undefined;
     const result = await discoverSchedules({
       projectDir,
       adapter,
@@ -227,11 +340,10 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
       throw RESOURCE_NOT_FOUND.create({ detail: `Schedule "${opts.id}" not found.` });
     }
 
-    const triggerInput = input ?? schedule.input ?? {};
-    const scheduleConfig =
-      triggerInput && typeof triggerInput === "object" && !Array.isArray(triggerInput)
-        ? triggerInput as Record<string, unknown>
-        : {};
+    const triggerInput = normalizeLocalScheduleInput(
+      opts.input === undefined ? schedule.input ?? {} : input,
+    );
+    const scheduleConfig = triggerInput;
     const scheduleName = schedule.name ?? schedule.id;
     const scheduleTarget = scheduleConfig._schedule_target;
     const conversationMode = scheduleTarget && typeof scheduleTarget === "object" &&
@@ -258,17 +370,25 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
       }
       : {};
 
-    const run = await runTriggerTarget({
-      projectDir,
-      adapter,
-      config,
-      cacheKey: configCacheKey,
-      projectId,
-      target: schedule.target,
-      input: triggerInput,
-      ...agentRunOptions,
-      debug: opts.debug,
-    });
+    const timeout = createLocalScheduleTimeout(schedule.timeoutSeconds);
+    const run = await (async () => {
+      try {
+        return await runTriggerTarget({
+          projectDir,
+          adapter,
+          config,
+          cacheKey: configCacheKey,
+          projectId,
+          target: schedule.target,
+          input: triggerInput,
+          ...agentRunOptions,
+          signal: timeout.signal,
+          debug: opts.debug,
+        });
+      } finally {
+        timeout.dispose();
+      }
+    })();
 
     await outputTriggerRun({
       command: "schedule",
@@ -277,8 +397,6 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
       output: run.output,
       durationMs: run.durationMs,
     });
-  }).catch((error: unknown) => {
-    throw error;
   });
 
   exitProcess(0);

@@ -22,6 +22,7 @@ function extractProxyHeaders(req: Request): Record<string, string | null> {
     "x-project-slug": req.headers.get("x-project-slug"),
     "x-environment": req.headers.get("x-environment"),
     "x-environment-id": req.headers.get("x-environment-id"),
+    "x-environment-name": req.headers.get("x-environment-name"),
     "x-content-source-id": req.headers.get("x-content-source-id"),
     "x-forwarded-host": req.headers.get("x-forwarded-host"),
     "x-project-path": req.headers.get("x-project-path"),
@@ -29,6 +30,7 @@ function extractProxyHeaders(req: Request): Record<string, string | null> {
     "x-release-id": req.headers.get("x-release-id"),
     "x-branch-id": req.headers.get("x-branch-id"),
     "x-branch-name": req.headers.get("x-branch-name"),
+    "x-default-branch-name": req.headers.get("x-default-branch-name"),
   };
 }
 
@@ -206,6 +208,7 @@ describe("Proxy-Renderer Mode Parity", () => {
           "x-project-path": "/tmp/attacker",
           "x-token": "attacker-token",
           "x-environment": "production",
+          "x-default-branch-name": "attacker-default",
         },
       });
 
@@ -214,6 +217,7 @@ describe("Proxy-Renderer Mode Parity", () => {
       assertEquals(injected.headers.get("x-project-path"), null);
       assertEquals(injected.headers.get("x-token"), null);
       assertEquals(injected.headers.get("x-environment"), "preview");
+      assertEquals(injected.headers.get("x-default-branch-name"), null);
     });
 
     it("replaces every internal proxy header with proxy-derived values", () => {
@@ -225,6 +229,7 @@ describe("Proxy-Renderer Mode Parity", () => {
         branchId: "branch-id",
         branchName: "feature-branch",
         environmentId: "env-id",
+        environmentName: "production",
         environment: "production",
         contentSourceId: "release-rel-id",
         host: "proj.production.veryfront.com",
@@ -257,6 +262,7 @@ describe("Proxy-Renderer Mode Parity", () => {
       assertEquals(headers["x-project-slug"], "proj");
       assertEquals(headers["x-environment"], "production");
       assertEquals(headers["x-environment-id"], "env-id");
+      assertEquals(headers["x-environment-name"], "production");
       assertEquals(headers["x-content-source-id"], "release-rel-id");
       assertEquals(headers["x-forwarded-host"], "proj.production.veryfront.com");
       assertEquals(headers["x-project-path"], null);
@@ -264,7 +270,36 @@ describe("Proxy-Renderer Mode Parity", () => {
       assertEquals(headers["x-release-id"], "rel-id");
       assertEquals(headers["x-branch-id"], "branch-id");
       assertEquals(headers["x-branch-name"], "feature-branch");
+      assertEquals(headers["x-default-branch-name"], null);
       assertEquals(injected.headers.get("accept"), "text/html");
+    });
+
+    it("injects a trusted non-main default branch without preview identity", () => {
+      const ctx: ProxyContext = {
+        projectSlug: "proj",
+        projectId: "proj-id",
+        defaultBranchName: "trunk",
+        environment: "preview",
+        contentSourceId: "preview-trunk",
+        host: "proj.preview.veryfront.com",
+        parsedDomain: {
+          slug: "proj",
+          isVeryfrontDomain: true,
+          environment: "preview",
+          branch: null,
+          isDraft: true,
+          allowIframeEmbed: true,
+        },
+        isLocalProject: false,
+      };
+      const injected = injectContextHeaders(
+        new Request("http://proj.preview.veryfront.com/page"),
+        ctx,
+      );
+
+      assertEquals(injected.headers.get("x-default-branch-name"), "trunk");
+      assertEquals(injected.headers.get("x-branch-id"), null);
+      assertEquals(injected.headers.get("x-branch-name"), null);
     });
 
     it("preserves request cancellation in the injected request", () => {

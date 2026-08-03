@@ -439,7 +439,7 @@ testSuite("WorkerPool", () => {
     await pool.shutdown();
     pool = controlled.pool;
     const projectRoot = Deno.makeTempDirSync({
-      prefix: "worker-pool-ssr-permissions-",
+      prefix: "vf-worker-permissions-project-",
     });
 
     try {
