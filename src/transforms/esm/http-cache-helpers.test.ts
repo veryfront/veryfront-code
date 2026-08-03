@@ -48,6 +48,25 @@ describe("transforms/esm/http-cache-helpers", () => {
       );
     });
 
+    it("does not consult inherited toJSON hooks while fingerprinting", async () => {
+      const original = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+      let first: string;
+      let second: string;
+      try {
+        Object.defineProperty(Array.prototype, "toJSON", {
+          configurable: true,
+          value: () => [],
+        });
+        first = await fingerprintImportMap({ imports: { package: "version-a" } });
+        second = await fingerprintImportMap({ imports: { package: "version-b" } });
+      } finally {
+        if (original) Object.defineProperty(Array.prototype, "toJSON", original);
+        else delete (Array.prototype as unknown as { toJSON?: unknown }).toJSON;
+      }
+
+      assertNotEquals(first, second);
+    });
+
     it("frames URL and React version components without delimiter collisions", async () => {
       const importMap = { imports: {}, scopes: {} };
 

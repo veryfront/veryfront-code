@@ -184,5 +184,34 @@ describe("modules/import-map/loader", () => {
       assert(!("relative" in appScope), "relative path in scope should be filtered");
       assert("absolute" in appScope, "absolute path in scope should be kept");
     });
+
+    it("keeps dependency resolution deterministic after primordial poisoning", async () => {
+      const worker = new Worker(
+        new URL("./loader-primordial-poisoning.worker.ts", import.meta.url),
+        { type: "module" },
+      );
+      try {
+        const result = await new Promise<{
+          denoOnly: string | undefined;
+          package: string | undefined;
+          react: string | undefined;
+        }>((resolve, reject) => {
+          worker.onmessage = (event) => {
+            const message = event.data as
+              | { ok: true; result: Parameters<typeof resolve>[0] }
+              | { ok: false; error: string };
+            if (message.ok) resolve(message.result);
+            else reject(new Error(message.error));
+          };
+          worker.onerror = (event) => reject(event.error ?? new Error(event.message));
+        });
+
+        assertEquals(result.denoOnly, "https://example.com/deno.ts");
+        assertEquals(result.package, "https://esm.sh/package@1.0.0?target=es2022");
+        assert(result.react?.includes("esm.sh"));
+      } finally {
+        worker.terminate();
+      }
+    });
   });
 });

@@ -234,6 +234,62 @@ describe("modules/import-map/preloader", () => {
       assertEquals(release === branch, false);
     });
 
+    it("isolates project roots that share one project ID and content source", async () => {
+      const adapter = createMinimalAdapter();
+      let loads = 0;
+      const preloader = new ImportMapPreloader({
+        maxProjects: 1,
+        maxVariantsPerProject: 2,
+        ttlMs: 1_000,
+        loadImportMap: async (projectDir) => ({
+          imports: { projectDir, load: String(++loads) },
+        }),
+      });
+      const context = { contentSourceId: "release-1" };
+
+      const first = await preloader.preload(
+        "/releases/first",
+        adapter,
+        "project-1",
+        context,
+      );
+      const second = await preloader.preload(
+        "/releases/second",
+        adapter,
+        "project-1",
+        context,
+      );
+
+      assertEquals(first.imports?.projectDir, "/releases/first");
+      assertEquals(second.imports?.projectDir, "/releases/second");
+      assertEquals(loads, 2);
+    });
+
+    it("rejects accessor-backed request context without invoking it", async () => {
+      const adapter = createMinimalAdapter();
+      let getterCalls = 0;
+      const context = Object.defineProperty({}, "contentSourceId", {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return "poisoned";
+        },
+      });
+
+      await assertRejects(
+        () =>
+          preloadImportMap(
+            "/accessor-context",
+            adapter,
+            "accessor-context",
+            context,
+          ),
+        TypeError,
+        "cannot be an accessor",
+      );
+      assertEquals(getterCalls, 0);
+    });
+
     it("snapshots and deep-freezes loader output before publishing it", async () => {
       const adapter = createMinimalAdapter();
       const loadedMap = {
@@ -282,7 +338,9 @@ describe("modules/import-map/preloader", () => {
         "https://example.com/scoped-v1.ts",
       );
       assertEquals(
-        await preloader.getCached("immutable-loader-output"),
+        await preloader.getCached("immutable-loader-output", {
+          projectDir: "/immutable-loader-output",
+        }),
         published,
       );
       assertEquals(
@@ -387,9 +445,9 @@ describe("modules/import-map/preloader", () => {
       });
       const projectDir = "/bounded-variants";
       const projectId = "project-1";
-      const sourceA = { contentSourceId: "source-a" };
-      const sourceB = { contentSourceId: "source-b" };
-      const sourceC = { contentSourceId: "source-c" };
+      const sourceA = { contentSourceId: "source-a", projectDir };
+      const sourceB = { contentSourceId: "source-b", projectDir };
+      const sourceC = { contentSourceId: "source-c", projectDir };
 
       await preloader.preload(projectDir, adapter, projectId, sourceA);
       await preloader.preload(projectDir, adapter, projectId, sourceB);
@@ -411,12 +469,21 @@ describe("modules/import-map/preloader", () => {
 
       await preloader.preload("/project-a", adapter, "project-a");
       await preloader.preload("/project-b", adapter, "project-b");
-      await preloader.getCached("project-a");
+      await preloader.getCached("project-a", { projectDir: "/project-a" });
       await preloader.preload("/project-c", adapter, "project-c");
 
-      assertEquals(await preloader.getCached("project-a") !== undefined, true);
-      assertEquals(await preloader.getCached("project-b"), undefined);
-      assertEquals(await preloader.getCached("project-c") !== undefined, true);
+      assertEquals(
+        await preloader.getCached("project-a", { projectDir: "/project-a" }) !== undefined,
+        true,
+      );
+      assertEquals(
+        await preloader.getCached("project-b", { projectDir: "/project-b" }),
+        undefined,
+      );
+      assertEquals(
+        await preloader.getCached("project-c", { projectDir: "/project-c" }) !== undefined,
+        true,
+      );
     });
 
     it("expires settled entries against an injected clock and reloads them", async () => {
@@ -428,7 +495,7 @@ describe("modules/import-map/preloader", () => {
         ttlMs: 100,
         now: () => now,
       });
-      const context = { contentSourceId: "source-a" };
+      const context = { contentSourceId: "source-a", projectDir: "/ttl-project" };
 
       const first = await preloader.preload("/ttl-project", adapter, "ttl-project", context);
       now = 1_099;
@@ -455,7 +522,10 @@ describe("modules/import-map/preloader", () => {
         ttlMs: 100,
         now: () => now,
       });
-      const context = { contentSourceId: "source-a" };
+      const context = {
+        contentSourceId: "source-a",
+        projectDir: "/direct-expiry",
+      };
 
       const expired = await preloader.preload(
         "/direct-expiry",
@@ -497,7 +567,10 @@ describe("modules/import-map/preloader", () => {
           return load.promise;
         },
       });
-      const context = { contentSourceId: "source-a" };
+      const context = {
+        contentSourceId: "source-a",
+        projectDir: "/concurrent-direct-expiry",
+      };
 
       const initialPromise = preloader.preload(
         "/concurrent-direct-expiry",
@@ -569,7 +642,10 @@ describe("modules/import-map/preloader", () => {
           imports: { loaded: String(++loads) },
         }),
       });
-      const context = { contentSourceId: "source-a" };
+      const context = {
+        contentSourceId: "source-a",
+        projectDir: "/throwing-clock",
+      };
 
       const first = await preloader.preload(
         "/throwing-clock",
@@ -606,8 +682,14 @@ describe("modules/import-map/preloader", () => {
       await preloader.preload("/project-b", adapter, "project-b");
       preloader.clear("project-a");
 
-      assertEquals(await preloader.getCached("project-a"), undefined);
-      assertEquals(await preloader.getCached("project-b") !== undefined, true);
+      assertEquals(
+        await preloader.getCached("project-a", { projectDir: "/project-a" }),
+        undefined,
+      );
+      assertEquals(
+        await preloader.getCached("project-b", { projectDir: "/project-b" }) !== undefined,
+        true,
+      );
     });
 
     it("does not publish pre-clear work after identity hashing resumes", async () => {
@@ -621,7 +703,7 @@ describe("modules/import-map/preloader", () => {
           imports: { loaded: String(++loads) },
         }),
       });
-      const context = { contentSourceId: "source-a" };
+      const context = { contentSourceId: "source-a", projectDir: "/project-a" };
 
       const preClear = preloader.preload(
         "/project-a",
@@ -675,7 +757,7 @@ describe("modules/import-map/preloader", () => {
           imports: { loaded: String(++loads) },
         }),
       });
-      const context = { contentSourceId: "source-a" };
+      const context = { contentSourceId: "source-a", projectDir: "/project-a" };
 
       const preClear = preloader.preload(
         "/project-a",

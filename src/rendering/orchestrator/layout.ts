@@ -178,6 +178,10 @@ export class LayoutOrchestrator {
                   this.config.projectDir,
                   this.config.adapter,
                   this.config.projectId,
+                  {
+                    contentSourceId: this.config.contentSourceId,
+                    config: this.config.config,
+                  },
                 );
                 this._preloadedImportMap = importMap;
                 return { type: "importMap" as const, success: true };

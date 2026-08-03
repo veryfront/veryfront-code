@@ -96,8 +96,16 @@ async function runPoisoningRegression() {
         },
       }),
     });
-    const contextA = { contentSourceId: "source", config: configA };
-    const contextB = { contentSourceId: "source", config: configB };
+    const contextA = {
+      contentSourceId: "source",
+      config: configA,
+      projectDir: "/project",
+    };
+    const contextB = {
+      contentSourceId: "source",
+      config: configB,
+      projectDir: "/project",
+    };
 
     first = await preloader.preload("/project", adapter, "project", contextA);
     firstAgain = await preloader.preload(

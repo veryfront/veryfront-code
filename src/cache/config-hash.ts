@@ -14,15 +14,8 @@ import {
 } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { buildDependencyPinningCacheVariant } from "./keys/dependency-pinning.ts";
 
-const IntrinsicTypeError = TypeError;
 const JSONStringify = JSON.stringify;
-const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
-const ReflectApply = Reflect.apply;
-
-function hasOwn(object: object, key: PropertyKey): boolean {
-  return ReflectApply(ObjectPrototypeHasOwnProperty, object, [key]) as boolean;
-}
+const ObjectCreate = Object.create;
 
 /**
  * Configuration that affects transform output.
@@ -48,104 +41,34 @@ interface TransformConfig {
   dependencyPinningCacheKey?: string;
 }
 
-function readOwnConfigField(
-  config: TransformConfig,
-  key: keyof TransformConfig,
-): unknown {
-  if (config === null || typeof config !== "object") {
-    throw new IntrinsicTypeError("Transform config must be an object");
-  }
-  const descriptor = ObjectGetOwnPropertyDescriptor(config, key);
-  if (!descriptor) return undefined;
-  if (!hasOwn(descriptor, "value")) {
-    throw new IntrinsicTypeError(`Transform config ${key} must be an own data property`);
-  }
-  return descriptor.value;
-}
-
-function readOptionalConfigString(
-  config: TransformConfig,
-  key: keyof TransformConfig,
-): string | undefined {
-  const value = readOwnConfigField(config, key);
-  if (value === undefined) return undefined;
-  if (typeof value !== "string") {
-    throw new IntrinsicTypeError(`Transform config ${key} must be a string`);
-  }
-  return value;
-}
-
-function readOptionalConfigBoolean(
-  config: TransformConfig,
-  key: "studioEmbed" | "dev",
-): boolean | undefined {
-  const value = readOwnConfigField(config, key);
-  if (value === undefined) return undefined;
-  if (typeof value !== "boolean") {
-    throw new IntrinsicTypeError(`Transform config ${key} must be a boolean`);
-  }
-  return value;
-}
-
-function encodeNullableConfigString(value: string | null): string {
-  return JSONStringify(value) as string;
-}
-
-function buildConfigIdentity(config: TransformConfig): string {
-  const dependencyPinningCacheKey = readOptionalConfigString(
-    config,
-    "dependencyPinningCacheKey",
-  );
-  const moduleServerOrigin = readOptionalConfigString(config, "moduleServerOrigin");
-  const dependencyPinningCacheVariant = buildDependencyPinningCacheVariant(
-    dependencyPinningCacheKey,
-    moduleServerOrigin,
-  );
-  let identity = `v${VERSION}`;
-  identity += `|react=${
-    encodeNullableConfigString(
-      readOptionalConfigString(config, "reactVersion") ?? DEFAULT_REACT_VERSION,
-    )
-  }`;
-  identity += `|jsx=${
-    encodeNullableConfigString(
-      readOptionalConfigString(config, "jsxImportSource") ?? "react",
-    )
-  }`;
-  identity += `|modules=${
-    encodeNullableConfigString(
-      readOptionalConfigString(config, "moduleServerUrl") ?? null,
-    )
-  }`;
-  identity += `|vendor=${
-    encodeNullableConfigString(
-      readOptionalConfigString(config, "vendorBundleHash") ?? null,
-    )
-  }`;
-  identity += `|api=${
-    encodeNullableConfigString(
-      readOptionalConfigString(config, "apiBaseUrl") ?? null,
-    )
-  }`;
-  identity += `|studio=${readOptionalConfigBoolean(config, "studioEmbed") ?? false ? "1;" : "0;"}`;
-  identity += `|dev=${readOptionalConfigBoolean(config, "dev") ?? false ? "1;" : "0;"}`;
-  identity += `|pins=${
-    encodeNullableConfigString(
-      dependencyPinningCacheVariant ?? null,
-    )
-  }`;
-  identity += `|csstype=${encodeNullableConfigString(CSSTYPE_VERSION)}`;
-  identity += `|tailwind=${encodeNullableConfigString(TAILWIND_VERSION)}`;
-  return identity;
-}
-
 /**
  * Compute a hash of transform-affecting configuration.
  *
  * Changes to these values should invalidate cached transforms.
  */
 export function computeConfigHash(config: TransformConfig): Promise<string> {
-  return computeHash(buildConfigIdentity(config));
+  const dependencyPinningCacheVariant = buildDependencyPinningCacheVariant(
+    config.dependencyPinningCacheKey,
+    config.moduleServerOrigin,
+  );
+  // Null-prototype storage preserves the existing JSON cache-key format while
+  // preventing project code from injecting an inherited toJSON hook.
+  const normalized = ObjectCreate(null) as Record<string, string | boolean | null>;
+  normalized.transformVersion = VERSION;
+  normalized.reactVersion = config.reactVersion ?? DEFAULT_REACT_VERSION;
+  normalized.jsxImportSource = config.jsxImportSource ?? "react";
+  normalized.moduleServerUrl = config.moduleServerUrl ?? null;
+  normalized.vendorBundleHash = config.vendorBundleHash ?? null;
+  normalized.apiBaseUrl = config.apiBaseUrl ?? null;
+  normalized.studioEmbed = config.studioEmbed ?? false;
+  normalized.dev = config.dev ?? false;
+  if (dependencyPinningCacheVariant) {
+    normalized.dependencyPinningCacheVariant = dependencyPinningCacheVariant;
+  }
+  normalized.csstype = CSSTYPE_VERSION;
+  normalized.tailwind = TAILWIND_VERSION;
+
+  return computeHash(JSONStringify(normalized));
 }
 
 /**
@@ -154,5 +77,28 @@ export function computeConfigHash(config: TransformConfig): Promise<string> {
  * Use this when you need a config hash but can't afford async overhead.
  */
 export function computeConfigHashSync(config: TransformConfig): string {
-  return buildConfigIdentity(config);
+  const parts = [
+    `v${VERSION}`,
+    config.reactVersion ?? DEFAULT_REACT_VERSION,
+    config.jsxImportSource ?? "react",
+    encodeConfigPart("modules", config.moduleServerUrl),
+    encodeConfigPart("vendor", config.vendorBundleHash),
+    encodeConfigPart("api", config.apiBaseUrl),
+    config.studioEmbed ? "studio" : "",
+    config.dev ? "dev" : "",
+  ].filter(Boolean);
+  const dependencyPinningCacheVariant = buildDependencyPinningCacheVariant(
+    config.dependencyPinningCacheKey,
+    config.moduleServerOrigin,
+  );
+  if (dependencyPinningCacheVariant) {
+    parts.push(`pins:${dependencyPinningCacheVariant}`);
+  }
+
+  return parts.join(":");
+}
+
+function encodeConfigPart(label: string, value: string | undefined): string {
+  if (!value) return "";
+  return `${label}:${value.length}:${value}`;
 }

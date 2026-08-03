@@ -355,7 +355,10 @@ export function loadMDXLayout(
         hasPreloadedImportMap: !!preloadedImportMap,
       });
 
-      const map = preloadedImportMap ?? (await preloadImportMap(projectDir, adapter, projectId));
+      const map = preloadedImportMap ??
+        (await preloadImportMap(projectDir, adapter, projectId, {
+          contentSourceId,
+        }));
       if (preloadedImportMap) {
         loadMdxLayoutLog.debug("Using preloaded import map", { projectSlug });
       }

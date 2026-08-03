@@ -106,9 +106,32 @@ export function fingerprintImportMap(importMap: ImportMapConfig): Promise<string
     ]],
   );
 
-  return computeHash(
-    `${HTTP_IMPORT_MAP_FINGERPRINT_NAMESPACE}\0${JSONStringify({ imports, scopes })}`,
-  );
+  // Serialize only string primitives. JSON.stringify on arrays/objects still
+  // consults inherited toJSON hooks even when the intrinsic function itself
+  // was captured, which would let project code collapse distinct maps onto a
+  // shared cache identity.
+  // Preserve the established JSON byte format exactly so this hardening does
+  // not invalidate every persisted HTTP module cache entry on deployment.
+  let canonical = `${HTTP_IMPORT_MAP_FINGERPRINT_NAMESPACE}\0{"imports":[`;
+  for (let index = 0; index < imports.length; index++) {
+    const [key, value] = imports[index]!;
+    if (index > 0) canonical += ",";
+    canonical += `[${JSONStringify(key)},${JSONStringify(value)}]`;
+  }
+  canonical += `],"scopes":[`;
+  for (let scopeIndex = 0; scopeIndex < scopes.length; scopeIndex++) {
+    const [scope, mappings] = scopes[scopeIndex] as [string, Array<[string, string]>];
+    if (scopeIndex > 0) canonical += ",";
+    canonical += `[${JSONStringify(scope)},[`;
+    for (let mappingIndex = 0; mappingIndex < mappings.length; mappingIndex++) {
+      const [key, value] = mappings[mappingIndex]!;
+      if (mappingIndex > 0) canonical += ",";
+      canonical += `[${JSONStringify(key)},${JSONStringify(value)}]`;
+    }
+    canonical += "]]";
+  }
+  canonical += "]}";
+  return computeHash(canonical);
 }
 
 function attachHttpCacheRequestIdentityContext<T extends HttpCacheIdentityOptions>(
