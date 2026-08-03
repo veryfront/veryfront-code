@@ -4,22 +4,13 @@ import type { RedisClient } from "#veryfront/extensions/distributed";
 import { unrefTimer } from "#veryfront/platform/compat/process.ts";
 import { serverLogger } from "#veryfront/utils";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
+import { REDIS_RATE_LIMIT_INCREMENT_WITH_TTL_SCRIPT } from "./redis-rate-limit-script.ts";
 import { requireRateLimitKey, requireRateLimitWindowMs } from "./rate-limit-validation.ts";
 import type { RateLimitEntry, RateLimitStore } from "./types.ts";
 
 const logger = serverLogger.component("redis-ratelimit");
 const DEFAULT_REDIS_CONNECT_TIMEOUT_MS = 5_000;
 const DEFAULT_REDIS_OPERATION_TIMEOUT_MS = 5_000;
-
-const INCREMENT_WITH_TTL_SCRIPT = `
-local count = redis.call("INCR", KEYS[1])
-local ttl = redis.call("PTTL", KEYS[1])
-if ttl < 0 then
-  redis.call("PEXPIRE", KEYS[1], ARGV[1])
-  ttl = tonumber(ARGV[1])
-end
-return { count, ttl }
-`;
 
 /** Options accepted by the provider-backed Redis rate-limit store. */
 export interface RedisRateLimitOptions {
@@ -130,7 +121,7 @@ export class RedisRateLimitStore implements RateLimitStore {
 
     const [count, pttl] = parseIncrementResult(
       await this.withOperationTimeout(
-        client.eval(INCREMENT_WITH_TTL_SCRIPT, {
+        client.eval(REDIS_RATE_LIMIT_INCREMENT_WITH_TTL_SCRIPT, {
           keys: [redisKey],
           arguments: [String(normalizedWindowMs)],
         }),

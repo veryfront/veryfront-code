@@ -5,6 +5,7 @@ import {
   MAX_TIMER_DELAY_MS,
   type RateLimitEntry,
   type RateLimitStore,
+  REDIS_RATE_LIMIT_INCREMENT_WITH_TTL_SCRIPT,
   requireRateLimitKey,
   requireRateLimitWindowMs,
   unrefTimer,
@@ -38,16 +39,6 @@ type RedisClientFactory = (options: RedisClientFactoryOptions) => RedisClient;
 
 const DEFAULT_REDIS_CONNECT_TIMEOUT_MS = 5_000;
 const DEFAULT_REDIS_OPERATION_TIMEOUT_MS = 5_000;
-
-const INCREMENT_WITH_TTL_SCRIPT = `
-local count = redis.call("INCR", KEYS[1])
-local ttl = redis.call("PTTL", KEYS[1])
-if ttl < 0 then
-  redis.call("PEXPIRE", KEYS[1], ARGV[1])
-  ttl = tonumber(ARGV[1])
-end
-return { count, ttl }
-`;
 
 /** Options accepted by redis rate limit. */
 export interface RedisRateLimitOptions {
@@ -318,7 +309,7 @@ export class RedisRateLimitStore implements RateLimitStore {
     let result: unknown;
     try {
       result = await this.withTimeout(
-        client.eval(INCREMENT_WITH_TTL_SCRIPT, {
+        client.eval(REDIS_RATE_LIMIT_INCREMENT_WITH_TTL_SCRIPT, {
           keys: [redisKey],
           arguments: [String(normalizedWindowMs)],
         }),
