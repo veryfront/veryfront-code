@@ -238,6 +238,9 @@ export async function resolveRelativeFrameworkSourceImport(
     (helper) => basePath === join(candidateRoot, helper),
   );
   if (!isWithinDirectory(containingTree, basePath) && !isPublishedRuntimeHelper) return null;
+  if (isPublishedRuntimeHelper) {
+    return await findExistingFrameworkCandidate(basePath, options);
+  }
 
   if (/\.(tsx?|jsx?|mjs)$/.test(specifier)) {
     const explicitCandidates = [basePath, `${basePath}.src`];

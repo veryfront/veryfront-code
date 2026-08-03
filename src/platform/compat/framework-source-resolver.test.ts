@@ -129,6 +129,23 @@ describe("platform/compat/framework-source-resolver", () => {
     });
   }
 
+  it("does not resolve published runtime helpers through extension fallback", async () => {
+    const probed: string[] = [];
+    const result = await resolveRelativeFrameworkSourceImport(
+      "../../deno.js",
+      "/package/esm/src/html/client-head-manager.js",
+      {
+        exists: (path) => {
+          probed.push(path);
+          return Promise.resolve(path === "/package/esm/deno.ts");
+        },
+      },
+    );
+
+    assertEquals(result, null);
+    assertEquals(probed, ["/package/esm/deno.js"]);
+  });
+
   it("rejects other files at the published package root", async () => {
     let probed = false;
     const result = await resolveRelativeFrameworkSourceImport(
