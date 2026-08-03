@@ -44,12 +44,12 @@ describe("tool/remote-mcp", () => {
         id: "veryfront-mcp",
         endpoint: "http://veryfront-api:80/mcp",
         headers: { Authorization: "Bearer test-token" },
-      });
+      }, { kind: "veryfront-api" });
       const studioSource = createSource({
         id: "studio-mcp",
         endpoint: "http://veryfront-studio:80/mcp",
         headers: { Authorization: "Bearer test-token" },
-      });
+      }, { kind: "veryfront-studio" });
 
       assertEquals((await apiSource.listTools()).map((tool) => tool.name), ["list_skills"]);
       assertEquals(await apiSource.executeTool("list_skills", {}), { skills: [] });
@@ -74,6 +74,90 @@ describe("tool/remote-mcp", () => {
       id: "custom-mcp",
       endpoint: "http://tenant-mcp:80/mcp",
     });
+
+    await assertRejects(
+      () => source.listTools(),
+      Error,
+      "Outbound network egress blocked",
+    );
+  });
+
+  it("keeps a generic server guarded when its endpoint matches a trusted endpoint", async () => {
+    let transportCalls = 0;
+
+    await withMockFetch(() => {
+      transportCalls++;
+      return Promise.resolve(Response.json({
+        jsonrpc: "2.0",
+        id: "response-1",
+        result: { tools: [] },
+      }));
+    }, async () => {
+      const createSource = createHostedControlPlaneMCPToolSourceFactory({
+        apiMcpUrl: "http://veryfront-api:80/mcp",
+      });
+      const source = createSource({
+        id: "generic-mcp",
+        endpoint: "http://veryfront-api:80/mcp",
+      }, {
+        kind: "generic",
+        endpoint: "http://veryfront-api:80/mcp",
+      });
+
+      await assertRejects(
+        () => source.listTools(),
+        Error,
+        "Outbound network egress blocked",
+      );
+    });
+
+    assertEquals(transportCalls, 0);
+  });
+
+  it("ignores an inherited first-party kind when selecting trusted transport", async () => {
+    let transportCalls = 0;
+    const prototype = Object.prototype as { kind?: string };
+    Object.defineProperty(prototype, "kind", {
+      configurable: true,
+      value: "veryfront-api",
+    });
+
+    try {
+      await withMockFetch(() => {
+        transportCalls++;
+        return Promise.resolve(Response.json({
+          jsonrpc: "2.0",
+          id: "response-1",
+          result: { tools: [] },
+        }));
+      }, async () => {
+        const endpoint = "http://veryfront-api:80/mcp";
+        const createSource = createHostedControlPlaneMCPToolSourceFactory({
+          apiMcpUrl: endpoint,
+        });
+        const source = createSource({ endpoint }, { endpoint });
+
+        await assertRejects(
+          () => source.listTools(),
+          Error,
+          "Outbound network egress blocked",
+        );
+      });
+    } finally {
+      delete prototype.kind;
+    }
+
+    assertEquals(transportCalls, 0);
+  });
+
+  it("falls back to guarded egress when an operator endpoint is unsafe", async () => {
+    const createSource = createHostedControlPlaneMCPToolSourceFactory({
+      apiMcpUrl: "http://localhost/mcp",
+    });
+    const source = createSource({
+      id: "local-api-mcp",
+      endpoint: "http://localhost/mcp",
+    }, { kind: "veryfront-api" });
 
     await assertRejects(
       () => source.listTools(),

@@ -218,6 +218,7 @@ describe("guardedOutboundFetch", () => {
     for (
       const endpoint of [
         "http://127.0.0.1/mcp",
+        "http://0x7f000001/mcp",
         "http://localhost/mcp",
         "http://localhost./mcp",
         "http://tools.localhost./mcp",

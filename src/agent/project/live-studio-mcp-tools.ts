@@ -3,11 +3,10 @@ import {
   createRemoteMCPToolSource,
   type HostToolSet,
   loadRemoteToolsFromSource,
-  type RemoteMCPToolSourceConfig,
-  type RemoteToolSource,
   type ToolExecutionContext,
 } from "#veryfront/tool";
 import { clientAllowsStudioMcp, type RuntimeClientProfile } from "../runtime/client-profile.ts";
+import type { AgentServiceRemoteMcpSourceFactory } from "../service/mcp-server-config.ts";
 import {
   bindToolExecutionIdentityContext,
   type ConfirmedToolExecutionIdentity,
@@ -22,7 +21,7 @@ export type LiveStudioMcpToolsOptions = {
   studioMcpUrl?: string | null;
   conversationId?: string;
   sourceId?: string;
-  createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
+  createRemoteToolSource?: AgentServiceRemoteMcpSourceFactory;
   loadRemoteTools?: typeof loadRemoteToolsFromSource;
 };
 
@@ -77,30 +76,33 @@ async function loadStudioMcpState(input: {
   conversationId?: string;
   url: string;
   sourceId: string;
-  createRemoteToolSource: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
+  createRemoteToolSource: AgentServiceRemoteMcpSourceFactory;
   loadRemoteTools: typeof loadRemoteToolsFromSource;
 }): Promise<StudioMcpState> {
   const boundIdentity = {
     authToken: input.authToken,
     projectId: input.projectId,
   };
-  const source = input.createRemoteToolSource({
-    id: input.sourceId,
-    endpoint: input.url,
-    headers: (context) => {
-      const identity = resolveToolExecutionIdentity(
-        context,
-        boundIdentity.authToken,
-        () => boundIdentity.projectId,
-        "Studio execution context",
-      );
-      return buildStudioMcpHeaders(
-        identity.authToken,
-        identity.projectId,
-        input.conversationId,
-      );
+  const source = input.createRemoteToolSource(
+    {
+      id: input.sourceId,
+      endpoint: input.url,
+      headers: (context) => {
+        const identity = resolveToolExecutionIdentity(
+          context,
+          boundIdentity.authToken,
+          () => boundIdentity.projectId,
+          "Studio execution context",
+        );
+        return buildStudioMcpHeaders(
+          identity.authToken,
+          identity.projectId,
+          input.conversationId,
+        );
+      },
     },
-  });
+    { kind: "veryfront-studio" },
+  );
 
   return {
     authToken: input.authToken,

@@ -15,6 +15,7 @@ import type {
 } from "#veryfront/tool";
 import { dynamicTool } from "#veryfront/tool";
 import { defineSchema } from "../../schemas/define.ts";
+import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
 import {
   prepareDefaultHostedChildForkSandboxToolSources,
   prepareDefaultHostedChildForkToolSources,
@@ -46,6 +47,7 @@ function toToolInputRecord(input: unknown): Record<string, unknown> {
 
 function createRemoteSourceFixtures() {
   const createdConfigs: RemoteMCPToolSourceConfig[] = [];
+  const serverKinds: Array<string | undefined> = [];
   const executeCalls: Array<{
     sourceId: string;
     toolName: string;
@@ -53,8 +55,12 @@ function createRemoteSourceFixtures() {
     context?: ToolExecutionContext;
   }> = [];
 
-  const createRemoteToolSource = (config: RemoteMCPToolSourceConfig): RemoteToolSource => {
+  const createRemoteToolSource = (
+    config: RemoteMCPToolSourceConfig,
+    server?: AgentServiceMcpServerConfig,
+  ): RemoteToolSource => {
     createdConfigs.push(config);
+    serverKinds.push(server?.kind);
     const sourceId = config.id ?? "source";
 
     return {
@@ -76,7 +82,7 @@ function createRemoteSourceFixtures() {
     };
   };
 
-  return { createdConfigs, executeCalls, createRemoteToolSource };
+  return { createdConfigs, serverKinds, executeCalls, createRemoteToolSource };
 }
 
 function commandPayload(status: BackgroundCommand["status"]): BackgroundCommand {
@@ -169,6 +175,7 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
       ["studio-mcp-live-tools", "https://studio.example/mcp"],
     ],
   );
+  assertEquals(fixtures.serverKinds, ["veryfront-api", "veryfront-studio"]);
 
   await result.forkTools.studio_open_project?.execute?.({ project_reference: "project-two" });
 

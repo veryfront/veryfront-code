@@ -2,12 +2,11 @@ import {
   createRemoteMCPToolSource,
   createToolsFromRemoteDefinitions,
   type HostToolSet,
-  type RemoteMCPToolSourceConfig,
-  type RemoteToolSource,
 } from "#veryfront/tool";
 import { AGENT_ERROR } from "#veryfront/errors";
 import {
   type AgentServiceMcpServerConfig,
+  type AgentServiceRemoteMcpSourceFactory,
   createAgentServiceRemoteMcpConfig,
   defaultAgentServiceMcpServers,
 } from "../service/mcp-server-config.ts";
@@ -50,7 +49,7 @@ export type PrepareDefaultHostedChildForkToolSourcesInput = {
   globalTools?: HostToolSet;
   abortSignal?: AbortSignal;
   onConfirmedStudioProjectSwitch?: HostedChildProjectSwitchHandler;
-  createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
+  createRemoteToolSource?: AgentServiceRemoteMcpSourceFactory;
   createToolsFromRemoteDefinitions?: typeof createToolsFromRemoteDefinitions;
   createLiveStudioTools?: (input: LiveStudioMcpToolsOptions) => Promise<{
     tools: HostToolSet;
@@ -135,7 +134,7 @@ export async function prepareDefaultHostedChildForkToolSources(
       if (!remoteConfig) {
         continue;
       }
-      const rawSource = createRemoteToolSource(remoteConfig);
+      const rawSource = createRemoteToolSource(remoteConfig, server);
       const policySource = createHostedMcpToolPolicySource(rawSource, server.toolPolicy);
       const rawDefinitions = await rawSource.listTools();
       const accessFilteredDefinitions = server.kind === "veryfront-api"

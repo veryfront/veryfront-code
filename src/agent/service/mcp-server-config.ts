@@ -1,4 +1,4 @@
-import type { RemoteMCPToolSourceConfig } from "#veryfront/tool";
+import type { RemoteMCPToolSourceConfig, RemoteToolSource } from "#veryfront/tool";
 import type { AgentMcpToolPolicy } from "../types.ts";
 import { buildStudioMcpHeaders } from "../project/live-studio-mcp-tools.ts";
 import { clientAllowsStudioMcp, type RuntimeClientProfile } from "../runtime/client-profile.ts";
@@ -29,6 +29,12 @@ export type AgentServiceMcpServerConfig =
   | AgentServiceVeryfrontApiMcpServerConfig
   | AgentServiceVeryfrontStudioMcpServerConfig
   | AgentServiceGenericMcpServerConfig;
+
+/** Creates a remote source while preserving the originating server config. */
+export type AgentServiceRemoteMcpSourceFactory = (
+  config: RemoteMCPToolSourceConfig,
+  server?: AgentServiceMcpServerConfig,
+) => RemoteToolSource;
 
 export type CreateAgentServiceRemoteMcpConfigInput = {
   server: AgentServiceMcpServerConfig;

@@ -5,12 +5,12 @@ import {
   type ProjectScopedRemoteToolCatalogOptions,
   type ProjectScopedRemoteToolDefaultProjectId,
   type ProjectScopedRemoteToolOptions,
-  type RemoteMCPToolSourceConfig,
   type RemoteToolSource,
   type ToolExecutionContext,
 } from "#veryfront/tool";
 import {
   type AgentServiceMcpServerConfig,
+  type AgentServiceRemoteMcpSourceFactory,
   createAgentServiceRemoteMcpConfig,
   defaultAgentServiceMcpServers,
 } from "../service/mcp-server-config.ts";
@@ -263,7 +263,7 @@ export type CreateHostedProjectRemoteToolSourcesInput =
     clientProfile?: RuntimeClientProfile | null;
     getProjectId: () => string | null | undefined;
     conversationId?: string;
-    createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
+    createRemoteToolSource?: AgentServiceRemoteMcpSourceFactory;
     onStudioProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler;
   };
 
@@ -393,7 +393,7 @@ export function createHostedProjectRemoteToolSources(
       createHostedProjectRemoteToolSourceFromConfig(
         input,
         server,
-        createRemoteToolSource(remoteConfig),
+        createRemoteToolSource(remoteConfig, server),
         server.kind === "veryfront-studio" ? input.onStudioProjectSwitch : undefined,
       ),
     );

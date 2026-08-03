@@ -481,6 +481,7 @@ Deno.test("createHostedProjectRemoteToolSource skips mutation callbacks for fail
 
 Deno.test("createHostedProjectRemoteToolSources defaults to first-party MCP servers for trusted Studio clients", async () => {
   const configs: RemoteMCPToolSourceConfig[] = [];
+  const serverKinds: Array<string | undefined> = [];
   const sources = createHostedProjectRemoteToolSources({
     authToken: "token-1",
     apiMcpUrl: "https://api.example/mcp",
@@ -492,8 +493,9 @@ Deno.test("createHostedProjectRemoteToolSources defaults to first-party MCP serv
       capabilities: ["ui_panels"],
     },
     getProjectId: () => "project-1",
-    createRemoteToolSource: (config) => {
+    createRemoteToolSource: (config, server) => {
       configs.push(config);
+      serverKinds.push(server?.kind);
       return createRemoteSource({ id: config.id, tools: [projectFileTool("update_file")] });
     },
   });
@@ -503,6 +505,7 @@ Deno.test("createHostedProjectRemoteToolSources defaults to first-party MCP serv
     "https://api.example/mcp",
     "https://studio.example/mcp",
   ]);
+  assertEquals(serverKinds, ["veryfront-api", "veryfront-studio"]);
 });
 
 Deno.test("createHostedProjectRemoteToolSources keeps caller-provided first-party endpoints guarded", async () => {
