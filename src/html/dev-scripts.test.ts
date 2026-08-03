@@ -13,7 +13,7 @@ describe("html/dev-scripts", () => {
   describe("getPreviewStylesheetLink", () => {
     it("returns the preview utility stylesheet link", () => {
       const link = getPreviewStylesheetLink();
-      assertEquals(link.includes('id="vf-tailwind-css"'), true);
+      assertEquals(link.includes('id="vf-project-css"'), true);
       assertEquals(link.includes("/_vf_styles/styles.css?t="), true);
     });
   });

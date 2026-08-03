@@ -20,6 +20,11 @@ export { processMetadata } from "./metadata-builder.ts";
 export type { ProcessedMetadata } from "./metadata-builder.ts";
 export { extractHTMLMetadata } from "./metadata-extraction.ts";
 export {
+  LEGACY_PROJECT_STYLESHEET_ID,
+  PROJECT_STYLESHEET_ID,
+  PROJECT_STYLESHEET_IDS,
+} from "./project-stylesheet-ids.ts";
+export {
   buildStructuredManagedHeadDescriptors,
   generateLinkTags,
   generateMetaTags,

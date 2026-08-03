@@ -1,7 +1,8 @@
 import { buildNonceAttribute } from "./html-escape.ts";
+import { PROJECT_STYLESHEET_ID } from "./project-stylesheet-ids.ts";
 
 export function getPreviewStylesheetLink(): string {
-  return `<link id="vf-tailwind-css" rel="stylesheet" href="/_vf_styles/styles.css?t=${Date.now()}">`;
+  return `<link id="${PROJECT_STYLESHEET_ID}" rel="stylesheet" href="/_vf_styles/styles.css?t=${Date.now()}">`;
 }
 
 export function getDevStyles(nonce?: string): string {

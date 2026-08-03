@@ -7,6 +7,7 @@ export interface ObservedFetchRequestInit {
   body?: BodyInit | null;
   headers?: HeadersInit;
   method?: string;
+  redirect?: RequestRedirect;
   signal?: AbortSignal | null;
 }
 
@@ -21,6 +22,7 @@ export function observeFetchRequestInit(
 
   const headers = "headers" in init ? init.headers : undefined;
   const method = "method" in init ? init.method : undefined;
+  const redirect = "redirect" in init ? init.redirect : undefined;
   const signal = "signal" in init ? init.signal : undefined;
   const body = "body" in init ? init.body : undefined;
 
@@ -28,6 +30,7 @@ export function observeFetchRequestInit(
     body: body as BodyInit | null | undefined,
     headers: headers as HeadersInit | undefined,
     method: typeof method === "string" ? method : undefined,
+    redirect: redirect as RequestRedirect | undefined,
     signal: signal as AbortSignal | null | undefined,
   };
 }

@@ -339,6 +339,16 @@ it("proxy release enforces the cold-start cgroup budget", async () => {
     "pull-request and main-release jobs must both enforce proxy memory",
   );
   assertEquals(
+    workflow.split("PROXY_MEMORY_LIMIT: 1536m").length - 1,
+    2,
+    "both proxy memory jobs must pin the 1536 MiB release gate",
+  );
+  assertEquals(
+    workflow.split('PROXY_MEMORY_ATTEMPTS: "3"').length - 1,
+    2,
+    "both proxy memory jobs must pin three cold-start attempts",
+  );
+  assertEquals(
     workflow.split("if: matrix.name == 'veryfront-proxy-linux-x64'").length -
       1,
     2,
@@ -368,12 +378,20 @@ it("proxy release enforces the cold-start cgroup budget", async () => {
 
 it("proxy binary smoke runs only for same-repository pull requests", async () => {
   const workflow = await Deno.readTextFile(".github/workflows/cicd.yml");
+  const jobStart = workflow.indexOf("  tests-proxy-binary:");
+  const jobEnd = workflow.indexOf("\n  build-binaries:", jobStart);
+  const job = workflow.slice(jobStart, jobEnd);
 
   assertEquals(
     workflow.includes(
       "if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.event_name == 'pull_request' }}",
     ),
     true,
+  );
+  assertEquals(
+    job.includes("persist-credentials: false"),
+    true,
+    "the pull-request proxy job must not retain checkout credentials",
   );
 });
 
