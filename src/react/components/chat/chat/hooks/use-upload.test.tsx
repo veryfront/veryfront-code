@@ -9,6 +9,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import {
   createUploadId,
   parseChatUploadResponse,
@@ -650,7 +651,10 @@ describe("useUpload", () => {
           </React.Suspense>,
         );
       });
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await waitFor(() => attemptedSuspendedRender, {
+        interval: 1,
+        message: "Concurrent upload render did not start",
+      });
       assertEquals(attemptedSuspendedRender, true);
       assertEquals(request.aborted, false);
 

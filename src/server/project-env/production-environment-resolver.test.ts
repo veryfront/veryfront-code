@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import {
   MAX_ENVIRONMENT_LIST_RESPONSE_BYTES,
   ProductionEnvironmentResolver,
@@ -196,9 +197,10 @@ describe("ProductionEnvironmentResolver", () => {
     let observedAbort = false;
     globalThis.fetch = ((_input, init) =>
       new Promise<Response>((_resolve, reject) => {
-        init?.signal?.addEventListener("abort", () => {
+        const signal = observeFetchRequestInit(init).signal;
+        signal?.addEventListener("abort", () => {
           observedAbort = true;
-          reject(init.signal?.reason);
+          reject(signal.reason);
         }, { once: true });
       })) as typeof fetch;
 

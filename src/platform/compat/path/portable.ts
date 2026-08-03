@@ -1,9 +1,13 @@
 import type { PathObject } from "./types.ts";
+import {
+  primordialArrayAt as arrayAt,
+  primordialArrayFilter as arrayFilter,
+  primordialArrayJoin as arrayJoin,
+  primordialArrayPop as arrayPop,
+  primordialArrayPush as arrayPush,
+} from "../primordials/array.ts";
 
 const apply = Reflect.apply;
-const arrayJoin = Array.prototype.join;
-const arrayPop = Array.prototype.pop;
-const arrayPush = Array.prototype.push;
 const arraySlice = Array.prototype.slice;
 const regExpExec = RegExp.prototype.exec;
 const stringEndsWith = String.prototype.endsWith;
@@ -124,15 +128,15 @@ function normalizeTail(rest: string, absolute: boolean): string[] {
     if (segment === "" || segment === ".") continue;
 
     if (segment !== "..") {
-      apply(arrayPush, normalized, [segment]);
+      arrayPush(normalized, segment);
       continue;
     }
 
-    const previous = normalized[normalized.length - 1];
+    const previous = arrayAt(normalized, -1);
     if (previous !== undefined && previous !== "..") {
-      apply(arrayPop, normalized, []);
+      arrayPop(normalized);
     } else if (!absolute) {
-      apply(arrayPush, normalized, [".."]) as number;
+      arrayPush(normalized, "..");
     }
   }
 
@@ -201,7 +205,7 @@ export function portableNormalize(path: string, windows: boolean): string {
   if (path === "") return ".";
 
   const root = analyzeRoot(path, windows);
-  const tail = apply(arrayJoin, normalizeTail(root.rest, root.absolute), ["/"]) as string;
+  const tail = arrayJoin(normalizeTail(root.rest, root.absolute), "/");
   let result = appendRoot(root, tail);
 
   const hadTrailingSeparator = matches(/[\\/]$/, path) !== null;
@@ -218,13 +222,9 @@ export function portableNormalize(path: string, windows: boolean): string {
 }
 
 export function portableJoin(paths: readonly string[], windows: boolean): string {
-  const nonempty: string[] = [];
-  for (let index = 0; index < paths.length; index++) {
-    const path = paths[index]!;
-    if (path.length > 0) apply(arrayPush, nonempty, [path]);
-  }
+  const nonempty = arrayFilter(paths, (path) => path.length > 0);
   if (nonempty.length === 0) return "/";
-  return portableNormalize(apply(arrayJoin, nonempty, ["/"]) as string, windows);
+  return portableNormalize(arrayJoin(nonempty, "/"), windows);
 }
 
 export function portableDirname(path: string, windows: boolean): string {
@@ -375,13 +375,13 @@ export function portableRelative(
 
   const result: string[] = [];
   for (let index = common; index < fromParts.length; index++) {
-    apply(arrayPush, result, [".."]) as number;
+    arrayPush(result, "..");
   }
   const remainingToParts = apply(arraySlice, toParts, [common]) as string[];
   for (let index = 0; index < remainingToParts.length; index++) {
-    apply(arrayPush, result, [remainingToParts[index]!]);
+    arrayPush(result, remainingToParts[index]!);
   }
-  return (apply(arrayJoin, result, ["/"]) as string) || ".";
+  return arrayJoin(result, "/") || ".";
 }
 
 export function portableParse(path: string, windows: boolean): PathObject {

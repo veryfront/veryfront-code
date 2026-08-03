@@ -476,7 +476,7 @@ describe("html-generation/html-shell-generator", () => {
         createOptions(),
       );
 
-      assertStringIncludes(result, 'id="vf-tailwind-css"');
+      assertStringIncludes(result, 'id="vf-project-css"');
       assertStringIncludes(
         result,
         "<!-- Tailwind CSS: Server-side JIT compiled -->",
