@@ -156,46 +156,25 @@ The detailed production pipeline is documented in
 - Server owns `BuildOptions` and `BuildStats` because the CLI and server share
   those contracts.
 
-Use package or declared internal aliases. Do not add cross-module relative
-imports, and do not expose a new package API by incidentally exporting an
-internal helper.
+Cross-module imports use package or declared internal aliases. Relative imports
+remain inside the Build module. Only exports from `src/build/index.ts` form the
+`veryfront/build` package API.
 
-## Maintainer verification
-
-After changing Build, run the focused gates:
-
-```bash
-deno lint src/build
-deno check src/build/index.ts src/build/production-build/index.ts
-deno task docs:validate
-```
-
-The full repository gate is `deno task verify`.
-
-## Related Modules
+## Related modules
 
 - [`server/`](../server/README.md) - Development server
 - [`rendering/`](../rendering/README.md) - SSR/RSC rendering
 - [`transforms/`](../transforms/README.md) - Code transforms
 - [`cli/`](../../cli/README.md) - CLI commands
 
-## Troubleshooting
+## Extension contracts
 
-### Asset optimization failures
-
-Compose the provider extensions for every enabled stage during application
-setup. See
+The provider packages for the optional asset stages are
 [`@veryfront/ext-image-sharp`](../../extensions/ext-image-sharp/README.md),
 [`@veryfront/ext-css-lightning`](../../extensions/ext-css-lightning/README.md),
 and [`@veryfront/ext-css-tailwind`](../../extensions/ext-css-tailwind/README.md).
-Absent stages are skipped; a requested stage fails the build if its provider or
-processing fails.
-
-### Out of memory errors
-
-```bash
-NODE_OPTIONS="--max-old-space-size=4096" deno task build
-```
+An unconfigured stage is skipped. An enabled stage with a missing provider or a
+provider failure rejects the build.
 
 ## References
 
