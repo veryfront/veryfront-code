@@ -123,6 +123,28 @@ describe("cache-dir", () => {
       assertEquals(context.reason.includes("/tmp/veryfront-cache-node-modules"), false);
       assertEquals(context.reason.includes("ENOTDIR"), true);
     });
+
+    it("redacts both quoted symlink operands when POSIX paths contain spaces", () => {
+      const cacheRoot = "/Users/Private Person/cache root";
+      const frameworkRoot = "/Users/Private Person/framework/node_modules";
+      const reason = `EEXIST: symlink '${frameworkRoot}' -> '${cacheRoot}/node_modules'`;
+
+      const redacted = __cacheDirInternals.redactCachePathDetails(reason, cacheRoot);
+
+      assertEquals(redacted, "EEXIST: symlink '[path]' -> '[path]'");
+      assertEquals(redacted.includes("Private Person"), false);
+    });
+
+    it("redacts both quoted symlink operands when Windows paths contain spaces", () => {
+      const cacheRoot = "C:\\Users\\Private Person\\cache root";
+      const frameworkRoot = "C:\\Users\\Private Person\\framework\\node_modules";
+      const reason = `EPERM: symlink '${frameworkRoot}' -> '${cacheRoot}\\node_modules'`;
+
+      const redacted = __cacheDirInternals.redactCachePathDetails(reason, cacheRoot);
+
+      assertEquals(redacted, "EPERM: symlink '[path]' -> '[path]'");
+      assertEquals(redacted.includes("Private Person"), false);
+    });
   });
 
   describe("runWithCacheDir", () => {

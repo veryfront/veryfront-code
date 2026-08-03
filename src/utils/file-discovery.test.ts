@@ -146,6 +146,32 @@ describe("file-discovery", () => {
     );
   });
 
+  it("treats a leading Windows **\\ include glob as any-depth entry matching", async () => {
+    const files = await collectFiles({
+      baseDir: TEST_DIR,
+      extensions: [".ts"],
+      patterns: ["**\\file-*.test.ts"],
+      recursive: false,
+    });
+
+    assertEquals(files.some((f) => f.name === "file-discovery.test.ts"), true);
+    assertEquals(
+      files.every((f) => f.name.startsWith("file-") && f.name.endsWith(".test.ts")),
+      true,
+    );
+  });
+
+  it("does not let an empty any-depth include pattern match every entry", async () => {
+    const files = await collectFiles({
+      baseDir: TEST_DIR,
+      extensions: [".ts"],
+      patterns: ["**/"],
+      recursive: false,
+    });
+
+    assertEquals(files, []);
+  });
+
   it("disables path-shaped include patterns instead of silently matching everything", async () => {
     const files = await collectFiles({
       baseDir: TEST_DIR,
@@ -174,6 +200,17 @@ describe("file-discovery", () => {
       baseDir: TEST_DIR,
       extensions: [".ts"],
       ignorePatterns: ["utils/file-discovery.ts"],
+      recursive: false,
+    });
+
+    assertEquals(files.some((f) => f.name === "file-discovery.ts"), true);
+  });
+
+  it("does not let empty or Windows path-shaped ignores hide files", async () => {
+    const files = await collectFiles({
+      baseDir: TEST_DIR,
+      extensions: [".ts"],
+      ignorePatterns: ["**/", "utils\\file-discovery.ts"],
       recursive: false,
     });
 

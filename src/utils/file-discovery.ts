@@ -105,14 +105,22 @@ const warnedPathShapedPatterns = new Set<string>();
 // misconfiguration is visible instead of silently matching nothing.
 function toEntryPattern(pattern: string): string | undefined {
   let entryPattern = pattern;
-  while (entryPattern.startsWith("**/")) entryPattern = entryPattern.slice(3);
+  while (entryPattern.startsWith("**/") || entryPattern.startsWith("**\\")) {
+    entryPattern = entryPattern.slice(3);
+  }
 
-  if (!entryPattern.includes("/")) return entryPattern;
+  if (
+    entryPattern.length > 0 &&
+    !entryPattern.includes("/") &&
+    !entryPattern.includes("\\")
+  ) {
+    return entryPattern;
+  }
 
   if (!warnedPathShapedPatterns.has(pattern) && warnedPathShapedPatterns.size < 1000) {
     warnedPathShapedPatterns.add(pattern);
     logger.warn(
-      "File discovery patterns match single directory-entry names; a path-shaped pattern can never match and is ignored",
+      "File discovery patterns match single directory-entry names; an empty or path-shaped pattern is ignored",
       { pattern },
     );
   }

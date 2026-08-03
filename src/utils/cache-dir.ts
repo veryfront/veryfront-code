@@ -49,6 +49,7 @@ function describeCacheRoot(cacheBase: string): string {
 
 function redactCachePathDetails(reason: string, cacheBase: string): string {
   return reason
+    .replace(/(["'`])(?:(?:[A-Za-z]:)?[\\/])[^"'`]*\1/g, "$1[path]$1")
     .replaceAll(cacheBase, "[cache-dir]")
     .replace(/(?:[A-Za-z]:)?[\\/][^\s'"`]+/g, "[path]");
 }

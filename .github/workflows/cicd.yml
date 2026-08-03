@@ -61,6 +61,8 @@ jobs:
         with:
           warm-cache: "true"
           warm-redis-cache: "true"
+      - name: Run Node cache-link compatibility tests
+        run: node ./tests/node/run-tests.mjs 'src/utils/cache-dir.test.ts'
       - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
         with:
           timeout_minutes: 10
