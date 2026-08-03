@@ -12,7 +12,7 @@
  */
 
 import { build, emptyDir } from "#dnt";
-import { STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES } from "../../src/extensions/first-party-defaults.ts";
+import { STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES } from "#veryfront/extensions/first-party-defaults.ts";
 import {
 	BROWSER_SAFE_CLIENT_MODULES,
 	BROWSER_SAFE_DNT_TIMER_MODULES,

@@ -1,6 +1,9 @@
-import { assertEquals, assertStringIncludes } from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
-import { STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES } from "../../src/extensions/first-party-defaults.ts";
+import { STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES } from "#veryfront/extensions/first-party-defaults.ts";
+import {
+  assertEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   BROWSER_SAFE_CLIENT_MODULES,
   BROWSER_SAFE_EXPORTS,
@@ -17,7 +20,7 @@ import {
   type RootPackageConfig,
 } from "./npm-extension-package-metadata.ts";
 
-Deno.test("exports agent skill helpers as a public package subpath", async () => {
+it("exports agent skill helpers as a public package subpath", async () => {
   const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
   const exports = denoConfig.exports as Record<string, string>;
   const imports = denoConfig.imports as Record<string, string>;
@@ -26,7 +29,7 @@ Deno.test("exports agent skill helpers as a public package subpath", async () =>
   assertEquals(imports["veryfront/skill"], "./src/skill/index.ts");
 });
 
-Deno.test("exports the UI adapter contract as a public package subpath", async () => {
+it("exports the UI adapter contract as a public package subpath", async () => {
   const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
   const exports = denoConfig.exports as Record<string, string>;
   const imports = denoConfig.imports as Record<string, string>;
@@ -36,7 +39,7 @@ Deno.test("exports the UI adapter contract as a public package subpath", async (
   assertEquals(imports["veryfront/ui/adapter"], contract);
 });
 
-Deno.test("exports CLI framework dependencies as public package subpaths", async () => {
+it("exports CLI framework dependencies as public package subpaths", async () => {
   const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
   const exports = denoConfig.exports as Record<string, string>;
   const imports = denoConfig.imports as Record<string, string>;
@@ -52,7 +55,7 @@ Deno.test("exports CLI framework dependencies as public package subpaths", async
   }
 });
 
-Deno.test("npm package provenance metadata points at veryfront-code", async () => {
+it("npm package provenance metadata points at veryfront-code", async () => {
   const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
 
   assertStringIncludes(
@@ -66,7 +69,7 @@ Deno.test("npm package provenance metadata points at veryfront-code", async () =
   assertEquals(source.includes("github.com/veryfront/veryfront.git"), false);
 });
 
-Deno.test("root npm build metadata does not inject extension implementation dependencies", async () => {
+it("root npm build metadata does not inject extension implementation dependencies", async () => {
   const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
 
   for (const packageName of ["@kreuzberg/node", "better-sqlite3"]) {
@@ -78,7 +81,7 @@ Deno.test("root npm build metadata does not inject extension implementation depe
   }
 });
 
-Deno.test("standard npm extension policy covers baseline app and developer features", () => {
+it("standard npm extension policy covers baseline app and developer features", () => {
   assertEquals([...STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES], [
     "ext-bundler-esbuild",
     "ext-content-mdx",
@@ -90,7 +93,7 @@ Deno.test("standard npm extension policy covers baseline app and developer featu
   ]);
 });
 
-Deno.test("root npm CLI package declares standard extensions after local install", async () => {
+it("root npm CLI package declares standard extensions after local install", async () => {
   const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
   const installIndex = source.indexOf(
     "const { code } = await npmInstall.output();",
@@ -111,7 +114,7 @@ Deno.test("root npm CLI package declares standard extensions after local install
   );
 });
 
-Deno.test("npm lifecycle probe installs auto-loaded extensions in a real consumer layout", async () => {
+it("npm lifecycle probe installs auto-loaded extensions in a real consumer layout", async () => {
   const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
 
   assertStringIncludes(source, '"--install-links"');
@@ -127,7 +130,7 @@ Deno.test("npm lifecycle probe installs auto-loaded extensions in a real consume
   );
 });
 
-Deno.test("npm publish version bump pins first-party extension dependencies to the publish version", async () => {
+it("npm publish version bump pins first-party extension dependencies to the publish version", async () => {
   const packageDir = await Deno.makeTempDir();
   const packagePath = `${packageDir}/package.json`;
   const publishVersion = "0.1.1016-rc.123";
@@ -200,7 +203,7 @@ Deno.test("npm publish version bump pins first-party extension dependencies to t
   }
 });
 
-Deno.test("npm publish orders extensions before the root package", async () => {
+it("npm publish orders extensions before the root package", async () => {
   const packageRoot = await Deno.makeTempDir();
 
   try {
@@ -235,7 +238,7 @@ Deno.test("npm publish orders extensions before the root package", async () => {
   }
 });
 
-Deno.test("npm publish skips extension packages marked publish false", async () => {
+it("npm publish skips extension packages marked publish false", async () => {
   const packageRoot = await Deno.makeTempDir();
 
   try {
@@ -339,7 +342,7 @@ const ROOT_BUNDLED_EXTENSIONS = new Set([
 // instead of treating the extension's use as private implementation detail.
 const ROOT_SHARED_EXTENSION_DEPENDENCIES = new Set(["react", "react-dom"]);
 
-Deno.test("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests", async () => {
+it("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests", async () => {
   const denoConfig = JSON.parse(
     await Deno.readTextFile("deno.json"),
   ) as RootPackageConfig;

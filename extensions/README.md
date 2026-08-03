@@ -111,34 +111,36 @@ the same contract.
 | ----------------------------------------------------------------- | --------------------------- | ------------------------------------------- |
 | [`@veryfront/ext-sandbox-shell-tools`](./ext-sandbox-shell-tools) | `SandboxShellToolsProvider` | Sandbox shell tool creation via `bash-tool` |
 
-## Auto-enabled core extensions
+## Built-in first-party selection
 
-These extensions are selected by `createBuiltinExtensions()` during app
-bootstrap unless a project disables or overrides them by name. Source and
-service distributions provide the packages needed for their role. The standard
-`veryfront` npm/CLI package installs the baseline subset used by ordinary apps
-and local development.
+These packages are known to `createBuiltinExtensions()`, but that does not make
+every contract an unconditional global default. Direct built-ins are provided
+by their owning source or service distribution. Deferred candidates load only
+when the matching feature selects their contract and the executing distribution
+contains the package. The standard `veryfront` npm/CLI package installs the
+baseline subset used by ordinary apps and local development.
 
-| Package                                      | Contracts                         |
-| -------------------------------------------- | --------------------------------- |
-| `@veryfront/ext-schema-zod`                  | `SchemaValidator`                 |
-| `@veryfront/ext-auth-jwt`                    | `AuthProvider`                    |
-| `@veryfront/ext-bundler-esbuild`             | `Bundler`, `ModuleLexer`          |
-| `@veryfront/ext-parser-babel`                | `CodeParser`                      |
-| `@veryfront/ext-yaml`                        | `SkillDocumentParserProvider`     |
-| `@veryfront/ext-content-mdx`                 | `ContentProcessor`                |
-| `@veryfront/ext-css-tailwind`                | `CSSProcessor`                    |
-| `@veryfront/ext-node-websocket-ws`           | `NodeWebSocketServerProvider`     |
-| `@veryfront/ext-dev-ui-react`                | `DevUiAssetProvider`              |
-| `@veryfront/ext-document-kreuzberg`          | `DocumentExtractor`               |
-| `@veryfront/ext-db-sqlite`                   | `SqliteStore`                     |
-| `@veryfront/ext-sandbox-shell-tools`         | `SandboxShellToolsProvider`       |
-| `@veryfront/ext-observability-opentelemetry` | `TracingExporter`, Node telemetry |
-| `@veryfront/ext-eval-report-http`            | Generic HTTP eval exporter        |
-| `@veryfront/ext-eval-report-mlflow`          | MLflow eval exporter              |
-| `@veryfront/ext-llm-openai`                  | `LLMProvider:openai`              |
-| `@veryfront/ext-llm-anthropic`               | `LLMProvider:anthropic`           |
-| `@veryfront/ext-llm-google`                  | `LLMProvider:google`              |
+| Package                                      | Contract                      | Selection and availability                |
+| -------------------------------------------- | ----------------------------- | ----------------------------------------- |
+| `@veryfront/ext-schema-zod`                  | `SchemaValidator`             | Direct built-in                           |
+| `@veryfront/ext-auth-jwt`                    | `AuthProvider`                | Deferred; install when auth is configured |
+| `@veryfront/ext-bundler-esbuild`             | `Bundler`, `ModuleLexer`      | Deferred; standard npm baseline           |
+| `@veryfront/ext-parser-babel`                | `CodeParser`                  | Deferred; standard npm baseline           |
+| `@veryfront/ext-yaml`                        | `SkillDocumentParserProvider` | Deferred; standard npm baseline           |
+| `@veryfront/ext-content-mdx`                 | `ContentProcessor`            | Deferred; standard npm baseline           |
+| `@veryfront/ext-css-tailwind`                | `CSSProcessor`                | Deferred; standard npm baseline           |
+| `@veryfront/ext-node-websocket-ws`           | `NodeWebSocketServerProvider` | Deferred; standard npm baseline           |
+| `@veryfront/ext-dev-ui-react`                | `DevUiAssetProvider`          | Deferred; standard npm baseline           |
+| `@veryfront/ext-document-kreuzberg`          | `DocumentExtractor`           | Deferred; source/service distribution     |
+| `@veryfront/ext-db-sqlite`                   | `SqliteStore`                 | Deferred; source/service distribution     |
+| `@veryfront/ext-sandbox-shell-tools`         | `SandboxShellToolsProvider`   | Deferred; source/service distribution     |
+| `@veryfront/ext-observability-opentelemetry` | `TracingExporter`             | Deferred; install when OTLP is configured |
+| `@veryfront/ext-observability-opentelemetry` | `NodeTelemetryProvider`       | Built into the owning agent service       |
+| `@veryfront/ext-eval-report-http`            | Generic HTTP eval exporter    | Deferred; source/service distribution     |
+| `@veryfront/ext-eval-report-mlflow`          | MLflow eval exporter          | Deferred; source/service distribution     |
+| `@veryfront/ext-llm-openai`                  | `LLMProvider:openai`          | Direct service/source built-in            |
+| `@veryfront/ext-llm-anthropic`               | `LLMProvider:anthropic`       | Direct service/source built-in            |
+| `@veryfront/ext-llm-google`                  | `LLMProvider:google`          | Direct service/source built-in            |
 
 ## Explicit opt-in extensions
 
