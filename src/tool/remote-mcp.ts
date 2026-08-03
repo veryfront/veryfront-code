@@ -982,7 +982,7 @@ export function createRemoteMCPToolSourceFactoryWithTransport(
   for (const value of options.trustedEndpoints) {
     const endpoint = normalizeTrustedEndpoint(value);
     if (!endpoint) {
-      throw new TypeError(`Invalid trusted endpoint: ${value}`);
+      throw new TypeError("Invalid trusted endpoint");
     }
     trustedEndpoints.add(endpoint);
   }

@@ -109,7 +109,7 @@ describe("tool/remote-mcp", () => {
   });
 
   it("rejects invalid trusted endpoints when the factory is created", () => {
-    assertThrows(
+    const error = assertThrows(
       () =>
         createRemoteMCPToolSourceFactoryWithTransport({
           trustedEndpoints: ["https://user:secret@example.com/mcp"],
@@ -118,6 +118,8 @@ describe("tool/remote-mcp", () => {
       TypeError,
       "trusted endpoint",
     );
+    assertInstanceOf(error, TypeError);
+    assertEquals(error.message, "Invalid trusted endpoint");
   });
 
   it("normalizes non-Error caller abort reasons", async () => {
