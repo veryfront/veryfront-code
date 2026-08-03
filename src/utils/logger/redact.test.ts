@@ -342,6 +342,43 @@ describe("logger/redact", () => {
       assertEquals(benign, "mapping: 4 routes resolved");
     });
 
+    it("keeps regex sanitization fail-closed after RegExp exec is replaced", () => {
+      const originalExec = RegExp.prototype.exec;
+
+      try {
+        RegExp.prototype.exec = () => {
+          throw new Error("project code replaced RegExp.prototype.exec");
+        };
+
+        assertEquals(
+          sanitizeUrlCredentials("Using token sk-proj-abc123456789"),
+          `Using token ${REDACTED}`,
+        );
+        assertEquals(
+          sanitizeUrlCredentials("https://user:password@example.test/path"),
+          `https://user:${REDACTED}@example.test/path`,
+        );
+        assertEquals(
+          sanitizeUrlCredentials("https://example.test/?access_token=secret"),
+          `https://example.test/?access_token=${REDACTED}`,
+        );
+        assertEquals(
+          sanitizeUrlCredentials("Bearer opaque-secret"),
+          `Bearer ${REDACTED}`,
+        );
+        assertEquals(
+          sanitizeUrlCredentials("refreshToken=prototype-poison-secret"),
+          `refreshToken=${REDACTED}`,
+        );
+        assertEquals(
+          sanitizeUrlCredentials("mapping: 4 routes resolved"),
+          "mapping: 4 routes resolved",
+        );
+      } finally {
+        RegExp.prototype.exec = originalExec;
+      }
+    });
+
     it("keeps structured and URL key redaction stable after collection prototypes change", () => {
       const originalMapGet = Map.prototype.get;
       const originalSetHas = Set.prototype.has;

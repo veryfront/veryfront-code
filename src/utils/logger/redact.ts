@@ -38,7 +38,6 @@ const regExpReplace = RegExp.prototype[Symbol.replace];
 const stringCharCodeAt = String.prototype.charCodeAt;
 const stringIncludes = String.prototype.includes;
 const stringSlice = String.prototype.slice;
-const stringSplit = String.prototype.split;
 const stringToLowerCase = String.prototype.toLowerCase;
 const setAdd = Set.prototype.add;
 const setDelete = Set.prototype.delete;
@@ -48,14 +47,29 @@ const mapSizeGetter = objectGetOwnPropertyDescriptor(Map.prototype, "size")!.get
 const NON_ALPHANUMERIC_PATTERN = /[^a-z0-9]/g;
 const CAMEL_CASE_BOUNDARY_PATTERN = /([a-z0-9])([A-Z])/g;
 const ACRONYM_BOUNDARY_PATTERN = /([A-Z])([A-Z][a-z])/g;
-const IDENTIFIER_SEPARATOR_PATTERN = /[^a-z0-9]+/g;
 const PROVIDER_CREDENTIAL_PATTERN =
   /\b(?:sk-[A-Za-z0-9._-]{8,}|gh[po]_[A-Za-z0-9._-]{8,}|xox[baprs]-[A-Za-z0-9._-]{8,}|eyJ[A-Za-z0-9._-]{8,})\b/g;
+
+function replaceWithCapturedExec(
+  input: string,
+  pattern: RegExp,
+  replacement: unknown,
+): string {
+  if (!objectHasOwn(pattern, "exec")) {
+    objectDefineProperty(pattern, "exec", {
+      configurable: false,
+      enumerable: false,
+      value: regExpExec,
+      writable: false,
+    });
+  }
+  return apply(regExpReplace, pattern, [input, replacement]) as string;
+}
 
 /** Strip all non-alphanumeric characters and lowercase, used for key normalization. */
 function normalizeToAlphanumeric(s: string): string {
   const lowercase = apply(stringToLowerCase, s, []) as string;
-  return apply(regExpReplace, NON_ALPHANUMERIC_PATTERN, [lowercase, ""]) as string;
+  return replaceWithCapturedExec(lowercase, NON_ALPHANUMERIC_PATTERN, "");
 }
 
 const FORWARD_SLASH_CODE_UNIT = 47;
@@ -85,6 +99,25 @@ function isAsciiLetterCodeUnit(codeUnit: number): boolean {
     ? codeUnit + ASCII_LOWERCASE_OFFSET
     : codeUnit;
   return lowercase >= 97 && lowercase <= 122;
+}
+
+function splitIdentifierTokens(value: string): string[] {
+  const tokens: string[] = [];
+  let tokenStart = 0;
+
+  for (let index = 0; index <= value.length; index++) {
+    const codeUnit = index === value.length ? -1 : stringCodeUnitAt(value, index);
+    const isIdentifierCodeUnit = (codeUnit >= 97 && codeUnit <= 122) ||
+      (codeUnit >= 48 && codeUnit <= 57);
+    if (isIdentifierCodeUnit) continue;
+
+    if (index > tokenStart) {
+      tokens[tokens.length] = sliceString(value, tokenStart, index);
+    }
+    tokenStart = index + 1;
+  }
+
+  return tokens;
 }
 
 function isWindowsPath(path: string): boolean {
@@ -738,16 +771,18 @@ function redactCredentialAssignments(
  * words such as `mapping` and `considered` stay intact.
  */
 function isSensitiveAssignmentKey(key: string): boolean {
-  const withAcronymBoundaries = apply(regExpReplace, ACRONYM_BOUNDARY_PATTERN, [
+  const withAcronymBoundaries = replaceWithCapturedExec(
     key,
+    ACRONYM_BOUNDARY_PATTERN,
     "$1 $2",
-  ]) as string;
-  const withBoundaries = apply(regExpReplace, CAMEL_CASE_BOUNDARY_PATTERN, [
+  );
+  const withBoundaries = replaceWithCapturedExec(
     withAcronymBoundaries,
+    CAMEL_CASE_BOUNDARY_PATTERN,
     "$1 $2",
-  ]) as string;
+  );
   const lowercase = apply(stringToLowerCase, withBoundaries, []) as string;
-  const tokens = apply(stringSplit, lowercase, [IDENTIFIER_SEPARATOR_PATTERN]) as string[];
+  const tokens = splitIdentifierTokens(lowercase);
 
   for (let start = 0; start < tokens.length; start++) {
     if (tokens[start]!.length === 0) continue;
@@ -819,8 +854,9 @@ export function sanitizeUrlCredentials(input: string): string {
   if (typeof input !== "string" || input.length === 0) return input;
 
   // 1) userinfo: scheme://user:pass@  → mask the password (and any bare creds).
-  let out = apply(regExpReplace, URL_USERINFO_RE, [
+  let out = replaceWithCapturedExec(
     input,
+    URL_USERINFO_RE,
     (_match: string, scheme: string, userinfo: string) => {
       const colon = userinfo.indexOf(":");
       if (colon === -1) {
@@ -830,9 +866,10 @@ export function sanitizeUrlCredentials(input: string): string {
       const user = sliceString(userinfo, 0, colon);
       return `${scheme}${user}:${REDACTED}@`;
     },
-  ]) as string;
-  out = apply(regExpReplace, HORIZONTAL_WHITESPACE_URL_USERINFO_RE, [
+  );
+  out = replaceWithCapturedExec(
     out,
+    HORIZONTAL_WHITESPACE_URL_USERINFO_RE,
     (
       match: string,
       scheme: string,
@@ -848,13 +885,14 @@ export function sanitizeUrlCredentials(input: string): string {
       }
       return `${scheme}${user}:${REDACTED}@`;
     },
-  ]) as string;
+  );
 
   // 2) sensitive query/fragment params: `key=value` → `key=[REDACTED]`.
   // Match `?key=`, `#key=`, `&key=`, and `;key=` separators and stop at the
   // next delimiter. OAuth implicit-flow tokens commonly appear after `#`.
-  out = apply(regExpReplace, /([?#&;])([-a-z0-9_.%\[\]]+)=([^&#;\s]*)/gi, [
+  out = replaceWithCapturedExec(
     out,
+    /([?#&;])([-a-z0-9_.%\[\]]+)=([^&#;\s]*)/gi,
     (match: string, sep: string, key: string, _val: string) => {
       const decodedKey = decodeUrlParameterName(key);
       const sensitive = apply(setHas, NORMALIZED_SENSITIVE_URL_PARAMS, [
@@ -863,38 +901,37 @@ export function sanitizeUrlCredentials(input: string): string {
         isSensitiveKey(decodedKey);
       return sensitive ? `${sep}${key}=${REDACTED}` : match;
     },
-  ]) as string;
+  );
 
   // 3) Cookie header values.
   // Cookie headers can carry multiple independent credentials separated by
   // semicolons (and Set-Cookie attributes can contain commas). Mask the entire
   // header line before the generic assignment scanner can stop at the first
   // delimiter and expose later values.
-  out = apply(regExpReplace, /(^|[^a-z0-9_-])((?:set-cookie|cookie)\s*:\s*)[^\r\n]*/gi, [
+  out = replaceWithCapturedExec(
     out,
+    /(^|[^a-z0-9_-])((?:set-cookie|cookie)\s*:\s*)[^\r\n]*/gi,
     (_match: string, boundary: string, prefix: string) => `${boundary}${prefix}${REDACTED}`,
-  ]) as string;
+  );
 
   // 4) Header-shaped authorization values and standalone auth schemes.
   // Authorization schemes are extensible (AWS SigV4, Digest, custom proxy
   // schemes, and others), so mask the complete line instead of trying to
   // enumerate schemes or parse their credential-bearing parameters.
-  out = apply(regExpReplace, /\b(authorization\s*[:=]\s*)[^\r\n]*/gi, [
+  out = replaceWithCapturedExec(
     out,
+    /\b(authorization\s*[:=]\s*)[^\r\n]*/gi,
     (_match: string, prefix: string) => `${prefix}${REDACTED}`,
-  ]) as string;
-  out = apply(
-    regExpReplace,
+  );
+  out = replaceWithCapturedExec(
+    out,
     /\b(bearer|basic)(\s+)(?:"[^"\r\n]*"|'[^'\r\n]*'|[a-z0-9._~+/=-]+)/gi,
-    [
-      out,
-      (_match: string, scheme: string, whitespace: string) => `${scheme}${whitespace}${REDACTED}`,
-    ],
-  ) as string;
+    (_match: string, scheme: string, whitespace: string) => `${scheme}${whitespace}${REDACTED}`,
+  );
 
   // 5) Common provider token shapes can appear as bare values without an
   // assignment delimiter, for example `Using token sk-...`.
-  out = apply(regExpReplace, PROVIDER_CREDENTIAL_PATTERN, [out, REDACTED]) as string;
+  out = replaceWithCapturedExec(out, PROVIDER_CREDENTIAL_PATTERN, REDACTED);
 
   // 6) Credential assignments embedded in free-form messages/errors. Match
   // generic identifier-shaped keys and apply the same credential vocabulary
