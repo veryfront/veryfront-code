@@ -50,6 +50,12 @@ describe("PathNormalizer", () => {
       assertEquals(normalizer.normalize("/project/src/file.ts"), "src/file.ts");
     });
 
+    it("should canonicalize current-directory segments before stripping projectDir", () => {
+      const normalizer = new PathNormalizer("/project/./root");
+      assertEquals(normalizer.normalize("/project/root/src/file.ts"), "src/file.ts");
+      assertEquals(normalizer.normalize("/project/./root/src/file.ts"), "src/file.ts");
+    });
+
     it("should not modify path without projectDir prefix", () => {
       const normalizer = new PathNormalizer("/project");
       assertEquals(normalizer.normalize("/other/src/file.ts"), "other/src/file.ts");

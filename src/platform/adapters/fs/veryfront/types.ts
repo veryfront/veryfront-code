@@ -124,7 +124,7 @@ export interface FSAdapterConfig {
       ttl?: number;
     };
     retry?: {
-      /** Retries after the initial request, from 0 through 9. */
+      /** Retries after the initial request, bounded by `MAX_VERYFRONT_FILESYSTEM_RETRIES`. */
       maxRetries?: number;
       initialDelay?: number;
       maxDelay?: number;

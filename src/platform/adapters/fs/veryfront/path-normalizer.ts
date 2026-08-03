@@ -11,13 +11,24 @@ function hasAsciiControlCharacter(value: string): boolean {
   return false;
 }
 
+function normalizeForComparison(value: string): string {
+  const isAbsolute = value.startsWith("/");
+  const normalized = value
+    .replace(/^\/+|\/+$/g, "")
+    .replace(/\/+/g, "/")
+    .split("/")
+    .filter((segment) => segment !== ".")
+    .join("/");
+  return isAbsolute ? `/${normalized}` : normalized;
+}
+
 export class PathNormalizer {
   private readonly projectDirPrefix?: string;
 
   constructor(private readonly projectDir?: string) {
     if (projectDir !== undefined) {
       this.assertSafePath(projectDir, "project directory");
-      this.projectDirPrefix = projectDir === "/" ? "/" : projectDir.replace(/\/+$/g, "");
+      this.projectDirPrefix = normalizeForComparison(projectDir);
     }
   }
 
@@ -27,14 +38,15 @@ export class PathNormalizer {
 
   normalize(path: string): string {
     this.assertSafePath(path, "path");
+    const normalizedPath = normalizeForComparison(path);
 
     const projectDir = this.projectDirPrefix;
     const wasAbsoluteInProject = projectDir !== undefined &&
       (projectDir === "/"
-        ? path.startsWith("/")
-        : path === projectDir || path.startsWith(`${projectDir}/`));
+        ? normalizedPath.startsWith("/")
+        : normalizedPath === projectDir || normalizedPath.startsWith(`${projectDir}/`));
 
-    let normalized = path;
+    let normalized = normalizedPath;
 
     if (wasAbsoluteInProject) {
       normalized = projectDir === "/" ? normalized.slice(1) : normalized.slice(projectDir.length);
