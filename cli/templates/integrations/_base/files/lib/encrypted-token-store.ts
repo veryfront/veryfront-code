@@ -81,6 +81,9 @@ const MAX_KEY_COMPONENT_LENGTH = 1_024;
 const MAX_STATE_KEY_LENGTH = 1_024;
 const STATE_TTL_MS = 10 * 60 * 1_000;
 const STATE_CLOCK_SKEW_MS = 60 * 1_000;
+const MAX_TOKEN_VALUE_LENGTH = 65_536;
+const MAX_TOKEN_TYPE_LENGTH = 256;
+const MAX_SCOPE_WIRE_LENGTH = 4_096;
 
 const TOKENS_KEY_PREFIX = "veryfront:oauth:v1:tokens:";
 const STATE_KEY_PREFIX = "veryfront:oauth:v1:state:";
@@ -209,33 +212,73 @@ interface StoredTokenEntry {
   tokens: OAuthTokens;
 }
 
+function ownDataValue(record: object, key: string): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(record, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
+function hasAsciiControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function requireOptionalTokenString(
+  record: object,
+  key: string,
+  maxLength: number,
+): string | undefined {
+  const value = ownDataValue(record, key);
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== "string" || value.length === 0 || value.length > maxLength ||
+    value.trim() !== value || hasAsciiControlCharacter(value)
+  ) {
+    throw new TypeError(`OAuth token row ${key} must be a safe bounded string`);
+  }
+  return value;
+}
+
 function requireTokenRow(value: unknown): OAuthTokens {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError("OAuth token row must be an object");
   }
-  const tokens = value as OAuthTokens;
-  if (typeof tokens.accessToken !== "string" || tokens.accessToken.length === 0) {
+  const accessToken = requireOptionalTokenString(value, "accessToken", MAX_TOKEN_VALUE_LENGTH);
+  if (accessToken === undefined) {
     throw new TypeError("OAuth token row must contain a non-empty accessToken");
   }
+  const refreshToken = requireOptionalTokenString(value, "refreshToken", MAX_TOKEN_VALUE_LENGTH);
+  const tokenType = requireOptionalTokenString(value, "tokenType", MAX_TOKEN_TYPE_LENGTH);
+  const scope = requireOptionalTokenString(value, "scope", MAX_SCOPE_WIRE_LENGTH);
+  const idToken = requireOptionalTokenString(value, "idToken", MAX_TOKEN_VALUE_LENGTH);
+  const expiresAt = ownDataValue(value, "expiresAt");
   if (
-    tokens.expiresAt !== undefined &&
-    (typeof tokens.expiresAt !== "number" || !Number.isSafeInteger(tokens.expiresAt) ||
-      tokens.expiresAt < 0)
+    expiresAt !== undefined &&
+    (typeof expiresAt !== "number" || !Number.isSafeInteger(expiresAt) || expiresAt < 0)
   ) {
     throw new TypeError("OAuth token expiresAt must be a non-negative safe integer");
   }
-  return tokens;
+  return {
+    accessToken,
+    ...(refreshToken === undefined ? {} : { refreshToken }),
+    ...(expiresAt === undefined ? {} : { expiresAt }),
+    ...(tokenType === undefined ? {} : { tokenType }),
+    ...(scope === undefined ? {} : { scope }),
+    ...(idToken === undefined ? {} : { idToken }),
+  };
 }
 
 function requireTokenEntry(value: unknown): StoredTokenEntry {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError("Stored OAuth token entry must be an object");
   }
-  const entry = value as StoredTokenEntry;
-  if (typeof entry.revision !== "string" || entry.revision.length === 0) {
+  const revision = ownDataValue(value, "revision");
+  if (typeof revision !== "string" || revision.length === 0) {
     throw new TypeError("Stored OAuth token entry must contain a revision");
   }
-  return { revision: entry.revision, tokens: requireTokenRow(entry.tokens) };
+  return { revision, tokens: requireTokenRow(ownDataValue(value, "tokens")) };
 }
 
 function requireStateRow(value: unknown): StoredOAuthState {

@@ -123,6 +123,63 @@ describe("generated encrypted OAuth token store", () => {
     assertEquals(await store.getTokens("github", "alice"), tokens);
   });
 
+  it("rejects token rows that require invoking getters", async () => {
+    const store = createEncryptedTokenStore(createMemoryKvBackend());
+    const tokens = {};
+    Object.defineProperty(tokens, "accessToken", {
+      enumerable: true,
+      get() {
+        throw new Error("getter must not run");
+      },
+    });
+
+    await assertRejects(
+      () => store.setTokens("github", "alice", tokens as never),
+      TypeError,
+      "accessToken",
+    );
+  });
+
+  it("rejects malformed optional token string fields", async () => {
+    const store = createEncryptedTokenStore(createMemoryKvBackend());
+
+    await assertRejects(
+      () =>
+        store.setTokens("github", "alice", {
+          accessToken: "access-token",
+          refreshToken: 42,
+        } as never),
+      TypeError,
+      "refreshToken",
+    );
+    await assertRejects(
+      () =>
+        store.setTokens("github", "alice", {
+          accessToken: "access-token",
+          scope: "read\nwrite",
+        }),
+      TypeError,
+      "scope",
+    );
+  });
+
+  it("stores detached token snapshots", async () => {
+    const store = createEncryptedTokenStore(createMemoryKvBackend());
+    const tokens = { accessToken: "original", refreshToken: "refresh" };
+
+    await store.setTokens("github", "alice", tokens);
+    tokens.accessToken = "mutated";
+
+    const stored = await store.getTokens("github", "alice");
+    assertEquals(stored, { accessToken: "original", refreshToken: "refresh" });
+    if (!stored) throw new Error("Expected stored tokens");
+    stored.accessToken = "caller-mutated";
+    assertEquals(await store.getTokens("github", "alice"), {
+      accessToken: "original",
+      refreshToken: "refresh",
+    });
+  });
+
   it("uses a fresh IV for every encryption", async () => {
     const backend = inspectableBackend();
     const store = createEncryptedTokenStore(backend);
