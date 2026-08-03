@@ -494,6 +494,48 @@ describe("logger", () => {
         restore();
       }
     });
+
+    it("scrubs credentials embedded in the log message", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info(
+            "Fetching https://user:password@example.com/cb?access_token=secret",
+          );
+
+          const line = getOutput();
+          const entry = JSON.parse(line) as LogEntry;
+          assertEquals(line.includes("password"), false);
+          assertEquals(line.includes("secret"), false);
+          assertEquals(entry.message.includes("[REDACTED]"), true);
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("serializes BigInt and hostile toJSON getters without throwing", () => {
+      const { getOutput, restore } = captureConsoleLog();
+      const hostile: Record<string, unknown> = {};
+      Object.defineProperty(hostile, "toJSON", {
+        get() {
+          throw new Error("hostile serializer getter");
+        },
+      });
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info("Unusual values", { count: 42n, hostile });
+        });
+
+        const entry = JSON.parse(getOutput()) as LogEntry;
+        assertEquals(entry.context?.count, "42");
+        assertEquals(entry.context?.hostile, "[REDACTED]");
+      } finally {
+        restore();
+      }
+    });
   });
 
   describe("text output format", () => {
@@ -537,6 +579,26 @@ describe("logger", () => {
 
         const output = getOutput();
         assertEquals(output.includes("p4ss"), false);
+        assertEquals(output.includes("[REDACTED]"), true);
+      } finally {
+        restore();
+        Deno.env.delete("LOG_FORMAT");
+        Deno.env.delete("NO_COLOR");
+        __resetLoggerConfigForTests();
+      }
+    });
+
+    it("scrubs credentials embedded in the rendered message", () => {
+      Deno.env.set("LOG_FORMAT", "text");
+      Deno.env.set("NO_COLOR", "1");
+      __resetLoggerConfigForTests();
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        serverLogger.info("Fetching https://user:password@example.com?token=secret");
+        const output = getOutput();
+        assertEquals(output.includes("password"), false);
+        assertEquals(output.includes("secret"), false);
         assertEquals(output.includes("[REDACTED]"), true);
       } finally {
         restore();

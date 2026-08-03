@@ -14,7 +14,13 @@ import {
   type SerializedError,
   serializeError,
 } from "./core.ts";
-import { redactSensitive, sanitizeSerializedError, sanitizeUrlCredentials } from "./redact.ts";
+import {
+  REDACTED,
+  redactForSerialization,
+  redactSensitive,
+  sanitizeSerializedError,
+  sanitizeUrlCredentials,
+} from "./redact.ts";
 
 export enum LogLevel {
   DEBUG = 0,
@@ -342,6 +348,45 @@ function sanitizeStringFieldValue(value: unknown): string {
   return sanitizeUrlCredentials(String(value));
 }
 
+/**
+ * JSON.stringify replacer that converts BigInt context values to decimal
+ * strings. BigInt is not JSON-serializable and would otherwise throw a
+ * TypeError out of the logging call site.
+ */
+function jsonSafeReplacer(_key: string, value: unknown): unknown {
+  return typeof value === "bigint" ? value.toString() : value;
+}
+
+/**
+ * Serialize a log entry without ever throwing out of the caller. A BigInt in
+ * context or a hostile/stateful `toJSON` can make `JSON.stringify` throw;
+ * logging must degrade to a redacted snapshot instead of crashing the call
+ * site. The fallback re-snapshots the context with
+ * {@link redactForSerialization}, which normalizes BigInt, `toJSON`, and
+ * unreadable values into JSON-safe forms while failing closed.
+ */
+function stringifyLogEntry(entry: LogEntry): string {
+  try {
+    return JSON.stringify(entry, jsonSafeReplacer);
+  } catch {
+    try {
+      return JSON.stringify(
+        { ...entry, context: redactForSerialization(entry.context) },
+        jsonSafeReplacer,
+      );
+    } catch {
+      return JSON.stringify({
+        timestamp: entry.timestamp,
+        level: entry.level,
+        service: entry.service,
+        veryfrontVersion: entry.veryfrontVersion,
+        message: entry.message,
+        context: { unserializable_context: REDACTED },
+      });
+    }
+  }
+}
+
 class ConsoleLogger implements Logger {
   private boundContext: Record<string, unknown>;
   private componentName?: string;
@@ -378,7 +423,10 @@ class ConsoleLogger implements Logger {
       level,
       service: this.prefix.toLowerCase(),
       veryfrontVersion: RUNTIME_VERSION,
-      message,
+      // The message string bypasses the key-based context redactor, so scrub
+      // credential-shaped text (URL userinfo, ?access_token=, header dumps)
+      // embedded directly in the message before emission (#1989).
+      message: sanitizeUrlCredentials(message),
     };
 
     if (this.componentName) entry.component = this.componentName;
@@ -495,13 +543,16 @@ class ConsoleLogger implements Logger {
 
   private formatJson(level: LogEntry["level"], message: string, args: unknown[]): string {
     const entry = this.createEntry(level, message, args);
-    return JSON.stringify(entry);
+    return stringifyLogEntry(entry);
   }
 
   private formatTextLine(level: LogEntry["level"], message: string, args: unknown[]): string {
     const { context, error } = extractContext(args);
     const mergedContext = { ...this.boundContext, ...context };
     const enableColor = shouldUseColor();
+    // Mirror the JSON path: the message string bypasses the key-based context
+    // redactor, so scrub credential-shaped text before rendering (#1989).
+    const safeMessage = sanitizeUrlCredentials(message);
 
     const contextText = formatContextText(
       redactSensitive(mergedContext),
@@ -513,7 +564,7 @@ class ConsoleLogger implements Logger {
     if (preset === "cli") {
       // CLI preset: no timestamp or tag — 2-space indent + glyph only.
       const glyph = colorize(CLI_LEVEL_GLYPHS[level], LEVEL_COLORS[level], enableColor);
-      return `  ${glyph} ${message}${contextText}`;
+      return `  ${glyph} ${safeMessage}${contextText}`;
     }
 
     const timestamp = colorize(formatTimestamp(), ANSI.dim, enableColor);
@@ -522,7 +573,7 @@ class ConsoleLogger implements Logger {
     const componentTag = this.componentName
       ? ` ${colorize(`[${this.componentName}]`, ANSI.dim, enableColor)}`
       : "";
-    return `${timestamp}  ${tag} ${glyph}${componentTag} ${message}${contextText}`;
+    return `${timestamp}  ${tag} ${glyph}${componentTag} ${safeMessage}${contextText}`;
   }
 
   private log(
@@ -539,7 +590,7 @@ class ConsoleLogger implements Logger {
     const line = resolvedFormat === "json"
       ? (() => {
         entry = this.createEntry(level, message, args);
-        return JSON.stringify(entry);
+        return stringifyLogEntry(entry);
       })()
       : this.formatTextLine(level, message, args);
 
