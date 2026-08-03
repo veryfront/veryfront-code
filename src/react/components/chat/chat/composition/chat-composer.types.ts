@@ -21,11 +21,11 @@ export interface ChatInputFieldProps extends
   ref?: React.Ref<HTMLTextAreaElement>;
 }
 
-/** Props shared by the native icon-button action leaves. */
-export interface ChatInputActionProps extends
+/** Props shared by every ChatInput action leaf. */
+interface ChatInputActionBaseProps extends
   Omit<
     React.ButtonHTMLAttributes<HTMLButtonElement>,
-    "children" | "onClick" | "type"
+    "children" | "onClick" | "ref" | "type"
   > {
   /** Replace the default glyph. The canonical path (RFC 2980: a leaf renders its
    * default icon when childless; pass children to replace it). */
@@ -34,12 +34,27 @@ export interface ChatInputActionProps extends
   icon?: React.ReactNode;
   /** Additional classes merged with the action's Button variant classes. */
   className?: string;
-  /** Merge the action behavior and styling onto one custom child element. */
-  asChild?: boolean;
   onClick?: WrapClick;
-  /** React 19: ref is a regular prop. */
+}
+
+/** Native-button mode for a ChatInput action leaf. */
+interface ChatInputNativeActionProps extends ChatInputActionBaseProps {
+  asChild?: false;
+  /** React 19: ref targets the rendered button. */
   ref?: React.Ref<HTMLButtonElement>;
 }
+
+/** Slotted mode for a ChatInput action leaf. */
+interface ChatInputSlottedActionProps extends ChatInputActionBaseProps {
+  /** Merge action behavior and styling onto one custom child element. */
+  asChild: true;
+  children: React.ReactElement;
+  /** React 19: ref targets the element rendered by the custom child. */
+  ref?: React.Ref<HTMLElement>;
+}
+
+/** Props shared by the ChatInput action leaves. */
+export type ChatInputActionProps = ChatInputNativeActionProps | ChatInputSlottedActionProps;
 
 /** Props accepted by `<ChatInput.Send>`. */
 export type ChatInputSendProps = ChatInputActionProps;
@@ -51,7 +66,7 @@ export type ChatInputStopProps = ChatInputActionProps;
 export type ChatInputVoiceProps = ChatInputActionProps;
 
 /** Props for the unified {@link ChatInputSubmit} control. */
-export interface ChatInputSubmitProps extends ChatInputActionProps {
+export type ChatInputSubmitProps = ChatInputActionProps & {
   /** Replace the idle/send glyph. With `asChild`, supplies the element in both states. */
   children?: React.ReactNode;
   /**
@@ -59,7 +74,7 @@ export interface ChatInputSubmitProps extends ChatInputActionProps {
    * applies to the idle/send state.
    */
   stopIcon?: React.ReactNode;
-}
+};
 
 /** Props accepted by `<ChatInput.Model>`. */
 export interface ChatInputModelProps {

@@ -1,5 +1,5 @@
 /**
- * Native button leaves for the ChatInput composer.
+ * Action leaves for the ChatInput composer.
  *
  * @module react/components/chat/chat/composition/chat-input-actions
  */
@@ -49,7 +49,7 @@ export function ChatInputSend({
   return (
     <Button
       {...buttonProps}
-      ref={ref}
+      ref={ref as React.Ref<HTMLButtonElement>}
       type={getChatInputActionType(asChild, children)}
       asChild={asChild}
       variant="icon-primary"
@@ -84,7 +84,7 @@ export function ChatInputStop({
   return (
     <Button
       {...buttonProps}
-      ref={ref}
+      ref={ref as React.Ref<HTMLButtonElement>}
       type={getChatInputActionType(asChild, children)}
       asChild={asChild}
       variant="icon-ghost"
@@ -100,27 +100,27 @@ export function ChatInputStop({
 }
 ChatInputStop.displayName = "ChatInput.Stop";
 
-/**
- * Unified submit control: renders {@link ChatInputStop} while a turn is
- * streaming and {@link ChatInputSend} otherwise, so the common case needs one
- * control instead of wiring Send and Stop and relying on their internal
- * visibility. Send and Stop remain available as low-level escapes.
- */
-export function ChatInputSubmit(
-  { children, icon, stopIcon, asChild, ...rest }: ChatInputSubmitProps,
-): React.ReactElement | null {
+/** Switch between send and stop states with one control. */
+export function ChatInputSubmit(props: ChatInputSubmitProps): React.ReactElement | null {
   const c = useChatInputContext();
+  if (props.asChild) {
+    const { children, icon, stopIcon, ...actionProps } = props;
+    return c.isLoading
+      ? (
+        <ChatInputStop {...actionProps} icon={stopIcon}>
+          {children}
+        </ChatInputStop>
+      )
+      : (
+        <ChatInputSend {...actionProps} icon={icon}>
+          {children}
+        </ChatInputSend>
+      );
+  }
+  const { children, icon, stopIcon, ...actionProps } = props;
   return c.isLoading
-    ? (
-      <ChatInputStop icon={stopIcon} asChild={asChild} {...rest}>
-        {asChild ? children : undefined}
-      </ChatInputStop>
-    )
-    : (
-      <ChatInputSend icon={icon} asChild={asChild} {...rest}>
-        {children}
-      </ChatInputSend>
-    );
+    ? <ChatInputStop {...actionProps} icon={stopIcon} />
+    : <ChatInputSend {...actionProps} icon={icon}>{children}</ChatInputSend>;
 }
 ChatInputSubmit.displayName = "ChatInput.Submit";
 
@@ -142,7 +142,7 @@ export function ChatInputVoice({
   return (
     <Button
       {...buttonProps}
-      ref={ref}
+      ref={ref as React.Ref<HTMLButtonElement>}
       type={getChatInputActionType(asChild, children)}
       asChild={asChild}
       variant="icon-ghost"

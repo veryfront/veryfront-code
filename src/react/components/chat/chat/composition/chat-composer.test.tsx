@@ -1,7 +1,13 @@
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
-import { createElement, createRef, type FormEvent } from "react";
+import {
+  type ButtonHTMLAttributes,
+  createElement,
+  createRef,
+  type FormEvent,
+  forwardRef,
+} from "react";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -557,7 +563,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       { url: "https://example.com/" },
     );
     const restore = installDomGlobals(dom);
-    const actionRef = createRef<HTMLButtonElement>();
+    const actionRef = createRef<HTMLAnchorElement>();
     const childRef = createRef<HTMLAnchorElement>();
     const order: string[] = [];
 
@@ -596,7 +602,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
 
       const link = document.querySelector<HTMLAnchorElement>('a[aria-label="Send"]');
       assert(link, "Expected the custom send link to render");
-      assert(actionRef.current === (link as unknown as HTMLButtonElement));
+      assertEquals(actionRef.current, link);
       assertEquals(childRef.current, link);
       assert(link.className.includes("bg-[var(--primary)]"), "Button variant classes survive");
       assert(link.className.includes("size-9"), "Button size classes survive");
@@ -696,6 +702,56 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       nativeButton.includes('type="button"'),
       "a native asChild button keeps the non-submitting Button default",
     );
+  });
+
+  it("keeps an opaque forwardRef asChild button out of native form submission", () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDomGlobals(dom);
+    const ForwardedButton = forwardRef<
+      HTMLButtonElement,
+      ButtonHTMLAttributes<HTMLButtonElement>
+    >((props, ref) => <button ref={ref} {...props} />);
+    let actionSubmits = 0;
+    let nativeSubmits = 0;
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "Expected root element to exist");
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <ChatInput.Root
+            input="ready"
+            onChange={() => {}}
+            onSubmit={() => actionSubmits += 1}
+          >
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                nativeSubmits += 1;
+              }}
+            >
+              <ChatInput.Send asChild>
+                <ForwardedButton>Send</ForwardedButton>
+              </ChatInput.Send>
+            </form>
+          </ChatInput.Root>,
+        );
+      });
+
+      const button = document.querySelector<HTMLButtonElement>('button[aria-label="Send"]');
+      assert(button, "Expected the forwarded custom button to render");
+      assertEquals(button.type, "button", "opaque button components stay non-submitting");
+      flushSync(() => button.click());
+      assertEquals(actionSubmits, 1);
+      assertEquals(nativeSubmits, 0, "the enclosing form must not submit a second time");
+      root.unmount();
+    } finally {
+      restore();
+    }
   });
 
   it("asChild respects child cancellation before invoking the action wrapper", () => {

@@ -97,6 +97,19 @@ export function FlatChatInputDemo(): React.ReactElement {
   );
 }
 
+const anchorActionRef = React.createRef<HTMLAnchorElement>();
+
+/** Slotted action refs describe the element that actually renders. */
+export function PolymorphicChatInputActionDemo(): React.ReactElement {
+  return (
+    <ChatInputRoot input="ready" onChange={() => {}} onSubmit={() => {}}>
+      <ChatInputSend asChild ref={anchorActionRef}>
+        <a href="#send">Send</a>
+      </ChatInputSend>
+    </ChatInputRoot>
+  );
+}
+
 export type ChatInputFlatPartProps = [
   ChatInputAttachProps,
   ChatInputExportProps,
