@@ -399,11 +399,15 @@ export default defineConfig({
 });
 ```
 
-`OptimizedImage` consumes the manifest produced by the build pipeline. Core
-does not probe for Sharp or infer an environment-variable fallback. If image
-optimization is enabled, explicitly compose an `ImageOptimizationEngine` such
-as `@veryfront/ext-image-sharp`; a missing or invalid provider fails the build
-before replacing the last known-good image output.
+The runtime image APIs do not read the build manifest. If you customize
+`assetPipeline.images.sizes`, pass the same values as `targetWidths` to all four
+image APIs. If you customize `assetPipeline.images.formats`, pass the same
+`formats` to `OptimizedImage` and `useOptimizedImage`, and select a build-emitted
+`format` for `SimpleOptimizedImage` and `OptimizedBackgroundImage`.
+Core does not probe for Sharp or infer an environment-variable fallback. If
+image optimization is enabled, explicitly compose an `ImageOptimizationEngine`
+such as `@veryfront/ext-image-sharp`; a missing or invalid provider fails the
+build before replacing the last known-good image output.
 
 ### Link Prefetch Not Working
 
