@@ -90,6 +90,7 @@ export class VeryfrontRenderer {
           moduleServerUrl: this.moduleServerUrl,
           projectId: this.projectId,
           contentSourceId: this.contentSourceId,
+          isLocalProject: this.isLocalProject,
         });
         this.services = await this.lifecycle.initialize();
 
@@ -127,6 +128,7 @@ export class VeryfrontRenderer {
       layoutCompiler: this.services.layoutCompiler,
       layoutCache: createLayoutComponentCache(),
       componentRegistry: this.services.componentRegistry,
+      isLocalProject: this.isLocalProject,
     });
 
     this.htmlGenerator = new HTMLGenerator({

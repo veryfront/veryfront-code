@@ -31,6 +31,17 @@ describe(
       it("should create handler with project directory", () => {
         expect(handler).toBeDefined();
       });
+
+      it("passes the trusted local-project identity to the render handler", () => {
+        const localHandler = new RSCDevServerHandler("/tmp/test-project", {
+          isLocalProject: true,
+        });
+        const isLocalProject = (localHandler as unknown as {
+          renderHandler: { moduleOptions: { isLocalProject?: boolean } };
+        }).renderHandler.moduleOptions.isLocalProject;
+
+        expect(isLocalProject).toBe(true);
+      });
     });
 
     describe("handlePage", { sanitizeOps: false, sanitizeResources: false }, () => {

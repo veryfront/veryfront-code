@@ -156,6 +156,8 @@ export function handleMDXPage(
     dependencyPinningDependencies?: Readonly<Record<string, string>>;
     /** Exact package source namespace paired with the immutable snapshot. */
     dependencyPinningSource?: DependencyPinningSourceInput;
+    /** Server-trusted local-project identity for dev-only module-server fallback. */
+    isLocalProject?: boolean;
   },
 ): Promise<MDXPageResult> {
   return withSpan(
@@ -182,6 +184,7 @@ export function handleMDXPage(
           options?.dependencyPinningDependencies,
           options?.dependencyPinningSource,
           options?.url?.origin,
+          options?.isLocalProject,
         )) as MDXModule;
 
         const MDXComp = mod.MDXContent || mod.default;

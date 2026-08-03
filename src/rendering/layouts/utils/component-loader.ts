@@ -346,6 +346,7 @@ export function loadMDXLayout(
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
+  isLocalProject?: boolean,
 ): Promise<BundledReact.ComponentType<{ components?: MDXComponents }> | undefined> {
   return withSpan(
     SpanNames.LAYOUT_LOAD_MDX,
@@ -378,6 +379,7 @@ export function loadMDXLayout(
         dependencyPinningDependencies,
         dependencyPinningSource,
         moduleServerOrigin,
+        isLocalProject,
       )) as MDXModule;
 
       loadMdxLayoutLog.debug("loadModuleESM DONE", {
@@ -408,6 +410,7 @@ export async function preloadMDXLayoutModule(
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
+  isLocalProject?: boolean,
 ): Promise<void> {
   await loadMDXLayout(
     bundle,
@@ -422,6 +425,7 @@ export async function preloadMDXLayoutModule(
     dependencyPinningDependencies,
     dependencyPinningSource,
     moduleServerOrigin,
+    isLocalProject,
   );
 }
 
@@ -508,6 +512,7 @@ export async function applyMDXLayout(
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
+  isLocalProject?: boolean,
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact(reactVersion);
   const LayoutFn = await loadMDXLayout(
@@ -523,6 +528,7 @@ export async function applyMDXLayout(
     dependencyPinningDependencies,
     dependencyPinningSource,
     moduleServerOrigin,
+    isLocalProject,
   );
 
   if (!LayoutFn) {

@@ -33,6 +33,8 @@ export interface LayoutOrchestratorConfig {
   layoutCompiler: LayoutCompiler;
   layoutCache: LayoutComponentCache;
   componentRegistry: MDXComponents | ComponentRegistry;
+  /** Server-trusted local-project identity. */
+  isLocalProject?: boolean;
 }
 
 function isSnapshotAwareComponentRegistry(
@@ -249,6 +251,7 @@ export class LayoutOrchestrator {
                   dependencyPinningDependencies,
                   dependencyPinningSource,
                   moduleServerOrigin,
+                  this.config.isLocalProject === true,
                 );
                 return { type: "mdx" as const, path: layout.path, success: true };
               } catch (error) {
@@ -376,6 +379,7 @@ export class LayoutOrchestrator {
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
           dependencyPinningSource,
+          isLocalProject: this.config.isLocalProject === true,
         });
 
         const pageType = pageElement.type;

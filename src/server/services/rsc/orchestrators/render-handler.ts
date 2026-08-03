@@ -33,6 +33,8 @@ export interface RenderHandlerModuleOptions {
   projectSlug?: string;
   contentSourceId?: string;
   dependencyPinningSource?: DependencyPinningSourceInput;
+  /** Server-trusted local-project identity for dev-only module-server fallback. */
+  isLocalProject?: boolean;
   reactVersion?: (snapshot: DependencyPinningSnapshot) => Promise<string>;
   runtimeAdapter?: () => Promise<RuntimeAdapter>;
   moduleLoader?: typeof loadModuleFromSource;
@@ -165,6 +167,7 @@ export class RenderHandler {
         dependencySnapshot.dependencies,
         this.moduleOptions.dependencyPinningSource,
         moduleServerOrigin,
+        this.moduleOptions.isLocalProject === true,
       ) as Record<string, unknown>;
     }
 

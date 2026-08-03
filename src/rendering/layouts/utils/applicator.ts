@@ -33,6 +33,7 @@ export function applyLayoutsESM(
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
+  isLocalProject?: boolean,
 ): Promise<BundledReact.ReactElement> {
   return withSpan(
     SpanNames.LAYOUT_APPLY_LAYOUTS_ESM,
@@ -83,6 +84,7 @@ export function applyLayoutsESM(
                   dependencyPinningDependencies,
                   dependencyPinningSource,
                   moduleServerOrigin,
+                  isLocalProject,
                 ),
               spanAttrs,
             );
@@ -145,6 +147,7 @@ export function applyLayoutsESM(
             dependencyPinningDependencies,
             dependencyPinningSource,
             moduleServerOrigin,
+            isLocalProject,
           ),
         { "layout.kind": "mdx", "layout.type": "named" },
       );

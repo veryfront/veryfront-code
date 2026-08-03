@@ -7,6 +7,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import type { EntityInfo } from "#veryfront/types";
 import { handleMDXPage, prepareMDXPageBundles } from "./page-rendering.ts";
+import { PageRenderer } from "./page-renderer.ts";
 import {
   __setServerModuleLoaderForTests,
   resetReactCache,
@@ -184,6 +185,51 @@ describe("rendering/page-rendering", () => {
 
       assertEquals(loadedUrls.some((url) => url.includes("react@18.3.1")), true);
       assertEquals(moduleReactVersion, "18.3.1");
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+    }
+  });
+
+  it("threads the trusted local-project identity from PageRenderer into MDX loading", async () => {
+    __setServerModuleLoaderForTests(() => Promise.resolve({ default: React }));
+
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+    let observedIsLocalProject: unknown;
+    mutableRenderer.loadModuleESM = ((...args: unknown[]) => {
+      observedIsLocalProject = args[11];
+      return Promise.resolve({ default: () => null });
+    }) as typeof mdxRenderer.loadModuleESM;
+
+    const renderer = new PageRenderer({
+      projectDir: "/project",
+      mode: "development",
+      config: { react: { version: "19.1.1" } },
+      adapter: { fs: {} } as unknown as RuntimeAdapter,
+      componentRegistry: {
+        prepareDependencySnapshot: () => Promise.resolve("off"),
+        getAllAsComponents: () => ({}),
+      } as never,
+      compileMDX: async () => ({ compiledCode: "", frontmatter: {}, headings: [] }),
+      isLocalProject: true,
+    });
+
+    try {
+      await renderer.preparePageBundles(
+        createMDXPageInfo("# Local MDX probe"),
+        "probe",
+        undefined,
+        {
+          projectId: "local-project",
+          projectSlug: "local-project",
+          contentSourceId: "local-main",
+          url: new URL("http://localhost/probe"),
+        },
+      );
+
+      assertEquals(observedIsLocalProject, true);
     } finally {
       mutableRenderer.loadModuleESM = originalLoadModuleESM;
     }
