@@ -27,6 +27,20 @@ function isTransientStatus(status: number): boolean {
   return status === 502 || status === 503 || status === 504;
 }
 
+/**
+ * Classify failures from an idempotent API read conservatively.
+ *
+ * A structured HTTP status is authoritative: authentication, validation, and
+ * other client failures must not become retryable merely because an attached
+ * cause resembles a connection error.
+ */
+export function isRetryableApiReadError(error: unknown): boolean {
+  const status = typeof error === "object" && error !== null
+    ? (error as { status?: unknown }).status
+    : undefined;
+  return typeof status === "number" ? isTransientStatus(status) : isRetryableConnectionError(error);
+}
+
 /** Sleep for `ms` milliseconds plus a random jitter up to 20% of `ms`. */
 function sleepWithJitter(ms: number): Promise<void> {
   const jitter = Math.floor(ms * 0.2 * Math.random());
@@ -445,17 +459,11 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
       } catch (error) {
         lastError = error;
 
-        const status = (error as { status?: number }).status;
-        const isTransient = status !== undefined
-          ? isTransientStatus(status)
-          : isRetryableConnectionError(error);
         const isRefused = isConnectionRefusedError(error);
 
         // Idempotent: retry on transient HTTP status or any retryable connection error.
         // Non-idempotent: retry only on connection-refused (request never reached server).
-        const shouldRetry = isIdempotent(method)
-          ? (isTransient || isRetryableConnectionError(error))
-          : isRefused;
+        const shouldRetry = isIdempotent(method) ? isRetryableApiReadError(error) : isRefused;
 
         if (!shouldRetry || attempt >= API_MAX_RETRIES - 1) {
           throw error;

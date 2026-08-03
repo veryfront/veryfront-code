@@ -28,6 +28,7 @@ import {
 import { normalizeProjectSlug } from "../slug.ts";
 import { reserveProjectSlug } from "../reserve-slug.ts";
 import {
+  getErrorStatus,
   inferProjectSlugFromDirectory,
   projectApiReference,
   ProjectReferenceNotFoundError,
@@ -37,6 +38,7 @@ import {
   shouldPersistProjectLink,
 } from "../project-resolution.ts";
 import {
+  isRetryableApiReadError,
   type ProjectReferenceSource,
   resolveConfigWithAuth,
   resolveConfigWithAuthDetails,
@@ -50,7 +52,6 @@ import {
   type DeployEnvironment,
   type DeploymentRoutingConvergence,
   type DeployRelease,
-  type DeployReleaseAssetManifestBody,
 } from "./control-plane.ts";
 import type { DeployResult } from "./result.ts";
 
@@ -621,17 +622,6 @@ function readReleaseAssetResponseDataProperty(value: unknown, key: PropertyKey):
   }
 }
 
-function getErrorStatus(error: unknown): number | undefined {
-  if (typeof error !== "object" || error === null) return undefined;
-  const status = (error as { status?: unknown }).status;
-  return typeof status === "number" ? status : undefined;
-}
-
-function isTransientReleaseAssetPollError(error: unknown): boolean {
-  const status = getErrorStatus(error);
-  return status === 502 || status === 503 || status === 504;
-}
-
 export async function waitForReleaseAssetManifest(
   controlPlane: DeployControlPlane,
   projectSlug: string,
@@ -647,15 +637,19 @@ export async function waitForReleaseAssetManifest(
   const expectedRoutes = options.expectedRoutes ?? [];
   const deadline = Date.now() + timeoutMs;
   let lastState = "missing";
+  let lastTransientFailure: string | null = null;
 
   for (;;) {
-    let raw: DeployReleaseAssetManifestBody | null;
+    let raw: Awaited<ReturnType<DeployControlPlane["getReleaseAssetManifest"]>> = null;
     try {
       raw = await controlPlane.getReleaseAssetManifest(projectSlug, releaseId);
+      lastTransientFailure = null;
     } catch (error) {
-      if (!isTransientReleaseAssetPollError(error)) throw error;
-      lastState = `transient ${getErrorStatus(error)}`;
-      raw = null;
+      if (!isRetryableApiReadError(error)) throw error;
+      const status = getErrorStatus(error);
+      lastTransientFailure = status === undefined
+        ? "a transient connection failure"
+        : `HTTP ${status}`;
     }
     if (raw !== null) {
       const state = readReleaseAssetResponseDataProperty(raw, "state");
@@ -698,7 +692,11 @@ export async function waitForReleaseAssetManifest(
     if (remainingMs <= 0) {
       const timeoutSeconds = Math.ceil(timeoutMs / 1000);
       throw new Error(
-        `Release assets were not ready within ${timeoutSeconds}s (last state: ${lastState}). Check the release asset build and run deploy again.`,
+        `Release assets were not ready within ${timeoutSeconds}s (last state: ${lastState}${
+          lastTransientFailure === null
+            ? ""
+            : `; last control-plane failure: ${lastTransientFailure}`
+        }). Check the release asset build and run deploy again.`,
       );
     }
 

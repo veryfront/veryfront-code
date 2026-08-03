@@ -1288,33 +1288,6 @@ describe("release asset manifest", () => {
     assertEquals(reads, 3);
   });
 
-  it("continues polling through transient control-plane failures", async () => {
-    using time = new FakeTime();
-    let reads = 0;
-    const controlPlane = helperControlPlane({
-      getReleaseAssetManifest: () => {
-        reads++;
-        if (reads === 1) {
-          return Promise.reject(Object.assign(new Error("service unavailable"), { status: 503 }));
-        }
-        return Promise.resolve(readyManifest());
-      },
-    });
-
-    const pending = waitForReleaseAssetManifest(
-      controlPlane,
-      PROJECT_SLUG,
-      "release-1",
-      { ...polling, timeoutMs: 500 },
-    );
-    await time.tickAsync(0);
-    await time.tickAsync(100);
-
-    const result = await pending;
-    assertEquals(result.state, "ready");
-    assertEquals(reads, 2);
-  });
-
   it("reports the last state after the polling deadline", async () => {
     using time = new FakeTime();
     let reads = 0;
@@ -1341,6 +1314,96 @@ describe("release asset manifest", () => {
 
     await rejection;
     assertEquals(reads, 4);
+  });
+
+  it("recovers from transient control-plane failures within the polling deadline", async () => {
+    using time = new FakeTime();
+    const unavailable = Object.assign(new Error("service unavailable"), { status: 503 });
+    const connectionReset = Object.assign(new Error("connection reset"), {
+      code: "ECONNRESET",
+    });
+    const responses: Array<DeployReleaseAssetManifestBody | Error> = [
+      unavailable,
+      connectionReset,
+      { state: "building" },
+      readyManifest(),
+    ];
+    let reads = 0;
+    const controlPlane = helperControlPlane({
+      getReleaseAssetManifest: () => {
+        const response = responses[Math.min(reads, responses.length - 1)]!;
+        reads++;
+        return response instanceof Error ? Promise.reject(response) : Promise.resolve(response);
+      },
+    });
+
+    const pending = waitForReleaseAssetManifest(
+      controlPlane,
+      PROJECT_SLUG,
+      "release-1",
+      { ...polling, timeoutMs: 500 },
+    );
+    await time.tickAsync(0);
+    await time.tickAsync(100);
+    await time.tickAsync(100);
+    await time.tickAsync(100);
+
+    const result = await pending;
+    assertEquals(result.state, "ready");
+    assertEquals(reads, 4);
+  });
+
+  it("bounds transient control-plane retries by the original polling deadline", async () => {
+    using time = new FakeTime();
+    let reads = 0;
+    const controlPlane = helperControlPlane({
+      getReleaseAssetManifest: () => {
+        reads++;
+        return Promise.reject(Object.assign(new Error("service unavailable"), { status: 503 }));
+      },
+    });
+
+    const rejection = assertRejects(
+      () =>
+        waitForReleaseAssetManifest(controlPlane, PROJECT_SLUG, "release-1", {
+          ...polling,
+          timeoutMs: 250,
+        }),
+      Error,
+      "last control-plane failure: HTTP 503",
+    );
+    await time.tickAsync(0);
+    await time.tickAsync(100);
+    await time.tickAsync(100);
+    await time.tickAsync(50);
+
+    await rejection;
+    assertEquals(reads, 4);
+  });
+
+  it("does not retry authentication, validation, or cancellation failures", async () => {
+    for (
+      const error of [
+        Object.assign(new Error("unauthorized"), { status: 401 }),
+        Object.assign(new Error("invalid request"), { status: 422 }),
+        new DOMException("cancelled", "AbortError"),
+      ]
+    ) {
+      let reads = 0;
+      const controlPlane = helperControlPlane({
+        getReleaseAssetManifest: () => {
+          reads++;
+          return Promise.reject(error);
+        },
+      });
+
+      await assertRejects(
+        () => waitForReleaseAssetManifest(controlPlane, PROJECT_SLUG, "release-1", polling),
+        error.constructor as ErrorConstructor,
+        error.message,
+      );
+      assertEquals(reads, 1, `${error.name} must fail without another polling attempt`);
+    }
   });
 
   it("rejects legacy ready manifests", async () => {
