@@ -503,6 +503,51 @@ describe("provider/runtime-loader helpers", () => {
     }
   });
 
+  it("reads snapshot options only from own data properties", () => {
+    const optionKeys = [
+      "maxDepth",
+      "maxNodes",
+      "maxBytes",
+      "sortObjectKeys",
+    ] as const;
+
+    for (let index = 0; index < optionKeys.length; index += 1) {
+      const key = optionKeys[index]!;
+      let getterCalls = 0;
+      const options = Object.defineProperty({}, key, {
+        configurable: true,
+        get() {
+          getterCalls += 1;
+          return key === "sortObjectKeys" ? false : 1;
+        },
+      });
+
+      assertThrows(
+        () => snapshotJsonValue(null, options),
+        TypeError,
+        "options must use own data properties",
+      );
+      assertEquals(getterCalls, 0);
+    }
+
+    const inheritedOptions = Object.create({
+      maxDepth: 0,
+      maxNodes: 1,
+      maxBytes: 1,
+      sortObjectKeys: false,
+    });
+    assertEquals(
+      Object.keys(snapshotJsonValue({ b: 2, a: 1 }, inheritedOptions) as object),
+      ["a", "b"],
+    );
+    assertEquals(
+      Object.keys(
+        snapshotJsonValue({ b: 2, a: 1 }, { sortObjectKeys: false }) as object,
+      ),
+      ["b", "a"],
+    );
+  });
+
   it("makes JSON equality fail closed without invoking accessors or serialization hooks", () => {
     let getterCalls = 0;
     const accessor = Object.defineProperty({}, "value", {

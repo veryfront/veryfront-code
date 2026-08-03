@@ -8,7 +8,6 @@ import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspect
  */
 const apply = Reflect.apply;
 const ArrayIsArray = Array.isArray;
-const arrayPush = Array.prototype.push;
 const arraySort = Array.prototype.sort;
 const NativeArray = Array;
 const NativeTypeError = TypeError;
@@ -53,6 +52,15 @@ function addWeakSetValue(set: WeakSet<object>, value: object): void {
 
 function deleteWeakSetValue(set: WeakSet<object>, value: object): void {
   apply(weakSetDelete, set, [value]);
+}
+
+function defineArrayElement<T>(array: T[], index: number, value: T): void {
+  objectDefineProperty(array, index, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
 }
 
 const DEFAULT_MAX_DEPTH = 64;
@@ -117,13 +125,14 @@ function invalidValue(reason: string): never {
 }
 
 function readLimit(
-  value: number | undefined,
+  value: unknown,
   fallback: number,
   name: keyof JsonSnapshotOptions,
   minimum: number,
 ): number {
   const resolved = value ?? fallback;
   if (
+    typeof resolved !== "number" ||
     !numberIsSafeInteger(resolved) ||
     resolved < minimum
   ) {
@@ -134,15 +143,40 @@ function readLimit(
   return resolved;
 }
 
+function readOwnOption(
+  options: JsonSnapshotOptions,
+  key: keyof JsonSnapshotOptions,
+): unknown {
+  if ((typeof options !== "object" && typeof options !== "function") || options === null) {
+    throw new NativeTypeError("Provider JSON snapshot options must be an object");
+  }
+
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = objectGetOwnPropertyDescriptor(options, key);
+  } catch {
+    throw new NativeTypeError("Provider JSON snapshot options could not be inspected");
+  }
+  if (!descriptor) return undefined;
+  if (!hasOwn(descriptor, "value")) {
+    throw new NativeTypeError("Provider JSON snapshot options must use own data properties");
+  }
+  return descriptor.value;
+}
+
 function resolveOptions(options: JsonSnapshotOptions): ResolvedJsonSnapshotOptions {
-  if (options.sortObjectKeys !== undefined && typeof options.sortObjectKeys !== "boolean") {
+  const maxDepth = readOwnOption(options, "maxDepth");
+  const maxNodes = readOwnOption(options, "maxNodes");
+  const maxBytes = readOwnOption(options, "maxBytes");
+  const sortObjectKeys = readOwnOption(options, "sortObjectKeys");
+  if (sortObjectKeys !== undefined && typeof sortObjectKeys !== "boolean") {
     throw new NativeTypeError("Provider JSON snapshot sortObjectKeys must be a boolean");
   }
   return {
-    maxDepth: readLimit(options.maxDepth, DEFAULT_MAX_DEPTH, "maxDepth", 0),
-    maxNodes: readLimit(options.maxNodes, DEFAULT_MAX_NODES, "maxNodes", 1),
-    maxBytes: readLimit(options.maxBytes, DEFAULT_MAX_BYTES, "maxBytes", 1),
-    sortObjectKeys: options.sortObjectKeys ?? true,
+    maxDepth: readLimit(maxDepth, DEFAULT_MAX_DEPTH, "maxDepth", 0),
+    maxNodes: readLimit(maxNodes, DEFAULT_MAX_NODES, "maxNodes", 1),
+    maxBytes: readLimit(maxBytes, DEFAULT_MAX_BYTES, "maxBytes", 1),
+    sortObjectKeys: sortObjectKeys ?? true,
   };
 }
 
@@ -331,7 +365,8 @@ function snapshotArray(
   }
 
   const elementValues: unknown[] = new NativeArray(length);
-  for (const key of keys) {
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
+    const key = keys[keyIndex]!;
     if (key === "length") {
       continue;
     }
@@ -360,7 +395,7 @@ function snapshotArray(
     ) {
       invalidValue("arrays must be dense and contain no extra properties");
     }
-    elementValues[index] = readDataProperty(value, key, true);
+    defineArrayElement(elementValues, index, readDataProperty(value, key, true));
   }
 
   addBytes(state, 1);
@@ -369,7 +404,11 @@ function snapshotArray(
     if (index > 0) {
       addBytes(state, 1);
     }
-    snapshot[index] = snapshotValue(elementValues[index], depth + 1, state);
+    defineArrayElement(
+      snapshot,
+      index,
+      snapshotValue(elementValues[index], depth + 1, state),
+    );
   }
   addBytes(state, 1);
   objectDefineProperty(snapshot, "toJSON", {
@@ -397,14 +436,15 @@ function snapshotObject(
     invalidValue(`exceeded ${state.maxNodes} nodes`);
   }
   const entries: { key: string; value: unknown }[] = [];
-  for (const key of keys) {
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
+    const key = keys[keyIndex]!;
     if (typeof key !== "string") {
       invalidValue("must not contain symbol properties");
     }
-    apply(arrayPush, entries, [{
+    defineArrayElement(entries, entries.length, {
       key,
       value: readDataProperty(value, key, true),
-    }]);
+    });
   }
   if (state.sortObjectKeys) {
     apply(arraySort, entries, [

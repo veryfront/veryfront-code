@@ -355,31 +355,113 @@ describe("agent/runtime/error-utils", () => {
         owner,
         descriptor: getOwnPropertyDescriptor(owner, key)!,
       }));
-      const structuredError = { retryable: true, code: "E_TOOL" };
+      const structuredError = {
+        retryable: true,
+        details: ["safe", 1],
+        code: "E_TOOL",
+      };
       let hookCalls = 0;
       let result: string | undefined;
-      const hostile = () => {
-        hookCalls += 1;
-        throw new Error("mutable primordial must not run");
-      };
 
       try {
-        for (const { owner, key } of originals) {
+        for (let index = 0; index < originals.length; index += 1) {
+          const { owner, key } = originals[index]!;
+          const label = typeof key === "string" ? key : "Symbol.iterator";
           defineProperty(owner, key, {
             configurable: true,
-            value: hostile,
+            value: () => {
+              hookCalls += 1;
+              throw new Error(`mutable primordial ${label} must not run`);
+            },
             writable: true,
           });
         }
         result = stringifyToolError(structuredError);
       } finally {
-        for (const { owner, key, descriptor } of originals) {
+        for (let index = 0; index < originals.length; index += 1) {
+          const { owner, key, descriptor } = originals[index]!;
           defineProperty(owner, key, descriptor);
         }
       }
 
-      assertEquals(result, '{"code":"E_TOOL","retryable":true}');
+      assertEquals(
+        result,
+        '{"code":"E_TOOL","details":["safe",1],"retryable":true}',
+      );
       assertEquals(hookCalls, 0);
+    });
+
+    it("avoids Array iterators and inherited numeric setters in a fresh process", async () => {
+      const script = `
+        const { stringifyToolError } = await import(
+          "./src/agent/runtime/error-utils.ts"
+        );
+        const defineProperty = Object.defineProperty;
+        const deleteProperty = Reflect.deleteProperty;
+        const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+        const iteratorDescriptor = getOwnPropertyDescriptor(
+          Array.prototype,
+          Symbol.iterator,
+        );
+        const indexDescriptor = getOwnPropertyDescriptor(Array.prototype, "0");
+        const structuredError = {
+          retryable: true,
+          details: ["safe", 1],
+          code: "E_TOOL",
+        };
+        let iteratorCalls = 0;
+        let inheritedSetterCalls = 0;
+        let result;
+
+        try {
+          defineProperty(Array.prototype, Symbol.iterator, {
+            configurable: true,
+            value() {
+              iteratorCalls += 1;
+              throw new Error("Array iterator must not run");
+            },
+            writable: true,
+          });
+          defineProperty(Array.prototype, "0", {
+            configurable: true,
+            set() {
+              inheritedSetterCalls += 1;
+            },
+          });
+          result = stringifyToolError(structuredError);
+        } finally {
+          if (iteratorDescriptor) {
+            defineProperty(Array.prototype, Symbol.iterator, iteratorDescriptor);
+          }
+          if (indexDescriptor) {
+            defineProperty(Array.prototype, "0", indexDescriptor);
+          } else {
+            deleteProperty(Array.prototype, "0");
+          }
+        }
+
+        console.log(JSON.stringify({
+          inheritedSetterCalls,
+          iteratorCalls,
+          result,
+        }));
+      `;
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: ["eval", "--config=deno.json", script],
+        cwd: new URL("../../../", import.meta.url),
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      const stderr = new TextDecoder().decode(output.stderr);
+      assertEquals(output.code, 0, stderr);
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(output.stdout)),
+        {
+          inheritedSetterCalls: 0,
+          iteratorCalls: 0,
+          result: '{"code":"E_TOOL","details":["safe",1],"retryable":true}',
+        },
+      );
     });
 
     it("bounds direct and Error diagnostic text by UTF-8 byte length", () => {

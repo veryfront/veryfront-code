@@ -80,6 +80,60 @@ Deno.test("resolveHostedProjectReference rejects an API identity that does not m
   );
 });
 
+Deno.test("resolveHostedProjectReference ignores accessors and inherited descriptor values", async () => {
+  const defineProperty = Object.defineProperty;
+  const deleteProperty = Reflect.deleteProperty;
+  const previousValue = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+  let payloadAccessorCalls = 0;
+  let inheritedValueCalls = 0;
+  const payload = defineProperty({}, "id", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      payloadAccessorCalls += 1;
+      return "target-project";
+    },
+  });
+  let failure: unknown;
+
+  try {
+    defineProperty(Object.prototype, "value", {
+      configurable: true,
+      get() {
+        inheritedValueCalls += 1;
+        return "target-project";
+      },
+    });
+    await withMockFetch(
+      () =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(payload),
+        } as unknown as Response),
+      async () => {
+        try {
+          await resolveHostedProjectReference(LOOKUP_INPUT);
+        } catch (error) {
+          failure = error;
+        }
+      },
+    );
+  } finally {
+    if (previousValue) {
+      defineProperty(Object.prototype, "value", previousValue);
+    } else {
+      deleteProperty(Object.prototype, "value");
+    }
+  }
+
+  assertEquals(
+    failure instanceof Error ? failure.message : undefined,
+    "Project lookup response did not confirm the requested project identity",
+  );
+  assertEquals(payloadAccessorCalls, 0);
+  assertEquals(inheritedValueCalls, 0);
+});
+
 Deno.test("resolveHostedProjectReference rejects unsafe references before fetch", async () => {
   let fetchCount = 0;
 

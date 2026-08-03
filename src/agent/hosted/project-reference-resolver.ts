@@ -9,6 +9,12 @@ import {
 
 const ArrayIsArray = Array.isArray;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const ReflectApply = Reflect.apply;
+
+function hasOwn(object: object, key: PropertyKey): boolean {
+  return ReflectApply(ObjectPrototypeHasOwnProperty, object, [key]) as boolean;
+}
 
 /**
  * Read an own data property from untrusted JSON without invoking accessors or
@@ -20,7 +26,7 @@ function readOwnDataProperty(source: unknown, key: string): unknown {
   }
 
   const descriptor = ObjectGetOwnPropertyDescriptor(source, key);
-  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+  return descriptor && hasOwn(descriptor, "value") ? descriptor.value : undefined;
 }
 
 function cancelResponseBodyWithoutWaiting(response: Response): void {
