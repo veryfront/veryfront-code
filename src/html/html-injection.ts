@@ -27,6 +27,13 @@ import {
 } from "#veryfront/release-assets/route-path.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
+const PROJECT_STYLESHEET_ID_PATTERNS = PROJECT_STYLESHEET_IDS.map((id) =>
+  new RegExp(`id=["']${id}["']`, "i")
+);
+const PREVIEW_PROJECT_STYLESHEET_PATTERN =
+  /href=["'][^"']*\/_vf_styles\/styles\.css(?:\?[^"']*)?["']/i;
+const PRODUCTION_PROJECT_STYLESHEET_PATTERN = /href=["'][^"']*\/_vf\/css\/[^"']+\.css["']/i;
+
 export interface InjectHTMLContentOptions {
   mode: string;
   slug: string;
@@ -81,9 +88,9 @@ function toProjectRelativePath(absolutePath: string, projectDir?: string): strin
 }
 
 function hasProjectStylesheet(html: string): boolean {
-  return PROJECT_STYLESHEET_IDS.some((id) => new RegExp(`id=["']${id}["']`, "i").test(html)) ||
-    /href=["'][^"']*\/_vf_styles\/styles\.css(?:\?[^"']*)?["']/i.test(html) ||
-    /href=["'][^"']*\/_vf\/css\/[^"']+\.css["']/i.test(html);
+  return PROJECT_STYLESHEET_ID_PATTERNS.some((pattern) => pattern.test(html)) ||
+    PREVIEW_PROJECT_STYLESHEET_PATTERN.test(html) ||
+    PRODUCTION_PROJECT_STYLESHEET_PATTERN.test(html);
 }
 
 export function injectHTMLContent(
