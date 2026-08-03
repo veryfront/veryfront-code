@@ -558,6 +558,11 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
           "/_vf_modules/_pins/on%3Asnapshot-a",
           "Malformed dependency snapshot module path",
         ],
+        [
+          "a reserved path with an invalid snapshot key",
+          "/_vf_modules/_pins/not-a-snapshot/components/Child.js",
+          "Malformed dependency snapshot module path",
+        ],
       ] as const
     ) {
       it(`rejects ${name} before adapter access`, async () => {

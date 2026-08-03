@@ -19,7 +19,7 @@ describe("rendering/orchestrator/layout", () => {
     };
 
     const orchestrator = new LayoutOrchestrator({
-      projectDir: "/project",
+      projectDir: "/<PROJECT_DIR>",
       projectId: "local-project",
       projectSlug: "local-project",
       contentSourceId: "local-main",
@@ -34,7 +34,7 @@ describe("rendering/orchestrator/layout", () => {
     });
     const layouts = [{
       kind: "mdx",
-      path: "/project/layout.mdx",
+      path: "/<PROJECT_DIR>/layout.mdx",
       bundle: { compiledCode: "export default function Layout() { return null; }" },
     }] as LayoutItem[];
 

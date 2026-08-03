@@ -99,6 +99,10 @@ function isFatalModuleFetchError(error: unknown): boolean {
     error instanceof ModuleSourceLimitError;
 }
 
+function isReservedDependencyPinningPath(pathname: string): boolean {
+  return pathname.startsWith("/_vf_modules/_pins/");
+}
+
 function unwrapDependencyPinningPath(
   modulePath: string,
   expectedCacheKey?: string,
@@ -110,6 +114,9 @@ function unwrapDependencyPinningPath(
   );
 
   if (extracted.malformed) {
+    throw new TypeError("Malformed dependency snapshot module path");
+  }
+  if (!extracted.found && isReservedDependencyPinningPath(pathname)) {
     throw new TypeError("Malformed dependency snapshot module path");
   }
   if (!extracted.found) return modulePath;
