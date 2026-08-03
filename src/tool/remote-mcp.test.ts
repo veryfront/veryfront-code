@@ -40,6 +40,48 @@ describe("tool/remote-mcp", () => {
     assertEquals(transportCalls, 1);
   });
 
+  it("normalizes default ports before matching exact trusted endpoints", async () => {
+    let transportCalls = 0;
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints: ["http://veryfront-api:80/mcp"],
+      requestFetch: async (_input, init) => {
+        transportCalls++;
+        const body = JSON.parse(String(init?.body)) as { id: string };
+        return Response.json({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { tools: [] },
+        });
+      },
+    });
+
+    await createSource({ endpoint: "http://veryfront-api/mcp" }).listTools();
+    assertEquals(transportCalls, 1);
+  });
+
+  it("keeps trailing-slash mismatches guarded and snapshots the allowlist", async () => {
+    let transportCalls = 0;
+    const trustedEndpoints = ["http://169.254.169.254/latest/meta-data/"];
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints,
+      requestFetch: async () => {
+        transportCalls++;
+        return Response.json({});
+      },
+    });
+    trustedEndpoints.push("http://169.254.169.254/latest/meta-data");
+
+    const source = createSource({
+      endpoint: "http://169.254.169.254/latest/meta-data",
+    });
+    await assertRejects(
+      () => source.listTools(),
+      Error,
+      "Outbound network egress blocked",
+    );
+    assertEquals(transportCalls, 0);
+  });
+
   it("keeps unmatched and dynamic endpoints on guarded transport", async () => {
     let transportCalls = 0;
     const createSource = createRemoteMCPToolSourceFactoryWithTransport({
