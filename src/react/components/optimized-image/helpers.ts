@@ -1,3 +1,4 @@
+import { isDevelopment } from "#veryfront/platform/environment.ts";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import {
   isValidImageVariantWidth,
@@ -5,6 +6,31 @@ import {
 } from "#veryfront/utils/image-variant-widths.ts";
 
 export const DEFAULT_OPTIMIZED_IMAGE_FORMATS = ["avif", "webp", "jpeg"] as const;
+
+interface VeryfrontImageRuntimeGlobal {
+  __RSC_DEV__?: boolean;
+  __VERYFRONT_DEV__?: boolean;
+  __VERYFRONT_SSR__?: boolean;
+}
+
+const INVALID_IMAGE_DIMENSIONS_WARNING =
+  "[Veryfront] Optimized image width and targetWidths must contain positive integers " +
+  "within the build image limit. Rendering the original asset instead.";
+
+let warnedInvalidImageDimensions = false;
+
+function isOptimizedImageDevelopment(): boolean {
+  const runtime = globalThis as VeryfrontImageRuntimeGlobal;
+  const isServer = runtime.__VERYFRONT_SSR__ === true || typeof window === "undefined";
+  if (isServer) return isDevelopment();
+  return runtime.__VERYFRONT_DEV__ === true || runtime.__RSC_DEV__ === true;
+}
+
+function warnInvalidImageDimensionsOnce(): void {
+  if (warnedInvalidImageDimensions || !isOptimizedImageDevelopment()) return;
+  warnedInvalidImageDimensions = true;
+  console.warn(INVALID_IMAGE_DIMENSIONS_WARNING);
+}
 
 function sourcePath(src: string): string {
   const queryIndex = src.indexOf("?");
@@ -45,20 +71,36 @@ export function generateSrcSet(
     .join(", ");
 }
 
-/** Resolve build-emitted widths when the source's intrinsic width is known. */
+/**
+ * Resolve build-emitted widths at the public React boundary.
+ * Invalid runtime props use the original asset; the strict shared resolver
+ * remains authoritative for build configuration and internal callers.
+ */
 export function getOptimizedImageVariantWidths(
   sourceWidth: number | undefined,
   targetWidths?: readonly number[],
 ): readonly number[] {
-  if (!isValidImageVariantWidth(sourceWidth)) return [];
-  if (targetWidths !== undefined) {
-    for (let index = 0; index < targetWidths.length; index++) {
-      if (!isValidImageVariantWidth(targetWidths[index])) return [];
+  if (sourceWidth === undefined) return [];
+  try {
+    if (!isValidImageVariantWidth(sourceWidth)) {
+      warnInvalidImageDimensionsOnce();
+      return [];
     }
+    if (targetWidths !== undefined) {
+      for (let index = 0; index < targetWidths.length; index++) {
+        if (!isValidImageVariantWidth(targetWidths[index])) {
+          warnInvalidImageDimensionsOnce();
+          return [];
+        }
+      }
+    }
+    return targetWidths === undefined
+      ? resolveImageVariantWidths(sourceWidth)
+      : resolveImageVariantWidths(sourceWidth, targetWidths);
+  } catch {
+    warnInvalidImageDimensionsOnce();
+    return [];
   }
-  return targetWidths === undefined
-    ? resolveImageVariantWidths(sourceWidth)
-    : resolveImageVariantWidths(sourceWidth, targetWidths);
 }
 
 /** Use the original asset unless a corresponding optimized variant is known. */

@@ -419,6 +419,8 @@ not the rendered width. Missing or invalid intrinsic widths use the original
 asset instead of generating unverified variant URLs. Runtime `src` values must
 identify app asset paths. Query strings and fragments do not affect the emitted
 variant path, and spaces or commas are URL-encoded to match build output.
+Invalid runtime dimensions emit one value-free development diagnostic;
+production stays silent. Build-time image validation remains strict.
 Core does not probe for Sharp or infer an environment-variable fallback. If
 image optimization is enabled, explicitly compose an `ImageOptimizationEngine`
 such as `@veryfront/ext-image-sharp`; a missing or invalid provider fails the

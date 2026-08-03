@@ -1,7 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { generateSrcSet, getImageExtension, getOptimizedPath } from "./helpers.ts";
+import {
+  generateSrcSet,
+  getImageExtension,
+  getOptimizedImageVariantWidths,
+  getOptimizedPath,
+} from "./helpers.ts";
+
+const INVALID_IMAGE_DIMENSIONS_WARNING =
+  "[Veryfront] Optimized image width and targetWidths must contain positive integers " +
+  "within the build image limit. Rendering the original asset instead.";
 
 describe("optimized-image helpers", () => {
   describe("getOptimizedPath", () => {
@@ -68,6 +77,57 @@ describe("optimized-image helpers", () => {
 
     it("handles nested paths", () => {
       assertEquals(getImageExtension("/images/blog/hero.avif"), "avif");
+    });
+  });
+
+  describe("getOptimizedImageVariantWidths", () => {
+    it("contains malformed browser props and warns once only in development", () => {
+      const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+      const originalVeryfrontDev = Object.getOwnPropertyDescriptor(
+        globalThis,
+        "__VERYFRONT_DEV__",
+      );
+      const originalRscDev = Object.getOwnPropertyDescriptor(globalThis, "__RSC_DEV__");
+      const originalWarn = console.warn;
+      const warnings: unknown[][] = [];
+      const hostileWidths = new Proxy([] as number[], {
+        get(_target, property) {
+          if (property === "length") throw new Error("unreadable target widths");
+          return undefined;
+        },
+      });
+      const restore = (key: string, descriptor: PropertyDescriptor | undefined) => {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else Reflect.deleteProperty(globalThis, key);
+      };
+
+      Object.defineProperty(globalThis, "window", { configurable: true, value: {} });
+      Object.defineProperty(globalThis, "__VERYFRONT_DEV__", {
+        configurable: true,
+        value: false,
+      });
+      Object.defineProperty(globalThis, "__RSC_DEV__", {
+        configurable: true,
+        value: false,
+        writable: true,
+      });
+      console.warn = (...args: unknown[]) => warnings.push(args);
+
+      try {
+        assertEquals(getOptimizedImageVariantWidths(Number.NaN), []);
+        assertEquals(getOptimizedImageVariantWidths(640, hostileWidths), []);
+        assertEquals(warnings, []);
+
+        Object.defineProperty(globalThis, "__RSC_DEV__", { value: true });
+        assertEquals(getOptimizedImageVariantWidths(Number.NaN), []);
+        assertEquals(getOptimizedImageVariantWidths(640, hostileWidths), []);
+        assertEquals(warnings, [[INVALID_IMAGE_DIMENSIONS_WARNING]]);
+      } finally {
+        console.warn = originalWarn;
+        restore("window", originalWindow);
+        restore("__VERYFRONT_DEV__", originalVeryfrontDev);
+        restore("__RSC_DEV__", originalRscDev);
+      }
     });
   });
 });

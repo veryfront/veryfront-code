@@ -1,5 +1,6 @@
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
+import { IMAGE_OPTIMIZATION } from "#veryfront/utils/constants/build.ts";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
@@ -12,6 +13,48 @@ import {
   SimpleOptimizedImage,
   useOptimizedImage,
 } from "#veryfront/components";
+
+const INVALID_IMAGE_DIMENSIONS_WARNING =
+  "[Veryfront] Optimized image width and targetWidths must contain positive integers " +
+  "within the build image limit. Rendering the original asset instead.";
+
+function assertPublicImageApisUseOriginalAsset(
+  width: number,
+  targetWidths?: readonly number[],
+): void {
+  const src = "/images/invalid.jpg";
+  const picture = renderToStaticMarkup(
+    React.createElement(OptimizedImage, {
+      src,
+      alt: "Invalid dimensions",
+      width,
+      targetWidths,
+    }),
+  );
+  const simple = renderToStaticMarkup(
+    React.createElement(SimpleOptimizedImage, {
+      src,
+      alt: "Invalid dimensions",
+      width,
+      targetWidths,
+    }),
+  );
+  const background = renderToStaticMarkup(
+    React.createElement(OptimizedBackgroundImage, {
+      src,
+      width,
+      targetWidths,
+    }),
+  );
+  const hooked = useOptimizedImage(src, { width, targetWidths });
+
+  for (const markup of [picture, simple, background]) {
+    assertStringIncludes(markup, src);
+    assertEquals(markup.includes("/.veryfront/optimized-images/"), false);
+  }
+  assertEquals(hooked.sources, []);
+  assertEquals(hooked.fallback, src);
+}
 
 describe("OptimizedImage", () => {
   describe("basic props", () => {
@@ -248,40 +291,64 @@ describe("OptimizedImage", () => {
       );
     });
 
-    it("uses the original asset when runtime widths are invalid", () => {
-      const picture = renderToStaticMarkup(
-        React.createElement(OptimizedImage, {
-          src: "/images/fractional.jpg",
-          alt: "Fractional width",
-          width: 320.5,
-        }),
-      );
-      const simple = renderToStaticMarkup(
-        React.createElement(SimpleOptimizedImage, {
-          src: "/images/fractional.jpg",
-          alt: "Fractional width",
-          width: 320.5,
-        }),
-      );
-      const background = renderToStaticMarkup(
-        React.createElement(OptimizedBackgroundImage, {
-          src: "/images/fractional.jpg",
-          width: 320.5,
-        }),
-      );
-      const hooked = useOptimizedImage("/images/fractional.jpg", { width: 320.5 });
-      const invalidTargets = useOptimizedImage("/images/fractional.jpg", {
-        width: 1_000,
-        targetWidths: [320.5],
+    it("keeps valid minimum and maximum image dimensions optimized", () => {
+      const maximumWidth = IMAGE_OPTIMIZATION.MAX_DIMENSION;
+      const minimum = useOptimizedImage("/images/minimum.jpg", {
+        formats: ["webp"],
+        width: 1,
+        targetWidths: [1],
       });
+      const maximum = renderToStaticMarkup(
+        React.createElement(OptimizedBackgroundImage, {
+          src: "/images/maximum.jpg",
+          width: maximumWidth,
+          size: maximumWidth,
+          targetWidths: [1, maximumWidth],
+        }),
+      );
 
-      assertStringIncludes(picture, '<img src="/images/fractional.jpg"');
-      assertStringIncludes(simple, 'src="/images/fractional.jpg"');
-      assertStringIncludes(background, "background-image:url(/images/fractional.jpg)");
-      assertEquals(picture.includes("/.veryfront/optimized-images"), false);
-      assertEquals(simple.includes("/.veryfront/optimized-images"), false);
-      assertEquals(hooked, { sources: [], fallback: "/images/fractional.jpg" });
-      assertEquals(invalidTargets, { sources: [], fallback: "/images/fractional.jpg" });
+      assertEquals(minimum.sources.map(({ srcSet }) => srcSet), [
+        "/.veryfront/optimized-images/images/minimum-1w.webp 1w",
+      ]);
+      assertStringIncludes(maximum, `/images/maximum-${maximumWidth}w.webp`);
+    });
+
+    it("contains invalid runtime dimensions and warns once only in development", () => {
+      const maximumWidth = IMAGE_OPTIMIZATION.MAX_DIMENSION;
+      const invalidWidths = [
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        Number.NEGATIVE_INFINITY,
+        320.5,
+        0,
+        -1,
+        maximumWidth + 1,
+      ];
+      const invalidTargetWidths = invalidWidths.map((targetWidth) => [targetWidth] as const);
+      const previousEnvironment = Deno.env.get("VERYFRONT_ENV");
+      const originalWarn = console.warn;
+      const warnings: unknown[][] = [];
+
+      console.warn = (...args: unknown[]) => warnings.push(args);
+      try {
+        Deno.env.set("VERYFRONT_ENV", "production");
+        for (const width of invalidWidths) {
+          assertPublicImageApisUseOriginalAsset(width);
+        }
+        for (const targetWidths of invalidTargetWidths) {
+          assertPublicImageApisUseOriginalAsset(640, targetWidths);
+        }
+        assertEquals(warnings, []);
+
+        Deno.env.set("VERYFRONT_ENV", "development");
+        assertPublicImageApisUseOriginalAsset(Number.NaN);
+        assertPublicImageApisUseOriginalAsset(640, [Number.NaN]);
+        assertEquals(warnings, [[INVALID_IMAGE_DIMENSIONS_WARNING]]);
+      } finally {
+        console.warn = originalWarn;
+        if (previousEnvironment === undefined) Deno.env.delete("VERYFRONT_ENV");
+        else Deno.env.set("VERYFRONT_ENV", previousEnvironment);
+      }
     });
   });
 
