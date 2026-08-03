@@ -423,6 +423,38 @@ export class ImportMapPreloader {
     return entry;
   }
 
+  private getSingleVariantEntry(
+    cacheKey: string,
+    projectState: ProjectImportMapState,
+    now: number,
+  ): CachedImportMap | undefined {
+    const projectCache = projectState.variants;
+    let foundKey: string | undefined;
+    let foundEntry: CachedImportMap | undefined;
+    let foundEntries = 0;
+
+    mapForEach(projectCache, (entry, variantKey) => {
+      if (entry.expiresAt !== null && entry.expiresAt <= now) {
+        mapDelete(projectCache, variantKey);
+        return;
+      }
+      foundEntries += 1;
+      if (foundEntries === 1) {
+        foundKey = variantKey;
+        foundEntry = entry;
+      }
+    });
+
+    if (foundEntries !== 1 || foundKey === undefined || foundEntry === undefined) {
+      this.removeEmptyProject(cacheKey, projectState);
+      return undefined;
+    }
+
+    this.touchVariant(projectCache, foundKey, foundEntry);
+    this.touchProject(cacheKey, projectState);
+    return foundEntry;
+  }
+
   private capacityError(scope: "projects" | "variants" | "loads"): RangeError {
     const error = new IntrinsicRangeError(
       `Import-map preloader ${scope} capacity is occupied by in-flight loads; retry after a load settles`,
@@ -881,11 +913,11 @@ export class ImportMapPreloader {
     }
     let entry: CachedImportMap | undefined;
     try {
-      entry = this.getEntry(
-        cacheKey,
-        variantKey,
-        this.readNow(),
-      );
+      const now = this.readNow();
+      entry = this.getEntry(cacheKey, variantKey, now) ??
+        (context === undefined
+          ? this.getSingleVariantEntry(cacheKey, projectState, now)
+          : undefined);
     } catch (error) {
       this.removeEmptyProject(cacheKey, projectState);
       throw error;

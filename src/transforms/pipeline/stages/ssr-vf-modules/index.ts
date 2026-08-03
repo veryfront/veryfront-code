@@ -147,8 +147,8 @@ export const ssrVfModulesPlugin: TransformPlugin = {
         });
 
         const reactVersion = ctx.reactVersion ?? REACT_DEFAULT_VERSION;
-        const importMap = ctx.metadata.get("importMap") as ImportMapConfig | undefined;
-        const importMapFingerprint = ctx.metadata.get("importMapFingerprint") as
+        const importMap = ctx.metadata?.get("importMap") as ImportMapConfig | undefined;
+        const importMapFingerprint = ctx.metadata?.get("importMapFingerprint") as
           | string
           | undefined;
         const transformKey = buildFrameworkTransformCacheKey(

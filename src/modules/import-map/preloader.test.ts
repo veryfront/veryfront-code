@@ -415,6 +415,51 @@ describe("modules/import-map/preloader", () => {
       );
     });
 
+    it("falls back to the only retained variant for project-id cache lookups", async () => {
+      const adapter = createMinimalAdapter();
+      const preloader = new ImportMapPreloader({
+        maxProjects: 1,
+        maxVariantsPerProject: 2,
+        loadImportMap: async () => ({
+          imports: { loaded: "single" },
+        }),
+      });
+
+      const loaded = await preloader.preload("/release-a", adapter, "project", {
+        projectDir: "/release-a",
+        contentSourceId: "source-a",
+      });
+
+      assertEquals(await preloader.getCached("project"), loaded);
+      assertEquals(
+        await preloader.getCached("project", { contentSourceId: "source-a" }),
+        undefined,
+      );
+    });
+
+    it("does not guess a project-id cache lookup across multiple variants", async () => {
+      const adapter = createMinimalAdapter();
+      let loads = 0;
+      const preloader = new ImportMapPreloader({
+        maxProjects: 1,
+        maxVariantsPerProject: 2,
+        loadImportMap: async () => ({
+          imports: { loaded: String(++loads) },
+        }),
+      });
+
+      await preloader.preload("/release-a", adapter, "project", {
+        projectDir: "/release-a",
+        contentSourceId: "source-a",
+      });
+      await preloader.preload("/release-b", adapter, "project", {
+        projectDir: "/release-b",
+        contentSourceId: "source-b",
+      });
+
+      assertEquals(await preloader.getCached("project"), undefined);
+    });
+
     it("rejects malformed loader output before publication and permits retry", async () => {
       const adapter = createMinimalAdapter();
       let loads = 0;
