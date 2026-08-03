@@ -27,15 +27,7 @@ import type {
   ChatActionsItemProps,
   ChatActionsProps,
 } from "./chat-actions.types.ts";
-export type { ChatActionsSettings } from "./chat-actions-settings.tsx";
-export type {
-  ChatActionItem,
-  ChatActionsContentProps,
-  ChatActionsContextValue,
-  ChatActionsItemProps,
-  ChatActionsProps,
-  ChatActionsTriggerProps,
-} from "./chat-actions.types.ts";
+export type * from "./chat-actions.types.ts";
 
 /* -------------------------------------------------------------------------------------------------
  * ChatActions

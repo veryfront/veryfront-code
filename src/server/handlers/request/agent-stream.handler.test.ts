@@ -5,6 +5,7 @@ import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-serve
 import { getRuntimeSourceIntegrationPolicy } from "#veryfront/agent/runtime/runtime-tool-config.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { getVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
@@ -653,7 +654,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       if (String(url) === `${TEST_PUBLIC_API_ORIGIN}/mcp`) {
         platformMcpFetchCalls += 1;
         assertEquals(
-          new Headers(init?.headers).get("authorization"),
+          new Headers(observeFetchRequestInit(init).headers).get("authorization"),
           "Bearer request-scoped-user-token",
         );
         return Promise.resolve(
@@ -1121,7 +1122,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     Deno.env.set("VERYFRONT_STUDIO_MCP_URL", TEST_PUBLIC_STUDIO_MCP_URL);
     globalThis.fetch = ((url, init) => {
       assertEquals(String(url), TEST_PUBLIC_STUDIO_MCP_URL);
-      const headers = new Headers(init?.headers);
+      const headers = new Headers(observeFetchRequestInit(init).headers);
       assertEquals(headers.get("authorization"), "Bearer request-scoped-user-token");
       assertEquals(headers.get("x-project-id"), "proj-1");
       assertEquals(headers.get("x-conversation-id"), "10000000-1000-4000-8000-100000000001");
@@ -1581,10 +1582,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
     globalThis.fetch = ((url, init) => {
       assertEquals(String(url), `${TEST_PUBLIC_API_ORIGIN}/mcp`);
       assertEquals(
-        new Headers(init?.headers).get("authorization"),
+        new Headers(observeFetchRequestInit(init).headers).get("authorization"),
         "Bearer request-scoped-user-token",
       );
-      const request = JSON.parse(String(init?.body)) as {
+      const request = JSON.parse(String(observeFetchRequestInit(init).body)) as {
         id: string;
         method: string;
         params?: { arguments?: Record<string, unknown> };
@@ -1803,7 +1804,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     globalThis.fetch = ((url, init) => {
       fetchUrls.push(String(url));
       assertEquals(
-        new Headers(init?.headers).get("authorization"),
+        new Headers(observeFetchRequestInit(init).headers).get("authorization"),
         "Bearer request-scoped-user-token",
       );
 
@@ -1846,7 +1847,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       if (String(url) === `${TEST_PUBLIC_API_ORIGIN}/mcp`) {
         capturedMcpRequest = {
           url: String(url),
-          authorization: new Headers(init?.headers).get("authorization"),
+          authorization: new Headers(observeFetchRequestInit(init).headers).get("authorization"),
         };
         return Promise.resolve(
           new Response(
@@ -1992,7 +1993,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     globalThis.fetch = ((url, init) => {
       fetchUrls.push(String(url));
       assertEquals(
-        new Headers(init?.headers).get("authorization"),
+        new Headers(observeFetchRequestInit(init).headers).get("authorization"),
         "Bearer request-scoped-user-token",
       );
 

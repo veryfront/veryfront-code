@@ -8,7 +8,20 @@ import { Button } from "../ui/button.tsx";
 import { DropdownMenuTrigger } from "../ui/dropdown-menu.tsx";
 import { PlusIcon } from "../ui/icons/index.ts";
 import { cn } from "./theme.ts";
-import type { ChatActionsTriggerProps } from "./chat-actions.types.ts";
+import type {
+  ChatActionsSlottedTriggerProps,
+  ChatActionsTriggerProps,
+} from "./chat-actions.types.ts";
+
+type ChatActionsCustomTriggerProps<T extends HTMLElement> =
+  | ChatActionsSlottedTriggerProps<T>
+  | (ChatActionsTriggerProps & { children: React.ReactElement });
+
+function hasCustomTrigger<T extends HTMLElement>(
+  props: ChatActionsTriggerProps | ChatActionsSlottedTriggerProps<T>,
+): props is ChatActionsCustomTriggerProps<T> {
+  return React.isValidElement(props.children);
+}
 
 /**
  * `ChatActions.Trigger` renders through the dropdown's `asChild` slot. Custom
@@ -16,16 +29,25 @@ import type { ChatActionsTriggerProps } from "./chat-actions.types.ts";
  * standard `+` button.
  */
 export function ChatActionsTrigger<T extends HTMLElement = HTMLElement>(
-  triggerProps: ChatActionsTriggerProps<T>,
+  triggerProps: ChatActionsSlottedTriggerProps<T>,
+): React.ReactElement;
+export function ChatActionsTrigger(
+  triggerProps: ChatActionsTriggerProps,
+): React.ReactElement;
+export function ChatActionsTrigger<T extends HTMLElement = HTMLElement>(
+  triggerProps: ChatActionsTriggerProps | ChatActionsSlottedTriggerProps<T>,
 ): React.ReactElement {
-  if (triggerProps.children != null) {
-    const { children, className, ref, ...props } = triggerProps;
+  if (triggerProps.children != null && !React.isValidElement(triggerProps.children)) {
+    throw new TypeError("ChatActions.Trigger children must be one valid React element");
+  }
+  if (hasCustomTrigger(triggerProps)) {
+    const { children, className, ref, asChild: _asChild, ...props } = triggerProps;
     return (
-      <DropdownMenuTrigger<T>
+      <DropdownMenuTrigger
         asChild
-        ref={ref}
+        ref={ref as React.Ref<HTMLElement>}
         className={className}
-        {...props}
+        {...(props as React.HTMLAttributes<HTMLElement>)}
       >
         {children}
       </DropdownMenuTrigger>
@@ -37,11 +59,12 @@ export function ChatActionsTrigger<T extends HTMLElement = HTMLElement>(
     className,
     ref,
     type,
+    asChild: _asChild,
     "aria-label": ariaLabel,
     ...props
   } = triggerProps;
   return (
-    <DropdownMenuTrigger<HTMLButtonElement> asChild ref={ref} {...props}>
+    <DropdownMenuTrigger asChild ref={ref} {...props}>
       <Button
         type={type ?? "button"}
         variant="icon-tertiary"

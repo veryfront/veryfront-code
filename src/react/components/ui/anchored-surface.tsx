@@ -30,14 +30,20 @@ export interface AnchoredState {
   setContentId: React.Dispatch<React.SetStateAction<string>>;
 }
 
-/** Native-button props for an anchored trigger. */
-interface AnchoredNativeTriggerProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  asChild?: false;
+/**
+ * Backward-compatible public props for an anchored trigger.
+ *
+ * Keep this as a broad interface so existing wrapper interfaces, conditional
+ * `asChild` values, and button-shaped prop spreads remain source-compatible.
+ * Skin-level overloads add precise element refs for literal slotted calls.
+ */
+export interface AnchoredTriggerPublicProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  asChild?: boolean;
   ref?: React.Ref<HTMLButtonElement>;
 }
 
 /** Slotted-element props for an anchored trigger. */
-type AnchoredSlottedTriggerProps<T extends HTMLElement = HTMLElement> =
+export type AnchoredSlottedTriggerProps<T extends HTMLElement = HTMLElement> =
   & Omit<PolymorphicButtonAttributes<T>, "children" | "ref" | "type">
   & {
     asChild: true;
@@ -50,14 +56,9 @@ type AnchoredSlottedTriggerProps<T extends HTMLElement = HTMLElement> =
     ref?: React.Ref<T>;
   };
 
-/** Public native/slotted contract shared by Popover and DropdownMenu triggers. */
-export type AnchoredTriggerPublicProps<T extends HTMLElement = HTMLElement> =
-  | AnchoredNativeTriggerProps
-  | AnchoredSlottedTriggerProps<T>;
-
 /** Props for `AnchoredTrigger` (returned by the factory). */
 export type AnchoredTriggerProps<T extends HTMLElement = HTMLElement> =
-  & AnchoredTriggerPublicProps<T>
+  & (AnchoredTriggerPublicProps | AnchoredSlottedTriggerProps<T>)
   & {
     /** `aria-haspopup` value -- `"dialog"` for Popover, `"menu"` for DropdownMenu. */
     haspopup: NonNullable<React.AriaAttributes["aria-haspopup"]>;

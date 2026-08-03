@@ -264,6 +264,8 @@ export {
   type ChatInputRootProps,
   ChatInputSend,
   type ChatInputSendProps,
+  type ChatInputSlottedActionProps,
+  type ChatInputSlottedSubmitProps,
   ChatInputStop,
   type ChatInputStopProps,
   ChatInputSubmit,
@@ -352,6 +354,7 @@ export {
   type ChatActionsItemProps,
   type ChatActionsProps,
   type ChatActionsSettings,
+  type ChatActionsSlottedTriggerProps,
   type ChatActionsTriggerProps,
   useChatActions,
 } from "#veryfront/react/components/chat/chat-actions.tsx";

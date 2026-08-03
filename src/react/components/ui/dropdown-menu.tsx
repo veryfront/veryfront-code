@@ -9,6 +9,7 @@ import * as React from "react";
 import { cx as cn } from "./cva.ts";
 import { getPolymorphicButtonType, type PolymorphicButtonAttributes, Slot } from "./slot.tsx";
 import {
+  type AnchoredSlottedTriggerProps,
   type AnchoredTriggerPublicProps,
   createAnchoredSurfaceParts,
 } from "./anchored-surface.tsx";
@@ -38,8 +39,18 @@ export function DropdownMenu(props: DropdownMenuProps): React.ReactElement {
  * Trigger — toggles the menu; the positioning anchor. `asChild` merges onto
  * the child element, which must forward `ref` to its DOM node.
  */
+export interface DropdownMenuTriggerProps extends AnchoredTriggerPublicProps {}
+
+/** Literal slotted trigger contract with an element-specific ref. */
+export type DropdownMenuSlottedTriggerProps<T extends HTMLElement = HTMLElement> =
+  AnchoredSlottedTriggerProps<T>;
+
 export function DropdownMenuTrigger<T extends HTMLElement = HTMLElement>(
-  props: AnchoredTriggerPublicProps<T>,
+  props: DropdownMenuSlottedTriggerProps<T>,
+): React.ReactElement;
+export function DropdownMenuTrigger(props: DropdownMenuTriggerProps): React.ReactElement;
+export function DropdownMenuTrigger<T extends HTMLElement = HTMLElement>(
+  props: DropdownMenuTriggerProps | DropdownMenuSlottedTriggerProps<T>,
 ): React.ReactElement {
   return <_Trigger {...props} haspopup="menu" />;
 }

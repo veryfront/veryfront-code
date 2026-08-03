@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import {
   assertWorkerEgressAllowed,
   assertWorkerHostEgressAllowed,
@@ -723,7 +724,7 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
     const seen: Array<Record<string, string | null>> = [];
     const fetchImpl: WorkerEgressFetch = (input, init) => {
       const url = input instanceof Request ? input.url : String(input);
-      const headers = new Headers(init?.headers);
+      const headers = new Headers(observeFetchRequestInit(init).headers);
       seen.push(Object.fromEntries(credentialHeaders.map((name) => [name, headers.get(name)])));
       if (url === "http://93.184.216.34/start") {
         return Promise.resolve(redirectTo("http://93.184.216.35/landing"));
@@ -755,7 +756,7 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
     const seen: Array<string | null> = [];
     const fetchImpl: WorkerEgressFetch = (input, init) => {
       const url = input instanceof Request ? input.url : String(input);
-      seen.push(new Headers(init?.headers).get("authorization"));
+      seen.push(new Headers(observeFetchRequestInit(init).headers).get("authorization"));
       if (url === "http://93.184.216.34/a") {
         return Promise.resolve(redirectTo("http://93.184.216.34/b"));
       }
@@ -795,7 +796,8 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
       const seen: Array<{ method: string | undefined; body: BodyInit | null | undefined }> = [];
       let calls = 0;
       const fetchImpl: WorkerEgressFetch = (_input, init) => {
-        seen.push({ method: init?.method, body: init?.body });
+        const observedInit = observeFetchRequestInit(init);
+        seen.push({ method: observedInit.method, body: observedInit.body });
         calls++;
         return Promise.resolve(
           calls === 1
@@ -821,7 +823,7 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
     const seenHeaders: Headers[] = [];
     let calls = 0;
     const fetchImpl: WorkerEgressFetch = (_input, init) => {
-      seenHeaders.push(new Headers(init?.headers));
+      seenHeaders.push(new Headers(observeFetchRequestInit(init).headers));
       calls++;
       return Promise.resolve(
         calls === 1
@@ -882,7 +884,7 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
     const seenSignals: Array<AbortSignal | null | undefined> = [];
     const fetchImpl: WorkerEgressFetch = (input, init) => {
       const url = input instanceof Request ? input.url : String(input);
-      seenSignals.push(init?.signal);
+      seenSignals.push(observeFetchRequestInit(init).signal);
       if (url === "http://93.184.216.34/a") {
         return Promise.resolve(redirectTo("http://93.184.216.35/b"));
       }
@@ -905,7 +907,7 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
     const request = new Request("http://93.184.216.34/a", { signal: controller.signal });
     let seenSignal: AbortSignal | null | undefined;
     const fetchImpl: WorkerEgressFetch = (_input, init) => {
-      seenSignal = init?.signal;
+      seenSignal = observeFetchRequestInit(init).signal;
       return Promise.resolve(new Response("ok", { status: 200 }));
     };
 

@@ -103,6 +103,8 @@ export type {
   ChatInputProps,
   ChatInputRootProps,
   ChatInputSendProps,
+  ChatInputSlottedActionProps,
+  ChatInputSlottedSubmitProps,
   ChatInputStopProps,
   ChatInputSubmitProps,
   ChatInputToolbarProps,

@@ -4,6 +4,7 @@ import type * as React from "react";
 import type { ModelOption } from "../../model-selector.tsx";
 import type { ChatTheme } from "../../theme.ts";
 import type { AttachmentInfo } from "../components/attachment-pill.tsx";
+import type { PolymorphicButtonAttributes } from "../../../ui/slot.tsx";
 import type { ChatMessage } from "#veryfront/agent/react";
 import type { ComposerStateProps } from "./use-composer-value.ts";
 
@@ -21,8 +22,14 @@ export interface ChatInputFieldProps extends
   ref?: React.Ref<HTMLTextAreaElement>;
 }
 
-/** Props shared by every ChatInput action leaf. */
-interface ChatInputActionBaseProps extends
+/**
+ * Backward-compatible props shared by every ChatInput action leaf.
+ *
+ * Keep this as a broad interface so existing wrapper interfaces, conditional
+ * `asChild` values, and button-shaped prop spreads remain source-compatible.
+ * The component overloads add precise element refs for literal slotted calls.
+ */
+export interface ChatInputActionProps extends
   Omit<
     React.ButtonHTMLAttributes<HTMLButtonElement>,
     "children" | "onClick" | "ref" | "type"
@@ -35,29 +42,33 @@ interface ChatInputActionBaseProps extends
   /** Additional classes merged with the action's Button variant classes. */
   className?: string;
   onClick?: WrapClick;
-}
-
-/** Native-button mode for a ChatInput action leaf. */
-interface ChatInputNativeActionProps extends ChatInputActionBaseProps {
-  asChild?: false;
-  /** React 19: ref targets the rendered button. */
+  /** Merge action behavior and styling onto one custom child element. */
+  asChild?: boolean;
+  /** React 19: ref targets the historical native-button contract. */
   ref?: React.Ref<HTMLButtonElement>;
 }
 
-/** Slotted mode for a ChatInput action leaf. */
-interface ChatInputSlottedActionProps extends ChatInputActionBaseProps {
-  /**
-   * Merge action behavior and styling onto one custom child element. An opaque
-   * component that renders a button must set its own `type="button"`.
-   */
-  asChild: true;
-  children: React.ReactElement;
-  /** React 19: ref targets the element rendered by the custom child. */
-  ref?: React.Ref<HTMLElement>;
-}
-
-/** Props shared by the ChatInput action leaves. */
-export type ChatInputActionProps = ChatInputNativeActionProps | ChatInputSlottedActionProps;
+/** Literal slotted action contract with an element-specific ref and event. */
+export type ChatInputSlottedActionProps<T extends HTMLElement = HTMLElement> =
+  & Omit<
+    PolymorphicButtonAttributes<T>,
+    "children" | "onClick" | "ref" | "type"
+  >
+  & {
+    /**
+     * Merge action behavior and styling onto one custom child element. An opaque
+     * component that renders a button must set its own `type="button"`.
+     */
+    asChild: true;
+    children: React.ReactElement;
+    disabled?: boolean;
+    /** @deprecated Pass `children` instead. Kept working for backward compatibility. */
+    icon?: React.ReactNode;
+    className?: string;
+    onClick?: WrapClick;
+    /** React 19: ref targets the element rendered by the custom child. */
+    ref?: React.Ref<T>;
+  };
 
 /** Props accepted by `<ChatInput.Send>`. */
 export type ChatInputSendProps = ChatInputActionProps;
@@ -69,7 +80,7 @@ export type ChatInputStopProps = ChatInputActionProps;
 export type ChatInputVoiceProps = ChatInputActionProps;
 
 /** Props for the unified {@link ChatInputSubmit} control. */
-export type ChatInputSubmitProps = ChatInputActionProps & {
+export interface ChatInputSubmitProps extends ChatInputActionProps {
   /** Replace the idle/send glyph. With `asChild`, supplies the element in both states. */
   children?: React.ReactNode;
   /**
@@ -77,7 +88,15 @@ export type ChatInputSubmitProps = ChatInputActionProps & {
    * applies to the idle/send state.
    */
   stopIcon?: React.ReactNode;
-};
+}
+
+/** Literal slotted props for the unified {@link ChatInputSubmit} control. */
+export type ChatInputSlottedSubmitProps<T extends HTMLElement = HTMLElement> =
+  & ChatInputSlottedActionProps<T>
+  & {
+    /** Icon shown while streaming. Defaults to the stop glyph. */
+    stopIcon?: React.ReactNode;
+  };
 
 /** Props accepted by `<ChatInput.Model>`. */
 export interface ChatInputModelProps {

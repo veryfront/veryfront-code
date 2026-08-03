@@ -36,14 +36,23 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
 } from "veryfront/ui";
-import type { DropdownMenuItemProps } from "veryfront/ui";
+import type {
+  DropdownMenuItemProps,
+  DropdownMenuTriggerProps,
+  PopoverTriggerProps,
+} from "veryfront/ui";
 import type {
   AgentPickerActionProps,
   AgentPickerSearchProps,
   BranchPickerActionProps,
   BranchPickerCountProps,
   ChatAgentInfo,
+  ChatActionsTriggerProps,
+  ChatInputActionProps,
   ChatInputAttachProps,
   ChatInputExportProps,
   ChatInputFieldProps,
@@ -122,10 +131,38 @@ interface ConsumerMenuItemProps extends DropdownMenuItemProps {
   analyticsId?: string;
 }
 
+interface ConsumerChatInputActionProps extends ChatInputActionProps {
+  analyticsId?: string;
+}
+
+interface ConsumerChatActionsTriggerProps extends ChatActionsTriggerProps {
+  analyticsId?: string;
+}
+
+interface ConsumerDropdownTriggerProps extends DropdownMenuTriggerProps {
+  analyticsId?: string;
+}
+
+interface ConsumerPopoverTriggerProps extends PopoverTriggerProps {
+  analyticsId?: string;
+}
+
 const dynamicAsChild: boolean = messages.length > 0;
 const compatibleMenuItemProps: DropdownMenuItemProps = {
   asChild: dynamicAsChild,
   onSelect: () => undefined,
+};
+const compatibleChatInputActionProps: ChatInputActionProps = {
+  asChild: dynamicAsChild,
+};
+const compatibleChatActionsTriggerProps: ChatActionsTriggerProps = {
+  asChild: dynamicAsChild,
+};
+const compatibleDropdownTriggerProps: DropdownMenuTriggerProps = {
+  asChild: dynamicAsChild,
+};
+const compatiblePopoverTriggerProps: PopoverTriggerProps = {
+  asChild: dynamicAsChild,
 };
 
 /** Existing wrappers can extend and spread the broad public menu-item contract. */
@@ -136,6 +173,40 @@ export function ConsumerMenuItem({
   return <DropdownMenuItem {...props} data-analytics-id={analyticsId} />;
 }
 
+/** Historical public interfaces remain extendable and wrapper-spread compatible. */
+export function ConsumerChatInputAction({
+  analyticsId,
+  ...props
+}: ConsumerChatInputActionProps): React.ReactElement | null {
+  return <ChatInputSend {...props} data-analytics-id={analyticsId} />;
+}
+
+export function ConsumerChatActionsTrigger({
+  analyticsId,
+  ...props
+}: ConsumerChatActionsTriggerProps): React.ReactElement {
+  return <ChatActions.Trigger {...props} data-analytics-id={analyticsId} />;
+}
+
+export function ConsumerDropdownTrigger({
+  analyticsId,
+  ...props
+}: ConsumerDropdownTriggerProps): React.ReactElement {
+  return <DropdownMenuTrigger {...props} data-analytics-id={analyticsId} />;
+}
+
+export function ConsumerPopoverTrigger({
+  analyticsId,
+  ...props
+}: ConsumerPopoverTriggerProps): React.ReactElement {
+  return <PopoverTrigger {...props} data-analytics-id={analyticsId} />;
+}
+
+void compatibleChatInputActionProps;
+void compatibleChatActionsTriggerProps;
+void compatibleDropdownTriggerProps;
+void compatiblePopoverTriggerProps;
+
 /** Slotted action refs describe the element that actually renders. */
 export function PolymorphicChatInputActionDemo(): React.ReactElement {
   return (
@@ -143,6 +214,15 @@ export function PolymorphicChatInputActionDemo(): React.ReactElement {
       <ChatInputSend asChild ref={anchorActionRef}>
         <a href="#send">Send</a>
       </ChatInputSend>
+      <ChatInputStop asChild ref={anchorActionRef}>
+        <a href="#stop">Stop</a>
+      </ChatInputStop>
+      <ChatInputVoice asChild ref={anchorActionRef}>
+        <a href="#voice">Voice</a>
+      </ChatInputVoice>
+      <ChatInputSubmit asChild ref={anchorActionRef}>
+        <a href="#submit">Submit</a>
+      </ChatInputSubmit>
     </ChatInputRoot>
   );
 }
@@ -171,8 +251,14 @@ export function PolymorphicMenuDemo(): React.ReactElement {
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      <Popover>
+        <PopoverTrigger asChild ref={anchorTriggerRef}>
+          <a href="#popover">Popover</a>
+        </PopoverTrigger>
+        <PopoverContent>Details</PopoverContent>
+      </Popover>
       <ChatActions.Root>
-        <ChatActions.Trigger ref={anchorTriggerRef}>
+        <ChatActions.Trigger asChild ref={anchorTriggerRef}>
           <a href="#actions">Actions</a>
         </ChatActions.Trigger>
         <ChatActions.Content />

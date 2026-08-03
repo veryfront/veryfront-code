@@ -119,7 +119,9 @@ export {
   type DropdownMenuProps,
   DropdownMenuSeparator,
   type DropdownMenuSlottedItemProps,
+  type DropdownMenuSlottedTriggerProps,
   DropdownMenuTrigger,
+  type DropdownMenuTriggerProps,
 } from "./dropdown-menu.tsx";
 export {
   Checkbox,
@@ -205,8 +207,10 @@ export {
   PopoverFooter,
   PopoverHeader,
   type PopoverProps,
+  type PopoverSlottedTriggerProps,
   PopoverTitle,
   PopoverTrigger,
+  type PopoverTriggerProps,
 } from "./popover.tsx";
 export {
   Accordion,

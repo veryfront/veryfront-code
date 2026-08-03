@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import type { ChatUiMessage } from "../../chat/types.ts";
 import { generateText } from "../../runtime/runtime-bridge.ts";
 import { createGenerateModel } from "../../runtime/runtime-bridge.test-helpers.ts";
@@ -39,7 +40,7 @@ function rejectIfStillPending<T>(
 function createAbortAwarePendingFetch(requestedUrls: string[] = []): typeof fetch {
   return (input, init): Promise<Response> => {
     requestedUrls.push(input.toString());
-    const signal = init?.signal;
+    const signal = observeFetchRequestInit(init).signal;
     if (!(signal instanceof AbortSignal)) {
       return new Promise(() => {});
     }

@@ -13,6 +13,7 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import {
   useAgent,
   useAgents,
@@ -292,7 +293,7 @@ describe("veryfront/chat hook behavior", () => {
     let requestBody: unknown;
     let finished = "";
     const restoreFetch = replaceFetch(async (_input, init) => {
-      requestBody = JSON.parse(String(init?.body));
+      requestBody = JSON.parse(String(observeFetchRequestInit(init).body));
       return new Response("Generated answer", { status: 200 });
     });
     try {
@@ -360,7 +361,10 @@ describe("veryfront/chat hook behavior", () => {
     const restoreFetch = replaceFetch(async (input, init) => {
       requests += 1;
       assertEquals(String(input), "/api/agents");
-      assertEquals(new Headers(init?.headers).get("accept"), "application/json");
+      assertEquals(
+        new Headers(observeFetchRequestInit(init).headers).get("accept"),
+        "application/json",
+      );
       return Response.json({
         agents: [{
           id: "support",
@@ -399,8 +403,9 @@ describe("veryfront/chat hook behavior", () => {
     let requestBody: unknown;
     const restoreFetch = replaceFetch(async (input, init) => {
       assertEquals(String(input), "/api/agents/support");
-      assertEquals(init?.method, "POST");
-      requestBody = JSON.parse(String(init?.body));
+      const observedInit = observeFetchRequestInit(init);
+      assertEquals(observedInit.method, "POST");
+      requestBody = JSON.parse(String(observedInit.body));
       return Response.json({
         messages: [],
         toolCalls: [],

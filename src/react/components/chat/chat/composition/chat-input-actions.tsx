@@ -9,7 +9,13 @@ import { Button } from "../../../ui/button.tsx";
 import { cn } from "../../theme.ts";
 import { useChatInputContext } from "../contexts/composer-context.tsx";
 import { getChatInputActionType } from "./chat-input-action-semantics.ts";
-import type { ChatInputActionProps, ChatInputSubmitProps } from "./chat-composer.types.ts";
+import type {
+  ChatInputActionProps,
+  ChatInputSendProps,
+  ChatInputSlottedActionProps,
+  ChatInputStopProps,
+  ChatInputVoiceProps,
+} from "./chat-composer.types.ts";
 
 /** Microphone glyph for the idle-composer voice button. */
 function MicGlyph(): React.ReactElement {
@@ -31,7 +37,11 @@ function MicGlyph(): React.ReactElement {
 }
 
 /** Send button, shown while the composer is idle. */
-export function ChatInputSend({
+export function ChatInputSend<T extends HTMLElement = HTMLElement>(
+  props: ChatInputSlottedActionProps<T>,
+): React.ReactElement | null;
+export function ChatInputSend(props: ChatInputSendProps): React.ReactElement | null;
+export function ChatInputSend<T extends HTMLElement = HTMLElement>({
   children,
   icon,
   className,
@@ -41,7 +51,7 @@ export function ChatInputSend({
   disabled,
   "aria-label": ariaLabel,
   ...buttonProps
-}: ChatInputActionProps): React.ReactElement | null {
+}: ChatInputActionProps | ChatInputSlottedActionProps<T>): React.ReactElement | null {
   const c = useChatInputContext();
   if (c.isLoading) return null;
   if (!c.canSubmit && c.onVoice) return null;
@@ -67,7 +77,11 @@ export function ChatInputSend({
 ChatInputSend.displayName = "ChatInput.Send";
 
 /** Stop button, shown while the composer is streaming. */
-export function ChatInputStop({
+export function ChatInputStop<T extends HTMLElement = HTMLElement>(
+  props: ChatInputSlottedActionProps<T>,
+): React.ReactElement | null;
+export function ChatInputStop(props: ChatInputStopProps): React.ReactElement | null;
+export function ChatInputStop<T extends HTMLElement = HTMLElement>({
   children,
   icon,
   className,
@@ -77,7 +91,7 @@ export function ChatInputStop({
   disabled,
   "aria-label": ariaLabel,
   ...buttonProps
-}: ChatInputActionProps): React.ReactElement | null {
+}: ChatInputActionProps | ChatInputSlottedActionProps<T>): React.ReactElement | null {
   const c = useChatInputContext();
   if (!c.isLoading || (!c.onStop && !onClick)) return null;
   const run = () => c.onStop?.();
@@ -100,32 +114,12 @@ export function ChatInputStop({
 }
 ChatInputStop.displayName = "ChatInput.Stop";
 
-/** Switch between send and stop states with one control. */
-export function ChatInputSubmit(props: ChatInputSubmitProps): React.ReactElement | null {
-  const c = useChatInputContext();
-  if (props.asChild) {
-    const { children, icon, stopIcon, ...actionProps } = props;
-    return c.isLoading
-      ? (
-        <ChatInputStop {...actionProps} icon={stopIcon}>
-          {children}
-        </ChatInputStop>
-      )
-      : (
-        <ChatInputSend {...actionProps} icon={icon}>
-          {children}
-        </ChatInputSend>
-      );
-  }
-  const { children, icon, stopIcon, ...actionProps } = props;
-  return c.isLoading
-    ? <ChatInputStop {...actionProps} icon={stopIcon} />
-    : <ChatInputSend {...actionProps} icon={icon}>{children}</ChatInputSend>;
-}
-ChatInputSubmit.displayName = "ChatInput.Submit";
-
 /** Voice button, shown when the idle composer is empty. */
-export function ChatInputVoice({
+export function ChatInputVoice<T extends HTMLElement = HTMLElement>(
+  props: ChatInputSlottedActionProps<T>,
+): React.ReactElement | null;
+export function ChatInputVoice(props: ChatInputVoiceProps): React.ReactElement | null;
+export function ChatInputVoice<T extends HTMLElement = HTMLElement>({
   children,
   icon,
   className,
@@ -135,7 +129,7 @@ export function ChatInputVoice({
   disabled,
   "aria-label": ariaLabel,
   ...buttonProps
-}: ChatInputActionProps): React.ReactElement | null {
+}: ChatInputActionProps | ChatInputSlottedActionProps<T>): React.ReactElement | null {
   const c = useChatInputContext();
   if (c.isLoading || c.canSubmit || !c.onVoice) return null;
   const run = () => c.onVoice?.();

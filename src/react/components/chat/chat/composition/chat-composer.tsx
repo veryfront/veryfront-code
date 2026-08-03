@@ -31,12 +31,8 @@ import { downloadMarkdown } from "../utils/export.ts";
 import { ChatInputContextProvider, useChatInputContext } from "../contexts/composer-context.tsx";
 import { useChatInputAttachmentPicker } from "./chat-input-attachment-picker.tsx";
 import { ChatInputForm } from "./chat-input-form.tsx";
-import {
-  ChatInputSend,
-  ChatInputStop,
-  ChatInputSubmit,
-  ChatInputVoice,
-} from "./chat-input-actions.tsx";
+import { ChatInputSend, ChatInputStop, ChatInputVoice } from "./chat-input-actions.tsx";
+import { ChatInputSubmit } from "./chat-input-submit.tsx";
 import { useComposerValue } from "./use-composer-value.ts";
 import type {
   ChatInputAttachProps,

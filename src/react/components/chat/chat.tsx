@@ -34,6 +34,8 @@ export {
   type ChatInputProps,
   type ChatInputRootProps,
   type ChatInputSendProps,
+  type ChatInputSlottedActionProps,
+  type ChatInputSlottedSubmitProps,
   type ChatInputStopProps,
   type ChatInputSubmitProps,
   type ChatInputToolbarProps,

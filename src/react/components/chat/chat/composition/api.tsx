@@ -27,6 +27,8 @@ export {
   type ChatInputRootProps,
   ChatInputSend,
   type ChatInputSendProps,
+  type ChatInputSlottedActionProps,
+  type ChatInputSlottedSubmitProps,
   ChatInputStop,
   type ChatInputStopProps,
   ChatInputSubmit,

@@ -67,18 +67,27 @@ export interface ChatActionsContextValue {
   settings?: ChatActionsSettings;
 }
 
-/** Default-button props for `ChatActions.Trigger`. */
-interface ChatActionsNativeTriggerProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  /** Omit children to render the default `+` Button. */
-  children?: null | undefined;
+/**
+ * Backward-compatible props for `ChatActions.Trigger`.
+ *
+ * Custom children continue to opt into the historical auto-slotted path. Keep
+ * this as a broad interface so wrapper interfaces and prop spreads remain
+ * valid; literal `asChild` calls use the precise overload below.
+ */
+export interface ChatActionsTriggerProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  /** Omit children to render the default `+` Button; a child is auto-slotted. */
+  children?: React.ReactNode;
+  /** Select the element-specific slotted overload when passed as literal `true`. */
+  asChild?: boolean;
   ref?: React.Ref<HTMLButtonElement>;
 }
 
-/** Custom-element props for `ChatActions.Trigger`. */
-type ChatActionsSlottedTriggerProps<T extends HTMLElement = HTMLElement> =
-  & Omit<PolymorphicButtonAttributes<T>, "children" | "ref" | "type">
+/** Literal slotted-element props for `ChatActions.Trigger`. */
+export type ChatActionsSlottedTriggerProps<T extends HTMLElement = HTMLElement> =
+  & Omit<PolymorphicButtonAttributes<T>, "asChild" | "children" | "ref" | "type">
   & {
     /** Custom focusable trigger rendered through `asChild`. */
+    asChild: true;
     children: React.ReactElement;
     disabled?: boolean;
     /** Applied only when `children` is an intrinsic `<button>`; opaque buttons own `type`. */
@@ -86,11 +95,6 @@ type ChatActionsSlottedTriggerProps<T extends HTMLElement = HTMLElement> =
       : never;
     ref?: React.Ref<T>;
   };
-
-/** Props for `ChatActions.Trigger`, discriminated by custom-child presence. */
-export type ChatActionsTriggerProps<T extends HTMLElement = HTMLElement> =
-  | ChatActionsNativeTriggerProps
-  | ChatActionsSlottedTriggerProps<T>;
 
 /** Props for `ChatActions.Content`, the dropdown surface. */
 export interface ChatActionsContentProps {
