@@ -14,6 +14,7 @@ describe("errors/catalog/module-errors", () => {
         "dependency-missing",
         "version-mismatch",
         "lockfile-format-mismatch",
+        "lockfile-read-error",
       ];
 
       for (const slug of expectedSlugs) {
@@ -36,8 +37,8 @@ describe("errors/catalog/module-errors", () => {
       }
     });
 
-    it("should have 7 entries", () => {
-      assertEquals(Object.keys(MODULE_ERROR_CATALOG).length, 7);
+    it("should have 8 entries", () => {
+      assertEquals(Object.keys(MODULE_ERROR_CATALOG).length, 8);
     });
 
     it("module-not-found should have an example with import map", () => {

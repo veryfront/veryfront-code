@@ -1,9 +1,11 @@
 import { computeHash } from "./hash-utils.ts";
 import { serverLogger } from "./logger/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { normalize, resolve } from "#veryfront/compat/path/resolution.ts";
 import {
   CACHE_ERROR,
   LOCKFILE_FORMAT_MISMATCH,
+  LOCKFILE_READ_ERROR,
   NETWORK_ERROR,
 } from "#veryfront/errors/error-registry.ts";
 
@@ -23,25 +25,95 @@ export interface LockfileData {
 
 const LOCKFILE_NAME = "veryfront.lock";
 const LOCKFILE_VERSION = 1;
-const lockfileMutationTails = new Map<string, Promise<void>>();
 
-function serializeLockfileMutation<T>(
+function cloneLockfileEntry(entry: LockfileEntry): LockfileEntry {
+  return {
+    resolved: entry.resolved,
+    integrity: entry.integrity,
+    ...(entry.dependencies === undefined ? {} : { dependencies: [...entry.dependencies] }),
+    ...(entry.fetchedAt === undefined ? {} : { fetchedAt: entry.fetchedAt }),
+  };
+}
+
+function cloneLockfileData(data: LockfileData): LockfileData {
+  return {
+    version: LOCKFILE_VERSION,
+    imports: Object.fromEntries(
+      Object.entries(data.imports).map(([url, entry]) => [url, cloneLockfileEntry(entry)]),
+    ),
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isLockfileEntry(value: unknown): value is LockfileEntry {
+  if (!isRecord(value)) return false;
+  if (typeof value.resolved !== "string" || typeof value.integrity !== "string") return false;
+  if (
+    value.dependencies !== undefined &&
+    (!Array.isArray(value.dependencies) ||
+      value.dependencies.some((dependency) => typeof dependency !== "string"))
+  ) {
+    return false;
+  }
+  return value.fetchedAt === undefined || typeof value.fetchedAt === "string";
+}
+
+function lockfileReadError(
   lockfilePath: string,
-  mutation: () => Promise<T>,
-): Promise<T> {
-  const predecessor = lockfileMutationTails.get(lockfilePath) ?? Promise.resolve();
-  const result = predecessor.then(mutation);
-  const tail = result.then(
-    () => undefined,
-    () => undefined,
-  );
-  lockfileMutationTails.set(lockfilePath, tail);
+  reason: "access-failed" | "invalid-json" | "invalid-structure",
+  cause?: unknown,
+) {
+  const description = reason === "access-failed"
+    ? "could not be accessed"
+    : reason === "invalid-json"
+    ? "does not contain valid JSON"
+    : "has an invalid structure";
 
-  return result.finally(() => {
-    if (lockfileMutationTails.get(lockfilePath) === tail) {
-      lockfileMutationTails.delete(lockfilePath);
-    }
+  return LOCKFILE_READ_ERROR.create({
+    detail: `Lockfile ${lockfilePath} ${description}. The file was left untouched.`,
+    cause,
+    context: { lockfilePath, reason },
   });
+}
+
+function parseLockfile(content: string, lockfilePath: string): LockfileData {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch (cause) {
+    throw lockfileReadError(lockfilePath, "invalid-json", cause);
+  }
+
+  if (!isRecord(parsed) || !("version" in parsed)) {
+    throw lockfileReadError(lockfilePath, "invalid-structure");
+  }
+  if (parsed.version !== LOCKFILE_VERSION) {
+    throw LOCKFILE_FORMAT_MISMATCH.create({
+      detail: `Lockfile ${lockfilePath} uses format version ${parsed.version}, but this ` +
+        `Veryfront build supports version ${LOCKFILE_VERSION}. The file was left untouched; ` +
+        "upgrade Veryfront or migrate the lockfile before reading or modifying it.",
+      context: {
+        lockfilePath,
+        expectedVersion: LOCKFILE_VERSION,
+        actualVersion: parsed.version,
+      },
+    });
+  }
+  if (!isRecord(parsed.imports)) {
+    throw lockfileReadError(lockfilePath, "invalid-structure");
+  }
+
+  const imports: Array<[string, LockfileEntry]> = [];
+  for (const [url, entry] of Object.entries(parsed.imports)) {
+    if (!isLockfileEntry(entry)) {
+      throw lockfileReadError(lockfilePath, "invalid-structure");
+    }
+    imports.push([url, cloneLockfileEntry(entry)]);
+  }
+  return { version: LOCKFILE_VERSION, imports: Object.fromEntries(imports) };
 }
 
 export function createEmptyLockfile(): LockfileData {
@@ -62,9 +134,9 @@ export async function verifyIntegrity(content: string, integrity: string): Promi
 /**
  * Public API contract for lockfile manager.
  *
- * Reads and mutations fail closed with a `lockfile-format-mismatch` error when the
- * on-disk lockfile uses an unsupported format version, so an older Veryfront
- * build can never destroy data written by a newer one.
+ * Reads and mutations fail closed with `lockfile-format-mismatch` for an
+ * unsupported format and `lockfile-read-error` for unreadable or malformed
+ * data, so an older Veryfront build cannot destroy unrecognized lockfile data.
  */
 export interface LockfileManager {
   read(): Promise<LockfileData | null>;
@@ -77,16 +149,61 @@ export interface LockfileManager {
 }
 
 export type FSAdapter = {
+  /**
+   * Stable identity for adapters that access the same backing filesystem.
+   * Separate adapter objects must share this key to coordinate lockfile writes.
+   */
+  readonly coordinationKey?: string;
   readFile(path: string): Promise<string>;
   writeFile(path: string, content: string): Promise<void>;
   exists(path: string): Promise<boolean>;
   remove?(path: string): Promise<void>;
 };
 
+const PLATFORM_FS_COORDINATION_KEY = "veryfront-platform-filesystem";
+const adapterIdentityByInstance = new WeakMap<FSAdapter, number>();
+const lockfileMutationTails = new Map<string, Promise<void>>();
+let nextAdapterIdentity = 1;
+
+function getAdapterCoordinationIdentity(fs: FSAdapter): string {
+  if (fs.coordinationKey !== undefined) return `shared:${fs.coordinationKey}`;
+
+  let identity = adapterIdentityByInstance.get(fs);
+  if (identity === undefined) {
+    identity = nextAdapterIdentity++;
+    adapterIdentityByInstance.set(fs, identity);
+  }
+  return `instance:${identity}`;
+}
+
+function createLockfileMutationKey(fs: FSAdapter, lockfilePath: string): string {
+  return JSON.stringify([getAdapterCoordinationIdentity(fs), resolve(lockfilePath)]);
+}
+
+function serializeLockfileMutation<T>(
+  mutationKey: string,
+  mutation: () => Promise<T>,
+): Promise<T> {
+  const predecessor = lockfileMutationTails.get(mutationKey) ?? Promise.resolve();
+  const result = predecessor.then(mutation);
+  const tail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  lockfileMutationTails.set(mutationKey, tail);
+
+  return result.finally(() => {
+    if (lockfileMutationTails.get(mutationKey) === tail) {
+      lockfileMutationTails.delete(mutationKey);
+    }
+  });
+}
+
 function createPlatformFSAdapter(): FSAdapter {
   const fs = createFileSystem();
 
   return {
+    coordinationKey: PLATFORM_FS_COORDINATION_KEY,
     readFile(path: string): Promise<string> {
       return fs.readTextFile(path);
     },
@@ -105,9 +222,20 @@ function createPlatformFSAdapter(): FSAdapter {
 /** Create lockfile manager. */
 export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter): LockfileManager {
   const fs = fsAdapter ?? createPlatformFSAdapter();
-  const lockfilePath = `${projectDir}/${LOCKFILE_NAME}`;
+  const lockfilePath = normalize(`${projectDir}/${LOCKFILE_NAME}`);
+  const mutationKey = createLockfileMutationKey(fs, lockfilePath);
   let cache: LockfileData | null = null;
+  let managerOperationTail: Promise<void> = Promise.resolve();
   const pendingEntries = new Map<string, LockfileEntry>();
+
+  function serializeManagerOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = managerOperationTail.then(operation);
+    managerOperationTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
 
   async function readFromDisk(): Promise<LockfileData | null> {
     let content: string;
@@ -115,38 +243,14 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
       const exists = await fs.exists(lockfilePath);
       if (!exists) return null;
       content = await fs.readFile(lockfilePath);
-    } catch (e) {
-      logger.debug(`Could not read lockfile: ${e}`);
-      return null;
+    } catch (cause) {
+      throw lockfileReadError(lockfilePath, "access-failed", cause);
     }
 
-    let parsed: LockfileData;
-    try {
-      parsed = JSON.parse(content) as LockfileData;
-    } catch (e) {
-      logger.debug(`Could not parse lockfile: ${e}`);
-      return null;
-    }
-
-    if (parsed.version !== LOCKFILE_VERSION) {
-      // Fail closed: silently substituting an empty lockfile here would let the
-      // next flush() overwrite a newer-format file and destroy the user's data.
-      throw LOCKFILE_FORMAT_MISMATCH.create({
-        detail: `Lockfile ${lockfilePath} uses format version ${parsed.version}, but this ` +
-          `Veryfront build supports version ${LOCKFILE_VERSION}. The file was left untouched; ` +
-          "upgrade Veryfront or migrate the lockfile before reading or modifying it.",
-        context: {
-          lockfilePath,
-          expectedVersion: LOCKFILE_VERSION,
-          actualVersion: parsed.version,
-        },
-      });
-    }
-
-    return parsed;
+    return parseLockfile(content, lockfilePath);
   }
 
-  async function read(): Promise<LockfileData | null> {
+  async function readCurrent(): Promise<LockfileData | null> {
     if (cache) return cache;
 
     const data = await readFromDisk();
@@ -154,11 +258,20 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     return data;
   }
 
+  function read(): Promise<LockfileData | null> {
+    return serializeManagerOperation(async () => {
+      const data = await readCurrent();
+      return data === null ? null : cloneLockfileData(data);
+    });
+  }
+
   async function writeToDisk(data: LockfileData): Promise<void> {
     const sorted: LockfileData = {
-      version: data.version,
+      version: LOCKFILE_VERSION,
       imports: Object.fromEntries(
-        Object.entries(data.imports).sort(([a], [b]) => a.localeCompare(b)),
+        Object.entries(data.imports)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([url, entry]) => [url, cloneLockfileEntry(entry)]),
       ),
     };
 
@@ -166,68 +279,85 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     logger.debug(`Written ${Object.keys(data.imports).length} entries`);
   }
 
-  async function write(data: LockfileData): Promise<void> {
-    await serializeLockfileMutation(lockfilePath, async () => {
-      // Revalidate the on-disk format before replacing it. This throws when the
-      // file was written by a newer Veryfront build, preserving that data.
-      await readFromDisk();
-      await writeToDisk(data);
+  function write(data: LockfileData): Promise<void> {
+    const snapshot = cloneLockfileData(data);
+    return serializeManagerOperation(() =>
+      serializeLockfileMutation(mutationKey, async () => {
+        // Revalidate the existing file before replacing it. Unsupported,
+        // unreadable, and malformed files are always preserved.
+        await readFromDisk();
+        await writeToDisk(snapshot);
+        cache = snapshot;
+        pendingEntries.clear();
+      })
+    );
+  }
+
+  function get(url: string): Promise<LockfileEntry | null> {
+    return serializeManagerOperation(async () => {
+      const entry = (await readCurrent())?.imports[url];
+      return entry === undefined ? null : cloneLockfileEntry(entry);
+    });
+  }
+
+  function set(url: string, entry: LockfileEntry): Promise<void> {
+    const snapshot = cloneLockfileEntry(entry);
+    return serializeManagerOperation(async () => {
+      const data = (await readCurrent()) ?? createEmptyLockfile();
+      data.imports[url] = snapshot;
       cache = data;
-      pendingEntries.clear();
+      pendingEntries.set(url, snapshot);
     });
   }
 
-  async function get(url: string): Promise<LockfileEntry | null> {
-    const data = await read();
-    return data?.imports[url] ?? null;
-  }
-
-  async function set(url: string, entry: LockfileEntry): Promise<void> {
-    const data = (await read()) ?? createEmptyLockfile();
-    data.imports[url] = entry;
-    cache = data;
-    pendingEntries.set(url, entry);
-  }
-
-  async function has(url: string): Promise<boolean> {
-    const data = await read();
-    return url in (data?.imports ?? {});
-  }
-
-  async function clear(): Promise<void> {
-    await serializeLockfileMutation(lockfilePath, async () => {
-      cache = createEmptyLockfile();
-      pendingEntries.clear();
-
-      if (!fs.remove) return;
-
-      const exists = await fs.exists(lockfilePath);
-      if (!exists) return;
-
-      await fs.remove(lockfilePath);
+  function has(url: string): Promise<boolean> {
+    return serializeManagerOperation(async () => {
+      const data = await readCurrent();
+      return url in (data?.imports ?? {});
     });
   }
 
-  async function flush(): Promise<void> {
-    if (pendingEntries.size === 0) return;
+  function clear(): Promise<void> {
+    return serializeManagerOperation(() =>
+      serializeLockfileMutation(mutationKey, async () => {
+        const existing = await readFromDisk();
+        const cleared = createEmptyLockfile();
+        if (existing !== null) {
+          if (fs.remove) await fs.remove(lockfilePath);
+          else await writeToDisk(cleared);
+        }
 
-    await serializeLockfileMutation(lockfilePath, async () => {
+        // State changes only after validation and any requested deletion have
+        // succeeded, so a failed clear leaves both memory and disk untouched.
+        cache = cleared;
+        pendingEntries.clear();
+      })
+    );
+  }
+
+  function flush(): Promise<void> {
+    return serializeManagerOperation(async () => {
       if (pendingEntries.size === 0) return;
 
-      // Merge only this manager's pending entries onto the latest on-disk
-      // state while holding the per-path mutation turn. This makes the whole
-      // read-merge-write sequence atomic relative to other in-process managers.
-      const snapshot = new Map(pendingEntries);
-      const merged = (await readFromDisk()) ?? createEmptyLockfile();
-      for (const [url, entry] of snapshot) {
-        merged.imports[url] = entry;
-      }
+      await serializeLockfileMutation(mutationKey, async () => {
+        // Merge only this manager's pending entries onto the latest on-disk
+        // state while holding the per-path mutation turn. This makes the whole
+        // read-merge-write sequence atomic relative to other in-process managers.
+        const snapshot = new Map(pendingEntries);
+        const merged = (await readFromDisk()) ?? createEmptyLockfile();
+        for (const [url, entry] of snapshot) {
+          merged.imports[url] = cloneLockfileEntry(entry);
+        }
 
-      await writeToDisk(merged);
-      cache = merged;
-      for (const [url, entry] of snapshot) {
-        if (pendingEntries.get(url) === entry) pendingEntries.delete(url);
-      }
+        await writeToDisk(merged);
+        for (const [url, entry] of snapshot) {
+          if (pendingEntries.get(url) === entry) pendingEntries.delete(url);
+        }
+        for (const [url, entry] of pendingEntries) {
+          merged.imports[url] = cloneLockfileEntry(entry);
+        }
+        cache = merged;
+      });
     });
   }
 

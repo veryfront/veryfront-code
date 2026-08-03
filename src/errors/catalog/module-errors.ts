@@ -94,4 +94,15 @@ resolve: {
       "Do not delete or overwrite the lockfile unless its contents are no longer needed",
     ],
   ),
+
+  "lockfile-read-error": createSimpleError(
+    "lockfile-read-error",
+    "Lockfile could not be read safely",
+    "Veryfront could not safely read or validate the existing lockfile.",
+    [
+      "Check that the lockfile is readable",
+      "Restore valid JSON from version control or a backup",
+      "Move the unreadable file aside manually before regenerating it",
+    ],
+  ),
 });

@@ -9,14 +9,20 @@ import {
   extractImports,
   fetchWithLock,
   type FSAdapter,
+  type LockfileData,
+  type LockfileEntry,
   resolveImportUrl,
   verifyIntegrity,
 } from "./import-lockfile.ts";
 
-function createMockFS(files: Record<string, string> = {}): FSAdapter {
+function createMockFS(
+  files: Record<string, string> = {},
+  coordinationKey?: string,
+): FSAdapter {
   const store = new Map<string, string>(Object.entries(files));
 
   return {
+    ...(coordinationKey === undefined ? {} : { coordinationKey }),
     readFile: (path: string) => {
       const content = store.get(path);
       if (content == null) return Promise.reject(new Error("ENOENT"));
@@ -32,6 +38,27 @@ function createMockFS(files: Record<string, string> = {}): FSAdapter {
       return Promise.resolve();
     },
   };
+}
+
+function blockNextWrite(fs: FSAdapter): {
+  started: Promise<void>;
+  release: () => void;
+} {
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const writeFile = fs.writeFile;
+  let blocked = false;
+
+  fs.writeFile = async (path: string, content: string): Promise<void> => {
+    if (!blocked) {
+      blocked = true;
+      started.resolve();
+      await release.promise;
+    }
+    await writeFile(path, content);
+  };
+
+  return { started: started.promise, release: release.resolve };
 }
 
 describe("import-lockfile", () => {
@@ -274,8 +301,114 @@ describe("import-lockfile", () => {
       assertEquals(await fs.readFile("/project/veryfront.lock"), newerContent);
     });
 
-    it("should serialize overlapping flushes for managers on the same projectDir", async () => {
-      const fs = createMockFS({
+    it("should preserve disk and pending state when clear sees a newer-format lockfile", async () => {
+      const fs = createMockFS();
+      const mgr = createLockfileManager("/project", fs);
+      const pendingUrl = "https://cdn.com/pending.ts";
+      const pendingEntry = {
+        resolved: pendingUrl,
+        integrity: "sha256-pending",
+      };
+      await mgr.set(pendingUrl, pendingEntry);
+
+      const newerContent = JSON.stringify({
+        version: 99,
+        imports: { "https://cdn.com/newer.ts": { resolved: "x", integrity: "y" } },
+      });
+      await fs.writeFile("/project/veryfront.lock", newerContent);
+
+      const error = await assertRejects(() => mgr.clear(), VeryfrontError);
+      assertExists(error);
+      if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
+      assertEquals(error.slug, "lockfile-format-mismatch");
+      assertEquals(await fs.readFile("/project/veryfront.lock"), newerContent);
+      assertEquals(await mgr.get(pendingUrl), pendingEntry);
+    });
+
+    it("should preserve disk and cached state when lockfile removal fails", async () => {
+      const fs = createMockFS();
+      const mgr = createLockfileManager("/project", fs);
+      const url = "https://cdn.com/mod.ts";
+      const entry = { resolved: url, integrity: "sha256-abc" };
+      await mgr.set(url, entry);
+      await mgr.flush();
+      const before = await fs.readFile("/project/veryfront.lock");
+      fs.remove = () => Promise.reject(new Error("remove failed"));
+
+      await assertRejects(() => mgr.clear(), Error, "remove failed");
+
+      assertEquals(await fs.readFile("/project/veryfront.lock"), before);
+      assertEquals(await mgr.get(url), entry);
+    });
+
+    it("should persist an empty lockfile when the adapter cannot remove files", async () => {
+      const path = "/project/veryfront.lock";
+      const url = "https://cdn.com/mod.ts";
+      const backingFS = createMockFS({
+        [path]: JSON.stringify({
+          version: 1,
+          imports: { [url]: { resolved: url, integrity: "sha256-abc" } },
+        }),
+      });
+      const fs: FSAdapter = {
+        coordinationKey: "non-removing-test-store",
+        exists: backingFS.exists,
+        readFile: backingFS.readFile,
+        writeFile: backingFS.writeFile,
+      };
+      const mgr = createLockfileManager("/project", fs);
+
+      await mgr.clear();
+
+      assertEquals(JSON.parse(await fs.readFile(path)), createEmptyLockfile());
+      const freshManager = createLockfileManager("/project", fs);
+      assertEquals(await freshManager.has(url), false);
+    });
+
+    it("should fail closed when an existing lockfile contains malformed JSON", async () => {
+      const malformed = "{not-json";
+      const fs = createMockFS({ "/project/veryfront.lock": malformed });
+      const mgr = createLockfileManager("/project", fs);
+
+      const error = await assertRejects(
+        () => mgr.write(createEmptyLockfile()),
+        VeryfrontError,
+      );
+      assertExists(error);
+      if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
+      assertEquals(error.slug, "lockfile-read-error");
+      assertEquals(error.title, "Lockfile could not be read safely");
+      await assertRejects(() => mgr.clear(), VeryfrontError);
+      assertEquals(await fs.readFile("/project/veryfront.lock"), malformed);
+    });
+
+    it("should not write or remove a lockfile that cannot be read", async () => {
+      let writes = 0;
+      let removals = 0;
+      const fs: FSAdapter = {
+        coordinationKey: "unreadable-test-store",
+        exists: () => Promise.resolve(true),
+        readFile: () => Promise.reject(new Error("permission denied")),
+        writeFile: () => {
+          writes++;
+          return Promise.resolve();
+        },
+        remove: () => {
+          removals++;
+          return Promise.resolve();
+        },
+      };
+      const mgr = createLockfileManager("/project", fs);
+
+      await assertRejects(() => mgr.write(createEmptyLockfile()), VeryfrontError);
+      await assertRejects(() => mgr.clear(), VeryfrontError);
+
+      assertEquals(writes, 0);
+      assertEquals(removals, 0);
+    });
+
+    it("should serialize path aliases across adapters with a shared coordination identity", async () => {
+      const backingFS = createMockFS({
         "/project/veryfront.lock": JSON.stringify({
           version: 1,
           imports: {
@@ -286,8 +419,11 @@ describe("import-lockfile", () => {
           },
         }),
       });
-      const mgrA = createLockfileManager("/project", fs);
-      const mgrB = createLockfileManager("/project", fs);
+      const coordinationKey = "shared-test-store";
+      const fsA: FSAdapter = { ...backingFS, coordinationKey };
+      const fsB: FSAdapter = { ...backingFS, coordinationKey };
+      const mgrA = createLockfileManager("/project", fsA);
+      const mgrB = createLockfileManager("/project/.", fsB);
 
       // Both managers warm their caches from the same on-disk state.
       assertEquals(await mgrA.has("https://cdn.com/base.ts"), true);
@@ -304,7 +440,7 @@ describe("import-lockfile", () => {
 
       await Promise.all([mgrA.flush(), mgrB.flush()]);
 
-      const onDisk = JSON.parse(await fs.readFile("/project/veryfront.lock")) as {
+      const onDisk = JSON.parse(await backingFS.readFile("/project/veryfront.lock")) as {
         imports: Record<string, unknown>;
       };
       assertEquals(Object.keys(onDisk.imports).sort(), [
@@ -312,6 +448,74 @@ describe("import-lockfile", () => {
         "https://cdn.com/b.ts",
         "https://cdn.com/base.ts",
       ]);
+    });
+
+    it("should preserve a set queued during an in-flight flush and snapshot its input", async () => {
+      const fs = createMockFS();
+      const mgr = createLockfileManager("/project", fs);
+      const firstUrl = "https://cdn.com/first.ts";
+      const lateUrl = "https://cdn.com/late.ts";
+      await mgr.set(firstUrl, { resolved: firstUrl, integrity: "sha256-first" });
+      const gate = blockNextWrite(fs);
+
+      const inFlightFlush = mgr.flush();
+      await gate.started;
+      const lateEntry = {
+        resolved: lateUrl,
+        integrity: "sha256-late",
+        dependencies: ["dep-a"],
+      };
+      const lateSet = mgr.set(lateUrl, lateEntry);
+      lateEntry.integrity = "sha256-mutated-by-caller";
+      lateEntry.dependencies.push("dep-b");
+      gate.release();
+      await inFlightFlush;
+      await lateSet;
+
+      assertEquals(await mgr.get(lateUrl), {
+        resolved: lateUrl,
+        integrity: "sha256-late",
+        dependencies: ["dep-a"],
+      });
+      await mgr.flush();
+      const onDisk = JSON.parse(await fs.readFile("/project/veryfront.lock")) as {
+        imports: Record<string, LockfileEntry>;
+      };
+      assertEquals(onDisk.imports[lateUrl]?.integrity, "sha256-late");
+      assertEquals(Object.keys(onDisk.imports).sort(), [firstUrl, lateUrl]);
+    });
+
+    it("should preserve a set queued during an in-flight write", async () => {
+      const fs = createMockFS();
+      const mgr = createLockfileManager("/project", fs);
+      const writtenUrl = "https://cdn.com/written.ts";
+      const lateUrl = "https://cdn.com/late.ts";
+      const writeData: LockfileData = {
+        version: 1,
+        imports: {
+          [writtenUrl]: { resolved: writtenUrl, integrity: "sha256-written" },
+        },
+      };
+      const gate = blockNextWrite(fs);
+
+      const inFlightWrite = mgr.write(writeData);
+      await gate.started;
+      const lateSet = mgr.set(lateUrl, {
+        resolved: lateUrl,
+        integrity: "sha256-late",
+      });
+      writeData.imports[writtenUrl]!.integrity = "sha256-mutated-by-caller";
+      gate.release();
+      await Promise.all([inFlightWrite, lateSet]);
+
+      assertEquals((await mgr.get(writtenUrl))?.integrity, "sha256-written");
+      assertEquals((await mgr.get(lateUrl))?.integrity, "sha256-late");
+      await mgr.flush();
+      const onDisk = JSON.parse(await fs.readFile("/project/veryfront.lock")) as {
+        imports: Record<string, LockfileEntry>;
+      };
+      assertEquals(Object.keys(onDisk.imports).sort(), [lateUrl, writtenUrl]);
+      assertEquals(onDisk.imports[writtenUrl]?.integrity, "sha256-written");
     });
   });
 

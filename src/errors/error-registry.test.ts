@@ -29,9 +29,9 @@ describe("error-registry", () => {
       assertEquals(slugs.length, uniqueSlugs.size, "Duplicate slugs detected");
     });
 
-    it("should have 103 registered errors", () => {
+    it("should have 105 registered errors", () => {
       const slugs = getAllSlugs();
-      assertEquals(slugs.length, 103);
+      assertEquals(slugs.length, 105);
     });
   });
 
@@ -318,7 +318,7 @@ describe("error-registry", () => {
       BUILD: 8,
       RUNTIME: 10,
       ROUTE: 6,
-      MODULE: 7,
+      MODULE: 8,
       SERVER: 18,
       BOUNDARY: 7,
       DEV: 5,

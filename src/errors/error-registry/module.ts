@@ -56,6 +56,14 @@ export const LOCKFILE_FORMAT_MISMATCH = defineError({
   suggestion: "Upgrade Veryfront or migrate the lockfile before modifying it",
 });
 
+export const LOCKFILE_READ_ERROR = defineError({
+  slug: "lockfile-read-error",
+  category: "MODULE",
+  status: 500,
+  title: "Lockfile could not be read safely",
+  suggestion: "Check file access or restore a valid lockfile before retrying",
+});
+
 /** Registry fragment for MODULE errors (slug → definition). */
 export const MODULE_REGISTRY = {
   "module-not-found": MODULE_NOT_FOUND,
@@ -65,4 +73,5 @@ export const MODULE_REGISTRY = {
   "dependency-missing": DEPENDENCY_MISSING,
   "version-mismatch": VERSION_MISMATCH,
   "lockfile-format-mismatch": LOCKFILE_FORMAT_MISMATCH,
+  "lockfile-read-error": LOCKFILE_READ_ERROR,
 } as const;
