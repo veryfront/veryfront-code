@@ -245,11 +245,6 @@ describe("findCoreThirdPartySourceImports", () => {
       },
       {
         path: "src/cache/hidden-imports.ts",
-        line: 6,
-        specifier: "npm:redis@5.11.0",
-      },
-      {
-        path: "src/cache/hidden-imports.ts",
         line: 7,
         specifier: "https://esm.sh/zod@4.3.6",
       },
@@ -261,7 +256,7 @@ describe("findCoreThirdPartySourceImports", () => {
       {
         path: "src/cache/scoped-imports.ts",
         content: [
-          'const dependency = "npm:redis@5.11.0";',
+          'const dependency = "npm:ioredis@5.8.2";',
           "{",
           '  const dependency = "./local.ts";',
           "  await import(dependency);",
@@ -275,7 +270,7 @@ describe("findCoreThirdPartySourceImports", () => {
       {
         path: "src/cache/scoped-imports.ts",
         line: 6,
-        specifier: "npm:redis@5.11.0",
+        specifier: "npm:ioredis@5.8.2",
       },
     ]);
   });
@@ -285,7 +280,7 @@ describe("findCoreThirdPartySourceImports", () => {
       {
         path: "src/cache/default-parameter.ts",
         content: [
-          'const dependency = "npm:redis@5.11.0";',
+          'const dependency = "npm:ioredis@5.8.2";',
           "function load(value = dependency) {",
           "  return import(dependency);",
           "}",
@@ -294,7 +289,7 @@ describe("findCoreThirdPartySourceImports", () => {
       {
         path: "src/cache/destructured-parameter.ts",
         content: [
-          'const dependency = "npm:redis@5.11.0";',
+          'const dependency = "npm:ioredis@5.8.2";',
           "function load({ dependency: local }) {",
           "  return import(dependency);",
           "}",
@@ -303,7 +298,7 @@ describe("findCoreThirdPartySourceImports", () => {
       {
         path: "src/cache/loop-scope.ts",
         content: [
-          'const dependency = "npm:redis@5.11.0";',
+          'const dependency = "npm:ioredis@5.8.2";',
           'for (const dependency of ["./local.ts"]) {',
           "  await import(dependency);",
           "}",
@@ -313,7 +308,7 @@ describe("findCoreThirdPartySourceImports", () => {
       {
         path: "src/cache/var-scope.ts",
         content: [
-          'const dependency = "npm:redis@5.11.0";',
+          'const dependency = "npm:ioredis@5.8.2";',
           "function load() {",
           "  { var dependency = './local.ts'; }",
           "  return import(dependency);",
@@ -323,7 +318,7 @@ describe("findCoreThirdPartySourceImports", () => {
       {
         path: "src/cache/parameter-var-scope.ts",
         content: [
-          'const dependency = "npm:redis@5.11.0";',
+          'const dependency = "npm:ioredis@5.8.2";',
           "function load(value = import(dependency)) {",
           "  var dependency = './local.ts';",
           "}",
@@ -332,7 +327,7 @@ describe("findCoreThirdPartySourceImports", () => {
       {
         path: "src/cache/static-block-scope.ts",
         content: [
-          'const dependency = "npm:redis@5.11.0";',
+          'const dependency = "npm:ioredis@5.8.2";',
           "class Cache {",
           "  static {",
           "    var dependency = './local.ts';",
@@ -345,7 +340,7 @@ describe("findCoreThirdPartySourceImports", () => {
       {
         path: "src/cache/named-class-expression.ts",
         content: [
-          'const dependency = "npm:redis@5.11.0";',
+          'const dependency = "npm:ioredis@5.8.2";',
           "const Cache = class dependency {",
           "  static { void import(dependency); }",
           "};",
@@ -354,7 +349,7 @@ describe("findCoreThirdPartySourceImports", () => {
       {
         path: "src/cache/computed-class-method.ts",
         content: [
-          'const dependency = "npm:redis@5.11.0";',
+          'const dependency = "npm:ioredis@5.8.2";',
           "class Cache {",
           "  [import(dependency)](dependency: string) {}",
           "}",
@@ -363,7 +358,7 @@ describe("findCoreThirdPartySourceImports", () => {
       {
         path: "src/cache/computed-object-method.ts",
         content: [
-          'const dependency = "npm:redis@5.11.0";',
+          'const dependency = "npm:ioredis@5.8.2";',
           "const cache = {",
           "  [import(dependency)](dependency: string) {}",
           "};",
@@ -372,7 +367,7 @@ describe("findCoreThirdPartySourceImports", () => {
       {
         path: "src/cache/namespace-scope.ts",
         content: [
-          'const dependency = "npm:redis@5.11.0";',
+          'const dependency = "npm:ioredis@5.8.2";',
           "namespace Cache {",
           '  const dependency = "./local.ts";',
           "  void import(dependency);",
@@ -386,42 +381,42 @@ describe("findCoreThirdPartySourceImports", () => {
       {
         path: "src/cache/default-parameter.ts",
         line: 3,
-        specifier: "npm:redis@5.11.0",
+        specifier: "npm:ioredis@5.8.2",
       },
       {
         path: "src/cache/destructured-parameter.ts",
         line: 3,
-        specifier: "npm:redis@5.11.0",
+        specifier: "npm:ioredis@5.8.2",
       },
       {
         path: "src/cache/loop-scope.ts",
         line: 5,
-        specifier: "npm:redis@5.11.0",
+        specifier: "npm:ioredis@5.8.2",
       },
       {
         path: "src/cache/parameter-var-scope.ts",
         line: 2,
-        specifier: "npm:redis@5.11.0",
+        specifier: "npm:ioredis@5.8.2",
       },
       {
         path: "src/cache/static-block-scope.ts",
         line: 8,
-        specifier: "npm:redis@5.11.0",
+        specifier: "npm:ioredis@5.8.2",
       },
       {
         path: "src/cache/computed-class-method.ts",
         line: 3,
-        specifier: "npm:redis@5.11.0",
+        specifier: "npm:ioredis@5.8.2",
       },
       {
         path: "src/cache/computed-object-method.ts",
         line: 3,
-        specifier: "npm:redis@5.11.0",
+        specifier: "npm:ioredis@5.8.2",
       },
       {
         path: "src/cache/namespace-scope.ts",
         line: 6,
-        specifier: "npm:redis@5.11.0",
+        specifier: "npm:ioredis@5.8.2",
       },
     ]);
   });

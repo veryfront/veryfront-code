@@ -1,7 +1,6 @@
 import { createError, toError } from "../../../errors/index.ts";
 import { serverLogger } from "../../../utils/logger/index.ts";
 import { MAX_TIMER_DELAY_MS } from "../../../utils/timer.ts";
-import { createClient } from "npm:redis@5.11.0";
 import { requireRateLimitKey, requireRateLimitWindowMs } from "./rate-limit-validation.ts";
 import type { RateLimitEntry, RateLimitStore } from "./types.ts";
 
@@ -27,9 +26,12 @@ interface RedisClientFactoryOptions {
 }
 
 type RedisClientFactory = (options: RedisClientFactoryOptions) => RedisClient;
+type RedisClientClosedErrorConstructor = new () => Error;
 
 const DEFAULT_REDIS_CONNECT_TIMEOUT_MS = 5_000;
 const DEFAULT_REDIS_OPERATION_TIMEOUT_MS = 5_000;
+const REDIS_MODULE_SPECIFIER = "npm:redis@5.11.0";
+let RedisClientClosedError: RedisClientClosedErrorConstructor | undefined;
 
 const INCREMENT_WITH_TTL_SCRIPT = `
 local count = redis.call("INCR", KEYS[1])
@@ -143,7 +145,9 @@ export class RedisRateLimitStore implements RateLimitStore {
   }
 
   private async loadClientFactory(): Promise<RedisClientFactory> {
-    return createClient as unknown as RedisClientFactory;
+    const redis = await import(REDIS_MODULE_SPECIFIER);
+    RedisClientClosedError = redis.ClientClosedError as RedisClientClosedErrorConstructor;
+    return redis.createClient as unknown as RedisClientFactory;
   }
 
   private async disconnectBestEffort(client: RedisClient): Promise<void> {
@@ -329,11 +333,12 @@ export class RedisRateLimitStore implements RateLimitStore {
   }
 
   async reset(key: string): Promise<void> {
+    const normalizedKey = requireRateLimitKey(key);
     const client = await this.ensureClient();
     const generation = this.clientGeneration;
     try {
       await this.withTimeout(
-        client.del(this.storageKey(requireRateLimitKey(key))),
+        client.del(this.storageKey(normalizedKey)),
         this.operationTimeoutMs,
         "reset",
       );
@@ -349,6 +354,7 @@ export class RedisRateLimitStore implements RateLimitStore {
     const client = this.client;
     const connectingClient = this.connectingClient;
     const pending = this.clientPromise;
+    pending?.catch(() => {});
     const cancelPendingConnection = this.cancelPendingConnection;
     const clientsToDisconnect = new Set(this.pendingDisconnectClients);
     if (client) clientsToDisconnect.add(client);
@@ -370,8 +376,6 @@ export class RedisRateLimitStore implements RateLimitStore {
         })
       ),
     );
-    pending?.catch(() => {});
-
     if (disconnectFailed) throw disconnectError;
   }
 }
@@ -403,7 +407,15 @@ function isTimeoutError(error: unknown): boolean {
 }
 
 function isAlreadyClosedClientError(error: unknown): boolean {
-  return error instanceof Error && error.name === "ClientClosedError";
+  if (!(error instanceof Error)) return false;
+  if (
+    RedisClientClosedError !== undefined &&
+    error instanceof RedisClientClosedError
+  ) {
+    return true;
+  }
+  return error.constructor.name === "ClientClosedError" &&
+    error.message === "The client is closed";
 }
 
 function parseIncrementResult(result: unknown): [number, number] {

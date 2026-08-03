@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
+import { ClientClosedError } from "npm:redis@5.11.0";
 import { MiddlewareContext } from "../../core/context.ts";
 import {
   authRateLimit,
@@ -30,13 +32,18 @@ function createMockRedisClient(): {
   del: (key: string) => Promise<number>;
   on: (event: string, listener: (...args: unknown[]) => void) => void;
   _evalCalls: number;
+  _connectCalls: number;
   _disconnectCalls: number;
 } {
   let evalCalls = 0;
+  let connectCalls = 0;
   let disconnectCalls = 0;
 
   return {
-    connect: () => Promise.resolve(),
+    connect: () => {
+      connectCalls += 1;
+      return Promise.resolve();
+    },
     disconnect: () => {
       disconnectCalls += 1;
       return Promise.resolve();
@@ -51,6 +58,9 @@ function createMockRedisClient(): {
     on: () => {},
     get _evalCalls() {
       return evalCalls;
+    },
+    get _connectCalls() {
+      return connectCalls;
     },
     get _disconnectCalls() {
       return disconnectCalls;
@@ -359,9 +369,7 @@ describe("rateLimit middleware", () => {
     const redisStore = new RedisRateLimitStore({ keyPrefix: "compat:" });
     const mockClient = createMockRedisClient();
     mockClient.disconnect = () => {
-      const error = new Error("The client is closed");
-      error.name = "ClientClosedError";
-      return Promise.reject(error);
+      return Promise.reject(new ClientClosedError());
     };
     (redisStore as unknown as {
       loadClientFactory: () => Promise<() => typeof mockClient>;
@@ -370,6 +378,79 @@ describe("rateLimit middleware", () => {
     await redisStore.increment("user-1", 30000);
     await redisStore.destroy();
     await redisStore.destroy();
+  });
+
+  it("should reject invalid Redis reset keys before connecting", async () => {
+    const redisStore = new RedisRateLimitStore({ keyPrefix: "compat:" });
+    const mockClient = createMockRedisClient();
+    (redisStore as unknown as {
+      loadClientFactory: () => Promise<() => typeof mockClient>;
+    }).loadClientFactory = () => Promise.resolve(() => mockClient);
+
+    await assertRejects(
+      () => redisStore.reset("x".repeat(1025)),
+      RangeError,
+      "1024",
+    );
+
+    assertEquals(mockClient._connectCalls, 0);
+  });
+
+  it("should attach pending Redis connection rejection handling before destroy cancels it", async () => {
+    const redisStore = new RedisRateLimitStore({ keyPrefix: "compat:" });
+    const mockClient = createMockRedisClient();
+    let connectStarted = false;
+    mockClient.connect = () => {
+      connectStarted = true;
+      return new Promise<void>(() => {});
+    };
+    (redisStore as unknown as {
+      loadClientFactory: () => Promise<() => typeof mockClient>;
+    }).loadClientFactory = () => Promise.resolve(() => mockClient);
+
+    const incrementPromise = redisStore.increment("pending", 30000);
+    for (let attempt = 0; attempt < 10 && !connectStarted; attempt++) {
+      await Promise.resolve();
+    }
+
+    const pending = (redisStore as unknown as {
+      clientPromise: Promise<unknown> | null;
+    }).clientPromise;
+    let cancelObserved = false;
+    let catchAttachedBeforeCancel = false;
+    if (pending) {
+      const originalCatch = pending.catch.bind(pending);
+      Object.defineProperty(pending, "catch", {
+        configurable: true,
+        value: (...args: Parameters<Promise<unknown>["catch"]>) => {
+          if (!cancelObserved) catchAttachedBeforeCancel = true;
+          return originalCatch(...args);
+        },
+      });
+    }
+    const internals = redisStore as unknown as {
+      cancelPendingConnection: (() => void) | null;
+    };
+    const originalCancel = internals.cancelPendingConnection;
+    internals.cancelPendingConnection = () => {
+      cancelObserved = true;
+      originalCancel?.();
+    };
+
+    await redisStore.destroy();
+
+    assertExists(pending);
+    assertEquals(catchAttachedBeforeCancel, true);
+    const handledPromise = pending.then(
+      () => "resolved" as const,
+      () => "rejected" as const,
+    );
+    await assertRejects(
+      () => incrementPromise,
+      Error,
+      "superseded",
+    );
+    assertEquals(await handledPromise, "rejected");
   });
 
   it("should fail closed when custom keys are invalid without calling the store", async () => {
@@ -416,6 +497,95 @@ describe("rateLimit middleware", () => {
     assertEquals(response?.status, 503);
     assertEquals(response?.headers.get("Retry-After"), "60");
     assertEquals(incrementCalled, false);
+  });
+
+  it("should log key resolution failures separately from store failures", async () => {
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+      if (entry.component === "rate-limit") records.push(entry);
+    });
+
+    try {
+      const keyFailure = rateLimit({
+        keyGenerator: () => {
+          throw new Error("custom key failure");
+        },
+        store: {
+          increment: () => Promise.resolve({ count: 1, resetAt: Date.now() + 1000 }),
+          reset: () => Promise.resolve(),
+        },
+      });
+      const storeFailure = rateLimit({
+        store: {
+          increment: () => Promise.reject(new Error("backend unavailable")),
+          reset: () => Promise.resolve(),
+        },
+      });
+
+      assertEquals(
+        (await keyFailure(createContext(), () => Promise.resolve(new Response("OK"))))
+          ?.status,
+        503,
+      );
+      assertEquals(
+        (await storeFailure(createContext(), () => Promise.resolve(new Response("OK"))))
+          ?.status,
+        503,
+      );
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(records.map((record) => record.message), [
+      "Rate limit key resolution failed; request denied",
+      "Rate limit store failed; request denied",
+    ]);
+    assertEquals(records.map((record) => record.context?.stage), [
+      "key-resolution",
+      "store-increment",
+    ]);
+  });
+
+  it("should emit a capacity-specific store failure signal", async () => {
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+      if (entry.component === "rate-limit") records.push(entry);
+    });
+    const store = new MemoryRateLimitStore(60000, { maxEntries: 1 });
+    const middleware = rateLimit({
+      maxRequests: 10,
+      windowMs: 60000,
+      store,
+      trustProxy: true,
+    });
+
+    try {
+      assertEquals(
+        (await middleware(
+          createContext("198.51.100.1"),
+          () => Promise.resolve(new Response("OK")),
+        ))?.status,
+        200,
+      );
+      assertEquals(
+        (await middleware(
+          createContext("198.51.100.2"),
+          () => Promise.resolve(new Response("OK")),
+        ))?.status,
+        503,
+      );
+    } finally {
+      unsubscribe();
+      store.destroy();
+    }
+
+    assertEquals(records.length, 1);
+    assertEquals(
+      records[0]?.message,
+      "Rate limit store capacity exhausted; request denied",
+    );
+    assertEquals(records[0]?.context?.stage, "store-capacity");
+    assertEquals(records[0]?.context?.maxEntries, 1);
   });
 
   it("should use custom key generator", async () => {

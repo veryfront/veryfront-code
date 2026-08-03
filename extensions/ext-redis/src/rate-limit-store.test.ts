@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { ClientClosedError } from "redis";
 import { type RedisRateLimitOptions, RedisRateLimitStore } from "./index.ts";
 
 async function outcomeWithin(
@@ -344,9 +345,7 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         let disconnectAttempts = 0;
         mockClient.disconnect = () => {
           disconnectAttempts++;
-          const error = new Error("The client is closed");
-          error.name = "ClientClosedError";
-          return Promise.reject(error);
+          return Promise.reject(new ClientClosedError());
         };
 
         await rateStore.destroy();
@@ -375,6 +374,24 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         await rateStore.destroy();
 
         assertEquals(disconnectAttempts, 2);
+      });
+    });
+
+    describe("reset", () => {
+      it("should reject invalid keys before connecting", async () => {
+        const rateStore = new RedisRateLimitStore();
+        const mockClient = createMockRedisClient();
+
+        // deno-lint-ignore no-explicit-any
+        (rateStore as any).loadClientFactory = () => Promise.resolve(() => mockClient);
+
+        await assertRejects(
+          () => rateStore.reset("x".repeat(1025)),
+          RangeError,
+          "1024",
+        );
+
+        assertEquals(mockClient._connectCalls, 0);
       });
     });
 
@@ -581,6 +598,60 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         assertEquals(mockClient._disconnectCalls, 1);
         const outcome = await outcomeWithin(incrementPromise, 50);
         assertEquals(outcome, "rejected");
+      });
+
+      it("should attach pending rejection handling before destroy cancels it", async () => {
+        const rateStore = new RedisRateLimitStore();
+        const mockClient = createMockRedisClient();
+        let connectStarted = false;
+        mockClient.connect = () => {
+          connectStarted = true;
+          return new Promise<void>(() => {});
+        };
+
+        // deno-lint-ignore no-explicit-any
+        (rateStore as any).loadClientFactory = () => Promise.resolve(() => mockClient);
+
+        const incrementPromise = rateStore.increment("pending", 1000);
+        for (let attempt = 0; attempt < 10 && !connectStarted; attempt++) {
+          await Promise.resolve();
+        }
+
+        // deno-lint-ignore no-explicit-any
+        const pending = (rateStore as any).clientPromise as Promise<unknown> | null;
+        let cancelObserved = false;
+        let catchAttachedBeforeCancel = false;
+        if (pending) {
+          const originalCatch = pending.catch.bind(pending);
+          Object.defineProperty(pending, "catch", {
+            configurable: true,
+            value: (...args: Parameters<Promise<unknown>["catch"]>) => {
+              if (!cancelObserved) catchAttachedBeforeCancel = true;
+              return originalCatch(...args);
+            },
+          });
+        }
+        // deno-lint-ignore no-explicit-any
+        const originalCancel = (rateStore as any).cancelPendingConnection as
+          | (() => void)
+          | null;
+        // deno-lint-ignore no-explicit-any
+        (rateStore as any).cancelPendingConnection = () => {
+          cancelObserved = true;
+          originalCancel?.();
+        };
+
+        await rateStore.destroy();
+
+        if (!pending) throw new Error("Expected pending connection promise");
+        assertEquals(catchAttachedBeforeCancel, true);
+        const pendingOutcome = await outcomeWithin(pending, 50);
+        await assertRejects(
+          () => incrementPromise,
+          Error,
+          "superseded",
+        );
+        assertEquals(pendingOutcome, "rejected");
       });
     });
   });

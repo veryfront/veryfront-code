@@ -1,6 +1,6 @@
 import { createError, toError } from "veryfront/errors";
 import { serverLogger } from "veryfront/utils/logger";
-import { createClient } from "redis";
+import { ClientClosedError, createClient } from "redis";
 import {
   MAX_TIMER_DELAY_MS,
   type RateLimitEntry,
@@ -336,11 +336,12 @@ export class RedisRateLimitStore implements RateLimitStore {
   }
 
   async reset(key: string): Promise<void> {
+    const normalizedKey = requireRateLimitKey(key);
     const client = await this.ensureClient();
     const generation = this.clientGeneration;
     try {
       await this.withTimeout(
-        client.del(this.storageKey(requireRateLimitKey(key))),
+        client.del(this.storageKey(normalizedKey)),
         this.operationTimeoutMs,
         "reset",
       );
@@ -356,6 +357,7 @@ export class RedisRateLimitStore implements RateLimitStore {
     const client = this.client;
     const connectingClient = this.connectingClient;
     const pending = this.clientPromise;
+    pending?.catch(() => {});
     const cancelPendingConnection = this.cancelPendingConnection;
     const clientsToDisconnect = new Set(this.pendingDisconnectClients);
     if (client) clientsToDisconnect.add(client);
@@ -377,8 +379,6 @@ export class RedisRateLimitStore implements RateLimitStore {
         })
       ),
     );
-    pending?.catch(() => {});
-
     if (disconnectFailed) throw disconnectError;
   }
 }
@@ -410,7 +410,7 @@ function isTimeoutError(error: unknown): boolean {
 }
 
 function isAlreadyClosedClientError(error: unknown): boolean {
-  return error instanceof Error && error.name === "ClientClosedError";
+  return error instanceof ClientClosedError;
 }
 
 function parseIncrementResult(result: unknown): [number, number] {

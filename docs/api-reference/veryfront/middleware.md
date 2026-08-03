@@ -116,6 +116,14 @@ Options accepted by rate limit.
 | `keyGenerator?` | <code>(req: Request) =&gt; string</code> | Function to derive rate limit key from request | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L135) |
 | `trustProxy?` | `boolean` | Trust proxy-set forwarding headers (X-Forwarded-For) for keying. Defaults to false so forwarded headers are ignored and cannot be used to evade limits. Enable only when a trusted proxy that appends the real client IP sits in front of this middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L142) |
 
+### `MemoryRateLimitStoreOptions`
+
+Options accepted by the in-memory rate limit store.
+
+| Property | Type | Description | Source |
+|----------|------|-------------|--------|
+| `maxEntries?` | `number` | Maximum number of active identities retained by the store. Size this above the expected concurrent identities in one rate-limit window. New identities fail closed when all entries are active; existing identities remain tracked until their windows expire. Capacity exhaustion emits a `store-capacity` log stage with the configured `maxEntries`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L137) |
+
 ### `LoggerOptions`
 
 Options accepted by logger.
