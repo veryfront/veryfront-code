@@ -28,6 +28,12 @@ function oauthState(userId: string): StoredOAuthState {
   };
 }
 
+function envelopeIv(stored: string): number[] {
+  const encoded = stored.slice(ENVELOPE_PREFIX.length);
+  const bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
+  return [...bytes.subarray(0, 12)];
+}
+
 /** Expose the raw rows so tests can assert what actually hits storage. */
 function inspectableBackend(): EncryptedKvBackend & { rows: Map<string, string> } {
   const backend = createMemoryKvBackend();
@@ -163,6 +169,17 @@ describe("generated encrypted OAuth token store", () => {
     );
   });
 
+  it("normalizes surrounding whitespace in provider scope strings", async () => {
+    const store = createEncryptedTokenStore(createMemoryKvBackend());
+
+    await store.setTokens("github", "alice", {
+      accessToken: "access-token",
+      scope: "  read:user user:email  ",
+    });
+
+    assertEquals((await store.getTokens("github", "alice"))?.scope, "read:user user:email");
+  });
+
   it("stores detached token snapshots", async () => {
     const store = createEncryptedTokenStore(createMemoryKvBackend());
     const tokens = { accessToken: "original", refreshToken: "refresh" };
@@ -189,8 +206,9 @@ describe("generated encrypted OAuth token store", () => {
     const first = [...backend.rows.values()][0];
     await store.setTokens("github", "alice", tokens);
     const second = [...backend.rows.values()][0];
+    if (!first || !second) throw new Error("Expected encrypted token rows");
 
-    assertNotEquals(first, second);
+    assertNotEquals(envelopeIv(first), envelopeIv(second));
   });
 
   it("refuses plaintext rows found in the backend", async () => {
@@ -321,6 +339,60 @@ describe("generated encrypted OAuth token store", () => {
     assertEquals(await store.consumeState("never-set"), null);
   });
 
+  it("rejects unsafe state storage keys", async () => {
+    const store = createEncryptedTokenStore(createMemoryKvBackend());
+
+    await assertRejects(
+      () => store.setState("state\nheader", oauthState("alice")),
+      TypeError,
+      "state",
+    );
+  });
+
+  it("rejects incomplete or malformed OAuth state rows", async () => {
+    const store = createEncryptedTokenStore(createMemoryKvBackend());
+
+    await assertRejects(
+      () => store.setState("missing-redirect", { ...oauthState("alice"), redirectUri: undefined }),
+      TypeError,
+      "redirectUri",
+    );
+    await assertRejects(
+      () =>
+        store.setState("unsafe-redirect", {
+          ...oauthState("alice"),
+          redirectUri: "javascript:alert(1)",
+        }),
+      TypeError,
+      "redirectUri",
+    );
+    await assertRejects(
+      () => store.setState("invalid-scopes", { ...oauthState("alice"), scopes: ["read user"] }),
+      TypeError,
+      "scopes",
+    );
+  });
+
+  it("treats corrupted one-shot OAuth state as invalid", async () => {
+    const backend = inspectableBackend();
+    const store = createEncryptedTokenStore(backend);
+    await store.setState("corrupted-state", oauthState("alice"));
+
+    const entry = [...backend.rows.entries()][0];
+    if (!entry) throw new Error("Expected a stored state row");
+    const [key, stored] = entry;
+    const body = stored.slice(ENVELOPE_PREFIX.length);
+    const index = 20;
+    const replacement = body[index] === "A" ? "B" : "A";
+    await backend.set(
+      key,
+      ENVELOPE_PREFIX + body.slice(0, index) + replacement + body.slice(index + 1),
+    );
+
+    assertEquals(await store.consumeState("corrupted-state"), null);
+    assertEquals(await store.consumeState("corrupted-state"), null);
+  });
+
   it("rejects state rows outside the acceptance window", async () => {
     const store = createEncryptedTokenStore(createMemoryKvBackend());
     const expired = { ...oauthState("alice"), createdAt: Date.now() - 12 * 60_000 };
@@ -388,6 +460,16 @@ describe("generated encrypted OAuth token store", () => {
       () => createMemoryKvBackend(),
       Error,
       "not allowed in production",
+    );
+  });
+
+  it("refuses the in-memory example backend when runtime mode is unset", () => {
+    Deno.env.delete("NODE_ENV");
+
+    assertThrows(
+      () => createMemoryKvBackend(),
+      Error,
+      "explicit development or test",
     );
   });
 });

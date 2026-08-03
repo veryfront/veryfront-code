@@ -14,6 +14,11 @@
  *   the store without a valid key throws, and values that are not in the
  *   expected encrypted envelope are refused on read.
  *
+ * Keep the configured key while encrypted rows still use it. Replacing the
+ * key makes existing rows unreadable. Delete affected rows and have users
+ * reconnect before removing the old key; this v1 envelope does not support
+ * decrypting with multiple keys during rotation.
+ *
  * Generate a key once per deployment and set it before startup:
  *
  * ```sh
@@ -81,9 +86,16 @@ const MAX_KEY_COMPONENT_LENGTH = 1_024;
 const MAX_STATE_KEY_LENGTH = 1_024;
 const STATE_TTL_MS = 10 * 60 * 1_000;
 const STATE_CLOCK_SKEW_MS = 60 * 1_000;
+const MAX_SERVICE_ID_LENGTH = 128;
+const MAX_SCOPE_COUNT = 100;
+const MAX_REDIRECT_URI_LENGTH = 8_192;
 const MAX_TOKEN_VALUE_LENGTH = 65_536;
 const MAX_TOKEN_TYPE_LENGTH = 256;
 const MAX_SCOPE_WIRE_LENGTH = 4_096;
+
+const SERVICE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const SCOPE_TOKEN_PATTERN = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
+const PKCE_VERIFIER_PATTERN = /^[A-Za-z0-9._~-]{43,128}$/;
 
 const TOKENS_KEY_PREFIX = "veryfront:oauth:v1:tokens:";
 const STATE_KEY_PREFIX = "veryfront:oauth:v1:state:";
@@ -199,12 +211,18 @@ function refreshLockKey(serviceId: string, userId: string): string {
 }
 
 function stateStorageKey(state: string): string {
-  if (typeof state !== "string" || state.length === 0 || state.length > MAX_STATE_KEY_LENGTH) {
+  if (typeof state !== "string") {
+    throw new TypeError("state must be a string");
+  }
+  if (state.length === 0 || state.length > MAX_STATE_KEY_LENGTH) {
     throw new RangeError(
       `state must contain between 1 and ${MAX_STATE_KEY_LENGTH} characters`,
     );
   }
-  return STATE_KEY_PREFIX + state;
+  if (state.trim() !== state || hasAsciiControlCharacter(state)) {
+    throw new TypeError("state must not contain surrounding whitespace or control characters");
+  }
+  return STATE_KEY_PREFIX + JSON.stringify([state]);
 }
 
 interface StoredTokenEntry {
@@ -251,7 +269,20 @@ function requireTokenRow(value: unknown): OAuthTokens {
   }
   const refreshToken = requireOptionalTokenString(value, "refreshToken", MAX_TOKEN_VALUE_LENGTH);
   const tokenType = requireOptionalTokenString(value, "tokenType", MAX_TOKEN_TYPE_LENGTH);
-  const scope = requireOptionalTokenString(value, "scope", MAX_SCOPE_WIRE_LENGTH);
+  const scopeValue = ownDataValue(value, "scope");
+  let scope: string | undefined;
+  if (scopeValue !== undefined) {
+    if (
+      typeof scopeValue !== "string" || hasAsciiControlCharacter(scopeValue) ||
+      scopeValue.length > MAX_SCOPE_WIRE_LENGTH
+    ) {
+      throw new TypeError("OAuth token row scope must be a safe bounded string");
+    }
+    scope = scopeValue.trim();
+    if (scope.length === 0) {
+      throw new TypeError("OAuth token row scope must be a safe bounded string");
+    }
+  }
   const idToken = requireOptionalTokenString(value, "idToken", MAX_TOKEN_VALUE_LENGTH);
   const expiresAt = ownDataValue(value, "expiresAt");
   if (
@@ -285,17 +316,83 @@ function requireStateRow(value: unknown): StoredOAuthState {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError("Stored OAuth state row must be an object");
   }
-  const meta = value as StoredOAuthState;
-  if (typeof meta.userId !== "string" || meta.userId.length === 0) {
+  const userId = ownDataValue(value, "userId");
+  const serviceId = ownDataValue(value, "serviceId");
+  const redirectUri = ownDataValue(value, "redirectUri");
+  const scopes = ownDataValue(value, "scopes");
+  const createdAt = ownDataValue(value, "createdAt");
+  const codeVerifier = ownDataValue(value, "codeVerifier");
+  const metadata = ownDataValue(value, "metadata");
+  if (
+    typeof userId !== "string" || userId.length === 0 ||
+    userId.length > MAX_KEY_COMPONENT_LENGTH || userId.trim() !== userId
+  ) {
     throw new TypeError("Stored OAuth state row must contain a userId");
   }
-  if (typeof meta.serviceId !== "string" || meta.serviceId.length === 0) {
+  if (
+    typeof serviceId !== "string" || serviceId.length > MAX_SERVICE_ID_LENGTH ||
+    !SERVICE_ID_PATTERN.test(serviceId)
+  ) {
     throw new TypeError("Stored OAuth state row must contain a serviceId");
   }
-  if (typeof meta.createdAt !== "number" || !Number.isSafeInteger(meta.createdAt)) {
+  let parsedRedirectUri: URL;
+  try {
+    if (
+      typeof redirectUri !== "string" || redirectUri.length > MAX_REDIRECT_URI_LENGTH ||
+      redirectUri.trim() !== redirectUri || hasAsciiControlCharacter(redirectUri) ||
+      redirectUri.includes("\\")
+    ) {
+      throw new TypeError();
+    }
+    parsedRedirectUri = new URL(redirectUri);
+  } catch {
+    throw new TypeError("Stored OAuth state row must contain a valid redirectUri");
+  }
+  const isLoopback = parsedRedirectUri.hostname === "localhost" ||
+    parsedRedirectUri.hostname === "127.0.0.1" ||
+    parsedRedirectUri.hostname === "[::1]" || parsedRedirectUri.hostname === "::1";
+  if (
+    parsedRedirectUri.username || parsedRedirectUri.password || parsedRedirectUri.hash ||
+    (parsedRedirectUri.protocol !== "https:" &&
+      !(parsedRedirectUri.protocol === "http:" && isLoopback))
+  ) {
+    throw new TypeError("Stored OAuth state row must contain a valid redirectUri");
+  }
+  if (!Array.isArray(scopes) || scopes.length > MAX_SCOPE_COUNT) {
+    throw new TypeError("Stored OAuth state row must contain valid scopes");
+  }
+  const scopeSnapshot: string[] = [];
+  for (let index = 0; index < scopes.length; index++) {
+    const descriptor = Object.getOwnPropertyDescriptor(scopes, String(index));
+    if (
+      !descriptor || !("value" in descriptor) || typeof descriptor.value !== "string" ||
+      !SCOPE_TOKEN_PATTERN.test(descriptor.value)
+    ) {
+      throw new TypeError("Stored OAuth state row must contain valid scopes");
+    }
+    scopeSnapshot.push(descriptor.value);
+  }
+  if (scopeSnapshot.join(" ").length > MAX_SCOPE_WIRE_LENGTH) {
+    throw new TypeError("Stored OAuth state row must contain valid scopes");
+  }
+  if (typeof createdAt !== "number" || !Number.isSafeInteger(createdAt) || createdAt <= 0) {
     throw new TypeError("Stored OAuth state row must contain a createdAt timestamp");
   }
-  return meta;
+  if (
+    codeVerifier !== undefined &&
+    (typeof codeVerifier !== "string" || !PKCE_VERIFIER_PATTERN.test(codeVerifier))
+  ) {
+    throw new TypeError("Stored OAuth state row has an invalid codeVerifier");
+  }
+  return {
+    userId,
+    serviceId,
+    redirectUri,
+    scopes: scopeSnapshot,
+    createdAt,
+    ...(codeVerifier === undefined ? {} : { codeVerifier }),
+    ...(metadata === undefined ? {} : { metadata: metadata as Record<string, unknown> }),
+  };
 }
 
 function isFreshState(createdAt: number, now: number): boolean {
@@ -487,8 +584,12 @@ export function createEncryptedTokenStore(
       // may redeem it, so a replayed callback cannot reuse the state.
       const consumed = await backend.compareAndSwap(key, raw, null);
       if (!consumed) return null;
-      const row = requireStateRow(await cipher.open(key, raw));
-      return isFreshState(row.createdAt, Date.now()) ? row : null;
+      try {
+        const row = requireStateRow(await cipher.open(key, raw));
+        return isFreshState(row.createdAt, Date.now()) ? row : null;
+      } catch {
+        return null;
+      }
     },
   };
 }

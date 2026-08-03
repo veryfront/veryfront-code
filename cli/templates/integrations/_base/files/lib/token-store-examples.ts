@@ -40,10 +40,10 @@
 
 import type { EncryptedKvBackend } from "./encrypted-token-store.ts";
 
-function isProductionRuntime(): boolean {
-  if (typeof process !== "undefined") return process.env?.NODE_ENV === "production";
+function runtimeMode(): string | undefined {
+  if (typeof process !== "undefined") return process.env?.NODE_ENV;
   return (globalThis as { Deno?: { env?: { get?: (name: string) => string | undefined } } }).Deno
-    ?.env?.get?.("NODE_ENV") === "production";
+    ?.env?.get?.("NODE_ENV");
 }
 
 interface MemoryRow {
@@ -57,10 +57,15 @@ interface MemoryRow {
  * nothing is shared across workers, so creation is refused in production.
  */
 export function createMemoryKvBackend(): EncryptedKvBackend {
-  if (isProductionRuntime()) {
+  const mode = runtimeMode();
+  if (mode !== "development" && mode !== "test") {
     throw new Error(
-      "The in-memory example backend is not allowed in production. Implement " +
-        "EncryptedKvBackend over a durable service (Redis, Postgres, Deno KV).",
+      mode === "production"
+        ? "The in-memory example backend is not allowed in production. Implement " +
+          "EncryptedKvBackend over a durable service (Redis, Postgres, Deno KV)."
+        : "The in-memory example backend requires an explicit development or test " +
+          "runtime. Set NODE_ENV accordingly, or implement EncryptedKvBackend over " +
+          "a durable service (Redis, Postgres, Deno KV).",
     );
   }
 
