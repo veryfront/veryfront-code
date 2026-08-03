@@ -91,6 +91,14 @@ export class BrowserModuleBundleError extends Error {
   }
 }
 
+/** Server-only syntax found while validating an otherwise admitted browser entry. */
+export class BrowserModuleBoundaryError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BrowserModuleBoundaryError";
+  }
+}
+
 /** Browser endpoint entry rejection that is safe to surface as not-found. */
 export class BrowserModuleEntryRejectedError extends Error {
   constructor(cause?: unknown) {
@@ -850,11 +858,9 @@ export function bundleBrowserModuleWithMetadata(
         }
         const boundaryViolation = await inspectBrowserModuleBoundary(src, absPath);
         if (boundaryViolation) {
-          const cause = new Error(describeBrowserModuleBoundaryViolation(boundaryViolation));
-          if (options.requireClientBoundary) {
-            throw new BrowserModuleEntryRejectedError(cause);
-          }
-          throw cause;
+          throw new BrowserModuleBoundaryError(
+            describeBrowserModuleBoundaryViolation(boundaryViolation),
+          );
         }
         const importMapJson = options.importMapJson === undefined
           ? await buildTrackedImportMapJson(
