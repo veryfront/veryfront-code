@@ -942,25 +942,61 @@ function createRemoteMCPToolSourceWithFetch(
   };
 }
 
-/**
- * Create a remote MCP source with transport authority supplied by the caller.
- *
- * This is a deployment-composition seam: the framework does not capture or
- * grant network authority here. A separately deployed, trusted host may use
- * it for exact endpoints from immutable deployment configuration. Keep
- * request- or tenant-derived endpoints on {@link createRemoteMCPToolSource},
- * which preserves the framework's guarded outbound transport.
- */
-export function createRemoteMCPToolSourceWithTransport(
-  config: RemoteMCPToolSourceConfig,
-  requestFetch: typeof fetch,
-): RemoteToolSource {
-  return createRemoteMCPToolSourceWithFetch(config, requestFetch);
-}
-
 /** Create a remote MCP source with the framework's guarded outbound transport. */
 export function createRemoteMCPToolSource(
   config: RemoteMCPToolSourceConfig,
 ): RemoteToolSource {
   return createRemoteMCPToolSourceWithFetch(config, guardedOutboundFetch);
+}
+
+/** Deployment-owned transport policy for exact, immutable MCP endpoints. */
+export interface RemoteMCPToolSourceTransportOptions {
+  /** Complete endpoint URLs allowed to use {@link requestFetch}. */
+  trustedEndpoints: readonly string[];
+  /** Host transport captured by the trusted deployment at startup. */
+  requestFetch: typeof fetch;
+}
+
+function normalizeTrustedEndpoint(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    if (url.username || url.password || url.search || url.hash) return undefined;
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Create a remote MCP source factory with narrowly scoped host transport.
+ *
+ * Only static endpoint strings that exactly match a normalized deployment
+ * allowlist use the supplied transport. Invalid, unmatched, or resolver-based
+ * endpoints retain {@link createRemoteMCPToolSource}'s guarded outbound path.
+ */
+export function createRemoteMCPToolSourceFactoryWithTransport(
+  options: RemoteMCPToolSourceTransportOptions,
+): (config: RemoteMCPToolSourceConfig) => RemoteToolSource {
+  const trustedEndpoints = new Set<string>();
+  for (const value of options.trustedEndpoints) {
+    const endpoint = normalizeTrustedEndpoint(value);
+    if (!endpoint) {
+      throw new TypeError(`Invalid trusted endpoint: ${value}`);
+    }
+    trustedEndpoints.add(endpoint);
+  }
+
+  return (config) => {
+    const endpoint = typeof config.endpoint === "string"
+      ? normalizeTrustedEndpoint(config.endpoint)
+      : undefined;
+    if (!endpoint || !trustedEndpoints.has(endpoint)) {
+      return createRemoteMCPToolSource(config);
+    }
+    return createRemoteMCPToolSourceWithFetch(
+      { ...config, endpoint },
+      options.requestFetch,
+    );
+  };
 }

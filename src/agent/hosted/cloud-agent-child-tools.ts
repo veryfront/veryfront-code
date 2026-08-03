@@ -93,8 +93,9 @@ export function resolveMcpServers(
   agentConfig?: Pick<RuntimeAgentMarkdownDefinition, "mcpServers">,
 ): readonly AgentServiceMcpServerConfig[] {
   // A deployment-owned transport is a privileged capability. When present,
-  // the framework defaults become the service authority ceiling so tenant
-  // configuration cannot bind that transport to arbitrary endpoints.
+  // omitting mcpServers locks the service to first-party defaults as its
+  // authority ceiling, so tenant configuration cannot bind that transport to
+  // arbitrary endpoints.
   const serviceMcpServers = options.mcpServers ??
     (options.createRemoteToolSource === undefined ? undefined : defaultAgentServiceMcpServers());
 

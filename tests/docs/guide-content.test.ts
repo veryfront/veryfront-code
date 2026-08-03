@@ -127,16 +127,16 @@ describe("guide content contracts", () => {
     );
 
     assertStringIncludes(guide, "exact allowed endpoints once at startup");
-    assertStringIncludes(guide, "createRemoteMCPToolSourceWithTransport");
+    assertStringIncludes(guide, "createRemoteMCPToolSourceFactoryWithTransport");
+    assertStringIncludes(guide, "trustedEndpoints:");
+    assertStringIncludes(guide, "requestFetch: hostFetch");
+    assertStringIncludes(guide, "exact normalized URL match");
+    assertStringIncludes(guide, "resolver-based endpoints retain guarded");
+    assertStringIncludes(guide, "Never put a callback endpoint");
     assertStringIncludes(
-      guide,
-      "function normalizeEndpoint(value: string): string | undefined",
+      reference,
+      "`createRemoteMCPToolSourceFactoryWithTransport`",
     );
-    assertStringIncludes(guide, "normalizeEndpoint(config.endpoint)");
-    assertStringIncludes(guide, "return createRemoteMCPToolSource(config)");
-    assertStringIncludes(guide, "complete normalized URL");
-    assertStringIncludes(guide, "Never route a callback endpoint");
-    assertStringIncludes(reference, "`createRemoteMCPToolSourceWithTransport`");
   });
 
   it("documents deploy URL output for the first deploy path", async () => {

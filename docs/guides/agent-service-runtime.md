@@ -197,56 +197,34 @@ immutable endpoints and preserve the guarded source for everything else:
 
 ```ts
 import { startAgentService } from "veryfront/agent";
-import {
-  createRemoteMCPToolSource,
-  createRemoteMCPToolSourceWithTransport,
-  type RemoteMCPToolSourceConfig,
-} from "veryfront/tool";
-
-function normalizeEndpoint(value: string): string | undefined {
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return;
-    if (url.username || url.password || url.search || url.hash) return;
-    return url.toString();
-  } catch {
-    return;
-  }
-}
+import { createRemoteMCPToolSourceFactoryWithTransport } from "veryfront/tool";
 
 function requiredUrl(name: string): string {
   const value = process.env[name];
-  const endpoint = value ? normalizeEndpoint(value) : undefined;
-  if (!endpoint) throw new Error(`Missing or invalid ${name}`);
-  return endpoint;
+  if (!value) throw new Error(`Missing ${name}`);
+  return value;
 }
 
 const hostFetch = globalThis.fetch.bind(globalThis);
-const trustedEndpoints = new Set([
-  requiredUrl("VERYFRONT_MCP_URL"),
-  requiredUrl("VERYFRONT_STUDIO_MCP_URL"),
-]);
+const createRemoteToolSource = createRemoteMCPToolSourceFactoryWithTransport({
+  trustedEndpoints: [
+    requiredUrl("VERYFRONT_MCP_URL"),
+    requiredUrl("VERYFRONT_STUDIO_MCP_URL"),
+  ],
+  requestFetch: hostFetch,
+});
 
 await startAgentService({
-  createRemoteToolSource(config: RemoteMCPToolSourceConfig) {
-    const endpoint = typeof config.endpoint === "string"
-      ? normalizeEndpoint(config.endpoint)
-      : undefined;
-    if (endpoint && trustedEndpoints.has(endpoint)) {
-      return createRemoteMCPToolSourceWithTransport(
-        { ...config, endpoint },
-        hostFetch,
-      );
-    }
-    return createRemoteMCPToolSource(config);
-  },
+  createRemoteToolSource,
 });
 ```
 
-Do not use a suffix, hostname-only, or private-address check here. The
-privileged path must match the complete normalized URL from deployment
-configuration. Never route a callback endpoint or a per-request URL through
-the host transport.
+The framework rejects invalid allowlist entries at startup and uses the host
+transport only for an exact normalized URL match. Unmatched, invalid, and
+resolver-based endpoints retain guarded outbound networking. `http:` is
+appropriate only for private deployment-local networking; use `https:` for
+public networks. Never put a callback endpoint or a per-request URL in the
+trusted endpoint list.
 
 ## Refresh runtime state
 
