@@ -61,6 +61,35 @@ function blockNextWrite(fs: FSAdapter): {
   return { started: started.promise, release: release.resolve };
 }
 
+function exposePartialNextWrite(fs: FSAdapter): {
+  started: Promise<void>;
+  release: () => void;
+} {
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const writeFile = fs.writeFile;
+  let blocked = false;
+
+  fs.writeFile = async (path: string, content: string): Promise<void> => {
+    if (!blocked) {
+      blocked = true;
+      await writeFile(path, "{");
+      started.resolve();
+      await release.promise;
+    }
+    await writeFile(path, content);
+  };
+
+  return { started: started.promise, release: release.resolve };
+}
+
+function resolvesWithin(promise: Promise<unknown>, milliseconds = 50): Promise<boolean> {
+  return Promise.race([
+    promise.then(() => true),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), milliseconds)),
+  ]);
+}
+
 describe("import-lockfile", () => {
   describe("createEmptyLockfile", () => {
     it("should create lockfile with version 1 and empty imports", () => {
@@ -365,6 +394,89 @@ describe("import-lockfile", () => {
       assertEquals(await freshManager.has(url), false);
     });
 
+    it("should keep a cold reader behind an in-flight lockfile replacement", async () => {
+      const path = "/project/veryfront.lock";
+      const baseUrl = "https://cdn.com/base.ts";
+      const addedUrl = "https://cdn.com/added.ts";
+      const fs = createMockFS({
+        [path]: JSON.stringify({
+          version: 1,
+          imports: {
+            [baseUrl]: { resolved: baseUrl, integrity: "sha256-base" },
+          },
+        }),
+      });
+      const writer = createLockfileManager("/project", fs);
+      await writer.set(addedUrl, { resolved: addedUrl, integrity: "sha256-added" });
+
+      const partialRead = Promise.withResolvers<void>();
+      const readFile = fs.readFile;
+      fs.readFile = async (filePath: string): Promise<string> => {
+        const content = await readFile(filePath);
+        if (content === "{") partialRead.resolve();
+        return content;
+      };
+      const gate = exposePartialNextWrite(fs);
+      const flush = writer.flush();
+      await gate.started;
+
+      const coldReader = createLockfileManager("/project", fs);
+      const coldRead = coldReader.read().then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({ ok: false as const, error }),
+      );
+      const observedPartialContent = await resolvesWithin(partialRead.promise);
+      gate.release();
+      await flush;
+
+      assertEquals(observedPartialContent, false);
+      const result = await coldRead;
+      if (!result.ok) throw result.error;
+      assertEquals(Object.keys(result.value?.imports ?? {}).sort(), [addedUrl, baseUrl]);
+    });
+
+    it("should keep a cold reader behind an in-flight clear fallback write", async () => {
+      const path = "/project/veryfront.lock";
+      const url = "https://cdn.com/mod.ts";
+      const backingFS = createMockFS({
+        [path]: JSON.stringify({
+          version: 1,
+          imports: { [url]: { resolved: url, integrity: "sha256-abc" } },
+        }),
+      });
+      const fs: FSAdapter = {
+        coordinationKey: "non-removing-clear-window-test-store",
+        exists: backingFS.exists,
+        readFile: backingFS.readFile,
+        writeFile: backingFS.writeFile,
+      };
+      const partialRead = Promise.withResolvers<void>();
+      const readFile = fs.readFile;
+      fs.readFile = async (filePath: string): Promise<string> => {
+        const content = await readFile(filePath);
+        if (content === "{") partialRead.resolve();
+        return content;
+      };
+      const gate = exposePartialNextWrite(fs);
+      const clearingManager = createLockfileManager("/project", fs);
+      const clear = clearingManager.clear();
+      await gate.started;
+
+      const coldReader = createLockfileManager("/project", fs);
+      const coldRead = coldReader.read().then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({ ok: false as const, error }),
+      );
+      const observedPartialContent = await resolvesWithin(partialRead.promise);
+      gate.release();
+      await clear;
+
+      assertEquals(observedPartialContent, false);
+      const result = await coldRead;
+      if (!result.ok) throw result.error;
+      assertEquals(result.value, createEmptyLockfile());
+    });
+
     it("should fail closed when an existing lockfile contains malformed JSON", async () => {
       const malformed = "{not-json";
       const fs = createMockFS({ "/project/veryfront.lock": malformed });
@@ -448,6 +560,181 @@ describe("import-lockfile", () => {
         "https://cdn.com/b.ts",
         "https://cdn.com/base.ts",
       ]);
+    });
+
+    it("should serialize real symlink aliases by canonical backing path", async () => {
+      const root = await Deno.makeTempDir({ prefix: "veryfront-lockfile-alias-" });
+      const projectDir = `${root}/project`;
+      const aliasDir = `${root}/project-alias`;
+      const lockfilePath = `${projectDir}/veryfront.lock`;
+      const aliasLockfilePath = `${aliasDir}/veryfront.lock`;
+      const baseUrl = "https://cdn.com/base.ts";
+      const aUrl = "https://cdn.com/a.ts";
+      const bUrl = "https://cdn.com/b.ts";
+
+      try {
+        await Deno.mkdir(projectDir);
+        await Deno.writeTextFile(
+          lockfilePath,
+          JSON.stringify({
+            version: 1,
+            imports: {
+              [baseUrl]: { resolved: baseUrl, integrity: "sha256-base" },
+            },
+          }),
+        );
+        try {
+          await Deno.symlink(projectDir, aliasDir);
+        } catch (error) {
+          if (
+            error instanceof Deno.errors.NotSupported ||
+            error instanceof Deno.errors.PermissionDenied
+          ) return;
+          throw error;
+        }
+
+        const firstWriteStarted = Promise.withResolvers<void>();
+        const releaseFirstWrite = Promise.withResolvers<void>();
+        const aliasRead = Promise.withResolvers<void>();
+        let blockFirstWrite = false;
+        let blocked = false;
+        let observeAliasRead = false;
+        const fs: FSAdapter = {
+          coordinationKey: `real-fs:${root}`,
+          async exists(path: string): Promise<boolean> {
+            try {
+              await Deno.stat(path);
+              return true;
+            } catch (error) {
+              if (error instanceof Deno.errors.NotFound) return false;
+              throw error;
+            }
+          },
+          async readFile(path: string): Promise<string> {
+            if (observeAliasRead && path === aliasLockfilePath) aliasRead.resolve();
+            return await Deno.readTextFile(path);
+          },
+          async writeFile(path: string, content: string): Promise<void> {
+            if (blockFirstWrite && !blocked && path === lockfilePath) {
+              blocked = true;
+              firstWriteStarted.resolve();
+              await releaseFirstWrite.promise;
+            }
+            await Deno.writeTextFile(path, content);
+          },
+          remove: (path: string) => Deno.remove(path),
+          realPath: (path: string) => Deno.realPath(path),
+        };
+        const managerA = createLockfileManager(projectDir, fs);
+        const managerB = createLockfileManager(aliasDir, fs);
+
+        assertEquals(await managerA.has(baseUrl), true);
+        assertEquals(await managerB.has(baseUrl), true);
+        await managerA.set(aUrl, { resolved: aUrl, integrity: "sha256-a" });
+        await managerB.set(bUrl, { resolved: bUrl, integrity: "sha256-b" });
+
+        blockFirstWrite = true;
+        const flushA = managerA.flush();
+        await firstWriteStarted.promise;
+        observeAliasRead = true;
+        const flushB = managerB.flush();
+        const aliasReadBeforeRelease = await resolvesWithin(aliasRead.promise);
+        releaseFirstWrite.resolve();
+        await Promise.all([flushA, flushB]);
+
+        assertEquals(aliasReadBeforeRelease, false);
+        const onDisk = JSON.parse(await Deno.readTextFile(lockfilePath)) as {
+          imports: Record<string, unknown>;
+        };
+        assertEquals(Object.keys(onDisk.imports).sort(), [aUrl, bUrl, baseUrl]);
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+
+    it("should coordinate aliases when the lockfile is created after manager construction", async () => {
+      const canonicalProjectDir = "/backing/project";
+      const canonicalLockfilePath = `${canonicalProjectDir}/veryfront.lock`;
+      const projectDir = "/project";
+      const aliasDir = "/project-alias";
+      const projectLockfilePath = `${projectDir}/veryfront.lock`;
+      const aliasLockfilePath = `${aliasDir}/veryfront.lock`;
+      const aUrl = "https://cdn.com/a.ts";
+      const bUrl = "https://cdn.com/b.ts";
+      const store = new Map<string, string>();
+      const firstWriteStarted = Promise.withResolvers<void>();
+      const releaseFirstWrite = Promise.withResolvers<void>();
+      const aliasAccess = Promise.withResolvers<void>();
+      let blockFirstWrite = false;
+      let blocked = false;
+      let observeAliasAccess = false;
+
+      function backingPath(path: string): string {
+        return path === projectLockfilePath || path === aliasLockfilePath
+          ? canonicalLockfilePath
+          : path;
+      }
+
+      const fs: FSAdapter = {
+        coordinationKey: "late-created-aliased-lockfile-store",
+        exists(path: string): Promise<boolean> {
+          if (observeAliasAccess && path === aliasLockfilePath) aliasAccess.resolve();
+          return Promise.resolve(store.has(backingPath(path)));
+        },
+        readFile(path: string): Promise<string> {
+          if (observeAliasAccess && path === aliasLockfilePath) aliasAccess.resolve();
+          const content = store.get(backingPath(path));
+          return content === undefined
+            ? Promise.reject(new Error("ENOENT"))
+            : Promise.resolve(content);
+        },
+        async writeFile(path: string, content: string): Promise<void> {
+          if (blockFirstWrite && !blocked && path === projectLockfilePath) {
+            blocked = true;
+            firstWriteStarted.resolve();
+            await releaseFirstWrite.promise;
+          }
+          store.set(backingPath(path), content);
+        },
+        remove(path: string): Promise<void> {
+          store.delete(backingPath(path));
+          return Promise.resolve();
+        },
+        realPath(path: string): Promise<string> {
+          if (path === projectDir || path === aliasDir) {
+            return Promise.resolve(canonicalProjectDir);
+          }
+          if (
+            (path === projectLockfilePath || path === aliasLockfilePath) &&
+            store.has(canonicalLockfilePath)
+          ) {
+            return Promise.resolve(canonicalLockfilePath);
+          }
+          return Promise.reject(new Error("ENOENT"));
+        },
+      };
+      const managerA = createLockfileManager(projectDir, fs);
+      const managerB = createLockfileManager(aliasDir, fs);
+
+      // Both managers resolve their stable access identity while the lockfile
+      // is absent, using the canonical project directory as the fallback.
+      await managerA.set(aUrl, { resolved: aUrl, integrity: "sha256-a" });
+      await managerB.set(bUrl, { resolved: bUrl, integrity: "sha256-b" });
+
+      blockFirstWrite = true;
+      const flushA = managerA.flush();
+      await firstWriteStarted.promise;
+      observeAliasAccess = true;
+      const flushB = managerB.flush();
+      const aliasAccessBeforeRelease = await resolvesWithin(aliasAccess.promise);
+      releaseFirstWrite.resolve();
+      await Promise.all([flushA, flushB]);
+
+      assertEquals(aliasAccessBeforeRelease, false);
+      const onDisk = JSON.parse(store.get(canonicalLockfilePath)!) as {
+        imports: Record<string, unknown>;
+      };
+      assertEquals(Object.keys(onDisk.imports).sort(), [aUrl, bUrl]);
     });
 
     it("should preserve a set queued during an in-flight flush and snapshot its input", async () => {

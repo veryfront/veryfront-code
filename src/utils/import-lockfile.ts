@@ -1,7 +1,10 @@
 import { computeHash } from "./hash-utils.ts";
 import { serverLogger } from "./logger/index.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { normalize, resolve } from "#veryfront/compat/path/resolution.ts";
+import {
+  createFileSystem,
+  realPath as resolvePlatformRealPath,
+} from "#veryfront/platform/compat/fs.ts";
+import { normalize } from "#veryfront/compat/path/resolution.ts";
 import {
   CACHE_ERROR,
   LOCKFILE_FORMAT_MISMATCH,
@@ -158,11 +161,13 @@ export type FSAdapter = {
   writeFile(path: string, content: string): Promise<void>;
   exists(path: string): Promise<boolean>;
   remove?(path: string): Promise<void>;
+  /** Resolve an existing path to its canonical backing path when supported. */
+  realPath?(path: string): Promise<string>;
 };
 
 const PLATFORM_FS_COORDINATION_KEY = "veryfront-platform-filesystem";
 const adapterIdentityByInstance = new WeakMap<FSAdapter, number>();
-const lockfileMutationTails = new Map<string, Promise<void>>();
+const lockfileAccessTails = new Map<string, Promise<void>>();
 let nextAdapterIdentity = 1;
 
 function getAdapterCoordinationIdentity(fs: FSAdapter): string {
@@ -176,25 +181,46 @@ function getAdapterCoordinationIdentity(fs: FSAdapter): string {
   return `instance:${identity}`;
 }
 
-function createLockfileMutationKey(fs: FSAdapter, lockfilePath: string): string {
-  return JSON.stringify([getAdapterCoordinationIdentity(fs), resolve(lockfilePath)]);
+async function resolveLockfileAccessKey(
+  fs: FSAdapter,
+  projectDir: string,
+  lockfilePath: string,
+): Promise<string> {
+  const adapterIdentity = getAdapterCoordinationIdentity(fs);
+  if (!fs.realPath) return JSON.stringify([adapterIdentity]);
+
+  try {
+    return JSON.stringify([adapterIdentity, normalize(await fs.realPath(lockfilePath))]);
+  } catch {
+    try {
+      const canonicalProjectDir = normalize(await fs.realPath(projectDir));
+      return JSON.stringify([
+        adapterIdentity,
+        normalize(`${canonicalProjectDir}/${LOCKFILE_NAME}`),
+      ]);
+    } catch {
+      // Without a trustworthy canonical path, serialize conservatively across
+      // the whole backing adapter so symlink and case aliases cannot race.
+      return JSON.stringify([adapterIdentity]);
+    }
+  }
 }
 
-function serializeLockfileMutation<T>(
-  mutationKey: string,
-  mutation: () => Promise<T>,
+function serializeLockfileAccess<T>(
+  accessKey: string,
+  operation: () => Promise<T>,
 ): Promise<T> {
-  const predecessor = lockfileMutationTails.get(mutationKey) ?? Promise.resolve();
-  const result = predecessor.then(mutation);
+  const predecessor = lockfileAccessTails.get(accessKey) ?? Promise.resolve();
+  const result = predecessor.then(operation);
   const tail = result.then(
     () => undefined,
     () => undefined,
   );
-  lockfileMutationTails.set(mutationKey, tail);
+  lockfileAccessTails.set(accessKey, tail);
 
   return result.finally(() => {
-    if (lockfileMutationTails.get(mutationKey) === tail) {
-      lockfileMutationTails.delete(mutationKey);
+    if (lockfileAccessTails.get(accessKey) === tail) {
+      lockfileAccessTails.delete(accessKey);
     }
   });
 }
@@ -216,16 +242,20 @@ function createPlatformFSAdapter(): FSAdapter {
     remove(path: string): Promise<void> {
       return fs.remove(path);
     },
+    realPath(path: string): Promise<string> {
+      return resolvePlatformRealPath(path);
+    },
   };
 }
 
 /** Create lockfile manager. */
 export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter): LockfileManager {
   const fs = fsAdapter ?? createPlatformFSAdapter();
-  const lockfilePath = normalize(`${projectDir}/${LOCKFILE_NAME}`);
-  const mutationKey = createLockfileMutationKey(fs, lockfilePath);
+  const normalizedProjectDir = normalize(projectDir);
+  const lockfilePath = normalize(`${normalizedProjectDir}/${LOCKFILE_NAME}`);
   let cache: LockfileData | null = null;
   let managerOperationTail: Promise<void> = Promise.resolve();
+  let accessKeyPromise: Promise<string> | undefined;
   const pendingEntries = new Map<string, LockfileEntry>();
 
   function serializeManagerOperation<T>(operation: () => Promise<T>): Promise<T> {
@@ -235,6 +265,11 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
       () => undefined,
     );
     return result;
+  }
+
+  function withLockfileAccess<T>(operation: () => Promise<T>): Promise<T> {
+    accessKeyPromise ??= resolveLockfileAccessKey(fs, normalizedProjectDir, lockfilePath);
+    return accessKeyPromise.then((accessKey) => serializeLockfileAccess(accessKey, operation));
   }
 
   async function readFromDisk(): Promise<LockfileData | null> {
@@ -253,7 +288,9 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   async function readCurrent(): Promise<LockfileData | null> {
     if (cache) return cache;
 
-    const data = await readFromDisk();
+    // Cold reads share the same access turn as write/remove operations. This
+    // prevents a second manager from parsing a partially replaced lockfile.
+    const data = await withLockfileAccess(readFromDisk);
     if (data) cache = data;
     return data;
   }
@@ -282,7 +319,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   function write(data: LockfileData): Promise<void> {
     const snapshot = cloneLockfileData(data);
     return serializeManagerOperation(() =>
-      serializeLockfileMutation(mutationKey, async () => {
+      withLockfileAccess(async () => {
         // Revalidate the existing file before replacing it. Unsupported,
         // unreadable, and malformed files are always preserved.
         await readFromDisk();
@@ -319,7 +356,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
 
   function clear(): Promise<void> {
     return serializeManagerOperation(() =>
-      serializeLockfileMutation(mutationKey, async () => {
+      withLockfileAccess(async () => {
         const existing = await readFromDisk();
         const cleared = createEmptyLockfile();
         if (existing !== null) {
@@ -339,10 +376,11 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     return serializeManagerOperation(async () => {
       if (pendingEntries.size === 0) return;
 
-      await serializeLockfileMutation(mutationKey, async () => {
+      await withLockfileAccess(async () => {
         // Merge only this manager's pending entries onto the latest on-disk
-        // state while holding the per-path mutation turn. This makes the whole
-        // read-merge-write sequence atomic relative to other in-process managers.
+        // state while holding the canonical backing-store access turn. This
+        // makes the whole read-merge-write sequence atomic relative to other
+        // in-process managers, including managers using path aliases.
         const snapshot = new Map(pendingEntries);
         const merged = (await readFromDisk()) ?? createEmptyLockfile();
         for (const [url, entry] of snapshot) {
