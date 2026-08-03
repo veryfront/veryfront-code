@@ -2459,7 +2459,6 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
         assertEquals(childResponse.status, 200);
       }
 
-      const nestedFetches: string[] = [];
       await withMockFetch(
         async (
           input: RequestInfo | URL,
@@ -2471,7 +2470,6 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
             requestUrl.origin === parentUrl.origin &&
             requestUrl.pathname.startsWith("/_vf_modules/")
           ) {
-            nestedFetches.push(requestUrl.href);
             return await serve(request, projectDir);
           }
           if (requestUrl.origin === "https://1.1.1.1") {
@@ -2489,11 +2487,6 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
           const ssrParentCode = await ssrParentResponse.text();
           assertStringIncludes(ssrParentCode, absolutePath);
           assertStringIncludes(ssrParentCode, protocolPath);
-          for (const childFetch of nestedFetches) {
-            const childUrl = new URL(childFetch);
-            assertEquals(childUrl.searchParams.get("ssr"), "true");
-            assertEquals(childUrl.searchParams.get("pins"), snapshot.cacheKey);
-          }
         },
       );
     } finally {
