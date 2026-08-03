@@ -169,11 +169,35 @@ function readOwnOption(
   return descriptor.value;
 }
 
+function prepareOptionsForInspection(options: JsonSnapshotOptions): JsonSnapshotOptions {
+  if ((typeof options !== "object" && typeof options !== "function") || options === null) {
+    throw new NativeTypeError("Provider JSON snapshot options must be an object");
+  }
+
+  if (canIdentifyProxyWithoutHooks) {
+    if (isProxyWithoutHooks(options)) {
+      throw new NativeTypeError("Provider JSON snapshot options could not be inspected");
+    }
+    return options;
+  }
+
+  if (typeof structuredCloneValue !== "function") {
+    throw new NativeTypeError("Provider JSON snapshot options could not be inspected");
+  }
+
+  try {
+    return apply(structuredCloneValue, globalThis, [options]) as JsonSnapshotOptions;
+  } catch {
+    throw new NativeTypeError("Provider JSON snapshot options could not be inspected");
+  }
+}
+
 function resolveOptions(options: JsonSnapshotOptions): ResolvedJsonSnapshotOptions {
-  const maxDepth = readOwnOption(options, "maxDepth");
-  const maxNodes = readOwnOption(options, "maxNodes");
-  const maxBytes = readOwnOption(options, "maxBytes");
-  const sortObjectKeys = readOwnOption(options, "sortObjectKeys");
+  const inspectedOptions = prepareOptionsForInspection(options);
+  const maxDepth = readOwnOption(inspectedOptions, "maxDepth");
+  const maxNodes = readOwnOption(inspectedOptions, "maxNodes");
+  const maxBytes = readOwnOption(inspectedOptions, "maxBytes");
+  const sortObjectKeys = readOwnOption(inspectedOptions, "sortObjectKeys");
   if (sortObjectKeys !== undefined && typeof sortObjectKeys !== "boolean") {
     throw new NativeTypeError("Provider JSON snapshot sortObjectKeys must be a boolean");
   }
