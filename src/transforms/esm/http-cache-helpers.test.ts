@@ -17,8 +17,6 @@ import {
   prepareHttpCacheRequestOptions,
   resolveBareSpecifier,
 } from "./http-cache-helpers.ts";
-import { computeHash } from "#veryfront/utils/hash-utils.ts";
-
 describe("transforms/esm/http-cache-helpers", () => {
   describe("cache identity", () => {
     it("uses a full SHA-256 fingerprint for import maps that collide under 32-bit hashing", async () => {
@@ -46,6 +44,39 @@ describe("transforms/esm/http-cache-helpers", () => {
       assertNotEquals(
         await hashHttpCacheIdentity(aaIdentity),
         await hashHttpCacheIdentity(bbIdentity),
+      );
+    });
+
+    it("does not consult inherited toJSON hooks while fingerprinting", async () => {
+      const original = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+      let first: string;
+      let second: string;
+      try {
+        Object.defineProperty(Array.prototype, "toJSON", {
+          configurable: true,
+          value: () => [],
+        });
+        first = await fingerprintImportMap({ imports: { package: "version-a" } });
+        second = await fingerprintImportMap({ imports: { package: "version-b" } });
+      } finally {
+        if (original) Object.defineProperty(Array.prototype, "toJSON", original);
+        else delete (Array.prototype as unknown as { toJSON?: unknown }).toJSON;
+      }
+
+      assertNotEquals(first, second);
+    });
+
+    it("preserves the established v2 canonical fingerprint bytes", async () => {
+      assertEquals(
+        await fingerprintImportMap({
+          imports: { package: "https://example.com/package.ts" },
+          scopes: {
+            "https://example.com/": {
+              scoped: "https://example.com/scoped.ts",
+            },
+          },
+        }),
+        "c0cef34844a37f56972214c773cc169cec17fa1fdd05f80add96f1821ff4650a",
       );
     });
 
@@ -111,18 +142,6 @@ describe("transforms/esm/http-cache-helpers", () => {
       }
 
       assertEquals(hookCalls, 0);
-    });
-
-    it("does not reuse the v2 namespace after changing fingerprint canonicalization", async () => {
-      const importMap = {
-        imports: { pkg: "https://modules.example.com/pkg.js" },
-        scopes: {},
-      };
-      const legacyV2Fingerprint = await computeHash(
-        'veryfront:http-import-map:v2\0import:"pkg":"https://modules.example.com/pkg.js"',
-      );
-
-      assertNotEquals(await fingerprintImportMap(importMap), legacyV2Fingerprint);
     });
 
     it("canonicalizes and fingerprints one import map once per prepared request graph", async () => {

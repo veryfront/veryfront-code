@@ -16,6 +16,7 @@ const MAX_CUSTOM_PLUGINS = 1_000;
 const ArrayIsArray = Array.isArray;
 const ArrayPrototypePush = Array.prototype.push;
 const IntrinsicTextEncoder = TextEncoder;
+const IntrinsicUint8Array = Uint8Array;
 const IntrinsicRangeError = RangeError;
 const IntrinsicTypeError = TypeError;
 const JSONStringify = JSON.stringify;
@@ -35,6 +36,20 @@ const StringPrototypeTrim = String.prototype.trim;
 const TextEncoderPrototypeEncode = TextEncoder.prototype.encode;
 const controlCharacterPattern = /\p{Cc}/u;
 const encoder = new IntrinsicTextEncoder();
+const TypedArrayPrototype = ObjectGetPrototypeOf(IntrinsicUint8Array.prototype);
+const TypedArrayByteLengthGetter = ObjectGetOwnPropertyDescriptor(
+  TypedArrayPrototype,
+  "byteLength",
+)!.get!;
+
+function encodedByteLength(value: string): number {
+  const bytes = ReflectApply(
+    TextEncoderPrototypeEncode,
+    encoder,
+    [value],
+  ) as Uint8Array;
+  return ReflectApply(TypedArrayByteLengthGetter, bytes, []) as number;
+}
 
 function hasOwn(object: object, key: PropertyKey): boolean {
   return ReflectApply(ObjectPrototypeHasOwnProperty, object, [key]) as boolean;
@@ -60,9 +75,7 @@ function countIdentityString(
   label: string,
   maxBytes = MAX_IDENTITY_STRING_BYTES,
 ): string {
-  const bytes = (
-    ReflectApply(TextEncoderPrototypeEncode, encoder, [value]) as Uint8Array
-  ).byteLength;
+  const bytes = encodedByteLength(value);
   if (bytes > maxBytes) throw new IntrinsicTypeError(`${label} is too large`);
   budget.bytes += bytes;
   if (budget.bytes > MAX_IMPORT_MAP_IDENTITY_BYTES) {
@@ -202,18 +215,25 @@ export type CustomPluginCacheIdentity =
 export function getCustomPluginCacheIdentity(
   plugins: readonly TransformPlugin[] | undefined,
 ): CustomPluginCacheIdentity {
-  if (!plugins || plugins.length === 0) {
+  if (plugins === undefined) {
     return { cacheable: true, identity: ObjectFreeze([]) };
   }
-  if (plugins.length > MAX_CUSTOM_PLUGINS) {
+  if (!ArrayIsArray(plugins)) {
+    throw new IntrinsicTypeError("Transform pipeline plugins must be an array");
+  }
+  const pluginCount = readArrayLength(plugins, "Transform pipeline plugins");
+  if (pluginCount === 0) {
+    return { cacheable: true, identity: ObjectFreeze([]) };
+  }
+  if (pluginCount > MAX_CUSTOM_PLUGINS) {
     throw new IntrinsicRangeError(
       `Transform pipeline cannot contain more than ${MAX_CUSTOM_PLUGINS} plugins`,
     );
   }
 
   const identity: Array<readonly [number, string, number, string]> = [];
-  for (let index = 0; index < plugins.length; index++) {
-    const plugin = plugins[index];
+  for (let index = 0; index < pluginCount; index++) {
+    const plugin = readArrayElement(plugins, index, "Transform pipeline plugins");
     if (plugin === null || typeof plugin !== "object") {
       throw new IntrinsicTypeError(`Transform plugin at index ${index} must be an object`);
     }
@@ -242,9 +262,7 @@ export function getCustomPluginCacheIdentity(
     }
     if (
       typeof cacheIdentity !== "string" || cacheIdentity.length === 0 ||
-      (ReflectApply(TextEncoderPrototypeEncode, encoder, [cacheIdentity]) as Uint8Array)
-          .byteLength >
-        MAX_PLUGIN_IDENTITY_BYTES
+      encodedByteLength(cacheIdentity) > MAX_PLUGIN_IDENTITY_BYTES
     ) {
       throw new IntrinsicTypeError(`Transform plugin ${name} has an invalid cacheIdentity`);
     }
@@ -263,9 +281,7 @@ function boundedOption(value: unknown, label: string): string | null {
     throw new IntrinsicTypeError(`${label} must be a string`);
   }
   if (
-    (ReflectApply(TextEncoderPrototypeEncode, encoder, [value]) as Uint8Array)
-      .byteLength >
-      MAX_IDENTITY_STRING_BYTES
+    encodedByteLength(value) > MAX_IDENTITY_STRING_BYTES
   ) {
     throw new IntrinsicTypeError(`${label} is too large for transform cache identity`);
   }
@@ -346,8 +362,7 @@ function encodeCustomPluginIdentities(
     }
     if (
       typeof cacheIdentity !== "string" || cacheIdentity.length === 0 ||
-      (ReflectApply(TextEncoderPrototypeEncode, encoder, [cacheIdentity]) as Uint8Array)
-          .byteLength > MAX_PLUGIN_IDENTITY_BYTES
+      encodedByteLength(cacheIdentity) > MAX_PLUGIN_IDENTITY_BYTES
     ) {
       throw new IntrinsicTypeError(
         `Custom plugin identity ${index} has an invalid cache identity`,

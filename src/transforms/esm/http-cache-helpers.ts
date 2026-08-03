@@ -76,7 +76,7 @@ function compareImportMapKeys(left: [string, string], right: [string, string]): 
   return left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0;
 }
 
-const HTTP_IMPORT_MAP_FINGERPRINT_NAMESPACE = "veryfront:http-import-map:v3";
+const HTTP_IMPORT_MAP_FINGERPRINT_NAMESPACE = "veryfront:http-import-map:v2";
 const HTTP_CACHE_IDENTITY_NAMESPACE = "veryfront:http-module:v2";
 const HTTP_CACHE_FILE_HASH_NAMESPACE = "veryfront:http-module-file:v2";
 
@@ -106,20 +106,31 @@ export function fingerprintImportMap(importMap: ImportMapConfig): Promise<string
     ]],
   );
 
-  let canonical = HTTP_IMPORT_MAP_FINGERPRINT_NAMESPACE;
+  // Serialize only string primitives. JSON.stringify on arrays/objects still
+  // consults inherited toJSON hooks even when the intrinsic function itself
+  // was captured, which would let project code collapse distinct maps onto a
+  // shared cache identity.
+  // Preserve the established JSON byte format exactly so this hardening does
+  // not invalidate every persisted HTTP module cache entry on deployment.
+  let canonical = `${HTTP_IMPORT_MAP_FINGERPRINT_NAMESPACE}\0{"imports":[`;
   for (let index = 0; index < imports.length; index++) {
-    const [specifier, target] = imports[index]!;
-    canonical += `\0import:${JSONStringify(specifier)}:${JSONStringify(target)}`;
+    const [key, value] = imports[index]!;
+    if (index > 0) canonical += ",";
+    canonical += `[${JSONStringify(key)},${JSONStringify(value)}]`;
   }
+  canonical += `],"scopes":[`;
   for (let scopeIndex = 0; scopeIndex < scopes.length; scopeIndex++) {
-    const [scope, scopedImports] = scopes[scopeIndex]!;
-    canonical += `\0scope:${JSONStringify(scope)}`;
-    for (let importIndex = 0; importIndex < scopedImports.length; importIndex++) {
-      const [specifier, target] = scopedImports[importIndex]!;
-      canonical += `\0mapping:${JSONStringify(specifier)}:${JSONStringify(target)}`;
+    const [scope, mappings] = scopes[scopeIndex] as [string, Array<[string, string]>];
+    if (scopeIndex > 0) canonical += ",";
+    canonical += `[${JSONStringify(scope)},[`;
+    for (let mappingIndex = 0; mappingIndex < mappings.length; mappingIndex++) {
+      const [key, value] = mappings[mappingIndex]!;
+      if (mappingIndex > 0) canonical += ",";
+      canonical += `[${JSONStringify(key)},${JSONStringify(value)}]`;
     }
+    canonical += "]]";
   }
-
+  canonical += "]}";
   return computeHash(canonical);
 }
 

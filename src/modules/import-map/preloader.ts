@@ -1,17 +1,18 @@
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { snapshotImportMap } from "#veryfront/transforms/pipeline/cache-identity.ts";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/constants/limits.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import type { ImportMapConfig } from "./types.ts";
 import { loadImportMap } from "./loader.ts";
 
 export interface PreloadImportMapContext {
-  /** On-disk project root selected for this render. */
-  projectDir?: string;
   /** Immutable content source selected for this render (release, branch, or environment). */
   contentSourceId?: string;
   /** Config already validated for the authenticated request. */
   config?: VeryfrontConfig;
+  /** Project root used by cache-inspection callers when the cache key is a project ID. */
+  projectDir?: string;
 }
 
 const IMPORT_MAP_CACHE_IDENTITY_NAMESPACE = "veryfront:preloaded-import-map:v2";
@@ -19,7 +20,6 @@ const DEFAULT_MAX_IMPORT_MAP_PROJECTS = 512;
 const DEFAULT_MAX_IMPORT_MAP_VARIANTS_PER_PROJECT = 16;
 const DEFAULT_IMPORT_MAP_TTL_MS = 10 * 60 * 1_000;
 const DEFAULT_IMPORT_MAP_LOAD_TIMEOUT_MS = 30_000;
-const CAPACITY_ERROR = Symbol("ImportMapPreloader.capacityError");
 
 // Project code can execute in the same realm before a later request reaches
 // this cache. Capture every primitive used for identity, admission, and
@@ -28,9 +28,11 @@ const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSort = Array.prototype.sort;
 const DateNow = Date.now;
 const IntrinsicMap = Map;
+const IntrinsicPerformance = performance;
 const IntrinsicPromise = Promise;
 const IntrinsicRangeError = RangeError;
 const IntrinsicSet = Set;
+const IntrinsicWeakSet = WeakSet;
 const IntrinsicTypeError = TypeError;
 const JSONStringify = JSON.stringify;
 const MapPrototypeClear = Map.prototype.clear;
@@ -44,25 +46,22 @@ const MathMin = Math.min;
 const NUMBER_MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
 const NumberIsFinite = Number.isFinite;
 const NumberIsSafeInteger = Number.isSafeInteger;
-const ObjectDefineProperty = Object.defineProperty;
 const ObjectEntries = Object.entries;
 const ObjectFreeze = Object.freeze;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const PromisePrototypeThen = Promise.prototype.then;
 const PromiseResolve = Promise.resolve;
+const PerformanceNow = IntrinsicPerformance.now;
 const ReflectApply = Reflect.apply;
 const SetPrototypeAdd = Set.prototype.add;
 const SetPrototypeDelete = Set.prototype.delete;
 const SetPrototypeForEach = Set.prototype.forEach;
 const SetPrototypeSize = Object.getOwnPropertyDescriptor(Set.prototype, "size")!
   .get!;
+const WeakSetPrototypeAdd = WeakSet.prototype.add;
+const WeakSetPrototypeHas = WeakSet.prototype.has;
 const SetTimeout = setTimeout;
 const ClearTimeout = clearTimeout;
-
-function hasOwn(object: object, key: PropertyKey): boolean {
-  return ReflectApply(ObjectPrototypeHasOwnProperty, object, [key]) as boolean;
-}
 
 function arraySort<T>(
   values: T[],
@@ -73,6 +72,10 @@ function arraySort<T>(
 
 function arrayPush<T>(values: T[], value: T): void {
   ReflectApply(ArrayPrototypePush, values, [value]);
+}
+
+function monotonicNow(): number {
+  return ReflectApply(PerformanceNow, IntrinsicPerformance, []) as number;
 }
 
 function mapClear<K, V>(map: Map<K, V>): void {
@@ -133,6 +136,14 @@ function setSize<T>(set: Set<T>): number {
   return ReflectApply(SetPrototypeSize, set, []) as number;
 }
 
+function weakSetAdd<T extends object>(set: WeakSet<T>, value: T): void {
+  ReflectApply(WeakSetPrototypeAdd, set, [value]);
+}
+
+function weakSetHas<T extends object>(set: WeakSet<T>, value: T): boolean {
+  return ReflectApply(WeakSetPrototypeHas, set, [value]) as boolean;
+}
+
 interface CachedImportMap {
   readonly promise: Promise<ImportMapConfig>;
   /** Starts when the load settles; in-flight work is never expired mid-flight. */
@@ -159,7 +170,7 @@ export interface ImportMapPreloaderOptions {
   maxVariantsPerProject?: number;
   /** Retention lifetime after a successful load. */
   ttlMs?: number;
-  /** Maximum time an in-flight loader can pin cache capacity. */
+  /** Maximum caller wait for a load or for occupied capacity to settle. */
   loadTimeoutMs?: number;
   /** Monotonic-enough clock seam; defaults to Date.now. */
   now?: () => number;
@@ -167,9 +178,9 @@ export interface ImportMapPreloaderOptions {
   loadImportMap?: typeof loadImportMap;
 }
 
-function compareEntries(
-  left: readonly [string, string],
-  right: readonly [string, string],
+function compareEntries<T, U>(
+  left: readonly [string, T],
+  right: readonly [string, U],
 ): number {
   return left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0;
 }
@@ -180,55 +191,70 @@ function compareEntries(
  * and need not remain unchanged while SHA-256 is being computed.
  */
 function snapshotPreloadContext(
+  projectDir: string,
   context?: PreloadImportMapContext,
-): PreloadImportMapContext | undefined {
-  if (!context) return undefined;
-  const contentSourceId = readOptionalOwnDataProperty(
+): PreloadImportMapContext {
+  if (typeof projectDir !== "string") {
+    throw new IntrinsicTypeError("Import-map projectDir must be a string");
+  }
+  if (!context) return ObjectFreeze({ projectDir });
+  if (typeof context !== "object") {
+    throw new IntrinsicTypeError("Import-map context must be an object");
+  }
+  const contentSourceDescriptor = ObjectGetOwnPropertyDescriptor(
     context,
     "contentSourceId",
-    "Preload import-map context",
   );
+  if (contentSourceDescriptor && !("value" in contentSourceDescriptor)) {
+    throw new IntrinsicTypeError("Import-map contentSourceId cannot be an accessor");
+  }
+  const contentSourceId = contentSourceDescriptor?.value;
   if (contentSourceId !== undefined && typeof contentSourceId !== "string") {
-    throw new IntrinsicTypeError("Preload import-map contentSourceId must be a string");
+    throw new IntrinsicTypeError("Import-map contentSourceId must be a string");
   }
-  const projectDir = readOptionalOwnDataProperty(
-    context,
-    "projectDir",
-    "Preload import-map context",
-  );
-  if (projectDir !== undefined && typeof projectDir !== "string") {
-    throw new IntrinsicTypeError("Preload import-map projectDir must be a string");
+  const configDescriptor = ObjectGetOwnPropertyDescriptor(context, "config");
+  if (configDescriptor && !("value" in configDescriptor)) {
+    throw new IntrinsicTypeError("Import-map config cannot be an accessor");
   }
-  const config = readOptionalOwnDataProperty(
-    context,
-    "config",
-    "Preload import-map context",
-  ) as VeryfrontConfig | undefined;
-  if (config === undefined) return ObjectFreeze({ projectDir, contentSourceId });
+  const config = configDescriptor?.value as VeryfrontConfig | undefined;
+  if (config === undefined) return ObjectFreeze({ contentSourceId, projectDir });
   if (config === null || typeof config !== "object") {
-    throw new IntrinsicTypeError("Preload import-map config must be a non-null object");
+    throw new IntrinsicTypeError("Import-map config must be an object");
   }
-
-  const resolve = readOptionalOwnDataProperty(config, "resolve", "Veryfront config");
-  const importMap = resolve && typeof resolve === "object"
-    ? readOptionalOwnDataProperty(resolve, "importMap", "Veryfront config resolve")
+  const resolveDescriptor = ObjectGetOwnPropertyDescriptor(config, "resolve");
+  if (resolveDescriptor && !("value" in resolveDescriptor)) {
+    throw new IntrinsicTypeError("Import-map config resolve cannot be an accessor");
+  }
+  const resolve = resolveDescriptor?.value;
+  if (resolve !== undefined && (resolve === null || typeof resolve !== "object")) {
+    throw new IntrinsicTypeError("Import-map config resolve must be an object");
+  }
+  const importMapDescriptor = resolve
+    ? ObjectGetOwnPropertyDescriptor(resolve, "importMap")
     : undefined;
+  if (importMapDescriptor && !("value" in importMapDescriptor)) {
+    throw new IntrinsicTypeError("Import-map config resolve.importMap cannot be an accessor");
+  }
+  const importMap = snapshotImportMap(importMapDescriptor?.value ?? {});
+  // The loader only consumes resolve.importMap. Keeping the request snapshot
+  // minimal avoids invoking unrelated config getters or retaining mutable
+  // tenant-controlled configuration behind a cache entry.
   const exactConfig = ObjectFreeze({
     resolve: ObjectFreeze({
-      importMap: snapshotImportMap(importMap ?? {}),
+      importMap,
     }),
   }) as VeryfrontConfig;
-  return ObjectFreeze({ projectDir, contentSourceId, config: exactConfig });
+  return ObjectFreeze({ contentSourceId, config: exactConfig, projectDir });
 }
 
 function buildVariantCanonicalIdentity(
-  context?: PreloadImportMapContext,
+  context: PreloadImportMapContext,
 ): string {
-  const importMap = context?.config?.resolve?.importMap;
-  let canonical = `${IMPORT_MAP_CACHE_IDENTITY_NAMESPACE}\0project:${
-    JSONStringify(context?.projectDir ?? null)
-  }\0source:${JSONStringify(context?.contentSourceId ?? null)}\0`;
-  if (!context?.config) return `${canonical}ambient`;
+  const importMap = context.config?.resolve?.importMap;
+  let canonical = `${IMPORT_MAP_CACHE_IDENTITY_NAMESPACE}\0source:${
+    JSONStringify(context.contentSourceId ?? null)
+  }\0projectDir:${JSONStringify(context.projectDir)}\0`;
+  if (!context.config) return `${canonical}ambient`;
 
   canonical += "validated";
   const imports = arraySort(
@@ -244,7 +270,7 @@ function buildVariantCanonicalIdentity(
 
   const scopes = arraySort(
     ObjectEntries(importMap?.scopes ?? {}),
-    (left, right) => left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0,
+    compareEntries,
   );
   for (let scopeIndex = 0; scopeIndex < scopes.length; scopeIndex++) {
     const scopeEntry = scopes[scopeIndex]!;
@@ -266,19 +292,6 @@ function racePromises<T>(promises: Array<Promise<T>>): Promise<T> {
   });
 }
 
-function readOptionalOwnDataProperty(
-  value: object,
-  key: PropertyKey,
-  label: string,
-): unknown {
-  const descriptor = ObjectGetOwnPropertyDescriptor(value, key);
-  if (!descriptor) return undefined;
-  if (!hasOwn(descriptor, "value")) {
-    throw new IntrinsicTypeError(`${label} cannot contain accessor properties`);
-  }
-  return descriptor.value;
-}
-
 function readPositiveSafeInteger(
   value: number | undefined,
   fallback: number,
@@ -287,6 +300,16 @@ function readPositiveSafeInteger(
   const resolved = value ?? fallback;
   if (!NumberIsSafeInteger(resolved) || resolved <= 0) {
     throw new IntrinsicRangeError(`${label} must be a positive safe integer`);
+  }
+  return resolved;
+}
+
+function readPositiveTimerMs(value: number | undefined, fallback: number): number {
+  const resolved = readPositiveSafeInteger(value, fallback, "loadTimeoutMs");
+  if (resolved > MAX_TIMER_DELAY_MS) {
+    throw new IntrinsicRangeError(
+      `loadTimeoutMs must not exceed ${MAX_TIMER_DELAY_MS}`,
+    );
   }
   return resolved;
 }
@@ -302,6 +325,7 @@ export class ImportMapPreloader {
   /** Underlying loader work remains accounted for even after explicit invalidation. */
   private readonly activeLoads = new IntrinsicSet<Promise<ImportMapConfig>>();
   private readonly activeIdentityBuilds = new IntrinsicSet<Promise<string>>();
+  private readonly capacityErrors = new IntrinsicWeakSet<object>();
   private globalGeneration = createGeneration();
   private readonly maxProjects: number;
   private readonly maxVariantsPerProject: number;
@@ -331,10 +355,9 @@ export class ImportMapPreloader {
       DEFAULT_IMPORT_MAP_TTL_MS,
       "ttlMs",
     );
-    this.loadTimeoutMs = readPositiveSafeInteger(
+    this.loadTimeoutMs = readPositiveTimerMs(
       options.loadTimeoutMs,
       DEFAULT_IMPORT_MAP_LOAD_TIMEOUT_MS,
-      "loadTimeoutMs",
     );
     this.now = options.now ?? DateNow;
     this.loader = options.loadImportMap ?? loadImportMap;
@@ -413,32 +436,42 @@ export class ImportMapPreloader {
     const error = new IntrinsicRangeError(
       `Import-map preloader ${scope} capacity is occupied by in-flight loads; retry after a load settles`,
     );
-    ObjectDefineProperty(error, CAPACITY_ERROR, {
-      configurable: false,
-      enumerable: false,
-      value: true,
-      writable: false,
-    });
+    weakSetAdd(this.capacityErrors, error);
     return error;
   }
 
   private isCapacityError(error: unknown): boolean {
-    return Boolean(
-      error && typeof error === "object" &&
-        (error as { [CAPACITY_ERROR]?: boolean })[CAPACITY_ERROR],
-    );
+    return error !== null && typeof error === "object" &&
+      weakSetHas(this.capacityErrors, error);
   }
 
-  private waitForActiveWork(): Promise<void> {
+  private waitForActiveWork(timeoutMs: number): Promise<void> {
     const activeWork: Array<Promise<unknown>> = [];
     setForEach(this.activeLoads, (promise) => arrayPush(activeWork, promise));
     setForEach(this.activeIdentityBuilds, (promise) => arrayPush(activeWork, promise));
-    if (activeWork.length === 0) throw this.capacityError("loads");
-    const raced = racePromises(activeWork);
+    // Work can settle between the capacity check and this snapshot. Retry the
+    // admission loop immediately instead of surfacing a stale capacity error.
+    if (activeWork.length === 0) return resolvedPromise();
+    const settled = promiseThen(
+      racePromises(activeWork),
+      () => resolvedPromise(),
+      () => resolvedPromise(),
+    );
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new IntrinsicPromise<void>((_, reject) => {
+      timeoutId = SetTimeout(() => {
+        reject(new IntrinsicRangeError("Import-map preloader capacity wait timed out"));
+      }, timeoutMs);
+    });
     return promiseThen(
-      raced,
-      () => resolvedPromise(),
-      () => resolvedPromise(),
+      racePromises([settled, timeout]),
+      () => {
+        if (timeoutId !== undefined) ClearTimeout(timeoutId);
+      },
+      (error) => {
+        if (timeoutId !== undefined) ClearTimeout(timeoutId);
+        throw error;
+      },
     );
   }
 
@@ -594,6 +627,9 @@ export class ImportMapPreloader {
       resolvedPromise(),
       () => this.loader(projectDir, adapter, config),
     );
+    // The caller-facing timeout must not release capacity while the underlying
+    // adapter is still working; doing so would permit an unbounded retry train.
+    this.trackActiveLoad(loaderPromise);
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new IntrinsicPromise<ImportMapConfig>((_, reject) => {
       timeoutId = SetTimeout(() => {
@@ -615,7 +651,6 @@ export class ImportMapPreloader {
       boundedLoaderPromise,
       (loadedImportMap) => snapshotImportMap(loadedImportMap),
     );
-    this.trackActiveLoad(promise);
     return promise;
   }
 
@@ -625,12 +660,15 @@ export class ImportMapPreloader {
     projectId?: string,
     context?: PreloadImportMapContext,
   ): Promise<ImportMapConfig> {
+    const capacityDeadline = monotonicNow() + this.loadTimeoutMs;
     for (;;) {
       try {
         return await this.preloadOnce(projectDir, adapter, projectId, context);
       } catch (error) {
         if (!this.isCapacityError(error)) throw error;
-        await this.waitForActiveWork();
+        const remainingMs = capacityDeadline - monotonicNow();
+        if (remainingMs <= 0) throw error;
+        await this.waitForActiveWork(remainingMs);
       }
     }
   }
@@ -641,7 +679,7 @@ export class ImportMapPreloader {
     projectId?: string,
     context?: PreloadImportMapContext,
   ): Promise<ImportMapConfig> {
-    const exactContext = snapshotPreloadContext(context);
+    const exactContext = snapshotPreloadContext(projectDir, context);
     const cacheKey = projectId ?? projectDir;
     const canonicalIdentity = buildVariantCanonicalIdentity(exactContext);
     const admissionNow = this.readNow();
@@ -704,7 +742,7 @@ export class ImportMapPreloader {
       return this.startTrackedLoad(
         projectDir,
         adapter,
-        exactContext?.config,
+        exactContext.config,
       );
     }
 
@@ -730,7 +768,7 @@ export class ImportMapPreloader {
       return this.startTrackedLoad(
         projectDir,
         adapter,
-        exactContext?.config,
+        exactContext.config,
       );
     }
 
@@ -752,7 +790,7 @@ export class ImportMapPreloader {
       const promise = this.startTrackedLoad(
         projectDir,
         adapter,
-        exactContext?.config,
+        exactContext.config,
       );
       const entry: CachedImportMap = { promise, expiresAt: null };
       mapSet(projectCache, variantKey, entry);
@@ -801,39 +839,33 @@ export class ImportMapPreloader {
     cacheKey: string,
     context?: PreloadImportMapContext,
   ): Promise<ImportMapConfig | undefined> {
-    const exactContext = snapshotPreloadContext(context);
+    const projectDirDescriptor = context && typeof context === "object"
+      ? ObjectGetOwnPropertyDescriptor(context, "projectDir")
+      : undefined;
+    if (projectDirDescriptor && !("value" in projectDirDescriptor)) {
+      throw new IntrinsicTypeError("Import-map projectDir cannot be an accessor");
+    }
+    const contextProjectDir = projectDirDescriptor?.value;
+    if (contextProjectDir !== undefined && typeof contextProjectDir !== "string") {
+      throw new IntrinsicTypeError("Import-map projectDir must be a string");
+    }
+    const exactContext = snapshotPreloadContext(
+      contextProjectDir ?? cacheKey,
+      context,
+    );
     const canonicalIdentity = buildVariantCanonicalIdentity(exactContext);
     const projectState = mapGet(this.projects, cacheKey);
     if (!projectState) return undefined;
     const globalGeneration = this.globalGeneration;
     const projectGeneration = projectState.generation;
-    let identityBuild: Promise<string> | undefined;
     let variantKey: string;
     try {
-      identityBuild = this.getOrCreateIdentityBuild(
-        projectState,
-        canonicalIdentity,
-      );
-      variantKey = await identityBuild;
+      variantKey = await computeHash(canonicalIdentity);
     } catch (error) {
-      if (identityBuild) {
-        this.releaseIdentityBuild(
-          projectState,
-          canonicalIdentity,
-          identityBuild,
-        );
-      }
       this.removeEmptyProject(cacheKey, projectState);
       if (!this.isCapacityError(error)) throw error;
       return undefined;
     }
-    const releaseIdentity = (): void => {
-      this.releaseIdentityBuild(
-        projectState,
-        canonicalIdentity,
-        identityBuild,
-      );
-    };
     if (
       !this.isCurrentGeneration(
         cacheKey,
@@ -842,7 +874,6 @@ export class ImportMapPreloader {
         projectGeneration,
       )
     ) {
-      releaseIdentity();
       return undefined;
     }
     let entry: CachedImportMap | undefined;
@@ -853,18 +884,13 @@ export class ImportMapPreloader {
         this.readNow(),
       );
     } catch (error) {
-      releaseIdentity();
       this.removeEmptyProject(cacheKey, projectState);
       if (!this.isCapacityError(error)) throw error;
       return undefined;
     }
     if (!entry) {
-      releaseIdentity();
       this.removeEmptyProject(cacheKey, projectState);
       return undefined;
-    }
-    if (entry.expiresAt !== null) {
-      releaseIdentity();
     }
 
     try {

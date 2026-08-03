@@ -199,78 +199,32 @@ describe("modules/import-map/loader", () => {
       assert("absolute" in appScope, "absolute path in scope should be kept");
     });
 
-    it("uses captured JSON and collection primordials while loading deno.json maps", async () => {
-      const adapter = createMockAdapter();
-      adapter.fs.files.set(
-        "/poisoned-deno-json/deno.json",
-        JSON.stringify({
-          imports: {
-            "pkg": "https://esm.sh/pkg@1",
-            "relative": "./local.ts",
-          },
-          scopes: {
-            "/app/": {
-              "scoped": "https://esm.sh/scoped@1",
-            },
-          },
-        }),
+    it("keeps dependency resolution deterministic after primordial poisoning", async () => {
+      const worker = new Worker(
+        new URL("./loader-primordial-poisoning.worker.ts", import.meta.url),
+        { type: "module" },
       );
-      const original = {
-        jsonParse: JSON.parse,
-        objectEntries: Object.entries,
-        objectFromEntries: Object.fromEntries,
-        arrayEvery: Array.prototype.every,
-        arrayFilter: Array.prototype.filter,
-        arrayJoin: Array.prototype.join,
-        arrayMap: Array.prototype.map,
-        arrayPush: Array.prototype.push,
-        arraySome: Array.prototype.some,
-      };
-
       try {
-        JSON.parse = (() => {
-          throw new Error("poisoned JSON.parse");
-        }) as typeof JSON.parse;
-        Object.entries = (() => {
-          throw new Error("poisoned Object.entries");
-        }) as typeof Object.entries;
-        Object.fromEntries = (() => {
-          throw new Error("poisoned Object.fromEntries");
-        }) as typeof Object.fromEntries;
-        Array.prototype.every = function () {
-          throw new Error("poisoned Array.prototype.every");
-        };
-        Array.prototype.filter = function () {
-          throw new Error("poisoned Array.prototype.filter");
-        };
-        Array.prototype.join = function () {
-          throw new Error("poisoned Array.prototype.join");
-        };
-        Array.prototype.map = function () {
-          throw new Error("poisoned Array.prototype.map");
-        };
-        Array.prototype.push = function () {
-          throw new Error("poisoned Array.prototype.push");
-        };
-        Array.prototype.some = function () {
-          throw new Error("poisoned Array.prototype.some");
-        };
+        const result = await new Promise<{
+          denoOnly: string | undefined;
+          package: string | undefined;
+          react: string | undefined;
+        }>((resolve, reject) => {
+          worker.onmessage = (event) => {
+            const message = event.data as
+              | { ok: true; result: Parameters<typeof resolve>[0] }
+              | { ok: false; error: string };
+            if (message.ok) resolve(message.result);
+            else reject(new Error(message.error));
+          };
+          worker.onerror = (event) => reject(event.error ?? new Error(event.message));
+        });
 
-        const { imports, scopes } = await loadImportMap("/poisoned-deno-json", adapter);
-
-        assertEquals(imports?.pkg, "https://esm.sh/pkg@1");
-        assertEquals(imports?.relative, undefined);
-        assertEquals(scopes?.["/app/"]?.scoped, "https://esm.sh/scoped@1");
+        assertEquals(result.denoOnly, "https://example.com/deno.ts");
+        assertEquals(result.package, "https://esm.sh/package@1.0.0?target=es2022");
+        assert(result.react?.includes("esm.sh"));
       } finally {
-        JSON.parse = original.jsonParse;
-        Object.entries = original.objectEntries;
-        Object.fromEntries = original.objectFromEntries;
-        Array.prototype.every = original.arrayEvery;
-        Array.prototype.filter = original.arrayFilter;
-        Array.prototype.join = original.arrayJoin;
-        Array.prototype.map = original.arrayMap;
-        Array.prototype.push = original.arrayPush;
-        Array.prototype.some = original.arraySome;
+        worker.terminate();
       }
     });
   });

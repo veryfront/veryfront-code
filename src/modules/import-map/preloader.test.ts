@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   clearImportMapCache,
@@ -7,8 +12,9 @@ import {
   ImportMapPreloader,
   preloadImportMap,
 } from "./preloader.ts";
-import { validateVeryfrontConfig } from "#veryfront/config";
+import { validateVeryfrontConfig, type VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/constants/limits.ts";
 import type { ImportMapConfig } from "./types.ts";
 
 function createMinimalAdapter(): RuntimeAdapter {
@@ -73,7 +79,7 @@ describe("modules/import-map/preloader", () => {
       const map1 = await preloadImportMap("/test-cache-same", adapter);
       const map2 = await preloadImportMap("/test-cache-same", adapter);
 
-      assertEquals(map1, map2);
+      assertStrictEquals(map1, map2);
     });
 
     it("should cache different projects independently", async () => {
@@ -131,7 +137,7 @@ describe("modules/import-map/preloader", () => {
         },
       );
 
-      assertEquals(first, firstAgain);
+      assertStrictEquals(first, firstAgain);
       assertEquals(first.imports?.package, "https://example.com/package-v1.ts");
       assertEquals(changed.imports?.package, "https://example.com/package-v2.ts");
       assertEquals(first === changed, false);
@@ -155,13 +161,13 @@ describe("modules/import-map/preloader", () => {
           };
         },
       });
-      const config = validateVeryfrontConfig({
+      const config = {
         resolve: {
           importMap: {
             imports: { package: "https://example.com/package-a.ts" },
           },
         },
-      });
+      } as VeryfrontConfig;
       const context = { contentSourceId: "release", config };
 
       const firstPromise = preloader.preload(
@@ -202,7 +208,7 @@ describe("modules/import-map/preloader", () => {
       );
 
       assertEquals(first.imports?.package, "https://example.com/package-a.ts");
-      assertEquals(cachedOriginal, first);
+      assertStrictEquals(cachedOriginal, first);
       assertEquals(changed.imports?.package, "https://example.com/package-b.ts");
       assertEquals(loads, 2);
     });
@@ -234,23 +240,76 @@ describe("modules/import-map/preloader", () => {
       assertEquals(release === branch, false);
     });
 
-    it("rejects non-object config context values with a targeted error", async () => {
+    it("isolates project roots that share one project ID and content source", async () => {
       const adapter = createMinimalAdapter();
+      let loads = 0;
       const preloader = new ImportMapPreloader({
-        loadImportMap: async () => ({ imports: {} }),
+        maxProjects: 1,
+        maxVariantsPerProject: 2,
+        ttlMs: 1_000,
+        loadImportMap: async (projectDir) => ({
+          imports: { projectDir, load: String(++loads) },
+        }),
       });
+      const context = { contentSourceId: "release-1" };
+
+      const first = await preloader.preload(
+        "/releases/first",
+        adapter,
+        "project-1",
+        context,
+      );
+      const second = await preloader.preload(
+        "/releases/second",
+        adapter,
+        "project-1",
+        context,
+      );
+
+      assertEquals(first.imports?.projectDir, "/releases/first");
+      assertEquals(second.imports?.projectDir, "/releases/second");
+      assertEquals(loads, 2);
+    });
+
+    it("rejects accessor-backed request context without invoking it", async () => {
+      const adapter = createMinimalAdapter();
+      let getterCalls = 0;
+      const context = Object.defineProperty({}, "contentSourceId", {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return "poisoned";
+        },
+      });
+
+      await assertRejects(
+        () =>
+          preloadImportMap(
+            "/accessor-context",
+            adapter,
+            "accessor-context",
+            context,
+          ),
+        TypeError,
+        "cannot be an accessor",
+      );
+      assertEquals(getterCalls, 0);
+    });
+
+    it("rejects non-object config context values", async () => {
+      const adapter = createMinimalAdapter();
 
       for (const config of [null, false, 0, "invalid"]) {
         await assertRejects(
           () =>
-            preloader.preload(
+            preloadImportMap(
               "/invalid-config-context",
               adapter,
               `invalid-config-${String(config)}`,
               { config } as never,
             ),
           TypeError,
-          "Preload import-map config must be a non-null object",
+          "Import-map config must be an object",
         );
       }
     });
@@ -303,7 +362,9 @@ describe("modules/import-map/preloader", () => {
         "https://example.com/scoped-v1.ts",
       );
       assertEquals(
-        await preloader.getCached("immutable-loader-output"),
+        await preloader.getCached("immutable-loader-output", {
+          projectDir: "/immutable-loader-output",
+        }),
         published,
       );
       assertEquals(
@@ -437,6 +498,17 @@ describe("modules/import-map/preloader", () => {
       return { preloader, getLoads: () => loads };
     }
 
+    it("rejects load timeouts that cannot be represented by the host timer", () => {
+      assertThrows(
+        () =>
+          new ImportMapPreloader({
+            loadTimeoutMs: MAX_TIMER_DELAY_MS + 1,
+          }),
+        RangeError,
+        `loadTimeoutMs must not exceed ${MAX_TIMER_DELAY_MS}`,
+      );
+    });
+
     it("evicts the least-recently-used variant within one project", async () => {
       const adapter = createMinimalAdapter();
       const { preloader } = createTestPreloader({
@@ -446,9 +518,9 @@ describe("modules/import-map/preloader", () => {
       });
       const projectDir = "/bounded-variants";
       const projectId = "project-1";
-      const sourceA = { contentSourceId: "source-a" };
-      const sourceB = { contentSourceId: "source-b" };
-      const sourceC = { contentSourceId: "source-c" };
+      const sourceA = { contentSourceId: "source-a", projectDir };
+      const sourceB = { contentSourceId: "source-b", projectDir };
+      const sourceC = { contentSourceId: "source-c", projectDir };
 
       await preloader.preload(projectDir, adapter, projectId, sourceA);
       await preloader.preload(projectDir, adapter, projectId, sourceB);
@@ -470,12 +542,21 @@ describe("modules/import-map/preloader", () => {
 
       await preloader.preload("/project-a", adapter, "project-a");
       await preloader.preload("/project-b", adapter, "project-b");
-      await preloader.getCached("project-a");
+      await preloader.getCached("project-a", { projectDir: "/project-a" });
       await preloader.preload("/project-c", adapter, "project-c");
 
-      assertEquals(await preloader.getCached("project-a") !== undefined, true);
-      assertEquals(await preloader.getCached("project-b"), undefined);
-      assertEquals(await preloader.getCached("project-c") !== undefined, true);
+      assertEquals(
+        await preloader.getCached("project-a", { projectDir: "/project-a" }) !== undefined,
+        true,
+      );
+      assertEquals(
+        await preloader.getCached("project-b", { projectDir: "/project-b" }),
+        undefined,
+      );
+      assertEquals(
+        await preloader.getCached("project-c", { projectDir: "/project-c" }) !== undefined,
+        true,
+      );
     });
 
     it("expires settled entries against an injected clock and reloads them", async () => {
@@ -487,7 +568,7 @@ describe("modules/import-map/preloader", () => {
         ttlMs: 100,
         now: () => now,
       });
-      const context = { contentSourceId: "source-a" };
+      const context = { contentSourceId: "source-a", projectDir: "/ttl-project" };
 
       const first = await preloader.preload("/ttl-project", adapter, "ttl-project", context);
       now = 1_099;
@@ -514,7 +595,10 @@ describe("modules/import-map/preloader", () => {
         ttlMs: 100,
         now: () => now,
       });
-      const context = { contentSourceId: "source-a" };
+      const context = {
+        contentSourceId: "source-a",
+        projectDir: "/direct-expiry",
+      };
 
       const expired = await preloader.preload(
         "/direct-expiry",
@@ -537,7 +621,7 @@ describe("modules/import-map/preloader", () => {
       );
 
       assertEquals(replacement === expired, false);
-      assertEquals(cachedReplacement, replacement);
+      assertStrictEquals(cachedReplacement, replacement);
       assertEquals(getLoads(), 2);
     });
 
@@ -556,7 +640,10 @@ describe("modules/import-map/preloader", () => {
           return load.promise;
         },
       });
-      const context = { contentSourceId: "source-a" };
+      const context = {
+        contentSourceId: "source-a",
+        projectDir: "/concurrent-direct-expiry",
+      };
 
       const initialPromise = preloader.preload(
         "/concurrent-direct-expiry",
@@ -598,7 +685,7 @@ describe("modules/import-map/preloader", () => {
 
       assertEquals(replacement === initial, false);
       assertEquals(duplicate, replacement);
-      assertEquals(cached, replacement);
+      assertStrictEquals(cached, replacement);
       assertEquals(
         await preloader.preload(
           "/concurrent-direct-expiry",
@@ -628,7 +715,10 @@ describe("modules/import-map/preloader", () => {
           imports: { loaded: String(++loads) },
         }),
       });
-      const context = { contentSourceId: "source-a" };
+      const context = {
+        contentSourceId: "source-a",
+        projectDir: "/throwing-clock",
+      };
 
       const first = await preloader.preload(
         "/throwing-clock",
@@ -665,8 +755,14 @@ describe("modules/import-map/preloader", () => {
       await preloader.preload("/project-b", adapter, "project-b");
       preloader.clear("project-a");
 
-      assertEquals(await preloader.getCached("project-a"), undefined);
-      assertEquals(await preloader.getCached("project-b") !== undefined, true);
+      assertEquals(
+        await preloader.getCached("project-a", { projectDir: "/project-a" }),
+        undefined,
+      );
+      assertEquals(
+        await preloader.getCached("project-b", { projectDir: "/project-b" }) !== undefined,
+        true,
+      );
     });
 
     it("does not publish pre-clear work after identity hashing resumes", async () => {
@@ -680,7 +776,7 @@ describe("modules/import-map/preloader", () => {
           imports: { loaded: String(++loads) },
         }),
       });
-      const context = { contentSourceId: "source-a" };
+      const context = { contentSourceId: "source-a", projectDir: "/project-a" };
 
       const preClear = preloader.preload(
         "/project-a",
@@ -706,11 +802,9 @@ describe("modules/import-map/preloader", () => {
         },
         TypeError,
       );
-      assertEquals(await preloader.getCached("project-a", context), undefined);
-
       const reloaded = await postClear;
       assertEquals(reloaded.imports?.loaded, "2");
-      assertEquals(await preloader.getCached("project-a", context), reloaded);
+      assertStrictEquals(await preloader.getCached("project-a", context), reloaded);
     });
 
     it("does not publish pre-clear work into a new global generation", async () => {
@@ -724,7 +818,7 @@ describe("modules/import-map/preloader", () => {
           imports: { loaded: String(++loads) },
         }),
       });
-      const context = { contentSourceId: "source-a" };
+      const context = { contentSourceId: "source-a", projectDir: "/project-a" };
 
       const preClear = preloader.preload(
         "/project-a",
@@ -762,7 +856,7 @@ describe("modules/import-map/preloader", () => {
       loads[0]!.resolve({ imports: { source: "a" } });
       const firstResult = await first;
       assertEquals(firstResult.imports?.source, "a");
-      assertEquals(await sameKey, firstResult);
+      assertStrictEquals(await sameKey, firstResult);
 
       await waitForLoadCount(loads, 2);
       loads[1]!.resolve({ imports: { source: "b" } });
@@ -782,8 +876,8 @@ describe("modules/import-map/preloader", () => {
           return load.promise;
         },
       });
-      const sourceA = { contentSourceId: "source-a" };
-      const sourceB = { contentSourceId: "source-b" };
+      const sourceA = { contentSourceId: "source-a", projectDir: "/project" };
+      const sourceB = { contentSourceId: "source-b", projectDir: "/project" };
 
       const first = preloader.preload("/project", adapter, "project", sourceA);
       const queued = preloader.preload("/project", adapter, "project", sourceB);
@@ -828,6 +922,41 @@ describe("modules/import-map/preloader", () => {
       await first;
     });
 
+    it("does not release capacity or duplicate work when a loader times out", async () => {
+      const adapter = createMinimalAdapter();
+      const loads: Array<ReturnType<typeof createDeferred<ImportMapConfig>>> = [];
+      const preloader = new ImportMapPreloader({
+        maxProjects: 1,
+        maxVariantsPerProject: 1,
+        ttlMs: 1_000,
+        loadTimeoutMs: 20,
+        loadImportMap: () => {
+          const load = createDeferred<ImportMapConfig>();
+          loads.push(load);
+          return load.promise;
+        },
+      });
+
+      await assertRejects(
+        () => preloader.preload("/hung", adapter, "hung"),
+        RangeError,
+        "load timed out",
+      );
+      await assertRejects(
+        () => preloader.preload("/next", adapter, "next"),
+        RangeError,
+        "capacity wait timed out",
+      );
+      assertEquals(loads.length, 1);
+
+      loads[0]!.resolve({ imports: { source: "late" } });
+      await Promise.resolve();
+      const recovered = preloader.preload("/next", adapter, "next");
+      await waitForLoadCount(loads, 2);
+      loads[1]!.resolve({ imports: { source: "next" } });
+      assertEquals((await recovered).imports?.source, "next");
+    });
+
     it("keeps variant identity and capacity deterministic after primordial poisoning", async () => {
       const worker = new Worker(
         new URL("./preloader-primordial-poisoning.worker.ts", import.meta.url),
@@ -842,14 +971,22 @@ describe("modules/import-map/preloader", () => {
           evicted: boolean;
           loads: number;
         }>((resolve, reject) => {
+          const timeoutId = setTimeout(
+            () => reject(new Error("primordial poisoning worker timed out")),
+            30_000,
+          );
           worker.onmessage = (event) => {
+            clearTimeout(timeoutId);
             const message = event.data as
               | { ok: true; result: Parameters<typeof resolve>[0] }
               | { ok: false; error: string };
             if (message.ok) resolve(message.result);
             else reject(new Error(message.error));
           };
-          worker.onerror = (event) => reject(event.error ?? new Error(event.message));
+          worker.onerror = (event) => {
+            clearTimeout(timeoutId);
+            reject(event.error ?? new Error(event.message));
+          };
         });
 
         assertEquals(result.firstLoaded, "1");

@@ -15,6 +15,18 @@ import {
 import { buildDependencyPinningCacheVariant } from "./keys/dependency-pinning.ts";
 
 const JSONStringify = JSON.stringify;
+const ObjectCreate = Object.create;
+const ArrayPrototypeJoin = Array.prototype.join;
+const ArrayPrototypePush = Array.prototype.push;
+const ReflectApply = Reflect.apply;
+
+function arrayPush(values: string[], value: string): void {
+  ReflectApply(ArrayPrototypePush, values, [value]);
+}
+
+function arrayJoin(values: string[], separator: string): string {
+  return ReflectApply(ArrayPrototypeJoin, values, [separator]) as string;
+}
 
 /**
  * Configuration that affects transform output.
@@ -40,82 +52,34 @@ interface TransformConfig {
   dependencyPinningCacheKey?: string;
 }
 
-function encodeJsonStringProperty(key: string, value: string): string {
-  return `${JSONStringify(key)}:${JSONStringify(value)}`;
-}
-
-function encodeJsonNullableStringProperty(key: string, value: string | null): string {
-  return `${JSONStringify(key)}:${JSONStringify(value)}`;
-}
-
-function encodeJsonBooleanProperty(key: string, value: boolean): string {
-  return `${JSONStringify(key)}:${value ? "true" : "false"}`;
-}
-
-function buildAsyncConfigIdentity(config: TransformConfig): string {
-  const dependencyPinningCacheVariant = buildDependencyPinningCacheVariant(
-    config.dependencyPinningCacheKey,
-    config.moduleServerOrigin,
-  );
-  let fields = encodeJsonStringProperty("transformVersion", VERSION);
-  fields += `,${
-    encodeJsonStringProperty("reactVersion", config.reactVersion ?? DEFAULT_REACT_VERSION)
-  }`;
-  fields += `,${encodeJsonStringProperty("jsxImportSource", config.jsxImportSource ?? "react")}`;
-  fields += `,${
-    encodeJsonNullableStringProperty("moduleServerUrl", config.moduleServerUrl ?? null)
-  }`;
-  fields += `,${
-    encodeJsonNullableStringProperty("vendorBundleHash", config.vendorBundleHash ?? null)
-  }`;
-  fields += `,${encodeJsonNullableStringProperty("apiBaseUrl", config.apiBaseUrl ?? null)}`;
-  fields += `,${encodeJsonBooleanProperty("studioEmbed", config.studioEmbed ?? false)}`;
-  fields += `,${encodeJsonBooleanProperty("dev", config.dev ?? false)}`;
-  if (dependencyPinningCacheVariant) {
-    fields += `,${
-      encodeJsonStringProperty("dependencyPinningCacheVariant", dependencyPinningCacheVariant)
-    }`;
-  }
-  fields += `,${encodeJsonStringProperty("csstype", CSSTYPE_VERSION)}`;
-  fields += `,${encodeJsonStringProperty("tailwind", TAILWIND_VERSION)}`;
-  return `{${fields}}`;
-}
-
-function encodeConfigPart(label: string, value: string | undefined): string {
-  if (!value) return "";
-  return `${label}:${value.length}:${value}`;
-}
-
-function buildSyncConfigIdentity(config: TransformConfig): string {
-  let identity = `v${VERSION}:${config.reactVersion ?? DEFAULT_REACT_VERSION}:${
-    config.jsxImportSource ?? "react"
-  }`;
-  const moduleServerUrlPart = encodeConfigPart("modules", config.moduleServerUrl);
-  if (moduleServerUrlPart) identity += `:${moduleServerUrlPart}`;
-  const vendorBundleHashPart = encodeConfigPart("vendor", config.vendorBundleHash);
-  if (vendorBundleHashPart) identity += `:${vendorBundleHashPart}`;
-  const apiBaseUrlPart = encodeConfigPart("api", config.apiBaseUrl);
-  if (apiBaseUrlPart) identity += `:${apiBaseUrlPart}`;
-  if (config.studioEmbed) identity += ":studio";
-  if (config.dev) identity += ":dev";
-  const dependencyPinningCacheVariant = buildDependencyPinningCacheVariant(
-    config.dependencyPinningCacheKey,
-    config.moduleServerOrigin,
-  );
-  if (dependencyPinningCacheVariant) {
-    identity += `:pins:${dependencyPinningCacheVariant}`;
-  }
-
-  return identity;
-}
-
 /**
  * Compute a hash of transform-affecting configuration.
  *
  * Changes to these values should invalidate cached transforms.
  */
 export function computeConfigHash(config: TransformConfig): Promise<string> {
-  return computeHash(buildAsyncConfigIdentity(config));
+  const dependencyPinningCacheVariant = buildDependencyPinningCacheVariant(
+    config.dependencyPinningCacheKey,
+    config.moduleServerOrigin,
+  );
+  // Null-prototype storage preserves the existing JSON cache-key format while
+  // preventing project code from injecting an inherited toJSON hook.
+  const normalized = ObjectCreate(null) as Record<string, string | boolean | null>;
+  normalized.transformVersion = VERSION;
+  normalized.reactVersion = config.reactVersion ?? DEFAULT_REACT_VERSION;
+  normalized.jsxImportSource = config.jsxImportSource ?? "react";
+  normalized.moduleServerUrl = config.moduleServerUrl ?? null;
+  normalized.vendorBundleHash = config.vendorBundleHash ?? null;
+  normalized.apiBaseUrl = config.apiBaseUrl ?? null;
+  normalized.studioEmbed = config.studioEmbed ?? false;
+  normalized.dev = config.dev ?? false;
+  if (dependencyPinningCacheVariant) {
+    normalized.dependencyPinningCacheVariant = dependencyPinningCacheVariant;
+  }
+  normalized.csstype = CSSTYPE_VERSION;
+  normalized.tailwind = TAILWIND_VERSION;
+
+  return computeHash(JSONStringify(normalized));
 }
 
 /**
@@ -124,5 +88,30 @@ export function computeConfigHash(config: TransformConfig): Promise<string> {
  * Use this when you need a config hash but can't afford async overhead.
  */
 export function computeConfigHashSync(config: TransformConfig): string {
-  return buildSyncConfigIdentity(config);
+  const parts: string[] = [];
+  arrayPush(parts, `v${VERSION}`);
+  arrayPush(parts, config.reactVersion ?? DEFAULT_REACT_VERSION);
+  arrayPush(parts, config.jsxImportSource ?? "react");
+  const moduleServerUrlPart = encodeConfigPart("modules", config.moduleServerUrl);
+  if (moduleServerUrlPart) arrayPush(parts, moduleServerUrlPart);
+  const vendorBundleHashPart = encodeConfigPart("vendor", config.vendorBundleHash);
+  if (vendorBundleHashPart) arrayPush(parts, vendorBundleHashPart);
+  const apiBaseUrlPart = encodeConfigPart("api", config.apiBaseUrl);
+  if (apiBaseUrlPart) arrayPush(parts, apiBaseUrlPart);
+  if (config.studioEmbed) arrayPush(parts, "studio");
+  if (config.dev) arrayPush(parts, "dev");
+  const dependencyPinningCacheVariant = buildDependencyPinningCacheVariant(
+    config.dependencyPinningCacheKey,
+    config.moduleServerOrigin,
+  );
+  if (dependencyPinningCacheVariant) {
+    arrayPush(parts, `pins:${dependencyPinningCacheVariant}`);
+  }
+
+  return arrayJoin(parts, ":");
+}
+
+function encodeConfigPart(label: string, value: string | undefined): string {
+  if (!value) return "";
+  return `${label}:${value.length}:${value}`;
 }
