@@ -103,7 +103,6 @@ import {
   hasRuntimeToolInventory,
   withRuntimeToolInventory,
 } from "./tool-inventory.ts";
-import { markRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
 
 // Re-export from submodules
 export { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";

@@ -156,10 +156,18 @@ Deno.test("agent service routes scope the exact inbound signal to all preparatio
       return { executionId: "exec-1" };
     },
   });
-  const agUiRequest = createAuthenticatedRequest("/api/ag-ui", createAgUiBody());
-  const durableRequest = createAuthenticatedRequest(
-    "/api/control-plane/runs/run-1/stream",
-    createRuntimeAgentInvocationBody(),
+  const agUiAbortController = new AbortController();
+  const durableAbortController = new AbortController();
+  const agUiRequest = new Request(
+    createAuthenticatedRequest("/api/ag-ui", createAgUiBody()),
+    { signal: agUiAbortController.signal },
+  );
+  const durableRequest = new Request(
+    createAuthenticatedRequest(
+      "/api/control-plane/runs/run-1/stream",
+      createRuntimeAgentInvocationBody(),
+    ),
+    { signal: durableAbortController.signal },
   );
 
   await routeSet.handleAgUiRequest(agUiRequest);
@@ -168,7 +176,13 @@ Deno.test("agent service routes scope the exact inbound signal to all preparatio
     runId: "run-1",
   });
 
-  assertEquals(observedSignals, [agUiRequest.signal, durableRequest.signal]);
+  assertEquals(observedSignals.length, 2);
+  assertEquals(observedSignals[0]?.aborted, false);
+  assertEquals(observedSignals[1]?.aborted, false);
+  agUiAbortController.abort();
+  durableAbortController.abort();
+  assertEquals(observedSignals[0]?.aborted, true);
+  assertEquals(observedSignals[1]?.aborted, true);
   assertEquals(getHostedRequestPreparationSignal(), undefined);
 });
 

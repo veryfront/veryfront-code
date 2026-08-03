@@ -239,7 +239,7 @@ describe("internal-agents/run-stream", () => {
       assertEquals((entry as Tool).description, "Caller-supplied shadow definition");
       assertEquals(entry === projectTool, false);
     } finally {
-      toolRegistry.delete("number-generator");
+      toolRegistryInternal.delete("number-generator");
     }
   });
 
@@ -253,7 +253,7 @@ describe("internal-agents/run-stream", () => {
       execute: () => ({ randomNumber: 7 }),
     } as unknown as Tool;
 
-    toolRegistry.register("number-generator", projectTool);
+    toolRegistryInternal.register("number-generator", projectTool);
     try {
       const runtimeAgent = {
         id: "random",
@@ -282,7 +282,7 @@ describe("internal-agents/run-stream", () => {
       assertEquals(typeof entry, "object");
       assertEquals((entry as Tool).description, "Caller-supplied shadow definition");
     } finally {
-      toolRegistry.delete("number-generator");
+      toolRegistryInternal.delete("number-generator");
     }
   });
 
@@ -296,7 +296,7 @@ describe("internal-agents/run-stream", () => {
       execute: () => ({ randomNumber: 7 }),
     } as unknown as Tool;
 
-    toolRegistry.register("number-generator", projectTool);
+    toolRegistryInternal.register("number-generator", projectTool);
     try {
       const runtimeAgent = {
         id: "random",
