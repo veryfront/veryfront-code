@@ -611,7 +611,7 @@ function assertReadyManifestCoversPageRoutes(
 }
 
 function readReleaseAssetResponseDataProperty(value: unknown, key: PropertyKey): unknown {
-  if (typeof value !== "object" || value === null) return undefined;
+  if (value === null || typeof value !== "object") return undefined;
   try {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     return descriptor && "value" in descriptor ? descriptor.value : undefined;
