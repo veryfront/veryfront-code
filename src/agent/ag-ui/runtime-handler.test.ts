@@ -184,6 +184,50 @@ describe("agent/ag-ui-runtime-handler", () => {
     });
   });
 
+  it("withholds infrastructure headers from runtime context callbacks", async () => {
+    let admissionToken: string | null = null;
+    const handler = createAgUiRuntimeHandler({
+      beforeParse: ({ request }) => {
+        admissionToken = request.headers.get("x-token");
+      },
+      context: (request) => {
+        assertEquals(request.headers.get("authorization"), "Bearer public-user");
+        assertEquals(request.headers.get("cookie"), "session=public");
+        assertEquals(request.headers.get("x-token"), null);
+        assertEquals(request.headers.get("x-project-slug"), null);
+        assertEquals(request.headers.get("x-forwarded-host"), null);
+        return { admitted: true };
+      },
+      execute: ({ request, context }) => {
+        assertEquals(request.headers.get("authorization"), "Bearer public-user");
+        assertEquals(request.headers.get("x-token"), null);
+        return Response.json(context);
+      },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer public-user",
+          Cookie: "session=public",
+          "x-token": "host-secret",
+          "x-project-slug": "infrastructure-project",
+          "x-forwarded-host": "trusted-proxy.example",
+        },
+        body: JSON.stringify({
+          runId: "run_runtime_boundary",
+          threadId: crypto.randomUUID(),
+          messages: [{ id: "user-1", role: "user", content: "Hello" }],
+        }),
+      }),
+    );
+
+    assertEquals(admissionToken, "host-secret");
+    assertEquals(await response.json(), { admitted: true });
+  });
+
   it("lets hosts short-circuit before parsing the runtime request body", async () => {
     let beforeParseCalls = 0;
     let executeCalls = 0;

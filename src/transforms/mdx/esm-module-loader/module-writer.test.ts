@@ -5,6 +5,7 @@ import { buildMdxModuleCacheIdentity } from "./module-writer.ts";
 import { mdxRenderer } from "../index.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/deno.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 function cacheKeyForDependencies(
   dependencies: Readonly<Record<string, string>>,
@@ -94,43 +95,42 @@ describe("MDX root module cache identity", () => {
     const snapshotPinKey = cacheKeyForDependencies(dependencies);
     let validRequests = 0;
     let rawRequests = 0;
-    const server = Deno.serve(
-      { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-      (request) => {
-        const url = new URL(request.url);
-        if (url.pathname !== modulePath) return new Response("not found", { status: 404 });
-        if (
-          url.searchParams.get("pins") !== snapshotPinKey ||
-          url.searchParams.get("ssr") !== "true"
-        ) {
-          rawRequests++;
-          return new Response("missing dependency snapshot", { status: 409 });
-        }
-
-        validRequests++;
-        return new Response('export default "STRICT_CHILD_OK";', {
-          headers: { "content-type": "application/javascript" },
-        });
-      },
-    );
-    const address = server.addr;
-    if (address.transport !== "tcp") throw new Error("expected TCP test server");
-    const origin = `http://127.0.0.1:${address.port}`;
+    const origin = "https://93.184.216.34";
     const projectDir = await Deno.makeTempDir({ prefix: "vf-mdx-origin-" });
 
     try {
-      const mod = await mdxRenderer.loadModuleESM(
-        `import child from "${origin}${modulePath}";\nexport default child;`,
-        denoAdapter,
-        `project-${crypto.randomUUID()}`,
-        projectDir,
-        "strict-origin",
-        `source-${crypto.randomUUID()}`,
-        "19.1.1",
-        snapshotPinKey,
-        dependencies,
-        projectDir,
-        origin,
+      const mod = await withMockFetch(
+        async (input, init) => {
+          const request = new Request(input, init);
+          const url = new URL(request.url);
+          if (url.pathname !== modulePath) return new Response("not found", { status: 404 });
+          if (
+            url.searchParams.get("pins") !== snapshotPinKey ||
+            url.searchParams.get("ssr") !== "true"
+          ) {
+            rawRequests++;
+            return new Response("missing dependency snapshot", { status: 409 });
+          }
+
+          validRequests++;
+          return new Response('export default "STRICT_CHILD_OK";', {
+            headers: { "content-type": "application/javascript" },
+          });
+        },
+        () =>
+          mdxRenderer.loadModuleESM(
+            `import child from "${origin}${modulePath}";\nexport default child;`,
+            denoAdapter,
+            `project-${crypto.randomUUID()}`,
+            projectDir,
+            "strict-origin",
+            `source-${crypto.randomUUID()}`,
+            "19.1.1",
+            snapshotPinKey,
+            dependencies,
+            projectDir,
+            origin,
+          ),
       );
 
       assertEquals(mod.default as unknown, "STRICT_CHILD_OK");
@@ -138,8 +138,6 @@ describe("MDX root module cache identity", () => {
       assertEquals(rawRequests, 0);
     } finally {
       mdxRenderer.clearCache();
-      await server.shutdown();
-      await server.finished;
       await Deno.remove(projectDir, { recursive: true });
       const esbuild = await import("veryfront/extensions/bundler");
       await esbuild.stop();

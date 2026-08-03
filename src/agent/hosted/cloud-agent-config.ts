@@ -144,6 +144,7 @@ async function discoverProjectPrimitives(
   context.discoveryResult = await discoverProjectAgentRuntime({
     projectDir: context.projectDir,
     adapter: nodeAdapter,
+    allowHostProjectCodeExecution: true,
   });
 }
 

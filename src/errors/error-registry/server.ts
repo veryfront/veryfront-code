@@ -48,6 +48,14 @@ export const SERVICE_OVERLOADED = defineError({
   suggestion: "Reduce load or scale up resources",
 });
 
+export const PROJECT_EXECUTION_UNAVAILABLE = defineError({
+  slug: "project-execution-unavailable",
+  category: "SERVER",
+  status: 503,
+  title: "Project execution unavailable",
+  suggestion: "Route the project to a dedicated isolated runtime",
+});
+
 export const SEMAPHORE_TIMEOUT = defineError({
   slug: "semaphore-timeout",
   category: "SERVER",
@@ -133,6 +141,7 @@ export const SERVER_REGISTRY = {
   "file-watch-error": FILE_WATCH_ERROR,
   "request-error": REQUEST_ERROR,
   "service-overloaded": SERVICE_OVERLOADED,
+  "project-execution-unavailable": PROJECT_EXECUTION_UNAVAILABLE,
   "semaphore-timeout": SEMAPHORE_TIMEOUT,
   "circuit-breaker-open": CIRCUIT_BREAKER_OPEN,
   "cache-path-mismatch": CACHE_PATH_MISMATCH,

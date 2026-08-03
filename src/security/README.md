@@ -138,6 +138,27 @@ create time-of-check/time-of-use races on adapters without descriptor-relative
 filesystem operations. Production deployments must not grant project code
 independent write access to the host paths being served.
 
+## Host outbound HTTP policy
+
+Framework-owned fetches of tenant-selected remote modules, OpenAPI and remote
+MCP endpoints, OAuth provider endpoints, and project-configured model and
+embedding provider base URLs pass through a DNS-pinned HTTP boundary. It admits only public
+`http:` and `https:` destinations, rejects URL credentials, blocks loopback,
+private, link-local, metadata, and other non-global addresses, and repeats both
+the network and caller-specific allowlist checks before every redirect hop.
+Cross-origin redirects do not retain authorization or cookie headers.
+
+`VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS=1` is an operator-owned compatibility
+override. It disables the private-network destination check for these host
+fetches and must remain unset in a shared runtime. Project environment overlays
+cannot enable it. URL scheme, URL-credential, redirect, and caller allowlist
+checks remain active when the override is enabled.
+
+Cloud credentials are bound to their endpoint provenance: a request-scoped
+Cloud base URL must carry a request-scoped token, and gateway fetches admit only
+their configured origin with redirects rejected. A caller-selected endpoint
+cannot inherit a host or request credential.
+
 ## Internal worker isolation
 
 [`sandbox/`](./sandbox/) is an internal runtime implementation used by Routing,
@@ -159,23 +180,57 @@ The worker pool provides:
   metadata, and other non-global destinations by default; and
 - deterministic cleanup of workers, streams, timers, and egress brokers.
 
-Worker isolation is disabled unless `WORKER_ISOLATION_ENABLED` and the relevant
-`WORKER_ISOLATION_API`, `WORKER_ISOLATION_DATA`, or `WORKER_ISOLATION_SSR` flag
-are enabled. Defined invalid flags and pool limits are startup errors; they are
-not silently replaced with defaults.
+The `WORKER_ISOLATION_ENABLED` and surface-specific
+`WORKER_ISOLATION_API`, `WORKER_ISOLATION_DATA`, and `WORKER_ISOLATION_SSR`
+flags opt trusted local projects into worker execution. They cannot disable the
+shared-runtime boundary. A dedicated single-project runtime may execute
+prepared API source in its local worker pool. A shared multi-project/proxy
+runtime never executes tenant API source in the host process or a same-process
+Worker: API ownership returns the typed
+`project-execution-unavailable` 503 response until the request is routed to a
+genuinely external or dedicated isolated project runtime. Raw-path server-data
+modules are local-only; remote data and renderer-backed module endpoints return
+503 before resolving project modules. Shared-runtime CORS preflights never
+import route modules to discover methods, and component-snippet requests fail
+before source reads or compilation. Shared markdown previews likewise stop
+before source reads or custom not-found rendering.
+Defined invalid flags and pool limits are startup errors; they are not silently
+replaced with defaults.
 
-`WORKER_ISOLATION_SSR=1` additionally requires explicit registration of
-`@veryfront/ext-react-ssr`. That extension supplies a local, offline renderer
+OpenAPI metadata is currently attached to handler functions. Because reading
+it requires route evaluation, runtime OpenAPI generation is available only for
+explicitly trusted local projects; remote requests fail closed before route
+discovery or import.
+
+Executable primitive discovery and root project middleware use the same
+explicit host-execution capability. Local development and dedicated
+single-project runtimes grant it at their host-owned entrypoints. Shared proxy
+runtimes reject these operations before reading or evaluating tenant modules;
+they must provide an isolated project runtime before enabling either surface.
+
+`WORKER_ISOLATION_SSR=1` additionally requires explicit registration of an
+`IsolatedSsrRendererProvider`. The provider supplies a local, offline renderer
 bundle through the isolated-SSR contract. Core does not import React, and there
-is no host-rendering or remote-import fallback; an SSR request fails closed with
-an installation hint when the extension is absent. API and data workers do not
-resolve or receive the renderer contract.
+is no host-rendering or remote-import fallback. The current HTTP renderer does
+not yet produce a generation-owned isolated page and layout graph, so remote
+SSR and server-executing RSC endpoints return `503 Service Unavailable` before
+resolving a renderer. API and data workers do not resolve or receive the
+renderer contract.
 
 Deno Workers share the host process. Worker retirement is lifecycle hygiene,
-not a hard per-worker memory or CPU boundary. A project can still create
-host-process memory pressure or consume a worker thread until the host
-terminates it. Strong memory, CPU, and process containment requires a
-separately limited process or container.
+not a hard per-worker memory or CPU boundary. They are therefore limited to
+local development and dedicated single-project execution, where one project
+cannot deny service to unrelated tenants. Shared multi-project execution must
+use a separately limited external process or container; there is no operator
+flag that reclassifies same-process Workers as a safe tenant boundary.
+
+Before application-controlled API handlers, project middleware, SSR/data
+rendering, or RSC action authorization receives a request, the runtime creates
+a detached application request. Public application credentials such as
+`Authorization` and `Cookie` are retained. Infrastructure-only credentials,
+project/source identity, trusted-proxy metadata, and `x-veryfront-*` control
+headers are withheld. The original request remains available only to the
+host-owned admission and routing pipeline.
 
 ## Internal-only files
 

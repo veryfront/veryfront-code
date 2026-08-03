@@ -126,6 +126,10 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
 
 Deno.test("hosted first provider call filters skill tools for every tool selector", async () => {
   try {
+    // Use the standards-reserved public documentation address so the outbound
+    // guard can validate the destination before handing the request to the
+    // deterministic test transport.
+    const testApiOrigin = "https://93.184.216.34";
     const providerCappedToolNames = Array.from(
       { length: 129 },
       (_, index) => `provider_cap_tool_${String(index).padStart(3, "0")}`,
@@ -247,8 +251,8 @@ Deno.test("hosted first provider call filters skill tools for every tool selecto
           : { hostToolPolicy: { allow: testCase.hostToolAllow } }),
         options: { ...prepared.creationOptions, userId: "user-1" },
         config: {
-          apiUrl: "https://api.example.com",
-          apiMcpUrl: "https://api.example.com/mcp",
+          apiUrl: testApiOrigin,
+          apiMcpUrl: `${testApiOrigin}/mcp`,
         },
         buildLocalTools: () => ({
           ...Object.fromEntries(
@@ -296,6 +300,7 @@ Deno.test("hosted first provider call filters skill tools for every tool selecto
         },
       );
 
+      assertExists(capturedProviderBody);
       const providerBody = JSON.stringify(capturedProviderBody);
       assertEquals(providerBody.includes("Deploy the project"), true);
       for (const toolName of testCase.expectedPresent) {

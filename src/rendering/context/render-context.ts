@@ -21,6 +21,8 @@ export interface RenderContext {
   mode: "development" | "production";
   /** Whether browser-facing local filesystem module URLs are trusted. */
   isLocalProject?: boolean;
+  /** Narrow host-owned capability for project-code execution. */
+  allowHostProjectCodeExecution?: boolean;
   adapter: RuntimeAdapter;
   cachePrefix: string;
   environment: RenderEnvironment;
@@ -83,6 +85,8 @@ export function createRenderContext(
     config: ctx.config,
     mode: isLocal ? "development" : "production",
     isLocalProject: isLocal,
+    allowHostProjectCodeExecution: isLocal ||
+      ctx.allowHostProjectCodeExecution === true,
     adapter: ctx.adapter,
     cachePrefix,
     environment,
@@ -137,6 +141,8 @@ export function createRenderContextFromEnriched(
     config: enriched.config,
     mode: enriched.mode,
     isLocalProject: enriched.isLocalProject,
+    allowHostProjectCodeExecution: enriched.isLocalProject ||
+      enriched.allowHostProjectCodeExecution === true,
     adapter: enriched.adapter,
     cachePrefix: enriched.cachePrefix,
     environment: enriched.environment,

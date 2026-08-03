@@ -1,18 +1,37 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { agentLogger as logger } from "#veryfront/utils";
+import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { API_ERROR, CONFIG_INVALID, INVALID_ARGUMENT } from "#veryfront/errors";
 import {
-  getVeryfrontCloudAuthToken,
   getVeryfrontCloudBootstrap,
+  getVeryfrontCloudHostBootstrap,
   getVeryfrontCloudProjectSlug,
 } from "#veryfront/platform/cloud/resolver.ts";
+import {
+  guardedOutboundFetch,
+  OutboundRequestBlockedError,
+} from "#veryfront/security/http/outbound-fetch.ts";
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
 import { assertSafeBlobId, isSafeBlobId } from "./blob-id.ts";
 
 const DEFAULT_PREFIX = ".veryfront/blobs/";
 const DATA_SUFFIX = ".blob";
 const META_SUFFIX = ".meta.json";
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
+const MAX_RESPONSE_BYTES = 128 * 1024 * 1024;
+const DEFAULT_MAX_UPLOAD_BYTES = 64 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 128 * 1024 * 1024;
+const ERROR_RESPONSE_BYTES = 8 * 1024;
+const MAX_BLOB_MIME_TYPE_BYTES = 1_024;
+const MAX_BLOB_METADATA_ENTRIES = 128;
+const MAX_BLOB_METADATA_KEY_BYTES = 256;
+const MAX_BLOB_METADATA_VALUE_BYTES = 8 * 1024;
+const MAX_BLOB_USER_METADATA_BYTES = 64 * 1024;
+const MAX_BLOB_METADATA_ENVELOPE_BYTES = 4 * 1024;
+const MAX_BLOB_METADATA_SIDECAR_BYTES = 128 * 1024;
+const textEncoder = new TextEncoder();
 
 const getUploadCreateResponseSchema = defineSchema((v) =>
   v.object({
@@ -88,6 +107,12 @@ export interface VeryfrontCloudBlobStorageConfig {
   downloadTtl?: number;
   /** Time source for tests. */
   now?: () => Date;
+  /** Full-operation outbound deadline, including response-body consumption. */
+  requestTimeoutMs?: number;
+  /** Maximum decoded API or signed-download response body size. */
+  maxResponseBytes?: number;
+  /** Maximum bytes accepted for one blob upload, including streamed input. */
+  maxUploadBytes?: number;
 }
 
 interface ResolvedConfig {
@@ -98,6 +123,237 @@ interface ResolvedConfig {
   defaultTtl?: number;
   downloadTtl?: number;
   now: () => Date;
+  requestTimeoutMs: number;
+  maxResponseBytes: number;
+  maxUploadBytes: number;
+}
+
+function requirePositiveInteger(value: number, name: string, maximum: number): number {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > maximum) {
+    throw CONFIG_INVALID.create({
+      detail: `${name} must be a positive integer no greater than ${maximum}`,
+    });
+  }
+  return value;
+}
+
+function createRequestScope(timeoutMs: number): { signal: AbortSignal; dispose(): void } {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(new DOMException("Blob request timed out", "TimeoutError")),
+    timeoutMs,
+  );
+  return { signal: controller.signal, dispose: () => clearTimeout(timeout) };
+}
+
+async function readResponseBytes(
+  response: Response,
+  maximumBytes: number,
+  signal: AbortSignal,
+): Promise<Uint8Array> {
+  if (!response.body) return new Uint8Array();
+  return await readStreamBytes(response.body, maximumBytes, signal, "Blob response");
+}
+
+async function readStreamBytes(
+  stream: ReadableStream<Uint8Array>,
+  maximumBytes: number,
+  signal: AbortSignal,
+  label: string,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  let complete = false;
+  let failure: unknown;
+  const read = async (): Promise<ReadableStreamReadResult<Uint8Array>> =>
+    await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+      const onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      reader.read().then(resolve, reject).finally(() =>
+        signal.removeEventListener("abort", onAbort)
+      );
+    });
+  try {
+    for (;;) {
+      signal.throwIfAborted();
+      const { done, value } = await read();
+      if (done) {
+        complete = true;
+        break;
+      }
+      if (length > maximumBytes - value.byteLength) {
+        throw new RangeError(`${label} exceeds ${maximumBytes} bytes`);
+      }
+      chunks.push(value);
+      length += value.byteLength;
+    }
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    if (!complete) {
+      // A project-owned stream can return a cancellation promise that never
+      // settles. Start cleanup, but never let it extend the operation deadline.
+      try {
+        void reader.cancel(failure ?? signal.reason).catch(() => {});
+      } catch {
+        // Cancellation is best effort after the bounded read has failed.
+      }
+    }
+    try {
+      reader.releaseLock();
+    } catch {
+      // A pending hostile read can keep the lock until cancellation settles.
+    }
+  }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+function invalidBlobOption(detail: string): never {
+  throw INVALID_ARGUMENT.create({ detail });
+}
+
+function boundedUtf8Length(value: string, maximumBytes: number, label: string): number {
+  // UTF-8 uses at least one byte per UTF-16 code unit for valid scalar text.
+  // Reject by code-unit length first so a huge string is never encoded merely
+  // to discover that it exceeds the byte ceiling.
+  if (value.length > maximumBytes) {
+    return invalidBlobOption(`${label} exceeds ${maximumBytes} bytes`);
+  }
+  const length = textEncoder.encode(value).byteLength;
+  if (length > maximumBytes) {
+    return invalidBlobOption(`${label} exceeds ${maximumBytes} bytes`);
+  }
+  return length;
+}
+
+function normalizeMimeType(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || value !== value.trim()) {
+    return invalidBlobOption("Blob mimeType must be a non-empty trimmed string");
+  }
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit <= 0x1f || codeUnit === 0x7f) {
+      return invalidBlobOption("Blob mimeType must not contain control characters");
+    }
+  }
+  boundedUtf8Length(value, MAX_BLOB_MIME_TYPE_BYTES, "Blob mimeType");
+  return value;
+}
+
+function snapshotBlobMetadata(
+  value: unknown,
+  maximumBytes: number,
+): Record<string, string> | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return invalidBlobOption("Blob metadata must be a plain string record");
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return invalidBlobOption("Blob metadata must be a plain string record");
+  }
+
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const keys = Reflect.ownKeys(descriptors);
+  if (keys.length > MAX_BLOB_METADATA_ENTRIES) {
+    return invalidBlobOption(
+      `Blob metadata must contain at most ${MAX_BLOB_METADATA_ENTRIES} entries`,
+    );
+  }
+
+  const snapshot = Object.create(null) as Record<string, string>;
+  let rawBytes = 0;
+  for (const key of keys) {
+    if (typeof key !== "string") {
+      return invalidBlobOption("Blob metadata keys must be strings");
+    }
+    const descriptor = descriptors[key];
+    if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+      return invalidBlobOption("Blob metadata must contain enumerable data properties only");
+    }
+    if (typeof descriptor.value !== "string") {
+      return invalidBlobOption("Blob metadata values must be strings");
+    }
+    const keyBytes = boundedUtf8Length(
+      key,
+      MAX_BLOB_METADATA_KEY_BYTES,
+      "Blob metadata key",
+    );
+    const valueBytes = boundedUtf8Length(
+      descriptor.value,
+      MAX_BLOB_METADATA_VALUE_BYTES,
+      `Blob metadata value for "${key}"`,
+    );
+    if (rawBytes > maximumBytes - keyBytes - valueBytes) {
+      return invalidBlobOption(`Blob metadata exceeds ${maximumBytes} bytes`);
+    }
+    rawBytes += keyBytes + valueBytes;
+    snapshot[key] = descriptor.value;
+  }
+
+  const serialized = JSON.stringify(snapshot);
+  boundedUtf8Length(serialized, maximumBytes, "Blob metadata");
+  return snapshot;
+}
+
+function snapshotStoreBlobOptions(value: unknown): {
+  id: unknown;
+  mimeType: unknown;
+  metadata: unknown;
+  ttl: unknown;
+} {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return invalidBlobOption("Blob storage options must be a plain object");
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return invalidBlobOption("Blob storage options must be a plain object");
+  }
+
+  const read = (name: string): unknown => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, name);
+    if (!descriptor) return undefined;
+    if (!("value" in descriptor)) {
+      return invalidBlobOption(`Blob storage option "${name}" must be a data property`);
+    }
+    return descriptor.value;
+  };
+  return {
+    id: read("id"),
+    mimeType: read("mimeType"),
+    metadata: read("metadata"),
+    ttl: read("ttl"),
+  };
+}
+
+function normalizeBlobTtl(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    return invalidBlobOption("Blob ttl must be a non-negative safe integer");
+  }
+  return value;
+}
+
+async function readErrorBody(response: Response, signal: AbortSignal): Promise<string> {
+  try {
+    return (await readResponseTextPrefix(response, ERROR_RESPONSE_BYTES, signal, {
+      fatalUtf8: true,
+    })).text;
+  } catch {
+    return "";
+  }
 }
 
 function normalizePrefix(prefix: string | undefined): string {
@@ -156,23 +412,45 @@ async function attachSignedUrl(
 
 async function normalizeUploadBody(
   data: string | Uint8Array | Blob | ReadableStream,
+  maximumBytes: number,
+  signal: AbortSignal,
 ): Promise<{ body: BodyInit; size: number }> {
+  const assertWithinLimit = (size: number): void => {
+    if (size > maximumBytes) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Veryfront Cloud blob upload exceeds ${maximumBytes} bytes`,
+      });
+    }
+  };
+
+  signal.throwIfAborted();
   if (typeof data === "string") {
     const bytes = new TextEncoder().encode(data);
+    assertWithinLimit(bytes.byteLength);
     return { body: bytes, size: bytes.byteLength };
   }
 
   if (data instanceof Uint8Array) {
     const bytes = Uint8Array.from(data);
+    assertWithinLimit(bytes.byteLength);
     return { body: bytes, size: bytes.byteLength };
   }
 
   if (data instanceof Blob) {
+    assertWithinLimit(data.size);
     return { body: data, size: data.size };
   }
 
   if (data instanceof ReadableStream) {
-    const bytes = new Uint8Array(await new Response(data).arrayBuffer());
+    let bytes: Uint8Array<ArrayBuffer>;
+    try {
+      bytes = await readStreamBytes(data, maximumBytes, signal, "Blob upload");
+    } catch (error) {
+      if (error instanceof RangeError) {
+        throw INVALID_ARGUMENT.create({ detail: error.message, cause: error });
+      }
+      throw error;
+    }
     return { body: bytes, size: bytes.byteLength };
   }
 
@@ -193,68 +471,95 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     options: StoreBlobOptions = {},
   ): Promise<BlobRef> {
     const resolved = this.resolveConfig();
-    const id = options.id ?? crypto.randomUUID();
-    const mimeType = options.mimeType ?? "application/octet-stream";
-    const { body, size } = await normalizeUploadBody(data);
-    const createdAt = resolved.now();
-    const ttl = options.ttl ?? resolved.defaultTtl;
-    const expiresAt = ttl ? new Date(createdAt.getTime() + ttl * 1000) : undefined;
-
-    const blobRef: BlobRef = {
-      __kind: "blob",
-      id,
-      size,
-      mimeType,
-      createdAt,
-      expiresAt,
-      metadata: options.metadata,
-    };
-
-    const metadataPayload = BlobMetadataSchema.parse({
-      version: 1,
-      id,
-      size,
-      mimeType,
-      createdAt: createdAt.toISOString(),
-      expiresAt: expiresAt?.toISOString(),
-      metadata: options.metadata,
-    });
-
-    const dataPath = this.getDataPath(id, resolved.prefix);
-    const metadataPath = this.getMetadataPath(id, resolved.prefix);
-    const metadataBytes = new TextEncoder().encode(JSON.stringify(metadataPayload));
-
-    await this.uploadFile(dataPath, mimeType, size, body, resolved);
-
+    const scope = createRequestScope(resolved.requestTimeoutMs);
     try {
-      await this.uploadFile(
-        metadataPath,
-        "application/json",
-        metadataBytes.byteLength,
-        metadataBytes,
-        resolved,
+      const optionSnapshot = snapshotStoreBlobOptions(options);
+      const id = optionSnapshot.id ?? crypto.randomUUID();
+      assertSafeBlobId(id);
+      const mimeType = normalizeMimeType(
+        optionSnapshot.mimeType ?? "application/octet-stream",
       );
-    } catch (error) {
-      logger.warn("Failed to upload blob metadata sidecar, cleaning up primary upload", {
+      const metadata = snapshotBlobMetadata(
+        optionSnapshot.metadata,
+        Math.min(resolved.maxUploadBytes, MAX_BLOB_USER_METADATA_BYTES),
+      );
+      const { body, size } = await normalizeUploadBody(
+        data,
+        resolved.maxUploadBytes,
+        scope.signal,
+      );
+      const createdAt = resolved.now();
+      const ttl = normalizeBlobTtl(optionSnapshot.ttl ?? resolved.defaultTtl);
+      const expiresAt = ttl ? new Date(createdAt.getTime() + ttl * 1000) : undefined;
+
+      const blobRef: BlobRef = {
+        __kind: "blob",
         id,
-        dataPath,
-        error: error instanceof Error ? error.message : String(error),
+        size,
+        mimeType,
+        createdAt,
+        expiresAt,
+        metadata,
+      };
+
+      const metadataPayload = BlobMetadataSchema.parse({
+        version: 1,
+        id,
+        size,
+        mimeType,
+        createdAt: createdAt.toISOString(),
+        expiresAt: expiresAt?.toISOString(),
+        metadata,
       });
 
-      try {
-        await this.deleteUpload(dataPath, resolved);
-      } catch (cleanupError) {
-        logger.warn("Failed to clean up primary upload after metadata failure", {
-          id,
-          dataPath,
-          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+      const dataPath = this.getDataPath(id, resolved.prefix);
+      const metadataPath = this.getMetadataPath(id, resolved.prefix);
+      const metadataBytes = new TextEncoder().encode(JSON.stringify(metadataPayload));
+      const metadataSidecarLimit = Math.min(
+        MAX_BLOB_METADATA_SIDECAR_BYTES,
+        resolved.maxUploadBytes + MAX_BLOB_METADATA_ENVELOPE_BYTES,
+      );
+      if (metadataBytes.byteLength > metadataSidecarLimit) {
+        throw INVALID_ARGUMENT.create({
+          detail: `Blob metadata sidecar exceeds ${metadataSidecarLimit} bytes`,
         });
       }
 
-      throw error;
-    }
+      await this.uploadFile(dataPath, mimeType, size, body, resolved, scope.signal);
 
-    return blobRef;
+      try {
+        await this.uploadFile(
+          metadataPath,
+          "application/json",
+          metadataBytes.byteLength,
+          metadataBytes,
+          resolved,
+          scope.signal,
+        );
+      } catch (error) {
+        logger.warn("Failed to upload blob metadata sidecar, cleaning up primary upload", {
+          id,
+          dataPath,
+          error: error instanceof Error ? error.message : String(error),
+        });
+
+        try {
+          await this.deleteUpload(dataPath, resolved);
+        } catch (cleanupError) {
+          logger.warn("Failed to clean up primary upload after metadata failure", {
+            id,
+            dataPath,
+            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          });
+        }
+
+        throw error;
+      }
+
+      return blobRef;
+    } finally {
+      scope.dispose();
+    }
   }
 
   async getStream(id: string): Promise<ReadableStream | null> {
@@ -352,8 +657,20 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
   }
 
   private resolveConfig(): ResolvedConfig {
-    const apiBaseUrl = this.config.apiBaseUrl ?? getVeryfrontCloudBootstrap().apiBaseUrl;
-    const apiToken = this.config.apiToken ?? getVeryfrontCloudAuthToken();
+    const bootstrap = getVeryfrontCloudBootstrap();
+    const hostBootstrap = getVeryfrontCloudHostBootstrap();
+    if (this.config.apiBaseUrl && !this.config.apiToken) {
+      throw CONFIG_INVALID.create({
+        detail:
+          "VeryfrontCloudBlobStorage apiBaseUrl requires an explicit apiToken. A caller-selected endpoint cannot use request- or host-owned credentials.",
+      });
+    }
+    const connection = this.config.apiBaseUrl && this.config.apiToken
+      ? { apiBaseUrl: this.config.apiBaseUrl, apiToken: this.config.apiToken }
+      : this.config.apiToken
+      ? { apiBaseUrl: hostBootstrap.apiBaseUrl, apiToken: this.config.apiToken }
+      : { apiBaseUrl: bootstrap.apiBaseUrl, apiToken: bootstrap.apiToken };
+    const { apiBaseUrl, apiToken } = connection;
     const projectSlug = this.config.projectSlug ?? getVeryfrontCloudProjectSlug();
 
     if (!apiToken) {
@@ -378,6 +695,21 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       defaultTtl: this.config.defaultTtl,
       downloadTtl: this.config.downloadTtl,
       now: this.config.now ?? (() => new Date()),
+      requestTimeoutMs: requirePositiveInteger(
+        this.config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+        "requestTimeoutMs",
+        DEFAULT_REQUEST_TIMEOUT_MS,
+      ),
+      maxResponseBytes: requirePositiveInteger(
+        this.config.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
+        "maxResponseBytes",
+        MAX_RESPONSE_BYTES,
+      ),
+      maxUploadBytes: requirePositiveInteger(
+        this.config.maxUploadBytes ?? DEFAULT_MAX_UPLOAD_BYTES,
+        "maxUploadBytes",
+        MAX_UPLOAD_BYTES,
+      ),
     };
   }
 
@@ -397,6 +729,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     size: number,
     body: BodyInit,
     resolved: ResolvedConfig,
+    signal?: AbortSignal,
   ): Promise<void> {
     const upload = UploadCreateResponseSchema.parse(
       await this.requestJson(
@@ -410,6 +743,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
             content_type: mimeType,
             size,
           }),
+          signal,
         },
       ),
     );
@@ -417,20 +751,31 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     const headers = new Headers(upload.required_headers);
     if (!headers.has("Content-Type")) headers.set("Content-Type", mimeType);
 
-    const response = await fetch(upload.file_upload_url, {
-      method: "PUT",
-      headers,
-      body,
-    });
-
-    if (!response.ok) {
-      const errorBody = await response.text().catch(() => "");
-      throw API_ERROR.create({
-        detail:
-          `Veryfront Cloud upload failed for "${path}": ${response.status} ${response.statusText}${
-            errorBody ? ` - ${errorBody}` : ""
-          }`,
+    const scope = signal ? undefined : createRequestScope(resolved.requestTimeoutMs);
+    const requestSignal = signal ?? scope?.signal;
+    if (!requestSignal) throw new TypeError("Blob upload request signal is unavailable");
+    let response: Response;
+    try {
+      response = await guardedOutboundFetch(upload.file_upload_url, {
+        method: "PUT",
+        headers,
+        body,
+        redirect: "error",
+        signal: requestSignal,
       });
+
+      if (!response.ok) {
+        const errorBody = await readErrorBody(response, requestSignal);
+        throw API_ERROR.create({
+          detail:
+            `Veryfront Cloud upload failed for "${path}": ${response.status} ${response.statusText}${
+              errorBody ? ` - ${errorBody}` : ""
+            }`,
+        });
+      }
+      void response.body?.cancel().catch(() => {});
+    } finally {
+      scope?.dispose();
     }
   }
 
@@ -499,20 +844,32 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     const download = await this.getDownloadUrl(path, resolved);
     if (!download) return null;
 
-    const response = await fetch(download.signedUrl);
-    if (response.status === 404) return null;
-
-    if (!response.ok) {
-      const errorBody = await response.text().catch(() => "");
-      throw API_ERROR.create({
-        detail:
-          `Veryfront Cloud download failed for "${path}": ${response.status} ${response.statusText}${
-            errorBody ? ` - ${errorBody}` : ""
-          }`,
+    const scope = createRequestScope(resolved.requestTimeoutMs);
+    try {
+      const response = await guardedOutboundFetch(download.signedUrl, {
+        redirect: "error",
+        signal: scope.signal,
       });
+      if (response.status === 404) {
+        void response.body?.cancel().catch(() => {});
+        return null;
+      }
+      if (!response.ok) {
+        const errorBody = await readErrorBody(response, scope.signal);
+        throw API_ERROR.create({
+          detail:
+            `Veryfront Cloud download failed for "${path}": ${response.status} ${response.statusText}${
+              errorBody ? ` - ${errorBody}` : ""
+            }`,
+        });
+      }
+      const bytes = await readResponseBytes(response, resolved.maxResponseBytes, scope.signal);
+      return new Blob([
+        bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+      ]).stream();
+    } finally {
+      scope.dispose();
     }
-
-    return response.body;
   }
 
   private async downloadUploadText(
@@ -533,35 +890,57 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       body?: BodyInit;
       allowNotFound?: boolean;
       expectEmptyBody?: boolean;
+      signal?: AbortSignal;
     } = {},
   ): Promise<unknown | null> {
     const headers = new Headers(options.headers);
     headers.set("Authorization", `Bearer ${resolved.apiToken}`);
 
-    const response = await fetch(joinUrl(resolved.apiBaseUrl, path), {
-      method,
-      headers,
-      body: options.body,
-    });
+    const scope = options.signal ? undefined : createRequestScope(resolved.requestTimeoutMs);
+    const signal = options.signal ?? scope?.signal;
+    if (!signal) throw new TypeError("Blob request signal is unavailable");
+    try {
+      const response = await guardedOutboundFetch(
+        joinUrl(resolved.apiBaseUrl, path),
+        { method, headers, body: options.body, redirect: "error", signal },
+        {
+          authorizeUrl: (target) => {
+            if (target.origin !== new URL(resolved.apiBaseUrl).origin) {
+              throw new OutboundRequestBlockedError(
+                "Veryfront Cloud Blob request blocked: destination origin is not authorized",
+              );
+            }
+          },
+        },
+      );
 
-    if (options.allowNotFound && response.status === 404) {
-      return null;
+      if (options.allowNotFound && response.status === 404) {
+        void response.body?.cancel().catch(() => {});
+        return null;
+      }
+
+      if (!response.ok) {
+        const errorBody = await readErrorBody(response, signal);
+        throw API_ERROR.create({
+          detail:
+            `Veryfront Cloud request failed: ${method} ${path} -> ${response.status} ${response.statusText}${
+              errorBody ? ` - ${errorBody}` : ""
+            }`,
+        });
+      }
+
+      if (options.expectEmptyBody || response.status === 204) {
+        void response.body?.cancel().catch(() => {});
+        return null;
+      }
+
+      return JSON.parse(
+        new TextDecoder().decode(
+          await readResponseBytes(response, resolved.maxResponseBytes, signal),
+        ),
+      );
+    } finally {
+      scope?.dispose();
     }
-
-    if (!response.ok) {
-      const errorBody = await response.text().catch(() => "");
-      throw API_ERROR.create({
-        detail:
-          `Veryfront Cloud request failed: ${method} ${path} -> ${response.status} ${response.statusText}${
-            errorBody ? ` - ${errorBody}` : ""
-          }`,
-      });
-    }
-
-    if (options.expectEmptyBody || response.status === 204) {
-      return null;
-    }
-
-    return response.json();
   }
 }

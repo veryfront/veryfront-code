@@ -9,13 +9,35 @@ import { mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat";
 import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { APIRouteHandler } from "#veryfront/routing/api/index.ts";
+import type { HandlerContext } from "#veryfront/types";
 import { withTestContext } from "../../_helpers/context.ts";
 
 // Track all handlers to clean up after tests
 const handlers: APIRouteHandler[] = [];
 
-function createHandler(projectDir: string, adapter?: RuntimeAdapter): APIRouteHandler {
-  const handler = new APIRouteHandler(projectDir, adapter);
+class TrustedLocalAPIRouteHandler extends APIRouteHandler {
+  readonly #context: HandlerContext;
+
+  constructor(projectDir: string, adapter: RuntimeAdapter) {
+    super(projectDir, adapter);
+    this.#context = {
+      projectDir,
+      adapter,
+      securityConfig: null,
+      cspUserHeader: null,
+      isLocalProject: true,
+    };
+  }
+
+  override handle(request: Request, context?: HandlerContext): Promise<Response | null> {
+    return super.handle(request, context ?? this.#context);
+  }
+}
+
+function createHandler(projectDir: string, adapter: RuntimeAdapter): APIRouteHandler {
+  // This suite writes and executes source in a local temporary project. Keep
+  // that trusted-local capability explicit so hosted execution remains closed.
+  const handler = new TrustedLocalAPIRouteHandler(projectDir, adapter);
   handlers.push(handler);
   return handler;
 }

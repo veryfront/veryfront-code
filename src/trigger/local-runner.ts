@@ -109,6 +109,7 @@ async function discoverRuntimeOrThrow(options: NormalizedRunTriggerTargetOptions
     cacheKey: options.cacheKey,
     debug: options.debug,
     throwOnErrors: true,
+    allowHostProjectCodeExecution: true,
   });
   options.signal?.throwIfAborted();
   return discovery;

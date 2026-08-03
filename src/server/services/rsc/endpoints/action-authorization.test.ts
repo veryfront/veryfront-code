@@ -89,7 +89,13 @@ function request(args: unknown[] = []): Request {
     method: "POST",
     headers: {
       authorization: "Bearer request-token",
+      cookie: "session=application-cookie",
       "content-type": "application/json",
+      "proxy-authorization": "Basic infrastructure-proxy-token",
+      "x-forwarded-host": "internal-proxy.example",
+      "x-project-id": "infrastructure-project",
+      "x-token": "platform-service-token",
+      "x-veryfront-control-plane-jws": "signed-control-plane-request",
     },
     body: JSON.stringify({ id: "save", args }),
   });
@@ -194,6 +200,7 @@ describe("RSC action authorization provider", () => {
     const original = { role: "user" };
     let observedHasBody = true;
     let observedAuthorization: string | undefined;
+    let observedHeaders: Readonly<Record<string, string | undefined>> | undefined;
     let observedProject: unknown;
     let observedSameSignal = true;
     let providerMutationSucceeded = true;
@@ -203,6 +210,7 @@ describe("RSC action authorization provider", () => {
       authorize(providerRequest, context) {
         observedHasBody = Object.hasOwn(providerRequest, "body");
         observedAuthorization = providerRequest.headers.authorization;
+        observedHeaders = providerRequest.headers;
         observedSameSignal = providerRequest.signal === originalSignal;
         observedProject = {
           projectId: context.projectId,
@@ -233,6 +241,11 @@ describe("RSC action authorization provider", () => {
     assertEquals(await response.json(), { ok: true, result: original });
     assertEquals(observedHasBody, false);
     assertEquals(observedAuthorization, "Bearer request-token");
+    assertEquals(observedHeaders, {
+      authorization: "Bearer request-token",
+      "content-type": "application/json",
+      cookie: "session=application-cookie",
+    });
     assertEquals(observedSameSignal, false);
     assertEquals(providerMutationSucceeded, false);
     assertEquals(observedProject, {

@@ -7,7 +7,24 @@ import { loadSecurityConfig } from "./security-config.ts";
 
 function makeAdapter(): RuntimeAdapter {
   return {
-    env: { get: () => undefined },
+    id: "memory",
+    name: "security-config-test",
+    capabilities: {
+      typescript: false,
+      jsx: false,
+      http2: false,
+      websocket: false,
+      workers: false,
+      fileWatching: false,
+      shell: false,
+      kvStore: false,
+      writableFs: false,
+    },
+    env: {
+      get: () => undefined,
+      set: () => {},
+      toObject: () => ({}),
+    },
     fs: {
       readFile: () => Promise.resolve(""),
       writeFile: () => Promise.resolve(),
@@ -29,6 +46,12 @@ function makeAdapter(): RuntimeAdapter {
         [Symbol.asyncIterator]: async function* () {},
       }),
     },
+    server: {
+      upgradeWebSocket: () => {
+        throw new Error("not supported");
+      },
+    },
+    serve: () => Promise.reject(new Error("not supported")),
   };
 }
 
@@ -48,6 +71,24 @@ describe("routing/api/module-loader/security-config", () => {
     it("should return a non-empty list of allowed hosts", async () => {
       const result = await loadSecurityConfig("/tmp/nonexistent-project", makeAdapter());
       assertEquals(result.length > 0, true);
+    });
+
+    it("uses a supplied config snapshot without broadening an explicit empty allow-list", async () => {
+      const result = await loadSecurityConfig(
+        "/tmp/nonexistent-project",
+        makeAdapter(),
+        { security: { remoteHosts: [] } },
+      );
+      assertEquals(result, []);
+    });
+
+    it("uses defaults only when the supplied config snapshot omits remoteHosts", async () => {
+      const result = await loadSecurityConfig(
+        "/tmp/nonexistent-project",
+        makeAdapter(),
+        { security: {} },
+      );
+      assertEquals(result, DEFAULT_ALLOWED_CDN_HOSTS);
     });
   });
 });

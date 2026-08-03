@@ -18,10 +18,10 @@ const TEST_CONFIG: OAuthServiceConfig = {
   displayName: "Test Provider",
   clientIdEnvVar: "TEST_CLIENT_ID",
   clientSecretEnvVar: "TEST_CLIENT_SECRET",
-  authorizationUrl: "https://provider.test/auth",
-  tokenUrl: "https://provider.test/token",
+  authorizationUrl: "https://93.184.216.34/auth",
+  tokenUrl: "https://93.184.216.34/token",
   defaultScopes: ["read"],
-  apiBaseUrl: "https://api.provider.test",
+  apiBaseUrl: "https://93.184.216.34",
 };
 
 const ENV: Record<string, string> = {
@@ -97,12 +97,12 @@ Deno.test("OAuthService.fetch: relative endpoint resolves against apiBaseUrl", a
     assertEquals(result, { ok: true });
   });
 
-  assertEquals(captured, ["https://api.provider.test/v1/me"]);
+  assertEquals(captured, ["https://93.184.216.34/v1/me"]);
 });
 
 Deno.test("OAuthService.fetch: joins relative endpoints without requiring a leading slash", async () => {
   const service = new OAuthService(
-    { ...TEST_CONFIG, apiBaseUrl: "https://api.provider.test/v1" },
+    { ...TEST_CONFIG, apiBaseUrl: "https://93.184.216.34/v1" },
     makeAuthedTokenStore(),
     (k) => ENV[k],
   );
@@ -112,7 +112,7 @@ Deno.test("OAuthService.fetch: joins relative endpoints without requiring a lead
     await service.fetch("user-1", "me");
   });
 
-  assertEquals(captured, ["https://api.provider.test/v1/me"]);
+  assertEquals(captured, ["https://93.184.216.34/v1/me"]);
 });
 
 Deno.test("OAuthService.fetch: preserves Headers instances and caller content types", async () => {
@@ -416,7 +416,7 @@ Deno.test("OAuthService.fetch timeout cancels a stalled API body", async () => {
 
 Deno.test("OAuthProvider preserves existing authorization endpoint query parameters", async () => {
   const provider = new OAuthProvider(
-    { ...TEST_CONFIG, authorizationUrl: "https://provider.test/auth?audience=existing" },
+    { ...TEST_CONFIG, authorizationUrl: "https://93.184.216.34/auth?audience=existing" },
     (key) => ENV[key],
   );
 
@@ -652,7 +652,7 @@ Deno.test("OAuthService rejects accessor-backed authorization options without in
 Deno.test("OAuthService.fetch: absolute endpoint matching apiBaseUrl origin is allowed", async () => {
   const service = new OAuthService(TEST_CONFIG, makeAuthedTokenStore(), (k) => ENV[k]);
   const captured: string[] = [];
-  const sameOrigin = "https://api.provider.test/v1/me";
+  const sameOrigin = "https://93.184.216.34/v1/me";
 
   await withStubbedFetch(captured, async () => {
     const result = await service.fetch<{ ok: boolean }>("user-1", sameOrigin);
@@ -704,8 +704,8 @@ Deno.test("OAuthService.fetch: rejects endpoint credentials and fragments before
   await withStubbedFetch(captured, async () => {
     for (
       const endpoint of [
-        "https://user:password@api.provider.test/v1/me",
-        "https://api.provider.test/v1/me#secret",
+        "https://user:password@93.184.216.34/v1/me",
+        "https://93.184.216.34/v1/me#secret",
       ]
     ) {
       await assertRejects(
@@ -1235,13 +1235,38 @@ Deno.test("OAuthProvider requires HTTPS provider endpoints", () => {
   }
 });
 
+Deno.test("OAuthProvider blocks an internal token endpoint before credentials leave the process", async () => {
+  const provider = new OAuthProvider(
+    { ...TEST_CONFIG, tokenUrl: "https://169.254.169.254/token" },
+    (key) => ENV[key],
+  );
+  const original = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = (() => {
+    fetchCalls++;
+    return Promise.resolve(Response.json({ access_token: "unexpected" }));
+  }) as typeof fetch;
+
+  try {
+    const result = await provider.exchangeCode({
+      code: "code",
+      redirectUri: "https://app.test/callback",
+    });
+    assertEquals(result.success, false);
+    assertEquals(result.error, "network_error");
+    assertEquals(fetchCalls, 0);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 Deno.test("OAuthProvider rejects reserved token endpoint query parameters", () => {
   assertThrows(
     () =>
       new OAuthProvider(
         {
           ...TEST_CONFIG,
-          tokenUrl: "https://provider.test/token?grant_type=password&client_secret=attacker",
+          tokenUrl: "https://93.184.216.34/token?grant_type=password&client_secret=attacker",
         },
         (key) => ENV[key],
       ),
@@ -1252,7 +1277,7 @@ Deno.test("OAuthProvider rejects reserved token endpoint query parameters", () =
 
 Deno.test("OAuthProvider rejects cross-origin HTTP redirects for secret-bearing requests", async () => {
   const provider = new OAuthProvider(
-    { ...TEST_CONFIG, revocationUrl: "https://provider.test/revoke" },
+    { ...TEST_CONFIG, revocationUrl: "https://93.184.216.34/revoke" },
     (key) => ENV[key],
   );
   const original = globalThis.fetch;
@@ -1269,12 +1294,12 @@ Deno.test("OAuthProvider rejects cross-origin HTTP redirects for secret-bearing 
     globalThis.fetch = original;
   }
 
-  assertEquals(redirects, ["error", "error"]);
+  assertEquals(redirects, ["manual", "manual"]);
 });
 
 Deno.test("OAuthProvider bounds revocation tokens before fetch and releases response bodies", async () => {
   const provider = new OAuthProvider(
-    { ...TEST_CONFIG, revocationUrl: "https://provider.test/revoke" },
+    { ...TEST_CONFIG, revocationUrl: "https://93.184.216.34/revoke" },
     (key) => ENV[key],
   );
   const original = globalThis.fetch;
@@ -1311,7 +1336,7 @@ Deno.test("OAuthProvider bounds revocation tokens before fetch and releases resp
 
 Deno.test("OAuthProvider authenticates revocation with client credentials in the body", async () => {
   const provider = new OAuthProvider(
-    { ...TEST_CONFIG, revocationUrl: "https://provider.test/revoke" },
+    { ...TEST_CONFIG, revocationUrl: "https://93.184.216.34/revoke" },
     (key) => ENV[key],
   );
   const original = globalThis.fetch;
@@ -1331,14 +1356,14 @@ Deno.test("OAuthProvider authenticates revocation with client credentials in the
   assertEquals(body.get("token"), "token");
   assertEquals(body.get("client_id"), "test-id");
   assertEquals(body.get("client_secret"), "test-secret");
-  const headers = init?.headers as Record<string, string>;
-  assertEquals(headers["Content-Type"], "application/x-www-form-urlencoded");
-  assertEquals(headers.Authorization, undefined);
+  const headers = new Headers(init?.headers);
+  assertEquals(headers.get("Content-Type"), "application/x-www-form-urlencoded");
+  assertEquals(headers.get("Authorization"), null);
 });
 
 Deno.test("OAuthProvider authenticates revocation with Basic auth when configured", async () => {
   const provider = new OAuthProvider(
-    { ...TEST_CONFIG, revocationUrl: "https://provider.test/revoke", useBasicAuth: true },
+    { ...TEST_CONFIG, revocationUrl: "https://93.184.216.34/revoke", useBasicAuth: true },
     (key) => ENV[key],
   );
   const original = globalThis.fetch;
@@ -1354,8 +1379,8 @@ Deno.test("OAuthProvider authenticates revocation with Basic auth when configure
     globalThis.fetch = original;
   }
 
-  const headers = init?.headers as Record<string, string>;
-  assertEquals(headers.Authorization, `Basic ${btoa("test-id:test-secret")}`);
+  const headers = new Headers(init?.headers);
+  assertEquals(headers.get("Authorization"), `Basic ${btoa("test-id:test-secret")}`);
   const body = new URLSearchParams(String(init?.body));
   assertEquals(body.get("token"), "token");
   // Basic-auth providers must not also receive the secret in the body.
@@ -1365,7 +1390,7 @@ Deno.test("OAuthProvider authenticates revocation with Basic auth when configure
 
 Deno.test("OAuthProvider skips revocation when client credentials are missing", async () => {
   const provider = new OAuthProvider(
-    { ...TEST_CONFIG, revocationUrl: "https://provider.test/revoke" },
+    { ...TEST_CONFIG, revocationUrl: "https://93.184.216.34/revoke" },
     () => undefined,
   );
   const original = globalThis.fetch;
@@ -1386,7 +1411,7 @@ Deno.test("OAuthProvider skips revocation when client credentials are missing", 
 
 Deno.test("OAuthProvider revocation logging does not coerce hostile thrown values", async () => {
   const provider = new OAuthProvider(
-    { ...TEST_CONFIG, revocationUrl: "https://provider.test/revoke" },
+    { ...TEST_CONFIG, revocationUrl: "https://93.184.216.34/revoke" },
     (key) => ENV[key],
   );
   const original = globalThis.fetch;
@@ -1422,7 +1447,7 @@ Deno.test("OAuthService.fetch cannot be configured to follow redirects", async (
     globalThis.fetch = original;
   }
 
-  assertEquals(redirect, "error");
+  assertEquals(redirect, "manual");
 });
 
 Deno.test("OAuthService rejects oversized authorization codes before fetch", async () => {

@@ -35,6 +35,10 @@ import { handleClientScript, handleDomScript } from "./script-handlers.ts";
 import type { RSCEndpointParams } from "./types.ts";
 import { analyzeComponent } from "#veryfront/rendering/rsc/component-analyzer.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import {
+  createErrorResponseFromDefinition,
+  PROJECT_EXECUTION_UNAVAILABLE,
+} from "#veryfront/errors";
 
 const rscEndpointRouterLog = serverLogger.component("rsc-endpoint-router");
 const rscLog = serverLogger.component("rsc");
@@ -84,6 +88,7 @@ export async function handleRSCEndpoint(
     adapter,
     config,
     isLocalProject,
+    allowHostProjectCodeExecution,
     mode,
     nonce,
   }: RSCEndpointParams,
@@ -111,6 +116,29 @@ export async function handleRSCEndpoint(
   // Do not remove until those clients/tests stop exercising the endpoint.
   if (sub === "flight_page") {
     return new Response("Flight endpoint removed. Use custom RSC endpoints.", { status: 410 });
+  }
+
+  // These transports import or evaluate project-owned server modules. Until
+  // the generation-owned isolated RSC graph is connected to the worker
+  // renderer, requests without an explicit host capability must not fall back
+  // to the host realm.
+  if (!allowHostProjectCodeExecution && isRscServerExecutionEndpoint(sub)) {
+    const unavailable = createErrorResponseFromDefinition(
+      PROJECT_EXECUTION_UNAVAILABLE,
+      {
+        detail: "RSC server execution requires a dedicated isolated project runtime",
+        instance: pathname,
+      },
+    );
+    unavailable.headers.set("cache-control", "no-store");
+    unavailable.headers.set("retry-after", "1");
+    return req.method === "HEAD"
+      ? new Response(null, {
+        status: unavailable.status,
+        statusText: unavailable.statusText,
+        headers: unavailable.headers,
+      })
+      : unavailable;
   }
 
   const url = new URL(req.url);
@@ -287,6 +315,15 @@ export async function handleRSCEndpoint(
       },
     });
   }
+}
+
+function isRscServerExecutionEndpoint(sub: string): boolean {
+  return sub === "action" ||
+    sub === "payload" ||
+    sub === "render" ||
+    sub.startsWith("render/") ||
+    sub === "stream" ||
+    sub.startsWith("stream/");
 }
 
 function isDependencySnapshotBoundEndpoint(sub: string): boolean {

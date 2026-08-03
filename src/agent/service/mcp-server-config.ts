@@ -20,7 +20,6 @@ export type AgentServiceGenericMcpServerConfig = {
   id?: string;
   endpoint: RemoteMCPToolSourceConfig["endpoint"];
   headers?: RemoteMCPToolSourceConfig["headers"];
-  fetch?: RemoteMCPToolSourceConfig["fetch"];
   listMethod?: RemoteMCPToolSourceConfig["listMethod"];
   callMethod?: RemoteMCPToolSourceConfig["callMethod"];
   toolPolicy?: AgentMcpToolPolicy;
@@ -55,7 +54,6 @@ function createGenericRemoteMcpConfig(
 
   if (server.id !== undefined) config.id = server.id;
   if (server.headers !== undefined) config.headers = server.headers;
-  if (server.fetch !== undefined) config.fetch = server.fetch;
   if (server.listMethod !== undefined) config.listMethod = server.listMethod;
   if (server.callMethod !== undefined) config.callMethod = server.callMethod;
 

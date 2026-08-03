@@ -22,6 +22,8 @@ export interface EnrichedContext {
   environment: Environment;
   branch: string | null;
   isLocalProject: boolean;
+  /** Narrow host-owned capability for project-code execution. */
+  allowHostProjectCodeExecution?: boolean;
   mode: RenderMode;
 
   /** Content source identifier for cache isolation (e.g., "release-abc123", "preview-main", "local-main") */
@@ -50,6 +52,8 @@ export interface BuildEnrichedContextOptions {
   environment: Environment;
   branch: string | null;
   isLocalProject: boolean;
+  /** Narrow host-owned capability for project-code execution. */
+  allowHostProjectCodeExecution?: boolean;
   /** Content source identifier for cache isolation - computed by proxy */
   contentSourceId: string;
   parsedDomain: ParsedDomain;

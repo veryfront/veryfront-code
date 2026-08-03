@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../../transforms/mdx/compiler/__tests__/content-processor-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { SSRService } from "./ssr.service.ts";
 import type { RendererProvider, SSRRenderOptions, SSRRenderResult } from "./ssr.service.ts";
@@ -52,8 +52,18 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
     adapter: createMockAdapter(),
     securityConfig: null,
     cspUserHeader: null,
+    isLocalProject: true,
     ...overrides,
   };
+}
+
+function makeSharedCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
+  return makeCtx({
+    isLocalProject: false,
+    prepareHostedConfigContext: () =>
+      Promise.reject(new Error("Shared context preparation is not used by this unit test")),
+    ...overrides,
+  });
 }
 
 function makeRenderOptions(overrides: Partial<SSRRenderOptions> = {}): SSRRenderOptions {
@@ -232,9 +242,68 @@ describe("server/services/rendering/ssr.service", () => {
         await service.getRenderer(ctx);
         assertEquals(receivedProjectSlug, "my-project");
       });
+
+      it("rejects direct shared renderer access before invoking the provider", async () => {
+        let called = false;
+        const service = new SSRService({
+          rendererProvider: {
+            getRenderer: () => {
+              called = true;
+              return Promise.resolve(createMockRendererAdapter());
+            },
+          },
+        });
+
+        await assertRejects(
+          () => service.getRenderer(makeSharedCtx()),
+          Error,
+          "generation-owned isolated renderer admission",
+        );
+        assertEquals(called, false);
+      });
+
+      it("allows a dedicated non-local runtime to use its renderer", async () => {
+        let called = false;
+        const service = new SSRService({
+          rendererProvider: {
+            getRenderer: () => {
+              called = true;
+              return Promise.resolve(createMockRendererAdapter());
+            },
+          },
+        });
+
+        await service.getRenderer(makeCtx({
+          isLocalProject: false,
+          allowHostProjectCodeExecution: true,
+        }));
+        assertEquals(called, true);
+      });
     });
 
     describe("renderPage (with mock renderer)", () => {
+      it("fails closed before resolving a renderer in a shared runtime", async () => {
+        let rendererRequests = 0;
+        const service = new SSRService({
+          rendererProvider: {
+            getRenderer: () => {
+              rendererRequests++;
+              return Promise.resolve(createMockRendererAdapter());
+            },
+          },
+        });
+
+        const result = await service.renderPage(
+          makeSharedCtx(),
+          makeRenderOptions(),
+        );
+
+        assertEquals(result.status, 503);
+        assertEquals(result.cacheStrategy, "no-cache");
+        assertEquals(result.htmlProvenance, "framework");
+        assertEquals(rendererRequests, 0);
+      });
+
       it("returns 200 with HTML from renderer", async () => {
         const adapter = createMockRendererAdapter({
           renderPage: () =>
@@ -593,7 +662,7 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(redirectLocationOf(result), "/login");
       });
 
-      it("treats an unbranded notFound-shaped throw as a server error", async () => {
+      it("treats an unbranded notFound-shaped throw as a local runtime error", async () => {
         // A loader doing `throw await response.json()` against an upstream
         // answering `{ notFound: true }` is reporting a failure, not requesting a
         // 404. Only the brand, never the shape, routes to not-found.
@@ -608,10 +677,10 @@ describe("server/services/rendering/ssr.service", () => {
 
         const result = await service.renderPage(makeCtx(), makeRenderOptions());
         assertEquals(result.status, 500);
-        assertEquals(result.failure?.kind, "server-error");
+        assertEquals(result.failure?.kind, "runtime");
       });
 
-      it("returns server-error for generic errors in production", async () => {
+      it("captures generic local runtime errors", async () => {
         const captured: Array<{ error: unknown; context: ApplicationErrorContext }> = [];
         setApplicationErrorReporter({
           capture(error, context) {
@@ -632,7 +701,7 @@ describe("server/services/rendering/ssr.service", () => {
         try {
           const result = await service.renderPage(makeCtx(), makeRenderOptions());
           assertEquals(result.status, 500);
-          assertEquals(result.failure?.kind, "server-error");
+          assertEquals(result.failure?.kind, "runtime");
           assertEquals(typeof result.html, "string");
           assertEquals(captured.length, 1);
           assertEquals((captured[0]?.error as Error).message, "Something broke");

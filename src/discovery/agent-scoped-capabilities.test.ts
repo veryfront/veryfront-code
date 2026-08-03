@@ -33,7 +33,10 @@ function emptyResult(): DiscoveryResult {
   };
 }
 
-const context: FileDiscoveryContext = { platform: "node" };
+const context: FileDiscoveryContext = {
+  platform: "node",
+  allowHostProjectCodeExecution: true,
+};
 
 async function writeFixtureProject(root: string): Promise<string> {
   const agentsDir = `${root}/agents`;
@@ -252,7 +255,11 @@ Deno.test("agent ids that sanitize to the same namespace report a collision erro
 
 // ── Full-pipeline regression (review finding: discoverAll wiped colocated skills) ──
 
-import { discoverAll } from "./index.ts";
+import { discoverAll as discoverAllRaw } from "./index.ts";
+
+function discoverAll(config: import("./types.ts").DiscoveryConfig) {
+  return discoverAllRaw({ ...config, allowHostProjectCodeExecution: true });
+}
 
 Deno.test("discoverAll preserves directory-agent colocated skills through the skill-registry clear", async () => {
   const root = await Deno.makeTempDir();

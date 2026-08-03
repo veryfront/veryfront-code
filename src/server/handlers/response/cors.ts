@@ -10,6 +10,25 @@ import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { getConfig } from "#veryfront/config";
 import { PRIORITY_VERY_HIGH } from "#veryfront/utils/constants/index.ts";
 import { resolveAppRouteFile } from "../request/api/app-router-resolver.ts";
+import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
+import { isInfrastructureOnlyRequestHeader } from "#veryfront/security/http/application-request.ts";
+
+type AppRouteResolver = typeof resolveAppRouteFile;
+const DEFAULT_ALLOWED_HEADERS = "Content-Type,Authorization";
+
+function getApplicationPreflightHeaders(request: Request): string {
+  const requested = request.headers.get("access-control-request-headers");
+  if (!requested) return DEFAULT_ALLOWED_HEADERS;
+
+  const allowed = requested.split(",")
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0 && !isInfrastructureOnlyRequestHeader(name));
+  return allowed.length > 0 ? allowed.join(",") : DEFAULT_ALLOWED_HEADERS;
+}
+
+export interface CorsHandlerDependencies {
+  resolveAppRouteFile?: AppRouteResolver;
+}
 
 export class CorsHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -20,31 +39,41 @@ export class CorsHandler extends BaseHandler {
 
   private static readonly DEFAULT_METHODS = "GET,POST,PUT,PATCH,DELETE,OPTIONS";
   private static readonly HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
+  private readonly resolveAppRouteFile: AppRouteResolver;
+
+  constructor(dependencies: CorsHandlerDependencies = {}) {
+    super();
+    this.resolveAppRouteFile = dependencies.resolveAppRouteFile ?? resolveAppRouteFile;
+  }
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (req.method.toUpperCase() !== "OPTIONS") return this.continue();
 
     const pathname = new URL(req.url).pathname;
-    const allowMethods = await this.resolveAllowedMethods(pathname, ctx);
+    const isSharedRuntime = isSharedProjectRuntime(ctx);
+    const allowMethods = isSharedRuntime
+      ? CorsHandler.DEFAULT_METHODS
+      : await this.resolveAllowedMethods(pathname, ctx);
 
     let corsConfig = ctx.securityConfig?.cors;
-    try {
-      const cfg = await getConfig(ctx.projectDir, ctx.adapter);
-      corsConfig = cfg?.security?.cors ?? corsConfig;
-    } catch (error) {
-      // Falling back to ctx.securityConfig?.cors (set at request time). If that is
-      // also absent, ResponseBuilder.preflight will use its own restrictive defaults.
-      // Verify the fallback is not more permissive than the config-file value intended.
-      this.logWarn(
-        "Failed to load CORS config — falling back to security-context defaults",
-        { error },
-      );
+    if (!isSharedRuntime) {
+      try {
+        const cfg = await getConfig(ctx.projectDir, ctx.adapter);
+        corsConfig = cfg?.security?.cors ?? corsConfig;
+      } catch (error) {
+        // Falling back to ctx.securityConfig?.cors (set at request time). If that is
+        // also absent, ResponseBuilder.preflight will use its own restrictive defaults.
+        // Verify the fallback is not more permissive than the config-file value intended.
+        this.logWarn(
+          "Failed to load CORS config — falling back to security-context defaults",
+          { error },
+        );
+      }
     }
 
     const response = ResponseBuilder.preflight(req, {
       allowMethods,
-      allowHeaders: req.headers.get("access-control-request-headers") ??
-        "Content-Type,Authorization",
+      allowHeaders: getApplicationPreflightHeaders(req),
       securityConfig: ctx.securityConfig ?? undefined,
       corsConfig,
     });
@@ -54,7 +83,7 @@ export class CorsHandler extends BaseHandler {
 
   private async resolveAllowedMethods(pathname: string, ctx: HandlerContext): Promise<string> {
     try {
-      const match = await resolveAppRouteFile(pathname, ctx);
+      const match = await this.resolveAppRouteFile(pathname, ctx);
       if (!match) return CorsHandler.DEFAULT_METHODS;
 
       const mod = (await import(`file://${match.file}`)) as RouteHandlerModule;

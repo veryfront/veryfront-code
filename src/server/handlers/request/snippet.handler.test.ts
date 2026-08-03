@@ -61,8 +61,8 @@ describe("snippet handler path validation", () => {
   });
 });
 
-Deno.test("SnippetHandler validates and reads inside the same proxy context", async () => {
-  let inContext = false;
+Deno.test("SnippetHandler rejects shared rendering before proxy context or source reads", async () => {
+  let contextCalls = 0;
   let readPath: string | undefined;
   const fs = {
     symlinkSemantics: "none" as const,
@@ -73,12 +73,8 @@ Deno.test("SnippetHandler validates and reads inside the same proxy context", as
       _token: string,
       fn: () => Promise<unknown>,
     ) => {
-      inContext = true;
-      try {
-        return await fn();
-      } finally {
-        inContext = false;
-      }
+      contextCalls++;
+      return await fn();
     },
     exists: () => Promise.resolve(true),
     stat: () =>
@@ -90,7 +86,6 @@ Deno.test("SnippetHandler validates and reads inside the same proxy context", as
         mtime: new Date(),
       }),
     readFile: (path: string) => {
-      assertEquals(inContext, true);
       readPath = path;
       return Promise.resolve("");
     },
@@ -99,6 +94,42 @@ Deno.test("SnippetHandler validates and reads inside the same proxy context", as
     projectDir: "/project",
     projectSlug: "project",
     proxyToken: "token",
+    isLocalProject: true,
+    adapter: { fs },
+  } as unknown as HandlerContext;
+
+  const result = await new SnippetHandler().handle(
+    new Request("http://localhost/@components/button"),
+    ctx,
+  );
+  assertEquals(result.response?.status, 503);
+  assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
+  assertEquals(contextCalls, 0);
+  assertEquals(readPath, undefined);
+});
+
+Deno.test("SnippetHandler preserves dedicated local rendering", async () => {
+  let readPath: string | undefined;
+  const fs = {
+    symlinkSemantics: "none" as const,
+    isMultiProjectMode: () => false,
+    isContextualMode: () => false,
+    exists: () => Promise.resolve(true),
+    stat: () =>
+      Promise.resolve({
+        isFile: true,
+        isDirectory: false,
+        isSymlink: false,
+        size: 0,
+        mtime: new Date(),
+      }),
+    readFile: (path: string) => {
+      readPath = path;
+      return Promise.resolve("");
+    },
+  };
+  const ctx = {
+    projectDir: "/project",
     isLocalProject: true,
     adapter: { fs },
   } as unknown as HandlerContext;

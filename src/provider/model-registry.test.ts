@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { clearModelProviders, resolveModel } from "./model-registry.ts";
@@ -7,6 +7,8 @@ import { clearModelProviders, resolveModel } from "./model-registry.ts";
 const MODEL_REGISTRY_ENV_KEYS = [
   "OPENAI_API_KEY",
   "OPENAI_BASE_URL",
+  "GOOGLE_API_KEY",
+  "GOOGLE_GENERATIVE_AI_API_KEY",
   "VERYFRONT_API_TOKEN",
   "VERYFRONT_PROJECT_SLUG",
 ] as const;
@@ -174,5 +176,74 @@ describe("provider/model-registry", () => {
 
     assertEquals(requestedBody?.custom_compat, true);
     assertEquals(requestedBody?.service_tier, "default");
+  });
+
+  it("keeps env-backed Google credentials on the captured guarded transport", async () => {
+    setEnv("GOOGLE_API_KEY", "google-test-key");
+    let guardedCalls = 0;
+    let replacedGlobalCalls = 0;
+    let requestedUrl = "";
+    let requestedApiKey: string | null = null;
+    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
+      guardedCalls++;
+      const request = new Request(input, init);
+      requestedUrl = request.url;
+      requestedApiKey = request.headers.get("x-goog-api-key");
+      return Response.json({
+        candidates: [{
+          content: { parts: [{ text: "Guarded response" }] },
+          finishReason: "STOP",
+        }],
+        usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 2 },
+      });
+    }) as typeof fetch;
+
+    const runtime = resolveModel("google/gemini-2.5-flash");
+    globalThis.fetch = (() => {
+      replacedGlobalCalls++;
+      return Promise.resolve(new Response("unexpected", { status: 500 }));
+    }) as typeof fetch;
+
+    const result = await runtime.doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+    });
+
+    assertEquals(guardedCalls, 1);
+    assertEquals(replacedGlobalCalls, 0);
+    assertEquals(
+      requestedUrl,
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+    );
+    assertEquals(requestedApiKey, "google-test-key");
+    assertEquals(result.content, [{ type: "text", text: "Guarded response" }]);
+  });
+
+  it("rejects Google redirects before its API key can cross origins", async () => {
+    setEnv("GOOGLE_API_KEY", "google-test-key");
+    let calls = 0;
+    let requestedApiKey: string | null = null;
+    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
+      calls++;
+      const request = new Request(input, init);
+      requestedApiKey = request.headers.get("x-goog-api-key");
+      return new Response(null, {
+        status: 307,
+        headers: { location: "https://93.184.216.35/collect" },
+      });
+    }) as typeof fetch;
+    const runtime = resolveModel("google/gemini-2.5-flash");
+
+    await assertRejects(
+      () =>
+        Promise.resolve(
+          runtime.doGenerate({
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+          }),
+        ),
+      Error,
+      "unexpected redirect",
+    );
+    assertEquals(calls, 1);
+    assertEquals(requestedApiKey, "google-test-key");
   });
 });

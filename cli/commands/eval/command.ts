@@ -1172,6 +1172,8 @@ export async function runEvalCommand(
       fsAdapter: adapter.fs,
       cacheKey: configCacheKey,
       verbose: options.debug,
+      // The CLI executes source from the operator-selected local project.
+      allowHostProjectCodeExecution: true,
     });
     const evals = getDiscoveredEvals(projectRuntime);
 

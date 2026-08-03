@@ -9,7 +9,12 @@ import {
   type SkillDocumentParserProvider,
   SkillDocumentParserProviderName,
 } from "#veryfront/extensions/parser/skill-document-parser.ts";
-import { discoverAll } from "./index.ts";
+import { discoverAll as discoverAllRaw } from "./index.ts";
+import type { DiscoveryConfig } from "./types.ts";
+
+function discoverAll(config: DiscoveryConfig) {
+  return discoverAllRaw({ ...config, allowHostProjectCodeExecution: true });
+}
 
 describe("src/discovery/skill-discovery", () => {
   beforeEach(() => {

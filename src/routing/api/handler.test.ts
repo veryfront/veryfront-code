@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { HTTP_OK } from "#veryfront/utils";
@@ -10,6 +10,9 @@ import {
   APIRouteHandler,
   sanitizeLoadErrorForResponse,
 } from "./handler.ts";
+import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
+import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 
 const handlers: APIRouteHandler[] = [];
 
@@ -31,9 +34,12 @@ async function createInitializedHandler(
   return handler;
 }
 
-afterEach((): void => {
+afterEach(async (): Promise<void> => {
   while (handlers.length) handlers.pop()?.destroy();
   __injectDepsForTests(null);
+  await __resetPoolForTests();
+  Deno.env.delete("WORKER_ISOLATION_ENABLED");
+  Deno.env.delete("WORKER_ISOLATION_API");
 });
 
 describe("APIRouteHandler", () => {
@@ -112,6 +118,276 @@ describe("APIRouteHandler", () => {
       const response = await handler.handle(request);
 
       assertEquals(response?.status, 404);
+    });
+  });
+
+  describe("remote execution isolation", () => {
+    it("rejects shared-runtime API execution before preparing or starting a Worker", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/app/api/isolation/route.ts",
+        "export function GET() { return new Response('must-not-run'); }",
+      );
+      let hostLoads = 0;
+      let preparations = 0;
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          hostLoads++;
+          throw new Error("shared tenant reached host import");
+        },
+        prepareHandlerModule: () => {
+          preparations++;
+          throw new Error("shared tenant reached same-process worker preparation");
+        },
+      });
+
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const response = await handler.handle(
+        new Request("http://localhost/api/isolation"),
+        {
+          projectDir: "/test/project",
+          adapter,
+          securityConfig: null,
+          cspUserHeader: null,
+          isLocalProject: false,
+          prepareHostedConfigContext: () =>
+            Promise.reject(new Error("hosted config must not be evaluated")),
+        },
+      );
+
+      assertEquals(response?.status, 503);
+      assertEquals(response?.headers.get("cache-control"), "no-store");
+      assertEquals(hostLoads, 0);
+      assertEquals(preparations, 0);
+    });
+
+    it("prepares without host import and executes top-level code in an env-denied worker", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/app/api/isolation/route.ts",
+        "export function GET() { return new Response('discovery-only'); }",
+      );
+
+      const marker = "__vf_remote_route_isolation_test__";
+      delete (globalThis as Record<string, unknown>)[marker];
+      const source = [
+        `import "data:text/javascript,globalThis.${marker}%3D%27worker-imported%27";`,
+        "let envAccess = 'allowed';",
+        "try { Deno.env.get('VF_TEST_HOST_ONLY_SECRET'); } catch { envAccess = 'blocked'; }",
+        "export function GET(request) {",
+        `  return Response.json({`,
+        `    envAccess,`,
+        `    marker: globalThis.${marker},`,
+        `    applicationAuthorization: request.headers.get("authorization"),`,
+        `    applicationCookie: request.headers.get("cookie"),`,
+        `    infrastructureToken: request.headers.get("x-token"),`,
+        `    projectSlug: request.headers.get("x-project-slug"),`,
+        `  });`,
+        "}",
+      ].join("\n");
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(source));
+      let hostLoads = 0;
+      let preparations = 0;
+
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          hostLoads++;
+          throw new Error("remote project module reached host import");
+        },
+        prepareHandlerModule: () => {
+          preparations++;
+          return Promise.resolve({
+            source,
+            sha256: new Uint8Array(digest).toHex(),
+          });
+        },
+      });
+
+      Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      Deno.env.delete("WORKER_ISOLATION_API");
+      await __resetPoolForTests();
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const remoteCtx = {
+        projectDir: "/test/project",
+        adapter,
+        securityConfig: null,
+        cspUserHeader: null,
+        isLocalProject: false,
+      } satisfies HandlerContext;
+
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          handler.handle(
+            new Request("http://localhost/api/isolation", {
+              headers: {
+                authorization: "Bearer application-user-token",
+                cookie: "session=application-cookie",
+                "x-project-slug": "tenant-project",
+                "x-token": "platform-service-token",
+              },
+            }),
+            remoteCtx,
+          ),
+      );
+
+      assertExists(response);
+      assertEquals(response.status, 200);
+      assertEquals(await response.json(), {
+        applicationAuthorization: "Bearer application-user-token",
+        applicationCookie: "session=application-cookie",
+        envAccess: "blocked",
+        infrastructureToken: null,
+        marker: "worker-imported",
+        projectSlug: null,
+      });
+      assertEquals(hostLoads, 0);
+      assertEquals(preparations, 1);
+      assertEquals((globalThis as Record<string, unknown>)[marker], undefined);
+      assert(
+        Deno.env.get("VF_TEST_HOST_ONLY_SECRET") === undefined,
+        "the test must not depend on a real host secret",
+      );
+    });
+
+    it("keeps local development on the host-compatible route path", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/local.ts",
+        "export function GET() { return new Response('local'); }",
+      );
+      let hostLoads = 0;
+      let preparations = 0;
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          hostLoads++;
+          return Promise.resolve({
+            GET: (request: Request) =>
+              Response.json({
+                authorization: request.headers.get("authorization"),
+                infrastructureToken: request.headers.get("x-token"),
+              }),
+          });
+        },
+        prepareHandlerModule: () => {
+          preparations++;
+          throw new Error("local development should not prepare a worker module");
+        },
+      });
+
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const response = await handler.handle(
+        new Request("http://localhost/api/local", {
+          headers: {
+            authorization: "Bearer local-application-token",
+            "x-token": "local-infrastructure-token",
+          },
+        }),
+        {
+          projectDir: "/test/project",
+          adapter,
+          securityConfig: null,
+          cspUserHeader: null,
+          isLocalProject: true,
+        },
+      );
+
+      assertEquals(response?.status, 200);
+      assertEquals(await response?.json(), {
+        authorization: "Bearer local-application-token",
+        infrastructureToken: null,
+      });
+      assertEquals(hostLoads, 1);
+      assertEquals(preparations, 0);
+    });
+
+    it("allows an explicitly capable dedicated runtime to use the host route path", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/dedicated.ts",
+        "export function GET() { return new Response('dedicated'); }",
+      );
+      let hostLoads = 0;
+      let preparations = 0;
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          hostLoads++;
+          return Promise.resolve({
+            GET: () => new Response("dedicated"),
+          });
+        },
+        prepareHandlerModule: () => {
+          preparations++;
+          throw new Error("dedicated runtime should not prepare a worker module");
+        },
+      });
+
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const response = await handler.handle(
+        new Request("http://localhost/api/dedicated"),
+        {
+          projectDir: "/test/project",
+          adapter,
+          securityConfig: null,
+          cspUserHeader: null,
+          isLocalProject: false,
+          allowHostProjectCodeExecution: true,
+        },
+      );
+
+      assertEquals(response?.status, 200);
+      assertEquals(await response?.text(), "dedicated");
+      assertEquals(hostLoads, 1);
+      assertEquals(preparations, 0);
+    });
+
+    it("prepares local routes before execution when API isolation is enabled", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/local-isolated.ts",
+        "export function GET() { return new Response('discovery-only'); }",
+      );
+      const source = `export function GET() { return new Response("local-isolated"); }`;
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(source));
+      let hostLoads = 0;
+      let preparations = 0;
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          hostLoads++;
+          throw new Error("isolated local route reached host import");
+        },
+        prepareHandlerModule: () => {
+          preparations++;
+          return Promise.resolve({
+            source,
+            sha256: new Uint8Array(digest).toHex(),
+          });
+        },
+      });
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          handler.handle(
+            new Request("http://localhost/api/local-isolated"),
+            {
+              projectDir: "/test/project",
+              adapter,
+              securityConfig: null,
+              cspUserHeader: null,
+              isLocalProject: true,
+            },
+          ),
+      );
+
+      assertEquals(response?.status, 200);
+      assertEquals(await response?.text(), "local-isolated");
+      assertEquals(hostLoads, 0);
+      assertEquals(preparations, 1);
     });
   });
 
@@ -275,7 +551,17 @@ describe("APIRouteHandler", () => {
       });
       const handler = await createInitializedHandler("/test/project", adapter);
 
-      const responsePromise = handler.handle(new Request("http://localhost/api/status"));
+      const localCtx = {
+        projectDir: "/test/project",
+        adapter,
+        securityConfig: null,
+        cspUserHeader: null,
+        isLocalProject: true,
+      } satisfies HandlerContext;
+      const responsePromise = handler.handle(
+        new Request("http://localhost/api/status"),
+        localCtx,
+      );
       handler.destroy();
 
       const response = await responsePromise;
@@ -284,6 +570,7 @@ describe("APIRouteHandler", () => {
 
       const responseAfterDestroy = await handler.handle(
         new Request("http://localhost/api/status"),
+        localCtx,
       );
       assertEquals(responseAfterDestroy?.status, 404);
     });
@@ -498,7 +785,21 @@ describe("APIRouteHandler", () => {
         "export const notAMethod = 1;",
       );
 
-      __injectDepsForTests({ loadHandlerModule: ({ modulePath }) => onLoad(modulePath) });
+      __injectDepsForTests({
+        loadHandlerModule: ({ modulePath }) => onLoad(modulePath),
+        prepareHandlerModule: async ({ modulePath }) => {
+          const route = await onLoad(modulePath);
+          if (!route || Object.keys(route).length === 0) {
+            throw new Error("Handler not found");
+          }
+          const source = "export function GET() { return new Response('prepared'); }";
+          const digest = await crypto.subtle.digest(
+            "SHA-256",
+            new TextEncoder().encode(source),
+          );
+          return { source, sha256: new Uint8Array(digest).toHex() };
+        },
+      });
 
       return {
         handler: await createInitializedHandler("/test/project", adapter),

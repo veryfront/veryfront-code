@@ -112,6 +112,8 @@ export function makeParams(
     adapter: overrides.adapter ?? createMockAdapter(),
     config: overrides.config,
     ...overrides,
+    isLocalProject: overrides.isLocalProject ?? true,
+    allowHostProjectCodeExecution: overrides.allowHostProjectCodeExecution ?? true,
     req: overrides.req ?? new Request("http://localhost" + overrides.pathname),
   };
 }

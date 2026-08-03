@@ -1,9 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { withTimeoutThrow } from "../../utils/stream-utils.ts";
 import { APICacheStore } from "./api-store.ts";
 import type { CachePayload } from "../types.ts";
+
+// IANA's documentation address is public, so the egress guard can validate it
+// before the deterministic test transport handles the request.
+const TEST_PUBLIC_API_ORIGIN = "https://93.184.216.34";
 
 async function withStoreTtlEnabled(fn: () => Promise<void>): Promise<void> {
   const previousGlobal = (globalThis as Record<string, unknown>).__vfDisableLruInterval;
@@ -183,25 +188,7 @@ describe("rendering/cache/stores/api-store", () => {
       const releaseSet = Promise.withResolvers<void>();
       let setCompleted = false;
       let setPromise: Promise<void> | undefined;
-      const server = Deno.serve(
-        { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-        async (request) => {
-          const url = new URL(request.url);
-          if (
-            request.method !== "POST" ||
-            url.pathname !== "/projects/api-store-test-project/cache/set"
-          ) {
-            return Response.json({ error: "not found" }, { status: 404 });
-          }
-
-          setStarted.resolve();
-          await releaseSet.promise;
-          setCompleted = true;
-          return Response.json({ success: true });
-        },
-      );
-      const addr = server.addr as Deno.NetAddr;
-      Deno.env.set("VERYFRONT_API_BASE_URL", `http://${addr.hostname}:${addr.port}`);
+      Deno.env.set("VERYFRONT_API_BASE_URL", TEST_PUBLIC_API_ORIGIN);
       Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
       globals.__vf_multi_project_adapter = {
         getCurrentRequestContext: () => ({
@@ -217,27 +204,50 @@ describe("rendering/cache/stores/api-store", () => {
       } as any;
 
       try {
-        let setResolved = false;
-        setPromise = store.set("distributed-key", payload).then(() => {
-          setResolved = true;
-        });
+        await withMockFetch(
+          async (input: string | URL | Request, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            const url = new URL(request.url);
+            if (
+              request.method !== "POST" ||
+              url.origin !== TEST_PUBLIC_API_ORIGIN ||
+              url.pathname !== "/projects/api-store-test-project/cache/set"
+            ) {
+              return Response.json({ error: "not found" }, { status: 404 });
+            }
 
-        await withTimeoutThrow(setStarted.promise, 10_000, "distributed cache write to start");
-        assertEquals(setResolved, false);
-        assertEquals(setCompleted, false);
+            setStarted.resolve();
+            await releaseSet.promise;
+            setCompleted = true;
+            return Response.json({ success: true });
+          },
+          async () => {
+            let setResolved = false;
+            setPromise = store.set("distributed-key", payload).then(() => {
+              setResolved = true;
+            });
 
-        releaseSet.resolve();
-        await setPromise;
+            await withTimeoutThrow(
+              setStarted.promise,
+              10_000,
+              "distributed cache write to start",
+            );
+            assertEquals(setResolved, false);
+            assertEquals(setCompleted, false);
 
-        assertEquals(setCompleted, true);
-        assertEquals(setResolved, true);
+            releaseSet.resolve();
+            await setPromise;
+
+            assertEquals(setCompleted, true);
+            assertEquals(setResolved, true);
+          },
+        );
       } finally {
         releaseSet.resolve();
         try {
           await withTimeoutThrow(
             Promise.all([
               store.destroy(),
-              server.shutdown(),
               setPromise ?? Promise.resolve(),
             ]),
             10_000,
@@ -263,29 +273,13 @@ describe("rendering/cache/stores/api-store", () => {
       }
     });
 
-    it("preserves Dates through an actual API backend round-trip", async () => {
+    it("preserves Dates through an API transport round-trip", async () => {
       const previousApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
       const previousApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
       const globals = globalThis as Record<string, unknown>;
       const originalAdapter = globals.__vf_multi_project_adapter;
       const values = new Map<string, string>();
-      const server = Deno.serve(
-        { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-        async (request) => {
-          const url = new URL(request.url);
-          if (url.pathname === "/projects/api-store-date-project/cache/set") {
-            const body = await request.json() as { key: string; value: string };
-            values.set(body.key, body.value);
-            return Response.json({ success: true });
-          }
-          if (url.pathname === "/projects/api-store-date-project/cache/get") {
-            return Response.json({ value: values.get(url.searchParams.get("key") ?? "") ?? null });
-          }
-          return Response.json({ error: "not found" }, { status: 404 });
-        },
-      );
-      const addr = server.addr as Deno.NetAddr;
-      Deno.env.set("VERYFRONT_API_BASE_URL", `http://${addr.hostname}:${addr.port}`);
+      Deno.env.set("VERYFRONT_API_BASE_URL", TEST_PUBLIC_API_ORIGIN);
       Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
       globals.__vf_multi_project_adapter = {
         getCurrentRequestContext: () => ({
@@ -306,13 +300,39 @@ describe("rendering/cache/stores/api-store", () => {
       };
 
       try {
-        await store.set("dated-key", payload);
-        const result = await store.get("dated-key");
+        await withMockFetch(
+          async (input: string | URL | Request, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            const url = new URL(request.url);
+            if (
+              request.method === "POST" &&
+              url.origin === TEST_PUBLIC_API_ORIGIN &&
+              url.pathname === "/projects/api-store-date-project/cache/set"
+            ) {
+              const body = await request.json() as { key: string; value: string };
+              values.set(body.key, body.value);
+              return Response.json({ success: true });
+            }
+            if (
+              request.method === "GET" &&
+              url.origin === TEST_PUBLIC_API_ORIGIN &&
+              url.pathname === "/projects/api-store-date-project/cache/get"
+            ) {
+              return Response.json({
+                value: values.get(url.searchParams.get("key") ?? "") ?? null,
+              });
+            }
+            return Response.json({ error: "not found" }, { status: 404 });
+          },
+          async () => {
+            await store.set("dated-key", payload);
+            const result = await store.get("dated-key");
 
-        assertEquals(result?.result.frontmatter as unknown, { publishedAt });
+            assertEquals(result?.result.frontmatter as unknown, { publishedAt });
+          },
+        );
       } finally {
         await store.destroy();
-        await server.shutdown();
         if (previousApiBaseUrl === undefined) {
           Deno.env.delete("VERYFRONT_API_BASE_URL");
         } else {
@@ -339,25 +359,7 @@ describe("rendering/cache/stores/api-store", () => {
 
       let receivedTtl: number | undefined;
       let receivedValue = "";
-      const server = Deno.serve(
-        { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-        async (request) => {
-          const url = new URL(request.url);
-          if (
-            request.method !== "POST" ||
-            url.pathname !== "/projects/api-store-test-project/cache/set"
-          ) {
-            return Response.json({ error: "not found" }, { status: 404 });
-          }
-
-          const body = await request.json() as { ttl?: number; value?: string };
-          receivedTtl = body.ttl;
-          receivedValue = body.value ?? "";
-          return Response.json({ success: true });
-        },
-      );
-      const addr = server.addr as Deno.NetAddr;
-      Deno.env.set("VERYFRONT_API_BASE_URL", `http://${addr.hostname}:${addr.port}`);
+      Deno.env.set("VERYFRONT_API_BASE_URL", TEST_PUBLIC_API_ORIGIN);
       Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
       globals.__vf_multi_project_adapter = {
         getCurrentRequestContext: () => ({
@@ -377,13 +379,32 @@ describe("rendering/cache/stores/api-store", () => {
       } as any;
 
       try {
-        await store.set("distributed-stale-key", payload);
+        await withMockFetch(
+          async (input: string | URL | Request, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            const url = new URL(request.url);
+            if (
+              request.method !== "POST" ||
+              url.origin !== TEST_PUBLIC_API_ORIGIN ||
+              url.pathname !== "/projects/api-store-test-project/cache/set"
+            ) {
+              return Response.json({ error: "not found" }, { status: 404 });
+            }
 
-        assertEquals(receivedTtl !== undefined && receivedTtl > 5, true);
-        assertEquals(receivedValue.includes('"staleUntil"'), true);
+            const body = await request.json() as { ttl?: number; value?: string };
+            receivedTtl = body.ttl;
+            receivedValue = body.value ?? "";
+            return Response.json({ success: true });
+          },
+          async () => {
+            await store.set("distributed-stale-key", payload);
+
+            assertEquals(receivedTtl !== undefined && receivedTtl > 5, true);
+            assertEquals(receivedValue.includes('"staleUntil"'), true);
+          },
+        );
       } finally {
         await store.destroy();
-        await server.shutdown();
         if (previousApiBaseUrl === undefined) {
           Deno.env.delete("VERYFRONT_API_BASE_URL");
         } else {

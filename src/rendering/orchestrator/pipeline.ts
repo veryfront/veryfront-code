@@ -140,7 +140,9 @@ export interface RenderPipelineConfig {
   mode: "development" | "production";
   projectDir: string;
   /** Whether browser module URLs may use the local filesystem endpoint. */
-  isLocalProject?: boolean;
+  isLocalProject: boolean;
+  /** Narrow host-owned capability for project-code execution. */
+  allowHostProjectCodeExecution?: boolean;
   /** Stable project identity used to isolate transformed module caches. */
   projectId?: string;
   /** Release or preview source used to isolate transformed module caches. */
@@ -177,6 +179,13 @@ interface FetchedDataResult {
   id: string;
   result: Awaited<ReturnType<RenderPipeline["dataFetcher"]["fetchData"]>> | null;
   error: Error | null;
+}
+
+interface DataWorkerIdentity {
+  readonly isLocalProject: boolean;
+  readonly allowHostProjectCodeExecution: boolean;
+  readonly workerScope?: string;
+  readonly sourceGeneration?: string;
 }
 
 const PRE_RESOLVED_DATA = Symbol("veryfront.preResolvedData");
@@ -520,6 +529,8 @@ export class RenderPipeline {
       return { params, pageProps, layoutProps };
     }
 
+    const dataWorkerIdentity = await this.resolveDataWorkerIdentity(options);
+
     const dataResults = await profilePhase(
       "render.fetch_data",
       () =>
@@ -534,6 +545,7 @@ export class RenderPipeline {
                     const fetchOptions: FetchDataOptions = {
                       modulePath: jobPath,
                       projectDir: this.config.projectDir,
+                      ...dataWorkerIdentity,
                     };
                     const result = await this.dataFetcher
                       .fetchData(
@@ -558,6 +570,47 @@ export class RenderPipeline {
     this.applyFetchedDataResults(slug, dataResults, pageProps, layoutProps);
 
     return { params, pageProps, layoutProps };
+  }
+
+  /**
+   * Build a host-owned worker generation for raw local data modules.
+   *
+   * A mutable source may only reuse a Worker when its filesystem adapter
+   * supplies an exact snapshot generation. Otherwise the data fetcher selects
+   * a single-use Worker so an imported module graph cannot survive a source
+   * change. Production releases are immutable and may use the release id.
+   */
+  private async resolveDataWorkerIdentity(
+    options: RenderOptions | undefined,
+  ): Promise<DataWorkerIdentity> {
+    const isLocalProject = this.config.isLocalProject === true;
+    const allowHostProjectCodeExecution = isLocalProject ||
+      this.config.allowHostProjectCodeExecution === true;
+    if (!isLocalProject) {
+      return { isLocalProject, allowHostProjectCodeExecution };
+    }
+
+    const sourceSnapshotVersion = await this.config.adapter.fs
+      .getSourceSnapshotVersion?.();
+    const releaseId = options?.releaseId;
+    if (!releaseId && sourceSnapshotVersion === undefined) {
+      return { isLocalProject, allowHostProjectCodeExecution };
+    }
+
+    const workerScope = this.config.projectId ?? this.config.projectDir;
+    const sourceGeneration = JSON.stringify({
+      releaseId: releaseId ?? null,
+      sourceSnapshotVersion: sourceSnapshotVersion ?? null,
+      contentSourceId: options?.contentSourceId ?? this.config.contentSourceId ?? null,
+      environment: options?.environment ?? null,
+      dependencyPinningCacheKey: options?.dependencyPinningCacheKey ?? null,
+    });
+    return {
+      isLocalProject,
+      allowHostProjectCodeExecution,
+      workerScope,
+      sourceGeneration,
+    };
   }
 
   private applyFetchedDataResults(

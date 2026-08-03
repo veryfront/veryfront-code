@@ -268,7 +268,7 @@ function getCloudStoreContext(config: RagStoreConfig): CloudStoreContext {
 
   return {
     apiBaseUrl: bootstrap.apiBaseUrl,
-    fetch: createVeryfrontCloudFetch(bootstrap.apiToken),
+    fetch: createVeryfrontCloudFetch(bootstrap.apiToken, bootstrap.apiBaseUrl),
     projectSlug: bootstrap.projectSlug,
     branch: config.branch ?? requestContext?.branch ?? "main",
     environmentName: requestContext?.environmentName ?? null,

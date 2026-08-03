@@ -213,6 +213,63 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
     });
   });
 
+  describe("shared runtime execution isolation", () => {
+    for (const endpoint of ["render", "render/page", "stream", "stream/page", "payload"]) {
+      it(`fails closed for shared ${endpoint} execution`, async () => {
+        const result = await handleRSCEndpoint(
+          makeParams({
+            pathname: `/_veryfront/rsc/${endpoint}`,
+            config: rscEnabledConfig,
+            isLocalProject: false,
+            allowHostProjectCodeExecution: false,
+          }),
+        );
+
+        assertEquals(result?.status, 503);
+        assertEquals(result?.headers.get("cache-control"), "no-store");
+        assertEquals(result?.headers.get("content-type"), "application/problem+json");
+        assertEquals(
+          (await result?.json() as { type?: string }).type,
+          "https://veryfront.com/docs/errors/project-execution-unavailable",
+        );
+      });
+    }
+
+    it("fails closed for shared server actions before authorization or import", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/action",
+          config: rscEnabledConfig,
+          isLocalProject: false,
+          allowHostProjectCodeExecution: false,
+          req: new Request("http://localhost/_veryfront/rsc/action", {
+            method: "POST",
+            body: "{}",
+          }),
+        }),
+      );
+
+      assertEquals(result?.status, 503);
+      assertEquals(result?.headers.get("cache-control"), "no-store");
+    });
+
+    it("does not conflate a dedicated production runtime with a shared runtime", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/action",
+          config: rscEnabledConfig,
+          isLocalProject: false,
+          allowHostProjectCodeExecution: true,
+          req: new Request("http://localhost/_veryfront/rsc/action", {
+            method: "GET",
+          }),
+        }),
+      );
+
+      assertEquals(result?.status, 405);
+    });
+  });
+
   describe("render endpoint", () => {
     it("renders components from the request filesystem adapter", async () => {
       const pagePath = "/virtual/project/app/page.tsx";
@@ -241,7 +298,7 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
           contentSourceId: "preview-main",
           adapter,
           config: rscEnabledConfig,
-          isLocalProject: false,
+          isLocalProject: true,
           mode: "development",
         }),
       );
@@ -1809,6 +1866,7 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
             adapter: branchAAdapter,
             config: rscEnabledConfig,
             isLocalProject: false,
+            allowHostProjectCodeExecution: false,
             mode: "development",
           }),
         );
@@ -1822,6 +1880,7 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
             adapter: branchBAdapter,
             config: rscEnabledConfig,
             isLocalProject: false,
+            allowHostProjectCodeExecution: false,
             mode: "development",
           }),
         );
@@ -1855,11 +1914,13 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
             adapter: branchBAdapter,
             config: rscEnabledConfig,
             isLocalProject: false,
+            allowHostProjectCodeExecution: false,
             mode: "development",
           }),
         );
 
-        assertEquals(renderB?.status, 200);
+        assertEquals(renderB?.status, 503);
+        assertEquals(renderB?.headers.get("cache-control"), "no-store");
       } finally {
         __resetRSCHandlerForTests();
         setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");

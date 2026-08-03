@@ -22,6 +22,8 @@ import {
 } from "#veryfront/config/env.ts";
 import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
+import { createOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import { DEFAULT_GOOGLE_BASE_URL } from "#veryfront/provider/runtime-loader/provider-endpoints.ts";
 import { createLocalModel } from "./local/model-runtime-adapter.ts";
 import { verifyLocalRuntime } from "./local/local-engine.ts";
 import { createVeryfrontCloudModel } from "./veryfront-cloud/provider.ts";
@@ -101,6 +103,9 @@ function autoInitializeFromEnv(): void {
         return provider.createModel(id, {
           credential: config.apiKey,
           baseURL: config.baseURL,
+          fetch: createOriginBoundOutboundFetch(
+            config.baseURL ?? "https://api.openai.com/v1",
+          ),
           providerName: getOpenAIEnvProviderName(config.baseURL),
         });
       }
@@ -130,6 +135,9 @@ function autoInitializeFromEnv(): void {
         return provider.createModel(id, {
           credential: config.apiKey,
           baseURL: config.baseURL,
+          fetch: createOriginBoundOutboundFetch(
+            config.baseURL ?? "https://api.anthropic.com/v1",
+          ),
         });
       }
       throw toError(createError({
@@ -157,6 +165,7 @@ function autoInitializeFromEnv(): void {
       if (provider) {
         return provider.createModel(id, {
           credential: config.apiKey,
+          fetch: createOriginBoundOutboundFetch(DEFAULT_GOOGLE_BASE_URL),
         });
       }
       throw toError(
@@ -187,6 +196,9 @@ function autoInitializeFromEnv(): void {
         return provider.createModel(id, {
           credential: config.apiKey,
           baseURL: config.baseURL,
+          fetch: createOriginBoundOutboundFetch(
+            config.baseURL ?? "https://api.mistral.ai/v1",
+          ),
         });
       }
       throw toError(createError({

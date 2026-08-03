@@ -1,6 +1,10 @@
 import { createError, toError } from "#veryfront/errors";
 import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
 import {
+  guardedOutboundFetch,
+  OutboundRequestBlockedError,
+} from "#veryfront/security/http/outbound-fetch.ts";
+import {
   getCurrentVeryfrontCloudContext,
   markCurrentVeryfrontCloudBillingGroupUsed,
 } from "./context.ts";
@@ -135,8 +139,11 @@ export function getVeryfrontCloudGatewayBaseUrl(
  */
 export function createVeryfrontCloudFetch(
   apiToken: string,
+  apiBaseUrl: string,
   projectSlug?: string,
 ): typeof fetch {
+  const authorizedOrigin = new URL(apiBaseUrl).origin;
+
   return (input, init) => {
     const request = new Request(input, init);
     const headers = new Headers(request.headers);
@@ -155,6 +162,18 @@ export function createVeryfrontCloudFetch(
       markCurrentVeryfrontCloudBillingGroupUsed();
     }
 
-    return fetch(new Request(request, { headers }));
+    return guardedOutboundFetch(
+      new Request(request, { headers }),
+      { redirect: "error" },
+      {
+        authorizeUrl(url) {
+          if (url.origin !== authorizedOrigin) {
+            throw new OutboundRequestBlockedError(
+              "Veryfront Cloud request blocked: destination origin is not authorized",
+            );
+          }
+        },
+      },
+    );
   };
 }

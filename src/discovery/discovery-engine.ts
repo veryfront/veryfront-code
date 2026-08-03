@@ -31,6 +31,7 @@ import {
 } from "./handlers/index.ts";
 import { discoverRuntimeAgentMarkdownDefinitions } from "./handlers/runtime-agent-markdown-handler.ts";
 import { filenameToId } from "./discovery-utils.ts";
+import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 
 const logger = agentLogger.component("discovery");
 
@@ -185,6 +186,12 @@ async function discoverConfiguredItems<T>(
  * Discover all items in configured directories
  */
 export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryResult> {
+  if (!isExplicitHostProjectCodeExecutionAllowed(config)) {
+    throw new TypeError(
+      "Executable project discovery requires explicit trusted-local execution",
+    );
+  }
+
   const baseDir = config.baseDir;
 
   const context: FileDiscoveryContext = {
@@ -192,6 +199,7 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
     fsAdapter: config.fsAdapter,
     cacheNamespace: config.cacheNamespace,
     baseDir,
+    allowHostProjectCodeExecution: true,
   };
 
   const result: DiscoveryResult = {

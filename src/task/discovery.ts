@@ -93,6 +93,9 @@ export interface TaskDiscoveryOptions {
 
   /** Enable debug logging */
   debug?: boolean;
+
+  /** Explicit host-owned capability for a trusted local or dedicated runtime. */
+  allowHostProjectCodeExecution?: boolean;
 }
 
 /**
@@ -162,10 +165,12 @@ async function loadTaskFromFile(
   id: string,
   adapter: RuntimeAdapter,
   projectDir: string,
+  allowHostProjectCodeExecution?: boolean,
 ): Promise<DiscoveredTask | null> {
   const module = await importDiscoveryModule(filePath, {
     adapter,
     projectDir,
+    allowHostProjectCodeExecution,
   }) as Record<string, unknown>;
   const taskExport = extractTaskExport(module);
   if (!taskExport) return null;
@@ -254,6 +259,7 @@ export async function discoverTasks(
     config,
     tasksDir = "tasks",
     debug = false,
+    allowHostProjectCodeExecution,
   } = options;
 
   const tasks: DiscoveredTask[] = [];
@@ -286,6 +292,7 @@ export async function discoverTasks(
           deriveTaskId(file.path, baseDir),
           adapter,
           projectDir,
+          allowHostProjectCodeExecution,
         );
         if (task) {
           tasks.push(task);
@@ -329,6 +336,7 @@ export async function findTaskById(
     config,
     tasksDir = "tasks",
     debug = false,
+    allowHostProjectCodeExecution,
   } = options;
   const baseDir = resolveTasksBaseDir(projectDir, tasksDir, config);
 
@@ -344,7 +352,13 @@ export async function findTaskById(
       if (id !== taskId) continue;
 
       try {
-        const task = await loadTaskFromFile(file.path, id, adapter, projectDir);
+        const task = await loadTaskFromFile(
+          file.path,
+          id,
+          adapter,
+          projectDir,
+          allowHostProjectCodeExecution,
+        );
         if (task) {
           matches.push(task);
         }

@@ -48,6 +48,7 @@ describe("replaceDiscoveredProjectPrimitives", () => {
       scheduleDirs: [],
       webhookDirs: [],
       evalDirs: [],
+      allowHostProjectCodeExecution: true,
     };
     const failure = await assertRejects(
       () => replaceDiscoveredProjectPrimitives(config),
@@ -109,6 +110,7 @@ describe("replaceDiscoveredProjectPrimitives", () => {
       scheduleDirs: [],
       webhookDirs: [],
       evalDirs: [],
+      allowHostProjectCodeExecution: true,
     }, { errorPolicy: "publish-valid" });
 
     assertEquals(result.errors.length, 1);

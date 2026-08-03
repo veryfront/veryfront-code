@@ -9,14 +9,23 @@ import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { loadMiddlewareFile } from "./middleware.ts";
 
-function createVirtualAdapter(source: string): RuntimeAdapter {
+function createVirtualAdapter(
+  source: string | undefined,
+  onFileAccess?: (operation: "exists" | "read") => void,
+): RuntimeAdapter {
   const fs = {
     getUnderlyingAdapter: () => fs,
     getAdapterType: () => "MultiProjectFSAdapter",
     isVeryfrontAdapter: () => true,
     isMultiProjectMode: () => true,
-    exists: (path: string) => Promise.resolve(path.endsWith("/middleware.ts")),
-    readFile: () => Promise.resolve(source),
+    exists: (path: string) => {
+      onFileAccess?.("exists");
+      return Promise.resolve(source !== undefined && path.endsWith("/middleware.ts"));
+    },
+    readFile: () => {
+      onFileAccess?.("read");
+      return Promise.resolve(source ?? "");
+    },
   } as unknown as RuntimeAdapter["fs"];
 
   return {
@@ -42,11 +51,49 @@ describe("loadMiddlewareFile", () => {
     await stop();
   });
 
+  it("rejects remote middleware before reading or evaluating project source", async () => {
+    const marker = `__vf_middleware_isolation_${crypto.randomUUID().replaceAll("-", "")}`;
+    const host = globalThis as unknown as Record<string, unknown>;
+    let sourceReads = 0;
+    const adapter = createVirtualAdapter(
+      `globalThis.${marker} = Deno.env.get("HOST_SECRET"); export default [];`,
+      (operation) => {
+        if (operation === "read") sourceReads++;
+      },
+    );
+
+    try {
+      await assertRejects(
+        () => loadMiddlewareFile("/app", adapter, { throwOnError: true }),
+        TypeError,
+        "requires explicit trusted-local execution",
+      );
+      assertEquals(sourceReads, 0);
+      assertEquals(host[marker], undefined);
+    } finally {
+      delete host[marker];
+    }
+  });
+
+  it("allows shared runtimes to establish that no middleware exists", async () => {
+    let sourceReads = 0;
+    const adapter = createVirtualAdapter(undefined, (operation) => {
+      if (operation === "read") sourceReads++;
+    });
+
+    assertEquals(await loadMiddlewareFile("/app", adapter), []);
+    assertEquals(sourceReads, 0);
+  });
+
   it("fails closed for invalid production middleware", async () => {
     const adapter = createVirtualAdapter("export default function broken( {");
 
     await assertRejects(
-      () => loadMiddlewareFile("/app", adapter, { throwOnError: true }),
+      () =>
+        loadMiddlewareFile("/app", adapter, {
+          throwOnError: true,
+          allowHostProjectCodeExecution: true,
+        }),
       Error,
     );
   });
@@ -55,7 +102,11 @@ describe("loadMiddlewareFile", () => {
     const adapter = createVirtualAdapter("export const middleware = () => new Response('ok');");
 
     await assertRejects(
-      () => loadMiddlewareFile("/app", adapter, { throwOnError: true }),
+      () =>
+        loadMiddlewareFile("/app", adapter, {
+          throwOnError: true,
+          allowHostProjectCodeExecution: true,
+        }),
       TypeError,
       "Invalid middleware export",
     );
@@ -67,7 +118,11 @@ describe("loadMiddlewareFile", () => {
     );
 
     await assertRejects(
-      () => loadMiddlewareFile("/app", adapter, { throwOnError: true }),
+      () =>
+        loadMiddlewareFile("/app", adapter, {
+          throwOnError: true,
+          allowHostProjectCodeExecution: true,
+        }),
       TypeError,
       "Invalid middleware export",
     );
@@ -76,7 +131,10 @@ describe("loadMiddlewareFile", () => {
   it("preserves nonfatal development loading for invalid middleware", async () => {
     const adapter = createVirtualAdapter("export default function broken( {");
 
-    assertEquals(await loadMiddlewareFile("/app", adapter), []);
+    assertEquals(
+      await loadMiddlewareFile("/app", adapter, { allowHostProjectCodeExecution: true }),
+      [],
+    );
   });
 });
 
@@ -94,7 +152,11 @@ describe("dev-server/middleware: actionable rejection", () => {
     );
 
     const error = await assertRejects(
-      () => loadMiddlewareFile("/app", adapter, { throwOnError: true }),
+      () =>
+        loadMiddlewareFile("/app", adapter, {
+          throwOnError: true,
+          allowHostProjectCodeExecution: true,
+        }),
       TypeError,
     );
 
@@ -111,7 +173,11 @@ describe("dev-server/middleware: actionable rejection", () => {
     const adapter = createVirtualAdapter("export const handler = 1; export const other = 2;");
 
     const error = await assertRejects(
-      () => loadMiddlewareFile("/app", adapter, { throwOnError: true }),
+      () =>
+        loadMiddlewareFile("/app", adapter, {
+          throwOnError: true,
+          allowHostProjectCodeExecution: true,
+        }),
       TypeError,
     );
 
@@ -130,7 +196,11 @@ describe("dev-server/middleware: actionable rejection", () => {
     );
 
     const error = await assertRejects(
-      () => loadMiddlewareFile("/app", adapter, { throwOnError: true }),
+      () =>
+        loadMiddlewareFile("/app", adapter, {
+          throwOnError: true,
+          allowHostProjectCodeExecution: true,
+        }),
       TypeError,
     );
 
@@ -143,7 +213,11 @@ describe("dev-server/middleware: actionable rejection", () => {
     const adapter = createVirtualAdapter("export default [];");
 
     const error = await assertRejects(
-      () => loadMiddlewareFile("/app", adapter, { throwOnError: true }),
+      () =>
+        loadMiddlewareFile("/app", adapter, {
+          throwOnError: true,
+          allowHostProjectCodeExecution: true,
+        }),
       TypeError,
     );
 
@@ -157,7 +231,11 @@ describe("dev-server/middleware: actionable rejection", () => {
     );
 
     const error = await assertRejects(
-      () => loadMiddlewareFile("/app", adapter, { throwOnError: true }),
+      () =>
+        loadMiddlewareFile("/app", adapter, {
+          throwOnError: true,
+          allowHostProjectCodeExecution: true,
+        }),
       TypeError,
     );
 
@@ -171,7 +249,10 @@ describe("dev-server/middleware: actionable rejection", () => {
       "export default async function (c, next) { return await next(); }",
     );
 
-    const middleware = await loadMiddlewareFile("/app", adapter, { throwOnError: true });
+    const middleware = await loadMiddlewareFile("/app", adapter, {
+      throwOnError: true,
+      allowHostProjectCodeExecution: true,
+    });
     assertEquals(middleware.length, 1);
   });
 
@@ -180,7 +261,10 @@ describe("dev-server/middleware: actionable rejection", () => {
       "export default [async (c, next) => await next(), async (c, next) => await next()];",
     );
 
-    const middleware = await loadMiddlewareFile("/app", adapter, { throwOnError: true });
+    const middleware = await loadMiddlewareFile("/app", adapter, {
+      throwOnError: true,
+      allowHostProjectCodeExecution: true,
+    });
     assertEquals(middleware.length, 2);
   });
 });

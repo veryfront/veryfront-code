@@ -48,6 +48,8 @@ export type DiscoverProjectAgentRuntimeInput = {
   verbose?: boolean;
   /** Immutable outer restriction to preserve while loading and discovering this source. */
   sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
+  /** Explicit host-owned capability for a trusted local or dedicated runtime. */
+  allowHostProjectCodeExecution?: boolean;
 };
 
 /** Project discovery plus the normalized policy owned by that exact source. */
@@ -137,6 +139,7 @@ export async function discoverProjectAgentRuntime(
         config,
         fsAdapter: input.fsAdapter,
         verbose: input.verbose,
+        allowHostProjectCodeExecution: input.allowHostProjectCodeExecution,
       });
 
       const currentSourcePolicy = normalizeSourceIntegrationPolicy(config.integrations);

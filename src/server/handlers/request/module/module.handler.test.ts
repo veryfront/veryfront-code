@@ -51,6 +51,7 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
     adapter: createMockAdapter(),
     securityConfig: null,
     cspUserHeader: null,
+    isLocalProject: true,
     ...overrides,
   };
 }
@@ -207,6 +208,70 @@ describe("server/handlers/request/module/module.handler", () => {
 
       assertEquals(result.response?.status, 405);
       assertEquals(result.response?.headers.get("allow"), "GET, HEAD");
+    });
+  });
+
+  describe("remote execution isolation", () => {
+    it("fails closed before resolving the host renderer", async () => {
+      let rendererCalls = 0;
+      setRendererInitializer({
+        initialize: () => {
+          rendererCalls++;
+          throw new Error("remote module endpoint reached the host renderer");
+        },
+        isInitialized: () => false,
+        get: () => {
+          throw new Error("remote module endpoint reached the host renderer");
+        },
+        destroy: () => Promise.resolve(),
+      });
+
+      const handler = new ModuleHandler();
+      for (
+        const pathname of [
+          "/_veryfront/modules/runtime.js",
+          "/_veryfront/pages/page.js",
+          "/_veryfront/data/page.json",
+          "/_veryfront/page-data/page.json",
+        ]
+      ) {
+        const result = await handler.handle(
+          new Request(`https://tenant.example${pathname}`),
+          makeCtx({
+            isLocalProject: false,
+            prepareHostedConfigContext: (() => {
+              throw new Error("shared module endpoint prepared host rendering context");
+            }) as HandlerContext["prepareHostedConfigContext"],
+          }),
+        );
+        assertEquals(result.continue, false);
+        assertEquals(result.response?.status, 503);
+        assertEquals(result.response?.headers.get("cache-control"), "no-store");
+        assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
+        assertEquals(
+          (await result.response?.json() as { type?: string }).type,
+          "https://veryfront.com/docs/errors/project-execution-unavailable",
+        );
+      }
+
+      assertEquals(rendererCalls, 0);
+    });
+
+    it("returns an empty fail-closed response for HEAD", async () => {
+      const result = await new ModuleHandler().handle(
+        new Request("https://tenant.example/_veryfront/page-data/page.json", {
+          method: "HEAD",
+        }),
+        makeCtx({
+          isLocalProject: false,
+          prepareHostedConfigContext: (() => {
+            throw new Error("shared module endpoint prepared host rendering context");
+          }) as HandlerContext["prepareHostedConfigContext"],
+        }),
+      );
+
+      assertEquals(result.response?.status, 503);
+      assertEquals(await result.response?.text(), "");
     });
   });
 

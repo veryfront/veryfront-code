@@ -10,7 +10,9 @@
 import { dynamicTool } from "#veryfront/tool";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { logger as baseLogger } from "#veryfront/utils";
+import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
+import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import type { OpenAPIOperation, OpenAPIParameter, OpenAPISpec } from "./types.ts";
 
@@ -18,6 +20,9 @@ const logger = baseLogger.component("open-api-mcp");
 
 const HTTP_METHODS = ["get", "post", "put", "patch", "delete", "head", "options"] as const;
 type HttpMethod = (typeof HTTP_METHODS)[number];
+
+const OPENAPI_MCP_REQUEST_TIMEOUT_MS = 30_000;
+const MAX_OPENAPI_MCP_RESPONSE_BYTES = 4 * 1024 * 1024;
 
 function isHttpMethod(method: string): method is HttpMethod {
   return HTTP_METHODS.includes(method as HttpMethod);
@@ -198,14 +203,28 @@ async function executeAPICall(
   logger.debug("Executing API call", { method, url });
 
   try {
-    const response = await fetch(url, requestInit);
+    const signal = AbortSignal.timeout(OPENAPI_MCP_REQUEST_TIMEOUT_MS);
+    const response = await guardedOutboundFetch(url, {
+      ...requestInit,
+      redirect: "error",
+      signal,
+    });
     const contentType = response.headers.get("content-type") ?? "";
+    const { text, truncated } = await readResponseTextPrefix(
+      response,
+      MAX_OPENAPI_MCP_RESPONSE_BYTES + 1,
+      signal,
+      { fatalUtf8: true },
+    );
+    if (truncated || new TextEncoder().encode(text).byteLength > MAX_OPENAPI_MCP_RESPONSE_BYTES) {
+      throw new RangeError("OpenAPI MCP response exceeds the maximum allowed size");
+    }
 
     let data: unknown;
     if (contentType.includes("application/json")) {
-      data = await response.json();
+      data = JSON.parse(text);
     } else {
-      data = await response.text();
+      data = text;
     }
 
     return {

@@ -29,6 +29,7 @@ import {
 } from "#veryfront/utils/constants/index.ts";
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import { isHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 
 const logger = serverLogger.component("ssr-service");
 
@@ -185,12 +186,31 @@ export class SSRService implements SSRServiceLike {
   }
 
   async getRenderer(ctx: HandlerContext): Promise<RendererAdapter> {
+    if (!isHostProjectCodeExecutionAllowed(ctx)) {
+      throw new Error(
+        "Project renderers without host execution capability require generation-owned isolated renderer admission",
+      );
+    }
     return this.rendererProvider.getRenderer(ctx);
   }
 
   async renderPage(ctx: HandlerContext, options: SSRRenderOptions): Promise<SSRRenderResult> {
     const { request, url, slug, nonce, studioEmbed, projectId, pageId, noHmr, useNoCache } =
       options;
+
+    // Project source without an explicit host capability is not trusted to
+    // execute in the server process. Dedicated single-project runtimes may
+    // grant the capability; all other projects require isolated admission.
+    if (!isHostProjectCodeExecutionAllowed(ctx)) {
+      return {
+        status: HTTP_UNAVAILABLE,
+        html: ErrorPages.serverError("Isolated rendering is temporarily unavailable."),
+        htmlProvenance: "framework",
+        isStreaming: false,
+        cacheStrategy: "no-cache",
+        slug,
+      };
+    }
 
     const renderSessionId = `${ctx.projectSlug || "default"}-${slug || "index"}-${Date.now()}`;
     const preRenderHeap = getHeapStats();

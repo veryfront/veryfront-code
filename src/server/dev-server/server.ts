@@ -306,6 +306,7 @@ export class DevServer {
       workflowDirs: ["workflows"],
       fsAdapter: this.adapter.fs,
       verbose: this.isDebug(),
+      allowHostProjectCodeExecution: true,
     };
   }
 

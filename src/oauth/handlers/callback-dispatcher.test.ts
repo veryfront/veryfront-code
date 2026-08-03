@@ -29,10 +29,10 @@ const ALPHA_CONFIG: OAuthServiceConfig = {
   displayName: "Alpha",
   clientIdEnvVar: "ALPHA_CLIENT_ID",
   clientSecretEnvVar: "ALPHA_CLIENT_SECRET",
-  authorizationUrl: "https://alpha.provider.test/auth",
-  tokenUrl: "https://alpha.provider.test/token",
+  authorizationUrl: "https://93.184.216.34/alpha/auth",
+  tokenUrl: "https://93.184.216.34/alpha/token",
   defaultScopes: ["alpha:read"],
-  apiBaseUrl: "https://alpha.provider.test/api",
+  apiBaseUrl: "https://93.184.216.34/alpha/api",
 };
 
 const BETA_CONFIG: OAuthServiceConfig = {
@@ -41,10 +41,10 @@ const BETA_CONFIG: OAuthServiceConfig = {
   displayName: "Beta",
   clientIdEnvVar: "BETA_CLIENT_ID",
   clientSecretEnvVar: "BETA_CLIENT_SECRET",
-  authorizationUrl: "https://beta.provider.test/auth",
-  tokenUrl: "https://beta.provider.test/token",
+  authorizationUrl: "https://93.184.216.34/beta/auth",
+  tokenUrl: "https://93.184.216.34/beta/token",
   defaultScopes: ["beta:read"],
-  apiBaseUrl: "https://beta.provider.test/api",
+  apiBaseUrl: "https://93.184.216.34/beta/api",
   pkceMode: "unsupported",
 };
 

@@ -68,6 +68,16 @@ describe("buildHandlerContext", () => {
     assertEquals(ctx.proxyToken, undefined);
   });
 
+  it("preserves the narrow host project-code execution capability", () => {
+    const ctx = buildHandlerContext(
+      makeOpts({ allowHostProjectCodeExecution: true }),
+    );
+
+    assertEquals(ctx.allowHostProjectCodeExecution, true);
+    assertEquals(ctx.isLocalProject, false);
+    assertEquals(ctx.enriched?.allowHostProjectCodeExecution, true);
+  });
+
   it("builds enriched context when both config and projectSlug present", () => {
     const opts = makeOpts({
       config: { name: "test" } as any,
