@@ -74,7 +74,8 @@ export async function writeCacheFile(
       path: path.slice(-80),
       error: describeCacheError(verifyError, path, parentDir),
     });
-    return false;
+    if (isNotFoundError(verifyError)) return false;
+    throw verifyError;
   }
 
   return true;

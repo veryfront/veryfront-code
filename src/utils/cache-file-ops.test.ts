@@ -113,13 +113,25 @@ describe("cache-file-ops", () => {
       );
     });
 
-    it("returns false when post-write verification fails", async () => {
+    it("returns false when post-write verification finds a missing file", async () => {
       const fs = createMockFs({
-        stat: () => Promise.reject(new Error("file gone")),
+        stat: () => Promise.reject(filesystemError("file gone", "ENOENT")),
       });
 
       const result = await writeCacheFile(fs, "/cache/dir/file.js", "content", "TEST");
       assertEquals(result, false);
+    });
+
+    it("propagates operational post-write verification failures", async () => {
+      const fs = createMockFs({
+        stat: () => Promise.reject(filesystemError("permission denied", "EACCES")),
+      });
+
+      await assertRejects(
+        () => writeCacheFile(fs, "/cache/dir/file.js", "content", "TEST"),
+        Error,
+        "permission denied",
+      );
     });
 
     it("returns false when stat says not a file", async () => {
