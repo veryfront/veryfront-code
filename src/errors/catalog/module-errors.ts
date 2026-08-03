@@ -91,7 +91,7 @@ resolve: {
     [
       "Upgrade Veryfront to a version that supports this lockfile",
       "Migrate the lockfile with a compatible Veryfront version",
-      "Do not delete or overwrite the lockfile unless its contents are no longer needed",
+      "If the contents are no longer needed, run 'veryfront lock --clear' to reset it",
     ],
   ),
 
