@@ -142,8 +142,13 @@ describe("transforms/esm/http-cache-helpers", () => {
       );
       const objectDefineProperty = Object.defineProperty;
       const urlDescriptor = Object.getOwnPropertyDescriptor(globalThis, "URL")!;
+      const urlPrototypeDescriptors = Object.getOwnPropertyDescriptors(URL.prototype);
+      const searchParamsPrototypeDescriptors = Object.getOwnPropertyDescriptors(
+        URLSearchParams.prototype,
+      );
       let definePropertyCalls = 0;
       let urlCalls = 0;
+      let urlPrototypeCalls = 0;
       let poisoned: string;
 
       try {
@@ -165,6 +170,37 @@ describe("transforms/esm/http-cache-helpers", () => {
           },
           writable: true,
         });
+        for (const name of ["hostname", "pathname", "searchParams"]) {
+          objectDefineProperty(URL.prototype, name, {
+            configurable: true,
+            get() {
+              urlPrototypeCalls++;
+              throw new Error(`poisoned URL.prototype.${name}`);
+            },
+            set() {
+              urlPrototypeCalls++;
+              throw new Error(`poisoned URL.prototype.${name}`);
+            },
+          });
+        }
+        objectDefineProperty(URL.prototype, "toString", {
+          configurable: true,
+          value() {
+            urlPrototypeCalls++;
+            return "https://evil.invalid/collapsed";
+          },
+          writable: true,
+        });
+        for (const name of ["get", "has", "set", "sort"]) {
+          objectDefineProperty(URLSearchParams.prototype, name, {
+            configurable: true,
+            value() {
+              urlPrototypeCalls++;
+              throw new Error(`poisoned URLSearchParams.prototype.${name}`);
+            },
+            writable: true,
+          });
+        }
 
         poisoned = await buildHttpCacheIdentity(
           "https://esm.sh/lodash@4?z=1&a=2",
@@ -177,11 +213,14 @@ describe("transforms/esm/http-cache-helpers", () => {
           writable: true,
         });
         objectDefineProperty(globalThis, "URL", urlDescriptor);
+        Object.defineProperties(URL.prototype, urlPrototypeDescriptors);
+        Object.defineProperties(URLSearchParams.prototype, searchParamsPrototypeDescriptors);
       }
 
       assertEquals(poisoned, baseline);
       assertEquals(definePropertyCalls, 0);
       assertEquals(urlCalls, 0);
+      assertEquals(urlPrototypeCalls, 0);
     });
 
     it("does not consult inherited toJSON hooks while fingerprinting import maps", async () => {

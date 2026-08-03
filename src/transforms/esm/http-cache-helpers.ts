@@ -21,8 +21,68 @@ import { computeHash } from "#veryfront/utils/hash-utils.ts";
 const logger = rendererLogger.component("http-cache");
 const JSONStringify = JSON.stringify;
 const IntrinsicURL = URL;
+const IntrinsicURLSearchParams = URLSearchParams;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectEntries = Object.entries;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ReflectApply = Reflect.apply;
+const URLHostnameGet = ObjectGetOwnPropertyDescriptor(
+  IntrinsicURL.prototype,
+  "hostname",
+)!.get!;
+const URLPathnameGet = ObjectGetOwnPropertyDescriptor(
+  IntrinsicURL.prototype,
+  "pathname",
+)!.get!;
+const URLPathnameSet = ObjectGetOwnPropertyDescriptor(
+  IntrinsicURL.prototype,
+  "pathname",
+)!.set!;
+const URLSearchParamsGet = ObjectGetOwnPropertyDescriptor(
+  IntrinsicURL.prototype,
+  "searchParams",
+)!.get!;
+const URLToString = IntrinsicURL.prototype.toString;
+const URLSearchParamsGetValue = IntrinsicURLSearchParams.prototype.get;
+const URLSearchParamsHas = IntrinsicURLSearchParams.prototype.has;
+const URLSearchParamsSetValue = IntrinsicURLSearchParams.prototype.set;
+const URLSearchParamsSort = IntrinsicURLSearchParams.prototype.sort;
+
+function getURLHostname(url: URL): string {
+  return ReflectApply(URLHostnameGet, url, []);
+}
+
+function getURLPathname(url: URL): string {
+  return ReflectApply(URLPathnameGet, url, []);
+}
+
+function setURLPathname(url: URL, pathname: string): void {
+  ReflectApply(URLPathnameSet, url, [pathname]);
+}
+
+function getURLSearchParams(url: URL): URLSearchParams {
+  return ReflectApply(URLSearchParamsGet, url, []);
+}
+
+function stringifyURL(url: URL): string {
+  return ReflectApply(URLToString, url, []);
+}
+
+function getURLSearchParam(searchParams: URLSearchParams, name: string): string | null {
+  return ReflectApply(URLSearchParamsGetValue, searchParams, [name]);
+}
+
+function hasURLSearchParam(searchParams: URLSearchParams, name: string): boolean {
+  return ReflectApply(URLSearchParamsHas, searchParams, [name]);
+}
+
+function setURLSearchParam(searchParams: URLSearchParams, name: string, value: string): void {
+  ReflectApply(URLSearchParamsSetValue, searchParams, [name, value]);
+}
+
+function sortURLSearchParams(searchParams: URLSearchParams): void {
+  ReflectApply(URLSearchParamsSort, searchParams, []);
+}
 
 /**
  * Cache interface for dependency injection (matches LRU essential methods).
@@ -237,9 +297,9 @@ interface CanonicalReactEsmPackage {
 function parseCanonicalReactEsmPackage(rawUrl: string): CanonicalReactEsmPackage | null {
   try {
     const url = new IntrinsicURL(rawUrl);
-    if (url.hostname !== "esm.sh") return null;
+    if (getURLHostname(url) !== "esm.sh") return null;
 
-    const pathSegments = url.pathname.split("/").filter(Boolean);
+    const pathSegments = getURLPathname(url).split("/").filter(Boolean);
     const prefix = pathSegments[0] ?? "";
     const packageIndex = prefix === "stable" || /^v\d+$/.test(prefix) ? 1 : 0;
     const match = /^(react|react-dom)@(\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)$/.exec(
@@ -279,7 +339,7 @@ export function getEffectiveHttpCacheRequest<T extends HttpCacheIdentityOptions>
   const version = options.reactVersion ?? parsed.version;
   if (version !== parsed.version) {
     parsed.pathSegments[parsed.packageIndex] = `${parsed.packageName}@${version}`;
-    parsed.url.pathname = `/${parsed.pathSegments.join("/")}`;
+    setURLPathname(parsed.url, `/${parsed.pathSegments.join("/")}`);
   }
 
   const effectiveOptions = {
@@ -290,7 +350,7 @@ export function getEffectiveHttpCacheRequest<T extends HttpCacheIdentityOptions>
   const context = getHttpCacheRequestIdentityContext(options);
   if (context) attachHttpCacheRequestIdentityContext(effectiveOptions, context);
 
-  return { url: parsed.url.toString(), options: effectiveOptions };
+  return { url: stringifyURL(parsed.url), options: effectiveOptions };
 }
 
 /**
@@ -335,25 +395,27 @@ export function isInternalBare(specifier: string): boolean {
 }
 
 export function normalizeEsmShUrl(url: URL): void {
-  if (url.hostname !== "esm.sh") return;
+  if (getURLHostname(url) !== "esm.sh") return;
 
-  if (url.pathname.includes("/denonext/")) {
-    url.pathname = url.pathname.replace("/denonext/", "/");
+  const originalPathname = getURLPathname(url);
+  if (originalPathname.includes("/denonext/")) {
+    setURLPathname(url, originalPathname.replace("/denonext/", "/"));
   }
 
-  if (!url.searchParams.has("target")) {
-    url.searchParams.set("target", "es2022");
+  const searchParams = getURLSearchParams(url);
+  if (!hasURLSearchParam(searchParams, "target")) {
+    setURLSearchParam(searchParams, "target", "es2022");
   }
 
-  const pathname = url.pathname.replace(/^\/+/, "");
+  const pathname = getURLPathname(url).replace(/^\/+/, "");
   const isBaseReact = /^react@[\d.]+(?:\?|$)/.test(pathname);
   if (isBaseReact) return;
 
-  const existing = url.searchParams.get("external");
+  const existing = getURLSearchParam(searchParams, "external");
   const externals = existing ? existing.split(",") : [];
   if (!externals.includes("react")) {
     externals.push("react");
-    url.searchParams.set("external", externals.join(","));
+    setURLSearchParam(searchParams, "external", externals.join(","));
   }
 }
 
@@ -361,15 +423,16 @@ export function normalizeHttpUrl(raw: string): string {
   try {
     const url = new IntrinsicURL(raw);
     normalizeEsmShUrl(url);
-    url.searchParams.sort();
-    const normalized = url.toString();
+    const searchParams = getURLSearchParams(url);
+    sortURLSearchParams(searchParams);
+    const normalized = stringifyURL(url);
 
     // esm.sh misbehaves when list-valued params such as
     // `external=react,react-dom` are percent-encoded as `%2C`.
     // Preserve literal commas only for the affected param so unrelated
     // query values remain canonically encoded.
-    if (url.hostname === "esm.sh") {
-      const external = url.searchParams.get("external");
+    if (getURLHostname(url) === "esm.sh") {
+      const external = getURLSearchParam(searchParams, "external");
       if (!external) return normalized;
 
       const encodedExternal = encodeURIComponent(external);
