@@ -134,6 +134,56 @@ describe("transforms/esm/http-cache-helpers", () => {
       assertEquals(hookCalls, 0);
     });
 
+    it("uses captured request-context and URL primordials for identities", async () => {
+      const importMap = { imports: {}, scopes: {} };
+      const baseline = await buildHttpCacheIdentity(
+        "https://esm.sh/lodash@4?z=1&a=2",
+        prepareHttpCacheRequestOptions({ cacheDir: ".cache", importMap }),
+      );
+      const objectDefineProperty = Object.defineProperty;
+      const urlDescriptor = Object.getOwnPropertyDescriptor(globalThis, "URL")!;
+      let definePropertyCalls = 0;
+      let urlCalls = 0;
+      let poisoned: string;
+
+      try {
+        objectDefineProperty(Object, "defineProperty", {
+          configurable: true,
+          value() {
+            definePropertyCalls++;
+            throw new Error("poisoned defineProperty");
+          },
+          writable: true,
+        });
+        objectDefineProperty(globalThis, "URL", {
+          configurable: true,
+          value: class PoisonedURL {
+            constructor() {
+              urlCalls++;
+              throw new Error("poisoned URL");
+            }
+          },
+          writable: true,
+        });
+
+        poisoned = await buildHttpCacheIdentity(
+          "https://esm.sh/lodash@4?z=1&a=2",
+          prepareHttpCacheRequestOptions({ cacheDir: ".cache", importMap }),
+        );
+      } finally {
+        objectDefineProperty(Object, "defineProperty", {
+          configurable: true,
+          value: objectDefineProperty,
+          writable: true,
+        });
+        objectDefineProperty(globalThis, "URL", urlDescriptor);
+      }
+
+      assertEquals(poisoned, baseline);
+      assertEquals(definePropertyCalls, 0);
+      assertEquals(urlCalls, 0);
+    });
+
     it("does not consult inherited toJSON hooks while fingerprinting import maps", async () => {
       const importMap = {
         imports: { pkg: "https://modules.example.com/pkg-v1.js" },

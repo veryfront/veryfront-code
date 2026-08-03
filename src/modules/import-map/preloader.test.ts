@@ -1073,11 +1073,11 @@ describe("modules/import-map/preloader", () => {
       await first;
     });
 
-    it("does not release capacity or duplicate work when a loader times out", async () => {
+    it("keeps timed-out underlying work scoped to its project capacity", async () => {
       const adapter = createMinimalAdapter();
       const loads: Array<ReturnType<typeof createDeferred<ImportMapConfig>>> = [];
       const preloader = new ImportMapPreloader({
-        maxProjects: 1,
+        maxProjects: 2,
         maxVariantsPerProject: 1,
         ttlMs: 1_000,
         loadTimeoutMs: 20,
@@ -1088,24 +1088,35 @@ describe("modules/import-map/preloader", () => {
         },
       });
 
+      const hungA = preloader.preload("/hung-a", adapter, "hung-a");
+      await waitForLoadCount(loads, 1);
       await assertRejects(
-        () => preloader.preload("/hung", adapter, "hung"),
+        () => hungA,
         RangeError,
         "load timed out",
       );
       await assertRejects(
-        () => preloader.preload("/next", adapter, "next"),
+        () => preloader.preload("/hung-a", adapter, "hung-a"),
         RangeError,
         "capacity wait timed out",
       );
       assertEquals(loads.length, 1);
 
+      const hungB = preloader.preload("/hung-b", adapter, "hung-b");
+      await waitForLoadCount(loads, 2);
+      const recovered = preloader.preload("/next", adapter, "next");
+      await waitForLoadCount(loads, 3);
+      loads[1]!.resolve({ imports: { source: "b" } });
+      loads[2]!.resolve({ imports: { source: "next" } });
+      assertEquals((await hungB).imports?.source, "b");
+      assertEquals((await recovered).imports?.source, "next");
+
       loads[0]!.resolve({ imports: { source: "late" } });
       await Promise.resolve();
-      const recovered = preloader.preload("/next", adapter, "next");
-      await waitForLoadCount(loads, 2);
-      loads[1]!.resolve({ imports: { source: "next" } });
-      assertEquals((await recovered).imports?.source, "next");
+      const sameProjectRecovered = preloader.preload("/hung-a", adapter, "hung-a");
+      await waitForLoadCount(loads, 4);
+      loads[3]!.resolve({ imports: { source: "hung-recovered" } });
+      assertEquals((await sameProjectRecovered).imports?.source, "hung-recovered");
     });
 
     it("keeps variant identity and capacity deterministic after primordial poisoning", async () => {

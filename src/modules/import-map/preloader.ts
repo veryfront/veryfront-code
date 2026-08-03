@@ -1,12 +1,10 @@
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import {
-  primordialArrayPush as arrayPush,
-  primordialArraySort as arraySort,
-} from "#veryfront/platform/compat/primordials/array.ts";
+import { primordialArraySort as arraySort } from "#veryfront/platform/compat/primordials/array.ts";
 import { snapshotImportMap } from "#veryfront/transforms/pipeline/cache-identity.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/constants/limits.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { rendererLogger } from "#veryfront/utils";
 import type { ImportMapConfig } from "./types.ts";
 import { loadImportMap } from "./loader.ts";
 
@@ -24,6 +22,7 @@ const DEFAULT_MAX_IMPORT_MAP_PROJECTS = 512;
 const DEFAULT_MAX_IMPORT_MAP_VARIANTS_PER_PROJECT = 16;
 const DEFAULT_IMPORT_MAP_TTL_MS = 10 * 60 * 1_000;
 const DEFAULT_IMPORT_MAP_LOAD_TIMEOUT_MS = 30_000;
+const logger = rendererLogger.component("import-map-preloader");
 
 // Project code can execute in the same realm before a later request reaches
 // this cache. Capture every primitive used for identity, admission, and
@@ -58,7 +57,6 @@ const PerformanceNow = IntrinsicPerformance.now;
 const ReflectApply = Reflect.apply;
 const SetPrototypeAdd = Set.prototype.add;
 const SetPrototypeDelete = Set.prototype.delete;
-const SetPrototypeForEach = Set.prototype.forEach;
 const SetPrototypeSize = ObjectGetOwnPropertyDescriptor(Set.prototype, "size")!
   .get!;
 const WeakSetPrototypeAdd = WeakSet.prototype.add;
@@ -116,16 +114,19 @@ function resolvedPromise(): Promise<void> {
   return ReflectApply(PromiseResolve, IntrinsicPromise, []) as Promise<void>;
 }
 
+function raceTwo<T>(first: Promise<T>, second: Promise<T>): Promise<T> {
+  return new IntrinsicPromise<T>((resolve, reject) => {
+    promiseThen(first, resolve, reject);
+    promiseThen(second, resolve, reject);
+  });
+}
+
 function setAdd<T>(set: Set<T>, value: T): void {
   ReflectApply(SetPrototypeAdd, set, [value]);
 }
 
 function setDelete<T>(set: Set<T>, value: T): boolean {
   return ReflectApply(SetPrototypeDelete, set, [value]) as boolean;
-}
-
-function setForEach<T>(set: Set<T>, callback: (value: T) => void): void {
-  ReflectApply(SetPrototypeForEach, set, [callback]);
 }
 
 function setSize<T>(set: Set<T>): number {
@@ -155,8 +156,21 @@ interface ProjectImportMapState {
   readonly identityBuilds: Map<string, Promise<string>>;
 }
 
+interface CapacityChangeSignal {
+  promise: Promise<void>;
+  resolve: () => void;
+}
+
 function createGeneration(): object {
   return ObjectFreeze({});
+}
+
+function createCapacityChangeSignal(): CapacityChangeSignal {
+  let resolve!: () => void;
+  const promise = new IntrinsicPromise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 export interface ImportMapPreloaderOptions {
@@ -280,14 +294,6 @@ function buildVariantCanonicalIdentity(
   return canonical;
 }
 
-function racePromises<T>(promises: Array<Promise<T>>): Promise<T> {
-  return new IntrinsicPromise<T>((resolve, reject) => {
-    for (let index = 0; index < promises.length; index++) {
-      promiseThen(promises[index]!, resolve, reject);
-    }
-  });
-}
-
 function readPositiveSafeInteger(
   value: number | undefined,
   fallback: number,
@@ -321,7 +327,12 @@ export class ImportMapPreloader {
   /** Underlying loader work remains accounted for even after explicit invalidation. */
   private readonly activeLoads = new IntrinsicSet<Promise<ImportMapConfig>>();
   private readonly activeIdentityBuilds = new IntrinsicSet<Promise<string>>();
+  private readonly orphanedLoadsByProject = new IntrinsicMap<
+    string,
+    Set<Promise<ImportMapConfig>>
+  >();
   private readonly capacityErrors = new IntrinsicWeakSet<object>();
+  private capacityChange = createCapacityChangeSignal();
   private globalGeneration = createGeneration();
   private readonly maxProjects: number;
   private readonly maxVariantsPerProject: number;
@@ -473,18 +484,28 @@ export class ImportMapPreloader {
       weakSetHas(this.capacityErrors, error);
   }
 
+  private notifyCapacityChange(): void {
+    const signal = this.capacityChange;
+    this.capacityChange = createCapacityChangeSignal();
+    signal.resolve();
+  }
+
+  private projectOrphanCount(cacheKey: string): number {
+    const orphanedLoads = mapGet(this.orphanedLoadsByProject, cacheKey);
+    return orphanedLoads ? setSize(orphanedLoads) : 0;
+  }
+
+  private hasProjectLoadCapacity(cacheKey: string): boolean {
+    return this.projectOrphanCount(cacheKey) < this.maxVariantsPerProject;
+  }
+
   private waitForActiveWork(timeoutMs: number): Promise<void> {
-    const activeWork: Array<Promise<unknown>> = [];
-    setForEach(this.activeLoads, (promise) => arrayPush(activeWork, promise));
-    setForEach(this.activeIdentityBuilds, (promise) => arrayPush(activeWork, promise));
+    const hasActiveWork = setSize(this.activeLoads) + setSize(this.activeIdentityBuilds) +
+        mapSize(this.orphanedLoadsByProject) >
+      0;
     // Work can settle between the capacity check and this snapshot. Retry the
     // admission loop immediately instead of surfacing a stale capacity error.
-    if (activeWork.length === 0) return resolvedPromise();
-    const settled = promiseThen(
-      racePromises(activeWork),
-      () => resolvedPromise(),
-      () => resolvedPromise(),
-    );
+    if (!hasActiveWork) return resolvedPromise();
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeout = new IntrinsicPromise<void>((_, reject) => {
       timeoutId = SetTimeout(() => {
@@ -492,7 +513,7 @@ export class ImportMapPreloader {
       }, timeoutMs);
     });
     return promiseThen(
-      racePromises([settled, timeout]),
+      raceTwo(this.capacityChange.promise, timeout),
       () => {
         if (timeoutId !== undefined) ClearTimeout(timeoutId);
       },
@@ -513,7 +534,8 @@ export class ImportMapPreloader {
       });
       if (
         mapSize(projectCache) === 0 &&
-        mapSize(projectState.identityBuilds) === 0
+        mapSize(projectState.identityBuilds) === 0 &&
+        this.projectOrphanCount(cacheKey) === 0
       ) {
         mapDelete(this.projects, cacheKey);
       }
@@ -559,15 +581,73 @@ export class ImportMapPreloader {
     }
   }
 
+  private trackOrphanedLoad(
+    cacheKey: string,
+    promise: Promise<ImportMapConfig>,
+  ): void {
+    let orphanedLoads = mapGet(this.orphanedLoadsByProject, cacheKey);
+    if (!orphanedLoads) {
+      if (mapSize(this.orphanedLoadsByProject) >= this.maxProjects) {
+        return;
+      }
+      orphanedLoads = new IntrinsicSet<Promise<ImportMapConfig>>();
+      mapSet(this.orphanedLoadsByProject, cacheKey, orphanedLoads);
+    }
+    setAdd(orphanedLoads, promise);
+    void promiseThen(
+      promise,
+      () => {
+        this.releaseOrphanedLoad(cacheKey, promise);
+      },
+      () => {
+        this.releaseOrphanedLoad(cacheKey, promise);
+      },
+    );
+  }
+
+  private releaseOrphanedLoad(
+    cacheKey: string,
+    promise: Promise<ImportMapConfig>,
+  ): void {
+    const orphanedLoads = mapGet(this.orphanedLoadsByProject, cacheKey);
+    if (!orphanedLoads) return;
+    const removed = setDelete(orphanedLoads, promise);
+    if (setSize(orphanedLoads) === 0) {
+      mapDelete(this.orphanedLoadsByProject, cacheKey);
+    }
+    if (removed) this.notifyCapacityChange();
+  }
+
+  private reportTimedOutLoad(cacheKey: string): void {
+    void promiseThen(
+      computeHash(cacheKey),
+      (cacheKeyHash) => {
+        logger.warn("Import-map load timed out with underlying work still active", {
+          cacheKeyHash,
+          orphanedLoadsForProject: this.projectOrphanCount(cacheKey),
+          orphanedProjects: mapSize(this.orphanedLoadsByProject),
+          activeLoads: setSize(this.activeLoads),
+        });
+      },
+      () => {
+        logger.warn("Import-map load timed out with underlying work still active", {
+          orphanedLoadsForProject: this.projectOrphanCount(cacheKey),
+          orphanedProjects: mapSize(this.orphanedLoadsByProject),
+          activeLoads: setSize(this.activeLoads),
+        });
+      },
+    );
+  }
+
   private trackActiveLoad(promise: Promise<ImportMapConfig>): void {
     setAdd(this.activeLoads, promise);
     promiseThen(
       promise,
       () => {
-        setDelete(this.activeLoads, promise);
+        if (setDelete(this.activeLoads, promise)) this.notifyCapacityChange();
       },
       () => {
-        setDelete(this.activeLoads, promise);
+        if (setDelete(this.activeLoads, promise)) this.notifyCapacityChange();
       },
     );
   }
@@ -606,7 +686,7 @@ export class ImportMapPreloader {
     // request can reach and join that in-flight entry even when load capacity
     // is otherwise full.
     const releaseActive = (): void => {
-      setDelete(this.activeIdentityBuilds, promise);
+      if (setDelete(this.activeIdentityBuilds, promise)) this.notifyCapacityChange();
     };
     promiseThen(
       promise,
@@ -644,10 +724,20 @@ export class ImportMapPreloader {
   }
 
   private startTrackedLoad(
+    cacheKey: string,
     projectDir: string,
     adapter: RuntimeAdapter,
     config: VeryfrontConfig | undefined,
   ): Promise<ImportMapConfig> {
+    if (!this.hasProjectLoadCapacity(cacheKey)) {
+      throw this.capacityError("loads");
+    }
+    if (
+      !mapGet(this.orphanedLoadsByProject, cacheKey) &&
+      mapSize(this.orphanedLoadsByProject) >= this.maxProjects
+    ) {
+      throw this.capacityError("projects");
+    }
     if (!this.hasActiveWorkCapacity()) {
       throw this.capacityError("loads");
     }
@@ -661,11 +751,16 @@ export class ImportMapPreloader {
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new IntrinsicPromise<ImportMapConfig>((_, reject) => {
       timeoutId = SetTimeout(() => {
+        if (setDelete(this.activeLoads, loaderPromise)) {
+          this.trackOrphanedLoad(cacheKey, loaderPromise);
+          this.notifyCapacityChange();
+          this.reportTimedOutLoad(cacheKey);
+        }
         reject(new IntrinsicRangeError("Import-map preloader load timed out"));
       }, this.loadTimeoutMs);
     });
     const boundedLoaderPromise = promiseThen(
-      racePromises([loaderPromise, timeoutPromise]),
+      raceTwo(loaderPromise, timeoutPromise),
       (value) => {
         if (timeoutId !== undefined) ClearTimeout(timeoutId);
         return value;
@@ -768,6 +863,7 @@ export class ImportMapPreloader {
     ) {
       releaseIdentity();
       return this.startTrackedLoad(
+        cacheKey,
         projectDir,
         adapter,
         exactContext.config,
@@ -794,6 +890,7 @@ export class ImportMapPreloader {
     ) {
       releaseIdentity();
       return this.startTrackedLoad(
+        cacheKey,
         projectDir,
         adapter,
         exactContext.config,
@@ -816,6 +913,7 @@ export class ImportMapPreloader {
       this.makeVariantRoom(projectCache, now);
 
       const promise = this.startTrackedLoad(
+        cacheKey,
         projectDir,
         adapter,
         exactContext.config,

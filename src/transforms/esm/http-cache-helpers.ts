@@ -20,6 +20,8 @@ import { computeHash } from "#veryfront/utils/hash-utils.ts";
 
 const logger = rendererLogger.component("http-cache");
 const JSONStringify = JSON.stringify;
+const IntrinsicURL = URL;
+const ObjectDefineProperty = Object.defineProperty;
 const ObjectEntries = Object.entries;
 
 /**
@@ -133,7 +135,7 @@ function attachHttpCacheRequestIdentityContext<T extends HttpCacheIdentityOption
   options: T,
   context: HttpCacheRequestIdentityContext,
 ): T {
-  Object.defineProperty(options, HTTP_CACHE_REQUEST_IDENTITY_CONTEXT, {
+  ObjectDefineProperty(options, HTTP_CACHE_REQUEST_IDENTITY_CONTEXT, {
     configurable: false,
     enumerable: false,
     value: context,
@@ -234,7 +236,7 @@ interface CanonicalReactEsmPackage {
 
 function parseCanonicalReactEsmPackage(rawUrl: string): CanonicalReactEsmPackage | null {
   try {
-    const url = new URL(rawUrl);
+    const url = new IntrinsicURL(rawUrl);
     if (url.hostname !== "esm.sh") return null;
 
     const pathSegments = url.pathname.split("/").filter(Boolean);
@@ -357,7 +359,7 @@ export function normalizeEsmShUrl(url: URL): void {
 
 export function normalizeHttpUrl(raw: string): string {
   try {
-    const url = new URL(raw);
+    const url = new IntrinsicURL(raw);
     normalizeEsmShUrl(url);
     url.searchParams.sort();
     const normalized = url.toString();
