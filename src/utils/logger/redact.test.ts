@@ -206,6 +206,27 @@ describe("logger/redact", () => {
       });
     });
 
+    it("keeps serializer hook cycle detection stable after the global Set changes", () => {
+      const originalSetConstructor = globalThis.Set;
+      let redacted: unknown;
+
+      try {
+        globalThis.Set = function ReplacementSet() {
+          throw new Error("project code replaced Set");
+        } as unknown as SetConstructor;
+
+        redacted = redactForSerialization({
+          wrap: {
+            toJSON: () => ({ apiKey: "synthetic-opaque-credential" }),
+          },
+        });
+      } finally {
+        globalThis.Set = originalSetConstructor;
+      }
+
+      assertEquals(redacted, { wrap: { apiKey: REDACTED } });
+    });
+
     it("fails closed past the max traversal depth", () => {
       // Build a structure deeper than MAX_DEPTH (16) with a secret at the bottom.
       let node: Record<string, unknown> = { token: "deep-secret" };

@@ -21,6 +21,7 @@
 export const REDACTED = "[REDACTED]";
 
 const apply = Reflect.apply;
+const NativeSet = Set;
 const NativeUint32Array = Uint32Array;
 const arrayIsArray = Array.isArray;
 const arrayPrototype = Array.prototype;
@@ -350,6 +351,13 @@ function classifyArray(value: object): boolean | null {
   }
 }
 
+function hasSeenSerializationHookOwner(seenOwners: object[], owner: object): boolean {
+  for (let index = 0; index < seenOwners.length; index++) {
+    if (seenOwners[index] === owner) return true;
+  }
+  return false;
+}
+
 /**
  * Read a deliberate serialization hook without consulting hooks installed on
  * the intrinsic Object or Array prototypes. Custom and platform prototypes
@@ -357,18 +365,18 @@ function classifyArray(value: object): boolean | null {
  */
 function readSerializationHook(value: object): unknown {
   let owner: object | null = value;
-  const seenOwners = new Set<object>();
+  const seenOwners: object[] = [];
   let prototypesVisited = 0;
   while (owner !== null) {
     if (owner === objectPrototype || owner === arrayPrototype) return undefined;
     if (
       prototypesVisited >= MAX_SERIALIZATION_HOOK_PROTOTYPES ||
-      apply(setHas, seenOwners, [owner])
+      hasSeenSerializationHookOwner(seenOwners, owner)
     ) {
       throw new TypeError("serialization hook prototype chain is cyclic or too deep");
     }
     prototypesVisited++;
-    apply(setAdd, seenOwners, [owner]);
+    seenOwners.push(owner);
     const descriptor = objectGetOwnPropertyDescriptor(owner, "toJSON");
     if (descriptor !== undefined) {
       if (!objectHasOwn(descriptor, "value")) {
@@ -536,7 +544,7 @@ function redactValue(
  * functions, symbols, and custom `toJSON` implementations must be normalized.
  */
 export function redactSensitive<T>(context: T): T {
-  return redactValue(context, 0, new Set<object>(), "compatible", {
+  return redactValue(context, 0, new NativeSet<object>(), "compatible", {
     remainingNodes: MAX_TRAVERSAL_NODES,
     exhausted: false,
   }) as T;
@@ -549,7 +557,7 @@ export function redactSensitive<T>(context: T): T {
  * closed. Objects with `toJSON` are snapshotted exactly once before redaction.
  */
 export function redactForSerialization(context: unknown): RedactedValue {
-  return redactValue(context, 0, new Set<object>(), "serialization", {
+  return redactValue(context, 0, new NativeSet<object>(), "serialization", {
     remainingNodes: MAX_TRAVERSAL_NODES,
     exhausted: false,
   }) as RedactedValue;
