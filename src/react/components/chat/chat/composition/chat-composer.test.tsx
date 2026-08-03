@@ -597,6 +597,49 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     assert(voice.includes('aria-describedby="voice-help"'));
   });
 
+  it("omits an unavailable Stop action while preserving an explicit custom action", () => {
+    const unavailable = renderToString(
+      <ChatInput.Root input="" onChange={() => {}} isLoading>
+        <ChatInput.Stop data-action="stop" />
+      </ChatInput.Root>,
+    );
+    assert(!unavailable.includes('data-action="stop"'), "an unavailable Stop action is omitted");
+
+    const explicit = renderToString(
+      <ChatInput.Root input="" onChange={() => {}} isLoading>
+        <ChatInput.Stop data-action="custom-stop" onClick={() => {}} />
+      </ChatInput.Root>,
+    );
+    assert(
+      explicit.includes('data-action="custom-stop"'),
+      "an explicit custom Stop action remains available",
+    );
+
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDomGlobals(dom);
+    let customStops = 0;
+    try {
+      const root = createRoot(document.getElementById("root")!);
+      flushSync(() => {
+        root.render(
+          <ChatInput.Root input="" onChange={() => {}} isLoading>
+            <ChatInput.Stop onClick={() => customStops += 1} />
+          </ChatInput.Root>,
+        );
+      });
+      flushSync(() =>
+        document.querySelector<HTMLButtonElement>('button[aria-label="Stop"]')?.click()
+      );
+      assertEquals(customStops, 1, "the explicit custom Stop action remains functional");
+      flushSync(() => root.unmount());
+    } finally {
+      restore();
+    }
+  });
+
   it("asChild action leaves preserve Button styling, refs, and event composition", () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',

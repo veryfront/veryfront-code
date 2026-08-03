@@ -120,6 +120,8 @@ export interface UseChatInputResult {
   isListening: boolean;
   /** Whether voice input is currently available; use this to omit a custom control. */
   canUseVoice: boolean;
+  /** Whether an upload or document-picker action is configured. */
+  canAttach: boolean;
   attachments: ChatInputContextValue["attachments"];
   model?: string;
   models: ChatInputContextValue["models"];
@@ -152,6 +154,7 @@ export interface UseChatInputResult {
 /** L3 headless composer hook. Must be used within a `<ChatInput>` / `<Chat>`. */
 export function useChatInput(): UseChatInputResult {
   const ctx = useChatInputContext();
+  const canAttach = Boolean(ctx.onOpenAttachmentPicker || ctx.onSelectAttachment);
 
   const getFormProps = React.useCallback(
     (
@@ -209,15 +212,19 @@ export function useChatInput(): UseChatInputResult {
   const getAttachProps = React.useCallback(
     (
       overrides?: React.ButtonHTMLAttributes<HTMLButtonElement>,
-    ): React.ButtonHTMLAttributes<HTMLButtonElement> =>
-      mergeProps<React.ButtonHTMLAttributes<HTMLButtonElement>>({
+    ): React.ButtonHTMLAttributes<HTMLButtonElement> => {
+      const merged = mergeProps<React.ButtonHTMLAttributes<HTMLButtonElement>>({
         type: "button",
+        disabled: !canAttach,
         onClick: () => {
+          if (!canAttach) return;
           if (ctx.onOpenAttachmentPicker) ctx.onOpenAttachmentPicker();
           else ctx.onSelectAttachment?.();
         },
-      }, overrides),
-    [ctx.onOpenAttachmentPicker, ctx.onSelectAttachment],
+      }, overrides);
+      return { ...merged, disabled: !canAttach || merged.disabled };
+    },
+    [canAttach, ctx.onOpenAttachmentPicker, ctx.onSelectAttachment],
   );
 
   const canUseVoice = !ctx.isLoading && !ctx.canSubmit && Boolean(ctx.onVoice);
@@ -247,6 +254,7 @@ export function useChatInput(): UseChatInputResult {
     input: ctx.input,
     setInput: ctx.setInput,
     canSubmit: ctx.canSubmit,
+    canAttach,
     isLoading: ctx.isLoading,
     isListening: ctx.isListening,
     canUseVoice,

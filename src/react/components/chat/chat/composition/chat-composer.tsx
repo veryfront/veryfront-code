@@ -111,10 +111,8 @@ export function ChatInputAttach(
   if (!c.onAttach && !c.onSelectAttachment) return null;
 
   const openDialog = () => c.onOpenAttachmentPicker?.();
-  // Menu selection carries no mouse event; pass a stub so the `onClick` wrap
-  // (e.g. `onAttachClick`) still gets its `next()` continuation.
-  const runUpload = () =>
-    onClick ? onClick({} as React.MouseEvent<HTMLElement>, openDialog) : openDialog();
+  const runUpload = (event: React.MouseEvent<HTMLButtonElement>) =>
+    onClick ? onClick(event, openDialog) : openDialog();
 
   return (
     <div ref={ref} className="relative flex shrink-0 items-center">

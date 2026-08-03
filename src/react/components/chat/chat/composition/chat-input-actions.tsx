@@ -79,7 +79,7 @@ export function ChatInputStop({
   ...buttonProps
 }: ChatInputActionProps): React.ReactElement | null {
   const c = useChatInputContext();
-  if (!c.isLoading) return null;
+  if (!c.isLoading || (!c.onStop && !onClick)) return null;
   const run = () => c.onStop?.();
   return (
     <Button

@@ -206,12 +206,19 @@ export type DropdownMenuItemProps<T extends HTMLElement = HTMLElement> =
   | DropdownMenuNativeItemProps
   | DropdownMenuSlottedItemProps<T>;
 
+function ownsKeyboardActivation(element: HTMLElement, key: "Enter" | " "): boolean {
+  const tagName = element.tagName;
+  if (tagName === "BUTTON") return true;
+  return key === "Enter" && tagName === "A" && element.hasAttribute("href");
+}
+
 /** A selectable menu item. Icons render at `size-3.5` (14px). */
 export function DropdownMenuItem<T extends HTMLElement = HTMLElement>({
   children,
   className,
   onSelect,
   onClick,
+  onKeyDown,
   disabled,
   asChild,
   ref,
@@ -239,6 +246,21 @@ export function DropdownMenuItem<T extends HTMLElement = HTMLElement>({
       if (trigger?.isConnected) focusWithoutScroll(trigger);
     });
   };
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLElement>): void => {
+    if (disabled) return;
+    (onKeyDown as React.KeyboardEventHandler<HTMLElement> | undefined)?.(event);
+    if (
+      event.defaultPrevented ||
+      event.nativeEvent.isComposing ||
+      event.nativeEvent.keyCode === 229 ||
+      (event.key !== "Enter" && event.key !== " ") ||
+      ownsKeyboardActivation(event.currentTarget, event.key)
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.currentTarget.click();
+  };
   const itemStateProps = {
     role: "menuitem",
     "aria-disabled": disabled || undefined,
@@ -246,6 +268,7 @@ export function DropdownMenuItem<T extends HTMLElement = HTMLElement>({
     tabIndex: -1,
     className: itemClassName,
     onClick: handleClick,
+    onKeyDown: handleKeyDown,
   } as const;
   if (asChild) {
     return (

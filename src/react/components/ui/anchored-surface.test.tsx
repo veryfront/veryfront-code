@@ -203,4 +203,156 @@ describe("anchored surfaces anchor to the trigger ref", () => {
       restore();
     }
   });
+
+  it("preserves keyboard activation across native and slotted menu items", async () => {
+    type ItemKind = "native" | "button" | "anchor" | "custom";
+    interface ActivationOptions {
+      kind: ItemKind;
+      key: "Enter" | " ";
+      disabled?: boolean;
+      composing?: boolean;
+      preventDefault?: boolean;
+      simulateNativeClick?: boolean;
+    }
+
+    async function activate(options: ActivationOptions): Promise<{
+      selectedAfterKey: number;
+      selectedAfterNativeClick: number;
+      keyWasPrevented: boolean;
+    }> {
+      const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
+        url: "https://example.com/",
+      });
+      const restore = installDom(dom);
+      const root = createRoot(document.getElementById("root")!);
+      let selected = 0;
+      const child = options.kind === "button"
+        ? <button type="button" data-menu-activation="">Action</button>
+        : options.kind === "anchor"
+        ? <a data-menu-activation="" href="#action">Action</a>
+        : <div data-menu-activation="">Action</div>;
+      const item = options.kind === "native"
+        ? (
+          <DropdownMenuItem
+            data-menu-activation=""
+            disabled={options.disabled}
+            onKeyDown={options.preventDefault ? (event) => event.preventDefault() : undefined}
+            onSelect={() => selected += 1}
+          >
+            Action
+          </DropdownMenuItem>
+        )
+        : (
+          <DropdownMenuItem
+            asChild
+            disabled={options.disabled}
+            onKeyDown={options.preventDefault ? (event) => event.preventDefault() : undefined}
+            onSelect={() => selected += 1}
+          >
+            {child}
+          </DropdownMenuItem>
+        );
+
+      try {
+        flushSync(() => {
+          root.render(
+            <DropdownMenu defaultOpen>
+              <DropdownMenuTrigger>Actions</DropdownMenuTrigger>
+              <DropdownMenuContent>
+                {item}
+              </DropdownMenuContent>
+            </DropdownMenu>,
+          );
+        });
+        await waitFor(
+          () => document.querySelector<HTMLElement>("[data-menu-activation]") !== null,
+          { message: "Timed out waiting for the menu item" },
+        );
+        const itemElement = document.querySelector<HTMLElement>("[data-menu-activation]")!;
+        itemElement.focus();
+        const keyEvent = new dom.window.KeyboardEvent("keydown", {
+          key: options.key,
+          bubbles: true,
+          cancelable: true,
+          isComposing: options.composing,
+        });
+        flushSync(() => itemElement.dispatchEvent(keyEvent));
+        const selectedAfterKey = selected;
+        if (options.simulateNativeClick) flushSync(() => itemElement.click());
+        return {
+          selectedAfterKey,
+          selectedAfterNativeClick: selected,
+          keyWasPrevented: keyEvent.defaultPrevented,
+        };
+      } finally {
+        flushSync(() => root.unmount());
+        restore();
+      }
+    }
+
+    for (const key of ["Enter", " "] as const) {
+      const nativeItem = await activate({
+        kind: "native",
+        key,
+        simulateNativeClick: true,
+      });
+      assertEquals(
+        nativeItem.selectedAfterKey,
+        0,
+        `${key} leaves default button activation native`,
+      );
+      assertEquals(nativeItem.selectedAfterNativeClick, 1);
+      assertEquals(nativeItem.keyWasPrevented, false);
+
+      const nativeButton = await activate({
+        kind: "button",
+        key,
+        simulateNativeClick: true,
+      });
+      assertEquals(
+        nativeButton.selectedAfterKey,
+        0,
+        `${key} leaves native button activation native`,
+      );
+      assertEquals(
+        nativeButton.selectedAfterNativeClick,
+        1,
+        `${key} does not double-fire a native button click`,
+      );
+      assertEquals(nativeButton.keyWasPrevented, false);
+
+      const custom = await activate({ kind: "custom", key });
+      assertEquals(custom.selectedAfterKey, 1, `${key} activates a non-native menu item`);
+      assertEquals(custom.keyWasPrevented, true, `${key} prevents the non-native default`);
+    }
+
+    const anchorEnter = await activate({
+      kind: "anchor",
+      key: "Enter",
+      simulateNativeClick: true,
+    });
+    assertEquals(anchorEnter.selectedAfterKey, 0, "Enter leaves anchor activation native");
+    assertEquals(anchorEnter.selectedAfterNativeClick, 1, "Enter does not double-fire an anchor");
+    assertEquals(anchorEnter.keyWasPrevented, false);
+
+    const anchorSpace = await activate({ kind: "anchor", key: " " });
+    assertEquals(anchorSpace.selectedAfterKey, 1, "Space activates an anchor menu item");
+    assertEquals(anchorSpace.keyWasPrevented, true);
+
+    assertEquals(
+      (await activate({ kind: "custom", key: "Enter", preventDefault: true })).selectedAfterKey,
+      0,
+      "consumer preventDefault cancels synthetic activation",
+    );
+    assertEquals(
+      (await activate({ kind: "custom", key: "Enter", disabled: true })).selectedAfterKey,
+      0,
+      "disabled items cannot be activated",
+    );
+    assertEquals(
+      (await activate({ kind: "custom", key: "Enter", composing: true })).selectedAfterKey,
+      0,
+      "IME completion does not activate an item",
+    );
+  });
 });

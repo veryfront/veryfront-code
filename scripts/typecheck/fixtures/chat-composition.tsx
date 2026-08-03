@@ -29,6 +29,7 @@ import {
   Suggestion,
   Suggestions,
   useChat,
+  useChatInput,
 } from "veryfront/chat";
 import {
   DropdownMenu,
@@ -103,6 +104,14 @@ export function FlatChatInputDemo(): React.ReactElement {
     </ChatInputRoot>
   );
 }
+
+/** Headless capability state and getter props agree for published consumers. */
+function HeadlessAttachmentControl(): React.ReactElement | null {
+  const input = useChatInput();
+  return input.canAttach ? <button {...input.getAttachProps()}>Attach</button> : null;
+}
+
+void HeadlessAttachmentControl;
 
 const anchorActionRef = React.createRef<HTMLAnchorElement>();
 const anchorMenuItemRef = React.createRef<HTMLAnchorElement>();

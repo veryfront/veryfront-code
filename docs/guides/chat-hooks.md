@@ -397,9 +397,10 @@ export function CustomComposer({
 ```
 
 Getters: `getFormProps`, `getFieldProps` (for a textarea), `getSubmitProps`, `getAttachProps`,
-`getVoiceProps`. State: `input`, `canSubmit`, `isLoading`, `isListening`, `canUseVoice`,
-`attachments`, `model`. Use `canUseVoice` to omit a custom voice control when dictation is
-not configured or is unavailable for the current composer state.
+`getVoiceProps`. State: `input`, `canSubmit`, `canAttach`, `isLoading`, `isListening`,
+`canUseVoice`, `attachments`, `model`. Use `canAttach` and `canUseVoice` to omit custom
+controls when their corresponding capability is not configured. Their prop getters also
+return fail-closed `disabled` state so unavailable controls cannot be re-enabled accidentally.
 `mergeProps` is exported for composing several getters onto one element. The preset
 `<Chat>` wires `setInput` automatically; direct `<ChatInput>` or `<ChatInput.Root>`
 providers must receive `setInput` before a headless child calls `input.setInput(...)`.

@@ -138,7 +138,7 @@ export interface ChatInputProps {
   theme?: ChatTheme;
 
   // Stop / Voice
-  /** Stop the in-flight streaming turn (shown as the Stop button). */
+  /** Stop the in-flight streaming turn. The default Stop control is omitted when unavailable. */
   stop?: () => void;
   /** Toggle voice input; when set, an empty field shows the mic button. */
   onVoice?: () => void;

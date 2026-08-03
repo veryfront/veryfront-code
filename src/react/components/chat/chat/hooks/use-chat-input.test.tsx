@@ -103,6 +103,39 @@ describe("useChatInput", () => {
     assertEquals(pickerCalls, 1);
   });
 
+  it("exposes attachment availability and fails closed when no action exists", () => {
+    let result: ReturnType<typeof useChatInput> | undefined;
+    function Capture() {
+      result = useChatInput();
+      return null;
+    }
+    const capture = (context: ComposerContextValue) => {
+      renderToString(
+        <ComposerContextProvider value={context}>
+          <Capture />
+        </ComposerContextProvider>,
+      );
+      assert(result);
+      return result;
+    };
+
+    let input = capture(makeCtx());
+    let attachProps = input.getAttachProps({ disabled: false });
+    assertEquals(input.canAttach, false);
+    assertEquals(attachProps.disabled, true, "an unavailable attachment action stays disabled");
+
+    let selectCalls = 0;
+    input = capture(makeCtx({ onSelectAttachment: () => selectCalls += 1 }));
+    attachProps = input.getAttachProps();
+    assertEquals(input.canAttach, true);
+    assertEquals(attachProps.disabled, false);
+    Reflect.apply(attachProps.onClick!, undefined, [{ defaultPrevented: false }]);
+    assertEquals(selectCalls, 1);
+
+    attachProps = input.getAttachProps({ disabled: true });
+    assertEquals(attachProps.disabled, true, "consumer-disabled attachment actions stay disabled");
+  });
+
   it("getFormProps cancels the native submit before delegating to onSubmit", () => {
     let submitted = false;
     let formProps: React.FormHTMLAttributes<HTMLFormElement> = {};

@@ -25,6 +25,7 @@ export function ChatSidebarRenameEditor({
   ref,
 }: ChatSidebarRenameEditorProps): React.ReactElement {
   const inputRef = React.useRef<HTMLInputElement>(null);
+  const accessibleNameRef = React.useRef(`Rename ${value}`);
   const terminalActionRef = React.useRef<"commit" | "cancel" | null>(null);
 
   React.useEffect(() => {
@@ -49,6 +50,7 @@ export function ChatSidebarRenameEditor({
     >
       <input
         ref={inputRef}
+        aria-label={accessibleNameRef.current}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         onBlur={() => finish("commit")}

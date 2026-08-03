@@ -299,4 +299,29 @@ describe("ChatSidebarRenameEditor", () => {
   it("does not commit after Escape is followed by blur", async () => {
     assertEquals(await runKeyboardCompletion("Escape"), [0, 1]);
   });
+
+  it("gives the editor a stable contextual accessible name", async () => {
+    const restoreDom = installDom();
+    try {
+      const root = createRoot(document.getElementById("root")!);
+      const renderEditor = (value: string) => (
+        <ChatSidebarRenameEditor
+          value={value}
+          onChange={() => {}}
+          onCommit={() => {}}
+          onCancel={() => {}}
+        />
+      );
+      flushSync(() => root.render(renderEditor("Original title")));
+      const input = document.querySelector<HTMLInputElement>("input")!;
+      assertEquals(input.getAttribute("aria-label"), "Rename Original title");
+
+      flushSync(() => root.render(renderEditor("Edited title")));
+      assertEquals(input.getAttribute("aria-label"), "Rename Original title");
+      flushSync(() => root.unmount());
+      await settle();
+    } finally {
+      restoreDom();
+    }
+  });
 });
