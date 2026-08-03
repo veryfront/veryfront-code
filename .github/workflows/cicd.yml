@@ -59,7 +59,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: ./.github/actions/setup-deno
-        timeout-minutes: 5
+        timeout-minutes: 10
         with:
           warm-cache: "true"
           warm-redis-cache: "true"
@@ -83,9 +83,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
-        with:
-          warm-cache: "true"
-          warm-redis-cache: "true"
       - name: Run unit coverage shard
         id: coverage
         run: |
@@ -159,8 +156,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
-        with:
-          warm-cache: "true"
       - name: Configure apt retries and mirrors
         run: |
           sudo sed -i \
@@ -174,6 +169,7 @@ jobs:
             echo 'Acquire::https::Timeout "30";'
           } | sudo tee /etc/apt/apt.conf.d/99veryfront-ci-retries
       - name: Install Chromium
+        timeout-minutes: 15
         run: |
           wait_for_apt_locks() {
             for _ in $(seq 1 60); do
@@ -187,7 +183,8 @@ jobs:
 
           for attempt in 1 2 3; do
             wait_for_apt_locks
-            timeout 10m deno run -A npm:playwright install --with-deps chromium && exit 0
+            timeout --signal=TERM --kill-after=15s 10m \
+              deno run -A npm:playwright install --with-deps chromium && exit 0
             status=$?
 
             if [ "$attempt" -eq 3 ]; then
@@ -219,8 +216,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
-        with:
-          warm-cache: "true"
       - name: Configure apt retries and mirrors
         run: |
           sudo sed -i \
@@ -234,6 +229,7 @@ jobs:
             echo 'Acquire::https::Timeout "30";'
           } | sudo tee /etc/apt/apt.conf.d/99veryfront-ci-retries
       - name: Install Chromium
+        timeout-minutes: 15
         run: |
           wait_for_apt_locks() {
             for _ in $(seq 1 60); do
@@ -247,7 +243,8 @@ jobs:
 
           for attempt in 1 2 3; do
             wait_for_apt_locks
-            timeout 10m deno run -A npm:playwright install --with-deps chromium && exit 0
+            timeout --signal=TERM --kill-after=15s 10m \
+              deno run -A npm:playwright install --with-deps chromium && exit 0
             status=$?
 
             if [ "$attempt" -eq 3 ]; then
@@ -283,8 +280,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
-        with:
-          warm-cache: "true"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v6
         with:
           node-version: "24"
@@ -305,8 +300,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
-        with:
-          warm-cache: "true"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v6
         with:
           node-version: "24"

@@ -10,8 +10,13 @@ import { parse } from "#std/yaml/parse";
 const ACTION_PATH = ".github/actions/setup-deno/action.yml";
 const WORKFLOWS_DIR = ".github/workflows";
 const LOCAL_ACTION = "./.github/actions/setup-deno";
-const CACHE_ACTION = "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
+const CACHE_RESTORE_ACTION =
+  "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
+const CACHE_SAVE_ACTION =
+  "actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
 const MAX_SETUP_MINUTES = 5;
+const MAX_CACHE_SETUP_MINUTES = 10;
+const CACHE_PRODUCER_JOB = "tests";
 
 type YamlRecord = Record<string, unknown>;
 
@@ -50,8 +55,11 @@ describe("setup-deno CI contract", () => {
     const runs = asRecord(action.runs, `${ACTION_PATH}.runs`);
     const steps = asSteps(runs.steps, `${ACTION_PATH}.runs.steps`);
 
-    const cacheStep = steps.find((step) => step.uses === CACHE_ACTION);
-    assert(cacheStep, "setup-deno must use the pinned actions/cache release");
+    const cacheStep = steps.find((step) => step.uses === CACHE_RESTORE_ACTION);
+    assert(
+      cacheStep,
+      "setup-deno must use the pinned restore-only cache action",
+    );
     const cacheEnv = asRecord(cacheStep.env, "cache step env");
     assertEquals(cacheEnv.SEGMENT_DOWNLOAD_TIMEOUT_MINS, "2");
     const cacheInputs = asRecord(cacheStep.with, "cache step inputs");
@@ -59,8 +67,26 @@ describe("setup-deno CI contract", () => {
     assertStringIncludes(cacheKey, "${{ runner.os }}");
     assertStringIncludes(cacheKey, "${{ runner.arch }}");
     assertStringIncludes(cacheKey, "2.7.7");
+    assertStringIncludes(cacheKey, "veryfront-deno-v2-");
     assertStringIncludes(cacheKey, "hashFiles(");
     assertStringIncludes(String(cacheInputs.path), "runner.temp");
+
+    const saveStep = steps.find((step) => step.uses === CACHE_SAVE_ACTION);
+    assert(saveStep, "setup-deno must use the pinned save-only cache action");
+    assertStringIncludes(String(saveStep.if), "inputs.warm-cache == 'true'");
+    assertStringIncludes(
+      String(saveStep.if),
+      "inputs.warm-redis-cache == 'true'",
+    );
+    assertStringIncludes(
+      String(saveStep.if),
+      "steps.deno-cache.outputs.cache-hit != 'true'",
+    );
+    const saveInputs = asRecord(saveStep.with, "cache save inputs");
+    assertEquals(
+      saveInputs.key,
+      "${{ steps.deno-cache.outputs.cache-primary-key }}",
+    );
 
     const installStep = steps.find((step) =>
       step.name === "Install pinned Deno"
@@ -69,7 +95,17 @@ describe("setup-deno CI contract", () => {
     const install = String(installStep.run);
     assertStringIncludes(install, 'version="2.7.7"');
     assertStringIncludes(install, "--retry-max-time 120");
+    assertStringIncludes(install, "--remove-on-error");
     assertMatch(install, /--connect-timeout\s+20\s+--max-time\s+120/);
+    assertEquals(
+      install.match(/archive_sha256="[0-9a-f]{64}"/g)?.length,
+      6,
+      "every supported Deno archive must have a pinned SHA-256 digest",
+    );
+    assertStringIncludes(
+      install,
+      'if [ "${actual_sha256}" != "${archive_sha256}" ]',
+    );
     assertEquals(
       /\bnpm\b/.test(install),
       false,
@@ -104,7 +140,7 @@ describe("setup-deno CI contract", () => {
     }
   });
 
-  it("caps every workflow setup call and keeps fork PRs out of cache writes", async () => {
+  it("uses one complete cache producer, caps setup, and excludes fork PRs", async () => {
     const workflowPaths = await workflowPathsUsingSetupDeno();
     assert(
       workflowPaths.length > 0,
@@ -112,6 +148,7 @@ describe("setup-deno CI contract", () => {
     );
 
     let setupCalls = 0;
+    let cacheProducerCalls = 0;
     for (const path of workflowPaths) {
       const workflow = await parseYamlFile(path);
       const jobs = asRecord(workflow.jobs, `${path}.jobs`);
@@ -121,16 +158,24 @@ describe("setup-deno CI contract", () => {
         const setupSteps = steps.filter((step) => step.uses === LOCAL_ACTION);
         for (const step of setupSteps) {
           setupCalls++;
+          const inputs = asRecord(step.with ?? {}, "setup inputs");
+          const warmsDependencies = inputs["warm-cache"] === "true" ||
+            inputs["warm-redis-cache"] === "true";
+
+          if (warmsDependencies) {
+            cacheProducerCalls++;
+            assertEquals(path, `${WORKFLOWS_DIR}/cicd.yml`);
+            assertEquals(jobName, CACHE_PRODUCER_JOB);
+            assertEquals(inputs["warm-cache"], "true");
+            assertEquals(inputs["warm-redis-cache"], "true");
+          }
+
           assertEquals(
             step["timeout-minutes"],
-            MAX_SETUP_MINUTES,
+            warmsDependencies ? MAX_CACHE_SETUP_MINUTES : MAX_SETUP_MINUTES,
             `${path} ${jobName} setup-deno must leave time for job work`,
           );
-          const inputs = asRecord(step.with ?? {}, "setup inputs");
-          if (
-            inputs["warm-cache"] === "true" ||
-            inputs["warm-redis-cache"] === "true"
-          ) {
+          if (warmsDependencies) {
             assertEquals(
               job["runs-on"],
               "ubuntu-latest",
@@ -150,6 +195,11 @@ describe("setup-deno CI contract", () => {
     }
 
     assert(setupCalls > 0, "setup-deno workflow calls must be inspected");
+    assertEquals(
+      cacheProducerCalls,
+      1,
+      "exactly one job may pre-warm and save the complete dependency graph",
+    );
 
     const ci = await parseYamlFile(`${WORKFLOWS_DIR}/cicd.yml`);
     const coverageShards = asRecord(
@@ -163,5 +213,25 @@ describe("setup-deno CI contract", () => {
     ).find((step) => step.uses === LOCAL_ACTION);
     assert(coverageSetup, "coverage shards must use setup-deno");
     assertEquals(coverageSetup["timeout-minutes"], MAX_SETUP_MINUTES);
+
+    for (const jobName of ["tests-e2e-rsc-browser", "tests-binary-e2e"]) {
+      const job = asRecord(
+        asRecord(ci.jobs, "cicd jobs")[jobName],
+        jobName,
+      );
+      const chromiumInstall = asSteps(job.steps, `${jobName} steps`).find(
+        (step) => step.name === "Install Chromium",
+      );
+      assert(chromiumInstall, `${jobName} must install Chromium`);
+      assertEquals(
+        chromiumInstall["timeout-minutes"],
+        15,
+        `${jobName} Chromium provisioning needs a total step deadline`,
+      );
+      assertMatch(
+        String(chromiumInstall.run),
+        /timeout --signal=TERM --kill-after=15s 10m\s+\\\s+deno run/,
+      );
+    }
   });
 });
