@@ -1088,17 +1088,12 @@ describe("generated encrypted OAuth token store", () => {
     assertEquals(await wrongKeyStore.consumeState("corrupted-state"), null);
     assertEquals(await rotatedWithoutPrevious.consumeState("wrong-key-state"), null);
     assertEquals(await store.consumeState("corrupted-state"), null);
-    assertEquals(captured.warnings.length, 2);
-    assertEquals(captured.warnings[0]?.includes("failed authentication"), true);
-    assertEquals(captured.warnings[1]?.includes("unknown encryption key"), true);
-    for (const warning of captured.warnings) {
-      assertEquals(warning.includes("corrupted-state"), false);
-      assertEquals(warning.includes("wrong-key-state"), false);
-      assertEquals(warning.includes("alice"), false);
-      assertEquals(warning.includes("bob"), false);
-      assertEquals(warning.includes("sensitive-tenant"), false);
-      assertEquals(warning.includes("https://app.example.com"), false);
-    }
+    assertEquals(captured.warnings, [
+      "[Encrypted Token Store] Ignoring unreadable OAuth state row " +
+      "(failed authentication). The OAuth callback state is rejected.",
+      "[Encrypted Token Store] Ignoring unreadable OAuth state row " +
+      "(unknown encryption key). The OAuth callback state is rejected.",
+    ]);
   });
 
   it("rejects state rows outside the acceptance window", async () => {
