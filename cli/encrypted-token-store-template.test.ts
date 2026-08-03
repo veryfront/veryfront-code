@@ -644,6 +644,31 @@ describe("generated encrypted OAuth token store", () => {
     });
   });
 
+  it("ignores expired OAuth state rows during rotation scans", async () => {
+    const backend = scanCapableBackend();
+    const retiringKey = Deno.env.get("TOKEN_ENCRYPTION_KEY");
+    if (!retiringKey) throw new Error("Expected a configured encryption key");
+    const stateKey = 'veryfront:oauth:v1:state:["expired-state"]';
+    await backend.set(
+      stateKey,
+      await sealV2(retiringKey, stateKey, {
+        ...oauthState("alice"),
+        createdAt: Date.now() - 12 * 60_000,
+      }),
+    );
+
+    Deno.env.set("TOKEN_ENCRYPTION_KEY", generateEncryptionKey());
+    Deno.env.set("TOKEN_ENCRYPTION_KEY_PREVIOUS", retiringKey);
+
+    assertEquals(await checkEncryptedTokenStoreRotation(backend), {
+      scannedRows: 1,
+      currentKeyRows: 0,
+      previousKeyRows: 0,
+      unreadableRows: 0,
+      complete: true,
+    });
+  });
+
   it("keeps reading legacy v1 envelopes with any configured key", async () => {
     const backend = createMemoryKvBackend();
     const legacyKey = Deno.env.get("TOKEN_ENCRYPTION_KEY");

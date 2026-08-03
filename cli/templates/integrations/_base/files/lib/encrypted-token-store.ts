@@ -826,6 +826,8 @@ function assertRotationScanBackend(
  * had a chance to rewrite rows. When `complete` is true, the scanned rows no
  * longer require the previous key. Unreadable rows are counted separately and
  * should be cleared or replaced before removing the previous key.
+ * Expired OAuth state rows are ignored after authenticated decrypt and schema
+ * validation because they can no longer be consumed.
  * `complete` describes only rows yielded by the backend; an empty scan reports
  * `complete: true` with `scannedRows: 0`. Confirm the scan covered the expected
  * rows before removing the previous key.
@@ -842,6 +844,7 @@ export async function checkEncryptedTokenStoreRotation(
     unreadableRows: 0,
     complete: false,
   };
+  const scanNow = Date.now();
 
   for (const prefix of [TOKENS_KEY_PREFIX, STATE_KEY_PREFIX]) {
     for await (const row of backend.scan(prefix)) {
@@ -858,7 +861,8 @@ export async function checkEncryptedTokenStoreRotation(
         if (row.key.startsWith(TOKENS_KEY_PREFIX)) {
           requireTokenEntry(opened.value);
         } else {
-          requireStateRow(opened.value);
+          const state = requireStateRow(opened.value);
+          if (!isFreshState(state.createdAt, scanNow)) continue;
         }
         if (opened.sealedWithCurrentKey) report.currentKeyRows++;
         else report.previousKeyRows++;
