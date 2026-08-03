@@ -14,10 +14,18 @@
  *   the store without a valid key throws, and values that are not in the
  *   expected encrypted envelope are refused on read.
  *
- * Keep the configured key while encrypted rows still use it. Replacing the
- * key makes existing rows unreadable. Delete affected rows and have users
- * reconnect before removing the old key; this v1 envelope does not support
- * decrypting with multiple keys during rotation.
+ * Key rotation: set `TOKEN_ENCRYPTION_KEY` to the new key and move the old
+ * key to `TOKEN_ENCRYPTION_KEY_PREVIOUS`. New writes are sealed with the new
+ * key (the v2 envelope records a key id derived from the key), while rows
+ * sealed with the previous key stay readable and are re-sealed with the new
+ * key the next time they are written. Legacy v1 envelopes (no key id) are
+ * decrypted by trying every configured key. Remove
+ * `TOKEN_ENCRYPTION_KEY_PREVIOUS` once no rows still use it.
+ *
+ * Undecryptable token rows (unknown key, tampering, legacy plaintext) never
+ * fail a whole request: the token read paths log a warning and report the
+ * integration as disconnected, so the recovery is simply reconnecting (a
+ * fresh `setTokens` overwrites the row; `clearTokens` removes it).
  *
  * Generate a key once per deployment and set it before startup:
  *
@@ -74,13 +82,18 @@ export interface EncryptedKvBackend {
 }
 
 const ENCRYPTION_KEY_ENV_VAR = "TOKEN_ENCRYPTION_KEY";
-const ENVELOPE_PREFIX = "vf-aes-gcm.v1:";
+const PREVIOUS_ENCRYPTION_KEY_ENV_VAR = "TOKEN_ENCRYPTION_KEY_PREVIOUS";
+const ENVELOPE_PREFIX = "vf-aes-gcm.v2:";
+const LEGACY_ENVELOPE_PREFIX = "vf-aes-gcm.v1:";
+const KEY_ID_HEX_LENGTH = 16;
+const KEY_ID_PATTERN = /^[0-9a-f]{16}$/;
 const AES_GCM_IV_BYTES = 12;
 const AES_GCM_TAG_BYTES = 16;
 const AES_KEY_BYTES = 32;
 const MAX_PLAINTEXT_BYTES = 64 * 1024;
 const MAX_ENCRYPTED_BYTES = MAX_PLAINTEXT_BYTES + AES_GCM_IV_BYTES + AES_GCM_TAG_BYTES;
-const MAX_ENCODED_LENGTH = Math.ceil(MAX_ENCRYPTED_BYTES / 3) * 4 + ENVELOPE_PREFIX.length;
+const MAX_ENCODED_LENGTH = Math.ceil(MAX_ENCRYPTED_BYTES / 3) * 4 + ENVELOPE_PREFIX.length +
+  KEY_ID_HEX_LENGTH + 1;
 const BASE64_CHUNK_BYTES = 0x8000;
 const MAX_KEY_COMPONENT_LENGTH = 1_024;
 const MAX_STATE_KEY_LENGTH = 1_024;
@@ -122,10 +135,10 @@ export function generateEncryptionKey(): string {
     .join("");
 }
 
-function parseEncryptionKeyHex(keyHex: string): Uint8Array<ArrayBuffer> {
+function parseEncryptionKeyHex(keyHex: string, envVar: string): Uint8Array<ArrayBuffer> {
   if (!/^[0-9a-fA-F]{64}$/.test(keyHex)) {
     throw new TypeError(
-      `${ENCRYPTION_KEY_ENV_VAR} must be exactly 64 hexadecimal characters ` +
+      `${envVar} must be exactly 64 hexadecimal characters ` +
         "(a 256-bit AES key). Generate one with `openssl rand -hex 32`.",
     );
   }
@@ -151,7 +164,20 @@ function requireEncryptionKeyBytes(): Uint8Array<ArrayBuffer> {
         `${ENCRYPTION_KEY_ENV_VAR} before starting the app.`,
     );
   }
-  return parseEncryptionKeyHex(configured);
+  return parseEncryptionKeyHex(configured, ENCRYPTION_KEY_ENV_VAR);
+}
+
+/**
+ * Resolve the decryption key ring: the current key first (used for every
+ * new write), then the optional previous key kept readable during rotation.
+ */
+function resolveEncryptionKeyRing(): Uint8Array<ArrayBuffer>[] {
+  const ring = [requireEncryptionKeyBytes()];
+  const previous = readEnvironmentVariable(PREVIOUS_ENCRYPTION_KEY_ENV_VAR);
+  if (previous !== undefined && previous !== "") {
+    ring.push(parseEncryptionKeyHex(previous, PREVIOUS_ENCRYPTION_KEY_ENV_VAR));
+  }
+  return ring;
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -544,15 +570,31 @@ function assertBackend(backend: EncryptedKvBackend): void {
   }
 }
 
-class EnvelopeCipher {
-  readonly #key: Promise<CryptoKey>;
+interface EnvelopeKey {
+  /** First 8 bytes of SHA-256 over the raw key, hex-encoded. */
+  keyId: string;
+  key: CryptoKey;
+}
 
-  constructor(keyBytes: Uint8Array<ArrayBuffer>) {
-    this.#key = crypto.subtle.importKey("raw", keyBytes, "AES-GCM", false, [
-      "encrypt",
-      "decrypt",
-    ]);
-    keyBytes.fill(0);
+async function importEnvelopeKey(keyBytes: Uint8Array<ArrayBuffer>): Promise<EnvelopeKey> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", keyBytes));
+  const key = await crypto.subtle.importKey("raw", keyBytes, "AES-GCM", false, [
+    "encrypt",
+    "decrypt",
+  ]);
+  keyBytes.fill(0);
+  const keyId = Array.from(digest.subarray(0, KEY_ID_HEX_LENGTH / 2))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return { keyId, key };
+}
+
+class EnvelopeCipher {
+  /** The first entry is the current key; every entry may decrypt. */
+  readonly #keys: Promise<EnvelopeKey[]>;
+
+  constructor(keyRing: readonly Uint8Array<ArrayBuffer>[]) {
+    this.#keys = Promise.all(keyRing.map(importEnvelopeKey));
   }
 
   async seal(storageKey: string, value: unknown): Promise<string> {
@@ -560,39 +602,81 @@ class EnvelopeCipher {
     if (plaintext.byteLength > MAX_PLAINTEXT_BYTES) {
       throw new RangeError(`Stored OAuth value exceeds ${MAX_PLAINTEXT_BYTES} bytes`);
     }
+    const [current] = await this.#keys;
+    if (!current) {
+      throw new Error("Encrypted token store has no encryption key configured");
+    }
     const iv = crypto.getRandomValues(new Uint8Array(AES_GCM_IV_BYTES));
     const ciphertext = new Uint8Array(
       await crypto.subtle.encrypt(
         { name: "AES-GCM", iv, additionalData: new TextEncoder().encode(storageKey) },
-        await this.#key,
+        current.key,
         plaintext,
       ),
     );
     const combined = new Uint8Array(iv.byteLength + ciphertext.byteLength);
     combined.set(iv);
     combined.set(ciphertext, iv.byteLength);
-    return ENVELOPE_PREFIX + bytesToBase64(combined);
+    return ENVELOPE_PREFIX + current.keyId + ":" + bytesToBase64(combined);
   }
 
   async open(storageKey: string, stored: string): Promise<unknown> {
     if (typeof stored !== "string" || stored.length > MAX_ENCODED_LENGTH) {
       throw new TypeError("Stored OAuth value must be a bounded string");
     }
-    if (!stored.startsWith(ENVELOPE_PREFIX)) {
-      throw new Error(
-        `Stored OAuth value is not in the ${ENVELOPE_PREFIX.slice(0, -1)} envelope ` +
-          "format. This store never reads plaintext credentials; re-authenticate " +
-          "affected users to replace legacy rows.",
+    const keys = await this.#keys;
+    if (stored.startsWith(ENVELOPE_PREFIX)) {
+      const body = stored.slice(ENVELOPE_PREFIX.length);
+      const keyId = body.slice(0, KEY_ID_HEX_LENGTH);
+      if (!KEY_ID_PATTERN.test(keyId) || body[KEY_ID_HEX_LENGTH] !== ":") {
+        throw new TypeError("Encrypted OAuth value has a malformed key id");
+      }
+      const match = keys.find((entry) => entry.keyId === keyId);
+      if (!match) {
+        throw new Error(
+          `Encrypted OAuth value was sealed with an unknown encryption key (id ${keyId}). ` +
+            `Set ${PREVIOUS_ENCRYPTION_KEY_ENV_VAR} to the retiring key during rotation, ` +
+            "or re-authenticate affected users.",
+        );
+      }
+      return await this.#decrypt(
+        storageKey,
+        base64ToBytes(body.slice(KEY_ID_HEX_LENGTH + 1)),
+        match.key,
       );
     }
-    const combined = base64ToBytes(stored.slice(ENVELOPE_PREFIX.length));
+    if (stored.startsWith(LEGACY_ENVELOPE_PREFIX)) {
+      // v1 envelopes carry no key id, so try every configured key.
+      const combined = base64ToBytes(stored.slice(LEGACY_ENVELOPE_PREFIX.length));
+      let lastFailure: unknown;
+      for (const entry of keys) {
+        try {
+          return await this.#decrypt(storageKey, combined, entry.key);
+        } catch (failure) {
+          lastFailure = failure;
+        }
+      }
+      throw lastFailure;
+    }
+    throw new Error(
+      "Stored OAuth value is not in a vf-aes-gcm envelope format. This store " +
+        "never reads plaintext credentials; re-authenticate affected users to " +
+        "replace legacy rows.",
+    );
+  }
+
+  async #decrypt(
+    storageKey: string,
+    combined: Uint8Array<ArrayBuffer>,
+    key: CryptoKey,
+  ): Promise<unknown> {
     const iv = combined.subarray(0, AES_GCM_IV_BYTES);
     const ciphertext = combined.subarray(AES_GCM_IV_BYTES);
     let plaintext: ArrayBuffer;
     try {
       plaintext = await crypto.subtle.decrypt(
         { name: "AES-GCM", iv, additionalData: new TextEncoder().encode(storageKey) },
-        await this.#key,
+        key,
         ciphertext,
       );
     } catch (cause) {
@@ -632,8 +716,13 @@ export function createEncryptedTokenStore(
   backend: EncryptedKvBackend,
 ): RefreshCapableTokenStore {
   assertBackend(backend);
-  const cipher = new EnvelopeCipher(requireEncryptionKeyBytes());
+  const cipher = new EnvelopeCipher(resolveEncryptionKeyRing());
 
+  // Undecryptable or malformed rows degrade to "absent" instead of failing
+  // the caller: a single bad row must not take down an integrations page.
+  // The integration shows as disconnected and reconnecting (setTokens)
+  // overwrites the row; clearTokens removes it explicitly. The warning never
+  // includes token material.
   async function readTokenEntry(
     serviceId: string,
     userId: string,
@@ -641,7 +730,16 @@ export function createEncryptedTokenStore(
     const key = tokensStorageKey(serviceId, userId);
     const raw = await backend.get(key);
     if (raw === null) return null;
-    return { key, raw, entry: requireTokenEntry(await cipher.open(key, raw)) };
+    try {
+      return { key, raw, entry: requireTokenEntry(await cipher.open(key, raw)) };
+    } catch (failure) {
+      console.warn(
+        `[Encrypted Token Store] Ignoring unreadable OAuth token row for ${key}: ` +
+          `${failure instanceof Error ? failure.message : String(failure)} ` +
+          "The integration is reported as disconnected; reconnecting overwrites the row.",
+      );
+      return null;
+    }
   }
 
   return {

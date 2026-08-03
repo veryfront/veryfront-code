@@ -16,7 +16,8 @@ import {
 import { createMemoryKvBackend } from "./templates/integrations/_base/files/lib/token-store-examples.ts";
 import { createTokenStore } from "./templates/integrations/_base/files/lib/token-store.ts";
 
-const ENVELOPE_PREFIX = "vf-aes-gcm.v1:";
+const ENVELOPE_PREFIX = "vf-aes-gcm.v2:";
+const LEGACY_ENVELOPE_PREFIX = "vf-aes-gcm.v1:";
 
 function oauthState(userId: string): StoredOAuthState {
   return {
@@ -28,10 +29,59 @@ function oauthState(userId: string): StoredOAuthState {
   };
 }
 
+/** Split an envelope into its header (prefix + key id) and base64 body. */
+function splitEnvelope(stored: string): { header: string; body: string } {
+  const separator = stored.lastIndexOf(":");
+  return { header: stored.slice(0, separator + 1), body: stored.slice(separator + 1) };
+}
+
 function envelopeIv(stored: string): number[] {
-  const encoded = stored.slice(ENVELOPE_PREFIX.length);
-  const bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
+  const bytes = Uint8Array.from(
+    atob(splitEnvelope(stored).body),
+    (character) => character.charCodeAt(0),
+  );
   return [...bytes.subarray(0, 12)];
+}
+
+function captureWarnings(): { warnings: string[]; [Symbol.dispose](): void } {
+  const original = console.warn;
+  const warnings: string[] = [];
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(" "));
+  };
+  return {
+    warnings,
+    [Symbol.dispose]() {
+      console.warn = original;
+    },
+  };
+}
+
+/** Seal a value in the legacy v1 envelope (no key id) for compatibility tests. */
+async function sealLegacyV1(
+  keyHex: string,
+  storageKey: string,
+  value: unknown,
+): Promise<string> {
+  const keyBytes = new Uint8Array(32);
+  for (let index = 0; index < keyBytes.length; index++) {
+    keyBytes[index] = Number.parseInt(keyHex.slice(index * 2, index * 2 + 2), 16);
+  }
+  const key = await crypto.subtle.importKey("raw", keyBytes, "AES-GCM", false, ["encrypt"]);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = new Uint8Array(
+    await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv, additionalData: new TextEncoder().encode(storageKey) },
+      key,
+      new TextEncoder().encode(JSON.stringify(value)),
+    ),
+  );
+  const combined = new Uint8Array(iv.byteLength + ciphertext.byteLength);
+  combined.set(iv);
+  combined.set(ciphertext, iv.byteLength);
+  let binary = "";
+  for (const byte of combined) binary += String.fromCharCode(byte);
+  return LEGACY_ENVELOPE_PREFIX + btoa(binary);
 }
 
 /** Expose the raw rows so tests can assert what actually hits storage. */
@@ -67,16 +117,20 @@ function inspectableBackend(): EncryptedKvBackend & { rows: Map<string, string> 
 
 describe("generated encrypted OAuth token store", () => {
   const originalKey = Deno.env.get("TOKEN_ENCRYPTION_KEY");
+  const originalPreviousKey = Deno.env.get("TOKEN_ENCRYPTION_KEY_PREVIOUS");
   const originalNodeEnv = Deno.env.get("NODE_ENV");
 
   beforeEach(() => {
     Deno.env.set("TOKEN_ENCRYPTION_KEY", generateEncryptionKey());
+    Deno.env.delete("TOKEN_ENCRYPTION_KEY_PREVIOUS");
     Deno.env.set("NODE_ENV", "development");
   });
 
   afterEach(() => {
     if (originalKey === undefined) Deno.env.delete("TOKEN_ENCRYPTION_KEY");
     else Deno.env.set("TOKEN_ENCRYPTION_KEY", originalKey);
+    if (originalPreviousKey === undefined) Deno.env.delete("TOKEN_ENCRYPTION_KEY_PREVIOUS");
+    else Deno.env.set("TOKEN_ENCRYPTION_KEY_PREVIOUS", originalPreviousKey);
     if (originalNodeEnv === undefined) Deno.env.delete("NODE_ENV");
     else Deno.env.set("NODE_ENV", originalNodeEnv);
   });
@@ -102,6 +156,16 @@ describe("generated encrypted OAuth token store", () => {
     }
   });
 
+  it("rejects a malformed TOKEN_ENCRYPTION_KEY_PREVIOUS instead of ignoring it", () => {
+    Deno.env.set("TOKEN_ENCRYPTION_KEY_PREVIOUS", "not-hex");
+
+    assertThrows(
+      () => createEncryptedTokenStore(createMemoryKvBackend()),
+      TypeError,
+      "TOKEN_ENCRYPTION_KEY_PREVIOUS",
+    );
+  });
+
   it("rejects backends that cannot provide atomic operations", () => {
     const incomplete = createMemoryKvBackend() as unknown as Record<string, unknown>;
     incomplete.compareAndSwap = undefined;
@@ -123,6 +187,11 @@ describe("generated encrypted OAuth token store", () => {
     assertEquals(backend.rows.size, 1);
     for (const stored of backend.rows.values()) {
       assertEquals(stored.startsWith(ENVELOPE_PREFIX), true);
+      // The v2 envelope records which key sealed the row.
+      assertEquals(
+        /^[0-9a-f]{16}:/.test(stored.slice(ENVELOPE_PREFIX.length)),
+        true,
+      );
       assertEquals(stored.includes("super-secret-access"), false);
       assertEquals(stored.includes("super-secret-refresh"), false);
     }
@@ -255,22 +324,23 @@ describe("generated encrypted OAuth token store", () => {
     assertNotEquals(envelopeIv(first), envelopeIv(second));
   });
 
-  it("refuses plaintext rows found in the backend", async () => {
+  it("treats plaintext rows found in the backend as absent without reading them", async () => {
     const backend = createMemoryKvBackend();
     const store = createEncryptedTokenStore(backend);
     await backend.set(
       'veryfront:oauth:v1:tokens:["github","alice"]',
-      JSON.stringify({ revision: "r1", tokens: { accessToken: "plaintext" } }),
+      JSON.stringify({ revision: "r1", tokens: { accessToken: "legacy-raw-secret" } }),
     );
 
-    await assertRejects(
-      () => store.getTokens("github", "alice"),
-      Error,
-      "never reads plaintext",
-    );
+    using captured = captureWarnings();
+    assertEquals(await store.getTokens("github", "alice"), null);
+    assertEquals(captured.warnings.length, 1);
+    assertEquals(captured.warnings[0]?.includes("unreadable OAuth token row"), true);
+    // The warning must never surface token material.
+    assertEquals(captured.warnings[0]?.includes("legacy-raw-secret"), false);
   });
 
-  it("rejects tampered ciphertext", async () => {
+  it("treats tampered ciphertext as absent instead of failing the read", async () => {
     const backend = inspectableBackend();
     const store = createEncryptedTokenStore(backend);
     await store.setTokens("github", "alice", { accessToken: "secret" });
@@ -278,19 +348,18 @@ describe("generated encrypted OAuth token store", () => {
     const entry = [...backend.rows.entries()][0];
     if (!entry) throw new Error("Expected a stored row");
     const [key, stored] = entry;
-    const body = stored.slice(ENVELOPE_PREFIX.length);
+    const { header, body } = splitEnvelope(stored);
     const index = 20;
     const replacement = body[index] === "A" ? "B" : "A";
     await backend.set(
       key,
-      ENVELOPE_PREFIX + body.slice(0, index) + replacement + body.slice(index + 1),
+      header + body.slice(0, index) + replacement + body.slice(index + 1),
     );
 
-    await assertRejects(
-      () => store.getTokens("github", "alice"),
-      Error,
-      "failed authentication",
-    );
+    using captured = captureWarnings();
+    assertEquals(await store.getTokens("github", "alice"), null);
+    assertEquals(captured.warnings.length, 1);
+    assertEquals(captured.warnings[0]?.includes("failed authentication"), true);
   });
 
   it("binds ciphertext to its storage slot", async () => {
@@ -302,26 +371,88 @@ describe("generated encrypted OAuth token store", () => {
     if (!stored) throw new Error("Expected a stored row");
     await backend.set('veryfront:oauth:v1:tokens:["github","mallory"]', stored);
 
-    await assertRejects(
-      () => store.getTokens("github", "mallory"),
-      Error,
-      "failed authentication",
-    );
+    using captured = captureWarnings();
+    assertEquals(await store.getTokens("github", "mallory"), null);
+    assertEquals(captured.warnings.length, 1);
+    assertEquals(await store.getTokens("github", "alice"), { accessToken: "alices-token" });
   });
 
-  it("cannot read values written under a different key", async () => {
+  it("treats values written under an unknown key as absent and recovers on reconnect", async () => {
     const backend = createMemoryKvBackend();
     const store = createEncryptedTokenStore(backend);
     await store.setTokens("github", "alice", { accessToken: "secret" });
+    const snapshot = await store.getTokenSnapshot("github", "alice");
+    if (!snapshot) throw new Error("Expected a revisioned token snapshot");
 
+    // Rotation without TOKEN_ENCRYPTION_KEY_PREVIOUS: rows sealed with the
+    // retired key are unreadable, so they degrade to "disconnected" rather
+    // than failing every read.
     Deno.env.set("TOKEN_ENCRYPTION_KEY", generateEncryptionKey());
     const rotated = createEncryptedTokenStore(backend);
 
-    await assertRejects(
-      () => rotated.getTokens("github", "alice"),
-      Error,
-      "failed authentication",
+    using captured = captureWarnings();
+    assertEquals(await rotated.getTokens("github", "alice"), null);
+    assertEquals(captured.warnings.length, 1);
+    assertEquals(captured.warnings[0]?.includes("unknown encryption key"), true);
+    assertEquals(
+      await rotated.compareAndSetTokens("github", "alice", snapshot.revision, {
+        accessToken: "stale-refresh",
+      }),
+      false,
     );
+
+    // The documented recovery: reconnecting overwrites the unreadable row.
+    await rotated.setTokens("github", "alice", { accessToken: "reconnected" });
+    assertEquals(await rotated.getTokens("github", "alice"), { accessToken: "reconnected" });
+  });
+
+  it("decrypts rows sealed with the previous key during rotation", async () => {
+    const backend = createMemoryKvBackend();
+    const retiringKey = Deno.env.get("TOKEN_ENCRYPTION_KEY");
+    if (!retiringKey) throw new Error("Expected a configured encryption key");
+    const store = createEncryptedTokenStore(backend);
+    await store.setTokens("github", "alice", { accessToken: "sealed-with-old-key" });
+
+    Deno.env.set("TOKEN_ENCRYPTION_KEY", generateEncryptionKey());
+    Deno.env.set("TOKEN_ENCRYPTION_KEY_PREVIOUS", retiringKey);
+    const rotated = createEncryptedTokenStore(backend);
+
+    assertEquals(await rotated.getTokens("github", "alice"), {
+      accessToken: "sealed-with-old-key",
+    });
+
+    // Writing re-seals the row with the current key, so the previous key can
+    // be dropped afterwards.
+    await rotated.setTokens("github", "alice", { accessToken: "resealed" });
+    Deno.env.delete("TOKEN_ENCRYPTION_KEY_PREVIOUS");
+    const afterRotation = createEncryptedTokenStore(backend);
+    assertEquals(await afterRotation.getTokens("github", "alice"), {
+      accessToken: "resealed",
+    });
+  });
+
+  it("keeps reading legacy v1 envelopes with any configured key", async () => {
+    const backend = createMemoryKvBackend();
+    const legacyKey = Deno.env.get("TOKEN_ENCRYPTION_KEY");
+    if (!legacyKey) throw new Error("Expected a configured encryption key");
+    const storageKey = 'veryfront:oauth:v1:tokens:["github","alice"]';
+    await backend.set(
+      storageKey,
+      await sealLegacyV1(legacyKey, storageKey, {
+        revision: "legacy-revision",
+        tokens: { accessToken: "legacy-token" },
+      }),
+    );
+
+    // Read with the sealing key as the current key.
+    const store = createEncryptedTokenStore(backend);
+    assertEquals(await store.getTokens("github", "alice"), { accessToken: "legacy-token" });
+
+    // Read with the sealing key demoted to the previous key.
+    Deno.env.set("TOKEN_ENCRYPTION_KEY", generateEncryptionKey());
+    Deno.env.set("TOKEN_ENCRYPTION_KEY_PREVIOUS", legacyKey);
+    const rotated = createEncryptedTokenStore(backend);
+    assertEquals(await rotated.getTokens("github", "alice"), { accessToken: "legacy-token" });
   });
 
   it("supports revisioned compare-and-set for token refresh", async () => {
@@ -477,12 +608,12 @@ describe("generated encrypted OAuth token store", () => {
     const entry = [...backend.rows.entries()][0];
     if (!entry) throw new Error("Expected a stored state row");
     const [key, stored] = entry;
-    const body = stored.slice(ENVELOPE_PREFIX.length);
+    const { header, body } = splitEnvelope(stored);
     const index = 20;
     const replacement = body[index] === "A" ? "B" : "A";
     await backend.set(
       key,
-      ENVELOPE_PREFIX + body.slice(0, index) + replacement + body.slice(index + 1),
+      header + body.slice(0, index) + replacement + body.slice(index + 1),
     );
 
     assertEquals(await store.consumeState("corrupted-state"), null);
