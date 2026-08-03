@@ -169,6 +169,42 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertMatch(prepared.source, /__vf_prepare_route_host_marker__/);
   });
 
+  it("keeps an authenticated hosted empty remote-host policy fail-closed", async () => {
+    const projectDir = await makeTempDir();
+    const modulePath = join(projectDir, "hosted-handler.ts");
+    await fs.writeTextFile(
+      modulePath,
+      `import { parse } from "https://esm.sh/yaml@2";\n` +
+        `export const GET = () => new Response(typeof parse);`,
+    );
+
+    const originalFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    try {
+      globalThis.fetch = (() => {
+        fetchCalls += 1;
+        return Promise.resolve(new Response("export const parse = () => {};"));
+      }) as typeof fetch;
+
+      await assertRejects(
+        () =>
+          prepareHandlerModule({
+            projectDir,
+            modulePath,
+            adapter,
+            // Hosted callers supply the already authenticated and validated
+            // project config. An explicit empty list means deny every host.
+            config: { security: { remoteHosts: [] } },
+          }),
+        Error,
+        "Remote import blocked by allow-list",
+      );
+      assertEquals(fetchCalls, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("executes prepared bundled source only inside the project worker", async () => {
     const tmpDir = await makeTempDir();
     const modulePath = join(tmpDir, "isolated-handler.ts");
@@ -1272,6 +1308,167 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       "Import escapes the project directory",
     );
     assertEquals(linkedModuleRead, false);
+  });
+
+  it("rejects a project package manifest symlink before reading outside the project", async () => {
+    const projectDir = await makeTempDir();
+    const outsideDir = await makeTempDir();
+    const outsideManifest = join(outsideDir, "package.json");
+    const projectManifest = join(projectDir, "package.json");
+    await fs.writeTextFile(
+      outsideManifest,
+      JSON.stringify({ dependencies: { "outside-only": "1.0.0" } }),
+    );
+    try {
+      await Deno.symlink(outsideManifest, projectManifest);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/permission|not supported/i.test(message)) return;
+      throw error;
+    }
+
+    const modulePath = join(projectDir, "route.ts");
+    await fs.writeTextFile(modulePath, `export const GET = () => new Response("ok");`);
+
+    const canonicalOutsideManifest = await Deno.realPath(outsideManifest);
+    let outsideManifestRead = false;
+    const observingAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile(path: string): Promise<string> {
+          if (path === canonicalOutsideManifest) outsideManifestRead = true;
+          return adapter.fs.readFile(path);
+        },
+      },
+    };
+
+    await assertRejects(
+      () =>
+        prepareHandlerModule({
+          projectDir,
+          modulePath,
+          adapter: observingAdapter,
+          config: undefined,
+        }),
+      Error,
+      "Import escapes the project directory",
+    );
+    assertEquals(outsideManifestRead, false);
+  });
+
+  it("rejects a symlinked dependency manifest outside the project", async () => {
+    const projectDir = await makeTempDir();
+    const outsideDir = await makeTempDir();
+    const packageName = "outside-dependency";
+    const projectModules = join(projectDir, "node_modules");
+    const outsidePackage = join(outsideDir, packageName);
+    await fs.mkdir(projectModules, { recursive: true });
+    await fs.mkdir(outsidePackage, { recursive: true });
+    await fs.writeTextFile(
+      join(projectDir, "package.json"),
+      JSON.stringify({ dependencies: { [packageName]: "1.0.0" } }),
+    );
+    const outsideManifest = join(outsidePackage, "package.json");
+    await fs.writeTextFile(
+      outsideManifest,
+      JSON.stringify({ name: packageName, version: "1.0.0", type: "module" }),
+    );
+    await fs.writeTextFile(join(outsidePackage, "index.js"), `export const value = "outside";`);
+    try {
+      await Deno.symlink(outsidePackage, join(projectModules, packageName));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/permission|not supported/i.test(message)) return;
+      throw error;
+    }
+
+    const modulePath = join(projectDir, "route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      `import { value } from "${packageName}";\n` +
+        `export const GET = () => new Response(value);`,
+    );
+
+    const canonicalOutsideManifest = await Deno.realPath(outsideManifest);
+    let outsideManifestRead = false;
+    const observingAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile(path: string): Promise<string> {
+          if (path === canonicalOutsideManifest) outsideManifestRead = true;
+          return adapter.fs.readFile(path);
+        },
+      },
+    };
+
+    await assertRejects(
+      () =>
+        prepareHandlerModule({
+          projectDir,
+          modulePath,
+          adapter: observingAdapter,
+          config: undefined,
+        }),
+      Error,
+      "Import escapes the project directory",
+    );
+    assertEquals(outsideManifestRead, false);
+  });
+
+  it("reads the authorized canonical path when a project symlink is swapped", async () => {
+    const projectDir = await makeTempDir();
+    const outsideDir = await makeTempDir();
+    const projectLibDir = join(projectDir, "lib");
+    await fs.mkdir(projectLibDir, { recursive: true });
+
+    const insideModule = join(projectLibDir, "inside.ts");
+    const outsideModule = join(outsideDir, "outside.ts");
+    const linkedModule = join(projectLibDir, "linked.ts");
+    await fs.writeTextFile(insideModule, `export const value = "inside-project-only";`);
+    await fs.writeTextFile(outsideModule, `export const value = "outside-project";`);
+    try {
+      await Deno.symlink(insideModule, linkedModule);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/permission|not supported/i.test(message)) return;
+      throw error;
+    }
+
+    const modulePath = join(projectDir, "route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      `import { value } from "./lib/linked.ts";\n` +
+        `export const GET = () => new Response(value);`,
+    );
+
+    const canonicalInsideModule = await Deno.realPath(insideModule);
+    let swapped = false;
+    const swappingAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        async readFile(path: string): Promise<string> {
+          if (!swapped && path === canonicalInsideModule) {
+            swapped = true;
+            await Deno.remove(linkedModule);
+            await Deno.symlink(outsideModule, linkedModule);
+          }
+          return await adapter.fs.readFile(path);
+        },
+      },
+    };
+
+    const prepared = await prepareHandlerModule({
+      projectDir,
+      modulePath,
+      adapter: swappingAdapter,
+      config: undefined,
+    });
+    assertEquals(swapped, true);
+    assertMatch(prepared.source, /inside-project-only/);
+    assertEquals(prepared.source.includes("outside-project"), false);
   });
 
   it("rejects API handlers with remote imports when the project lockfile cannot be written for non-read-only reasons", async () => {

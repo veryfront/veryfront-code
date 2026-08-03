@@ -176,7 +176,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
       const nodeMapped: Array<{ from: string; to: string }> = [];
 
       function authorizeRemoteUrl(url: URL): void {
-        if (!allowedHosts?.length || isAllowedRemoteHost(url, allowedHosts)) return;
+        if (isAllowedRemoteHost(url, allowedHosts)) return;
         throw new OutboundRequestBlockedError(
           `Remote import blocked by allow-list: ${url.origin}`,
         );
@@ -343,18 +343,16 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         try {
           const u = new URL(args.path);
 
-          if (allowedHosts?.length) {
-            if (!isAllowedRemoteHost(u, allowedHosts)) {
-              const remediation =
-                `Add "${u.origin}" to security.remoteHosts in veryfront.config.(ts|js) or replace with an approved CDN (e.g., https://esm.sh).`;
-              return {
-                errors: [
-                  {
-                    text: `Remote import blocked by allow-list: ${u.origin}. ${remediation}`,
-                  } as Message,
-                ],
-              };
-            }
+          if (!isAllowedRemoteHost(u, allowedHosts)) {
+            const remediation =
+              `Add "${u.origin}" to security.remoteHosts in veryfront.config.(ts|js) or replace with an approved CDN (e.g., https://esm.sh).`;
+            return {
+              errors: [
+                {
+                  text: `Remote import blocked by allow-list: ${u.origin}. ${remediation}`,
+                } as Message,
+              ],
+            };
           }
 
           if (u.hostname === "esm.sh") {

@@ -306,11 +306,45 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       }
     });
 
-    it("blocks internal module targets before invoking fetch", async () => {
+    it("blocks every remote module when the allowed host list is empty", async () => {
       const originalFetch = globalThis.fetch;
       let fetchCalls = 0;
       let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
       const plugin = createHTTPPlugin([]);
+      plugin.setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = (() => {
+          fetchCalls += 1;
+          return Promise.resolve(new Response("unexpected"));
+        }) as typeof fetch;
+        const result = await loadHandler({
+          path: "https://esm.sh/yaml@2",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+
+        const errors = (result as { errors?: Array<{ text: string }> }).errors;
+        assertExists(errors?.[0]);
+        assertEquals(errors[0].text.includes("Remote import blocked by allow-list"), true);
+        assertEquals(fetchCalls, 0);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("blocks internal module targets before invoking fetch", async () => {
+      const originalFetch = globalThis.fetch;
+      let fetchCalls = 0;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin(["http://169.254.169.254"]);
       const mockBuild = createMockBuild(
         () => {},
         (_opts, fn) => {

@@ -8,7 +8,7 @@ import { loadSecurityConfig } from "./security-config.ts";
 import type { APIRoute, LoadHostModuleOptions, LoadModuleOptions } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
-import { createFileSystem, realPath } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { FILE_EXTENSIONS, getLoaderForFile, validateModulePath } from "./loader-helpers.ts";
@@ -28,6 +28,11 @@ import {
   type PreparedWorkerModule,
 } from "#veryfront/security/sandbox/worker-types.ts";
 import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
+import {
+  createProjectSourceSnapshot,
+  ProjectBoundaryViolationError,
+  type ProjectSourceSnapshot,
+} from "./project-source-snapshot.ts";
 export {
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
@@ -99,12 +104,10 @@ export function prepareHandlerModule(options: LoadModuleOptions): Promise<Prepar
       }
 
       try {
-        const fs = createFileSystem();
         const source = await buildTranspiledModuleSource(
           modulePath,
           projectDir,
           adapter,
-          fs,
           config,
         );
         const bytes = new TextEncoder().encode(source);
@@ -215,8 +218,7 @@ function loadJSModule(modulePath: string): Promise<APIRoute> {
 
 function createImportMapPlugin(
   projectDir: string,
-  adapter: RuntimeAdapter,
-  boundary: ProjectBoundaryRoots,
+  sourceSnapshot: ProjectSourceSnapshot,
   config?: VeryfrontConfig,
 ): Plugin {
   const importMap = config?.resolve?.importMap?.imports ?? {};
@@ -288,9 +290,8 @@ function createImportMapPlugin(
       build.onLoad(
         { filter: /.*/, namespace: "import-map" },
         createNamespaceOnLoadHandler({
-          adapter,
+          sourceSnapshot,
           projectDir,
-          boundary,
           errorLabel: "file via import map",
         }),
       );
@@ -299,21 +300,19 @@ function createImportMapPlugin(
 }
 
 function createNamespaceOnLoadHandler(options: {
-  adapter: RuntimeAdapter;
+  sourceSnapshot: ProjectSourceSnapshot;
   projectDir: string;
-  boundary: ProjectBoundaryRoots;
   errorLabel: string;
 }) {
-  const { adapter, projectDir, boundary, errorLabel } = options;
+  const { sourceSnapshot, projectDir, errorLabel } = options;
 
   return wrapWithCurrentContext(async (args: { path: string }) => {
     try {
       const { filePath, contents } = await readFileWithExtensions(
-        adapter,
+        sourceSnapshot,
         args.path,
         FILE_EXTENSIONS,
         projectDir,
-        boundary,
       );
 
       return {
@@ -331,9 +330,8 @@ function createNamespaceOnLoadHandler(options: {
 
 /** Resolves the framework's built-in @/ project alias through the runtime adapter. */
 function createProjectAliasPlugin(
-  adapter: RuntimeAdapter,
+  sourceSnapshot: ProjectSourceSnapshot,
   projectDir: string,
-  boundary: ProjectBoundaryRoots,
 ): Plugin {
   const projectRoot = pathHelper.resolve(projectDir);
 
@@ -355,9 +353,8 @@ function createProjectAliasPlugin(
       build.onLoad(
         { filter: /.*/, namespace: "vf-project-alias" },
         createNamespaceOnLoadHandler({
-          adapter,
+          sourceSnapshot,
           projectDir,
-          boundary,
           errorLabel: "via project alias",
         }),
       );
@@ -367,9 +364,8 @@ function createProjectAliasPlugin(
 
 /** Resolves relative imports through the adapter's virtual FS for remote projects. */
 function createAdapterResolvePlugin(
-  adapter: RuntimeAdapter,
+  sourceSnapshot: ProjectSourceSnapshot,
   projectDir: string,
-  boundary: ProjectBoundaryRoots,
 ): Plugin {
   return {
     name: "vf-adapter-resolve",
@@ -407,9 +403,8 @@ function createAdapterResolvePlugin(
       build.onLoad(
         { filter: /.*/, namespace: "vf-adapter" },
         createNamespaceOnLoadHandler({
-          adapter,
+          sourceSnapshot,
           projectDir,
-          boundary,
           errorLabel: "via adapter",
         }),
       );
@@ -426,67 +421,10 @@ function createAdapterResolvePlugin(
  * is resolved by esbuild straight to a path above the project root and loaded
  * in the default namespace, where none of those guards ever see it.
  *
- * The boundary canonicalizes both roots and resolved files. Dependencies are
- * admitted only through the project's own canonical `node_modules` root; an
- * unrelated path is never trusted merely because one segment has that name.
- * Adapter-only virtual paths have no host realpath and remain governed by the
- * adapter's lexical project containment checks.
+ * The source snapshot canonicalizes both roots and resolved files. Dependencies
+ * are admitted only through the project's own canonical `node_modules` root;
+ * an unrelated path is never trusted merely because one segment has that name.
  */
-interface ProjectBoundaryRoots {
-  /** Canonical source roots. Empty for adapter-only virtual projects. */
-  readonly project: readonly string[];
-  /** Canonical dependency roots explicitly owned by the project. */
-  readonly dependencies: readonly string[];
-}
-
-async function canonicalPathIfPresent(path: string): Promise<string | null> {
-  try {
-    return pathHelper.resolve(await realPath(path));
-  } catch {
-    return null;
-  }
-}
-
-async function resolveProjectRoots(projectDir: string): Promise<ProjectBoundaryRoots> {
-  const configured = pathHelper.resolve(projectDir);
-  const canonicalProject = await canonicalPathIfPresent(configured);
-  const project = canonicalProject ? [canonicalProject] : [];
-
-  // Only the project's own dependency directory is trusted. A blanket
-  // `node_modules` path-segment exemption lets an absolute import select an
-  // unrelated host or tenant directory. Declared dependencies are externalized
-  // before this boundary, while packages that esbuild legitimately loads from
-  // the project remain under this exact canonical root.
-  const dependencyCandidates = new Set([
-    pathHelper.join(configured, "node_modules"),
-    ...(canonicalProject ? [pathHelper.join(canonicalProject, "node_modules")] : []),
-  ]);
-  const dependencies: string[] = [];
-  for (const candidate of dependencyCandidates) {
-    const canonical = await canonicalPathIfPresent(candidate);
-    if (
-      canonical &&
-      project.some((root) => isWithinDirectory(root, canonical)) &&
-      !dependencies.includes(canonical)
-    ) {
-      dependencies.push(canonical);
-    }
-  }
-
-  return Object.freeze({
-    project: Object.freeze(project),
-    dependencies: Object.freeze(dependencies),
-  });
-}
-
-function isWithinProjectBoundary(
-  path: string,
-  roots: ProjectBoundaryRoots,
-): boolean {
-  return roots.project.some((root) => isWithinDirectory(root, path)) ||
-    roots.dependencies.some((root) => isWithinDirectory(root, path));
-}
-
 function projectBoundaryError(path: string): { errors: Array<{ text: string }> } {
   logger.error(`[API] Resolved import escapes project: ${path}`);
   return {
@@ -497,30 +435,29 @@ function projectBoundaryError(path: string): { errors: Array<{ text: string }> }
   };
 }
 
-async function assertAdapterReadWithinProjectBoundary(
-  path: string,
-  roots: ProjectBoundaryRoots,
-): Promise<void> {
-  const canonical = await canonicalPathIfPresent(path);
-  // Adapter-only projects intentionally have no corresponding host path. If a
-  // path does exist on the host, however, it must pass the same canonical
-  // containment check as esbuild's default filesystem loader before the
-  // adapter is allowed to read it.
-  if (canonical === null || isWithinProjectBoundary(canonical, roots)) return;
-  throw new TypeError(
-    `Import escapes the project directory: ${path}. ` +
-      `API routes may only import project files and project-owned dependencies.`,
-  );
-}
-
-function createProjectBoundaryPlugin(roots: ProjectBoundaryRoots): Plugin {
+function createProjectBoundaryPlugin(
+  sourceSnapshot: ProjectSourceSnapshot,
+): Plugin {
   return {
     name: "vf-project-boundary",
     setup(build) {
       build.onLoad({ filter: /.*/ }, async (args) => {
-        const canonical = await canonicalPathIfPresent(args.path);
-        if (canonical && isWithinProjectBoundary(canonical, roots)) return undefined;
-        return projectBoundaryError(args.path);
+        try {
+          const source = await sourceSnapshot.read(args.path);
+          return {
+            contents: source.contents,
+            loader: getLoaderForFile(source.logicalPath),
+            resolveDir: pathHelper.dirname(source.logicalPath),
+          };
+        } catch (error) {
+          if (error instanceof ProjectBoundaryViolationError) {
+            return projectBoundaryError(args.path);
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            errors: [{ text: `Failed to read authorized import: ${message}` }],
+          };
+        }
       });
     },
   };
@@ -537,7 +474,6 @@ async function loadAndTranspileModule(
     modulePath,
     projectDir,
     adapter,
-    fs,
     config,
   );
   return await loadModuleFromCode(source, fs);
@@ -547,19 +483,17 @@ function buildTranspiledModuleSource(
   modulePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
-  fs: FileSystem,
   config?: VeryfrontConfig,
 ): Promise<string> {
   return withSpan(
     "api.buildTranspiledModuleSource",
     async () => {
-      const boundary = await resolveProjectRoots(projectDir);
+      const sourceSnapshot = await createProjectSourceSnapshot(projectDir, adapter);
       const { filePath: resolvedPath, contents: source } = await readFileWithExtensions(
-        adapter,
+        sourceSnapshot,
         modulePath,
         FILE_EXTENSIONS,
         projectDir,
-        boundary,
       );
 
       if (!source) {
@@ -573,13 +507,10 @@ function buildTranspiledModuleSource(
 
       const loader = getEsbuildLoader(resolvedPath);
 
-      const allowedHosts = await loadSecurityConfig(projectDir, adapter);
+      const allowedHosts = await loadSecurityConfig(projectDir, adapter, config);
       validateHTTPImports(source, allowedHosts);
 
-      const projectSourceReader = {
-        readTextFile: (filePath: string) => adapter.fs.readFile(filePath),
-      };
-      const allDeps = await readProjectDependencies(projectDir, projectSourceReader);
+      const allDeps = await readProjectDependencies(projectDir, sourceSnapshot);
 
       // Filter out framework-managed packages from user deps. These are already
       // handled by the framework's own external/rewrite logic and should not be
@@ -649,11 +580,11 @@ function buildTranspiledModuleSource(
           sourcefile: resolvedPath,
         },
         plugins: [
-          createImportMapPlugin(projectDir, adapter, boundary, config),
-          createProjectAliasPlugin(adapter, projectDir, boundary),
-          createAdapterResolvePlugin(adapter, projectDir, boundary),
+          createImportMapPlugin(projectDir, sourceSnapshot, config),
+          createProjectAliasPlugin(sourceSnapshot, projectDir),
+          createAdapterResolvePlugin(sourceSnapshot, projectDir),
           createHTTPPlugin({ allowedHosts, projectDir }),
-          createProjectBoundaryPlugin(boundary),
+          createProjectBoundaryPlugin(sourceSnapshot),
         ],
       });
 
@@ -671,18 +602,17 @@ function buildTranspiledModuleSource(
       const js = result.outputFiles?.[0]?.text ?? "export {}";
       logger.debug(`transpiled size ${js.length} bytes`);
 
-      return await rewriteExternalImports(js, projectDir, fs, userDeps);
+      return await rewriteExternalImports(js, projectDir, sourceSnapshot, userDeps);
     },
     { "api.modulePath": modulePath, "api.projectDir": projectDir },
   );
 }
 
 async function readFileWithExtensions(
-  adapter: RuntimeAdapter,
+  sourceSnapshot: ProjectSourceSnapshot,
   basePath: string,
   extensions: string[],
   projectDir?: string,
-  boundary?: ProjectBoundaryRoots,
 ): Promise<{ filePath: string; contents: string }> {
   const resolvedProjectDir = projectDir ? pathHelper.resolve(projectDir) : undefined;
 
@@ -701,14 +631,11 @@ async function readFileWithExtensions(
       }
     }
 
-    if (boundary) {
-      await assertAdapterReadWithinProjectBoundary(filePath, boundary);
-    }
-
     try {
-      const contents = await adapter.fs.readFile(filePath);
+      const contents = await sourceSnapshot.readTextFile(filePath);
       return { filePath, contents };
-    } catch (_) {
+    } catch (error) {
+      if (error instanceof ProjectBoundaryViolationError) throw error;
       /* expected: trying next file extension candidate */
     }
   }

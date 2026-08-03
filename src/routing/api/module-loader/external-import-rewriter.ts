@@ -18,8 +18,10 @@ import type {
   EsmDependencyLocation as RouteEsmDependencyLocation,
 } from "#veryfront/transforms/import-rewriter/route-adapter.ts";
 import { resolveExportEntry } from "./loader-helpers.ts";
+import { rethrowProjectBoundaryViolation } from "./project-source-snapshot.ts";
 
 const logger = serverLogger.component("api");
+type SourceReader = Pick<FileSystem, "readTextFile">;
 
 /** Node.js built-in module names — shared across the CJS shim, esbuild externals, and Deno rewrites. */
 export const NODE_BUILTINS = ROUTE_NODE_BUILTINS;
@@ -129,7 +131,7 @@ export function getNodeExternalPackagesToResolve(userDeps: Map<string, string>):
 export async function resolveNodePackageToFileUrl(
   projectDir: string,
   packageName: string,
-  fs: FileSystem,
+  fs: SourceReader,
   pathToFileURL: typeof import("node:url").pathToFileURL,
 ): Promise<string | null> {
   const packagePath = pathHelper.join(projectDir, "node_modules", packageName);
@@ -147,7 +149,8 @@ export async function resolveNodePackageToFileUrl(
     if (!entryPoint) return null;
 
     return pathToFileURL(pathHelper.join(packagePath, entryPoint)).href;
-  } catch (_) {
+  } catch (error) {
+    rethrowProjectBoundaryViolation(error);
     /* expected: package.json may not exist or be invalid */
     return null;
   }
@@ -163,7 +166,7 @@ export type EsmDependencyLocation = RouteEsmDependencyLocation;
  */
 export async function resolveEsmUserDependencies(
   projectDir: string,
-  fs: FileSystem,
+  fs: SourceReader,
   userDeps: Map<string, string>,
 ): Promise<Map<string, EsmDependencyLocation>> {
   return await resolveEsmUserDependenciesForRoute(projectDir, fs, userDeps);
@@ -171,7 +174,7 @@ export async function resolveEsmUserDependencies(
 
 export async function loadVeryfrontExportsMap(
   projectDir: string,
-  fs: FileSystem,
+  fs: SourceReader,
 ): Promise<Record<string, { import?: string }>> {
   const vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
   const vfPackageJsonPath = pathHelper.join(vfPackagePath, "package.json");
@@ -179,7 +182,8 @@ export async function loadVeryfrontExportsMap(
   try {
     const pkgJson = JSON.parse(await fs.readTextFile(vfPackageJsonPath));
     return pkgJson.exports || {};
-  } catch (_error) {
+  } catch (error) {
+    rethrowProjectBoundaryViolation(error);
     logger.debug("Could not read veryfront package.json");
     return {};
   }
@@ -188,7 +192,7 @@ export async function loadVeryfrontExportsMap(
 export async function rewriteNodeExternalImports(
   code: string,
   projectDir: string,
-  fs: FileSystem,
+  fs: SourceReader,
   userDeps: Map<string, string>,
 ): Promise<string> {
   const { pathToFileURL } = await import("node:url");
@@ -270,7 +274,7 @@ export function rewriteCompiledBinaryUserDependencyImports(
 export async function rewriteDenoNpmDependencyImports(
   code: string,
   projectDir: string,
-  fs: FileSystem,
+  fs: SourceReader,
   userDeps: Map<string, string>,
 ): Promise<string> {
   return await rewriteDenoNpmDependencyImportsForRoute(code, projectDir, fs, userDeps);
@@ -283,7 +287,7 @@ export function rewriteDenoNodeBuiltinImports(code: string): string {
 export async function rewriteExternalImports(
   code: string,
   projectDir: string,
-  fs: FileSystem,
+  fs: SourceReader,
   userDeps: Map<string, string> = new Map(),
 ): Promise<string> {
   let transformed = code;
@@ -292,6 +296,7 @@ export async function rewriteExternalImports(
     try {
       transformed = await rewriteNodeExternalImports(transformed, projectDir, fs, userDeps);
     } catch (e) {
+      rethrowProjectBoundaryViolation(e);
       logger.warn(`Failed to import node:module: ${e}`);
     }
   }
