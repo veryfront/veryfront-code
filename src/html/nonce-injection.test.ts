@@ -64,6 +64,24 @@ describe("html/nonce-injection", () => {
     assertEquals(html.includes("nonce="), false);
   });
 
+  it("adds a nonce only to exact framework-owned external scripts", () => {
+    const html = addNonceToHtmlTags(
+      '<script src="/_veryfront/rsc/client.js"></script>' +
+        '<script src="/_veryfront/hydration-runtime.1234abcd.js"></script>' +
+        '<script src="/_veryfront/rsc/client.js?variant=app"></script>' +
+        '<script src="https://app.example/_veryfront/rsc/client.js"></script>',
+      "nonce-123",
+    );
+
+    assertEquals(
+      html,
+      '<script src="/_veryfront/rsc/client.js" nonce="nonce-123"></script>' +
+        '<script src="/_veryfront/hydration-runtime.1234abcd.js" nonce="nonce-123"></script>' +
+        '<script src="/_veryfront/rsc/client.js?variant=app"></script>' +
+        '<script src="https://app.example/_veryfront/rsc/client.js"></script>',
+    );
+  });
+
   it("replaces an existing nonce attribute with the response nonce", () => {
     const html = addNonceToHtmlTags(
       `<script nonce="existing">window.__vf=1</script>`,

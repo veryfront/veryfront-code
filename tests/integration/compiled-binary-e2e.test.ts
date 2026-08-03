@@ -81,6 +81,19 @@ const BROWSER_ESM_CSP = {
   "form-action": ["'self'"],
 } as const;
 
+function assertInlineScriptHasNonce(html: string, marker: string, message: string): void {
+  const markerIndex = html.indexOf(marker);
+  assert(markerIndex >= 0, `${message}: marker was not rendered`);
+  const openingTagStart = html.lastIndexOf("<script", markerIndex);
+  const openingTagEnd = html.indexOf(">", openingTagStart);
+  assert(openingTagStart >= 0 && openingTagEnd > openingTagStart, `${message}: tag is malformed`);
+  assertStringIncludes(
+    html.slice(openingTagStart, openingTagEnd + 1),
+    'nonce="',
+    `${message}: response nonce is missing`,
+  );
+}
+
 async function configureBrowserEsmProject(
   projectDir: string,
   additionalConfig: Record<string, unknown> = {},
@@ -117,16 +130,21 @@ describe("Compiled Binary E2E", COMPILED_BINARY_E2E_OPTIONS, () => {
     }
   });
 
-  it("should render page with veryfront/head import correctly", async () => {
+  it("should render Head and UI nonce consumers through compiled framework sources", async () => {
     const projectDir = await createTestProject(
       "head-test",
       `
 import { Head } from "veryfront/head";
+import { ColorModeScript } from "veryfront/ui";
 
 export default function Home() {
   return (
     <>
-      <Head><title>Head Component Test</title></Head>
+      <Head>
+        <title>Head Component Test</title>
+        <script id="head-nonce-probe">{"globalThis.__vfHeadNonceProbe=true"}</script>
+      </Head>
+      <ColorModeScript storageKey="vf-binary-color-mode" />
       <div id="content">Head import works</div>
     </>
   );
@@ -143,6 +161,16 @@ export default function Home() {
         "Should not have module errors",
       );
       assertStringIncludes(html, "Head import works", "Should render content");
+      assertInlineScriptHasNonce(
+        html,
+        'id="head-nonce-probe"',
+        "Managed Head inline script",
+      );
+      assertInlineScriptHasNonce(
+        html,
+        'localStorage.getItem("vf-binary-color-mode")',
+        "ColorModeScript",
+      );
 
       const errorLogs = server.logs.filter((l) =>
         l.includes("esm.sh/_vf_modules") || l.includes("dual React") ||

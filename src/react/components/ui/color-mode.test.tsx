@@ -103,6 +103,19 @@ function ToggleFixture(): React.ReactElement {
   );
 }
 
+function readSingleInlineScript(markup: string): string {
+  const dom = new JSDOM(`<!doctype html><html><body>${markup}</body></html>`);
+  try {
+    const scripts = dom.window.document.querySelectorAll("script");
+    assertEquals(scripts.length, 1, "Expected exactly one inline script");
+    const script = scripts.item(0);
+    assertEquals(script.hasAttribute("src"), false, "Expected an inline script");
+    return script.textContent ?? "";
+  } finally {
+    dom.window.close();
+  }
+}
+
 /**
  * Unmount and drain the scheduler task React leaves behind.
  *
@@ -121,8 +134,7 @@ describe("react/components/ui/color-mode", () => {
     const markup = renderToString(
       <ColorModeScript defaultMode="dark" storageKey={storageKey} />,
     );
-    const script = markup.match(/<script[^>]*>([\s\S]*)<\/script>/)?.[1];
-    assert(script, "Expected ColorModeScript to render an inline script");
+    const script = readSingleInlineScript(markup);
 
     assertEquals(script.includes(`</script><script>alert(1)</script>`), false);
     assertStringIncludes(script, `\\u003c/script\\u003e`);

@@ -1,5 +1,5 @@
-import { getHeadCollectorNonce } from "../../head-collector.ts";
-import { useServerRenderContext } from "../../server-render-context.ts";
+import { getHeadCollectorNonce } from "#veryfront/react/head-collector.ts";
+import { useServerRenderContext } from "#veryfront/react/server-render-context.ts";
 
 /**
  * Reuse the response-scoped CSP nonce for framework-owned inline elements.

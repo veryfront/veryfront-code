@@ -1,5 +1,6 @@
 import type { RenderResult } from "../orchestrator/types.ts";
 import type { CachePayload } from "./types.ts";
+import { isHtmlNonceCachePlaceholder } from "#veryfront/html/nonce-injection.ts";
 
 const MAX_CACHE_VALUE_DEPTH = 64;
 const MAX_CACHE_VALUE_NODES = 100_000;
@@ -21,8 +22,6 @@ const SERIALIZED_CACHE_CODEC_VERSION = 1;
 const SERIALIZED_CACHE_DATE_PATHS_FIELD = "datePaths";
 const CACHE_VALUE_TAG = "$veryfrontCacheValue";
 const CACHE_VALUE_FIELD = "value";
-const HTML_NONCE_PLACEHOLDER_PATTERN = /^vf-cache-[a-f0-9]{48}$/u;
-
 type CacheDatePathSegment = string | number;
 type CacheDatePath = CacheDatePathSegment[];
 
@@ -804,8 +803,7 @@ function buildCachePayload(value: unknown): CachePayload {
   if (!isPlainRecord(rawFrontmatter)) fail("result.frontmatter must be an object");
   if (
     rawHtmlNoncePlaceholder !== undefined &&
-    (typeof rawHtmlNoncePlaceholder !== "string" ||
-      !HTML_NONCE_PLACEHOLDER_PATTERN.test(rawHtmlNoncePlaceholder))
+    !isHtmlNonceCachePlaceholder(rawHtmlNoncePlaceholder)
   ) {
     fail("htmlNoncePlaceholder is invalid");
   }

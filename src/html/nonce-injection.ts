@@ -65,6 +65,10 @@ interface ParsedAttribute {
 
 const CACHE_NONCE_PLACEHOLDER_PATTERN = /^vf-cache-[a-f0-9]{48}$/u;
 
+export function isHtmlNonceCachePlaceholder(value: unknown): value is string {
+  return typeof value === "string" && CACHE_NONCE_PLACEHOLDER_PATTERN.test(value);
+}
+
 function findAttribute(tag: string, attributeName: string): ParsedAttribute | undefined {
   const closeIndex = tag.lastIndexOf(">");
   if (closeIndex <= 0) return undefined;
@@ -128,7 +132,9 @@ function injectNonceIntoOpeningTag(tag: string, escapedNonce: string): string {
 }
 
 function acceptsAmbientNonce(tag: string, tagName: "script" | "style"): boolean {
-  return tagName === "style" || findAttribute(tag, "src") === undefined;
+  return tagName === "style" ||
+    findAttribute(tag, "src") === undefined ||
+    isFrameworkOwnedExternalScript(tag);
 }
 
 function isFrameworkOwnedExternalScript(tag: string): boolean {
@@ -233,8 +239,7 @@ export function isHtmlNonceCacheCompatible(
   placeholder: string | undefined,
   nonce?: string,
 ): boolean {
-  return !nonce || (typeof placeholder === "string" &&
-    CACHE_NONCE_PLACEHOLDER_PATTERN.test(placeholder));
+  return !nonce || isHtmlNonceCachePlaceholder(placeholder);
 }
 
 /** Bind an internally authenticated cache slot to the current response. */
@@ -243,7 +248,7 @@ export function bindHtmlNonceFromCache(
   placeholder: string | undefined,
   nonce?: string,
 ): string {
-  if (!placeholder || !CACHE_NONCE_PLACEHOLDER_PATTERN.test(placeholder)) return html;
+  if (!isHtmlNonceCachePlaceholder(placeholder)) return html;
   return replaceExactAuthorizedNonce(
     html,
     placeholder,

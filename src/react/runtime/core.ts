@@ -8,7 +8,7 @@ import {
   serializeManagedHeadPayload,
 } from "#veryfront/html/managed-head-protocol.ts";
 import { getClientHeadManager, getManagedHeadNonce } from "#veryfront/html/client-head-manager.ts";
-import { useServerRenderContext } from "../server-render-context.ts";
+import { useServerRenderContext } from "#veryfront/react/server-render-context.ts";
 
 /** Router state exposed through `useRouter()`. */
 export interface RouterValue {
@@ -506,7 +506,7 @@ export function Head({ children }: { children: React.ReactNode }): React.ReactEl
     [HEAD_REACT_OWNER_ATTRIBUTE]: "1",
     [HEAD_SERVER_COMMIT_ATTRIBUTE]: serverCommitToken,
     [HEAD_SSR_PAYLOAD_ATTRIBUTE]: payload,
-    suppressHydrationWarning: serverCommitToken ? true : undefined,
+    suppressHydrationWarning: true,
     style: { display: "none" },
   });
 }
