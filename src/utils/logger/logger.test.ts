@@ -515,6 +515,21 @@ describe("logger", () => {
       }
     });
 
+    it("keeps benign assignment-shaped log messages intact", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info("mapping: 4 routes resolved");
+        });
+
+        const entry = JSON.parse(getOutput()) as LogEntry;
+        assertEquals(entry.message, "mapping: 4 routes resolved");
+      } finally {
+        restore();
+      }
+    });
+
     it("serializes BigInt and hostile toJSON getters without throwing", () => {
       const { getOutput, restore } = captureConsoleLog();
       const hostile: Record<string, unknown> = {};
@@ -532,6 +547,68 @@ describe("logger", () => {
         const entry = JSON.parse(getOutput()) as LogEntry;
         assertEquals(entry.context?.count, "42");
         assertEquals(entry.context?.hostile, "[REDACTED]");
+      } finally {
+        restore();
+      }
+    });
+
+    it("ignores inherited serialization hooks and preserves component fields", () => {
+      const { getOutput, restore } = captureConsoleLog();
+      const objectToJson = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+      const arrayToJson = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+      let hookCalls = 0;
+
+      Object.defineProperty(Object.prototype, "toJSON", {
+        configurable: true,
+        value() {
+          hookCalls += 1;
+          throw new Error("inherited object serializer must not run");
+        },
+      });
+      Object.defineProperty(Array.prototype, "toJSON", {
+        configurable: true,
+        value() {
+          hookCalls += 1;
+          throw new Error("inherited array serializer must not run");
+        },
+      });
+
+      try {
+        withJsonLogFormat(() => {
+          getBaseLogger("SERVER").component("routing").info("Routes", {
+            values: ["one", "two"],
+          });
+        });
+      } finally {
+        if (objectToJson) {
+          Object.defineProperty(Object.prototype, "toJSON", objectToJson);
+        } else {
+          delete (Object.prototype as { toJSON?: unknown }).toJSON;
+        }
+        if (arrayToJson) {
+          Object.defineProperty(Array.prototype, "toJSON", arrayToJson);
+        } else {
+          delete (Array.prototype as { toJSON?: unknown }).toJSON;
+        }
+        restore();
+      }
+
+      assertEquals(hookCalls, 0);
+      const entry = JSON.parse(getOutput()) as LogEntry;
+      assertEquals(entry.component, "routing");
+      assertEquals(entry.context?.values, ["one", "two"]);
+    });
+
+    it("preserves non-callable own toJSON fields", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info("Metadata", { toJSON: "plain metadata" });
+        });
+
+        const entry = JSON.parse(getOutput()) as LogEntry;
+        assertEquals(entry.context?.toJSON, "plain metadata");
       } finally {
         restore();
       }

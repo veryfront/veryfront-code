@@ -28,6 +28,11 @@ const stringCharCodeAt = String.prototype.charCodeAt;
 const stringSlice = String.prototype.slice;
 const stringToLowerCase = String.prototype.toLowerCase;
 const NON_ALPHANUMERIC_PATTERN = /[^a-z0-9]/g;
+const CAMEL_CASE_BOUNDARY_PATTERN = /([a-z0-9])([A-Z])/g;
+const ACRONYM_BOUNDARY_PATTERN = /([A-Z])([A-Z][a-z])/g;
+const IDENTIFIER_SEPARATOR_PATTERN = /[^a-z0-9]+/g;
+const PROVIDER_CREDENTIAL_PATTERN =
+  /\b(?:sk-[A-Za-z0-9._-]{8,}|gh[po]_[A-Za-z0-9._-]{8,}|xox[baprs]-[A-Za-z0-9._-]{8,}|eyJ[A-Za-z0-9._-]{8,})\b/g;
 
 /** Strip all non-alphanumeric characters and lowercase, used for key normalization. */
 function normalizeToAlphanumeric(s: string): string {
@@ -153,10 +158,9 @@ export function redactPathFromText(
  * a lowercased, non-alphanumeric-stripped form of the key, so `API-Key`,
  * `api_key`, and `apiKey` all collapse to `apikey` and match.
  *
- * Deliberately omitted to avoid false positives that swamp real logs:
- * - bare `"auth"` (would mask `author`); `authorization`/`authToken` are still
- *   covered via `authorization`/`token`.
- * - short tokens like `"dsn"`/`"sas"` (would mask `feedsNamespace`, etc.).
+ * Bare `"auth"` is matched separately as an exact normalized key so `author`
+ * remains visible. Short tokens like `"dsn"`/`"sas"` are deliberately omitted
+ * to avoid masking keys such as `feedsNamespace`.
  */
 const SENSITIVE_KEY_PATTERNS = [
   "password",
@@ -214,7 +218,8 @@ export function isSensitiveKey(key: string): boolean {
   }
 
   const normalized = normalizeToAlphanumeric(key);
-  const sensitive = SENSITIVE_KEY_PATTERNS.some((pattern) => normalized.includes(pattern));
+  const sensitive = normalized === "auth" ||
+    SENSITIVE_KEY_PATTERNS.some((pattern) => normalized.includes(pattern));
 
   if (cacheable) {
     if (sensitiveKeyCache.size >= SENSITIVE_KEY_CACHE_MAX_SIZE) {
@@ -253,6 +258,27 @@ function classifyArray(value: object): boolean | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Read a deliberate serialization hook without consulting hooks installed on
+ * the intrinsic Object or Array prototypes. Custom and platform prototypes
+ * such as Date and URL remain supported through data-property methods.
+ */
+function readSerializationHook(value: object): unknown {
+  let owner: object | null = value;
+  while (owner !== null) {
+    if (owner === Object.prototype || owner === Array.prototype) return undefined;
+    const descriptor = Object.getOwnPropertyDescriptor(owner, "toJSON");
+    if (descriptor !== undefined) {
+      if (!Object.hasOwn(descriptor, "value")) {
+        throw new TypeError("serialization hooks must be data properties");
+      }
+      return descriptor.value;
+    }
+    owner = Object.getPrototypeOf(owner);
+  }
+  return undefined;
 }
 
 function redactValue(
@@ -322,7 +348,7 @@ function redactValue(
   if (depth >= MAX_DEPTH || seen.has(value)) return REDACTED;
   let toJSON: unknown;
   try {
-    toJSON = (value as Record<string, unknown>).toJSON;
+    toJSON = readSerializationHook(value);
   } catch {
     // Accessors can throw before a serializer is callable. Never inspect the
     // raw object after that because its eventual serialization is unknown.
@@ -655,7 +681,7 @@ function redactCredentialAssignments(
     match = apply(regExpExec, prefixPattern, [input]) as RegExpExecArray | null
   ) {
     const key = match[keyGroup]!;
-    if (!isSensitiveKey(key)) continue;
+    if (!isSensitiveAssignmentKey(key)) continue;
 
     const valueStart = prefixPattern.lastIndex;
     const boundary = urlParameterBoundaryGroup === undefined
@@ -681,6 +707,40 @@ function redactCredentialAssignments(
   }
 
   return cursor === 0 ? input : result + sliceString(input, cursor);
+}
+
+/**
+ * Classify free-text assignment keys without applying the structured-key
+ * substring policy to ordinary words. Identifier and camel-case boundaries
+ * still recognize `refreshToken`, `client_secret`, and `x-api-key`, while
+ * words such as `mapping` and `considered` stay intact.
+ */
+function isSensitiveAssignmentKey(key: string): boolean {
+  const withAcronymBoundaries = apply(regExpReplace, ACRONYM_BOUNDARY_PATTERN, [
+    key,
+    "$1 $2",
+  ]) as string;
+  const withBoundaries = apply(regExpReplace, CAMEL_CASE_BOUNDARY_PATTERN, [
+    withAcronymBoundaries,
+    "$1 $2",
+  ]) as string;
+  const lowercase = apply(stringToLowerCase, withBoundaries, []) as string;
+  const tokens = lowercase.split(IDENTIFIER_SEPARATOR_PATTERN).filter(Boolean);
+
+  for (let start = 0; start < tokens.length; start++) {
+    let candidate = "";
+    for (let end = start; end < tokens.length; end++) {
+      candidate += tokens[end];
+      if (
+        candidate === "auth" ||
+        SENSITIVE_KEY_PATTERNS.some((pattern) => candidate === pattern)
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 function isStandaloneUrlAuthorityBeforeWhitespace(
@@ -724,6 +784,8 @@ function decodeUrlParameterName(value: string): string {
  *
  * - URL userinfo: `http://user:pass@host` → `http://user:[REDACTED]@host`
  * - sensitive query params: `?access_token=abc` → `?access_token=[REDACTED]`
+ * - credential assignments: `refreshToken=abc` → `refreshToken=[REDACTED]`
+ * - common provider tokens: `Using token sk-...` → `Using token [REDACTED]`
  *
  * It is intentionally tolerant: it operates on any string (a DSN, a Mongo URI,
  * an axios error message containing a URL) via regex rather than requiring a
@@ -805,7 +867,11 @@ export function sanitizeUrlCredentials(input: string): string {
     ],
   ) as string;
 
-  // 5) Credential assignments embedded in free-form messages/errors. Match
+  // 5) Common provider token shapes can appear as bare values without an
+  // assignment delimiter, for example `Using token sk-...`.
+  out = apply(regExpReplace, PROVIDER_CREDENTIAL_PATTERN, [out, REDACTED]) as string;
+
+  // 6) Credential assignments embedded in free-form messages/errors. Match
   // generic identifier-shaped keys and delegate classification to the same
   // deny-list used for structured context. This keeps JSON snippets, header
   // dumps, and ordinary `key=value` text from drifting to a weaker policy.

@@ -348,42 +348,52 @@ function sanitizeStringFieldValue(value: unknown): string {
   return sanitizeUrlCredentials(String(value));
 }
 
-/**
- * JSON.stringify replacer that converts BigInt context values to decimal
- * strings. BigInt is not JSON-serializable and would otherwise throw a
- * TypeError out of the logging call site.
- */
-function jsonSafeReplacer(_key: string, value: unknown): unknown {
-  return typeof value === "bigint" ? value.toString() : value;
+function blockInheritedSerializationHooks(value: unknown): void {
+  if (value === null || typeof value !== "object") return;
+
+  if (!Object.hasOwn(value, "toJSON")) {
+    Object.defineProperty(value, "toJSON", {
+      configurable: false,
+      enumerable: false,
+      value: undefined,
+      writable: false,
+    });
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) blockInheritedSerializationHooks(item);
+    return;
+  }
+  for (const item of Object.values(value)) blockInheritedSerializationHooks(item);
+}
+
+function createFallbackLogEntry(entry: LogEntry): Record<string, unknown> {
+  const fallback = Object.create(null) as Record<string, unknown>;
+  fallback.timestamp = entry.timestamp;
+  fallback.level = entry.level;
+  fallback.service = entry.service;
+  fallback.veryfrontVersion = entry.veryfrontVersion;
+  fallback.message = entry.message;
+  if (entry.component !== undefined) fallback.component = entry.component;
+  const context = Object.create(null) as Record<string, string>;
+  context.unserializable_context = REDACTED;
+  fallback.context = context;
+  return fallback;
 }
 
 /**
- * Serialize a log entry without ever throwing out of the caller. A BigInt in
- * context or a hostile/stateful `toJSON` can make `JSON.stringify` throw;
- * logging must degrade to a redacted snapshot instead of crashing the call
- * site. The fallback re-snapshots the context with
- * {@link redactForSerialization}, which normalizes BigInt, `toJSON`, and
- * unreadable values into JSON-safe forms while failing closed.
+ * Serialize a log entry without letting caller-controlled values or inherited
+ * `toJSON` hooks escape the logging boundary. The redacted snapshot normalizes
+ * BigInt and deliberate serializers first, then shadows inherited hooks on
+ * every owned object and array before native JSON serialization.
  */
 function stringifyLogEntry(entry: LogEntry): string {
   try {
-    return JSON.stringify(entry, jsonSafeReplacer);
+    const snapshot = redactForSerialization(entry);
+    blockInheritedSerializationHooks(snapshot);
+    return JSON.stringify(snapshot);
   } catch {
-    try {
-      return JSON.stringify(
-        { ...entry, context: redactForSerialization(entry.context) },
-        jsonSafeReplacer,
-      );
-    } catch {
-      return JSON.stringify({
-        timestamp: entry.timestamp,
-        level: entry.level,
-        service: entry.service,
-        veryfrontVersion: entry.veryfrontVersion,
-        message: entry.message,
-        context: { unserializable_context: REDACTED },
-      });
-    }
+    return JSON.stringify(createFallbackLogEntry(entry));
   }
 }
 

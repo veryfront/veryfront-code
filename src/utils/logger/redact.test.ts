@@ -32,6 +32,7 @@ describe("logger/redact", () => {
           "accessKey",
           "privateKey",
           "credential",
+          "auth",
           "authorization",
           "Authorization",
           "Cookie",
@@ -53,9 +54,9 @@ describe("logger/redact", () => {
     });
 
     it("does not flag benign keys that merely look similar", () => {
-      // `author` must NOT match (the deny-list deliberately omits bare `auth`),
-      // and short tokens like `dsn`/`sas` are omitted to avoid masking e.g.
-      // `feedsNamespace`.
+      // Exact `auth` is sensitive, but it must not turn ordinary words such as
+      // `author` into sensitive keys. Short tokens like `dsn`/`sas` remain
+      // omitted to avoid masking e.g. `feedsNamespace`.
       for (
         const key of ["author", "count", "userId", "requestId", "url", "domain", "feedsNamespace"]
       ) {
@@ -251,6 +252,28 @@ describe("logger/redact", () => {
 
     it("leaves non-URL strings untouched", () => {
       assertEquals(sanitizeUrlCredentials("just a plain message"), "just a plain message");
+    });
+
+    it("keeps benign assignment-shaped words intact", () => {
+      for (
+        const message of [
+          "mapping: 4 routes resolved",
+          "spinner=ready",
+          "considered: safe",
+          "residual=small",
+          "saltiness=balanced",
+        ]
+      ) {
+        assertEquals(sanitizeUrlCredentials(message), message);
+      }
+    });
+
+    it("masks common provider token prefixes without assignment syntax", () => {
+      const message = "Using token sk-proj-abc123456789";
+      const sanitized = sanitizeUrlCredentials(message);
+
+      assertEquals(sanitized.includes("sk-proj-abc123456789"), false);
+      assertEquals(sanitized, `Using token ${REDACTED}`);
     });
   });
 
