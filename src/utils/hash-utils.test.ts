@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { computeCodeHash, computeHash, shortHash, simpleHash } from "./hash-utils.ts";
+import { computeCodeHash, computeHash, fnv1aHash, shortHash, simpleHash } from "./hash-utils.ts";
 
 describe("hash-utils", () => {
   describe("computeHash", () => {
@@ -155,6 +155,12 @@ describe("hash-utils", () => {
 
     it("should be different for different content", async () => {
       assertNotEquals(await shortHash("content 1"), await shortHash("content 2"));
+    });
+  });
+
+  describe("fnv1aHash", () => {
+    it("includes every UTF-16 code unit for non-BMP characters", () => {
+      assertNotEquals(fnv1aHash("😀"), fnv1aHash("😁"));
     });
   });
 });

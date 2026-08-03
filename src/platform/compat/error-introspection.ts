@@ -18,16 +18,50 @@ const NativeError = Error;
 const NativeAsyncFunctionPrototype = getPrototypeOf(async function () {});
 const toStringTagSymbol = Symbol.toStringTag;
 
+function hasOwn(object: object, key: PropertyKey): boolean {
+  return apply(objectHasOwnProperty, object, [key]) as boolean;
+}
+
+type ErrorBrandCheck = (value: unknown) => boolean;
+
+/**
+ * Capture the portable Error brand primitive during trusted framework
+ * bootstrap, before tenant code can replace mutable globals. Edge runtimes do
+ * not expose an immutable host-module equivalent, so this capture boundary is
+ * the authority for later no-hook Error checks.
+ */
+function captureErrorIsError(): ErrorBrandCheck | undefined {
+  const descriptor = getOwnPropertyDescriptor(NativeError, "isError");
+  return descriptor && hasOwn(descriptor, "value") &&
+      typeof descriptor.value === "function"
+    ? descriptor.value as ErrorBrandCheck
+    : undefined;
+}
+
+const capturedErrorIsError = captureErrorIsError();
 const unavailableBrandCheck = (_value: unknown): boolean => false;
+
+function portableErrorBrandCheck(value: unknown): boolean {
+  if (!capturedErrorIsError) return false;
+  try {
+    return apply(capturedErrorIsError, NativeError, [value]) === true;
+  } catch (_) {
+    return false;
+  }
+}
+
 const nativeAsyncFunctionBrandCheck = nativeBrandChecks?.isAsyncFunction ?? unavailableBrandCheck;
-const nativeErrorBrandCheck = nativeBrandChecks?.isNativeError ?? unavailableBrandCheck;
+const nativeErrorBrandCheck = nativeBrandChecks?.isNativeError ?? portableErrorBrandCheck;
 const nativePromiseBrandCheck = nativeBrandChecks?.isPromise ?? unavailableBrandCheck;
 const nativeProxyBrandCheck = nativeBrandChecks?.isProxy ?? unavailableBrandCheck;
 const nativeUint8ArrayBrandCheck = nativeBrandChecks?.isUint8Array ?? unavailableBrandCheck;
 
-function hasOwn(object: object, key: PropertyKey): boolean {
-  return apply(objectHasOwnProperty, object, [key]) as boolean;
-}
+/**
+ * Whether this runtime can distinguish Proxy values without evaluating a trap.
+ * Callers that need a fail-closed guarantee must not treat a `false` result
+ * from {@link isProxyWithoutHooks} as proof when this capability is absent.
+ */
+export const canIdentifyProxyWithoutHooks = nativeBrandChecks !== undefined;
 
 function createDataDescriptor(value: unknown): PropertyDescriptor {
   const descriptor = createObject(null) as PropertyDescriptor;
@@ -249,7 +283,12 @@ export function readNativeErrorNameWithoutHooks(error: Error): string {
   }
 }
 
-/** Identify a Proxy without evaluating any trap on the proxied value. */
+/**
+ * Identify a Proxy without evaluating any trap on the proxied value.
+ *
+ * Returns `false` without inspecting `value` when
+ * {@link canIdentifyProxyWithoutHooks} is false.
+ */
 export function isProxyWithoutHooks(value: unknown): boolean {
   return nativeProxyBrandCheck(value);
 }

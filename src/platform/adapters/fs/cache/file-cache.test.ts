@@ -367,6 +367,12 @@ describe("Distributed cache functions", () => {
       circular.self = circular;
       distributedCache.set("cyclic", circular);
       assertEquals(backendWrites, 0);
+
+      // Positive control: a serializable entry must reach the fake backend,
+      // proving the harness is live and the zero-write assertion above is not
+      // vacuously passing because the backend was never wired up.
+      distributedCache.set("serializable", { ok: true });
+      assertEquals(backendWrites, 1);
     });
 
     it("should return boolean", async () => {
