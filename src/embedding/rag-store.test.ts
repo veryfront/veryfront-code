@@ -853,7 +853,18 @@ describe("ragStore", () => {
         if (blockedTimer !== undefined) clearTimeout(blockedTimer);
         releaseQueryEmbedding();
       }
-      const documents = await listDocumentsPromise;
+      let settleTimer: ReturnType<typeof setTimeout> | undefined;
+      const documents = await Promise.race([
+        listDocumentsPromise,
+        new Promise<never>((_, reject) => {
+          settleTimer = setTimeout(
+            () => reject(new Error("listDocuments did not settle after query embedding release")),
+            5_000,
+          );
+        }),
+      ]).finally(() => {
+        if (settleTimer !== undefined) clearTimeout(settleTimer);
+      });
       await searchPromise;
 
       assert(Array.isArray(observedDocuments));

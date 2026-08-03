@@ -854,8 +854,7 @@ export class ImportMapPreloader {
       variantKey = await computeHash(canonicalIdentity);
     } catch (error) {
       this.removeEmptyProject(cacheKey, projectState);
-      if (!this.isCapacityError(error)) throw error;
-      return undefined;
+      throw error;
     }
     if (
       !this.isCurrentGeneration(
@@ -876,8 +875,7 @@ export class ImportMapPreloader {
       );
     } catch (error) {
       this.removeEmptyProject(cacheKey, projectState);
-      if (!this.isCapacityError(error)) throw error;
-      return undefined;
+      throw error;
     }
     if (!entry) {
       this.removeEmptyProject(cacheKey, projectState);

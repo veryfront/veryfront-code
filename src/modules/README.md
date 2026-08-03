@@ -147,11 +147,9 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 export async function resolveReact(
   adapter: RuntimeAdapter,
-  requestConfig?: VeryfrontConfig,
+  validatedConfig?: VeryfrontConfig,
 ) {
-  const projectMap = requestConfig
-    ? await loadImportMap("/workspace/site", adapter, requestConfig)
-    : await loadImportMap("/workspace/site", adapter);
+  const projectMap = await loadImportMap("/workspace/site", adapter, validatedConfig);
   const overrides = {
     imports: {
       "@app/": "/_vf_modules/app/",
