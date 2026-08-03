@@ -65,6 +65,7 @@ describe("ApiHandlerWrapper", () => {
       }>;
       resolveFile: (path: string) => Promise<string | null>;
       readFile: (path: string) => Promise<string>;
+      readFileBytesWithinLimit: (path: string, byteLimit: number) => Promise<Uint8Array>;
       refreshSourceSnapshot: (reason?: string) => Promise<void>;
     };
     fs.runWithContext = async (_slug, _token, fn) => {
@@ -97,8 +98,20 @@ describe("ApiHandlerWrapper", () => {
       );
     fs.readFile = (path) => {
       if (path === "/tmp/project/pages/review.tsx" || path === "pages/review.tsx") {
-        pageReads++;
         return Promise.resolve("export default function Review() { return null; }");
+      }
+      return Promise.reject(new Error("File not found"));
+    };
+    fs.readFileBytesWithinLimit = (path, byteLimit) => {
+      if (path === "/tmp/project/pages/review.tsx" || path === "pages/review.tsx") {
+        pageReads++;
+        const source = new TextEncoder().encode(
+          "export default function Review() { return null; }",
+        );
+        if (source.byteLength > byteLimit) {
+          return Promise.reject(new Error("File exceeds byte limit"));
+        }
+        return Promise.resolve(source);
       }
       return Promise.reject(new Error("File not found"));
     };
@@ -136,6 +149,7 @@ describe("ApiHandlerWrapper", () => {
       readDir: (path: string) => AsyncIterable<never>;
       resolveFile: (path: string) => Promise<string | null>;
       readFile: (path: string) => Promise<string>;
+      readFileBytesWithinLimit: (path: string, byteLimit: number) => Promise<Uint8Array>;
       refreshSourceSnapshot: (reason?: string) => Promise<void>;
     };
     fs.runWithContext = async (_slug, _token, fn) => await fn();
@@ -154,6 +168,18 @@ describe("ApiHandlerWrapper", () => {
     fs.readFile = (path) => {
       if (path === "pages/review.tsx" || path === "/tmp/project/pages/review.tsx") {
         return Promise.resolve("export default function Review() { return null; }");
+      }
+      return Promise.reject(new Error("File not found"));
+    };
+    fs.readFileBytesWithinLimit = (path, byteLimit) => {
+      if (path === "pages/review.tsx" || path === "/tmp/project/pages/review.tsx") {
+        const source = new TextEncoder().encode(
+          "export default function Review() { return null; }",
+        );
+        if (source.byteLength > byteLimit) {
+          return Promise.reject(new Error("File exceeds byte limit"));
+        }
+        return Promise.resolve(source);
       }
       return Promise.reject(new Error("File not found"));
     };
