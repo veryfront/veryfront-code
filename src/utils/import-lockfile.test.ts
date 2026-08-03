@@ -1449,6 +1449,50 @@ describe("import-lockfile", () => {
       assertEquals(await fs.exists("/project/veryfront.lock"), false);
     });
 
+    it("should validate public write data before touching disk", async () => {
+      const validUrl = "https://cdn.com/valid.ts";
+      const existingLockfile = JSON.stringify({
+        version: 1,
+        imports: {
+          [validUrl]: { resolved: validUrl, integrity: "sha256-valid" },
+        },
+      });
+      const fs = createMockFS({ "/project/veryfront.lock": existingLockfile });
+      const mgr = createLockfileManager("/project", fs);
+
+      const versionError = await assertRejects(
+        () =>
+          mgr.write({
+            version: 99,
+            imports: {
+              [validUrl]: { resolved: validUrl, integrity: "sha256-new" },
+            },
+          } as unknown as LockfileData),
+        VeryfrontError,
+      );
+      if (!(versionError instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
+      assertEquals(versionError.slug, "lockfile-format-mismatch");
+      assertEquals(await fs.readFile("/project/veryfront.lock"), existingLockfile);
+
+      const structureError = await assertRejects(
+        () =>
+          mgr.write({
+            version: 1,
+            imports: {
+              "https://cdn.com/bad.ts": {},
+            },
+          } as unknown as LockfileData),
+        VeryfrontError,
+      );
+      if (!(structureError instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
+      assertEquals(structureError.slug, "lockfile-read-error");
+      assertEquals(
+        (structureError.context as { reason?: string }).reason,
+        "invalid-structure",
+      );
+      assertEquals(await fs.readFile("/project/veryfront.lock"), existingLockfile);
+    });
+
     it("should fail closed on write but allow clear to remove an unreadable lockfile", async () => {
       let writes = 0;
       let removals = 0;
@@ -1518,6 +1562,48 @@ describe("import-lockfile", () => {
         "https://cdn.com/b.ts",
         "https://cdn.com/base.ts",
       ]);
+    });
+
+    it("should allow distinct shared-store lockfiles to flush independently", async () => {
+      const firstPath = "/project-a/veryfront.lock";
+      const secondPath = "/project-b/veryfront.lock";
+      const aUrl = "https://cdn.com/a.ts";
+      const bUrl = "https://cdn.com/b.ts";
+      const backingFS = createMockFS({}, "independent-lockfile-test-store");
+      const firstWriteStarted = Promise.withResolvers<void>();
+      const secondWriteStarted = Promise.withResolvers<void>();
+      const releaseFirstWrite = Promise.withResolvers<void>();
+      const writeFile = backingFS.writeFile;
+      backingFS.writeFile = async (filePath: string, content: string): Promise<void> => {
+        if (filePath === firstPath) {
+          firstWriteStarted.resolve();
+          await releaseFirstWrite.promise;
+        } else if (filePath === secondPath) {
+          secondWriteStarted.resolve();
+        }
+        await writeFile(filePath, content);
+      };
+      const managerA = createLockfileManager("/project-a", backingFS);
+      const managerB = createLockfileManager("/project-b", backingFS);
+      await managerA.set(aUrl, { resolved: aUrl, integrity: "sha256-a" });
+      await managerB.set(bUrl, { resolved: bUrl, integrity: "sha256-b" });
+
+      const flushA = managerA.flush();
+      await firstWriteStarted.promise;
+      const flushB = managerB.flush();
+      const secondWriteBeforeRelease = await resolvesWithin(secondWriteStarted.promise);
+      releaseFirstWrite.resolve();
+      await Promise.all([flushA, flushB]);
+
+      assertEquals(secondWriteBeforeRelease, true);
+      const firstOnDisk = JSON.parse(await backingFS.readFile(firstPath)) as {
+        imports: Record<string, unknown>;
+      };
+      const secondOnDisk = JSON.parse(await backingFS.readFile(secondPath)) as {
+        imports: Record<string, unknown>;
+      };
+      assertEquals(Object.keys(firstOnDisk.imports), [aUrl]);
+      assertEquals(Object.keys(secondOnDisk.imports), [bUrl]);
     });
 
     it("should use coordinationKey across adapters with mixed realPath support", async () => {

@@ -147,34 +147,30 @@ function lockfileReadError(
   });
 }
 
-function parseLockfile(content: string, lockfilePath: string): LockfileData {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(content);
-  } catch (cause) {
-    throw lockfileReadError(lockfilePath, "invalid-json", cause);
-  }
+function lockfileFormatMismatch(lockfilePath: string, version: number) {
+  return LOCKFILE_FORMAT_MISMATCH.create({
+    detail: `The lockfile uses format version ${version}, but this ` +
+      `Veryfront build supports version ${LOCKFILE_VERSION}. The file was left untouched. ` +
+      "Upgrade Veryfront or migrate the lockfile before reading or modifying it.",
+    context: {
+      lockfilePath,
+      expectedVersion: LOCKFILE_VERSION,
+      actualVersion: version,
+    },
+  });
+}
 
-  if (!isRecord(parsed)) {
-    throw lockfileReadError(lockfilePath, "invalid-structure");
-  }
-  const version = getOwnDataProperty(parsed, "version")?.value;
+function sanitizeLockfileData(value: unknown, lockfilePath: string): LockfileData {
+  if (!isRecord(value)) throw lockfileReadError(lockfilePath, "invalid-structure");
+
+  const version = getOwnDataProperty(value, "version")?.value;
   if (typeof version !== "number" || !Number.isSafeInteger(version)) {
     throw lockfileReadError(lockfilePath, "invalid-structure");
   }
   if (version !== LOCKFILE_VERSION) {
-    throw LOCKFILE_FORMAT_MISMATCH.create({
-      detail: `The lockfile uses format version ${version}, but this ` +
-        `Veryfront build supports version ${LOCKFILE_VERSION}. The file was left untouched. ` +
-        "Upgrade Veryfront or migrate the lockfile before reading or modifying it.",
-      context: {
-        lockfilePath,
-        expectedVersion: LOCKFILE_VERSION,
-        actualVersion: version,
-      },
-    });
+    throw lockfileFormatMismatch(lockfilePath, version);
   }
-  const parsedImports = getOwnDataProperty(parsed, "imports")?.value;
+  const parsedImports = getOwnDataProperty(value, "imports")?.value;
   if (!isRecord(parsedImports)) {
     throw lockfileReadError(lockfilePath, "invalid-structure");
   }
@@ -188,6 +184,17 @@ function parseLockfile(content: string, lockfilePath: string): LockfileData {
     imports.push([url, sanitizedEntry]);
   }
   return { version: LOCKFILE_VERSION, imports: createImportDictionary(imports) };
+}
+
+function parseLockfile(content: string, lockfilePath: string): LockfileData {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch (cause) {
+    throw lockfileReadError(lockfilePath, "invalid-json", cause);
+  }
+
+  return sanitizeLockfileData(parsed, lockfilePath);
 }
 
 export function createEmptyLockfile(): LockfileData {
@@ -608,7 +615,10 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     return result;
   }
 
-  async function resolveStateUnderAccess(): Promise<LockfileSharedState> {
+  async function resolveStateUnderAccess(): Promise<{
+    state: LockfileSharedState;
+    accessQueueKey: string;
+  }> {
     // Retry canonicalization for every serialized manager operation. A
     // project path may not exist on the first access, and a later successful
     // resolution must bridge the earlier logical state to canonical aliases.
@@ -623,9 +633,9 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
         managerCoordinationDomain,
       );
     managerCoordinationDomain = coordinationDomain;
-    // A coordinationKey deliberately serializes the whole backing store.
-    // Canonicalize the per-lockfile cache state independently so aliases
-    // invalidate each other without coupling separate projects.
+    // A coordinationKey declares a shared backing store. Canonicalize the
+    // per-lockfile cache state independently so aliases invalidate each other
+    // without coupling separate projects.
     managerSharedState = getLockfileSharedState(stateKeys);
     if (resolvedRecordKey !== undefined) {
       coordinationDomain.records.delete(resolvedRecordKey);
@@ -638,7 +648,10 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
       unresolvedRecord.state = new WeakRef(managerSharedState);
       coordinationDomain.records.set(unresolvedRecord.recordKey, unresolvedRecord);
     }
-    return resolveLockfileSharedState(managerSharedState);
+    return {
+      state: resolveLockfileSharedState(managerSharedState),
+      accessQueueKey: stateKeys[stateKeys.length - 1] ?? JSON.stringify([accessKey, lockfilePath]),
+    };
   }
 
   function retainUnresolvedMutation(
@@ -657,10 +670,14 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   function withLockfileAccess<T>(
     operation: (state: LockfileSharedState) => Promise<T>,
   ): Promise<T> {
-    return serializeLockfileAccess(
-      accessKey,
-      async () => operation(await resolveStateUnderAccess()),
-    );
+    const logicalQueueKey = hasSharedCoordinationKey
+      ? JSON.stringify([accessKey, lockfilePath])
+      : accessKey;
+    return serializeLockfileAccess(logicalQueueKey, async () => {
+      const { state, accessQueueKey } = await resolveStateUnderAccess();
+      if (accessQueueKey === logicalQueueKey) return await operation(state);
+      return await serializeLockfileAccess(accessQueueKey, () => operation(state));
+    });
   }
 
   async function lockfileExists(): Promise<boolean> {
@@ -733,9 +750,9 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   }
 
   function write(data: LockfileData): Promise<void> {
-    const snapshot = cloneLockfileData(data);
-    return serializeManagerOperation(() =>
-      withLockfileAccess(async (state) => {
+    return serializeManagerOperation(() => {
+      const snapshot = sanitizeLockfileData(data, lockfilePath);
+      return withLockfileAccess(async (state) => {
         // Revalidate the existing file before replacing it. Unsupported,
         // unreadable, and malformed files are always preserved.
         await readFromDisk();
@@ -744,8 +761,8 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
         pendingEntries.clear();
         cacheRevision = ++state.revision;
         retainUnresolvedMutation(state, true);
-      })
-    );
+      });
+    });
   }
 
   function get(url: string): Promise<LockfileEntry | null> {
