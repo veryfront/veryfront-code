@@ -94,17 +94,17 @@ describe("server/handlers/request/rsc", () => {
     const handler = new RSCHandler();
     let contextActive = false;
     let runWithContextArgs: unknown[] | undefined;
-    const adapter = createMockAdapter({
-      exists: () => {
-        if (!contextActive) {
-          throw new Error("missing multi-project context");
-        }
-        return Promise.resolve(false);
-      },
-    });
+    const adapter = createMockAdapter();
 
     adapter.fs = {
       ...adapter.fs,
+      symlinkSemantics: "none",
+      readFileBytesWithinLimit: (path: string, _byteLimit: number) => {
+        if (!contextActive) {
+          throw new Error("missing multi-project context");
+        }
+        return Promise.reject(new Deno.errors.NotFound(path));
+      },
       isVeryfrontAdapter: () => true,
       getUnderlyingAdapter: () => ({}),
       isMultiProjectMode: () => true,

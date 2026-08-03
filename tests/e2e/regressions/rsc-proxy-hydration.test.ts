@@ -231,13 +231,8 @@ async function withHostedBrowserPage(
 
     // A dedicated runtime gets its environment and project identity from
     // host-owned startup options. Forwarded project headers belong only to the
-    // shared proxy topology, where the dispatch signature establishes trust.
-    const extraHTTPHeaders = topology === "shared"
-      ? {
-        ...headers,
-        "x-veryfront-dispatch-jws": await mintTrustedDispatchJws(context.projectId),
-      }
-      : undefined;
+    // shared topology explicitly trusted by the host-level proxy setting.
+    const extraHTTPHeaders = topology === "shared" ? headers : undefined;
     const browserContext = await browser.newContext({ extraHTTPHeaders });
     await installEsmShCorsShim(browserContext);
 
