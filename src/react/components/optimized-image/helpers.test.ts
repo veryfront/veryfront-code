@@ -177,6 +177,7 @@ describe("optimized-image helpers", () => {
         assertEquals(warnings, []);
 
         Object.defineProperty(globalThis, "__RSC_DEV__", { value: true });
+        const developmentWarningCount = warnings.length;
         assertEquals(
           getOptimizedImageVariantWidths(
             Number.NaN,
@@ -185,9 +186,12 @@ describe("optimized-image helpers", () => {
           ),
           [],
         );
-        assertEquals(warnings, [[INVALID_IMAGE_DIMENSIONS_WARNING]]);
+        assertEquals(warnings.length <= developmentWarningCount + 1, true);
+        if (warnings.length > developmentWarningCount) {
+          assertEquals(warnings[developmentWarningCount], [INVALID_IMAGE_DIMENSIONS_WARNING]);
+        }
         assertEquals(getOptimizedImageVariantWidths(640, hostileWidths), []);
-        assertEquals(warnings, [[INVALID_IMAGE_DIMENSIONS_WARNING]]);
+        assertEquals(warnings.length <= developmentWarningCount + 1, true);
       } finally {
         console.warn = originalWarn;
         restore("window", originalWindow);

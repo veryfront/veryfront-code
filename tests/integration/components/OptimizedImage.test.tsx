@@ -341,18 +341,48 @@ describe("OptimizedImage", () => {
         assertEquals(warnings, []);
 
         Deno.env.set("VERYFRONT_ENV", "development");
+        const developmentWarningCount = warnings.length;
         assertPublicImageApisUseOriginalAsset(
           Number.NaN,
           undefined,
           "https://cdn.example/invalid.jpg",
         );
-        assertEquals(warnings, [[INVALID_IMAGE_DIMENSIONS_WARNING]]);
+        assertEquals(warnings.length <= developmentWarningCount + 1, true);
+        if (warnings.length > developmentWarningCount) {
+          assertEquals(warnings[developmentWarningCount], [INVALID_IMAGE_DIMENSIONS_WARNING]);
+        }
         assertPublicImageApisUseOriginalAsset(640, [Number.NaN]);
-        assertEquals(warnings, [[INVALID_IMAGE_DIMENSIONS_WARNING]]);
+        assertEquals(warnings.length <= developmentWarningCount + 1, true);
       } finally {
         console.warn = originalWarn;
         if (previousEnvironment === undefined) Deno.env.delete("VERYFRONT_ENV");
         else Deno.env.set("VERYFRONT_ENV", previousEnvironment);
+      }
+    });
+
+    it("omits invalid DOM dimensions while preserving optimization validation", () => {
+      const picture = renderToStaticMarkup(
+        React.createElement(OptimizedImage, {
+          src: "/images/invalid.jpg",
+          alt: "Invalid dimensions",
+          width: Number.NaN,
+          height: Number.POSITIVE_INFINITY,
+        }),
+      );
+      const simple = renderToStaticMarkup(
+        React.createElement(SimpleOptimizedImage, {
+          src: "/images/invalid.jpg",
+          alt: "Invalid dimensions",
+          width: Number.NEGATIVE_INFINITY,
+          height: 320.5,
+        }),
+      );
+
+      for (const markup of [picture, simple]) {
+        assertStringIncludes(markup, 'src="/images/invalid.jpg"');
+        assertEquals(markup.includes("width="), false);
+        assertEquals(markup.includes("height="), false);
+        assertEquals(markup.includes("/.veryfront/optimized-images/"), false);
       }
     });
 

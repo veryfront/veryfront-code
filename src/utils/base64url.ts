@@ -46,10 +46,7 @@ export function encodeBase64Bytes(bytes: Uint8Array): string {
     const encodedChunks: string[] = [];
     for (let offset = 0; offset < bytes.length; offset += chunkSize) {
       const end = Math.min(offset + chunkSize, bytes.length);
-      let binaryChunk = "";
-      for (let index = offset; index < end; index++) {
-        binaryChunk += String.fromCharCode(bytes[index]!);
-      }
+      const binaryChunk = String.fromCharCode(...bytes.subarray(offset, end));
       encodedChunks.push(globalThis.btoa(binaryChunk));
     }
     return encodedChunks.join("");

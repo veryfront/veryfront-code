@@ -165,6 +165,11 @@ export function getOptimizedImageVariantWidths(
   }
 }
 
+/** Return a valid numeric img dimension attribute, or omit invalid runtime values. */
+export function getImageDimensionAttribute(value: number | undefined): number | undefined {
+  return isValidImageVariantWidth(value) ? value : undefined;
+}
+
 /** Use the original asset unless a corresponding optimized variant is known. */
 export function getOptimizedImageFallback(
   src: string,

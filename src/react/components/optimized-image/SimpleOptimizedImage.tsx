@@ -2,6 +2,7 @@ import type React from "react";
 import type { OptimizedImageFormat, OptimizedImageProps } from "./OptimizedImage.tsx";
 import {
   generateSrcSet,
+  getImageDimensionAttribute,
   getOptimizedImageFallback,
   getOptimizedImageVariantWidths,
 } from "./helpers.ts";
@@ -30,6 +31,8 @@ export function SimpleOptimizedImage({
     ? generateSrcSet(src, format, variantWidths, quality)
     : undefined;
   const optimizedSrc = getOptimizedImageFallback(src, format, variantWidths, quality);
+  const imageWidth = getImageDimensionAttribute(width);
+  const imageHeight = getImageDimensionAttribute(height);
 
   return (
     <img
@@ -37,8 +40,8 @@ export function SimpleOptimizedImage({
       srcSet={srcSet}
       sizes={srcSet === undefined ? undefined : sizes}
       alt={alt}
-      width={width}
-      height={height}
+      width={imageWidth}
+      height={imageHeight}
       loading={loading}
       decoding="async"
       className={className}

@@ -2,6 +2,7 @@ import React from "react";
 import {
   DEFAULT_OPTIMIZED_IMAGE_FORMATS,
   generateSrcSet,
+  getImageDimensionAttribute,
   getImageExtension,
   getOptimizedImageFormatFallback,
   getOptimizedImageVariantWidths,
@@ -55,6 +56,8 @@ export function OptimizedImage({
   const loadingStrategy = priority ? "eager" : (loading ?? "lazy");
   const originalFormat = getImageExtension(src);
   const variantWidths = getOptimizedImageVariantWidths(width, targetWidths, src);
+  const imageWidth = getImageDimensionAttribute(width);
+  const imageHeight = getImageDimensionAttribute(height);
 
   const imgStyle: React.CSSProperties = {
     ...style,
@@ -83,8 +86,8 @@ export function OptimizedImage({
           quality,
         )}
         alt={alt}
-        width={width}
-        height={height}
+        width={imageWidth}
+        height={imageHeight}
         loading={loadingStrategy}
         decoding="async"
         className={className}
