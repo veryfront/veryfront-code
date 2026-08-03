@@ -96,6 +96,36 @@ async function sealLegacyV1(
   return await sealLegacyV1Plaintext(keyHex, storageKey, plaintext);
 }
 
+/** Seal a JSON value in the current v2 envelope for boundary tests. */
+async function sealV2(keyHex: string, storageKey: string, value: unknown): Promise<string> {
+  const keyBytes = new Uint8Array(32);
+  for (let index = 0; index < keyBytes.length; index++) {
+    keyBytes[index] = Number.parseInt(keyHex.slice(index * 2, index * 2 + 2), 16);
+  }
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", keyBytes));
+  const keyId = Array.from(digest.subarray(0, 8))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  const key = await crypto.subtle.importKey("raw", keyBytes, "AES-GCM", false, ["encrypt"]);
+  keyBytes.fill(0);
+  const plaintext = JSON.stringify(value);
+  if (plaintext === undefined) throw new TypeError("V2 test value must be JSON serializable");
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = new Uint8Array(
+    await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv, additionalData: new TextEncoder().encode(storageKey) },
+      key,
+      new TextEncoder().encode(plaintext),
+    ),
+  );
+  const combined = new Uint8Array(iv.byteLength + ciphertext.byteLength);
+  combined.set(iv);
+  combined.set(ciphertext, iv.byteLength);
+  let binary = "";
+  for (const byte of combined) binary += String.fromCharCode(byte);
+  return ENVELOPE_PREFIX + keyId + ":" + btoa(binary);
+}
+
 /** Expose the raw rows so tests can assert what actually hits storage. */
 function inspectableBackend(): EncryptedKvBackend & { rows: Map<string, string> } {
   const backend = createMemoryKvBackend();
@@ -511,6 +541,24 @@ describe("generated encrypted OAuth token store", () => {
       previousKeyRows: 0,
       unreadableRows: 0,
       complete: true,
+    });
+  });
+
+  it("reports authenticated rows with invalid payload schemas as unreadable", async () => {
+    const backend = scanCapableBackend();
+    const keyHex = Deno.env.get("TOKEN_ENCRYPTION_KEY");
+    if (!keyHex) throw new Error("Expected a configured encryption key");
+    const tokenKey = 'veryfront:oauth:v1:tokens:["github","malformed-token-user"]';
+    const stateKey = 'veryfront:oauth:v1:state:["malformed-state"]';
+    await backend.set(tokenKey, await sealV2(keyHex, tokenKey, {}));
+    await backend.set(stateKey, await sealV2(keyHex, stateKey, {}));
+
+    assertEquals(await checkEncryptedTokenStoreRotation(backend), {
+      scannedRows: 2,
+      currentKeyRows: 0,
+      previousKeyRows: 0,
+      unreadableRows: 2,
+      complete: false,
     });
   });
 

@@ -752,44 +752,6 @@ class EnvelopeCipher {
     );
   }
 
-  async classifyKeyUse(storageKey: string, stored: string): Promise<"current" | "previous"> {
-    if (typeof stored !== "string" || stored.length > MAX_ENCODED_LENGTH) {
-      throw new TypeError("Stored OAuth value must be a bounded string");
-    }
-    const keys = await this.#keys;
-    if (stored.startsWith(ENVELOPE_PREFIX)) {
-      const body = stored.slice(ENVELOPE_PREFIX.length);
-      const keyId = body.slice(0, KEY_ID_HEX_LENGTH);
-      if (!KEY_ID_PATTERN.test(keyId) || body[KEY_ID_HEX_LENGTH] !== ":") {
-        throw new TypeError("Encrypted OAuth value has a malformed key id");
-      }
-      const keyIndex = keys.findIndex((entry) => entry.keyId === keyId);
-      if (keyIndex < 0) {
-        throw new Error("Encrypted OAuth value was sealed with an unknown encryption key");
-      }
-      await this.#decrypt(
-        storageKey,
-        base64ToBytes(body.slice(KEY_ID_HEX_LENGTH + 1)),
-        keys[keyIndex]!.key,
-      );
-      return keyIndex === 0 ? "current" : "previous";
-    }
-    if (stored.startsWith(LEGACY_ENVELOPE_PREFIX)) {
-      const combined = base64ToBytes(stored.slice(LEGACY_ENVELOPE_PREFIX.length));
-      let lastFailure: unknown;
-      for (let index = 0; index < keys.length; index++) {
-        try {
-          await this.#decrypt(storageKey, combined, keys[index]!.key);
-          return index === 0 ? "current" : "previous";
-        } catch (failure) {
-          lastFailure = failure;
-        }
-      }
-      throw lastFailure;
-    }
-    throw new Error("Stored OAuth value is not in a vf-aes-gcm envelope format");
-  }
-
   async #decrypt(
     storageKey: string,
     combined: Uint8Array<ArrayBuffer>,
@@ -875,8 +837,13 @@ export async function checkEncryptedTokenStoreRotation(
         continue;
       }
       try {
-        const keyUse = await cipher.classifyKeyUse(row.key, row.value);
-        if (keyUse === "current") report.currentKeyRows++;
+        const opened = await cipher.open(row.key, row.value);
+        if (row.key.startsWith(TOKENS_KEY_PREFIX)) {
+          requireTokenEntry(opened.value);
+        } else {
+          requireStateRow(opened.value);
+        }
+        if (opened.sealedWithCurrentKey) report.currentKeyRows++;
         else report.previousKeyRows++;
       } catch {
         report.unreadableRows++;
