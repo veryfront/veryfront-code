@@ -27,6 +27,19 @@ type EsmShOptions = {
   deps?: Record<string, string>;
 };
 
+const ArrayPrototypeJoin = Array.prototype.join;
+const ArrayPrototypePush = Array.prototype.push;
+const ObjectEntries = Object.entries;
+const ReflectApply = Reflect.apply;
+
+function arrayJoin(values: string[], separator: string): string {
+  return ReflectApply(ArrayPrototypeJoin, values, [separator]) as string;
+}
+
+function arrayPush(values: string[], value: string): void {
+  ReflectApply(ArrayPrototypePush, values, [value]);
+}
+
 /**
  * Build esm.sh URL with proper configuration.
  *
@@ -44,21 +57,24 @@ export function buildEsmShUrl(
   const params: string[] = [];
 
   if (options?.external?.length) {
-    params.push(`external=${options.external.join(",")}`);
+    arrayPush(params, `external=${arrayJoin(options.external, ",")}`);
   }
 
-  params.push(`target=${options?.target ?? "es2022"}`);
+  arrayPush(params, `target=${options?.target ?? "es2022"}`);
 
   if (options?.deps) {
-    const depsStr = Object.entries(options.deps)
-      .map(([k, v]) => `${k}@${v}`)
-      .join(",");
-    params.push(`deps=${depsStr}`);
+    const deps: string[] = [];
+    const entries = ObjectEntries(options.deps);
+    for (let index = 0; index < entries.length; index++) {
+      const [key, value] = entries[index]!;
+      arrayPush(deps, `${key}@${value}`);
+    }
+    arrayPush(params, `deps=${arrayJoin(deps, ",")}`);
   }
 
   const versionStr = version ? `@${version}` : "";
   const pathStr = subpath ?? "";
-  const queryStr = params.length ? `?${params.join("&")}` : "";
+  const queryStr = params.length ? `?${arrayJoin(params, "&")}` : "";
 
   return `https://esm.sh/${pkg}${versionStr}${pathStr}${queryStr}`;
 }

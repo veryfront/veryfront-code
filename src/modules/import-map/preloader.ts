@@ -1,6 +1,7 @@
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { snapshotImportMap } from "#veryfront/transforms/pipeline/cache-identity.ts";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/constants/limits.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import type { ImportMapConfig } from "./types.ts";
 import { loadImportMap } from "./loader.ts";
@@ -18,16 +19,19 @@ const IMPORT_MAP_CACHE_IDENTITY_NAMESPACE = "veryfront:preloaded-import-map:v2";
 const DEFAULT_MAX_IMPORT_MAP_PROJECTS = 512;
 const DEFAULT_MAX_IMPORT_MAP_VARIANTS_PER_PROJECT = 16;
 const DEFAULT_IMPORT_MAP_TTL_MS = 10 * 60 * 1_000;
+const DEFAULT_IMPORT_MAP_LOAD_TIMEOUT_MS = 30_000;
 
 // Project code can execute in the same realm before a later request reaches
 // this cache. Capture every primitive used for identity, admission, and
 // settlement so replacing shared built-ins cannot redirect dependency graphs.
+const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSort = Array.prototype.sort;
 const DateNow = Date.now;
 const IntrinsicMap = Map;
 const IntrinsicPromise = Promise;
 const IntrinsicRangeError = RangeError;
 const IntrinsicSet = Set;
+const IntrinsicWeakSet = WeakSet;
 const IntrinsicTypeError = TypeError;
 const JSONStringify = JSON.stringify;
 const MapPrototypeClear = Map.prototype.clear;
@@ -49,14 +53,23 @@ const PromiseResolve = Promise.resolve;
 const ReflectApply = Reflect.apply;
 const SetPrototypeAdd = Set.prototype.add;
 const SetPrototypeDelete = Set.prototype.delete;
+const SetPrototypeForEach = Set.prototype.forEach;
 const SetPrototypeSize = Object.getOwnPropertyDescriptor(Set.prototype, "size")!
   .get!;
+const WeakSetPrototypeAdd = WeakSet.prototype.add;
+const WeakSetPrototypeHas = WeakSet.prototype.has;
+const SetTimeout = setTimeout;
+const ClearTimeout = clearTimeout;
 
 function arraySort<T>(
   values: T[],
   compare: (left: T, right: T) => number,
 ): T[] {
   return ReflectApply(ArrayPrototypeSort, values, [compare]) as T[];
+}
+
+function arrayPush<T>(values: T[], value: T): void {
+  ReflectApply(ArrayPrototypePush, values, [value]);
 }
 
 function mapClear<K, V>(map: Map<K, V>): void {
@@ -109,8 +122,20 @@ function setDelete<T>(set: Set<T>, value: T): boolean {
   return ReflectApply(SetPrototypeDelete, set, [value]) as boolean;
 }
 
+function setForEach<T>(set: Set<T>, callback: (value: T) => void): void {
+  ReflectApply(SetPrototypeForEach, set, [callback]);
+}
+
 function setSize<T>(set: Set<T>): number {
   return ReflectApply(SetPrototypeSize, set, []) as number;
+}
+
+function weakSetAdd<T extends object>(set: WeakSet<T>, value: T): void {
+  ReflectApply(WeakSetPrototypeAdd, set, [value]);
+}
+
+function weakSetHas<T extends object>(set: WeakSet<T>, value: T): boolean {
+  return ReflectApply(WeakSetPrototypeHas, set, [value]) as boolean;
 }
 
 interface CachedImportMap {
@@ -139,6 +164,8 @@ export interface ImportMapPreloaderOptions {
   maxVariantsPerProject?: number;
   /** Retention lifetime after a successful load. */
   ttlMs?: number;
+  /** Maximum caller wait for a load or for occupied capacity to settle. */
+  loadTimeoutMs?: number;
   /** Monotonic-enough clock seam; defaults to Date.now. */
   now?: () => number;
   /** Loader seam for alternate runtimes and deterministic verification. */
@@ -251,6 +278,14 @@ function buildVariantCanonicalIdentity(
   return canonical;
 }
 
+function racePromises<T>(promises: Array<Promise<T>>): Promise<T> {
+  return new IntrinsicPromise<T>((resolve, reject) => {
+    for (let index = 0; index < promises.length; index++) {
+      promiseThen(promises[index]!, resolve, reject);
+    }
+  });
+}
+
 function readPositiveSafeInteger(
   value: number | undefined,
   fallback: number,
@@ -259,6 +294,16 @@ function readPositiveSafeInteger(
   const resolved = value ?? fallback;
   if (!NumberIsSafeInteger(resolved) || resolved <= 0) {
     throw new IntrinsicRangeError(`${label} must be a positive safe integer`);
+  }
+  return resolved;
+}
+
+function readPositiveTimerMs(value: number | undefined, fallback: number): number {
+  const resolved = readPositiveSafeInteger(value, fallback, "loadTimeoutMs");
+  if (resolved > MAX_TIMER_DELAY_MS) {
+    throw new IntrinsicRangeError(
+      `loadTimeoutMs must not exceed ${MAX_TIMER_DELAY_MS}`,
+    );
   }
   return resolved;
 }
@@ -274,11 +319,13 @@ export class ImportMapPreloader {
   /** Underlying loader work remains accounted for even after explicit invalidation. */
   private readonly activeLoads = new IntrinsicSet<Promise<ImportMapConfig>>();
   private readonly activeIdentityBuilds = new IntrinsicSet<Promise<string>>();
+  private readonly capacityErrors = new IntrinsicWeakSet<object>();
   private globalGeneration = createGeneration();
   private readonly maxProjects: number;
   private readonly maxVariantsPerProject: number;
   private readonly maxConcurrentLoads: number;
   private readonly ttlMs: number;
+  private readonly loadTimeoutMs: number;
   private readonly now: () => number;
   private readonly loader: typeof loadImportMap;
 
@@ -301,6 +348,10 @@ export class ImportMapPreloader {
       options.ttlMs,
       DEFAULT_IMPORT_MAP_TTL_MS,
       "ttlMs",
+    );
+    this.loadTimeoutMs = readPositiveTimerMs(
+      options.loadTimeoutMs,
+      DEFAULT_IMPORT_MAP_LOAD_TIMEOUT_MS,
     );
     this.now = options.now ?? DateNow;
     this.loader = options.loadImportMap ?? loadImportMap;
@@ -376,8 +427,45 @@ export class ImportMapPreloader {
   }
 
   private capacityError(scope: "projects" | "variants" | "loads"): RangeError {
-    return new IntrinsicRangeError(
+    const error = new IntrinsicRangeError(
       `Import-map preloader ${scope} capacity is occupied by in-flight loads; retry after a load settles`,
+    );
+    weakSetAdd(this.capacityErrors, error);
+    return error;
+  }
+
+  private isCapacityError(error: unknown): boolean {
+    return error !== null && typeof error === "object" &&
+      weakSetHas(this.capacityErrors, error);
+  }
+
+  private waitForActiveWork(): Promise<void> {
+    const activeWork: Array<Promise<unknown>> = [];
+    setForEach(this.activeLoads, (promise) => arrayPush(activeWork, promise));
+    setForEach(this.activeIdentityBuilds, (promise) => arrayPush(activeWork, promise));
+    // Work can settle between the capacity check and this snapshot. Retry the
+    // admission loop immediately instead of surfacing a stale capacity error.
+    if (activeWork.length === 0) return resolvedPromise();
+    const settled = promiseThen(
+      racePromises(activeWork),
+      () => resolvedPromise(),
+      () => resolvedPromise(),
+    );
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new IntrinsicPromise<void>((_, reject) => {
+      timeoutId = SetTimeout(() => {
+        reject(new IntrinsicRangeError("Import-map preloader capacity wait timed out"));
+      }, this.loadTimeoutMs);
+    });
+    return promiseThen(
+      racePromises([settled, timeout]),
+      () => {
+        if (timeoutId !== undefined) ClearTimeout(timeoutId);
+      },
+      (error) => {
+        if (timeoutId !== undefined) ClearTimeout(timeoutId);
+        throw error;
+      },
     );
   }
 
@@ -533,15 +621,50 @@ export class ImportMapPreloader {
       resolvedPromise(),
       () => this.loader(projectDir, adapter, config),
     );
+    // The caller-facing timeout must not release capacity while the underlying
+    // adapter is still working; doing so would permit an unbounded retry train.
+    this.trackActiveLoad(loaderPromise);
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new IntrinsicPromise<ImportMapConfig>((_, reject) => {
+      timeoutId = SetTimeout(() => {
+        reject(new IntrinsicRangeError("Import-map preloader load timed out"));
+      }, this.loadTimeoutMs);
+    });
+    const boundedLoaderPromise = promiseThen(
+      racePromises([loaderPromise, timeoutPromise]),
+      (value) => {
+        if (timeoutId !== undefined) ClearTimeout(timeoutId);
+        return value;
+      },
+      (error) => {
+        if (timeoutId !== undefined) ClearTimeout(timeoutId);
+        throw error;
+      },
+    );
     const promise = promiseThen(
-      loaderPromise,
+      boundedLoaderPromise,
       (loadedImportMap) => snapshotImportMap(loadedImportMap),
     );
-    this.trackActiveLoad(promise);
     return promise;
   }
 
   async preload(
+    projectDir: string,
+    adapter: RuntimeAdapter,
+    projectId?: string,
+    context?: PreloadImportMapContext,
+  ): Promise<ImportMapConfig> {
+    for (;;) {
+      try {
+        return await this.preloadOnce(projectDir, adapter, projectId, context);
+      } catch (error) {
+        if (!this.isCapacityError(error)) throw error;
+        await this.waitForActiveWork();
+      }
+    }
+  }
+
+  private async preloadOnce(
     projectDir: string,
     adapter: RuntimeAdapter,
     projectId?: string,
@@ -731,7 +854,8 @@ export class ImportMapPreloader {
       variantKey = await computeHash(canonicalIdentity);
     } catch (error) {
       this.removeEmptyProject(cacheKey, projectState);
-      throw error;
+      if (!this.isCapacityError(error)) throw error;
+      return undefined;
     }
     if (
       !this.isCurrentGeneration(
@@ -752,7 +876,8 @@ export class ImportMapPreloader {
       );
     } catch (error) {
       this.removeEmptyProject(cacheKey, projectState);
-      throw error;
+      if (!this.isCapacityError(error)) throw error;
+      return undefined;
     }
     if (!entry) {
       this.removeEmptyProject(cacheKey, projectState);

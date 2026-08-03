@@ -1,6 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
+import {
+  CSSTYPE_VERSION,
+  DEFAULT_REACT_VERSION,
+  TAILWIND_VERSION,
+} from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
 import { computeConfigHash, computeConfigHashSync } from "./config-hash.ts";
 
 const CANONICAL_PIN_KEY = "on:z7bg3qnfgtcb";
@@ -8,6 +16,59 @@ const CHANGED_CANONICAL_PIN_KEY = "on:z7bg3qnfgtcc";
 
 describe("cache/config-hash", () => {
   describe("computeConfigHash", () => {
+    it("preserves the established serialized identity for the default config", async () => {
+      const identity = JSON.stringify({
+        transformVersion: VERSION,
+        reactVersion: DEFAULT_REACT_VERSION,
+        jsxImportSource: "react",
+        moduleServerUrl: null,
+        vendorBundleHash: null,
+        apiBaseUrl: null,
+        studioEmbed: false,
+        dev: false,
+        csstype: CSSTYPE_VERSION,
+        tailwind: TAILWIND_VERSION,
+      });
+      assertEquals(
+        await computeConfigHash({}),
+        await computeHash(identity),
+      );
+    });
+
+    it("preserves the established serialized identity for a fully scoped config", async () => {
+      const dependencyPinningCacheVariant = buildDependencyPinningCacheVariant(
+        CANONICAL_PIN_KEY,
+        "https://preview.example.test",
+      );
+      const identity = JSON.stringify({
+        transformVersion: VERSION,
+        reactVersion: "18.3.1",
+        jsxImportSource: "preact",
+        moduleServerUrl: "https://modules.example.test/_vf_modules",
+        vendorBundleHash: "vendor-a",
+        apiBaseUrl: "https://api.example.test",
+        studioEmbed: true,
+        dev: true,
+        ...(dependencyPinningCacheVariant ? { dependencyPinningCacheVariant } : {}),
+        csstype: CSSTYPE_VERSION,
+        tailwind: TAILWIND_VERSION,
+      });
+      assertEquals(
+        await computeConfigHash({
+          reactVersion: "18.3.1",
+          jsxImportSource: "preact",
+          moduleServerUrl: "https://modules.example.test/_vf_modules",
+          moduleServerOrigin: "https://preview.example.test",
+          vendorBundleHash: "vendor-a",
+          apiBaseUrl: "https://api.example.test",
+          studioEmbed: true,
+          dev: true,
+          dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+        }),
+        await computeHash(identity),
+      );
+    });
+
     it("should return a 64-char hex hash", async () => {
       const hash = await computeConfigHash({});
       assertEquals(hash.length, 64);
@@ -115,6 +176,30 @@ describe("cache/config-hash", () => {
   });
 
   describe("computeConfigHashSync", () => {
+    it("matches the golden identity for the default transform config", () => {
+      assertEquals(
+        computeConfigHashSync({}),
+        `v${VERSION}:${DEFAULT_REACT_VERSION}:react`,
+      );
+    });
+
+    it("matches the golden identity for a fully scoped transform config", () => {
+      assertEquals(
+        computeConfigHashSync({
+          reactVersion: "18.3.1",
+          jsxImportSource: "preact",
+          moduleServerUrl: "https://modules.example.test/_vf_modules",
+          moduleServerOrigin: "https://preview.example.test",
+          vendorBundleHash: "vendor-a",
+          apiBaseUrl: "https://api.example.test",
+          studioEmbed: true,
+          dev: true,
+          dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+        }),
+        `v${VERSION}:18.3.1:preact:modules:40:https://modules.example.test/_vf_modules:vendor:8:vendor-a:api:24:https://api.example.test:studio:dev:pins:on:z7bg3qnfgtcb:origin:aHR0cHM6Ly9wcmV2aWV3LmV4YW1wbGUudGVzdA`,
+      );
+    });
+
     it("should return a string", () => {
       const hash = computeConfigHashSync({});
       assertEquals(typeof hash, "string");

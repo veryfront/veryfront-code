@@ -9,6 +9,7 @@ import {
 } from "./preloader.ts";
 import { validateVeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/constants/limits.ts";
 import type { ImportMapConfig } from "./types.ts";
 
 function createMinimalAdapter(): RuntimeAdapter {
@@ -353,6 +354,44 @@ describe("modules/import-map/preloader", () => {
       );
     });
 
+    it("can isolate the same project id by explicit project directory context", async () => {
+      const adapter = createMinimalAdapter();
+      let loads = 0;
+      const preloader = new ImportMapPreloader({
+        maxProjects: 1,
+        maxVariantsPerProject: 2,
+        loadImportMap: async () => ({
+          imports: { loaded: String(++loads) },
+        }),
+      });
+
+      const first = await preloader.preload("/release-a", adapter, "project", {
+        projectDir: "/release-a",
+        contentSourceId: "source",
+      });
+      const second = await preloader.preload("/release-b", adapter, "project", {
+        projectDir: "/release-b",
+        contentSourceId: "source",
+      });
+
+      assertEquals(first.imports?.loaded, "1");
+      assertEquals(second.imports?.loaded, "2");
+      assertEquals(
+        await preloader.getCached("project", {
+          projectDir: "/release-a",
+          contentSourceId: "source",
+        }),
+        first,
+      );
+      assertEquals(
+        await preloader.getCached("project", {
+          projectDir: "/release-b",
+          contentSourceId: "source",
+        }),
+        second,
+      );
+    });
+
     it("rejects malformed loader output before publication and permits retry", async () => {
       const adapter = createMinimalAdapter();
       let loads = 0;
@@ -435,6 +474,17 @@ describe("modules/import-map/preloader", () => {
       });
       return { preloader, getLoads: () => loads };
     }
+
+    it("rejects load timeouts that cannot be represented by the host timer", () => {
+      assertThrows(
+        () =>
+          new ImportMapPreloader({
+            loadTimeoutMs: MAX_TIMER_DELAY_MS + 1,
+          }),
+        RangeError,
+        `loadTimeoutMs must not exceed ${MAX_TIMER_DELAY_MS}`,
+      );
+    });
 
     it("evicts the least-recently-used variant within one project", async () => {
       const adapter = createMinimalAdapter();
@@ -713,16 +763,11 @@ describe("modules/import-map/preloader", () => {
       );
       preloader.clear("project-a");
 
-      await assertRejects(
-        () =>
-          preloader.preload(
-            "/project-a",
-            adapter,
-            "project-a",
-            context,
-          ),
-        RangeError,
-        "capacity is occupied by in-flight loads",
+      const postClear = preloader.preload(
+        "/project-a",
+        adapter,
+        "project-a",
+        context,
       );
       const staleResult = await preClear;
       assertEquals(staleResult.imports?.loaded, "1");
@@ -734,14 +779,7 @@ describe("modules/import-map/preloader", () => {
         },
         TypeError,
       );
-      assertEquals(await preloader.getCached("project-a", context), undefined);
-
-      const reloaded = await preloader.preload(
-        "/project-a",
-        adapter,
-        "project-a",
-        context,
-      );
+      const reloaded = await postClear;
       assertEquals(reloaded.imports?.loaded, "2");
       assertEquals(await preloader.getCached("project-a", context), reloaded);
     });
@@ -771,7 +809,7 @@ describe("modules/import-map/preloader", () => {
       assertEquals(await preloader.getCached("project-a", context), undefined);
     });
 
-    it("keeps in-flight project work admitted instead of evicting and duplicating it", async () => {
+    it("waits for in-flight project capacity instead of failing renders", async () => {
       const adapter = createMinimalAdapter();
       const loads: Array<ReturnType<typeof createDeferred<ImportMapConfig>>> = [];
       const preloader = new ImportMapPreloader({
@@ -788,11 +826,7 @@ describe("modules/import-map/preloader", () => {
       const first = preloader.preload("/project-a", adapter, "project-a");
       await Promise.resolve();
       const sameKey = preloader.preload("/project-a", adapter, "project-a");
-      await assertRejects(
-        () => preloader.preload("/project-b", adapter, "project-b"),
-        RangeError,
-        "capacity is occupied by in-flight loads",
-      );
+      const queued = preloader.preload("/project-b", adapter, "project-b");
       await waitForLoadCount(loads, 1);
       assertEquals(loads.length, 1);
 
@@ -801,13 +835,12 @@ describe("modules/import-map/preloader", () => {
       assertEquals(firstResult.imports?.source, "a");
       assertEquals(await sameKey, firstResult);
 
-      const second = preloader.preload("/project-b", adapter, "project-b");
       await waitForLoadCount(loads, 2);
       loads[1]!.resolve({ imports: { source: "b" } });
-      assertEquals((await second).imports?.source, "b");
+      assertEquals((await queued).imports?.source, "b");
     });
 
-    it("bounds identity and loader work across variants and explicit invalidation", async () => {
+    it("waits for in-flight variant capacity across explicit invalidation", async () => {
       const adapter = createMinimalAdapter();
       const loads: Array<ReturnType<typeof createDeferred<ImportMapConfig>>> = [];
       const preloader = new ImportMapPreloader({
@@ -820,30 +853,85 @@ describe("modules/import-map/preloader", () => {
           return load.promise;
         },
       });
-      const sourceA = { contentSourceId: "source-a" };
-      const sourceB = { contentSourceId: "source-b" };
+      const sourceA = { contentSourceId: "source-a", projectDir: "/project" };
+      const sourceB = { contentSourceId: "source-b", projectDir: "/project" };
 
       const first = preloader.preload("/project", adapter, "project", sourceA);
-      await assertRejects(
-        () => preloader.preload("/project", adapter, "project", sourceB),
-        RangeError,
-        "capacity is occupied by in-flight loads",
-      );
+      const queued = preloader.preload("/project", adapter, "project", sourceB);
       preloader.clear("project");
-      await assertRejects(
-        () => preloader.preload("/project", adapter, "project", sourceA),
-        RangeError,
-        "capacity is occupied by in-flight loads",
-      );
       await waitForLoadCount(loads, 1);
       assertEquals(loads.length, 1);
 
       loads[0]!.resolve({ imports: { source: "a" } });
       await first;
-      const reloaded = preloader.preload("/project", adapter, "project", sourceB);
       await waitForLoadCount(loads, 2);
       loads[1]!.resolve({ imports: { source: "b" } });
-      assertEquals((await reloaded).imports?.source, "b");
+      assertEquals((await queued).imports?.source, "b");
+      assertEquals(await preloader.getCached("project", sourceA), undefined);
+      assertEquals((await preloader.getCached("project", sourceB))?.imports?.source, "b");
+    });
+
+    it("returns undefined from getCached when identity capacity is occupied", async () => {
+      const adapter = createMinimalAdapter();
+      const loads: Array<ReturnType<typeof createDeferred<ImportMapConfig>>> = [];
+      const preloader = new ImportMapPreloader({
+        maxProjects: 1,
+        maxVariantsPerProject: 1,
+        ttlMs: 1_000,
+        loadImportMap: () => {
+          const load = createDeferred<ImportMapConfig>();
+          loads.push(load);
+          return load.promise;
+        },
+      });
+
+      const first = preloader.preload("/project", adapter, "project", {
+        contentSourceId: "source-a",
+      });
+      await waitForLoadCount(loads, 1);
+
+      assertEquals(
+        await preloader.getCached("project", { contentSourceId: "source-b" }),
+        undefined,
+      );
+
+      loads[0]!.resolve({ imports: { source: "a" } });
+      await first;
+    });
+
+    it("does not release capacity or duplicate work when a loader times out", async () => {
+      const adapter = createMinimalAdapter();
+      const loads: Array<ReturnType<typeof createDeferred<ImportMapConfig>>> = [];
+      const preloader = new ImportMapPreloader({
+        maxProjects: 1,
+        maxVariantsPerProject: 1,
+        ttlMs: 1_000,
+        loadTimeoutMs: 20,
+        loadImportMap: () => {
+          const load = createDeferred<ImportMapConfig>();
+          loads.push(load);
+          return load.promise;
+        },
+      });
+
+      await assertRejects(
+        () => preloader.preload("/hung", adapter, "hung"),
+        RangeError,
+        "load timed out",
+      );
+      await assertRejects(
+        () => preloader.preload("/next", adapter, "next"),
+        RangeError,
+        "capacity wait timed out",
+      );
+      assertEquals(loads.length, 1);
+
+      loads[0]!.resolve({ imports: { source: "late" } });
+      await Promise.resolve();
+      const recovered = preloader.preload("/next", adapter, "next");
+      await waitForLoadCount(loads, 2);
+      loads[1]!.resolve({ imports: { source: "next" } });
+      assertEquals((await recovered).imports?.source, "next");
     });
 
     it("keeps variant identity and capacity deterministic after primordial poisoning", async () => {

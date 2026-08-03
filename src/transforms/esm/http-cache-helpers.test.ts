@@ -82,6 +82,55 @@ describe("transforms/esm/http-cache-helpers", () => {
       );
     });
 
+    it("does not consult inherited toJSON hooks while fingerprinting import maps", async () => {
+      const importMap = {
+        imports: { pkg: "https://modules.example.com/pkg-v1.js" },
+        scopes: {
+          "https://app.example.com/": {
+            scoped: "https://modules.example.com/scoped-v1.js",
+          },
+        },
+      };
+      const baseline = await fingerprintImportMap(importMap);
+      const arrayToJson = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+      const objectToJson = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+      let hookCalls = 0;
+
+      try {
+        Object.defineProperty(Array.prototype, "toJSON", {
+          configurable: true,
+          value() {
+            hookCalls++;
+            return [];
+          },
+          writable: true,
+        });
+        Object.defineProperty(Object.prototype, "toJSON", {
+          configurable: true,
+          value() {
+            hookCalls++;
+            return {};
+          },
+          writable: true,
+        });
+
+        assertEquals(await fingerprintImportMap(importMap), baseline);
+      } finally {
+        if (arrayToJson) {
+          Object.defineProperty(Array.prototype, "toJSON", arrayToJson);
+        } else {
+          Reflect.deleteProperty(Array.prototype, "toJSON");
+        }
+        if (objectToJson) {
+          Object.defineProperty(Object.prototype, "toJSON", objectToJson);
+        } else {
+          Reflect.deleteProperty(Object.prototype, "toJSON");
+        }
+      }
+
+      assertEquals(hookCalls, 0);
+    });
+
     it("canonicalizes and fingerprints one import map once per prepared request graph", async () => {
       let importEnumerations = 0;
       const imports = new Proxy({ pkg: "https://modules.example.com/pkg.js" }, {

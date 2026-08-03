@@ -179,6 +179,7 @@ export class LayoutOrchestrator {
                   this.config.adapter,
                   this.config.projectId,
                   {
+                    projectDir: this.config.projectDir,
                     contentSourceId: this.config.contentSourceId,
                     config: this.config.config,
                   },
@@ -253,6 +254,7 @@ export class LayoutOrchestrator {
                   dependencyPinningDependencies,
                   dependencyPinningSource,
                   moduleServerOrigin,
+                  this.config.config,
                 );
                 return { type: "mdx" as const, path: layout.path, success: true };
               } catch (error) {
