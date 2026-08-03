@@ -259,6 +259,56 @@ describe("local JSON RAG store lock generations", () => {
     });
   });
 
+  for (const phase of ["open", "iteration"] as const) {
+    it(`retries when a lock directory disappears during readDir ${phase}`, async () => {
+      await withTempDir(async (tempDir) => {
+        const storagePath = join(tempDir, "data", "index.json");
+        const seeded = await seedExpiredLock(storagePath);
+        const readDirDescriptor = Object.getOwnPropertyDescriptor(Deno, "readDir");
+        assert(readDirDescriptor !== undefined);
+        const originalReadDir = Deno.readDir.bind(Deno);
+        let changed = false;
+        Object.defineProperty(Deno, "readDir", {
+          ...readDirDescriptor,
+          value: (path: string | URL) => {
+            if (!changed && String(path) === seeded.lockDirectory) {
+              changed = true;
+              if (phase === "open") {
+                return {
+                  [Symbol.asyncIterator]() {
+                    return {
+                      async next() {
+                        await Deno.remove(seeded.lockDirectory, { recursive: true });
+                        throw new Deno.errors.NotFound("lock directory disappeared");
+                      },
+                    };
+                  },
+                };
+              }
+              const entries = originalReadDir(path);
+              return (async function* () {
+                for await (const entry of entries) {
+                  yield entry;
+                  await Deno.remove(seeded.lockDirectory, { recursive: true });
+                  throw new Deno.errors.NotFound("lock directory disappeared");
+                }
+              })();
+            }
+            return originalReadDir(path);
+          },
+        });
+
+        try {
+          await withLocalJsonStoreLock(storagePath, async () => undefined);
+          assertEquals(changed, true);
+          assertEquals(await exists(seeded.lockDirectory), false);
+        } finally {
+          Object.defineProperty(Deno, "readDir", readDirDescriptor);
+        }
+      });
+    });
+  }
+
   it("propagates non-transient lock validation failures", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");

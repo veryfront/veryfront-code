@@ -144,15 +144,25 @@ async function readObservation(
 
   const entryFileNames: string[] = [];
   const seenEntryNames = new Set<string>();
-  for await (const entry of fs.readDir(lockDirectory)) {
-    if (entryFileNames.length >= LOCK_MAX_ENTRIES) {
-      throw new LocalJsonStoreLockError("The RAG store lock contains too many entries");
+  try {
+    for await (const entry of fs.readDir(lockDirectory)) {
+      if (entryFileNames.length >= LOCK_MAX_ENTRIES) {
+        throw new LocalJsonStoreLockError("The RAG store lock contains too many entries");
+      }
+      if (seenEntryNames.has(entry.name)) {
+        throw new LocalJsonStoreLockError("The RAG store lock contains duplicate entries");
+      }
+      seenEntryNames.add(entry.name);
+      entryFileNames.push(entry.name);
     }
-    if (seenEntryNames.has(entry.name)) {
-      throw new LocalJsonStoreLockError("The RAG store lock contains duplicate entries");
+  } catch (error) {
+    if (isCanonicalNotFoundError(error)) {
+      throw new LocalJsonStoreLockObservationChangedError(
+        "RAG store lock directory changed while it was being inspected",
+        { cause: error },
+      );
     }
-    seenEntryNames.add(entry.name);
-    entryFileNames.push(entry.name);
+    throw error;
   }
   entryFileNames.sort();
 
