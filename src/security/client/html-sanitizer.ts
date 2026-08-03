@@ -7,10 +7,7 @@
  * - validateTrustedHtml() provides defense-in-depth for server HTML
  */
 
-import { escapeHtml } from "#veryfront/utils/html-escape.ts";
 import { SECURITY_VIOLATION } from "#veryfront/errors/error-registry.ts";
-
-export { escapeHtml };
 
 /**
  * Patterns that RSC should never generate.
