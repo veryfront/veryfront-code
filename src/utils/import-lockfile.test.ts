@@ -88,18 +88,14 @@ function exposePartialNextWrite(fs: FSAdapter): {
   return { started: started.promise, release: release.resolve };
 }
 
-async function resolvesWithin(promise: Promise<unknown>, milliseconds = 50): Promise<boolean> {
-  let timeout: number | undefined;
-  try {
-    return await Promise.race([
-      promise.then(() => true),
-      new Promise<boolean>((resolve) => {
-        timeout = setTimeout(() => resolve(false), milliseconds);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timeout);
-  }
+function resolvesWithin(promise: Promise<unknown>, milliseconds = 50): Promise<boolean> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<boolean>((resolve) => {
+    timeout = setTimeout(() => resolve(false), milliseconds);
+  });
+  return Promise.race([promise.then(() => true), timeoutPromise]).finally(() => {
+    if (timeout !== undefined) clearTimeout(timeout);
+  });
 }
 
 describe("import-lockfile", () => {
@@ -376,7 +372,7 @@ describe("import-lockfile", () => {
       });
       await fs.writeFile("/project/veryfront.lock", newerContent);
 
-      // A flush with pending data must validate and preserve the newer-format file.
+      // A flush with pending work must fail rather than overwrite the newer-format file.
       await assertRejects(() => mgr.flush(), VeryfrontError);
 
       assertEquals(await fs.readFile("/project/veryfront.lock"), newerContent);

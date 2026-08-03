@@ -214,10 +214,14 @@ async function resolveLockfileAccessKey(
       normalize(`${canonicalProjectDir}/${LOCKFILE_NAME}`),
     ]);
   } catch {
-    // Without a trustworthy canonical path, serialize conservatively across
-    // the whole backing adapter so symlink and case aliases cannot race.
+    // Without a trustworthy canonical project path, serialize conservatively
+    // across the whole backing adapter so symlink and case aliases cannot race.
     return JSON.stringify([adapterIdentity]);
   }
+}
+
+function compareLockfileImportKeys(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function serializeLockfileAccess<T>(
@@ -329,7 +333,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
       version: LOCKFILE_VERSION,
       imports: createImportDictionary(
         Object.entries(data.imports)
-          .sort(([a], [b]) => a.localeCompare(b))
+          .sort(([a], [b]) => compareLockfileImportKeys(a, b))
           .map(([url, entry]) => [url, cloneLockfileEntry(entry)]),
       ),
     };

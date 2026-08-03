@@ -102,7 +102,7 @@ resolve: {
     [
       "Check that the lockfile is readable",
       "Restore valid JSON from version control or a backup",
-      "Move the unreadable file aside manually before regenerating it",
+      "Run 'veryfront lock --clear' to discard the unreadable lockfile and regenerate it",
     ],
   ),
 });
