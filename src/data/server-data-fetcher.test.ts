@@ -363,7 +363,7 @@ describe("ServerDataFetcher", () => {
             { modulePath: "/tmp/test/page.ts", projectDir: "/tmp/test" },
           ),
         Error,
-        "too large",
+        "exceeds size limit",
       );
     });
 
@@ -393,8 +393,45 @@ describe("ServerDataFetcher", () => {
             { modulePath: "/tmp/test/page.ts", projectDir: "/tmp/test" },
           ),
         Error,
-        "too large",
+        "exceeds size limit",
       );
+    });
+
+    it("should bound chunked bodies while streaming and cancel the source", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_DATA", "1");
+      __resetPoolForTests();
+
+      const fetcher = new ServerDataFetcher();
+      const pageModule: PageWithData = {
+        default: () => null,
+        getServerData: () => ({ props: {} }),
+      };
+      const chunk = new Uint8Array(6 * 1024 * 1024);
+      let cancelled = false;
+      const request = new Request("http://localhost/test", {
+        method: "POST",
+        body: new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.enqueue(chunk);
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+      });
+
+      await assertRejects(
+        () =>
+          fetcher.fetch(
+            pageModule,
+            createContext({ request }),
+            { modulePath: "/tmp/test/page.ts", projectDir: "/tmp/test" },
+          ),
+        Error,
+        "exceeds size limit",
+      );
+      assertEquals(cancelled, true);
     });
 
     it("should skip body size guard when request has no body", async () => {
@@ -627,6 +664,7 @@ describe("ServerDataFetcher", () => {
       function isolatedFetch(
         modulePath: string,
         dir: string,
+        context: DataContext = createContext(),
       ): Promise<DataResult> {
         const fetcher = new ServerDataFetcher();
         const pageModule: PageWithData = {
@@ -637,7 +675,7 @@ describe("ServerDataFetcher", () => {
         return runWithExactSourceIntegrationPolicy(
           { schemaVersion: 1, mode: "unrestricted" },
           () =>
-            fetcher.fetch(pageModule, createContext(), {
+            fetcher.fetch(pageModule, context, {
               modulePath,
               projectDir: dir,
               isLocalProject: true,
@@ -691,6 +729,43 @@ describe("ServerDataFetcher", () => {
           Error,
           "intentional test error from isolated getServerData",
         );
+      });
+
+      it("does not expose infrastructure headers to isolated server-data hooks", async () => {
+        const { modulePath, projectDir: dir } = await writeIsolatedPage(
+          `export function getServerData(context) {
+             return {
+               props: {
+                 authorization: context.request.headers.get("authorization"),
+                 projectId: context.request.headers.get("x-project-id"),
+                 token: context.request.headers.get("x-token"),
+                 veryfront: context.request.headers.get("x-veryfront-release-id"),
+               },
+             };
+           }
+           export default function Page() { return null; }`,
+        );
+        const request = new Request("http://localhost/test", {
+          headers: {
+            authorization: "Bearer application-user",
+            "x-project-id": "tenant-42",
+            "x-token": "platform-secret",
+            "x-veryfront-release-id": "release-secret",
+          },
+        });
+
+        const result = await isolatedFetch(
+          modulePath,
+          dir,
+          createContext({ request }),
+        );
+
+        assertEquals(result.props, {
+          authorization: "Bearer application-user",
+          projectId: null,
+          token: null,
+          veryfront: null,
+        });
       });
     });
 

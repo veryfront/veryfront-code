@@ -20,6 +20,8 @@ import {
 import { getTrustedProjectEnvSnapshot } from "#veryfront/platform/compat/process/env.ts";
 import type { ProjectEnvSnapshot } from "#veryfront/platform/compat/process/project-env-contract.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
+import { readBodyBytesWithLimit } from "#veryfront/security/input-validation/limits.ts";
+import { createApplicationRequestHeaders } from "#veryfront/security/http/application-request.ts";
 
 /**
  * Options for isolated data fetching through Worker pool.
@@ -227,30 +229,15 @@ export class ServerDataFetcher {
     const pool = getWorkerPool();
     let body: Uint8Array | null = null;
     if (context.request?.body) {
-      // Fast path: reject before buffering if Content-Length is known
-      const contentLength = context.request.headers?.get("content-length");
-      if (contentLength) {
-        const bytes = parseInt(contentLength, 10);
-        if (bytes > MAX_WORKER_BODY_BYTES) {
-          throw new Error(
-            `Request body too large for isolated data fetch (${
-              (bytes / 1024 / 1024).toFixed(1)
-            } MB, limit ${MAX_WORKER_BODY_BYTES / 1024 / 1024} MB)`,
-          );
-        }
-      }
-
-      body = new Uint8Array(await context.request.arrayBuffer());
-
-      // Fallback: check actual size for chunked/streaming bodies
-      if (body.byteLength > MAX_WORKER_BODY_BYTES) {
-        throw new Error(
-          `Request body too large for isolated data fetch (${
-            (body.byteLength / 1024 / 1024).toFixed(1)
-          } MB, limit ${MAX_WORKER_BODY_BYTES / 1024 / 1024} MB)`,
-        );
-      }
+      body = await readBodyBytesWithLimit(
+        context.request,
+        MAX_WORKER_BODY_BYTES,
+      );
     }
+
+    const applicationHeaders = context.request
+      ? createApplicationRequestHeaders(context.request.headers)
+      : undefined;
 
     const admission = await resolveDataWorkerAdmission(options);
 
@@ -268,7 +255,7 @@ export class ServerDataFetcher {
             request: {
               url: context.request?.url ?? context.url?.toString() ?? "http://localhost",
               method: context.request?.method ?? "GET",
-              headers: context.request ? [...context.request.headers.entries()] : [],
+              headers: applicationHeaders ? [...applicationHeaders.entries()] : [],
               body,
             },
             url: context.url?.toString() ?? "http://localhost",
