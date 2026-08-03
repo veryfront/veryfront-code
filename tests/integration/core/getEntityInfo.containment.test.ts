@@ -28,6 +28,32 @@ describe("getEntityBySlug containment", () => {
         await getEntityBySlug(projectDir, "secret", undefined, "../outside"),
         null,
       );
+      assertEquals(
+        await getEntityBySlug(
+          projectDir,
+          "secret",
+          undefined,
+          join(root, "outside"),
+        ),
+        null,
+      );
+    });
+  });
+
+  it("rejects page files and directories that escape through symlinks", async () => {
+    await withTempDir(async (root) => {
+      const projectDir = join(root, "project");
+      const pagesDir = join(projectDir, "pages");
+      const outsideDir = join(root, "outside");
+      await mkdir(pagesDir, { recursive: true });
+      await mkdir(outsideDir, { recursive: true });
+      await writeTextFile(join(outsideDir, "secret.mdx"), "# Secret");
+      await writeTextFile(join(outsideDir, "index.mdx"), "# Secret index");
+      await Deno.symlink(join(outsideDir, "secret.mdx"), join(pagesDir, "leak.mdx"));
+      await Deno.symlink(outsideDir, join(pagesDir, "linked"));
+
+      assertEquals(await getEntityBySlug(projectDir, "leak"), null);
+      assertEquals(await getEntityBySlug(projectDir, "linked"), null);
     });
   });
 
@@ -56,6 +82,10 @@ describe("getLayoutEntity containment", () => {
 
       assertEquals(await getLayoutEntity(projectDir, "../outside.mdx"), null);
       assertEquals(await getLayoutEntity(projectDir, "@/../outside.mdx"), null);
+      assertEquals(
+        await getLayoutEntity(projectDir, join(root, "outside.mdx")),
+        null,
+      );
     });
   });
 
@@ -71,6 +101,20 @@ describe("getLayoutEntity containment", () => {
       const result = await getLayoutEntity(projectDir, "main");
 
       assertEquals(result?.entity.content, "# Main layout");
+    });
+  });
+
+  it("rejects layout files that escape through symlinks", async () => {
+    await withTempDir(async (root) => {
+      const projectDir = join(root, "project");
+      const layoutsDir = join(projectDir, "layouts");
+      const outsideLayout = join(root, "outside.mdx");
+      await mkdir(layoutsDir, { recursive: true });
+      await writeTextFile(outsideLayout, "# Outside layout");
+      await Deno.symlink(outsideLayout, join(layoutsDir, "main.mdx"));
+
+      assertEquals(await getLayoutEntity(projectDir, "main"), null);
+      assertEquals(await getLayoutEntity(projectDir, "layouts/main.mdx"), null);
     });
   });
 });

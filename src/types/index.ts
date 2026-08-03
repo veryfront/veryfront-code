@@ -96,7 +96,7 @@ export interface MDXFrontmatter {
   date?: string;
   published?: boolean;
   priority?: number;
-  [key: string]: string | number | boolean | string[] | undefined;
+  [key: string]: unknown;
 }
 
 export interface MDXGlobals {

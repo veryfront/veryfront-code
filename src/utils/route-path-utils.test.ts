@@ -11,6 +11,7 @@ import {
   isDynamicRoute,
   isDynamicSegment,
   matchesPattern,
+  parseRouteParameterSegment,
   removeFileExtension,
 } from "./route-path-utils.ts";
 
@@ -61,6 +62,42 @@ describe("route-path-utils", () => {
 
       for (const segment of segments) {
         assertEquals(isDynamicSegment(segment), false);
+      }
+    });
+  });
+
+  describe("parseRouteParameterSegment", () => {
+    it("parses supported dynamic segment forms and file suffixes", () => {
+      assertEquals(parseRouteParameterSegment("[id]"), {
+        name: "id",
+        kind: "dynamic",
+        suffix: "",
+      });
+      assertEquals(parseRouteParameterSegment("[...path].MDX"), {
+        name: "path",
+        kind: "catch-all",
+        suffix: ".MDX",
+      });
+      assertEquals(parseRouteParameterSegment("[[...slug]].tsx"), {
+        name: "slug",
+        kind: "optional-catch-all",
+        suffix: ".tsx",
+      });
+    });
+
+    it("rejects incomplete or unsafe parameter syntax", () => {
+      const invalid = [
+        "[]",
+        "[...].tsx",
+        "[[...slug].tsx",
+        "[a/b].tsx",
+        "[a\\b].tsx",
+        "[id]tsx",
+        "[id]\n.tsx",
+      ] as const;
+
+      for (const segment of invalid) {
+        assertEquals(parseRouteParameterSegment(segment), null);
       }
     });
   });

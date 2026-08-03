@@ -23,6 +23,61 @@ export function containsPathControlCharacters(value: string): boolean {
   return false;
 }
 
+export type RouteParameterKind =
+  | "dynamic"
+  | "catch-all"
+  | "optional-catch-all";
+
+export interface ParsedRouteParameter {
+  name: string;
+  kind: RouteParameterKind;
+  /** Literal suffix after the route parameter, such as `.tsx`. */
+  suffix: string;
+}
+
+function isValidParameterName(name: string): boolean {
+  return name.trim().length > 0 &&
+    !/[\/\\[\]]/.test(name) &&
+    !containsPathControlCharacters(name);
+}
+
+/** Parse a complete dynamic route segment using the public route grammar. */
+export function parseRouteParameterSegment(
+  segment: string,
+): ParsedRouteParameter | null {
+  if (!segment.startsWith("[") || containsPathControlCharacters(segment)) {
+    return null;
+  }
+
+  let marker: string;
+  let kind: RouteParameterKind;
+  let closing: string;
+  if (segment.startsWith("[[...")) {
+    marker = "[[...";
+    kind = "optional-catch-all";
+    closing = "]]";
+  } else if (segment.startsWith("[...")) {
+    marker = "[...";
+    kind = "catch-all";
+    closing = "]";
+  } else {
+    marker = "[";
+    kind = "dynamic";
+    closing = "]";
+  }
+
+  const closingIndex = segment.indexOf(closing, marker.length);
+  if (closingIndex === -1) return null;
+
+  const name = segment.slice(marker.length, closingIndex);
+  const suffix = segment.slice(closingIndex + closing.length);
+  if (!isValidParameterName(name)) return null;
+  if (suffix && (!suffix.startsWith(".") || /[\/\\[\]]/.test(suffix))) {
+    return null;
+  }
+  return { name, kind, suffix };
+}
+
 /** Patterns for dynamic segment detection */
 const DYNAMIC_SEGMENT_PATTERNS = {
   standard: /^\[[\w]+\]$/, // [id]

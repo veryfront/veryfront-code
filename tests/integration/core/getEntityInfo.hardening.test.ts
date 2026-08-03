@@ -1,79 +1,10 @@
-/**
- * Hardening cases for route, layout and entity resolution.
- *
- * Ported from origin/codex/module-reconcile-20260723, where the suite was
- * written against src/rendering/entity-resolution.ts — a 1045-line rewrite that
- * exists only on that branch. Main's equivalent is this repo's 480-line
- * src/types/entities/getEntityInfo.ts.
- *
- * The cases kept below are the ones that describe main's contract. Four defects
- * they exposed were fixed in production rather than asserted away: the detached
- * getEntityIdForPath receiver, case-sensitive extension matching, non-canonical
- * resolved slugs, and the missing directory-index candidate in the resolveFile
- * branch.
- *
- * Twenty-seven further cases specify subsystems main has never had. They are
- * not ported here, because a permanently-ignored test is dead coverage the
- * skipped-test ratchet exists to prevent (see tests/README.md). They remain
- * available in full at:
- *
- *   git show origin/codex/module-reconcile-20260723:tests/integration/core/getEntityInfo.hardening.test.ts
- *
- * Grouped by the subsystem each one needs, so a decision can be made per group:
- *
- *  1. Route-conflict reporting — main registers the `route-conflict` error in
- *     src/errors/error-registry/route.ts but never throws it; duplicate routes
- *     resolve silently by extension priority. Cases: "reports ambiguous dynamic
- *     pages at the same route depth", "reports duplicate exact page
- *     definitions", "reports duplicate exact pages hidden by adapter extension
- *     priority", "reports case-variant duplicate extensions returned by adapter
- *     directories", "reports duplicate layout definitions".
- *  2. Path and identifier bounds — no length ceiling or control-character
- *     screening on slugs, composed candidates, adapter-canonicalized paths or
- *     hosted entity ids. Cases: "rejects route slugs beyond the path boundary
- *     before filesystem access", "rejects route controls before filesystem
- *     access", "rejects composed candidate paths beyond the path boundary",
- *     "rejects overlong canonical paths returned by an adapter", "rejects
- *     hosted entity identifiers containing control characters".
- *  3. Traversal budgets — directory iteration and dynamic traversal are
- *     unbounded. Cases: "bounds adapter directory iteration", "bounds dynamic
- *     directory traversal across one route lookup", "charges invalid entries
- *     against the global dynamic traversal budget".
- *  4. Directory-entry integrity — entries are consumed as yielded, without
- *     validation or defensive copying. Cases: "rejects unsafe and structurally
- *     impossible directory entries", "snapshots adapter directory entries
- *     before asynchronous mutation".
- *  5. Root canonicalization — main never calls adapter realPath, so there is no
- *     canonical root to contain resolved paths against. Cases: "propagates an
- *     immediate root canonicalization failure before touching candidates",
- *     "propagates a deferred root canonicalization failure before touching
- *     candidates", "supports Cloudflare KV containment without allowing
- *     resolved path escapes".
- *  6. Error propagation policy — main deliberately catches and degrades where
- *     the branch propagates (see the documented catch blocks in
- *     getEntityInfo.ts). Reversing that is a product decision, not a fix.
- *     Cases: "propagates hosted adapter entity identifier failures", "does not
- *     reinterpret entity identifier failures as missing files", "propagates
- *     failures while inspecting the authoritative entity identifier hook",
- *     "preserves an unreadable adapter rejection without reclassifying it",
- *     "preserves adapter directory errors during exact-page discovery", "does
- *     not invoke an accessor masquerading as the optional entity identifier
- *     hook".
- *  7. Frontmatter type scrubbing — main passes YAML attrs through unvalidated,
- *     so a declared-string field can hold a number. Case: "removes invalid
- *     values from typed frontmatter fields".
- *  8. Page-source size limit — no ceiling on entity source length. Case:
- *     "rejects entity sources beyond the bounded page-source limit".
- *  9. Nested dynamic directory traversal — main only walks literal parent
- *     directories, so `pages/blog/[category]/[slug].mdx` never matches. Case:
- *     "resolves routes with consecutive dynamic path segments".
- */
 import "#veryfront/schemas/_test-setup.ts";
 import { join } from "#veryfront/compat/path";
-import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { mkdir, withTempDir, writeTextFile } from "#veryfront/testing/deno-compat";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { CloudflareFileSystemAdapter } from "#veryfront/platform/adapters/runtime/cloudflare/filesystem.ts";
 import type { KVNamespace } from "#veryfront/platform/adapters/runtime/cloudflare/types.ts";
@@ -82,6 +13,14 @@ import {
   getEntityInfo,
   getLayoutEntity,
 } from "../../../src/types/entities/getEntityInfo.ts";
+
+async function assertRouteConflict(operation: () => Promise<unknown>): Promise<void> {
+  const error = await assertRejects(operation, VeryfrontError);
+  if (!(error instanceof VeryfrontError)) {
+    throw new Error("Expected a VeryfrontError route conflict");
+  }
+  assertEquals(error.slug, "route-conflict");
+}
 
 function createCloudflareKV(initialEntries: Record<string, string>): KVNamespace {
   const entries = new Map(Object.entries(initialEntries));
@@ -107,16 +46,107 @@ function createCloudflareKV(initialEntries: Record<string, string>): KVNamespace
       });
     },
     put(key, value) {
-      entries.set(
-        key,
-        typeof value === "string" ? value : new TextDecoder().decode(value as ArrayBuffer),
-      );
+      if (typeof value !== "string") {
+        throw new TypeError("Test KV accepts text values only");
+      }
+      entries.set(key, value);
       return Promise.resolve();
     },
   };
 }
 
+function hostedTextRead(content = "# Page") {
+  return {
+    readFile: () => Promise.resolve(content),
+    readFileBytesWithinLimit: (_path: string, byteLimit: number) => {
+      const bytes = new TextEncoder().encode(content);
+      if (bytes.byteLength > byteLimit) {
+        return Promise.reject(new RangeError(`File exceeds ${byteLimit} bytes`));
+      }
+      return Promise.resolve(bytes);
+    },
+  };
+}
+
 describe("getEntityInfo", () => {
+  it("removes invalid values from typed frontmatter fields", async () => {
+    await withTempDir(async (projectDir) => {
+      const pagePath = join(projectDir, "page.mdx");
+      await writeTextFile(
+        pagePath,
+        [
+          "---",
+          "title: 42",
+          "tags:",
+          "  - valid",
+          "  - 7",
+          "published: yes",
+          "isLayout: yes",
+          "custom:",
+          "  nested: true",
+          "---",
+          "# Page",
+        ].join("\n"),
+      );
+
+      const result = await getEntityInfo(pagePath);
+
+      assertExists(result);
+      assertEquals(result.entity.frontmatter.title, undefined);
+      assertEquals(result.entity.frontmatter.tags, undefined);
+      assertEquals(result.entity.frontmatter.published, undefined);
+      assertEquals(result.entity.frontmatter.isLayout, undefined);
+      assertEquals(result.entity.frontmatter.custom as unknown, { nested: true });
+      assertEquals(result.entity.type, "page");
+    });
+  });
+
+  it("propagates hosted adapter entity identifier failures", async () => {
+    const adapter = {
+      fs: {
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({
+          getEntityIdForPath: () => {
+            throw new Error("entity identifier lookup failed");
+          },
+        }),
+        isMultiProjectMode: () => false,
+        ...hostedTextRead(),
+      },
+    } as unknown as RuntimeAdapter;
+
+    await assertRejects(
+      () => getEntityInfo("/project/pages/page.mdx", adapter),
+      Error,
+      "entity identifier lookup failed",
+    );
+  });
+
+  it("does not reinterpret entity identifier failures as missing files", async () => {
+    const missingEntityId = Object.assign(
+      new Error("entity identifier unavailable"),
+      { code: "ENOENT" },
+    );
+    const adapter = {
+      fs: {
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({
+          getEntityIdForPath: () => {
+            throw missingEntityId;
+          },
+        }),
+        isMultiProjectMode: () => false,
+        ...hostedTextRead(),
+      },
+    } as unknown as RuntimeAdapter;
+
+    await assertRejects(
+      () => getEntityInfo("/project/pages/page.mdx", adapter),
+      Error,
+      "entity identifier unavailable",
+    );
+  });
+
   it("preserves the hosted adapter receiver during entity identifier lookup", async () => {
     const underlyingAdapter = {
       prefix: "entity",
@@ -129,7 +159,7 @@ describe("getEntityInfo", () => {
         isVeryfrontAdapter: () => true,
         getUnderlyingAdapter: () => underlyingAdapter,
         isMultiProjectMode: () => false,
-        readFile: () => Promise.resolve("# Page"),
+        ...hostedTextRead(),
       },
     } as unknown as RuntimeAdapter;
 
@@ -137,6 +167,118 @@ describe("getEntityInfo", () => {
 
     assertExists(result);
     assertEquals(result.entity.id, "entity:pages/page.mdx");
+  });
+
+  it("does not invoke an accessor masquerading as the optional entity identifier hook", async () => {
+    let accessorReads = 0;
+    const underlyingAdapter = Object.defineProperty({}, "getEntityIdForPath", {
+      configurable: true,
+      get() {
+        accessorReads++;
+        throw new Error("entity identifier accessor must not run");
+      },
+    });
+    const adapter = {
+      fs: {
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => underlyingAdapter,
+        isMultiProjectMode: () => false,
+        ...hostedTextRead(),
+      },
+    } as unknown as RuntimeAdapter;
+
+    const result = await getEntityInfo("pages/page.mdx", adapter);
+
+    assertExists(result);
+    assertEquals(result.entity.id, "pages/page.mdx");
+    assertEquals(accessorReads, 0);
+  });
+
+  it("propagates failures while inspecting the authoritative entity identifier hook", async () => {
+    const underlyingAdapter = new Proxy({}, {
+      getOwnPropertyDescriptor() {
+        throw new Error("entity identifier hook inspection failed");
+      },
+    });
+    const adapter = {
+      fs: {
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => underlyingAdapter,
+        isMultiProjectMode: () => false,
+        ...hostedTextRead(),
+      },
+    } as unknown as RuntimeAdapter;
+
+    await assertRejects(
+      () => getEntityInfo("pages/page.mdx", adapter),
+      Error,
+      "entity identifier hook inspection failed",
+    );
+  });
+
+  it("rejects hosted entity identifiers containing control characters", async () => {
+    const adapter = {
+      fs: {
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({
+          getEntityIdForPath: () => "entity\nidentifier",
+        }),
+        isMultiProjectMode: () => false,
+        ...hostedTextRead(),
+      },
+    } as unknown as RuntimeAdapter;
+
+    const error = await assertRejects(
+      () => getEntityInfo("/project/pages/page.mdx", adapter),
+      VeryfrontError,
+    );
+    if (!(error instanceof VeryfrontError)) {
+      throw new Error("Expected a VeryfrontError for an invalid entity identifier");
+    }
+    assertEquals(error.slug, "invalid-route-file");
+  });
+
+  it("preserves an unreadable adapter rejection without reclassifying it", async () => {
+    const rejection = new Proxy({}, {
+      get() {
+        throw new Error("adapter rejection must not be inspected");
+      },
+    });
+    const adapter = createMockAdapter();
+    adapter.fs.stat = () => Promise.reject(rejection);
+
+    let caught: unknown;
+    try {
+      await getEntityInfo("/project/pages/page.mdx", adapter);
+    } catch (error) {
+      caught = error;
+    }
+
+    assertEquals(caught === rejection, true);
+  });
+
+  it("rejects entity sources beyond the bounded page-source limit", async () => {
+    let unboundedReads = 0;
+    const adapter = {
+      fs: {
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        readFile: () => {
+          unboundedReads++;
+          return Promise.resolve("x".repeat(5 * 1024 * 1024 + 1));
+        },
+        readFileBytesWithinLimit: () =>
+          Promise.reject(new RangeError("source exceeds bounded read")),
+      },
+    } as unknown as RuntimeAdapter;
+
+    await assertRejects(
+      () => getEntityInfo("/project/pages/page.mdx", adapter),
+      Error,
+      "source exceeds",
+    );
+    assertEquals(unboundedReads, 0);
   });
 
   it("normalizes slugs from case-insensitive supported extensions", async () => {
@@ -152,12 +294,7 @@ describe("getEntityInfo", () => {
     });
   });
 
-  // The branch derived a full route path here ("blog/guides"). Main's slug is
-  // the containing directory name, pinned by "extracts slug correctly" in
-  // getEntityInfo.test.ts, so the assertion follows main's contract. The case
-  // still covers what it was written for: an uppercase INDEX.MDX is recognized
-  // as a directory index and has its extension stripped.
-  it("derives a route slug for nested case-insensitive index files", async () => {
+  it("derives a complete route slug for nested case-insensitive index files", async () => {
     await withTempDir(async (projectDir) => {
       const pagePath = join(projectDir, "pages", "blog", "guides", "INDEX.MDX");
       await mkdir(join(projectDir, "pages", "blog", "guides"), { recursive: true });
@@ -166,12 +303,32 @@ describe("getEntityInfo", () => {
       const result = await getEntityInfo(pagePath);
 
       assertExists(result);
-      assertEquals(result.entity.slug, "guides");
+      assertEquals(result.entity.slug, "blog/guides");
     });
   });
 });
 
 describe("getEntityBySlug", () => {
+  it("supports Cloudflare KV containment without allowing resolved path escapes", async () => {
+    const fs = new CloudflareFileSystemAdapter(createCloudflareKV({
+      "/outside/secret.mdx": "# Secret",
+      "/project/pages/about.mdx": "# About",
+    }));
+    const adapter: RuntimeAdapter = {
+      ...createMockAdapter(),
+      id: "cloudflare",
+      fs,
+    };
+
+    const page = await getEntityBySlug("/project", "about", adapter);
+    assertEquals(page?.entity.content, "# About");
+
+    Object.assign(fs, {
+      resolveFile: () => Promise.resolve("/outside/secret.mdx"),
+    });
+    assertEquals(await getEntityBySlug("/project", "secret", adapter), null);
+  });
+
   it("resolves relative Cloudflare KV projects from the canonical virtual root", async () => {
     const fs = new CloudflareFileSystemAdapter(createCloudflareKV({
       "pages/about.mdx": "# Relative about",
@@ -210,6 +367,53 @@ describe("getEntityBySlug", () => {
     assertEquals(page?.entity.slug, "about");
   });
 
+  it("propagates an immediate root canonicalization failure before touching candidates", async () => {
+    const rootFailure = new Error("root backend unavailable immediately");
+    const adapter = createMockAdapter();
+    let candidateCalls = 0;
+    adapter.fs.resolveFile = (path: string) =>
+      Promise.resolve(path.endsWith("/pages/about") ? `${path}.mdx` : null);
+    adapter.fs.realPath = (path: string) => {
+      if (path === "/project") return Promise.reject(rootFailure);
+      candidateCalls++;
+      return Promise.reject(new Error("candidate failure must not win"));
+    };
+
+    const error = await assertRejects(
+      () => getEntityBySlug("/project", "about", adapter),
+      Error,
+      rootFailure.message,
+    );
+
+    assertEquals(error === rootFailure, true);
+    assertEquals(candidateCalls, 0);
+  });
+
+  it("propagates a deferred root canonicalization failure before touching candidates", async () => {
+    const rootFailure = new Error("root backend unavailable after a turn");
+    const adapter = createMockAdapter();
+    let candidateCalls = 0;
+    adapter.fs.resolveFile = (path: string) =>
+      Promise.resolve(path.endsWith("/pages/about") ? `${path}.mdx` : null);
+    adapter.fs.realPath = async (path: string) => {
+      if (path === "/project") {
+        await Promise.resolve();
+        throw rootFailure;
+      }
+      candidateCalls++;
+      throw new Error("candidate failure must not win");
+    };
+
+    const error = await assertRejects(
+      () => getEntityBySlug("/project", "about", adapter),
+      Error,
+      rootFailure.message,
+    );
+
+    assertEquals(error === rootFailure, true);
+    assertEquals(candidateCalls, 0);
+  });
+
   it("resolves dynamic pages with case-insensitive supported extensions", async () => {
     await withTempDir(async (projectDir) => {
       const pagesDir = join(projectDir, "pages", "blog");
@@ -221,6 +425,31 @@ describe("getEntityBySlug", () => {
       assertExists(result);
       assertEquals(result.entity.slug, "blog/entry");
       assertEquals(result.entity.content, "# Dynamic page");
+    });
+  });
+
+  it("reports ambiguous dynamic pages at the same route depth", async () => {
+    await withTempDir(async (projectDir) => {
+      const pagesDir = join(projectDir, "pages", "blog");
+      await mkdir(pagesDir, { recursive: true });
+      await writeTextFile(join(pagesDir, "[id].mdx"), "# ID page");
+      await writeTextFile(join(pagesDir, "[slug].mdx"), "# Slug page");
+
+      await assertRouteConflict(() => getEntityBySlug(projectDir, "blog/entry"));
+    });
+  });
+
+  it("resolves routes with consecutive dynamic path segments", async () => {
+    await withTempDir(async (projectDir) => {
+      const categoryDir = join(projectDir, "pages", "blog", "[category]");
+      await mkdir(categoryDir, { recursive: true });
+      await writeTextFile(join(categoryDir, "[slug].mdx"), "# Nested dynamic page");
+
+      const result = await getEntityBySlug(projectDir, "blog/guides/getting-started");
+
+      assertExists(result);
+      assertEquals(result.entity.slug, "blog/guides/getting-started");
+      assertEquals(result.entity.content, "# Nested dynamic page");
     });
   });
 
@@ -251,6 +480,44 @@ describe("getEntityBySlug", () => {
     });
   });
 
+  it("reports duplicate exact page definitions", async () => {
+    await withTempDir(async (projectDir) => {
+      const pagesDir = join(projectDir, "pages");
+      await mkdir(pagesDir, { recursive: true });
+      await writeTextFile(join(pagesDir, "about.mdx"), "# MDX page");
+      await writeTextFile(join(pagesDir, "about.tsx"), "export default function About() {}");
+
+      await assertRouteConflict(() => getEntityBySlug(projectDir, "about"));
+    });
+  });
+
+  it("reports duplicate exact pages hidden by adapter extension priority", async () => {
+    const adapter = createMockAdapter();
+    adapter.fs.files.set("/project/pages/about.mdx", "# MDX page");
+    adapter.fs.files.set(
+      "/project/pages/about.tsx",
+      "export default function About() {}",
+    );
+    adapter.fs.resolveFile = (path: string) =>
+      Promise.resolve(
+        path.endsWith("/pages/about") ? "/project/pages/about.mdx" : null,
+      );
+
+    await assertRouteConflict(() => getEntityBySlug("/project", "about", adapter));
+  });
+
+  it("reports case-variant duplicate extensions returned by adapter directories", async () => {
+    const adapter = createMockAdapter();
+    adapter.fs.files.set("/project/pages/about.mdx", "# Lowercase extension");
+    adapter.fs.files.set("/project/pages/about.MDX", "# Uppercase extension");
+    adapter.fs.resolveFile = (path: string) =>
+      Promise.resolve(
+        path.endsWith("/pages/about") ? "/project/pages/about.mdx" : null,
+      );
+
+    await assertRouteConflict(() => getEntityBySlug("/project", "about", adapter));
+  });
+
   it("deduplicates repeated adapter directory entries deterministically", async () => {
     const adapter = createMockAdapter();
     adapter.fs.files.set("/project/pages/about.mdx", "# About");
@@ -270,6 +537,30 @@ describe("getEntityBySlug", () => {
     const result = await getEntityBySlug("/project", "about", adapter);
 
     assertEquals(result?.entity.content, "# About");
+  });
+
+  it("preserves adapter directory errors during exact-page discovery", async () => {
+    const backendFailure = new Error("directory backend unavailable");
+    const adapter = createMockAdapter();
+    let resolveCalls = 0;
+    adapter.fs.resolveFile = (path: string) => {
+      resolveCalls++;
+      return Promise.resolve(
+        path.endsWith("/pages/about") ? "/project/pages/about.mdx" : null,
+      );
+    };
+    adapter.fs.readDir = () => {
+      throw backendFailure;
+    };
+
+    const error = await assertRejects(
+      () => getEntityBySlug("/project", "about", adapter),
+      Error,
+      backendFailure.message,
+    );
+
+    assertEquals(error === backendFailure, true);
+    assertEquals(resolveCalls, 1);
   });
 
   it("returns a canonical slug after resolving redundant path segments", async () => {
@@ -316,6 +607,325 @@ describe("getEntityBySlug", () => {
     assertEquals(result.entity.slug, "about");
     assertEquals(result.entity.content, "# About");
   });
+
+  it("rejects route slugs beyond the path boundary before filesystem access", async () => {
+    const adapter = createMockAdapter();
+    let statCalls = 0;
+    adapter.fs.stat = () => {
+      statCalls++;
+      return Promise.reject(new Error("filesystem must not be reached"));
+    };
+
+    assertEquals(
+      await getEntityBySlug("/project", "x".repeat(4_097), adapter),
+      null,
+    );
+    assertEquals(statCalls, 0);
+  });
+
+  it("rejects route controls before filesystem access", async () => {
+    const adapter = createMockAdapter();
+    let statCalls = 0;
+    adapter.fs.stat = () => {
+      statCalls++;
+      return Promise.reject(new Error("filesystem must not be reached"));
+    };
+
+    assertEquals(await getEntityBySlug("/project", "safe\nroute", adapter), null);
+    assertEquals(statCalls, 0);
+  });
+
+  it("rejects composed candidate paths beyond the path boundary", async () => {
+    const adapter = createMockAdapter();
+    let resolveCalls = 0;
+    let statCalls = 0;
+    adapter.fs.resolveFile = () => {
+      resolveCalls++;
+      return Promise.resolve(null);
+    };
+    adapter.fs.stat = () => {
+      statCalls++;
+      return Promise.reject(new Error("filesystem must not be reached"));
+    };
+
+    assertEquals(
+      await getEntityBySlug(
+        `/${"p".repeat(3_000)}`,
+        "page",
+        adapter,
+        "d".repeat(1_500),
+      ),
+      null,
+    );
+    assertEquals(resolveCalls, 0);
+    assertEquals(statCalls, 0);
+  });
+
+  it("rejects overlong canonical paths returned by an adapter", async () => {
+    const adapter = createMockAdapter();
+    let statCalls = 0;
+    adapter.fs.realPath = () => Promise.resolve(`/${"x".repeat(4_097)}`);
+    adapter.fs.stat = () => {
+      statCalls++;
+      return Promise.reject(new Error("filesystem must not be reached"));
+    };
+
+    assertEquals(await getEntityBySlug("/project", "page", adapter), null);
+    assertEquals(statCalls, 0);
+  });
+
+  it("snapshots adapter directory entries before asynchronous mutation", async () => {
+    const underlyingAdapter = {};
+    const mutableEntry = {
+      name: "[slug].mdx",
+      isFile: true,
+      isDirectory: false,
+      isSymlink: false,
+    };
+    const adapter = {
+      fs: {
+        isVeryfrontAdapter: () => false,
+        getUnderlyingAdapter: () => underlyingAdapter,
+        isMultiProjectMode: () => false,
+        getAdapterType: () => "GitHubFSAdapter",
+        resolveFile: () => Promise.resolve(null),
+        stat: (path: string) =>
+          Promise.resolve({
+            size: path.endsWith("/pages") ? 0 : 9,
+            isFile: !path.endsWith("/pages"),
+            isDirectory: path.endsWith("/pages"),
+            isSymlink: false,
+            mtime: null,
+          }),
+        readFile: () => Promise.resolve("# Dynamic"),
+        readDir: async function* () {
+          yield mutableEntry;
+          mutableEntry.name = "changed.txt";
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    const result = await getEntityBySlug("/project", "entry", adapter);
+
+    assertExists(result);
+    assertEquals(result.entity.content, "# Dynamic");
+  });
+
+  it("rejects unsafe and structurally impossible directory entries", async () => {
+    const createAdapter = (entry: unknown): RuntimeAdapter => {
+      const underlyingAdapter = {};
+      return {
+        fs: {
+          isVeryfrontAdapter: () => false,
+          getUnderlyingAdapter: () => underlyingAdapter,
+          isMultiProjectMode: () => false,
+          getAdapterType: () => "GitHubFSAdapter",
+          resolveFile: () => Promise.resolve(null),
+          stat: (path: string) =>
+            Promise.resolve({
+              size: path.endsWith("/pages") ? 0 : 9,
+              isFile: !path.endsWith("/pages"),
+              isDirectory: path.endsWith("/pages"),
+              isSymlink: false,
+              mtime: null,
+            }),
+          readFile: () => Promise.resolve("# Dynamic"),
+          readDir: async function* () {
+            yield entry;
+          },
+        },
+      } as unknown as RuntimeAdapter;
+    };
+
+    let accessorReads = 0;
+    const accessorEntry = Object.defineProperties({}, {
+      name: {
+        enumerable: true,
+        get() {
+          accessorReads++;
+          return "[slug].mdx";
+        },
+      },
+      isFile: { enumerable: true, value: true },
+      isDirectory: { enumerable: true, value: false },
+    });
+
+    await assertRejects(
+      () => getEntityBySlug("/project", "entry", createAdapter(accessorEntry)),
+      Error,
+      "invalid directory entry",
+    );
+    assertEquals(accessorReads, 0);
+
+    const inheritedEntry = Object.create({
+      name: "[slug].mdx",
+      isFile: true,
+      isDirectory: false,
+    });
+    await assertRejects(
+      () => getEntityBySlug("/project", "entry", createAdapter(inheritedEntry)),
+      Error,
+      "invalid directory entry",
+    );
+
+    assertEquals(
+      await getEntityBySlug(
+        "/project",
+        "entry",
+        createAdapter({
+          name: "[slug]\n.mdx",
+          isFile: true,
+          isDirectory: false,
+        }),
+      ),
+      null,
+    );
+
+    assertEquals(
+      await getEntityBySlug(
+        "/project",
+        "entry",
+        createAdapter({
+          name: `[${"x".repeat(4_097)}].mdx`,
+          isFile: true,
+          isDirectory: false,
+        }),
+      ),
+      null,
+    );
+
+    await assertRejects(
+      () =>
+        getEntityBySlug(
+          "/project",
+          "entry",
+          createAdapter({
+            name: "[slug].mdx",
+            isFile: true,
+            isDirectory: true,
+          }),
+        ),
+      Error,
+      "invalid directory entry",
+    );
+  });
+
+  it("bounds adapter directory iteration", async () => {
+    const underlyingAdapter = {};
+    const adapter = {
+      fs: {
+        isVeryfrontAdapter: () => false,
+        getUnderlyingAdapter: () => underlyingAdapter,
+        isMultiProjectMode: () => false,
+        getAdapterType: () => "GitHubFSAdapter",
+        resolveFile: () => Promise.resolve(null),
+        stat: () =>
+          Promise.resolve({
+            size: 0,
+            isFile: false,
+            isDirectory: true,
+            isSymlink: false,
+            mtime: null,
+          }),
+        readFile: () => Promise.resolve(""),
+        readDir: async function* () {
+          for (let index = 0; index <= 10_000; index++) {
+            yield {
+              name: `entry-${index}`,
+              isFile: false,
+              isDirectory: true,
+              isSymlink: false,
+            };
+          }
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    await assertRejects(
+      () => getEntityBySlug("/project", "entry", adapter),
+      Error,
+      "directory entries",
+    );
+  });
+
+  it("charges invalid entries against the global dynamic traversal budget", async () => {
+    const adapter = {
+      id: "memory",
+      fs: {
+        resolveFile: () => Promise.resolve(null),
+        stat: () =>
+          Promise.resolve({
+            size: 0,
+            isFile: false,
+            isDirectory: true,
+            isSymlink: false,
+            mtime: null,
+          }),
+        readFile: () => Promise.resolve(""),
+        readDir: async function* () {
+          for (let index = 0; index < 9_999; index++) {
+            yield {
+              name: "..",
+              isFile: false,
+              isDirectory: true,
+              isSymlink: false,
+            };
+          }
+          yield {
+            name: "[segment]",
+            isFile: false,
+            isDirectory: true,
+            isSymlink: false,
+          };
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    await assertRejects(
+      () => getEntityBySlug("/project", Array(11).fill("part").join("/"), adapter),
+      Error,
+      "100000-entry limit",
+    );
+  });
+
+  it("bounds dynamic directory traversal across one route lookup", async () => {
+    const underlyingAdapter = {};
+    const adapter = {
+      fs: {
+        isVeryfrontAdapter: () => false,
+        getUnderlyingAdapter: () => underlyingAdapter,
+        isMultiProjectMode: () => false,
+        getAdapterType: () => "GitHubFSAdapter",
+        resolveFile: () => Promise.resolve(null),
+        stat: () =>
+          Promise.resolve({
+            size: 0,
+            isFile: false,
+            isDirectory: true,
+            isSymlink: false,
+            mtime: null,
+          }),
+        readFile: () => Promise.resolve(""),
+        readDir: async function* (path: string) {
+          if (!path.endsWith("/pages")) return;
+          for (let index = 0; index <= 1_024; index++) {
+            yield {
+              name: `[segment${index}]`,
+              isFile: false,
+              isDirectory: true,
+              isSymlink: false,
+            };
+          }
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    await assertRejects(
+      () => getEntityBySlug("/project", "entry", adapter),
+      Error,
+      "directory traversal",
+    );
+  });
 });
 
 describe("getLayoutEntity", () => {
@@ -336,6 +946,20 @@ describe("getLayoutEntity", () => {
     });
   });
 
+  it("applies the layouts-directory convention to explicit file paths", async () => {
+    await withTempDir(async (projectDir) => {
+      const layoutPath = join(projectDir, "layouts", "main.mdx");
+      await mkdir(join(projectDir, "layouts"), { recursive: true });
+      await writeTextFile(layoutPath, "# Main layout");
+
+      const result = await getLayoutEntity(projectDir, "layouts/main.mdx");
+
+      assertExists(result);
+      assertEquals(result.entity.type, "layout");
+      assertEquals(result.entity.content, "# Main layout");
+    });
+  });
+
   it("does not apply the layout convention to explicit page paths", async () => {
     await withTempDir(async (projectDir) => {
       const pagePath = join(projectDir, "pages", "main.mdx");
@@ -349,31 +973,14 @@ describe("getLayoutEntity", () => {
     });
   });
 
-  // UNRESOLVED — needs a product decision, not a test fix.
-  //
-  // getLayoutEntity(dir, "main") resolves layouts/main.mdx through the
-  // layouts-directory convention ("files in layouts/ are layouts by
-  // convention, any extension"), but naming the same file explicitly as
-  // "layouts/main.mdx" returns null, because the explicit-path branch demands
-  // that detectEntityType recognise it independently. Two spellings of one
-  // file, two answers.
-  //
-  // Applying the convention to explicit paths under layouts/ would make this
-  // green and would not affect the "explicit page paths" case above, which is
-  // about pages/. It was left alone because the explicit-path branch carries a
-  // deliberate comment ("don't fall back to convention-based discovery"), so
-  // whether layouts/ is exempt from it is a contract call for a human.
-  it.ignore("applies the layouts-directory convention to explicit file paths", async () => {
+  it("reports duplicate layout definitions", async () => {
     await withTempDir(async (projectDir) => {
-      const layoutPath = join(projectDir, "layouts", "main.mdx");
-      await mkdir(join(projectDir, "layouts"), { recursive: true });
-      await writeTextFile(layoutPath, "# Main layout");
+      const layoutsDirectory = join(projectDir, "layouts");
+      await mkdir(layoutsDirectory, { recursive: true });
+      await writeTextFile(join(layoutsDirectory, "main.mdx"), "# MDX layout");
+      await writeTextFile(join(layoutsDirectory, "main.tsx"), "export default () => null;");
 
-      const result = await getLayoutEntity(projectDir, "layouts/main.mdx");
-
-      assertExists(result);
-      assertEquals(result.entity.type, "layout");
-      assertEquals(result.entity.content, "# Main layout");
+      await assertRouteConflict(() => getLayoutEntity(projectDir, "main"));
     });
   });
 });
