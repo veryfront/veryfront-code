@@ -1,8 +1,8 @@
 import * as React from "react";
-import { flushSync } from "react-dom";
-import { hydrateRoot, type Root } from "react-dom/client";
+import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/test-utils.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { Head } from "../Head.tsx";
@@ -103,7 +103,7 @@ async function hydrateAndReadStyleNonce(element: React.ReactElement): Promise<st
     assert(style, "Expected hydrated tree to contain an inline style tag");
 
     const nonce = style.getAttribute("nonce");
-    await unmount(hydratedRoot);
+    await unmountReactRoot(hydratedRoot);
     await flushHydrationTimers();
     return nonce;
   } finally {
@@ -129,7 +129,7 @@ async function hydrateAndReadScriptNonce(element: React.ReactElement): Promise<s
     assert(script, "Expected hydrated tree to contain an inline script tag");
 
     const nonce = script.getAttribute("nonce");
-    await unmount(hydratedRoot);
+    await unmountReactRoot(hydratedRoot);
     await flushHydrationTimers();
     return nonce;
   } finally {
@@ -160,7 +160,7 @@ async function hydrateAndReadManagedHeadStyleNonce(
     assert(style, "Expected Head to append a managed inline style tag");
 
     const nonce = style.getAttribute("nonce");
-    await unmount(hydratedRoot);
+    await unmountReactRoot(hydratedRoot);
     await flushHydrationTimers();
     return nonce;
   } finally {
@@ -238,18 +238,6 @@ function HydratingColorModeScriptFixture(): React.ReactElement {
       <ColorModeScript />
     </div>
   );
-}
-
-/**
- * Unmount and drain the scheduler task React leaves behind.
- *
- * React's scheduler holds a `setImmediate` until it next runs. It completes on
- * its own, but the test has to yield once more or Deno's leak sanitizer sees
- * the timer still pending.
- */
-async function unmount(root: Root): Promise<void> {
-  flushSync(() => root.unmount());
-  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("getDocumentNonce hydration behavior", () => {

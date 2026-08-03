@@ -11,6 +11,7 @@ import {
   type ReactElement,
 } from "react";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/test-utils.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ChatInput } from "./chat-composer.tsx";
@@ -47,18 +48,6 @@ function installDomGlobals(dom: JSDOM): () => void {
     Object.assign(globalThis, previous);
     dom.window.close();
   };
-}
-
-/**
- * Unmount and drain the scheduler task React leaves behind.
- *
- * React's scheduler holds a `setImmediate` until it next runs. It completes on
- * its own, but the test has to yield once more or Deno's leak sanitizer sees
- * the timer still pending.
- */
-async function unmount(root: Root): Promise<void> {
-  flushSync(() => root.unmount());
-  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("react/components/chat/chat/composition/chat-composer", () => {
@@ -158,7 +147,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       assertEquals(submits, 1, "controlled submit remains caller-owned");
       assertEquals(defaultPrevented, false, "controlled submit receives the event unchanged");
     } finally {
-      if (root) await unmount(root);
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
@@ -204,7 +193,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       assertEquals(submitEvent.defaultPrevented, true);
       assertEquals(dispatchResult, false, "cancelled native submission must report false");
     } finally {
-      if (root) await unmount(root);
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
@@ -295,7 +284,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       assertEquals(textarea.rows, 4);
       assertEquals(textarea.cols, 40);
       assertEquals(textarea.wrap, "soft");
-      await unmount(root);
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -373,7 +362,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       });
 
       assertEquals(selectCalls, 1);
-      await unmount(root);
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -441,7 +430,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
 
       assertEquals(submitCalls, 1);
       assertEquals(preventDefaultCalls, 1);
-      await unmount(root);
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -490,7 +479,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       });
 
       assertEquals(submitCalls, 1, "attachment-only send should submit");
-      await unmount(root);
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -554,7 +543,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       assertEquals(inputSetTo, "", "clears the input after send");
       assertEquals(cleared, 1, "clears attachments after send");
 
-      await unmount(root);
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -605,7 +594,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       );
       // Studio's submit button does not scale on press.
       assertEquals(submitButton.className.includes("active:scale"), false);
-      await unmount(root);
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -697,7 +686,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       );
       assertEquals(customStops, 1, "the explicit custom Stop action remains functional");
     } finally {
-      if (root) await unmount(root);
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
@@ -768,7 +757,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       });
       assertEquals(order, ["child", "wrapper", "submit"]);
     } finally {
-      if (root) await unmount(root);
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
@@ -914,7 +903,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       assertEquals(actionSubmits, 1);
       assertEquals(nativeSubmits, 0, "the enclosing form must not submit a second time");
     } finally {
-      if (root) await unmount(root);
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
@@ -962,7 +951,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       assertEquals(wrapperCalls, 0, "cancelled child event skips the action wrapper");
       assertEquals(submitCalls, 0, "cancelled child event skips submit");
     } finally {
-      if (root) await unmount(root);
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
@@ -1034,7 +1023,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       assertEquals(wrapperActivations, 0, "disabled state skips action handlers");
       assertEquals(submitCalls, 0, "disabled state skips submit");
     } finally {
-      if (root) await unmount(root);
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });

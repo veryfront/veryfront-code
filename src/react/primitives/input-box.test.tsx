@@ -1,7 +1,8 @@
 import { flushSync } from "react-dom";
-import { createRoot, type Root } from "react-dom/client";
+import { createRoot } from "react-dom/client";
 import type * as React from "react";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/test-utils.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleInputBoxKeyDown, InputBox, SubmitButton } from "./input-box.tsx";
@@ -79,18 +80,6 @@ function createEnterEvent(
   >;
 }
 
-/**
- * Unmount and drain the scheduler task React leaves behind.
- *
- * React's scheduler holds a `setImmediate` until it next runs. It completes on
- * its own, but the test has to yield once more or Deno's leak sanitizer sees
- * the timer still pending.
- */
-async function unmount(root: Root): Promise<void> {
-  flushSync(() => root.unmount());
-  await new Promise((resolve) => setTimeout(resolve, 0));
-}
-
 describe("InputBox", () => {
   it("merges a callback ref while retaining the internal auto-resize ref", async () => {
     const dom = createDom();
@@ -131,11 +120,11 @@ describe("InputBox", () => {
       await waitFor(() => textarea.style.height === "120px");
       assert(refValues.includes(textarea));
 
-      if (root) await unmount(root);
+      if (root) await unmountReactRoot(root);
       root = undefined;
       assertEquals(refCleanupCalls, 1);
     } finally {
-      if (root) await unmount(root);
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
@@ -235,7 +224,7 @@ describe("SubmitButton", () => {
       assertEquals(stopCalls, 1);
       assertEquals(submitCalls, 0);
     } finally {
-      if (root) await unmount(root);
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
@@ -275,7 +264,7 @@ describe("SubmitButton", () => {
       assertEquals(clickCalls, 1);
       assertEquals(voiceCalls, 1);
     } finally {
-      if (root) await unmount(root);
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
@@ -314,7 +303,7 @@ describe("SubmitButton", () => {
       assertEquals(clickCalls, 1);
       assertEquals(stopCalls, 0);
     } finally {
-      if (root) await unmount(root);
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
@@ -348,7 +337,7 @@ describe("SubmitButton", () => {
       flushSync(() => button.dispatchEvent(new MouseEvent("click", { bubbles: true })));
       assertEquals(clickCalls, 0);
     } finally {
-      if (root) await unmount(root);
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });

@@ -1,8 +1,9 @@
 import * as React from "react";
 import { flushSync } from "react-dom";
-import { createRoot, type Root } from "react-dom/client";
+import { createRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/test-utils.ts";
 import {
   assert,
   assertEquals,
@@ -45,18 +46,6 @@ function installDom(dom: JSDOM): () => void {
     }
     dom.window.close();
   };
-}
-
-/**
- * Unmount and drain the scheduler task React leaves behind.
- *
- * React's scheduler holds a `setImmediate` until it next runs. It completes on
- * its own, but the test has to yield once more or Deno's leak sanitizer sees
- * the timer still pending.
- */
-async function unmount(root: Root): Promise<void> {
-  flushSync(() => root.unmount());
-  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("Slot", () => {
@@ -158,7 +147,7 @@ describe("Slot", () => {
       assertEquals(attached, ["outer", "child"]);
       assertEquals(cleaned, []);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       assertEquals(cleaned, ["child", "outer"]);
       restore();
     }
@@ -195,7 +184,7 @@ describe("Slot", () => {
       );
       assertEquals(slotCalls, 0);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -288,7 +277,7 @@ describe("Slot", () => {
         assertEquals(calls, []);
       }
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });

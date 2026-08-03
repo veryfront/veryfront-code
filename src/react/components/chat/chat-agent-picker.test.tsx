@@ -1,6 +1,7 @@
-import { createRoot, type Root } from "react-dom/client";
+import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/test-utils.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { agentsToPickerOptions, ChatAgentPicker } from "./chat-agent-picker.tsx";
@@ -8,18 +9,6 @@ import type { AgentMetadata } from "#veryfront/agent/react";
 
 function agent(id: string, over: Partial<AgentMetadata> = {}): AgentMetadata {
   return { id, name: id, description: null, avatarUrl: null, ...over };
-}
-
-/**
- * Unmount and drain the scheduler task React leaves behind.
- *
- * React's scheduler holds a `setImmediate` until it next runs. It completes on
- * its own, but the test has to yield once more or Deno's leak sanitizer sees
- * the timer still pending.
- */
-async function unmount(root: Root): Promise<void> {
-  flushSync(() => root.unmount());
-  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("react/components/chat/chat-agent-picker: agentsToPickerOptions", () => {
@@ -121,7 +110,7 @@ describe("react/components/chat/chat-agent-picker: connected", () => {
       assert(trigger, "picker trigger renders after the agents resolve");
       assertStringIncludes(trigger.textContent ?? "", "Select agent");
 
-      await unmount(root);
+      await unmountReactRoot(root);
       await settle();
     } finally {
       restoreFetch();
@@ -146,7 +135,7 @@ describe("react/components/chat/chat-agent-picker: connected", () => {
       assert(trigger, "picker trigger renders");
       assertStringIncludes(trigger.textContent ?? "", "Sales Agent");
 
-      await unmount(root);
+      await unmountReactRoot(root);
       await settle();
     } finally {
       restoreFetch();
@@ -167,7 +156,7 @@ describe("react/components/chat/chat-agent-picker: connected", () => {
       assertEquals(rootElement.querySelector("button"), null);
       assertEquals(rootElement.textContent, "");
 
-      await unmount(root);
+      await unmountReactRoot(root);
       await settle();
     } finally {
       restoreFetch();
@@ -193,7 +182,7 @@ describe("react/components/chat/chat-agent-picker: connected", () => {
       assertEquals(fetches, 0);
       assertEquals(rootElement.querySelector("button"), null);
 
-      await unmount(root);
+      await unmountReactRoot(root);
       await settle();
     } finally {
       globalThis.fetch = previousFetch;

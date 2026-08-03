@@ -1,8 +1,9 @@
 import * as React from "react";
 import { flushSync } from "react-dom";
-import { createRoot, type Root } from "react-dom/client";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/test-utils.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor } from "#veryfront/testing/deno-compat.ts";
@@ -129,18 +130,6 @@ async function tick(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-/**
- * Unmount and drain the scheduler task React leaves behind.
- *
- * React's scheduler holds a `setImmediate` until it next runs. It completes on
- * its own, but the test has to yield once more or Deno's leak sanitizer sees
- * the timer still pending.
- */
-async function unmount(root: Root): Promise<void> {
-  flushSync(() => root.unmount());
-  await new Promise((resolve) => setTimeout(resolve, 0));
-}
-
 describe("react/runtime/RouterProvider (reactive)", () => {
   it("re-renders useRouter().query on a query-only navigation (no page load)", async () => {
     const restore = installDom("https://example.com/?thread=a");
@@ -171,7 +160,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
       assertStringIncludes(rootElement.textContent ?? "", "thread:b");
       assertEquals(router.navigateCount, 1);
 
-      await unmount(root);
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -208,7 +197,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
 
       assertStringIncludes(rootElement.textContent ?? "", "tab:b");
 
-      await unmount(root);
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -243,7 +232,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
 
       assertStringIncludes(rootElement.textContent ?? "", "/|x");
 
-      await unmount(root);
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -280,7 +269,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
       // Router changed → page context's query tracked it; frontmatter unchanged.
       assertStringIncludes(rootElement.textContent ?? "", "match:true|v:2|fm:kept");
 
-      await unmount(root);
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -309,7 +298,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
       // The hash must not leak into the query — only `tab` is present.
       assertStringIncludes(rootElement.textContent ?? "", "/docs|tab:api|keys:tab");
 
-      await unmount(root);
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -344,7 +333,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
 
       assertStringIncludes(rootElement.textContent ?? "", "42|comments|Hello");
 
-      await unmount(root);
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -385,7 +374,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
       // query/params.
       assertStringIncludes(rootElement.textContent ?? "", "data:from-server");
 
-      await unmount(root);
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -446,7 +435,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
 
       assertStringIncludes(rootElement.textContent ?? "", "/posts/7:7:x:Hi");
 
-      await unmount(root);
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -487,7 +476,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
         { interval: 10, message: "RouterProvider did not finish its client mount" },
       );
       assertStringIncludes(rootElement.textContent ?? "", "m:true");
-      await unmount(root);
+      await unmountReactRoot(root);
     } finally {
       restoreClient();
     }
@@ -527,7 +516,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
 
       assertStringIncludes(rootElement.textContent ?? "", "tab:b");
 
-      await unmount(root);
+      await unmountReactRoot(root);
     } finally {
       restore();
     }

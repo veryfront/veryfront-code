@@ -1,6 +1,7 @@
 import { flushSync } from "react-dom";
-import { createRoot, type Root } from "react-dom/client";
+import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/test-utils.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor } from "#veryfront/testing/deno-compat.ts";
@@ -38,18 +39,6 @@ function installDomGlobals(dom: JSDOM): () => void {
     Object.assign(globalThis, previous);
     dom.window.close();
   };
-}
-
-/**
- * Unmount and drain the scheduler task React leaves behind.
- *
- * React's scheduler holds a `setImmediate` until it next runs. It completes on
- * its own, but the test has to yield once more or Deno's leak sanitizer sees
- * the timer still pending.
- */
-async function unmount(root: Root): Promise<void> {
-  flushSync(() => root.unmount());
-  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("InlineCitation", () => {
@@ -96,7 +85,7 @@ describe("InlineCitation", () => {
       assert(card, "Expected citation card to render after hover");
       assertEquals(card.textContent, "Custom citation card");
 
-      await unmount(root);
+      await unmountReactRoot(root);
     } finally {
       restore();
     }

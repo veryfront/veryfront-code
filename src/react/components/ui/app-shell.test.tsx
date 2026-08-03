@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { createRoot, hydrateRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/test-utils.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { AppShell } from "./app-shell.tsx";
@@ -97,18 +98,6 @@ function MobileShell({ name }: { name: string }): React.ReactElement {
   );
 }
 
-/**
- * Unmount and drain the scheduler task React leaves behind.
- *
- * React's scheduler holds a `setImmediate` until it next runs. It completes on
- * its own, but the test has to yield once more or Deno's leak sanitizer sees
- * the timer still pending.
- */
-async function unmount(root: Root): Promise<void> {
-  flushSync(() => root.unmount());
-  await new Promise((resolve) => setTimeout(resolve, 0));
-}
-
 describe("AppShell", () => {
   it("hydrates from the server default before reconciling persisted visibility", async () => {
     const serverMarkup = renderToString(<Shell />);
@@ -133,7 +122,7 @@ describe("AppShell", () => {
       await waitFor(() => document.querySelector("[data-sidebar='left']") === null);
       assertEquals(recoverableErrors, []);
     } finally {
-      if (root) await unmount(root);
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
@@ -173,7 +162,7 @@ describe("AppShell", () => {
       await waitFor(() => document.querySelectorAll('[role="dialog"]').length === 2);
       assertEquals(document.body.style.overflow, "hidden");
 
-      await unmount(rootA);
+      await unmountReactRoot(rootA);
       rootA = undefined;
       assertEquals(document.querySelectorAll('[role="dialog"]').length, 1);
       assertEquals(
@@ -182,7 +171,7 @@ describe("AppShell", () => {
         "the remaining overlay still owns the document lock",
       );
 
-      await unmount(rootB);
+      await unmountReactRoot(rootB);
       rootB = undefined;
       assertEquals(
         document.body.style.overflow,
@@ -190,8 +179,8 @@ describe("AppShell", () => {
         "the final release restores the exact pre-lock value",
       );
     } finally {
-      if (rootA) await unmount(rootA);
-      if (rootB) await unmount(rootB);
+      if (rootA) await unmountReactRoot(rootA);
+      if (rootB) await unmountReactRoot(rootB);
       restore();
     }
   });
@@ -246,7 +235,7 @@ describe("AppShell", () => {
       assertEquals(documentShortcut.defaultPrevented, true);
       assertEquals(document.querySelector('[data-sidebar="left"]'), null);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });
@@ -315,7 +304,7 @@ describe("AppShell", () => {
       assertEquals(shell.getAttribute("data-vf-ui"), "");
       assertEquals(shell.getAttribute("data-vf-chat"), "");
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       restore();
     }
   });

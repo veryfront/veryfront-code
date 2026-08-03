@@ -3,9 +3,10 @@
  * the whole-session object drives the surface.
  */
 import { flushSync } from "react-dom";
-import { createRoot, type Root } from "react-dom/client";
+import { createRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/test-utils.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import type { ChatMessage, UseChatResult } from "#veryfront/agent/react";
@@ -79,18 +80,6 @@ function userMsg(text: string): ChatMessage {
 
 function assistantMsg(id: string, text: string): ChatMessage {
   return { id, role: "assistant", parts: [{ type: "text", text }] } as ChatMessage;
-}
-
-/**
- * Unmount and drain the scheduler task React leaves behind.
- *
- * React's scheduler holds a `setImmediate` until it next runs. It completes on
- * its own, but the test has to yield once more or Deno's leak sanitizer sees
- * the timer still pending.
- */
-async function unmount(root: Root): Promise<void> {
-  flushSync(() => root.unmount());
-  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("Chat — controlled via chat={useChat()}", () => {
@@ -183,7 +172,7 @@ describe("Chat — controlled via chat={useChat()}", () => {
         }],
       });
       assertEquals(removed, ["file-1"]);
-      await unmount(root);
+      await unmountReactRoot(root);
     } finally {
       restore();
     }

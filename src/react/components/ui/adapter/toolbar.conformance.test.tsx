@@ -12,6 +12,7 @@ import { flushSync } from "react-dom";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/test-utils.ts";
 import { assert } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { Toolbar, ToolbarButton, ToolbarLink, ToolbarSeparator } from "../toolbar.tsx";
@@ -53,13 +54,9 @@ function render(
   flushSync(() => root.render(element));
   return {
     host: host as unknown as HTMLElement,
-    // React's scheduler holds a `setImmediate` until it next runs. It completes
-    // on its own, but the test has to yield once more or Deno's leak sanitizer
-    // sees the timer still pending.
     unmount: async () => {
       try {
-        flushSync(() => root.unmount());
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await unmountReactRoot(root);
       } finally {
         restore();
       }

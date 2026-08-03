@@ -1,7 +1,8 @@
 import { flushSync } from "react-dom";
-import { createRoot, type Root } from "react-dom/client";
+import { createRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/test-utils.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import type { ChatDynamicToolPart, ChatMessage } from "#veryfront/agent/react";
@@ -31,18 +32,6 @@ const assistantMessage: ChatMessage = {
 // The composability contract for the message body: a developer must be able to
 // own the parts loop, render defaults via `Message.Part`, and drop in
 // `Message.Sources` — without reimplementing part grouping.
-/**
- * Unmount and drain the scheduler task React leaves behind.
- *
- * React's scheduler holds a `setImmediate` until it next runs. It completes on
- * its own, but the test has to yield once more or Deno's leak sanitizer sees
- * the timer still pending.
- */
-async function unmount(root: Root): Promise<void> {
-  flushSync(() => root.unmount());
-  await new Promise((resolve) => setTimeout(resolve, 0));
-}
-
 describe("Message.Content — composability contract", () => {
   it("hands each grouped part to a function child (caller owns the body)", () => {
     const seen: string[] = [];
@@ -469,7 +458,7 @@ describe("Message.CopyAction", () => {
       flushSync(() => {});
 
       assertEquals(writes, ["Answer body."]);
-      await unmount(root);
+      await unmountReactRoot(root);
     } finally {
       Object.assign(globalThis, previous);
       dom.window.close();

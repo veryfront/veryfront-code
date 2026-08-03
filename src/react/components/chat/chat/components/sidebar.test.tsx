@@ -3,11 +3,12 @@
  * Step 5 introduced: it lists straight from a `ConversationsProvider` with no
  * props, and it also works controlled from explicit `conversations`/`activeId`.
  */
-import { createRoot, type Root } from "react-dom/client";
+import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { renderToString } from "react-dom/server";
 import * as React from "react";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/test-utils.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ChatSidebar, useChatSidebarItem } from "./sidebar.tsx";
@@ -78,18 +79,6 @@ function summary(id: string, title: string, updatedAt: number): ConversationSumm
   return { id, title, messageCount: 2, createdAt: updatedAt, updatedAt };
 }
 
-/**
- * Unmount and drain the scheduler task React leaves behind.
- *
- * React's scheduler holds a `setImmediate` until it next runs. It completes on
- * its own, but the test has to yield once more or Deno's leak sanitizer sees
- * the timer still pending.
- */
-async function unmount(root: Root): Promise<void> {
-  flushSync(() => root.unmount());
-  await new Promise((resolve) => setTimeout(resolve, 0));
-}
-
 describe("ChatSidebar — conversation-native", () => {
   it("lists conversations straight from context with no props", async () => {
     const restoreDom = installDom();
@@ -112,7 +101,7 @@ describe("ChatSidebar — conversation-native", () => {
       assert(html.includes("First chat"), "lists the first conversation from context");
       assert(html.includes("Second chat"), "lists the second conversation from context");
 
-      await unmount(root);
+      await unmountReactRoot(root);
       await settle();
     } finally {
       restoreDom();
@@ -148,7 +137,7 @@ describe("ChatSidebar — conversation-native", () => {
         "the primary action carries the conversation label",
       );
 
-      await unmount(root);
+      await unmountReactRoot(root);
       await settle();
     } finally {
       restoreDom();
@@ -261,7 +250,7 @@ describe("ChatSidebar.Item — menu compound (E4 acid test)", () => {
       );
       assert(itemRef.current.querySelector("input"), "the ref targets the active rename row");
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
     } finally {
       restoreDom();
@@ -296,7 +285,7 @@ describe("ChatSidebarRenameEditor", () => {
         input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
       });
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
       return [commits, cancels];
     } finally {
@@ -330,7 +319,7 @@ describe("ChatSidebarRenameEditor", () => {
 
       flushSync(() => root.render(renderEditor("Edited title")));
       assertEquals(input.getAttribute("aria-label"), "Rename Original title");
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
     } finally {
       restoreDom();

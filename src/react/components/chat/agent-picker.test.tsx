@@ -1,7 +1,8 @@
-import { createRoot, type Root } from "react-dom/client";
+import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/test-utils.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import type { AgentOption } from "./agent-picker.tsx";
@@ -58,18 +59,6 @@ async function settle(): Promise<void> {
 // exercise the parts that DO render server-side — the trigger, the provider,
 // and the hook-throws contract. See the reported limitation.
 
-/**
- * Unmount and drain the scheduler task React leaves behind.
- *
- * React's scheduler holds a `setImmediate` until it next runs. It completes on
- * its own, but the test has to yield once more or Deno's leak sanitizer sees
- * the timer still pending.
- */
-async function unmount(root: Root): Promise<void> {
-  flushSync(() => root.unmount());
-  await new Promise((resolve) => setTimeout(resolve, 0));
-}
-
 describe("AgentPicker — preset (back-compat)", () => {
   it("renders the pill trigger with the selected agent name", () => {
     const html = renderToString(
@@ -123,7 +112,7 @@ describe("AgentPicker — preset (back-compat)", () => {
       assertEquals(loading.getAttribute("aria-selected"), "false");
       assertEquals(loading.querySelectorAll('[aria-hidden="true"]').length, 3);
 
-      await unmount(root);
+      await unmountReactRoot(root);
       await settle();
     } finally {
       dom.restore();
@@ -240,7 +229,7 @@ describe("AgentPicker — composability contract", () => {
       assertEquals(created, 1);
       assertEquals(managed, 0);
 
-      await unmount(root);
+      await unmountReactRoot(root);
       await settle();
     } finally {
       dom.restore();

@@ -2,6 +2,7 @@ import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/test-utils.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { RichCodeBlock } from "./code-block.tsx";
@@ -62,14 +63,6 @@ async function waitFor(condition: () => boolean, timeoutMs = 3000): Promise<void
     }
     await settle();
   }
-}
-
-// Unmounting leaves a scheduler callback queued; drain it so the leak
-// sanitizer does not attribute that timer to the test.
-async function unmount(root: Root | undefined): Promise<void> {
-  if (!root) return;
-  flushSync(() => root.unmount());
-  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("RichCodeBlock — inline mode", () => {
@@ -149,7 +142,7 @@ describe("RichCodeBlock — block mode", () => {
       );
       assertEquals(document.querySelectorAll("textarea").length, 0);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       dom.restore();
     }
   });
@@ -194,7 +187,7 @@ describe("RichCodeBlock — block mode", () => {
       assertStringIncludes(rootElement.textContent ?? "", "new code");
       assert(!(rootElement.textContent ?? "").includes("old code"));
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       dom.restore();
     }
   });
