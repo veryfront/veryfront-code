@@ -15,6 +15,20 @@ const LOG_PREFIX = "[GitHubApiClient]";
 const RATE_LIMIT_WARNING_THRESHOLD = 100;
 const RETRY_JITTER_MAX_MS = 1_000;
 
+function encodeUrlPathSegment(value: string): string {
+  if (value === "." || value === "..") {
+    throw new TypeError("GitHub URL paths must not contain dot segments");
+  }
+  return encodeURIComponent(value);
+}
+
+function encodeRepositorySegment(value: string, field: "owner" | "repo"): string {
+  if (value === "." || value === ".." || /[\\/]/u.test(value)) {
+    throw new TypeError(`GitHub ${field} must be a single URL path segment`);
+  }
+  return encodeUrlPathSegment(value);
+}
+
 class GitHubBlobIntegrityError extends Error {}
 
 interface RateLimitInfo {
@@ -28,9 +42,14 @@ type APIError = Error & { statusCode?: number; endpoint?: string; repo?: string 
 
 export class GitHubApiClient {
   private readonly baseUrl = "https://api.github.com";
+  private readonly repositoryEndpoint: string;
   private rateLimitInfo: RateLimitInfo | null = null;
 
-  constructor(private readonly config: ResolvedGitHubConfig) {}
+  constructor(private readonly config: ResolvedGitHubConfig) {
+    const owner = encodeRepositorySegment(config.owner, "owner");
+    const repo = encodeRepositorySegment(config.repo, "repo");
+    this.repositoryEndpoint = `/repos/${owner}/${repo}`;
+  }
 
   get repoId(): string {
     return `${this.config.owner}/${this.config.repo}`;
@@ -38,8 +57,9 @@ export class GitHubApiClient {
 
   async getTree(ref?: string): Promise<GitHubTreeResponse> {
     const treeRef = ref ?? this.config.ref;
-    const endpoint =
-      `/repos/${this.config.owner}/${this.config.repo}/git/trees/${treeRef}?recursive=1`;
+    const endpoint = `${this.repositoryEndpoint}/git/trees/${
+      encodeUrlPathSegment(treeRef)
+    }?recursive=1`;
 
     logger.debug(`${LOG_PREFIX} Fetching tree`, { ref: treeRef });
 
@@ -61,8 +81,8 @@ export class GitHubApiClient {
   ): Promise<GitHubContentItem | GitHubContentItem[]> {
     const contentRef = ref ?? this.config.ref;
     const normalizedPath = path.replace(/^\/+/, "");
-    const encodedPath = normalizedPath.split("/").map(encodeURIComponent).join("/");
-    const endpoint = `/repos/${this.config.owner}/${this.config.repo}/contents/${encodedPath}?ref=${
+    const encodedPath = normalizedPath.split("/").map(encodeUrlPathSegment).join("/");
+    const endpoint = `${this.repositoryEndpoint}/contents/${encodedPath}?ref=${
       encodeURIComponent(contentRef)
     }`;
 
@@ -73,7 +93,7 @@ export class GitHubApiClient {
   }
 
   async getBlob(sha: string): Promise<GitHubBlobResponse> {
-    const endpoint = `/repos/${this.config.owner}/${this.config.repo}/git/blobs/${sha}`;
+    const endpoint = `${this.repositoryEndpoint}/git/blobs/${encodeUrlPathSegment(sha)}`;
 
     logger.debug(`${LOG_PREFIX} Fetching blob`, { sha });
 
@@ -97,7 +117,7 @@ export class GitHubApiClient {
     if (expectedSize > byteLimit) {
       throw new RangeError(`GitHub blob exceeds ${byteLimit} bytes`);
     }
-    const endpoint = `/repos/${this.config.owner}/${this.config.repo}/git/blobs/${sha}`;
+    const endpoint = `${this.repositoryEndpoint}/git/blobs/${encodeUrlPathSegment(sha)}`;
 
     logger.debug(`${LOG_PREFIX} Fetching bounded raw blob`, { sha, expectedSize });
 

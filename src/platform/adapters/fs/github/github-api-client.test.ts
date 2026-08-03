@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { GitHubApiClient } from "./github-api-client.ts";
@@ -43,6 +48,23 @@ describe("GitHubApiClient", () => {
   describe("repoId", () => {
     it("should return owner/repo format", () => {
       assertEquals(createClient().repoId, "test-owner/test-repo");
+    });
+
+    it("rejects repository identities that can escape their URL segments", () => {
+      for (
+        const [field, value] of [
+          ["owner", "trusted/../../users"],
+          ["owner", "trusted\\..\\users"],
+          ["repo", ".."],
+          ["repo", "."],
+        ] as const
+      ) {
+        assertThrows(
+          () => new GitHubApiClient({ ...mockConfig, [field]: value }),
+          TypeError,
+          `GitHub ${field} must be a single URL path segment`,
+        );
+      }
     });
   });
 
@@ -122,6 +144,14 @@ describe("GitHubApiClient", () => {
       assertEquals(
         new URL(requestedUrls[2]!).pathname,
         "/repos/test-owner/test-repo/contents/docs/read%20me%23draft%3F.md",
+      );
+    });
+
+    it("rejects raw dot segments before URL construction", async () => {
+      await assertRejects(
+        () => createClient().getContents("../../user/repos"),
+        TypeError,
+        "GitHub URL paths must not contain dot segments",
       );
     });
   });
