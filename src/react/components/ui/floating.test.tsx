@@ -107,6 +107,19 @@ const surfaceCases: SurfaceCase[] = [
  * its own, but the test has to yield once more or Deno's leak sanitizer sees
  * the timer still pending.
  */
+/**
+ * Wait for the Escape dismissal layer to be registered.
+ *
+ * `Floating` registers its dismissable layer from a passive effect, so the
+ * surface is committed one tick before the document listener exists. A keydown
+ * is one-shot, so an Escape dispatched in that window is dropped for good and
+ * the surface never closes. Yield the macrotask React's scheduler queued at
+ * commit time first.
+ */
+function escapeLayerRegistered(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 async function unmount(root: Root): Promise<void> {
   flushSync(() => root.unmount());
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -280,6 +293,7 @@ describe("Floating SSR and hydration", () => {
 
       inside.focus();
       assertEquals(document.activeElement, inside);
+      await escapeLayerRegistered();
       document.dispatchEvent(
         new KeyboardEvent("keydown", {
           bubbles: true,
@@ -419,6 +433,7 @@ describe("Floating SSR and hydration", () => {
       assertEquals(surface.parentElement, scope);
       assertEquals(globalDom.window.document.querySelector("[data-owner-surface]"), null);
 
+      await escapeLayerRegistered();
       ownerDom.window.document.dispatchEvent(
         new ownerDom.window.KeyboardEvent("keydown", {
           bubbles: true,

@@ -240,7 +240,9 @@ describe("react/components/ui/color-mode", () => {
       });
 
       await waitFor(() => document.querySelector("button")?.getAttribute("data-mode") === "dark");
-      assertEquals(document.documentElement.style.colorScheme, "dark");
+      // The rendered mode and the colorScheme the provider writes to the root
+      // element land in separate commits, so wait for the second one too.
+      await waitFor(() => document.documentElement.style.colorScheme === "dark");
 
       await unmount(root);
     } finally {

@@ -48,6 +48,22 @@ async function settle(): Promise<void> {
   flushSync(() => {});
 }
 
+/**
+ * Poll for a state transition instead of assuming `settle()` covered it.
+ *
+ * A copy result travels through a promise chain and then a React commit, and a
+ * single macrotask does not always cover both under load.
+ */
+async function waitFor(condition: () => boolean, timeoutMs = 3000): Promise<void> {
+  const startedAt = Date.now();
+  while (!condition()) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error("Timed out waiting for code block state");
+    }
+    await settle();
+  }
+}
+
 // Unmounting leaves a scheduler callback queued; drain it so the leak
 // sanitizer does not attribute that timer to the test.
 async function unmount(root: Root | undefined): Promise<void> {
@@ -170,8 +186,7 @@ describe("RichCodeBlock — block mode", () => {
       assertEquals(pending.length, 2);
 
       pending[1]?.();
-      await settle();
-      assertEquals(secondButton.textContent?.trim(), "Copied");
+      await waitFor(() => secondButton.textContent?.trim() === "Copied");
 
       pending[0]?.();
       await settle();
