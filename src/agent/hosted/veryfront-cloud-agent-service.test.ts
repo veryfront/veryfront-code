@@ -45,6 +45,7 @@ import {
 import type { NodeVeryfrontCloudAgentServiceOptions } from "./veryfront-cloud-agent-service.ts";
 import { createAgentRuntime } from "./cloud-agent-chat-execution.ts";
 import { createInvokeAgentTool } from "./cloud-agent-child-tools.ts";
+import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
 import { initializeNodeAgentServiceSentryApplicationErrors } from "../service/node-sentry.ts";
@@ -1491,6 +1492,57 @@ Deno.test("hosted MCP resolver preserves default behavior without a service ceil
     [{
       kind: "veryfront-studio",
       toolPolicy: { allow: ["studio_open_project"] },
+    }],
+  );
+});
+
+Deno.test("hosted MCP resolver binds deployment-owned transports to first-party defaults", () => {
+  const createRemoteToolSource = () => ({
+    id: "injected",
+    listTools: () => Promise.resolve([]),
+    executeTool: () => Promise.resolve(null),
+  });
+  const serviceGenericMcpServer = {
+    id: "operator-docs",
+    endpoint: "https://operator.example/mcp",
+  } as const;
+  // Project agent parsing rejects generic endpoints. This unchecked shape
+  // verifies the resolver still fails closed if another caller bypasses it.
+  const untrustedGenericAgentConfig = {
+    mcpServers: [{ id: "operator-docs", endpoint: "https://project.example/mcp" }],
+  } as unknown as Pick<RuntimeAgentMarkdownDefinition, "mcpServers">;
+
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveMcpServers({ createRemoteToolSource }),
+    [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }],
+  );
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveMcpServers(
+      { createRemoteToolSource },
+      untrustedGenericAgentConfig,
+    ),
+    [],
+  );
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveMcpServers(
+      { createRemoteToolSource, mcpServers: [serviceGenericMcpServer] },
+      untrustedGenericAgentConfig,
+    ),
+    [serviceGenericMcpServer],
+  );
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveMcpServers(
+      { createRemoteToolSource },
+      {
+        mcpServers: [{
+          kind: "veryfront-api",
+          toolPolicy: { allow: ["read_job"] },
+        }],
+      },
+    ),
+    [{
+      kind: "veryfront-api",
+      toolPolicy: { allow: ["read_job"] },
     }],
   );
 });
