@@ -624,6 +624,13 @@ describe("generated encrypted OAuth token store", () => {
     // Read with the sealing key demoted to the previous key.
     Deno.env.set("TOKEN_ENCRYPTION_KEY", generateEncryptionKey());
     Deno.env.set("TOKEN_ENCRYPTION_KEY_PREVIOUS", legacyKey);
+    await backend.set(
+      storageKey,
+      await sealLegacyV1(legacyKey, storageKey, {
+        revision: "legacy-revision",
+        tokens: { accessToken: "legacy-token" },
+      }),
+    );
     const rotated = createEncryptedTokenStore(backend);
     assertEquals(await rotated.getTokens("github", "alice"), { accessToken: "legacy-token" });
   });

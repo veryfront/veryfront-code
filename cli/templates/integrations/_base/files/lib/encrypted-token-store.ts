@@ -822,6 +822,9 @@ function assertRotationScanBackend(
  * had a chance to rewrite rows. When `complete` is true, the scanned rows no
  * longer require the previous key. Unreadable rows are counted separately and
  * should be cleared or replaced before removing the previous key.
+ * `complete` describes only rows yielded by the backend; an empty scan reports
+ * `complete: true` with `scannedRows: 0`. Confirm the scan covered the expected
+ * rows before removing the previous key.
  */
 export async function checkEncryptedTokenStoreRotation(
   backend: EncryptedKvRotationScanBackend,
