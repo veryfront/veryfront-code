@@ -12,6 +12,8 @@ export interface LRUCacheOptions {
   ttlMs?: number;
   onEvict?: (key: string, value: unknown) => void;
   estimateSizeOf?: (value: unknown) => number;
+  /** Internal clock injection for deterministic expiry tests. */
+  now?: () => number;
 }
 
 export interface LRUEntry<T> {

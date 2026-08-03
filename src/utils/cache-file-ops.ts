@@ -5,8 +5,17 @@
  * to ensure consistent, robust file handling across all cache code paths.
  */
 
-import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { type FileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { redactPathFromText } from "#veryfront/utils/logger/redact.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
+
+function describeCacheError(error: unknown, ...paths: string[]): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  return paths.reduce(
+    (message, path) => redactPathFromText(message, path, "[path]"),
+    raw,
+  );
+}
 
 /**
  * Safely write a cache file: mkdir parent dir → write file → verify file exists.
@@ -29,7 +38,7 @@ export async function writeCacheFile(
     logger.debug(`[${label}] mkdir failed for cache file parent`, {
       path: path.slice(-80),
       dir: parentDir.slice(-80),
-      error: mkdirError instanceof Error ? mkdirError.message : String(mkdirError),
+      error: describeCacheError(mkdirError, path, parentDir),
     });
     throw mkdirError;
   }
@@ -46,7 +55,7 @@ export async function writeCacheFile(
     }
     logger.debug(`[${label}] Failed to write cache file`, {
       path: path.slice(-80),
-      error: writeError instanceof Error ? writeError.message : String(writeError),
+      error: describeCacheError(writeError, path, parentDir),
     });
     throw writeError;
   }
@@ -63,9 +72,10 @@ export async function writeCacheFile(
   } catch (verifyError) {
     logger.debug(`[${label}] Cache file verification failed: cannot stat after write`, {
       path: path.slice(-80),
-      error: verifyError instanceof Error ? verifyError.message : String(verifyError),
+      error: describeCacheError(verifyError, path, parentDir),
     });
-    return false;
+    if (isNotFoundError(verifyError)) return false;
+    throw verifyError;
   }
 
   return true;
@@ -73,19 +83,27 @@ export async function writeCacheFile(
 
 /**
  * Verify a cache file exists before attempting dynamic import.
- * Returns true if file exists and is a regular file, false otherwise.
+ * Returns true if the file exists and is a regular file, false when the path
+ * is genuinely absent or is not a regular file. Non-absence stat failures
+ * (EACCES, EIO, ...) are
+ * rethrown so callers do not misreport an unreadable cache as a cache miss
+ * and loop forever re-transforming the same module.
  */
 export async function verifyCacheFileExists(
   fs: FileSystem,
   path: string,
-  _label = "cache",
+  label = "cache",
 ): Promise<boolean> {
   try {
     const stat = await fs.stat(path);
     return !!stat?.isFile;
-  } catch (_) {
-    /* expected: file may not exist */
-    return false;
+  } catch (error) {
+    if (isNotFoundError(error)) return false;
+    logger.debug(`[${label}] Cache file existence check failed`, {
+      path: path.slice(-80),
+      error: describeCacheError(error, path),
+    });
+    throw error;
   }
 }
 

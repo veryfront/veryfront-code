@@ -9,6 +9,9 @@ import { join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isBun, isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { serverLogger } from "./logger/index.ts";
+
+const logger = serverLogger.component("file-discovery");
 
 async function getDefaultAdapter(): Promise<RuntimeAdapter> {
   if (isDeno) {
@@ -52,12 +55,110 @@ function matchesExtensions(fileName: string, extensions: string[] | undefined): 
 
 function matchesPatterns(fileName: string, patterns: string[] | undefined): boolean {
   if (!patterns?.length) return true;
-  return patterns.some((pattern) => fileName.includes(pattern));
+  return patterns.some((pattern) => matchesEntryPattern(fileName, pattern));
 }
 
-function shouldIgnore(name: string, ignorePatterns: string[] | undefined): boolean {
+/**
+ * Match a glob against one directory-entry name without compiling caller input
+ * as a regular expression. `*` matches zero or more characters and `?`
+ * matches exactly one character; every other character is literal.
+ */
+function matchesEntryGlob(name: string, pattern: string): boolean {
+  const nameTokens = [...name];
+  const patternTokens = [...pattern];
+  let nameIndex = 0;
+  let patternIndex = 0;
+  let lastStarIndex = -1;
+  let lastStarMatchIndex = -1;
+
+  while (nameIndex < nameTokens.length) {
+    const token = patternTokens[patternIndex];
+    if (token === "?" || token === nameTokens[nameIndex]) {
+      nameIndex++;
+      patternIndex++;
+      continue;
+    }
+
+    if (token === "*") {
+      lastStarIndex = patternIndex++;
+      lastStarMatchIndex = nameIndex;
+      continue;
+    }
+
+    if (lastStarIndex === -1) return false;
+    patternIndex = lastStarIndex + 1;
+    nameIndex = ++lastStarMatchIndex;
+  }
+
+  while (patternTokens[patternIndex] === "*") patternIndex++;
+  return patternIndex === patternTokens.length;
+}
+
+const warnedPathShapedPatterns = new Set<string>();
+
+// Normalize a caller pattern to entry-name form. Patterns are matched against
+// one directory-entry name, so a leading "**/" (match at any depth) is
+// redundant and stripped: "**/*.ts" means "*.ts at any depth", which is
+// exactly what entry-name matching during the recursive walk provides. Any
+// other path-shaped pattern (containing "/") can never match a bare entry
+// name; returning undefined disables it, after warning once so the
+// misconfiguration is visible instead of silently matching nothing.
+function toEntryPattern(pattern: string): string | undefined {
+  let entryPattern = pattern;
+  while (entryPattern.startsWith("**/") || entryPattern.startsWith("**\\")) {
+    entryPattern = entryPattern.slice(3);
+  }
+
+  if (
+    entryPattern.length > 0 &&
+    !entryPattern.includes("/") &&
+    !entryPattern.includes("\\")
+  ) {
+    return entryPattern;
+  }
+
+  if (!warnedPathShapedPatterns.has(pattern) && warnedPathShapedPatterns.size < 1000) {
+    warnedPathShapedPatterns.add(pattern);
+    logger.warn(
+      "File discovery patterns match single directory-entry names; an empty or path-shaped pattern is ignored",
+      { pattern },
+    );
+  }
+  return undefined;
+}
+
+function isGlobPattern(pattern: string): boolean {
+  return pattern.includes("*") || pattern.includes("?");
+}
+
+function matchesNormalizedEntryPattern(name: string, entryPattern: string): boolean {
+  return isGlobPattern(entryPattern)
+    ? matchesEntryGlob(name, entryPattern)
+    : name.includes(entryPattern);
+}
+
+function matchesEntryPattern(name: string, pattern: string): boolean {
+  const entryPattern = toEntryPattern(pattern);
+  if (entryPattern === undefined) return false;
+  return matchesNormalizedEntryPattern(name, entryPattern);
+}
+
+function shouldIgnore(
+  name: string,
+  ignorePatterns: string[] | undefined,
+  isDirectory: boolean,
+): boolean {
   if (!ignorePatterns?.length) return false;
-  return ignorePatterns.some((pattern) => name.includes(pattern));
+  return ignorePatterns.some((pattern) => {
+    const entryPattern = toEntryPattern(pattern);
+    if (entryPattern === undefined) return false;
+    // Glob ignores (e.g. `*.test.*`) describe file names; matching them
+    // against directory names would silently prune entire subtrees (a
+    // directory named `fixtures.test.data` would vanish). Subtree pruning is
+    // reserved for directory-name patterns like `node_modules` or `.git`.
+    if (isDirectory && isGlobPattern(entryPattern)) return false;
+    return matchesNormalizedEntryPattern(name, entryPattern);
+  });
 }
 
 function matchesFile(
@@ -132,7 +233,7 @@ async function* walkDirectory(options: WalkDirectoryOptions): AsyncGenerator<Fil
     const entries = adapter.fs.readDir(dir);
 
     for await (const entry of entries) {
-      if (shouldIgnore(entry.name, ignorePatterns)) continue;
+      if (shouldIgnore(entry.name, ignorePatterns, entry.isDirectory)) continue;
 
       const fullPath = join(dir, entry.name);
 
