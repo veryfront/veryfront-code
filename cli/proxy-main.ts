@@ -1,5 +1,7 @@
 /** Dedicated compiled proxy entrypoint. Optional CLI arguments are ignored. */
 
+import "./commands/serve/proxy-runtime.ts";
+
 // Keep the proxy's runtime-selected providers in the compile graph. Using
 // `deno compile --include` for these modules embeds the workspace file tree;
 // static references embed only each provider and its real dependencies.

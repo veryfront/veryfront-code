@@ -3,8 +3,9 @@ set -euo pipefail
 
 binary="${1:?usage: smoke-proxy-binary.sh <binary> [port]}"
 base_port="${2:-18080}"
-tmp_dir="$(mktemp -d)"
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/veryfront-proxy-smoke.XXXXXX")"
 proxy_pid=""
+max_binary_bytes="${PROXY_BINARY_MAX_BYTES:-188743680}"
 
 cleanup() {
   if [ -n "$proxy_pid" ]; then
@@ -14,6 +15,12 @@ cleanup() {
   rm -rf "$tmp_dir"
 }
 trap cleanup EXIT
+
+actual_binary_bytes="$(wc -c < "$binary" | tr -d '[:space:]')"
+if [ "$actual_binary_bytes" -gt "$max_binary_bytes" ]; then
+  echo "proxy binary size ${actual_binary_bytes} exceeds ${max_binary_bytes} bytes" >&2
+  exit 1
+fi
 
 run_smoke() {
   local name="$1"
@@ -27,7 +34,7 @@ run_smoke() {
   proxy_pid=$!
 
   for _ in {1..30}; do
-    if curl -fsS "http://127.0.0.1:${port}/_proxy/health" 2>/dev/null \
+    if curl --connect-timeout 1 --max-time 2 -fsS "http://127.0.0.1:${port}/_proxy/health" 2>/dev/null \
       | grep -Fq '"status":"ok"'; then
       if [ -n "$expected_log" ]; then
         if ! grep -Fq "$expected_log" "$log_file"; then
@@ -50,7 +57,9 @@ run_smoke() {
 run_smoke memory "$base_port" "" CACHE_TYPE=memory
 run_smoke redis "$((base_port + 1))" "TokenCacheStore registered" \
   CACHE_TYPE=redis REDIS_URL=redis://127.0.0.1:1
-run_smoke observability "$((base_port + 2))" "[otel] Initialized" \
+run_smoke ambient-redis "$((base_port + 2))" "[ext-redis] RedisRuntimeProvider registered" \
+  CACHE_TYPE=memory REDIS_URL=redis://127.0.0.1:1
+run_smoke observability "$((base_port + 3))" "[otel] Initialized" \
   CACHE_TYPE=memory \
   OTEL_TRACES_ENABLED=true \
   OTEL_TRACES_EXPORTER=otlp \

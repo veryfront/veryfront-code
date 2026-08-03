@@ -433,6 +433,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ contains(matrix.os, 'windows') }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: macos-latest

@@ -127,6 +127,14 @@ it("proxy binary embeds only the runtime-resolved proxy entrypoint", async () =>
   assertEquals(args.at(-1), "cli/proxy-main.ts");
 
   const entrypoint = await Deno.readTextFile("cli/proxy-main.ts");
+  const runtimeImportIndex = entrypoint.indexOf(
+    'import "./commands/serve/proxy-runtime.ts";',
+  );
+  assertEquals(
+    runtimeImportIndex >= 0,
+    true,
+    "proxy entrypoint must evaluate proxy-runtime before extension anchors",
+  );
   for (
     const extension of [
       "ext-auth-jwt",
@@ -136,10 +144,18 @@ it("proxy binary embeds only the runtime-resolved proxy entrypoint", async () =>
       "ext-observability-sentry",
     ]
   ) {
+    const extensionImportIndex = entrypoint.indexOf(
+      `../extensions/${extension}/src/index.ts`,
+    );
     assertEquals(
-      entrypoint.includes(`../extensions/${extension}/src/index.ts`),
+      extensionImportIndex >= 0,
       true,
       `proxy entrypoint must statically embed ${extension}`,
+    );
+    assertEquals(
+      runtimeImportIndex < extensionImportIndex,
+      true,
+      `proxy-runtime must evaluate before ${extension} top-level code`,
     );
   }
 
@@ -174,6 +190,12 @@ it("proxy release verifies lock freshness and publishes an exact SBOM", async ()
     true,
   );
   assertEquals(
+    /build-binaries:[\s\S]*?strategy:\n\s+fail-fast: false\n\s+matrix:/
+      .test(workflow),
+    true,
+    "proxy release leg must not cancel existing binary builds",
+  );
+  assertEquals(
     denoConfig.tasks?.["build:proxy-lock"]?.includes("--frozen=false"),
     false,
     "proxy lock refresh must use Deno's default mutable lock mode",
@@ -188,6 +210,9 @@ it("compiled proxy smoke covers cache and observability providers", async () => 
       "CACHE_TYPE=memory",
       "CACHE_TYPE=redis",
       "TokenCacheStore registered",
+      "ambient-redis",
+      "CACHE_TYPE=memory REDIS_URL=redis://127.0.0.1:1",
+      "[ext-redis] RedisRuntimeProvider registered",
       "OTEL_TRACES_EXPORTER=otlp",
       "[otel] Initialized",
       "SENTRY_DSN=https://public@example.com/1",
@@ -210,6 +235,22 @@ it("compiled proxy smoke covers cache and observability providers", async () => 
       .test(smoke),
     true,
     "healthy proxies must retry briefly while asynchronous provider logs flush",
+  );
+  assertEquals(
+    smoke.includes("--connect-timeout") && smoke.includes("--max-time"),
+    true,
+    "health probes must be bounded inside the retry window",
+  );
+  assertEquals(
+    smoke.includes("PROXY_BINARY_MAX_BYTES") &&
+      smoke.includes("188743680"),
+    true,
+    "compiled proxy smoke must enforce a defensible artifact size ceiling",
+  );
+  assertEquals(
+    smoke.includes('${TMPDIR:-/tmp}/veryfront-proxy-smoke.XXXXXX'),
+    true,
+    "smoke temp directory must use a portable mktemp template",
   );
 });
 
