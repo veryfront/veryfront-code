@@ -1,6 +1,6 @@
 import * as React from "react";
 import { flushSync } from "react-dom";
-import { createRoot, hydrateRoot } from "react-dom/client";
+import { createRoot, hydrateRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
@@ -97,6 +97,18 @@ function MobileShell({ name }: { name: string }): React.ReactElement {
   );
 }
 
+/**
+ * Unmount and drain the scheduler task React leaves behind.
+ *
+ * React's scheduler holds a `setImmediate` until it next runs. It completes on
+ * its own, but the test has to yield once more or Deno's leak sanitizer sees
+ * the timer still pending.
+ */
+async function unmount(root: Root): Promise<void> {
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("AppShell", () => {
   it("hydrates from the server default before reconciling persisted visibility", async () => {
     const serverMarkup = renderToString(<Shell />);
@@ -120,7 +132,7 @@ describe("AppShell", () => {
       await waitFor(() => document.querySelector("[data-sidebar='left']") === null);
       assertEquals(recoverableErrors, []);
 
-      root.unmount();
+      await unmount(root);
       await new Promise((resolve) => setTimeout(resolve, 0));
     } finally {
       restore();
@@ -235,7 +247,7 @@ describe("AppShell", () => {
       assertEquals(documentShortcut.defaultPrevented, true);
       assertEquals(document.querySelector('[data-sidebar="left"]'), null);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });
@@ -304,7 +316,7 @@ describe("AppShell", () => {
       assertEquals(shell.getAttribute("data-vf-ui"), "");
       assertEquals(shell.getAttribute("data-vf-chat"), "");
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });

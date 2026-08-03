@@ -1,5 +1,5 @@
 import { flushSync } from "react-dom";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import type { ChatMessage } from "#veryfront/agent/react";
 import { assertEquals } from "#veryfront/testing/assert.ts";
@@ -86,6 +86,18 @@ function contextValue(
   };
 }
 
+/**
+ * Unmount and drain the scheduler task React leaves behind.
+ *
+ * React's scheduler holds a `setImmediate` until it next runs. It completes on
+ * its own, but the test has to yield once more or Deno's leak sanitizer sees
+ * the timer still pending.
+ */
+async function unmount(root: Root): Promise<void> {
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("react/components/chat/hooks/useConversationChat", () => {
   it("keeps the session usable when a provider has no active conversation", async () => {
     const restoreDom = installDom();
@@ -144,7 +156,7 @@ describe("react/components/chat/hooks/useConversationChat", () => {
       ]);
     } finally {
       globalThis.fetch = originalFetch;
-      flushSync(() => root.unmount());
+      await unmount(root);
       await settle();
       restoreDom();
     }
@@ -203,7 +215,7 @@ describe("react/components/chat/hooks/useConversationChat", () => {
       );
       assertEquals(saved.at(-1)?.messages, [nextMessage]);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       await settle();
       restoreDom();
     }
@@ -265,7 +277,7 @@ describe("react/components/chat/hooks/useConversationChat", () => {
       assertEquals(saved.at(-1)?.id, syntheticId);
       assertEquals("agentId" in saved.at(-1)!, false);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       await settle();
       restoreDom();
     }
@@ -302,7 +314,7 @@ describe("react/components/chat/hooks/useConversationChat", () => {
       assertEquals(saved.at(-1)?.id, bound.id);
       assertEquals(saved.at(-1)?.agentId, "agent-b");
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       await settle();
       restoreDom();
     }
@@ -392,7 +404,7 @@ describe("react/components/chat/hooks/useConversationChat", () => {
       assertEquals(saved[0]?.messages, [...second.messages, reply]);
     } finally {
       globalThis.fetch = originalFetch;
-      flushSync(() => root.unmount());
+      await unmount(root);
       await settle();
       restoreDom();
     }
@@ -440,7 +452,7 @@ describe("react/components/chat/hooks/useConversationChat", () => {
       assertEquals(latest!.chat.streamingMessageId, null);
     } finally {
       globalThis.fetch = originalFetch;
-      flushSync(() => root.unmount());
+      await unmount(root);
       await settle();
       restoreDom();
     }
@@ -494,7 +506,7 @@ describe("react/components/chat/hooks/useConversationChat", () => {
       );
     } finally {
       globalThis.fetch = originalFetch;
-      flushSync(() => root.unmount());
+      await unmount(root);
       await settle();
       restoreDom();
     }
@@ -545,7 +557,7 @@ describe("react/components/chat/hooks/useConversationChat", () => {
       assertEquals(latest!.chat.messages, first.messages);
     } finally {
       globalThis.fetch = originalFetch;
-      flushSync(() => root.unmount());
+      await unmount(root);
       await settle();
       restoreDom();
     }
@@ -634,7 +646,7 @@ describe("react/components/chat/hooks/useConversationChat", () => {
       assertEquals(latest!.chat.data, null);
     } finally {
       globalThis.fetch = originalFetch;
-      flushSync(() => root.unmount());
+      await unmount(root);
       await settle();
       restoreDom();
     }
@@ -714,7 +726,7 @@ describe("react/components/chat/hooks/useConversationChat", () => {
       assertEquals(saved.at(-1)?.messages, [...second.messages, reply]);
     } finally {
       globalThis.fetch = originalFetch;
-      flushSync(() => root.unmount());
+      await unmount(root);
       await settle();
       restoreDom();
     }

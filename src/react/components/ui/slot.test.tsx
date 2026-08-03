@@ -1,6 +1,6 @@
 import * as React from "react";
 import { flushSync } from "react-dom";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import {
@@ -45,6 +45,18 @@ function installDom(dom: JSDOM): () => void {
     }
     dom.window.close();
   };
+}
+
+/**
+ * Unmount and drain the scheduler task React leaves behind.
+ *
+ * React's scheduler holds a `setImmediate` until it next runs. It completes on
+ * its own, but the test has to yield once more or Deno's leak sanitizer sees
+ * the timer still pending.
+ */
+async function unmount(root: Root): Promise<void> {
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("Slot", () => {
@@ -109,7 +121,7 @@ describe("Slot", () => {
     assertStringIncludes(ownedOpaqueButton, 'type="button"');
   });
 
-  it("preserves React 19 callback-ref cleanup for both composed refs", () => {
+  it("preserves React 19 callback-ref cleanup for both composed refs", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { pretendToBeVisual: true, url: "https://example.com/" },
@@ -146,13 +158,13 @@ describe("Slot", () => {
       assertEquals(attached, ["outer", "child"]);
       assertEquals(cleaned, []);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       assertEquals(cleaned, ["child", "outer"]);
       restore();
     }
   });
 
-  it("does not run slot behavior after a child handler cancels the event", () => {
+  it("does not run slot behavior after a child handler cancels the event", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { pretendToBeVisual: true, url: "https://example.com/" },
@@ -183,12 +195,12 @@ describe("Slot", () => {
       );
       assertEquals(slotCalls, 0);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });
 
-  it("blocks disabled activation, handlers, and propagation", () => {
+  it("blocks disabled activation, handlers, and propagation", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { pretendToBeVisual: true, url: "https://example.com/start" },
@@ -276,7 +288,7 @@ describe("Slot", () => {
         assertEquals(calls, []);
       }
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       restore();
     }
   });

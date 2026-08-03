@@ -1,5 +1,5 @@
 import { flushSync } from "react-dom";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import {
   type AnchorHTMLAttributes,
@@ -47,6 +47,18 @@ function installDomGlobals(dom: JSDOM): () => void {
     Object.assign(globalThis, previous);
     dom.window.close();
   };
+}
+
+/**
+ * Unmount and drain the scheduler task React leaves behind.
+ *
+ * React's scheduler holds a `setImmediate` until it next runs. It completes on
+ * its own, but the test has to yield once more or Deno's leak sanitizer sees
+ * the timer still pending.
+ */
+async function unmount(root: Root): Promise<void> {
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("react/components/chat/chat/composition/chat-composer", () => {
@@ -105,7 +117,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     assertEquals(sends, 1, "the additive API must not break a legacy owned submit");
   });
 
-  it("leaves legacy controlled submit policy with the caller", () => {
+  it("leaves legacy controlled submit policy with the caller", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
@@ -113,6 +125,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     const restore = installDomGlobals(dom);
     let submits = 0;
     let defaultPrevented: boolean | undefined;
+    let root: Root | undefined;
     function Capture(): ReactElement {
       const submit = useChatInputContext().onSubmit;
       return <form onSubmit={(event) => submit(event)} data-submit-probe />;
@@ -121,7 +134,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     try {
       const rootElement = document.getElementById("root");
       assert(rootElement, "Expected root element to exist");
-      const root = createRoot(rootElement);
+      root = createRoot(rootElement);
       flushSync(() => {
         root.render(
           <ChatInput.Root
@@ -143,13 +156,13 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
 
       assertEquals(submits, 1, "controlled submit remains caller-owned");
       assertEquals(defaultPrevented, false, "controlled submit receives the event unchanged");
-      root.unmount();
     } finally {
+      if (root) await unmount(root);
       restore();
     }
   });
 
-  it("prevents native submission from the default controlled composer form", () => {
+  it("prevents native submission from the default controlled composer form", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
@@ -190,7 +203,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       assertEquals(submitEvent.defaultPrevented, true);
       assertEquals(dispatchResult, false, "cancelled native submission must report false");
     } finally {
-      root?.unmount();
+      if (root) await unmount(root);
       restore();
     }
   });
@@ -247,7 +260,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     assert(pending.includes("disabled"), "a pending upload disables the send control");
   });
 
-  it("renders an accessible textarea with its native attributes and ref", () => {
+  it("renders an accessible textarea with its native attributes and ref", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
@@ -281,13 +294,13 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       assertEquals(textarea.rows, 4);
       assertEquals(textarea.cols, 40);
       assertEquals(textarea.wrap, "soft");
-      root.unmount();
+      await unmount(root);
     } finally {
       restore();
     }
   });
 
-  it("opens upload and select document actions from the attachment button", () => {
+  it("opens upload and select document actions from the attachment button", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
@@ -359,13 +372,13 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       });
 
       assertEquals(selectCalls, 1);
-      root.unmount();
+      await unmount(root);
     } finally {
       restore();
     }
   });
 
-  it("submits multiline input on Enter and keeps Shift+Enter for newlines", () => {
+  it("submits multiline input on Enter and keeps Shift+Enter for newlines", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
@@ -427,13 +440,13 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
 
       assertEquals(submitCalls, 1);
       assertEquals(preventDefaultCalls, 1);
-      root.unmount();
+      await unmount(root);
     } finally {
       restore();
     }
   });
 
-  it("enables send for a resolved attachment without text", () => {
+  it("enables send for a resolved attachment without text", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
@@ -476,13 +489,13 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       });
 
       assertEquals(submitCalls, 1, "attachment-only send should submit");
-      root.unmount();
+      await unmount(root);
     } finally {
       restore();
     }
   });
 
-  it("composer owns submit: folds resolved attachments, clears, and guards uploads", () => {
+  it("composer owns submit: folds resolved attachments, clears, and guards uploads", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
@@ -540,13 +553,13 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       assertEquals(inputSetTo, "", "clears the input after send");
       assertEquals(cleared, 1, "clears attachments after send");
 
-      root.unmount();
+      await unmount(root);
     } finally {
       restore();
     }
   });
 
-  it("uses the copied Studio prompt shell and non-scaling primary submit button", () => {
+  it("uses the copied Studio prompt shell and non-scaling primary submit button", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
@@ -591,7 +604,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       );
       // Studio's submit button does not scale on press.
       assertEquals(submitButton.className.includes("active:scale"), false);
-      root.unmount();
+      await unmount(root);
     } finally {
       restore();
     }
@@ -643,7 +656,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     assert(voice.includes('aria-describedby="voice-help"'));
   });
 
-  it("omits an unavailable Stop action while preserving an explicit custom action", () => {
+  it("omits an unavailable Stop action while preserving an explicit custom action", async () => {
     const unavailable = renderToString(
       <ChatInput.Root input="" onChange={() => {}} isLoading>
         <ChatInput.Stop data-action="stop" />
@@ -667,8 +680,9 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     );
     const restore = installDomGlobals(dom);
     let customStops = 0;
+    let root: Root | undefined;
     try {
-      const root = createRoot(document.getElementById("root")!);
+      root = createRoot(document.getElementById("root")!);
       flushSync(() => {
         root.render(
           <ChatInput.Root input="" onChange={() => {}} isLoading>
@@ -680,13 +694,13 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
         document.querySelector<HTMLButtonElement>('button[aria-label="Stop"]')?.click()
       );
       assertEquals(customStops, 1, "the explicit custom Stop action remains functional");
-      flushSync(() => root.unmount());
     } finally {
+      if (root) await unmount(root);
       restore();
     }
   });
 
-  it("asChild action leaves preserve Button styling, refs, and event composition", () => {
+  it("asChild action leaves preserve Button styling, refs, and event composition", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
@@ -695,11 +709,12 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     const actionRef = createRef<HTMLAnchorElement>();
     const childRef = createRef<HTMLAnchorElement>();
     const order: string[] = [];
+    let root: Root | undefined;
 
     try {
       const rootElement = document.getElementById("root");
       assert(rootElement, "Expected root element to exist");
-      const root = createRoot(rootElement);
+      root = createRoot(rootElement);
       flushSync(() => {
         root.render(
           <ChatInput.Root
@@ -749,8 +764,8 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
         link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
       });
       assertEquals(order, ["child", "wrapper", "submit"]);
-      root.unmount();
     } finally {
+      if (root) await unmount(root);
       restore();
     }
   });
@@ -849,7 +864,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     );
   });
 
-  it("lets an opaque forwardRef button own its native form semantics", () => {
+  it("lets an opaque forwardRef button own its native form semantics", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
@@ -861,11 +876,12 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     >((props, ref) => <button ref={ref} {...props} />);
     let actionSubmits = 0;
     let nativeSubmits = 0;
+    let root: Root | undefined;
 
     try {
       const rootElement = document.getElementById("root");
       assert(rootElement, "Expected root element to exist");
-      const root = createRoot(rootElement);
+      root = createRoot(rootElement);
       flushSync(() => {
         root.render(
           <ChatInput.Root
@@ -893,13 +909,13 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       flushSync(() => button.click());
       assertEquals(actionSubmits, 1);
       assertEquals(nativeSubmits, 0, "the enclosing form must not submit a second time");
-      root.unmount();
     } finally {
+      if (root) await unmount(root);
       restore();
     }
   });
 
-  it("asChild respects child cancellation before invoking the action wrapper", () => {
+  it("asChild respects child cancellation before invoking the action wrapper", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
@@ -907,11 +923,12 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     const restore = installDomGlobals(dom);
     let wrapperCalls = 0;
     let submitCalls = 0;
+    let root: Root | undefined;
 
     try {
       const rootElement = document.getElementById("root");
       assert(rootElement, "Expected root element to exist");
-      const root = createRoot(rootElement);
+      root = createRoot(rootElement);
       flushSync(() => {
         root.render(
           <ChatInput.Root
@@ -939,13 +956,13 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       assert(event.defaultPrevented, "child cancellation is preserved");
       assertEquals(wrapperCalls, 0, "cancelled child event skips the action wrapper");
       assertEquals(submitCalls, 0, "cancelled child event skips submit");
-      root.unmount();
     } finally {
+      if (root) await unmount(root);
       restore();
     }
   });
 
-  it("disabled asChild actions block link, auxiliary, and keyboard activation", () => {
+  it("disabled asChild actions block link, auxiliary, and keyboard activation", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
@@ -954,11 +971,12 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     let childActivations = 0;
     let wrapperActivations = 0;
     let submitCalls = 0;
+    let root: Root | undefined;
 
     try {
       const rootElement = document.getElementById("root");
       assert(rootElement, "Expected root element to exist");
-      const root = createRoot(rootElement);
+      root = createRoot(rootElement);
       flushSync(() => {
         root.render(
           <ChatInput.Root
@@ -1009,8 +1027,8 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       assertEquals(childActivations, 0, "disabled state skips child handlers");
       assertEquals(wrapperActivations, 0, "disabled state skips action handlers");
       assertEquals(submitCalls, 0, "disabled state skips submit");
-      root.unmount();
     } finally {
+      if (root) await unmount(root);
       restore();
     }
   });

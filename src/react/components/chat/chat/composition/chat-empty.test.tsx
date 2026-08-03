@@ -1,5 +1,5 @@
 import { flushSync } from "react-dom";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -38,6 +38,18 @@ function installDom(): () => void {
   };
 }
 
+/**
+ * Unmount and drain the scheduler task React leaves behind.
+ *
+ * React's scheduler holds a `setImmediate` until it next runs. It completes on
+ * its own, but the test has to yield once more or Deno's leak sanitizer sees
+ * the timer still pending.
+ */
+async function unmount(root: Root): Promise<void> {
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("getAgentPromptSuggestionItems", () => {
   it("normalizes prompt suggestions to { label, prompt }, dropping non-prompts", () => {
     const agent: AgentMetadata = {
@@ -66,7 +78,7 @@ describe("getAgentPromptSuggestionItems", () => {
 });
 
 describe("ChatEmpty suggestions", () => {
-  it("renders labels and hands the { label, prompt } object to onSuggestionSelect", () => {
+  it("renders labels and hands the { label, prompt } object to onSuggestionSelect", async () => {
     const restoreDom = installDom();
     const clicked: PromptSuggestion[] = [];
     try {
@@ -90,13 +102,13 @@ describe("ChatEmpty suggestions", () => {
         { label: "Triage login", prompt: "Triage a user who cannot sign in." },
       ], "click sends the full { label, prompt } — no .find needed");
 
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       restoreDom();
     }
   });
 
-  it("keeps legacy onSuggestionClick handlers receiving prompt text", () => {
+  it("keeps legacy onSuggestionClick handlers receiving prompt text", async () => {
     const restoreDom = installDom();
     const clicked: string[] = [];
     try {
@@ -116,7 +128,7 @@ describe("ChatEmpty suggestions", () => {
       assert(button, "renders the legacy suggestion chip");
       flushSync(() => button.click());
       assertEquals(clicked, ["Triage the login incident."]);
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       restoreDom();
     }

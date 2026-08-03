@@ -3,7 +3,7 @@
  * the whole-session object drives the surface.
  */
 import { flushSync } from "react-dom";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert";
@@ -81,6 +81,18 @@ function assistantMsg(id: string, text: string): ChatMessage {
   return { id, role: "assistant", parts: [{ type: "text", text }] } as ChatMessage;
 }
 
+/**
+ * Unmount and drain the scheduler task React leaves behind.
+ *
+ * React's scheduler holds a `setImmediate` until it next runs. It completes on
+ * its own, but the test has to yield once more or Deno's leak sanitizer sees
+ * the timer still pending.
+ */
+async function unmount(root: Root): Promise<void> {
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("Chat — controlled via chat={useChat()}", () => {
   it("renders the session's messages (the object drives the surface)", () => {
     const html = renderToString(
@@ -117,7 +129,7 @@ describe("Chat — controlled via chat={useChat()}", () => {
     );
   });
 
-  it("submits externally controlled attachments through the chat session", () => {
+  it("submits externally controlled attachments through the chat session", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
@@ -171,7 +183,7 @@ describe("Chat — controlled via chat={useChat()}", () => {
         }],
       });
       assertEquals(removed, ["file-1"]);
-      root.unmount();
+      await unmount(root);
     } finally {
       restore();
     }

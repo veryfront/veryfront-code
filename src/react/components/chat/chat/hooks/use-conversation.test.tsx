@@ -2,7 +2,7 @@
  * useConversation — the singular loader. Proves it fetches one full
  * conversation by id from the store and reports a missing id as `null`.
  */
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
@@ -99,6 +99,18 @@ function persistenceError(
   return result.error;
 }
 
+/**
+ * Unmount and drain the scheduler task React leaves behind.
+ *
+ * React's scheduler holds a `setImmediate` until it next runs. It completes on
+ * its own, but the test has to yield once more or Deno's leak sanitizer sees
+ * the timer still pending.
+ */
+async function unmount(root: Root): Promise<void> {
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("react/components/chat/hooks/useConversation", () => {
   it("loads a full conversation by id from the store", async () => {
     const restoreDom = installDom();
@@ -108,7 +120,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       await settle();
       assertEquals(view.get().conversation?.title, "Alpha");
       assertEquals(view.get().isLoading, false);
-      flushSync(() => view.root.unmount());
+      await unmount(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -122,7 +134,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       const view = mount(store, "does-not-exist");
       await settle();
       assert(view.get().conversation === null, "unknown id resolves to null");
-      flushSync(() => view.root.unmount());
+      await unmount(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -197,7 +209,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       assertEquals(latest!.conversation?.title, "Provider record");
       assertEquals(latest!.isLoading, false);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       await settle();
       restoreDom();
     }
@@ -244,7 +256,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       assertEquals(loadCalls, 2);
       assertEquals(latest!.conversation?.title, "Reloaded provider record");
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       await settle();
       restoreDom();
     }
@@ -302,7 +314,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       flushSync(() => latest!.clearError());
       assertEquals(latest!.error, null);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       await settle();
       restoreDom();
     }
@@ -355,7 +367,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       assertEquals(latest!.error, null);
       assertEquals(provider!.error, deleteFailure);
     } finally {
-      flushSync(() => root.unmount());
+      await unmount(root);
       await settle();
       restoreDom();
     }
@@ -382,7 +394,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       flushSync(() => view.get().clearError());
       assertEquals(persistenceError(view.get()), null);
 
-      flushSync(() => view.root.unmount());
+      await unmount(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -414,7 +426,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       assertEquals(persistenceError(view.get())?.cause, loadFailure);
       assertEquals(callbackErrors, [callbackFailure]);
 
-      flushSync(() => view.root.unmount());
+      await unmount(view.root);
       await settle();
     } finally {
       if (previousReportError) {
@@ -443,7 +455,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       const view = mount(store, "a");
       await Promise.resolve();
       assert(rejectLoad);
-      flushSync(() => view.root.unmount());
+      await unmount(view.root);
       rejectLoad(new Error("late load failure"));
       await settle();
     } finally {
@@ -481,7 +493,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       assertEquals(view.get().isLoading, false);
       assertEquals(persistenceError(view.get()), null);
 
-      flushSync(() => view.root.unmount());
+      await unmount(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -527,7 +539,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       await settle();
       assertEquals([firstLoads, secondLoads], [1, 1]);
 
-      flushSync(() => view.root.unmount());
+      await unmount(view.root);
       retained.reload();
       retained.clearError();
       await settle();
@@ -567,7 +579,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       await settle();
       assertEquals([firstDisposals, secondDisposals], [0, 0]);
 
-      flushSync(() => view.root.unmount());
+      await unmount(view.root);
       await settle();
       assertEquals([firstDisposals, secondDisposals], [0, 0]);
     } finally {

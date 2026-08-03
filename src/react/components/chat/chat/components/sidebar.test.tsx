@@ -3,7 +3,7 @@
  * Step 5 introduced: it lists straight from a `ConversationsProvider` with no
  * props, and it also works controlled from explicit `conversations`/`activeId`.
  */
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { renderToString } from "react-dom/server";
 import * as React from "react";
@@ -78,6 +78,18 @@ function summary(id: string, title: string, updatedAt: number): ConversationSumm
   return { id, title, messageCount: 2, createdAt: updatedAt, updatedAt };
 }
 
+/**
+ * Unmount and drain the scheduler task React leaves behind.
+ *
+ * React's scheduler holds a `setImmediate` until it next runs. It completes on
+ * its own, but the test has to yield once more or Deno's leak sanitizer sees
+ * the timer still pending.
+ */
+async function unmount(root: Root): Promise<void> {
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("ChatSidebar — conversation-native", () => {
   it("lists conversations straight from context with no props", async () => {
     const restoreDom = installDom();
@@ -100,7 +112,7 @@ describe("ChatSidebar — conversation-native", () => {
       assert(html.includes("First chat"), "lists the first conversation from context");
       assert(html.includes("Second chat"), "lists the second conversation from context");
 
-      flushSync(() => root.unmount());
+      await unmount(root);
       await settle();
     } finally {
       restoreDom();
@@ -136,7 +148,7 @@ describe("ChatSidebar — conversation-native", () => {
         "the primary action carries the conversation label",
       );
 
-      flushSync(() => root.unmount());
+      await unmount(root);
       await settle();
     } finally {
       restoreDom();

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
@@ -153,6 +153,18 @@ function fakeFile(name: string): File {
   return new File(["1234567890"], name, { type: "text/plain" });
 }
 
+/**
+ * Unmount and drain the scheduler task React leaves behind.
+ *
+ * React's scheduler holds a `setImmediate` until it next runs. It completes on
+ * its own, but the test has to yield once more or Deno's leak sanitizer sees
+ * the timer still pending.
+ */
+async function unmount(root: Root): Promise<void> {
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("react/components/chat/hooks/useUploadsRegistry", () => {
   it("useUploadsRegistry is a back-compat alias of useAttachments", () => {
     assert(useUploadsRegistry === useAttachments);
@@ -188,13 +200,13 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       assertEquals(items[0]!.id, "srv-1", "the server id is captured (needed for DELETE)");
       assertEquals(items[0]!.type, "text/plain");
       assert((localStorage.getItem(key) ?? "").includes("srv-1"), "persisted to localStorage");
-      flushSync(() => a.root.unmount());
+      await unmount(a.root);
       await flush(() => {});
 
       // Remount → the item is loaded back from localStorage.
       const b = mount(key);
       assertEquals(b.get().items.map((f) => f.id), ["srv-1"]);
-      flushSync(() => b.root.unmount());
+      await unmount(b.root);
       await flush(() => {});
     } finally {
       fetchStub.restore();
@@ -211,7 +223,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       assertEquals(reg.get().isLoading, true, "loading immediately after mount");
       await flush(() => {});
       assertEquals(reg.get().isLoading, false, "cleared once the initial fetch resolves");
-      flushSync(() => reg.root.unmount());
+      await unmount(reg.root);
       await flush(() => {});
     } finally {
       fetchStub.restore();
@@ -239,7 +251,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
 
       assertEquals((latest as unknown as UseUploadsRegistryResult).isLoading, false);
       assertEquals(fetchStub.gets.length, 1, "inline headers should not retrigger refresh");
-      flushSync(() => root.unmount());
+      await unmount(root);
       await flush(() => {});
     } finally {
       fetchStub.restore();
@@ -299,7 +311,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
         ["new"],
       );
 
-      flushSync(() => root.unmount());
+      await unmount(root);
       await flush(() => {});
     } finally {
       globalThis.fetch = previousFetch;
@@ -322,7 +334,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
 
       assert(fetchStub.deletes.includes(id), "a DELETE was sent for the removed id");
       assertEquals(reg.get().items.length, 0, "the item is gone from the registry");
-      flushSync(() => reg.root.unmount());
+      await unmount(reg.root);
       await flush(() => {});
     } finally {
       fetchStub.restore();
@@ -354,7 +366,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
         "/api/uploads?source=panel&id=current#details",
       );
       assertEquals(reg.get().items, []);
-      flushSync(() => reg.root.unmount());
+      await unmount(reg.root);
     } finally {
       fetchStub.restore();
       restoreDom();
@@ -377,7 +389,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       assert(reg.get().removeError instanceof Error);
       flushSync(() => reg.get().clearRemoveError());
       assertEquals(reg.get().removeError, null);
-      flushSync(() => reg.root.unmount());
+      await unmount(reg.root);
       await flush(() => {});
     } finally {
       fetchStub.restore();
@@ -385,7 +397,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
     }
   });
 
-  it("rejects malformed, oversized, and executable persisted registry data", () => {
+  it("rejects malformed, oversized, and executable persisted registry data", async () => {
     const restoreDom = installDom();
     const fetchStub = stubFetch();
     try {
@@ -400,13 +412,13 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       const invalid = mount("test-invalid-cache");
       assertEquals(invalid.get().items, []);
       assert(invalid.get().storageError instanceof Error);
-      flushSync(() => invalid.root.unmount());
+      await unmount(invalid.root);
 
       localStorage.setItem("test-oversized-cache", `"${"x".repeat(1_100_000)}"`);
       const oversized = mount("test-oversized-cache");
       assertEquals(oversized.get().items, []);
       assert(oversized.get().storageError instanceof Error);
-      flushSync(() => oversized.root.unmount());
+      await unmount(oversized.root);
 
       localStorage.setItem(
         "test-duplicate-cache",
@@ -418,7 +430,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       const duplicate = mount("test-duplicate-cache");
       assertEquals(duplicate.get().items, []);
       assert(duplicate.get().storageError instanceof Error);
-      flushSync(() => duplicate.root.unmount());
+      await unmount(duplicate.root);
     } finally {
       fetchStub.restore();
       restoreDom();
@@ -469,7 +481,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       await flush(() => reg.get().upload([fakeFile("unsafe.html")]));
       assertEquals(reg.get().items.map((item) => item.id), ["cached"]);
       assert(reg.get().uploadError instanceof Error);
-      flushSync(() => reg.root.unmount());
+      await unmount(reg.root);
     } finally {
       globalThis.fetch = previousFetch;
       restoreDom();
@@ -502,7 +514,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
 
       assertEquals(reg.get().items.map((item) => item.id), ["cached"]);
       assert(reg.get().refreshError instanceof Error);
-      flushSync(() => reg.root.unmount());
+      await unmount(reg.root);
     } finally {
       globalThis.fetch = previousFetch;
       restoreDom();
@@ -546,7 +558,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
         "an ambiguous snapshot must not replace the validated cache",
       );
       assert(reg.get().refreshError instanceof Error);
-      flushSync(() => reg.root.unmount());
+      await unmount(reg.root);
     } finally {
       globalThis.fetch = previousFetch;
       restoreDom();
@@ -568,7 +580,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       await flush(() => {});
       assertEquals(reg.get().items, []);
       assert(reg.get().refreshError instanceof Error);
-      flushSync(() => reg.root.unmount());
+      await unmount(reg.root);
     } finally {
       globalThis.fetch = previousFetch;
       restoreDom();
@@ -610,7 +622,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       if (originalDescriptor) {
         Object.defineProperty(storagePrototype, "setItem", originalDescriptor);
       }
-      flushSync(() => reg.root.unmount());
+      await unmount(reg.root);
     } finally {
       fetchStub.restore();
       restoreDom();
@@ -643,7 +655,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
         null,
         "the oversized payload must not be handed to localStorage",
       );
-      flushSync(() => reg.root.unmount());
+      await unmount(reg.root);
     } finally {
       fetchStub.restore();
       restoreDom();
@@ -705,7 +717,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       assertEquals(reg.get().uploadError, null);
       assertEquals(reg.get().isUploading, false);
 
-      flushSync(() => reg.root.unmount());
+      await unmount(reg.root);
     } finally {
       globalThis.fetch = previousFetch;
       restoreDom();
@@ -757,7 +769,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       await flush(() => {});
       assertEquals(reg.get().items.map((item) => item.name), ["current.txt"]);
 
-      flushSync(() => reg.root.unmount());
+      await unmount(reg.root);
     } finally {
       globalThis.fetch = previousFetch;
       restoreDom();
@@ -792,7 +804,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       first.resolve(Response.json({ items: [{ id: "old", name: "old.txt" }] }));
       await flush(() => {});
       assertEquals(reg.get().items.map((item) => item.id), ["new"]);
-      flushSync(() => reg.root.unmount());
+      await unmount(reg.root);
     } finally {
       globalThis.fetch = previousFetch;
       restoreDom();
@@ -844,7 +856,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
         ["newest", "older"],
       );
       assertEquals(reg.get().refreshError, null);
-      flushSync(() => reg.root.unmount());
+      await unmount(reg.root);
     } finally {
       globalThis.fetch = previousFetch;
       restoreDom();
@@ -884,7 +896,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       ]);
       assertEquals(reg.get().items.map((item) => item.id), ["cached"]);
       assert(reg.get().refreshError instanceof Error);
-      flushSync(() => reg.root.unmount());
+      await unmount(reg.root);
     } finally {
       globalThis.fetch = previousFetch;
       restoreDom();
@@ -915,7 +927,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
         ),
         ["b"],
       );
-      flushSync(() => reg.root.unmount());
+      await unmount(reg.root);
     } finally {
       fetchStub.restore();
       restoreDom();
@@ -945,7 +957,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       });
 
       assertEquals(reg.get().items.map((item) => item.id), ["b"]);
-      flushSync(() => reg.root.unmount());
+      await unmount(reg.root);
     } finally {
       fetchStub.restore();
       restoreDom();
@@ -979,7 +991,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       assertEquals(pending.length, 3, "GET, DELETE, and POST are all pending");
 
       const retained = reg.get();
-      flushSync(() => reg.root.unmount());
+      await unmount(reg.root);
       assert(
         pending.every((request) => request.signal?.aborted),
         "all operation signals are aborted during cleanup",
@@ -1077,7 +1089,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
           </React.Suspense>,
         )
       );
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       globalThis.fetch = previousFetch;
       restoreDom();
