@@ -13,6 +13,7 @@ import { setupNodeFsWatcher } from "./shared-watcher.ts";
 
 type AdapterOptions = {
   noFollow?: number;
+  platform?: "posix" | "windows";
   exclusiveCreate?: boolean;
   operations?: Record<string, unknown>;
 };
@@ -64,13 +65,88 @@ describe("NodeCompatibleFileSystemAdapter", () => {
     }
   });
 
-  it("omits snapshot authority when O_NOFOLLOW is absent or zero", () => {
+  it("omits snapshot authority on POSIX when O_NOFOLLOW is absent or zero", () => {
     for (const noFollow of [undefined, 0]) {
-      const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, { noFollow });
+      const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+        noFollow,
+        platform: "posix",
+      });
       assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), false);
       assertEquals(adapter.readFileSnapshotWithinLimit, undefined);
       assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
     }
+  });
+
+  it("reads an exact Windows snapshot through an identity-verified handle", async () => {
+    const source = new Uint8Array([4, 5, 6]);
+    const stat = {
+      dev: 1n,
+      ino: 2n,
+      size: BigInt(source.byteLength),
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    const openedWith: Array<number | string> = [];
+    const operations = {
+      realpath: (path: string) => Promise.resolve(path),
+      lstat: () => Promise.resolve(stat),
+      open: (_path: string, flags: number | string) => {
+        openedWith.push(flags);
+        return Promise.resolve({
+          stat: () => Promise.resolve(stat),
+          read: (buffer: Uint8Array, offset: number, length: number, position: number) => {
+            buffer.set(source.subarray(position, position + length), offset);
+            return Promise.resolve({ bytesRead: length });
+          },
+          close: () => Promise.resolve(),
+        });
+      },
+    };
+    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+      noFollow: 0,
+      platform: "windows",
+      operations,
+    });
+
+    assertEquals(
+      [...await requireSnapshotReader(adapter)("/root/file.bin", "/root", 3)],
+      [4, 5, 6],
+    );
+    assertEquals(openedWith, ["r"]);
+  });
+
+  it("fails closed when Windows cannot provide a stable native file identity", async () => {
+    let opens = 0;
+    const stat = {
+      dev: 0n,
+      ino: 2n,
+      size: 1n,
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+      noFollow: 0,
+      platform: "windows",
+      operations: {
+        realpath: (path: string) => Promise.resolve(path),
+        lstat: () => Promise.resolve(stat),
+        open: () => {
+          opens++;
+          throw new Error("must not open without an identity");
+        },
+      },
+    });
+
+    await assertRejects(
+      () => requireSnapshotReader(adapter)("/root/file.bin", "/root", 1),
+      FileSnapshotChangedError,
+      "Stable native file identity is unavailable",
+    );
+    assertEquals(opens, 0);
   });
 
   it("omits exclusive create independently from available snapshot authority", () => {

@@ -18,7 +18,12 @@ import {
 import { markNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 import { constants as nodeFsConstants } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "../../../compat/path/index.ts";
+import { runtimeUsesWindowsPaths } from "../../../compat/path/portable.ts";
 import { FileSnapshotChangedError } from "../../file-snapshot-error.ts";
+import {
+  hasUsableNativeFileIdentity,
+  type NativeSnapshotPlatform,
+} from "./native-snapshot-identity.ts";
 
 export interface NodeFileSystemLogger {
   error(message: string, context?: Record<string, unknown>): void;
@@ -64,6 +69,8 @@ export interface NodeFileSystemOperations {
 export interface NodeFileSystemCapabilityOptions {
   /** Test seam for runtime constants. An own undefined value means unavailable. */
   readonly noFollow?: number;
+  /** Test seam for native open and path semantics. */
+  readonly platform?: NativeSnapshotPlatform;
   /** Test seam for create-new primitive availability. */
   readonly exclusiveCreate?: boolean;
   /** Test seam for deterministic filesystem races and write failures. */
@@ -138,6 +145,12 @@ function sameGeneration(left: NodeFileSnapshotStat, right: NodeFileSnapshotStat)
     left.ctimeNs === right.ctimeNs;
 }
 
+function requireUsableIdentity(stat: NodeFileSnapshotStat, message: string): void {
+  if (!hasUsableNativeFileIdentity(stat)) {
+    throw changed(message);
+  }
+}
+
 function changed(message: string, cause?: unknown): FileSnapshotChangedError {
   const error = new FileSnapshotChangedError(message);
   if (cause !== undefined) {
@@ -176,12 +189,22 @@ function throwSnapshotChangeForPathRace(message: string, cause: unknown): never 
 
 async function readNodeFileSnapshotWithinLimit(
   operations: NodeFileSystemOperations,
-  noFollow: number,
+  platform: NativeSnapshotPlatform,
+  noFollow: number | undefined,
   path: string,
   containmentRoot: string,
   byteLimit: number,
 ): Promise<Uint8Array> {
   requirePositiveSafeInteger(byteLimit);
+  let openFlags: number | string;
+  if (platform === "windows") {
+    openFlags = "r";
+  } else {
+    if (typeof noFollow !== "number" || noFollow === 0) {
+      throw new TypeError("This runtime cannot guarantee no-follow snapshot opens");
+    }
+    openFlags = nodeFsConstants.O_RDONLY | noFollow;
+  }
   const lexicalRoot = resolve(containmentRoot);
   const candidate = resolve(path);
   if (!isContainedPath(candidate, lexicalRoot)) {
@@ -196,11 +219,15 @@ async function readNodeFileSnapshotWithinLimit(
   if (!pathnameBefore.isFile()) {
     throw new TypeError("Snapshot path must identify a regular file");
   }
+  requireUsableIdentity(
+    pathnameBefore,
+    "Stable native file identity is unavailable for the snapshot path",
+  );
 
   return await withFileHandle(
     async () => {
       try {
-        return await operations.open(candidate, nodeFsConstants.O_RDONLY | noFollow);
+        return await operations.open(candidate, openFlags);
       } catch (cause) {
         throwSnapshotChangeForPathRace(
           "File identity became uncertain while opening the snapshot",
@@ -215,6 +242,10 @@ async function readNodeFileSnapshotWithinLimit(
       } catch (cause) {
         throwSnapshotChangeForMissingPath("Opened file identity could not be verified", cause);
       }
+      requireUsableIdentity(
+        handleBefore,
+        "Stable native file identity is unavailable for the opened snapshot",
+      );
       if (!handleBefore.isFile() || !sameGeneration(pathnameBefore, handleBefore)) {
         throw changed("File identity changed while opening the snapshot");
       }
@@ -239,6 +270,10 @@ async function readNodeFileSnapshotWithinLimit(
       ) {
         throw changed("File identity changed while opening the snapshot");
       }
+      requireUsableIdentity(
+        pathnameOpened,
+        "Stable native file identity is unavailable while verifying the snapshot",
+      );
       if (!isContainedPath(canonicalTarget, canonicalRoot)) {
         throw new TypeError("Snapshot target must be contained by the canonical root");
       }
@@ -288,6 +323,14 @@ async function readNodeFileSnapshotWithinLimit(
           cause,
         );
       }
+      requireUsableIdentity(
+        handleAfter,
+        "Stable native file identity is unavailable after reading the snapshot",
+      );
+      requireUsableIdentity(
+        pathnameAfter,
+        "Stable native file identity is unavailable after reading the snapshot path",
+      );
       if (
         !pathnameAfter.isFile() ||
         pathnameAfter.isSymbolicLink() ||
@@ -330,11 +373,15 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
       ...options.operations,
     } as NodeFileSystemOperations;
     const noFollow = hasOwn(options, "noFollow") ? options.noFollow : nodeFsConstants.O_NOFOLLOW;
-    if (typeof noFollow === "number" && noFollow !== 0) {
+    const platform = options.platform ?? (runtimeUsesWindowsPaths() ? "windows" : "posix");
+    const canOpenExactSnapshot = platform === "windows" ||
+      (typeof noFollow === "number" && noFollow !== 0);
+    if (canOpenExactSnapshot) {
       Object.defineProperty(this, "readFileSnapshotWithinLimit", {
         value: (path: string, containmentRoot: string, byteLimit: number) =>
           readNodeFileSnapshotWithinLimit(
             operations,
+            platform,
             noFollow,
             path,
             containmentRoot,

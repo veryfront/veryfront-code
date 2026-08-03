@@ -70,15 +70,17 @@ if (isDeno) {
       }
     });
 
-    it("omits only snapshot authority for absent or zero O_NOFOLLOW", () => {
+    it("requires O_NOFOLLOW only for POSIX snapshot authority", () => {
       const TestableAdapter = DenoFileSystemAdapter as unknown as new (
-        options: { noFollow?: number },
+        options: { noFollow?: number; platform?: "posix" | "windows" },
       ) => DenoFileSystemAdapter;
       for (const noFollow of [undefined, 0]) {
-        const adapter = new TestableAdapter({ noFollow });
+        const adapter = new TestableAdapter({ noFollow, platform: "posix" });
         assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), false);
         assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
       }
+      const windowsAdapter = new TestableAdapter({ noFollow: 0, platform: "windows" });
+      assertEquals(Object.hasOwn(windowsAdapter, "readFileSnapshotWithinLimit"), true);
     });
 
     it("omits createNew independently when that primitive is unavailable", () => {

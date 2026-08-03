@@ -66,9 +66,77 @@ function stableOperations(
 }
 
 describe("native filesystem capabilities", () => {
-  it("advertises snapshots only where no-follow opens are supported", () => {
+  it("advertises exact snapshots on POSIX and Windows", () => {
     assertEquals(supportsNativeFileSnapshots("posix"), true);
-    assertEquals(supportsNativeFileSnapshots("windows"), false);
+    assertEquals(supportsNativeFileSnapshots("windows"), true);
+  });
+
+  it("uses an identity-verified handle for exact Windows snapshots", async () => {
+    const stat = snapshotStat();
+    const openedWith: Array<number | string> = [];
+    const operations = stableOperations(stat);
+    operations.open = (_path, flags) => {
+      openedWith.push(flags);
+      return Promise.resolve(snapshotHandle(stat));
+    };
+
+    assertEquals(
+      [
+        ...await readNodeFileSnapshotWithinLimit(
+          "/root/file.bin",
+          "/root",
+          3,
+          operations,
+          "windows",
+        ),
+      ],
+      [7, 7, 7],
+    );
+    assertEquals(openedWith, ["r"]);
+  });
+
+  it("rejects ambiguous identity and pathname substitution in Windows mode", async () => {
+    const ambiguous = snapshotStat({ dev: 0n, ino: 2n });
+    let opens = 0;
+    const ambiguousOperations = stableOperations(ambiguous);
+    ambiguousOperations.open = () => {
+      opens++;
+      return Promise.resolve(snapshotHandle(ambiguous));
+    };
+    await assertRejects(
+      () =>
+        readNodeFileSnapshotWithinLimit(
+          "/root/file.bin",
+          "/root",
+          3,
+          ambiguousOperations,
+          "windows",
+        ),
+      FileSnapshotChangedError,
+      "Stable native file identity is unavailable",
+    );
+    assertEquals(opens, 0);
+
+    const before = snapshotStat();
+    const replacement = snapshotStat({ ino: 9n });
+    let pathnameStats = 0;
+    const replacementOperations: NativeSnapshotOperations = {
+      realpath: (path) => Promise.resolve(path),
+      lstat: () => Promise.resolve(pathnameStats++ === 0 ? before : replacement),
+      open: () => Promise.resolve(snapshotHandle(before)),
+    };
+    await assertRejects(
+      () =>
+        readNodeFileSnapshotWithinLimit(
+          "/root/file.bin",
+          "/root",
+          3,
+          replacementOperations,
+          "windows",
+        ),
+      FileSnapshotChangedError,
+      "File identity changed",
+    );
   });
 
   it("reads exact and empty snapshots and rejects oversize, links, directories, and escapes", async () => {
