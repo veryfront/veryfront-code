@@ -56,18 +56,11 @@ describe(
         entryPath,
         'export const marker = "SYMLINKED_ENTRY_MARKER";',
       );
-      const readDir = adapter.fs.readDir;
-      adapter.fs.readDir = (path: string) =>
-        path === `${projectDir}/app`
-          ? (async function* () {
-            yield {
-              name: "Leak.ts",
-              isFile: false,
-              isDirectory: false,
-              isSymlink: true,
-            };
-          })()
-          : readDir(path);
+      const readSnapshot = adapter.fs.readFileSnapshotWithinLimit!;
+      adapter.fs.readFileSnapshotWithinLimit = (path, root, limit) =>
+        path === entryPath
+          ? Promise.reject(new Error("snapshot rejected symbolic link"))
+          : readSnapshot(path, root, limit);
 
       await assertRejects(
         () => bundleBrowserModule(entryPath, { adapter, projectDir }),
@@ -375,6 +368,100 @@ describe(
       }
     });
 
+    it("uses stable bounded snapshots without raw reads or directory walks", async () => {
+      const projectDir = "/snapshot-project";
+      const entryPath = `${projectDir}/app/Counter.ts`;
+      const dependencyPath = `${projectDir}/app/shared.ts`;
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        entryPath,
+        'import "./shared.ts"; import "./shared.ts"; export default 1;',
+      );
+      adapter.fs.files.set(dependencyPath, "export const shared = true;");
+      const snapshotRead = adapter.fs.readFileSnapshotWithinLimit!;
+      const stat = adapter.fs.stat;
+      let snapshotReads = 0;
+      let dependencyStats = 0;
+      adapter.fs.readFile = () => Promise.reject(new Error("raw read must not be used"));
+      adapter.fs.readDir = () => {
+        throw new Error("directory walk must not be used");
+      };
+      adapter.fs.readFileSnapshotWithinLimit = (path, root, limit) => {
+        snapshotReads += 1;
+        return snapshotRead(path, root, limit);
+      };
+      adapter.fs.stat = (path) => {
+        if (path === dependencyPath) dependencyStats += 1;
+        return stat(path);
+      };
+
+      const bundle = await bundleBrowserModuleWithMetadata(entryPath, {
+        adapter,
+        projectDir,
+        importMapJson: "{}",
+      });
+
+      assertEquals(bundle.dependencies.length, 2);
+      assertEquals(snapshotReads, 2);
+      assertEquals(dependencyStats, 1);
+    });
+
+    it("rejects invalid UTF-8 through the stable bounded reader", async () => {
+      const projectDir = "/invalid-utf8-project";
+      const entryPath = `${projectDir}/app/Counter.ts`;
+      const adapter = createMockAdapter();
+      adapter.fs.byteFiles.set(entryPath, new Uint8Array([0xff]));
+
+      await assertRejects(
+        async () =>
+          await bundleBrowserModuleWithMetadata(entryPath, {
+            adapter,
+            projectDir,
+            importMapJson: "{}",
+          }),
+        TypeError,
+        "valid UTF-8",
+      );
+    });
+
+    it("does not accept inherited no-symlink authority", async () => {
+      const projectDir = "/inherited-capability-project";
+      const entryPath = `${projectDir}/app/Counter.ts`;
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(entryPath, "export default 1;");
+      const inherited = Object.create({ symlinkSemantics: "none" }) as typeof adapter.fs;
+      for (const key of Reflect.ownKeys(adapter.fs)) {
+        if (key === "symlinkSemantics" || key === "readFileSnapshotWithinLimit") continue;
+        const descriptor = Object.getOwnPropertyDescriptor(adapter.fs, key);
+        if (descriptor) Object.defineProperty(inherited, key, descriptor);
+      }
+      adapter.fs = inherited;
+
+      await assertRejects(
+        () => bundleBrowserModule(entryPath, { adapter, projectDir }),
+        TypeError,
+        "stable bounded snapshot reader",
+      );
+    });
+
+    it("rejects attempts to raise production graph ceilings", async () => {
+      const projectDir = "/raised-limit-project";
+      const entryPath = `${projectDir}/app/Counter.ts`;
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(entryPath, "export default 1;");
+
+      await assertRejects(
+        async () =>
+          await bundleBrowserModuleWithMetadata(entryPath, {
+            adapter,
+            projectDir,
+            limits: { maxDependencies: 1_001 },
+          }),
+        RangeError,
+        "cannot exceed",
+      );
+    });
+
     it("keeps distinct entries separate when a caller reuses a singleflight key", async () => {
       const projectDir = "/distinct-entry-project";
       const firstPath = `${projectDir}/app/first.ts`;
@@ -458,7 +545,6 @@ describe(
           adapter,
           projectDir,
           importMapJson: "{}",
-          limits: { maxConcurrentPerIdentity: 2, maxQueuedPerIdentity: 2 },
         };
         const first = bundleBrowserModuleWithMetadata(entryPath, {
           ...common,
@@ -500,17 +586,15 @@ describe(
         adapter.fs.files.set(entryPath, "export default 1;");
         return adapter;
       };
-      const activeAdapter = createAdapter();
-      const queuedAdapter = createAdapter();
-      const rejectedAdapter = createAdapter();
-      const started = Promise.withResolvers<void>();
+      const adapters = Array.from({ length: 11 }, createAdapter);
+      const twoStarted = Promise.withResolvers<void>();
       const release = Promise.withResolvers<void>();
       let calls = 0;
       const previous = tryResolve<Bundler>("Bundler");
       register<Bundler>("Bundler", {
         bundle: async () => {
           calls += 1;
-          started.resolve();
+          if (calls === 2) twoStarted.resolve();
           await release.promise;
           return {
             outputFiles: [{
@@ -530,35 +614,105 @@ describe(
           projectDir,
           projectId: "capacity-project",
           importMapJson: "{}",
-          limits: { maxConcurrentPerIdentity: 1, maxQueuedPerIdentity: 1 },
         };
-        const active = bundleBrowserModuleWithMetadata(entryPath, {
-          ...common,
-          adapter: activeAdapter,
-          singleflightKey: "active",
-        });
-        await started.promise;
-        const queued = bundleBrowserModuleWithMetadata(entryPath, {
-          ...common,
-          adapter: queuedAdapter,
-          singleflightKey: "queued",
-        });
-        void queued.catch(() => undefined);
+        const admitted = adapters.slice(0, 10).map((adapter, index) =>
+          bundleBrowserModuleWithMetadata(entryPath, {
+            ...common,
+            adapter,
+            singleflightKey: `admitted-${index}`,
+          })
+        );
+        admitted.forEach((promise) => void promise.catch(() => undefined));
+        await twoStarted.promise;
         const rejected = await assertRejects(
           () =>
             bundleBrowserModuleWithMetadata(entryPath, {
               ...common,
-              adapter: rejectedAdapter,
+              adapter: adapters[10]!,
               singleflightKey: "rejected",
             }),
           BrowserModuleBundleError,
         );
         assertEquals((rejected as BrowserModuleBundleError).kind, "capacity");
-        assertEquals(calls, 1);
+        assertEquals(calls, 2);
 
         release.resolve();
-        await Promise.all([active, queued]);
-        assertEquals(calls, 2);
+        await Promise.all(admitted);
+        assertEquals(calls, 10);
+      } finally {
+        release.resolve();
+        if (previous) register("Bundler", previous);
+        else unregister("Bundler");
+      }
+    });
+
+    it("bounds aggregate bundle work across project identities", async () => {
+      const release = Promise.withResolvers<void>();
+      const eightStarted = Promise.withResolvers<void>();
+      let active = 0;
+      let maximumActive = 0;
+      let calls = 0;
+      const previous = tryResolve<Bundler>("Bundler");
+      register<Bundler>("Bundler", {
+        bundle: async () => {
+          calls += 1;
+          active += 1;
+          maximumActive = Math.max(maximumActive, active);
+          if (active === 8) eightStarted.resolve();
+          await release.promise;
+          active -= 1;
+          return {
+            outputFiles: [{
+              path: "out.js",
+              contents: new TextEncoder().encode("export default 1;"),
+              text: "export default 1;",
+            }],
+            warnings: [],
+            errors: [],
+          };
+        },
+        transform: () => Promise.resolve({ code: "", warnings: [] }),
+      });
+
+      try {
+        const admitted = Array.from({ length: 40 }, (_, index) => {
+          const projectDir = `/global-capacity-${index}`;
+          const entryPath = `${projectDir}/app/Counter.ts`;
+          const adapter = createMockAdapter();
+          adapter.fs.files.set(entryPath, "export default 1;");
+          return bundleBrowserModuleWithMetadata(entryPath, {
+            adapter,
+            projectDir,
+            projectId: `global-capacity-${index}`,
+            importMapJson: "{}",
+            singleflightKey: `global-capacity-${index}`,
+          });
+        });
+        admitted.forEach((promise) => void promise.catch(() => undefined));
+        await eightStarted.promise;
+
+        const overflowProjectDir = "/global-capacity-overflow";
+        const overflowEntryPath = `${overflowProjectDir}/app/Counter.ts`;
+        const overflowAdapter = createMockAdapter();
+        overflowAdapter.fs.files.set(overflowEntryPath, "export default 1;");
+        const rejected = await assertRejects(
+          () =>
+            bundleBrowserModuleWithMetadata(overflowEntryPath, {
+              adapter: overflowAdapter,
+              projectDir: overflowProjectDir,
+              projectId: "global-capacity-overflow",
+              importMapJson: "{}",
+              singleflightKey: "global-capacity-overflow",
+            }),
+          BrowserModuleBundleError,
+        );
+        assertEquals((rejected as BrowserModuleBundleError).kind, "capacity");
+        assertEquals(maximumActive, 8);
+
+        release.resolve();
+        await Promise.all(admitted);
+        assertEquals(calls, 40);
+        assertEquals(maximumActive, 8);
       } finally {
         release.resolve();
         if (previous) register("Bundler", previous);

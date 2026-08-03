@@ -21,6 +21,7 @@ import type {
   TransformOptions,
   TransformResult,
 } from "veryfront/extensions/bundler";
+import { rebuildContextWithSignal } from "./context-build-lifecycle.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
@@ -345,13 +346,6 @@ export class EsbuildBundler implements Bundler {
       const esbuild = await getEsbuild();
       const mapped = mapOptions(options, scope);
       const signal = options.signal;
-      let context:
-        | { rebuild(): Promise<unknown>; cancel(): Promise<void>; dispose(): Promise<void> }
-        | undefined;
-      let cancelPromise: Promise<void> | undefined;
-      const abort = (): void => {
-        if (context && !cancelPromise) cancelPromise = context.cancel();
-      };
       try {
         signal?.throwIfAborted();
 
@@ -364,10 +358,7 @@ export class EsbuildBundler implements Bundler {
         try {
           if (signal) {
             const buildContext = await invokeEsbuild(() => esbuild.context(mapped.options));
-            context = buildContext;
-            signal.addEventListener("abort", abort, { once: true });
-            if (signal.aborted) abort();
-            result = await buildContext.rebuild();
+            result = await rebuildContextWithSignal(buildContext, signal);
           } else {
             result = await invokeEsbuild(() => esbuild.build(mapped.options));
           }
@@ -383,16 +374,7 @@ export class EsbuildBundler implements Bundler {
           metafile: result.metafile as Metafile | undefined,
         };
       } finally {
-        signal?.removeEventListener("abort", abort);
-        try {
-          await cancelPromise;
-        } finally {
-          try {
-            await context?.dispose();
-          } finally {
-            mapped.activatePluginDisposals();
-          }
-        }
+        mapped.activatePluginDisposals();
       }
     });
   }

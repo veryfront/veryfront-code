@@ -83,6 +83,7 @@ import {
 import {
   type BrowserModuleBundle,
   BrowserModuleBundleError,
+  type BrowserModuleBundleLimitOverrides,
   bundleBrowserModuleWithMetadata,
 } from "#veryfront/server/shared/browser-module-bundler.ts";
 import { ensureDefaultParserContracts } from "#veryfront/extensions/parser/defaults.ts";
@@ -372,6 +373,8 @@ export interface ModuleServerOptions {
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Request mode ("preview" | "production") for studio features like node positions */
   mode?: string;
+  /** Optional operator tightening for request-triggered browser graph compilation. */
+  browserModuleBundleLimits?: BrowserModuleBundleLimitOverrides;
 }
 
 /** Serve transformed module at /_vf_modules/* path */
@@ -1002,6 +1005,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             sourcePolicy?.requiresClientBoundary === true &&
             hasUseClientDirective(inspectedBrowserSource, sourceFile)
           ) {
+            const inspectedBrowserSourceKey = await sha256Short(inspectedBrowserSource);
             bundledClientBoundary = await bundleBrowserModuleWithMetadata(sourceFile, {
               adapter,
               projectDir,
@@ -1013,12 +1017,16 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               dependencyPinningDependencies,
               dependencyPinningSource: dependencySource,
               signal: req.signal,
+              entrySource: inspectedBrowserSource,
+              entrySourceKey: inspectedBrowserSourceKey,
+              limits: options.browserModuleBundleLimits,
               singleflightKey: [
                 effectiveProjectId,
                 options.contentSourceId ?? options.releaseId ?? branch ?? "working-tree",
                 dependencyPinningCacheKey,
                 url.origin,
                 sourceFile,
+                inspectedBrowserSourceKey,
               ].join("\0"),
             });
             const dependencyAdmission = validateBundledClientDependencies(

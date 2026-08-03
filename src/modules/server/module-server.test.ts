@@ -547,7 +547,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     const projectDir = "/bounded-rsc-project";
     const adapter = createMockAdapter();
     const imports: string[] = ['"use client";'];
-    for (let index = 0; index < 1_000; index++) {
+    for (let index = 0; index < 4; index++) {
       imports.push(`import "./dependency-${index}.ts";`);
       adapter.fs.files.set(
         `${projectDir}/app/dependency-${index}.ts`,
@@ -567,6 +567,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       isProxyMode: true,
       mode: "preview",
       config: { experimental: { rsc: true } },
+      browserModuleBundleLimits: { maxDependencies: 3 },
     } as const;
     const url = "http://localhost:3000/_vf_modules/app/client.js";
     const [getResponse, headResponse] = await Promise.all([
@@ -576,7 +577,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
 
     assertEquals(getResponse.status, 413);
     assertEquals(headResponse.status, 413);
-    assertEquals((await getResponse.text()).includes("value999"), false);
+    assertEquals((await getResponse.text()).includes("value3"), false);
     assertEquals(await headResponse.text(), "");
   });
 

@@ -513,7 +513,6 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
           }
         },
       });
-
       const result = await handleRSCEndpoint(
         makeParams({
           pathname: "/_veryfront/rsc/module",
@@ -560,6 +559,13 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
           }
         },
       });
+      Object.defineProperty(adapter.fs, "symlinkSemantics", {
+        configurable: true,
+        enumerable: true,
+        value: undefined,
+      });
+      adapter.fs.readFileSnapshotWithinLimit = () =>
+        Promise.reject(new TypeError("snapshot rejected symbolic link"));
 
       const result = await handleRSCEndpoint(
         makeParams({
@@ -578,7 +584,7 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       assertEquals((await result!.text()).includes("OUTSIDE_PROJECT_MARKER"), false);
     });
 
-    it("fails closed when app path metadata cannot be inspected", async () => {
+    it("uses exact no-link reads instead of mutable directory metadata", async () => {
       const modulePath = "/tmp/test-project/app/Counter.ts";
       const reads: string[] = [];
       const adapter = createMockAdapter({
@@ -606,8 +612,8 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
         }),
       );
 
-      assertEquals(result?.status, 404);
-      assertEquals(reads, []);
+      assertEquals(result?.status, 200);
+      assertEquals(reads, [modulePath]);
     });
 
     it("serves declared client modules from the app root", async () => {
@@ -1160,7 +1166,7 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
         knownFiles: Object.keys(files),
         exists: (path) => Promise.resolve(path in files),
         readFile: async (path) => {
-          if (path === firstPath && ++firstReads === 2) {
+          if (path === firstPath && ++firstReads === 1) {
             signalStarted();
             await release;
           }

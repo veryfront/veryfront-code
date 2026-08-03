@@ -9,7 +9,6 @@ import {
   createBareExternalPlugin,
   createHttpExternalPlugin,
   createRelativeFsPlugin,
-  inspectBrowserModulePath,
 } from "#veryfront/server/handlers/dev/files/esbuild-plugins.ts";
 import {
   describeBrowserModuleBoundaryViolation,
@@ -21,6 +20,22 @@ import { PermitSemaphore } from "#veryfront/utils/permit-semaphore.ts";
 import { waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
 import { createAbortError, throwIfAborted } from "#veryfront/utils/abort.ts";
 import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
+import {
+  captureFileSystemCapabilities,
+  captureSnapshotReadCapability,
+  copyFixedUint8ArrayWithinLimit,
+  getFixedUint8ArrayByteLength,
+} from "#veryfront/platform/adapters/file-system-capabilities.ts";
+import {
+  isNativeErrorWithoutHooks,
+  readNativeErrorNameWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";
+import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
+import {
+  hasClientFileName,
+  hasUseClientDirective,
+  hasUseServerDirective,
+} from "#veryfront/rendering/rsc/page-island.ts";
 
 export interface BrowserModuleBundleLimits {
   maxDependencies: number;
@@ -31,6 +46,17 @@ export interface BrowserModuleBundleLimits {
   maxConcurrentPerIdentity: number;
   maxQueuedPerIdentity: number;
 }
+
+export type BrowserModuleBundleLimitOverrides = Partial<
+  Pick<
+    BrowserModuleBundleLimits,
+    | "maxDependencies"
+    | "maxAggregateInputBytes"
+    | "maxOutputBytes"
+    | "maxResolutionProbes"
+    | "maxDurationMs"
+  >
+>;
 
 /** Hard production ceilings for request-triggered browser compilation. */
 export const DEFAULT_BROWSER_MODULE_BUNDLE_LIMITS: Readonly<BrowserModuleBundleLimits> = Object
@@ -44,6 +70,11 @@ export const DEFAULT_BROWSER_MODULE_BUNDLE_LIMITS: Readonly<BrowserModuleBundleL
     maxQueuedPerIdentity: 8,
   });
 
+/** Isolate-wide ceiling that cannot be raised by a project or caller. */
+export const MAX_CONCURRENT_BROWSER_MODULE_BUNDLES = 8;
+/** Isolate-wide queue ceiling that cannot be raised by a project or caller. */
+export const MAX_QUEUED_BROWSER_MODULE_BUNDLES = 32;
+
 export type BrowserModuleBundleFailureKind = "capacity" | "deadline" | "limit";
 
 export class BrowserModuleBundleError extends Error {
@@ -53,6 +84,14 @@ export class BrowserModuleBundleError extends Error {
   ) {
     super(message);
     this.name = "BrowserModuleBundleError";
+  }
+}
+
+/** Browser endpoint entry rejection that is safe to surface as not-found. */
+export class BrowserModuleEntryRejectedError extends Error {
+  constructor(cause?: unknown) {
+    super("Browser module entry is not an admitted client boundary", { cause });
+    this.name = "BrowserModuleEntryRejectedError";
   }
 }
 
@@ -88,8 +127,14 @@ export interface BrowserModuleBundlerOptions {
   signal?: AbortSignal;
   /** Stable request identity used to coalesce equivalent concurrent bundles. */
   singleflightKey?: string;
-  /** Internal test/embedding override. Production callers use the hard defaults. */
-  limits?: Partial<BrowserModuleBundleLimits>;
+  /** Already-admitted entry snapshot. Avoids a second mutable filesystem read. */
+  entrySource?: string;
+  /** Content-derived identity required whenever entrySource is supplied. */
+  entrySourceKey?: string;
+  /** Require an explicit directive or `.client` filename on the entry source. */
+  requireClientBoundary?: boolean;
+  /** Optional tightening of the hard limits. Values above the defaults are rejected. */
+  limits?: BrowserModuleBundleLimitOverrides;
 }
 
 export function getSafeBrowserModuleIdentity(absPath: string, projectDir: string): string {
@@ -105,7 +150,7 @@ export interface BrowserModuleBundle {
   source: string;
   contentHash: string;
   importMapHash: string;
-  dependencies: ReadonlyArray<{ path: string; contentHash: string }>;
+  dependencies: ReadonlyArray<{ path: string; contentHash: string; byteLength: number }>;
   resolutionProbes: ReadonlyArray<{ path: string; state: ResolutionProbeState }>;
 }
 
@@ -113,8 +158,97 @@ interface TrackingAdapterResult {
   adapter: RuntimeAdapter;
   contents: Map<string, string>;
   probes: Map<string, ResolutionProbeState>;
-  chargeText(content: string): void;
+  readSource(path: string): Promise<string>;
+  admitSource(path: string, content: string): void;
+  chargeText(content: string): number;
   getFailure(): BrowserModuleBundleError | undefined;
+}
+
+interface AdmittedText {
+  content: string;
+  byteLength: number;
+}
+
+const apply = Reflect.apply;
+const strictUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
+const decodeUtf8 = TextDecoder.prototype.decode;
+
+function isNativeRangeError(value: unknown): boolean {
+  return isNativeErrorWithoutHooks(value) &&
+    readNativeErrorNameWithoutHooks(value) === "RangeError";
+}
+
+function isNativeTypeError(value: unknown): boolean {
+  return isNativeErrorWithoutHooks(value) &&
+    readNativeErrorNameWithoutHooks(value) === "TypeError";
+}
+
+function decodeBrowserModuleSource(bytes: Uint8Array): string {
+  try {
+    return apply(decodeUtf8, strictUtf8Decoder, [bytes]) as string;
+  } catch (cause) {
+    throw new TypeError("Browser module source must contain valid UTF-8", { cause });
+  }
+}
+
+/**
+ * Capture stable filesystem authority once. Native filesystems must provide a
+ * root-bound no-follow snapshot read. A virtual filesystem may instead make
+ * an own, immutable-in-contract declaration that it cannot traverse links and
+ * provide a genuine exact bounded reader.
+ */
+function createBrowserModuleSourceReader(
+  adapter: RuntimeAdapter,
+  projectDir: string,
+): (path: string, maximumBytes: number) => Promise<AdmittedText> {
+  const snapshot = captureSnapshotReadCapability(
+    adapter.fs,
+    "Browser module filesystem",
+  );
+  if (snapshot) {
+    return async (path: string, maximumBytes: number): Promise<AdmittedText> => {
+      const bytes = await snapshot.read(path, projectDir, maximumBytes);
+      return {
+        content: decodeBrowserModuleSource(bytes),
+        byteLength: getFixedUint8ArrayByteLength(bytes, "Browser module source"),
+      };
+    };
+  }
+
+  const semantics = Object.getOwnPropertyDescriptor(adapter.fs, "symlinkSemantics");
+  if (semantics && "value" in semantics && semantics.value === "none") {
+    const bounded = captureFileSystemCapabilities(
+      adapter.fs,
+      "Browser module filesystem",
+      "bounded-text",
+    );
+    if (!bounded.readFileBytesWithinLimit && !bounded.wholeFileReader) {
+      throw new TypeError(
+        "Link-free browser module filesystem requires an exact bounded reader",
+      );
+    }
+    return async (path: string, maximumBytes: number): Promise<AdmittedText> => {
+      const bytes = bounded.readFileBytesWithinLimit
+        ? await bounded.readFileBytesWithinLimit(path, maximumBytes)
+        : bounded.wholeFileReader && bounded.wholeFileReader.maximumBytes <= maximumBytes
+        ? copyFixedUint8ArrayWithinLimit(
+          await bounded.wholeFileReader.read(path),
+          maximumBytes,
+          "Browser module source",
+        )
+        : (() => {
+          throw new TypeError("Browser module source requires an exact bounded reader");
+        })();
+      return {
+        content: decodeBrowserModuleSource(bytes),
+        byteLength: getFixedUint8ArrayByteLength(bytes, "Browser module source"),
+      };
+    };
+  }
+
+  throw new TypeError(
+    "Browser module filesystem requires a stable bounded snapshot reader",
+  );
 }
 
 function requirePositiveSafeInteger(value: number, name: string): number {
@@ -125,17 +259,34 @@ function requirePositiveSafeInteger(value: number, name: string): number {
 }
 
 function resolveLimits(
-  overrides: Partial<BrowserModuleBundleLimits> | undefined,
+  overrides: BrowserModuleBundleLimitOverrides | undefined,
 ): BrowserModuleBundleLimits {
   const resolved = { ...DEFAULT_BROWSER_MODULE_BUNDLE_LIMITS, ...overrides };
   for (const [name, value] of Object.entries(resolved)) {
     requirePositiveSafeInteger(value, `Browser module bundle limit ${name}`);
+    const hardMaximum = DEFAULT_BROWSER_MODULE_BUNDLE_LIMITS[
+      name as keyof BrowserModuleBundleLimits
+    ];
+    if (value > hardMaximum) {
+      throw new RangeError(
+        `Browser module bundle limit ${name} cannot exceed the production ceiling`,
+      );
+    }
+    if (
+      (name === "maxConcurrentPerIdentity" || name === "maxQueuedPerIdentity") &&
+      value !== hardMaximum
+    ) {
+      throw new RangeError(
+        `Browser module bundle admission limit ${name} is process-owned and cannot be overridden`,
+      );
+    }
   }
   return resolved;
 }
 
 function createTrackingAdapter(
   adapter: RuntimeAdapter,
+  projectDir: string,
   limits: BrowserModuleBundleLimits,
   signal: AbortSignal,
 ): TrackingAdapterResult {
@@ -143,42 +294,79 @@ function createTrackingAdapter(
   const probes = new Map<string, ResolutionProbeState>();
   const dependencyPaths = new Set<string>();
   const probePaths = new Set<string>();
+  const sourceReads = new Map<string, Promise<string>>();
+  const statReads = new Map<string, Promise<Awaited<ReturnType<typeof adapter.fs.stat>>>>();
+  const readBoundedSource = createBrowserModuleSourceReader(adapter, projectDir);
+  let sourceReadTail = Promise.resolve();
   let failure: BrowserModuleBundleError | undefined;
   const fail = (message: string): never => {
     failure ??= new BrowserModuleBundleError("limit", message);
     throw failure;
   };
   let aggregateInputBytes = 0;
-  const chargeText = (content: string): void => {
+  const chargeText = (content: string): number => {
     const remaining = limits.maxAggregateInputBytes - aggregateInputBytes;
     const contentBytes = utf8ByteLength(content, remaining);
     if (contentBytes > remaining) {
       fail("Browser module bundle input exceeds the aggregate byte limit");
     }
     aggregateInputBytes += contentBytes;
+    return contentBytes;
+  };
+  const reserveDependency = (path: string): void => {
+    if (dependencyPaths.has(path)) return;
+    if (dependencyPaths.size >= limits.maxDependencies) {
+      fail("Browser module bundle exceeds the dependency limit");
+    }
+    dependencyPaths.add(path);
+  };
+  const admitSource = (path: string, content: string): void => {
+    reserveDependency(path);
+    if (contents.has(path)) return;
+    chargeText(content);
+    contents.set(path, content);
+    sourceReads.set(path, Promise.resolve(content));
+  };
+  const readSource = (path: string): Promise<string> => {
+    const existing = sourceReads.get(path);
+    if (existing) return existing;
+    reserveDependency(path);
+    const reading = sourceReadTail.then(async () => {
+      throwIfAborted(signal);
+      const remaining = limits.maxAggregateInputBytes - aggregateInputBytes;
+      if (remaining <= 0) {
+        fail("Browser module bundle input exceeds the aggregate byte limit");
+      }
+      let admitted: AdmittedText;
+      try {
+        admitted = await readBoundedSource(path, remaining);
+      } catch (error) {
+        if (isNativeRangeError(error)) {
+          fail("Browser module bundle input exceeds the aggregate byte limit");
+        }
+        throw error;
+      }
+      throwIfAborted(signal);
+      aggregateInputBytes += admitted.byteLength;
+      contents.set(path, admitted.content);
+      return admitted.content;
+    });
+    sourceReadTail = reading.then(
+      () => undefined,
+      () => undefined,
+    );
+    sourceReads.set(path, reading);
+    return reading;
   };
   const trackedFs = new Proxy(adapter.fs, {
     get(target, property, receiver) {
       if (property === "readFile") {
-        return async (path: string) => {
-          throwIfAborted(signal);
-          if (!dependencyPaths.has(path)) {
-            if (dependencyPaths.size >= limits.maxDependencies) {
-              fail("Browser module bundle exceeds the dependency limit");
-            }
-            // Reserve synchronously before awaiting the adapter so concurrent
-            // plugin loads cannot each pass the same remaining-capacity check.
-            dependencyPaths.add(path);
-          }
-          const content = await target.readFile(path);
-          throwIfAborted(signal);
-          chargeText(content);
-          contents.set(path, content);
-          return content;
-        };
+        return readSource;
       }
       if (property === "stat") {
-        return async (path: string) => {
+        return (path: string) => {
+          const existing = statReads.get(path);
+          if (existing) return existing;
           throwIfAborted(signal);
           if (!probePaths.has(path)) {
             if (probePaths.size >= limits.maxResolutionProbes) {
@@ -186,18 +374,24 @@ function createTrackingAdapter(
             }
             probePaths.add(path);
           }
-          try {
-            const info = await target.stat(path);
-            throwIfAborted(signal);
-            probes.set(
-              path,
-              info.isFile ? "file" : info.isDirectory ? "directory" : "other",
-            );
-            return info;
-          } catch (error) {
-            probes.set(path, "missing");
-            throw error;
-          }
+          const reading = (async () => {
+            try {
+              const info = await target.stat(path);
+              throwIfAborted(signal);
+              probes.set(
+                path,
+                info.isFile ? "file" : info.isDirectory ? "directory" : "other",
+              );
+              return info;
+            } catch (error) {
+              if (isCanonicalNotFoundError(error)) {
+                probes.set(path, "missing");
+              }
+              throw error;
+            }
+          })();
+          statReads.set(path, reading);
+          return reading;
         };
       }
 
@@ -217,6 +411,8 @@ function createTrackingAdapter(
     adapter: trackedAdapter,
     contents,
     probes,
+    readSource,
+    admitSource,
     chargeText,
     getFailure: () => failure,
   };
@@ -236,6 +432,9 @@ interface BundleLane {
 }
 
 const bundleLanes = new Map<string, BundleLane>();
+const globalBundleAdmission = new PermitSemaphore(MAX_CONCURRENT_BROWSER_MODULE_BUNDLES, {
+  maxQueueSize: MAX_QUEUED_BROWSER_MODULE_BUNDLES,
+});
 const objectIdentities = new WeakMap<object, number>();
 let nextObjectIdentity = 1;
 
@@ -252,11 +451,7 @@ function getBundleLane(
   identity: string,
   limits: BrowserModuleBundleLimits,
 ): { key: string; lane: BundleLane } {
-  const key = [
-    identity,
-    limits.maxConcurrentPerIdentity,
-    limits.maxQueuedPerIdentity,
-  ].join("\0");
+  const key = identity;
   let lane = bundleLanes.get(key);
   if (!lane) {
     lane = {
@@ -320,22 +515,50 @@ async function runWithBundleAdmission(
 
   const execute = async (parentSignal: AbortSignal | undefined): Promise<BrowserModuleBundle> => {
     const deadline = createBundleDeadline(parentSignal, limits.maxDurationMs);
-    let acquired = false;
+    let projectAcquired = false;
+    let globalAcquired = false;
+    let releaseWhenSettled = false;
+    const releaseAdmission = (): void => {
+      if (globalAcquired) {
+        globalAcquired = false;
+        globalBundleAdmission.release();
+      }
+      if (projectAcquired) {
+        projectAcquired = false;
+        lane.semaphore.release();
+      }
+      releaseBundleLane(laneKey, lane);
+    };
     try {
-      acquired = await lane.semaphore.tryAcquire(Number.POSITIVE_INFINITY, {
+      projectAcquired = await lane.semaphore.tryAcquire(Number.POSITIVE_INFINITY, {
         signal: deadline.signal,
       });
-      if (!acquired) {
+      if (!projectAcquired) {
         throw new BrowserModuleBundleError(
           "capacity",
-          "Browser module bundle capacity is exhausted",
+          "Browser module bundle project capacity is exhausted",
         );
       }
-      return await operation(deadline.signal);
+      globalAcquired = await globalBundleAdmission.tryAcquire(Number.POSITIVE_INFINITY, {
+        signal: deadline.signal,
+      });
+      if (!globalAcquired) {
+        throw new BrowserModuleBundleError(
+          "capacity",
+          "Browser module bundle host capacity is exhausted",
+        );
+      }
+
+      const running = operation(deadline.signal);
+      // A client receives its deadline promptly, while the underlying permit is
+      // retained until non-abortable adapter work actually settles. This keeps
+      // legacy transports bounded instead of detaching unlimited background I/O.
+      void running.then(releaseAdmission, releaseAdmission);
+      releaseWhenSettled = true;
+      return await waitForSharedPromise(running, deadline.signal);
     } finally {
-      if (acquired) lane.semaphore.release();
       deadline.dispose();
-      releaseBundleLane(laneKey, lane);
+      if (!releaseWhenSettled) releaseAdmission();
     }
   };
 
@@ -399,23 +622,57 @@ export function bundleBrowserModuleWithMetadata(
   options: BrowserModuleBundlerOptions,
 ): Promise<BrowserModuleBundle> {
   const limits = resolveLimits(options.limits);
-  return runWithBundleAdmission(options, limits, absPath, (signal) =>
+  if (
+    options.entrySource !== undefined &&
+    (typeof options.entrySourceKey !== "string" || options.entrySourceKey.length === 0)
+  ) {
+    return Promise.reject(
+      new TypeError("Browser module entrySource requires a content-derived entrySourceKey"),
+    );
+  }
+  const operationIdentity = options.entrySourceKey === undefined
+    ? absPath
+    : `${absPath}\0${options.entrySourceKey}`;
+  return runWithBundleAdmission(options, limits, operationIdentity, (signal) =>
     withSpan(
       "server.browser-module.bundle",
       async () => {
         throwIfAborted(signal);
-        const tracked = createTrackingAdapter(options.adapter, limits, signal);
-        const entryPathStatus = await inspectBrowserModulePath(
-          options.projectDir,
-          absPath,
-          tracked.adapter,
-        );
-        if (entryPathStatus !== "trusted") {
+        if (!isWithinDirectory(options.projectDir, absPath)) {
           throw new Error("Browser module entry path is not trusted");
         }
+        const tracked = createTrackingAdapter(
+          options.adapter,
+          options.projectDir,
+          limits,
+          signal,
+        );
 
         const { build } = await import("veryfront/extensions/bundler");
-        const src = await tracked.adapter.fs.readFile(absPath);
+        if (options.entrySource !== undefined) {
+          tracked.admitSource(absPath, options.entrySource);
+        }
+        let src: string;
+        try {
+          src = options.entrySource ?? await tracked.readSource(absPath);
+        } catch (error) {
+          if (
+            options.requireClientBoundary &&
+            (isCanonicalNotFoundError(error) || isNativeTypeError(error))
+          ) {
+            throw new BrowserModuleEntryRejectedError(error);
+          }
+          throw error;
+        }
+        if (
+          options.requireClientBoundary &&
+          (
+            (!hasUseClientDirective(src, absPath) && !hasClientFileName(absPath)) ||
+            hasUseServerDirective(src)
+          )
+        ) {
+          throw new BrowserModuleEntryRejectedError();
+        }
         const boundaryViolation = await inspectBrowserModuleBoundary(src, absPath);
         if (boundaryViolation) {
           throw new Error(describeBrowserModuleBoundaryViolation(boundaryViolation));
@@ -452,6 +709,7 @@ export function bundleBrowserModuleWithMetadata(
               createIgnoreCSSImportsPlugin(),
               createRelativeFsPlugin(options.projectDir, tracked.adapter, {
                 enforceBrowserBoundaries: true,
+                readBrowserModule: tracked.readSource,
               }),
               createBareExternalPlugin({
                 importMapImports: importMap.imports,
@@ -498,6 +756,7 @@ export function bundleBrowserModuleWithMetadata(
                 Object.freeze({
                   path,
                   contentHash: await computeHash(content),
+                  byteLength: utf8ByteLength(content),
                 })
               ),
           ),
@@ -532,16 +791,32 @@ export async function validateBrowserModuleBundle(
   bundle: BrowserModuleBundle,
   options: Pick<BrowserModuleBundlerOptions, "adapter" | "projectDir">,
 ): Promise<boolean> {
+  if (
+    bundle.dependencies.length > DEFAULT_BROWSER_MODULE_BUNDLE_LIMITS.maxDependencies ||
+    bundle.resolutionProbes.length > DEFAULT_BROWSER_MODULE_BUNDLE_LIMITS.maxResolutionProbes
+  ) {
+    return false;
+  }
+  let admittedBytes = 0;
+  for (const dependency of bundle.dependencies) {
+    if (!Number.isSafeInteger(dependency.byteLength) || dependency.byteLength < 0) return false;
+    admittedBytes += dependency.byteLength;
+    if (admittedBytes > DEFAULT_BROWSER_MODULE_BUNDLE_LIMITS.maxAggregateInputBytes) return false;
+  }
+  let readSource: ReturnType<typeof createBrowserModuleSourceReader>;
+  try {
+    readSource = createBrowserModuleSourceReader(options.adapter, options.projectDir);
+  } catch {
+    return false;
+  }
   for (const dependency of bundle.dependencies) {
     if (!isWithinDirectory(options.projectDir, dependency.path)) return false;
-    if (
-      await inspectBrowserModulePath(options.projectDir, dependency.path, options.adapter) !==
-        "trusted"
-    ) return false;
 
     try {
       if (
-        await computeHash(await options.adapter.fs.readFile(dependency.path)) !==
+        await computeHash(
+          (await readSource(dependency.path, Math.max(1, dependency.byteLength))).content,
+        ) !==
           dependency.contentHash
       ) {
         return false;
@@ -557,7 +832,8 @@ export async function validateBrowserModuleBundle(
     try {
       const info = await options.adapter.fs.stat(probe.path);
       currentState = info.isFile ? "file" : info.isDirectory ? "directory" : "other";
-    } catch {
+    } catch (error) {
+      if (!isCanonicalNotFoundError(error)) return false;
       currentState = "missing";
     }
     if (currentState !== probe.state) return false;

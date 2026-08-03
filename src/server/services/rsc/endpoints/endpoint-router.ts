@@ -13,6 +13,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import {
   type BrowserModuleBundle,
+  BrowserModuleEntryRejectedError,
   bundleBrowserModuleWithMetadata,
   validateBrowserModuleBundle,
 } from "#veryfront/server/shared/browser-module-bundler.ts";
@@ -33,7 +34,6 @@ import { handleActionRequest } from "./action-handler.ts";
 import { getRSCHandler } from "./handler-registry.ts";
 import { handleClientScript, handleDomScript } from "./script-handlers.ts";
 import type { RSCEndpointParams } from "./types.ts";
-import { analyzeComponent } from "#veryfront/rendering/rsc/component-analyzer.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import {
   createErrorResponseFromDefinition,
@@ -432,7 +432,7 @@ async function handleModuleEndpoint({
 
   try {
     const moduleServerOrigin = new URL(req.url).origin;
-    const modulePath = await resolveModuleEndpointPath(rel, projectDir, adapter, config);
+    const modulePath = resolveModuleEndpointPath(rel, projectDir, config);
     if (!modulePath) {
       return new Response("Not Found", {
         status: 404,
@@ -459,25 +459,18 @@ async function handleModuleEndpoint({
       cacheKey,
       projectKey,
       build: async () => {
-        const importMapJson = await buildImportMapJson({
-          projectDir,
-          config,
-          moduleServerOrigin,
-          dependencyPinningCacheKey,
-          dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
-          dependencyPinningSource,
-        });
         return browserModuleBuilder(modulePath, {
           adapter,
           projectDir,
           projectId: projectId ?? projectSlug,
           config,
           projectSlug,
-          importMapJson,
           moduleServerOrigin,
           dependencyPinningCacheKey,
           dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
           dependencyPinningSource,
+          signal: req.signal,
+          requireClientBoundary: true,
         });
       },
       validate: async (bundle) => {
@@ -512,6 +505,12 @@ async function handleModuleEndpoint({
       },
     });
   } catch (error) {
+    if (error instanceof BrowserModuleEntryRejectedError) {
+      return new Response("Not Found", {
+        status: HttpStatus.NOT_FOUND,
+        headers: { "cache-control": "no-store" },
+      });
+    }
     if (error instanceof BrowserModuleCapacityError) {
       rscEndpointRouterLog.debug("module build capacity exhausted", {
         errorName: error.name,
@@ -602,7 +601,7 @@ function estimateBrowserModuleBundleSize(bundle: BrowserModuleBundle): number {
   let size = new TextEncoder().encode(bundle.source).byteLength +
     bundle.contentHash.length + bundle.importMapHash.length;
   for (const dependency of bundle.dependencies) {
-    size += dependency.path.length + dependency.contentHash.length;
+    size += dependency.path.length + dependency.contentHash.length + 8;
   }
   for (const probe of bundle.resolutionProbes) {
     size += probe.path.length + probe.state.length;
@@ -618,12 +617,11 @@ function ifNoneMatch(header: string | null, etag: string): boolean {
   });
 }
 
-async function resolveModuleEndpointPath(
+function resolveModuleEndpointPath(
   rel: string,
   projectDir: string,
-  adapter: RuntimeAdapter,
   config?: VeryfrontConfig,
-): Promise<string | null> {
+): string | null {
   const normalizedRel = rel.replace(/^\/+/, "");
   if (!/\.(?:[jt]sx?|[cm][jt]s)$/i.test(normalizedRel)) return null;
 
@@ -637,85 +635,7 @@ async function resolveModuleEndpointPath(
   const modulePath = normalizePath(joinPath(root, pathRelativeToRoot));
   if (!isWithinDirectory(root, modulePath)) return null;
 
-  try {
-    if (!(await adapter.fs.exists(modulePath))) return null;
-    if (
-      !(await hasTrustedPathMetadata({
-        adapter,
-        projectDir,
-        rootRelative,
-        pathRelativeToRoot,
-      }))
-    ) return null;
-    if (!(await isTrustedBrowserModuleEntry(modulePath, adapter))) return null;
-  } catch (error) {
-    rscEndpointRouterLog.debug("module lookup failed", {
-      errorName: error instanceof Error ? error.name : "UnknownError",
-    });
-    throw error;
-  }
-
   return modulePath;
-}
-
-async function hasTrustedPathMetadata(options: {
-  projectDir: string;
-  rootRelative: string;
-  pathRelativeToRoot: string;
-  adapter: RuntimeAdapter;
-}): Promise<boolean> {
-  const segments = [options.rootRelative, options.pathRelativeToRoot]
-    .flatMap((path) => path.split("/"))
-    .filter(Boolean);
-  if (segments.length < 2 || segments.some((segment) => segment === "." || segment === "..")) {
-    return false;
-  }
-
-  let parent = normalizePath(options.projectDir);
-  try {
-    for (const [index, segment] of segments.entries()) {
-      let matchingEntry:
-        | { isFile: boolean; isDirectory: boolean; isSymlink: boolean }
-        | undefined;
-      for await (const entry of options.adapter.fs.readDir(parent)) {
-        if (entry.name === segment) {
-          matchingEntry = entry;
-          break;
-        }
-      }
-
-      const isLast = index === segments.length - 1;
-      if (
-        !matchingEntry || matchingEntry.isSymlink ||
-        (isLast ? !matchingEntry.isFile : !matchingEntry.isDirectory)
-      ) {
-        return false;
-      }
-      parent = normalizePath(joinPath(parent, segment));
-    }
-  } catch (error) {
-    rscEndpointRouterLog.debug("module path metadata inspection failed", {
-      errorName: error instanceof Error ? error.name : "UnknownError",
-    });
-    return false;
-  }
-
-  return true;
-}
-
-async function isTrustedBrowserModuleEntry(
-  modulePath: string,
-  adapter: RuntimeAdapter,
-): Promise<boolean> {
-  try {
-    const analysis = await analyzeComponent(modulePath, adapter.fs);
-    return analysis.type === "client" && !analysis.hasUseServer;
-  } catch (error) {
-    rscEndpointRouterLog.debug("client module analysis failed", {
-      errorName: error instanceof Error ? error.name : "UnknownError",
-    });
-    return false;
-  }
 }
 
 /** Extract name parameter with fallback to "World" */
