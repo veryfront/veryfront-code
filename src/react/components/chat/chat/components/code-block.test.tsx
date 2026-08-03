@@ -1,5 +1,5 @@
 import { flushSync } from "react-dom";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
@@ -48,6 +48,14 @@ async function settle(): Promise<void> {
   flushSync(() => {});
 }
 
+// Unmounting leaves a scheduler callback queued; drain it so the leak
+// sanitizer does not attribute that timer to the test.
+async function unmount(root: Root | undefined): Promise<void> {
+  if (!root) return;
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("RichCodeBlock — inline mode", () => {
   it("renders an inline <code> element with no language label or copy button", () => {
     const html = renderToString(<RichCodeBlock code="const x = 1;" inline />);
@@ -90,6 +98,7 @@ describe("RichCodeBlock — block mode", () => {
 
   it("reports failed copies without leaking the fallback textarea", async () => {
     const dom = installDom();
+    let root: Root | undefined;
     Object.defineProperty(dom.window.navigator, "clipboard", {
       configurable: true,
       value: { writeText: () => Promise.reject(new Error("denied")) },
@@ -106,8 +115,9 @@ describe("RichCodeBlock — block mode", () => {
     try {
       const rootElement = document.getElementById("root");
       assert(rootElement, "root fixture exists");
-      const root = createRoot(rootElement);
-      flushSync(() => root.render(<RichCodeBlock code="not copied" />));
+      const mountedRoot = createRoot(rootElement);
+      root = mountedRoot;
+      flushSync(() => mountedRoot.render(<RichCodeBlock code="not copied" />));
 
       const button = rootElement.querySelector("button");
       assert(button, "copy control renders");
@@ -122,14 +132,15 @@ describe("RichCodeBlock — block mode", () => {
         "Unable to copy code",
       );
       assertEquals(document.querySelectorAll("textarea").length, 0);
-      flushSync(() => root.unmount());
     } finally {
+      await unmount(root);
       dom.restore();
     }
   });
 
   it("does not show stale success after the displayed code changes", async () => {
     const dom = installDom();
+    let root: Root | undefined;
     const pending: Array<() => void> = [];
     Object.defineProperty(dom.window.navigator, "clipboard", {
       configurable: true,
@@ -144,14 +155,15 @@ describe("RichCodeBlock — block mode", () => {
     try {
       const rootElement = document.getElementById("root");
       assert(rootElement, "root fixture exists");
-      const root = createRoot(rootElement);
-      flushSync(() => root.render(<RichCodeBlock code="old code" />));
+      const mountedRoot = createRoot(rootElement);
+      root = mountedRoot;
+      flushSync(() => mountedRoot.render(<RichCodeBlock code="old code" />));
 
       const firstButton = rootElement.querySelector("button");
       assert(firstButton, "first copy control renders");
       firstButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
 
-      flushSync(() => root.render(<RichCodeBlock code="new code" />));
+      flushSync(() => mountedRoot.render(<RichCodeBlock code="new code" />));
       const secondButton = rootElement.querySelector("button");
       assert(secondButton, "updated copy control renders");
       secondButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
@@ -166,9 +178,8 @@ describe("RichCodeBlock — block mode", () => {
       assertEquals(secondButton.textContent?.trim(), "Copied");
       assertStringIncludes(rootElement.textContent ?? "", "new code");
       assert(!(rootElement.textContent ?? "").includes("old code"));
-
-      flushSync(() => root.unmount());
     } finally {
+      await unmount(root);
       dom.restore();
     }
   });
