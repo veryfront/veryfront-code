@@ -9,6 +9,18 @@ import {
   validateAnthropicRawAssistantMessages,
 } from "./anthropic-native-content.ts";
 
+async function runNoBrandEval(script: string): Promise<unknown> {
+  const output = await new Deno.Command(Deno.execPath(), {
+    args: ["eval", "--config=deno.json", script],
+    cwd: new URL("../../../", import.meta.url),
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  const stderr = new TextDecoder().decode(output.stderr);
+  assertEquals(output.code, 0, stderr);
+  return JSON.parse(new TextDecoder().decode(output.stdout));
+}
+
 describe("Anthropic provider-native content normalization", () => {
   it("owns exact replay metadata and rejects executable object behavior", () => {
     const rawMessages = [[{
@@ -77,6 +89,59 @@ describe("Anthropic provider-native content normalization", () => {
       TypeError,
       `Anthropic raw assistant metadata exceeded ${MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_BYTES} UTF-8 bytes`,
     );
+  });
+
+  it("accepts plain raw assistant metadata without Proxy detection", async () => {
+    const result = await runNoBrandEval(`
+      Object.defineProperty(globalThis, "caches", {
+        configurable: true,
+        value: {},
+      });
+      Object.defineProperty(globalThis, "WebSocketPair", {
+        configurable: true,
+        value: function WebSocketPair() {},
+      });
+
+      const { canIdentifyProxyWithoutHooks } = await import(
+        "./src/platform/compat/error-introspection.ts"
+      );
+      const { validateAnthropicRawAssistantMessages } = await import(
+        "./extensions/ext-llm-anthropic/src/anthropic-native-content.ts"
+      );
+
+      console.log(JSON.stringify({
+        canIdentifyProxyWithoutHooks,
+        messages: validateAnthropicRawAssistantMessages([[
+          {
+            type: "thinking",
+            thinking: "valid",
+            signature: "sig_edge",
+          },
+          {
+            type: "tool_use",
+            id: "tool_edge",
+            name: "lookup",
+            input: { query: "Veryfront" },
+          },
+        ]]),
+      }));
+    `);
+    assertEquals(result, {
+      canIdentifyProxyWithoutHooks: false,
+      messages: [[
+        {
+          type: "thinking",
+          thinking: "valid",
+          signature: "sig_edge",
+        },
+        {
+          type: "tool_use",
+          id: "tool_edge",
+          name: "lookup",
+          input: { query: "Veryfront" },
+        },
+      ]],
+    });
   });
 
   it("keeps ordinary client tool_use blocks out of the provider-executed path", () => {

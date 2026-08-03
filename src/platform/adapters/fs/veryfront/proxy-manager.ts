@@ -512,6 +512,17 @@ export class ProxyFSAdapterManager {
           error: error instanceof Error ? error.message : String(error),
         });
 
+        // The failed adapter is never cached, so nothing else releases the
+        // resources it may have allocated before initialize() threw.
+        try {
+          adapter.dispose();
+        } catch (disposeError) {
+          logger.debug("Adapter dispose after failed initialization threw", {
+            cacheKey: diagnosticCacheKey,
+            error: disposeError instanceof Error ? disposeError.message : String(disposeError),
+          });
+        }
+
         throw error;
       } finally {
         projectAdapter.initializing = undefined;
