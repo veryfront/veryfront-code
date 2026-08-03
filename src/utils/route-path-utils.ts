@@ -36,7 +36,7 @@ export interface ParsedRouteParameter {
 }
 
 function isValidParameterName(name: string): boolean {
-  return /^\w+$/.test(name);
+  return /^\w+(?:\.\w+)*$/.test(name);
 }
 
 /** Parse a complete dynamic route segment using the public route grammar. */
@@ -76,44 +76,27 @@ export function parseRouteParameterSegment(
   return { name, kind, suffix };
 }
 
-/** Patterns for dynamic segment detection */
-const DYNAMIC_SEGMENT_PATTERNS = {
-  standard: /^\[[\w]+\]$/, // [id]
-  catchAll: /^\[\.\.\.[\w]+\]$/, // [...slug]
-  optionalCatchAll: /^\[\[\.\.\.[\w]+\]\]$/, // [[...slug]]
-  withExtension: /^\[\.{0,3}\w+\]\.\w+$/, // [id].tsx or [...slug].ts
-} as const;
-
 /**
  * Check if a segment name is a dynamic route segment.
  * Handles both directory names like "[id]" and file names like "[id].tsx"
  */
 export function isDynamicSegment(name: string): boolean {
-  if (!name.startsWith("[")) return false;
-
-  if (name.endsWith("]")) {
-    return (
-      DYNAMIC_SEGMENT_PATTERNS.standard.test(name) ||
-      DYNAMIC_SEGMENT_PATTERNS.catchAll.test(name) ||
-      DYNAMIC_SEGMENT_PATTERNS.optionalCatchAll.test(name)
-    );
-  }
-
-  return DYNAMIC_SEGMENT_PATTERNS.withExtension.test(name);
+  return parseRouteParameterSegment(name) !== null;
 }
 
 /**
  * Check if a route pattern contains any dynamic segments
  */
 export function isDynamicRoute(pattern: string): boolean {
-  return /\[[\w.]+\]/.test(pattern);
+  return pattern.split(/[\\/]/).some(isDynamicSegment);
 }
 
 /**
  * Check if a segment is a catch-all segment ([...slug] or [[...slug]])
  */
 export function isCatchAllSegment(name: string): boolean {
-  return name.startsWith("[...") || name.startsWith("[[...");
+  const parameter = parseRouteParameterSegment(name);
+  return parameter?.kind === "catch-all" || parameter?.kind === "optional-catch-all";
 }
 
 /**
@@ -130,7 +113,7 @@ export function removeFileExtension(path: string): string {
  * "[[...params]]" -> "params"
  */
 export function extractParamName(segment: string): string {
-  return segment.replace(/\[\[\.\.\.|\[\.\.\.|\[|\]\]|\]/g, "");
+  return parseRouteParameterSegment(segment)?.name ?? segment;
 }
 
 /**

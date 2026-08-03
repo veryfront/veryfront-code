@@ -29,8 +29,22 @@ function createCloudflareKV(initialEntries: Record<string, string>): KVNamespace
       entries.delete(key);
       return Promise.resolve();
     },
-    get(key) {
-      return Promise.resolve(entries.get(key) ?? null);
+    get(key, type?: "text" | "json" | "arrayBuffer" | "stream") {
+      const value = entries.get(key);
+      if (value === undefined) return Promise.resolve(null);
+      const bytes = new TextEncoder().encode(value);
+      if (type === "arrayBuffer") return Promise.resolve(bytes.buffer);
+      if (type === "stream") {
+        return Promise.resolve(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(bytes);
+              controller.close();
+            },
+          }),
+        );
+      }
+      return Promise.resolve(value);
     },
     getWithMetadata(key) {
       return Promise.resolve({ metadata: null, value: entries.get(key) ?? null });
@@ -245,7 +259,39 @@ describe("getEntityInfo", () => {
       },
     });
     const adapter = createMockAdapter();
-    adapter.fs.stat = () => Promise.reject(rejection);
+    adapter.fs.readFileBytesWithinLimit = () => Promise.reject(rejection);
+
+    let caught: unknown;
+    try {
+      await getEntityInfo("/project/pages/page.mdx", adapter);
+    } catch (error) {
+      caught = error;
+    }
+
+    assertEquals(caught === rejection, true);
+  });
+
+  it("propagates a non-native ENOENT-shaped direct-read outage by identity", async () => {
+    const outage = Object.freeze({ code: "ENOENT", detail: "hosted storage offline" });
+    const adapter = createMockAdapter();
+    adapter.fs.readFileBytesWithinLimit = () => Promise.reject(outage);
+
+    let caught: unknown;
+    try {
+      await getEntityInfo("/project/pages/page.mdx", adapter);
+    } catch (error) {
+      caught = error;
+    }
+
+    assertEquals(caught === outage, true);
+  });
+
+  it("does not reinterpret an adapter EISDIR rejection as absence", async () => {
+    const rejection = Object.assign(new Error("adapter read failed"), {
+      code: "EISDIR",
+    });
+    const adapter = createMockAdapter();
+    adapter.fs.readFileBytesWithinLimit = () => Promise.reject(rejection);
 
     let caught: unknown;
     try {
@@ -296,14 +342,16 @@ describe("getEntityInfo", () => {
 
   it("derives a complete route slug for nested case-insensitive index files", async () => {
     await withTempDir(async (projectDir) => {
-      const pagePath = join(projectDir, "pages", "blog", "guides", "INDEX.MDX");
-      await mkdir(join(projectDir, "pages", "blog", "guides"), { recursive: true });
+      const pagePath = join(projectDir, "pages", "blog", "pages", "INDEX.MDX");
+      await mkdir(join(projectDir, "pages", "blog", "pages"), { recursive: true });
       await writeTextFile(pagePath, "# Guides");
 
-      const result = await getEntityInfo(pagePath);
+      const result = await getEntityInfo(pagePath, undefined, {
+        routeRoot: join(projectDir, "pages"),
+      });
 
       assertExists(result);
-      assertEquals(result.entity.slug, "blog/guides");
+      assertEquals(result.entity.slug, "blog/pages");
     });
   });
 });
@@ -405,9 +453,10 @@ describe("getEntityBySlug", () => {
       ...adapter,
       fs: Object.create(adapter.fs),
     } as RuntimeAdapter;
-    assertEquals(
-      await getEntityBySlug("/project", "about", inheritedMarkerAdapter),
-      null,
+    await assertRejects(
+      () => getEntityBySlug("/project", "about", inheritedMarkerAdapter),
+      Error,
+      "root-bound stable snapshot reader",
     );
 
     let markerAccessorReads = 0;
@@ -418,61 +467,389 @@ describe("getEntityBySlug", () => {
         return "none";
       },
     });
-    assertEquals(
-      await getEntityBySlug("/project", "about", {
-        ...adapter,
-        fs: accessorMarkerFs,
-      } as RuntimeAdapter),
-      null,
+    await assertRejects(
+      () =>
+        getEntityBySlug("/project", "about", {
+          ...adapter,
+          fs: accessorMarkerFs,
+        } as RuntimeAdapter),
+      Error,
+      "root-bound stable snapshot reader",
     );
     assertEquals(markerAccessorReads, 0);
   });
 
-  it("propagates an immediate root canonicalization failure before touching candidates", async () => {
-    const rootFailure = new Error("root backend unavailable immediately");
-    const adapter = createMockAdapter();
-    let candidateCalls = 0;
-    adapter.fs.resolveFile = (path: string) =>
-      Promise.resolve(path.endsWith("/pages/about") ? `${path}.mdx` : null);
-    adapter.fs.realPath = (path: string) => {
-      if (path === "/project") return Promise.reject(rootFailure);
-      candidateCalls++;
-      return Promise.reject(new Error("candidate failure must not win"));
-    };
+  it("fails closed when a link-resolving adapter lacks a snapshot reader", async () => {
+    let reads = 0;
+    const source = new TextEncoder().encode("# About");
+    const adapter = {
+      fs: {
+        resolveFile: (path: string) =>
+          Promise.resolve(path.endsWith("/pages/about") ? `${path}.mdx` : null),
+        readDir: async function* () {},
+        readFile: () => Promise.resolve("# About"),
+        readFileBytesWithinLimit: () => {
+          reads++;
+          return Promise.resolve(source);
+        },
+      },
+    } as unknown as RuntimeAdapter;
 
-    const error = await assertRejects(
+    await assertRejects(
       () => getEntityBySlug("/project", "about", adapter),
       Error,
-      rootFailure.message,
+      "root-bound stable snapshot reader",
     );
-
-    assertEquals(error === rootFailure, true);
-    assertEquals(candidateCalls, 0);
+    assertEquals(reads, 0);
   });
 
-  it("propagates a deferred root canonicalization failure before touching candidates", async () => {
-    const rootFailure = new Error("root backend unavailable after a turn");
-    const adapter = createMockAdapter();
-    let candidateCalls = 0;
-    adapter.fs.resolveFile = (path: string) =>
-      Promise.resolve(path.endsWith("/pages/about") ? `${path}.mdx` : null);
-    adapter.fs.realPath = async (path: string) => {
-      if (path === "/project") {
-        await Promise.resolve();
-        throw rootFailure;
-      }
-      candidateCalls++;
-      throw new Error("candidate failure must not win");
-    };
+  it("never treats Object.prototype filesystem hooks as adapter authority", async () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "realPath");
+    let pollutedCalls = 0;
+    let reads = 0;
+    Object.defineProperty(Object.prototype, "realPath", {
+      configurable: true,
+      value: () => {
+        pollutedCalls++;
+        return Promise.resolve("/project");
+      },
+    });
 
-    const error = await assertRejects(
+    try {
+      const adapter = {
+        fs: {
+          resolveFile: (path: string) => Promise.resolve(`${path}.mdx`),
+          readDir: async function* () {},
+          readFile: () => Promise.resolve("# Secret"),
+          readFileBytesWithinLimit: () => {
+            reads++;
+            return Promise.resolve(new TextEncoder().encode("# Secret"));
+          },
+        },
+      } as unknown as RuntimeAdapter;
+
+      await assertRejects(
+        () => getEntityBySlug("/project", "about", adapter),
+        Error,
+        "root-bound stable snapshot reader",
+      );
+      assertEquals(pollutedCalls, 0);
+      assertEquals(reads, 0);
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(Object.prototype, "realPath", originalDescriptor);
+      } else {
+        Reflect.deleteProperty(Object.prototype, "realPath");
+      }
+    }
+  });
+
+  it("binds containment and bytes to the captured snapshot capability", async () => {
+    let canonicalizeCalls = 0;
+    let separateReads = 0;
+    let snapshotReads = 0;
+    const adapter = {
+      fs: {
+        resolveFile: (path: string) =>
+          Promise.resolve(path.endsWith("/pages/about") ? `${path}.mdx` : null),
+        readDir: async function* () {},
+        readFile: () => Promise.resolve("# Replaced outside source"),
+        readFileBytesWithinLimit: () => {
+          separateReads++;
+          return Promise.resolve(new TextEncoder().encode("# Replaced outside source"));
+        },
+        realPath: () => {
+          canonicalizeCalls++;
+          return Promise.resolve("/project/pages/about.mdx");
+        },
+        readFileSnapshotWithinLimit: (
+          path: string,
+          root: string,
+          byteLimit: number,
+        ) => {
+          snapshotReads++;
+          assertEquals(path, "/project/pages/about.mdx");
+          assertEquals(root, "/project");
+          const bytes = new TextEncoder().encode("# Stable inside source");
+          if (bytes.byteLength > byteLimit) throw new RangeError("File exceeds byte limit");
+          return Promise.resolve(bytes);
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    const page = await getEntityBySlug("/project", "about", adapter);
+
+    assertEquals(page?.entity.content, "# Stable inside source");
+    assertEquals(snapshotReads, 1);
+    assertEquals(canonicalizeCalls, 0);
+    assertEquals(separateReads, 0);
+  });
+
+  it("propagates a non-native ENOENT-shaped snapshot outage by identity", async () => {
+    const outage = Object.freeze({ code: "ENOENT", detail: "snapshot service offline" });
+    const adapter = {
+      fs: {
+        resolveFile: (path: string) =>
+          Promise.resolve(path.endsWith("/pages/about") ? `${path}.mdx` : null),
+        readDir: async function* () {},
+        readFile: () => Promise.resolve("# Page"),
+        readFileBytesWithinLimit: () => Promise.resolve(new TextEncoder().encode("# Page")),
+        readFileSnapshotWithinLimit: () => Promise.reject(outage),
+      },
+    } as unknown as RuntimeAdapter;
+
+    let caught: unknown;
+    try {
+      await getEntityBySlug("/project", "about", adapter);
+    } catch (error) {
+      caught = error;
+    }
+
+    assertEquals(caught === outage, true);
+  });
+
+  it("propagates a non-native ENOENT-shaped directory outage by identity", async () => {
+    const outage = Object.freeze({ code: "ENOENT", detail: "directory service offline" });
+    const adapter = {
+      fs: {
+        symlinkSemantics: "none",
+        resolveFile: () => Promise.resolve(null),
+        readDir: async function* () {
+          throw outage;
+        },
+        readFile: () => Promise.resolve("# Page"),
+        readFileBytesWithinLimit: () => Promise.resolve(new TextEncoder().encode("# Page")),
+      },
+    } as unknown as RuntimeAdapter;
+
+    let caught: unknown;
+    try {
+      await getEntityBySlug("/project", "about", adapter);
+    } catch (error) {
+      caught = error;
+    }
+
+    assertEquals(caught === outage, true);
+  });
+
+  it("does not grant containment authority from an adapter id", async () => {
+    let reads = 0;
+    const adapter = {
+      id: "memory",
+      fs: {
+        resolveFile: (path: string) => Promise.resolve(`${path}.mdx`),
+        readDir: async function* () {},
+        readFile: () => Promise.resolve("# Page"),
+        readFileBytesWithinLimit: () => {
+          reads++;
+          return Promise.resolve(new TextEncoder().encode("# Page"));
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    await assertRejects(
       () => getEntityBySlug("/project", "about", adapter),
       Error,
-      rootFailure.message,
+      "root-bound stable snapshot reader",
     );
+    assertEquals(reads, 0);
+  });
 
-    assertEquals(error === rootFailure, true);
-    assertEquals(candidateCalls, 0);
+  it("rejects expired route work before filesystem access", async () => {
+    const adapter = createMockAdapter();
+    let resolveCalls = 0;
+    adapter.fs.resolveFile = () => {
+      resolveCalls++;
+      return Promise.resolve(null);
+    };
+
+    await assertRejects(
+      () =>
+        getEntityBySlug("/project", "about", adapter, "pages", {
+          deadline: 0,
+        }),
+      Error,
+      "deadline",
+    );
+    assertEquals(resolveCalls, 0);
+  });
+
+  it("isolates project admission and removes an aborted queued request", async () => {
+    const releases: Array<{ path: string; resolve: (bytes: Uint8Array) => void }> = [];
+    let resolveFourActive!: () => void;
+    let resolveOtherProject!: () => void;
+    const fourActive = new Promise<void>((resolve) => {
+      resolveFourActive = resolve;
+    });
+    const otherProjectActive = new Promise<void>((resolve) => {
+      resolveOtherProject = resolve;
+    });
+    let activeReads = 0;
+    const adapter = {
+      fs: {
+        symlinkSemantics: "none",
+        resolveFile: (path: string) =>
+          Promise.resolve(path.endsWith("/pages/about") ? `${path}.mdx` : null),
+        readDir: async function* () {},
+        readFile: () => Promise.resolve("# Page"),
+        readFileBytesWithinLimit: (path: string) =>
+          new Promise<Uint8Array>((resolve) => {
+            releases.push({ path, resolve });
+            activeReads++;
+            if (activeReads === 4) resolveFourActive();
+            if (activeReads === 5) resolveOtherProject();
+          }),
+      },
+    } as unknown as RuntimeAdapter;
+
+    const activeProjectA = Array.from(
+      { length: 4 },
+      () =>
+        getEntityBySlug("/project", "about", adapter, "pages", {
+          scopeKey: "project-a",
+        }),
+    );
+    await fourActive;
+
+    const abortController = new AbortController();
+    const queued = getEntityBySlug("/project", "about", adapter, "pages", {
+      signal: abortController.signal,
+      scopeKey: "project-a",
+    });
+    const projectB = getEntityBySlug("/project", "about", adapter, "pages", {
+      scopeKey: "project-b",
+    });
+    await otherProjectActive;
+    abortController.abort(new Error("queued route cancelled"));
+    await assertRejects(() => queued, Error, "queued route cancelled");
+    assertEquals(activeReads, 5);
+
+    for (const release of releases) {
+      release.resolve(new TextEncoder().encode("# Page"));
+    }
+    assertEquals((await projectB)?.entity.content, "# Page");
+    const pages = await Promise.all(activeProjectA);
+    assertEquals(pages.every((page) => page?.entity.content === "# Page"), true);
+  });
+
+  it("reports active deadlines while retaining permits until adapter work settles", async () => {
+    const readReleases: Array<(bytes: Uint8Array) => void> = [];
+    let resolveFourActive!: () => void;
+    const fourActive = new Promise<void>((resolve) => {
+      resolveFourActive = resolve;
+    });
+    let fifthStarted = false;
+    let resolveFifthStarted!: () => void;
+    const fifthStartedSignal = new Promise<void>((resolve) => {
+      resolveFifthStarted = resolve;
+    });
+    let activeReads = 0;
+    const adapter = {
+      fs: {
+        symlinkSemantics: "none",
+        resolveFile: (path: string) =>
+          Promise.resolve(path.endsWith("/pages/about") ? `${path}.mdx` : null),
+        readDir: async function* () {},
+        readFile: () => Promise.resolve("# Page"),
+        readFileBytesWithinLimit: () =>
+          new Promise<Uint8Array>((resolve) => {
+            readReleases.push(resolve);
+            activeReads++;
+            if (activeReads === 4) resolveFourActive();
+            if (activeReads === 5) {
+              fifthStarted = true;
+              resolveFifthStarted();
+            }
+          }),
+      },
+    } as unknown as RuntimeAdapter;
+
+    const deadline = Date.now() + 50;
+    const active = Array.from(
+      { length: 4 },
+      () =>
+        getEntityBySlug("/project", "about", adapter, "pages", {
+          deadline,
+          scopeKey: "deadline-project",
+        }),
+    );
+    const timeoutAssertions = active.map((request) =>
+      assertRejects(() => request, Error, "deadline")
+    );
+    await fourActive;
+    await Promise.all(timeoutAssertions);
+
+    const fifth = getEntityBySlug("/project", "about", adapter, "pages", {
+      deadline: Date.now() + 2_000,
+      scopeKey: "deadline-project",
+    });
+    const originalReadCount = activeReads;
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    assertEquals(fifthStarted, false);
+    assertEquals(activeReads, originalReadCount);
+
+    readReleases.shift()!(new TextEncoder().encode("# Page"));
+    await fifthStartedSignal;
+    for (const release of readReleases.splice(0)) {
+      release(new TextEncoder().encode("# Page"));
+    }
+    assertEquals((await fifth)?.entity.content, "# Page");
+  });
+
+  it("bounds isolate-wide active and queued work across project scopes", async () => {
+    let releaseReads!: () => void;
+    const readsReleased = new Promise<void>((resolve) => {
+      releaseReads = resolve;
+    });
+    let resolveGlobalActive!: () => void;
+    const globalActive = new Promise<void>((resolve) => {
+      resolveGlobalActive = resolve;
+    });
+    let activeReads = 0;
+    const adapter = {
+      fs: {
+        symlinkSemantics: "none",
+        resolveFile: (path: string) =>
+          Promise.resolve(path.endsWith("/pages/about") ? `${path}.mdx` : null),
+        readDir: async function* () {},
+        readFile: () => Promise.resolve("# Page"),
+        readFileBytesWithinLimit: async () => {
+          activeReads++;
+          if (activeReads === 16) resolveGlobalActive();
+          await readsReleased;
+          return new TextEncoder().encode("# Page");
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    const admitted = Array.from(
+      { length: 80 },
+      (_, index) =>
+        getEntityBySlug("/project", "about", adapter, "pages", {
+          scopeKey: `global-project-${index}`,
+        }),
+    );
+    await globalActive;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    const overflow = await assertRejects(
+      () =>
+        getEntityBySlug("/project", "about", adapter, "pages", {
+          scopeKey: "global-project-overflow",
+        }),
+      VeryfrontError,
+      "Global route resolution capacity",
+    );
+    if (!(overflow instanceof VeryfrontError)) {
+      throw new Error("Expected a global resolution queue error");
+    }
+    assertEquals(overflow.slug, "dynamic-route-error");
+    assertEquals(activeReads, 16);
+
+    releaseReads();
+    const pages = await Promise.all(admitted);
+    assertEquals(pages.every((page) => page?.entity.content === "# Page"), true);
   });
 
   it("resolves dynamic pages with case-insensitive supported extensions", async () => {
@@ -641,6 +1018,7 @@ describe("getEntityBySlug", () => {
     const underlyingAdapter = {};
     const adapter = {
       fs: {
+        symlinkSemantics: "none",
         isVeryfrontAdapter: () => false,
         getUnderlyingAdapter: () => underlyingAdapter,
         isMultiProjectMode: () => false,
@@ -658,6 +1036,7 @@ describe("getEntityBySlug", () => {
             mtime: null,
           }),
         readFile: () => Promise.resolve("# About"),
+        readFileBytesWithinLimit: () => Promise.resolve(new TextEncoder().encode("# About")),
         readDir: async function* () {},
       },
     } as unknown as RuntimeAdapter;
@@ -745,6 +1124,7 @@ describe("getEntityBySlug", () => {
     };
     const adapter = {
       fs: {
+        symlinkSemantics: "none",
         isVeryfrontAdapter: () => false,
         getUnderlyingAdapter: () => underlyingAdapter,
         isMultiProjectMode: () => false,
@@ -759,6 +1139,7 @@ describe("getEntityBySlug", () => {
             mtime: null,
           }),
         readFile: () => Promise.resolve("# Dynamic"),
+        readFileBytesWithinLimit: () => Promise.resolve(new TextEncoder().encode("# Dynamic")),
         readDir: async function* () {
           yield mutableEntry;
           mutableEntry.name = "changed.txt";
@@ -890,7 +1271,7 @@ describe("getEntityBySlug", () => {
           }),
         readFile: () => Promise.resolve(""),
         readDir: async function* () {
-          for (let index = 0; index <= 10_000; index++) {
+          for (let index = 0; index <= 2_048; index++) {
             yield {
               name: `entry-${index}`,
               isFile: false,
@@ -909,6 +1290,39 @@ describe("getEntityBySlug", () => {
     );
   });
 
+  it("rejects excessive matching routes before reading candidate sources", async () => {
+    let sourceReads = 0;
+    const adapter = {
+      fs: {
+        symlinkSemantics: "none",
+        resolveFile: () => Promise.resolve(null),
+        readFile: () => Promise.resolve("# Dynamic"),
+        readFileBytesWithinLimit: () => {
+          sourceReads++;
+          return Promise.resolve(new TextEncoder().encode("# Dynamic"));
+        },
+        readDir: async function* (path: string) {
+          if (!path.endsWith("/pages")) return;
+          for (let index = 0; index < 33; index++) {
+            yield {
+              name: `[parameter${index}].mdx`,
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+            };
+          }
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    await assertRejects(
+      () => getEntityBySlug("/project", "entry", adapter),
+      Error,
+      "32-candidate limit",
+    );
+    assertEquals(sourceReads, 0);
+  });
+
   it("charges invalid entries against the global dynamic traversal budget", async () => {
     const adapter = {
       id: "memory",
@@ -924,7 +1338,7 @@ describe("getEntityBySlug", () => {
           }),
         readFile: () => Promise.resolve(""),
         readDir: async function* () {
-          for (let index = 0; index < 9_999; index++) {
+          for (let index = 0; index < 2_000; index++) {
             yield {
               name: "..",
               isFile: false,
@@ -945,7 +1359,7 @@ describe("getEntityBySlug", () => {
     await assertRejects(
       () => getEntityBySlug("/project", Array(11).fill("part").join("/"), adapter),
       Error,
-      "100000-entry limit",
+      "8192-entry limit",
     );
   });
 
@@ -984,7 +1398,7 @@ describe("getEntityBySlug", () => {
     await assertRejects(
       () => getEntityBySlug("/project", "entry", adapter),
       Error,
-      "directory traversal",
+      "candidate limit",
     );
   });
 });

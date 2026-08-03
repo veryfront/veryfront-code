@@ -19,7 +19,7 @@ import { markNativeFileSystemAdapter } from "../../native-file-system-provenance
 import { constants as nodeFsConstants } from "node:fs";
 import { resolve } from "../../../compat/path/index.ts";
 import { runtimeUsesWindowsPaths } from "../../../compat/path/portable.ts";
-import { FileSnapshotChangedError } from "../../file-snapshot-error.ts";
+import { FileSnapshotChangedError, FileSnapshotPathError } from "../../file-snapshot-error.ts";
 import {
   hasUsableNativeFileIdentity,
   type NativeSnapshotPlatform,
@@ -241,15 +241,15 @@ export async function readNodeFileSnapshotWithinLimit(
     !isPathContainedBy(candidate, lexicalRoot) &&
     !isPathContainedBy(candidate, canonicalRoot)
   ) {
-    throw new TypeError("Snapshot path must be contained by the requested root");
+    throw new FileSnapshotPathError("Snapshot path must be contained by the requested root");
   }
 
   const pathnameBefore = await operations.lstat(candidate);
   if (pathnameBefore.isSymbolicLink()) {
-    throw new TypeError("Snapshot path must not be a symbolic link");
+    throw new FileSnapshotPathError("Snapshot path must not be a symbolic link");
   }
   if (!pathnameBefore.isFile()) {
-    throw new TypeError("Snapshot path must identify a regular file");
+    throw new FileSnapshotPathError("Snapshot path must identify a regular file");
   }
   requireUsableIdentity(
     pathnameBefore,
@@ -307,7 +307,9 @@ export async function readNodeFileSnapshotWithinLimit(
         "Stable native file identity is unavailable while verifying the snapshot",
       );
       if (!isPathContainedBy(canonicalTarget, canonicalRoot)) {
-        throw new TypeError("Snapshot target must be contained by the canonical root");
+        throw new FileSnapshotPathError(
+          "Snapshot target must be contained by the canonical root",
+        );
       }
 
       if (handleBefore.size < 0n) {

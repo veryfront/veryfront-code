@@ -9,6 +9,11 @@
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, Frontmatter } from "#veryfront/types";
+import {
+  type EntityResolutionGate,
+  type EntityResolutionOptions,
+  withEntityResolutionAdmission,
+} from "#veryfront/types/entities/getEntityInfo.ts";
 import { isCatchAllSegment, isDynamicSegment } from "#veryfront/utils/route-path-utils.ts";
 import { join } from "#veryfront/compat/path";
 import { extract } from "#std/front-matter/yaml.ts";
@@ -18,11 +23,25 @@ export async function getAppRouteEntity(
   slug: string,
   adapter: RuntimeAdapter,
   appDirName = "app",
+  options: EntityResolutionOptions = {},
 ): Promise<EntityInfo | null> {
-  const exactMatch = await tryExactMatch(projectDir, slug, adapter, appDirName);
-  if (exactMatch) return exactMatch;
+  return await withEntityResolutionAdmission(
+    projectDir,
+    adapter,
+    options,
+    async (gate) => {
+      const exactMatch = await tryExactMatch(
+        projectDir,
+        slug,
+        adapter,
+        appDirName,
+        gate,
+      );
+      if (exactMatch) return exactMatch;
 
-  return tryDynamicMatch(projectDir, slug, adapter, appDirName);
+      return await tryDynamicMatch(projectDir, slug, adapter, appDirName, gate);
+    },
+  );
 }
 
 async function tryExactMatch(
@@ -30,15 +49,16 @@ async function tryExactMatch(
   slug: string,
   adapter: RuntimeAdapter,
   appDirName: string,
+  gate: EntityResolutionGate,
 ): Promise<EntityInfo | null> {
   const base = slug ? join(projectDir, appDirName, slug) : join(projectDir, appDirName);
 
   if (adapter.fs.resolveFile) {
     for (const basePath of [`${base}/page`, base]) {
-      const resolvedPath = await adapter.fs.resolveFile(basePath);
+      const resolvedPath = await gate.awaitOperation(() => adapter.fs.resolveFile!(basePath));
       if (!resolvedPath) continue;
 
-      const entity = await tryLoadPageFile(resolvedPath, slug, adapter);
+      const entity = await tryLoadPageFile(resolvedPath, slug, adapter, gate);
       if (entity) return entity;
     }
     return null;
@@ -60,7 +80,7 @@ async function tryExactMatch(
   ];
 
   for (const file of candidates) {
-    const entity = await tryLoadPageFile(file, slug, adapter);
+    const entity = await tryLoadPageFile(file, slug, adapter, gate);
     if (entity) return entity;
   }
 
@@ -72,12 +92,13 @@ async function tryDynamicMatch(
   slug: string,
   adapter: RuntimeAdapter,
   appDirName: string,
+  gate: EntityResolutionGate,
 ): Promise<EntityInfo | null> {
   const segments = slug ? slug.split("/").filter(Boolean) : [];
   let currentDir = join(projectDir, appDirName);
 
   for (const segment of segments) {
-    const routeDirectory = await findRouteDirectory(currentDir, segment, adapter);
+    const routeDirectory = await findRouteDirectory(currentDir, segment, adapter, gate);
     if (!routeDirectory) return null;
 
     currentDir = join(currentDir, routeDirectory.name);
@@ -86,7 +107,7 @@ async function tryDynamicMatch(
 
   for (const ext of [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"]) {
     const pageFile = join(currentDir, `page${ext}`);
-    const entity = await tryLoadPageFile(pageFile, slug, adapter);
+    const entity = await tryLoadPageFile(pageFile, slug, adapter, gate);
     if (entity) return entity;
   }
 
@@ -97,24 +118,28 @@ async function findRouteDirectory(
   dir: string,
   segment: string,
   adapter: RuntimeAdapter,
+  gate: EntityResolutionGate,
 ): Promise<{ name: string; isCatchAll: boolean } | null> {
   try {
-    const entries = await adapter.fs.readDir(dir);
-    let dynamic: { name: string; isCatchAll: boolean } | null = null;
+    return await gate.awaitOperation(async () => {
+      const entries = await adapter.fs.readDir(dir);
+      let dynamic: { name: string; isCatchAll: boolean } | null = null;
 
-    for await (const entry of entries) {
-      if (!entry.isDirectory && !entry.isSymlink) continue;
-      if (entry.name === segment) return { name: entry.name, isCatchAll: false };
-      if (!dynamic && isDynamicSegment(entry.name)) {
-        dynamic = {
-          name: entry.name,
-          isCatchAll: isCatchAllSegment(entry.name),
-        };
+      for await (const entry of entries) {
+        if (!entry.isDirectory && !entry.isSymlink) continue;
+        if (entry.name === segment) return { name: entry.name, isCatchAll: false };
+        if (!dynamic && isDynamicSegment(entry.name)) {
+          dynamic = {
+            name: entry.name,
+            isCatchAll: isCatchAllSegment(entry.name),
+          };
+        }
       }
-    }
 
-    return dynamic;
+      return dynamic;
+    });
   } catch (_) {
+    gate.throwIfCancelled();
     /* expected: adapter.fs.readDir may fail for npm compatibility */
   }
 
@@ -125,11 +150,13 @@ async function tryLoadPageFile(
   file: string,
   slug: string,
   adapter: RuntimeAdapter,
+  gate: EntityResolutionGate,
 ): Promise<EntityInfo | null> {
   let raw: string;
   try {
-    raw = await adapter.fs.readFile(file);
+    raw = await gate.awaitOperation(() => adapter.fs.readFile(file));
   } catch (_) {
+    gate.throwIfCancelled();
     /* expected: file may not be readable */
     return null;
   }

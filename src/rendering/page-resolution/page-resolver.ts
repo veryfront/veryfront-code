@@ -5,7 +5,10 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { EntityInfo } from "#veryfront/types";
-import { getEntityBySlug } from "#veryfront/types/entities/getEntityInfo.ts";
+import {
+  type EntityResolutionOptions,
+  getEntityBySlug,
+} from "#veryfront/types/entities/getEntityInfo.ts";
 import {
   detectAppRouter,
   getAppRouteEntity,
@@ -40,6 +43,11 @@ function appDirToSlug(dirPath: string, appDirName: string): string {
   return relativePath === "" ? "/" : `/${relativePath}`;
 }
 
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  throw signal.reason ?? new DOMException("Page resolution was aborted", "AbortError");
+}
+
 export interface PageResolverOptions {
   projectDir: string;
   projectId?: string;
@@ -60,10 +68,18 @@ export class PageResolver {
     this.adapter = options.adapter;
   }
 
-  resolvePage(slug: string): Promise<EntityInfo> {
+  resolvePage(
+    slug: string,
+    options: EntityResolutionOptions = {},
+  ): Promise<EntityInfo> {
+    const resolutionOptions: EntityResolutionOptions = {
+      ...options,
+      scopeKey: options.scopeKey ?? this.projectId ?? this.projectDir,
+    };
     return withSpan(
       "routing.resolve_page",
       async () => {
+        throwIfAborted(resolutionOptions.signal);
         const appDirName = this.config.directories?.app ?? "app";
         const pagesDirName = this.config.directories?.pages ?? "pages";
         const cacheKey = this.projectId ?? this.projectDir;
@@ -76,6 +92,7 @@ export class PageResolver {
             slug,
             this.adapter,
             appDirName,
+            resolutionOptions,
           );
           if (pageInfo) {
             primeRouterDetectionCache(cacheKey, "app");
@@ -86,6 +103,7 @@ export class PageResolver {
             slug,
             this.adapter,
             pagesDirName,
+            resolutionOptions,
           );
           if (pageInfo) {
             primeRouterDetectionCache(cacheKey, "pages");
@@ -106,6 +124,7 @@ export class PageResolver {
               slug,
               this.adapter,
               appDirName,
+              resolutionOptions,
             );
             if (!pageInfo) {
               pageInfo = await getEntityBySlug(
@@ -113,6 +132,7 @@ export class PageResolver {
                 slug,
                 this.adapter,
                 pagesDirName,
+                resolutionOptions,
               );
             }
           } else {
@@ -121,9 +141,12 @@ export class PageResolver {
               slug,
               this.adapter,
               pagesDirName,
+              resolutionOptions,
             );
           }
         }
+
+        throwIfAborted(resolutionOptions.signal);
 
         if (!pageInfo) {
           throw FILE_NOT_FOUND.create({
@@ -229,9 +252,12 @@ export class PageResolver {
     }
   }
 
-  async pageExists(slug: string): Promise<boolean> {
+  async pageExists(
+    slug: string,
+    options: EntityResolutionOptions = {},
+  ): Promise<boolean> {
     try {
-      await this.resolvePage(slug);
+      await this.resolvePage(slug, options);
       return true;
     } catch (error: unknown) {
       if (error instanceof VeryfrontError && error.slug === "file-not-found") {

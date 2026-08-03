@@ -6,7 +6,7 @@ export interface Frontmatter {
   date?: string;
   published?: boolean;
   isLayout?: boolean;
-  [key: string]: unknown;
+  [key: string]: string | number | boolean | string[] | undefined;
 }
 
 export interface BundleInfo {

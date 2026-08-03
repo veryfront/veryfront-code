@@ -6,18 +6,30 @@
  */
 
 import { joinPath } from "#veryfront/utils/path-utils.ts";
-import { extractParamName } from "#veryfront/utils/route-path-utils.ts";
+import {
+  type ParsedRouteParameter,
+  parseRouteParameterSegment,
+} from "#veryfront/utils/route-path-utils.ts";
 import type { HandlerContext } from "../../types.ts";
 import type { AppRouteMatch } from "./types.ts";
 
-const STANDARD_DYNAMIC_SEGMENT_RE = /^\[[^\]]+\]$/;
-const CATCH_ALL_SEGMENT_RE = /^\[\.\.\.[^\]]+\]$/;
-const OPTIONAL_CATCH_ALL_SEGMENT_RE = /^\[\[\.\.\.[^\]]+\]\]$/;
+interface RouteParameterDirectory {
+  readonly directory: string;
+  readonly parameter: ParsedRouteParameter;
+}
 
-function isStandardDynamicSegment(name: string): boolean {
-  return STANDARD_DYNAMIC_SEGMENT_RE.test(name) &&
-    !CATCH_ALL_SEGMENT_RE.test(name) &&
-    !OPTIONAL_CATCH_ALL_SEGMENT_RE.test(name);
+function parameterDirectories(
+  names: readonly string[],
+  kind: ParsedRouteParameter["kind"],
+): RouteParameterDirectory[] {
+  const matches: RouteParameterDirectory[] = [];
+  for (const directory of names) {
+    const parameter = parseRouteParameterSegment(directory);
+    if (parameter?.kind === kind && parameter.suffix === "") {
+      matches.push({ directory, parameter });
+    }
+  }
+  return matches;
 }
 
 async function readDirectoryNames(current: string, ctx: HandlerContext): Promise<string[] | null> {
@@ -65,16 +77,17 @@ async function resolveFromDirectory(
     const names = await readDirectoryNames(current, ctx);
     if (!names) return null;
 
-    for (
-      const optionalCatchAll of names.filter((name) => OPTIONAL_CATCH_ALL_SEGMENT_RE.test(name))
-    ) {
-      const optionalFile = await findRouteFile(joinPath(current, optionalCatchAll), ctx);
+    for (const optionalCatchAll of parameterDirectories(names, "optional-catch-all")) {
+      const optionalFile = await findRouteFile(
+        joinPath(current, optionalCatchAll.directory),
+        ctx,
+      );
       if (optionalFile) {
         return {
           file: optionalFile,
           params: {
             ...params,
-            [extractParamName(optionalCatchAll)]: [],
+            [optionalCatchAll.parameter.name]: [],
           },
         };
       }
@@ -99,14 +112,14 @@ async function resolveFromDirectory(
     if (exactMatch) return exactMatch;
   }
 
-  for (const dynamicSegment of names.filter(isStandardDynamicSegment)) {
+  for (const dynamicSegment of parameterDirectories(names, "dynamic")) {
     const dynamicMatch = await resolveFromDirectory(
-      joinPath(current, dynamicSegment),
+      joinPath(current, dynamicSegment.directory),
       segments,
       index + 1,
       {
         ...params,
-        [extractParamName(dynamicSegment)]: seg,
+        [dynamicSegment.parameter.name]: seg,
       },
       ctx,
     );
@@ -115,28 +128,28 @@ async function resolveFromDirectory(
 
   const remainingSegments = segments.slice(index);
 
-  for (const catchAllSegment of names.filter((name) => CATCH_ALL_SEGMENT_RE.test(name))) {
+  for (const catchAllSegment of parameterDirectories(names, "catch-all")) {
     const catchAllMatch = await resolveFromDirectory(
-      joinPath(current, catchAllSegment),
+      joinPath(current, catchAllSegment.directory),
       segments,
       segments.length,
       {
         ...params,
-        [extractParamName(catchAllSegment)]: remainingSegments,
+        [catchAllSegment.parameter.name]: remainingSegments,
       },
       ctx,
     );
     if (catchAllMatch) return catchAllMatch;
   }
 
-  for (const optionalCatchAll of names.filter((name) => OPTIONAL_CATCH_ALL_SEGMENT_RE.test(name))) {
+  for (const optionalCatchAll of parameterDirectories(names, "optional-catch-all")) {
     const optionalMatch = await resolveFromDirectory(
-      joinPath(current, optionalCatchAll),
+      joinPath(current, optionalCatchAll.directory),
       segments,
       segments.length,
       {
         ...params,
-        [extractParamName(optionalCatchAll)]: remainingSegments,
+        [optionalCatchAll.parameter.name]: remainingSegments,
       },
       ctx,
     );

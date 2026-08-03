@@ -18,7 +18,7 @@ import {
 describe("route-path-utils", () => {
   describe("isDynamicSegment", () => {
     it("should detect standard dynamic segments", () => {
-      const segments = ["[id]", "[slug]", "[userId]"] as const;
+      const segments = ["[id]", "[slug]", "[userId]", "[version.number]"] as const;
 
       for (const segment of segments) {
         assertEquals(isDynamicSegment(segment), true);
@@ -34,7 +34,7 @@ describe("route-path-utils", () => {
     });
 
     it("should detect optional catch-all segments", () => {
-      const segments = ["[[...slug]]", "[[...params]]"] as const;
+      const segments = ["[[...slug]]", "[[...params]]", "[[...slug]].tsx"] as const;
 
       for (const segment of segments) {
         assertEquals(isDynamicSegment(segment), true);
@@ -73,6 +73,11 @@ describe("route-path-utils", () => {
         kind: "dynamic",
         suffix: "",
       });
+      assertEquals(parseRouteParameterSegment("[version.number]"), {
+        name: "version.number",
+        kind: "dynamic",
+        suffix: "",
+      });
       assertEquals(parseRouteParameterSegment("[...path].MDX"), {
         name: "path",
         kind: "catch-all",
@@ -95,6 +100,9 @@ describe("route-path-utils", () => {
         "[my param].tsx",
         "[slug-name].tsx",
         "[slug!].tsx",
+        "[.slug].tsx",
+        "[slug.].tsx",
+        "[slug..part].tsx",
         "[id]tsx",
         "[id]\n.tsx",
       ] as const;
@@ -107,7 +115,12 @@ describe("route-path-utils", () => {
 
   describe("isDynamicRoute", () => {
     it("should detect routes with dynamic segments", () => {
-      const routes = ["/users/[id]", "[...slug]", "/blog/[year]/[month]"] as const;
+      const routes = [
+        "/users/[id]",
+        "[...slug]",
+        "/blog/[year]/[month]",
+        "/api/[version.number]",
+      ] as const;
 
       for (const route of routes) {
         assertEquals(isDynamicRoute(route), true);
@@ -177,6 +190,7 @@ describe("route-path-utils", () => {
     it("should extract name from standard segments", () => {
       assertEquals(extractParamName("[id]"), "id");
       assertEquals(extractParamName("[slug]"), "slug");
+      assertEquals(extractParamName("[version.number]"), "version.number");
     });
 
     it("should extract name from catch-all segments", () => {
@@ -187,6 +201,7 @@ describe("route-path-utils", () => {
     it("should extract name from optional catch-all segments", () => {
       assertEquals(extractParamName("[[...slug]]"), "slug");
       assertEquals(extractParamName("[[...params]]"), "params");
+      assertEquals(extractParamName("[[...params]].tsx"), "params");
     });
   });
 

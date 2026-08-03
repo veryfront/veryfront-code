@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { ApiHandlerWrapper } from "./api-handler-wrapper.ts";
@@ -41,6 +41,31 @@ function createCtx(captured: { options?: Record<string, unknown> }): HandlerCont
 }
 
 describe("ApiHandlerWrapper", () => {
+  it("propagates request cancellation instead of continuing handler discovery", async () => {
+    const ctx = createCtx({});
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => await fn();
+    const handler = new ApiHandlerWrapper("/tmp/project", ctx.adapter);
+    const controller = new AbortController();
+    controller.abort(new Error("request cancelled"));
+
+    await assertRejects(
+      () =>
+        handler.handle(
+          new Request("http://localhost/review", { signal: controller.signal }),
+          ctx,
+        ),
+      Error,
+      "request cancelled",
+    );
+  });
+
   it("routes known pages without remote stat misses or full API discovery", async () => {
     let enteredProjectContext = false;
     let remoteStatMisses = 0;
@@ -64,6 +89,7 @@ describe("ApiHandlerWrapper", () => {
         isSymlink: boolean;
       }>;
       resolveFile: (path: string) => Promise<string | null>;
+      symlinkSemantics: "none";
       readFile: (path: string) => Promise<string>;
       readFileBytesWithinLimit: (path: string, byteLimit: number) => Promise<Uint8Array>;
       refreshSourceSnapshot: (reason?: string) => Promise<void>;
@@ -96,6 +122,7 @@ describe("ApiHandlerWrapper", () => {
       Promise.resolve(
         path === "/tmp/project/pages/review" ? "/tmp/project/pages/review.tsx" : null,
       );
+    fs.symlinkSemantics = "none";
     fs.readFile = (path) => {
       if (path === "/tmp/project/pages/review.tsx" || path === "pages/review.tsx") {
         return Promise.resolve("export default function Review() { return null; }");
@@ -148,6 +175,7 @@ describe("ApiHandlerWrapper", () => {
       exists: (path: string) => Promise<boolean>;
       readDir: (path: string) => AsyncIterable<never>;
       resolveFile: (path: string) => Promise<string | null>;
+      symlinkSemantics: "none";
       readFile: (path: string) => Promise<string>;
       readFileBytesWithinLimit: (path: string, byteLimit: number) => Promise<Uint8Array>;
       refreshSourceSnapshot: (reason?: string) => Promise<void>;
@@ -165,6 +193,7 @@ describe("ApiHandlerWrapper", () => {
         path === "/tmp/project/pages/review" ? "/tmp/project/pages/review.tsx" : null,
       );
     };
+    fs.symlinkSemantics = "none";
     fs.readFile = (path) => {
       if (path === "pages/review.tsx" || path === "/tmp/project/pages/review.tsx") {
         return Promise.resolve("export default function Review() { return null; }");

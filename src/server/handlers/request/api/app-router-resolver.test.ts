@@ -167,6 +167,30 @@ describe("resolveAppRouteFile", () => {
     });
   });
 
+  it("matches a dotted dynamic name through the canonical route parser", async () => {
+    const ctx = createMockCtx({
+      statMap: {
+        "/project/app": { isFile: false, isDirectory: true },
+        "/project/app/api/[version.number]/route.ts": {
+          isFile: true,
+          isDirectory: false,
+        },
+      },
+      dirMap: {
+        "/project/app": [dir("api")],
+        "/project/app/api": [dir("[version.number]")],
+        "/project/app/api/[version.number]": [],
+      },
+    });
+
+    const result = await resolveAppRouteFile("/api/v2", ctx);
+
+    assertEquals(result, {
+      file: "/project/app/api/[version.number]/route.ts",
+      params: { "version.number": "v2" },
+    });
+  });
+
   it("matches catch-all [...slug] for multi-segment paths", async () => {
     const ctx = createMockCtx({
       statMap: {
@@ -184,6 +208,31 @@ describe("resolveAppRouteFile", () => {
     assertEquals(result, {
       file: "/project/app/api/docs/[...slug]/route.ts",
       params: { slug: ["a", "b"] },
+    });
+  });
+
+  it("extracts a dotted catch-all name through the canonical route parser", async () => {
+    const ctx = createMockCtx({
+      statMap: {
+        "/project/app": { isFile: false, isDirectory: true },
+        "/project/app/api/docs/[...path.parts]/route.ts": {
+          isFile: true,
+          isDirectory: false,
+        },
+      },
+      dirMap: {
+        "/project/app": [dir("api")],
+        "/project/app/api": [dir("docs")],
+        "/project/app/api/docs": [dir("[...path.parts]")],
+        "/project/app/api/docs/[...path.parts]": [],
+      },
+    });
+
+    const result = await resolveAppRouteFile("/api/docs/a/b", ctx);
+
+    assertEquals(result, {
+      file: "/project/app/api/docs/[...path.parts]/route.ts",
+      params: { "path.parts": ["a", "b"] },
     });
   });
 
@@ -225,6 +274,58 @@ describe("resolveAppRouteFile", () => {
       file: "/project/app/api/search/[[...slug]]/route.ts",
       params: { slug: [] },
     });
+  });
+
+  it("extracts a dotted optional catch-all name with no segments", async () => {
+    const ctx = createMockCtx({
+      statMap: {
+        "/project/app": { isFile: false, isDirectory: true },
+        "/project/app/api/search/[[...query.parts]]/route.ts": {
+          isFile: true,
+          isDirectory: false,
+        },
+      },
+      dirMap: {
+        "/project/app": [dir("api")],
+        "/project/app/api": [dir("search")],
+        "/project/app/api/search": [dir("[[...query.parts]]")],
+        "/project/app/api/search/[[...query.parts]]": [],
+      },
+    });
+
+    const result = await resolveAppRouteFile("/api/search", ctx);
+
+    assertEquals(result, {
+      file: "/project/app/api/search/[[...query.parts]]/route.ts",
+      params: { "query.parts": [] },
+    });
+  });
+
+  it("does not classify invalid parameter directories as routes", async () => {
+    const invalidDirectories = [
+      "[slug-name]",
+      "[bad name]",
+      "[.slug]",
+      "[slug..part]",
+      "[id].tsx",
+    ];
+    const statMap: Record<string, StatResult> = {
+      "/project/app": { isFile: false, isDirectory: true },
+    };
+    const dirMap: Record<string, DirEntry[]> = {
+      "/project/app": [dir("api")],
+      "/project/app/api": invalidDirectories.map(dir),
+    };
+    for (const directory of invalidDirectories) {
+      statMap[`/project/app/api/${directory}/route.ts`] = {
+        isFile: true,
+        isDirectory: false,
+      };
+      dirMap[`/project/app/api/${directory}`] = [];
+    }
+    const ctx = createMockCtx({ statMap, dirMap });
+
+    assertEquals(await resolveAppRouteFile("/api/value", ctx), null);
   });
 
   it("falls back to catch-all when a dynamic route cannot consume the full path", async () => {
