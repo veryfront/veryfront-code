@@ -31,7 +31,7 @@ export const MAX_PORT_NUMBER = 65535;
 export const MIN_PORT_NUMBER = 1;
 export const MAX_URL_LENGTH_FOR_VALIDATION = 2048;
 
-/******** Batch limits ********/
+/** Maximum batch size. */
 export const MAX_BATCH_SIZE = 100;
 
 /** Largest delay supported consistently by JavaScript timer implementations. */
