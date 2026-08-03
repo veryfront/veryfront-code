@@ -1,6 +1,7 @@
 import type { VeryfrontAPIConfig } from "../../veryfront-api-client/types.ts";
 import type { FileCacheOptions } from "../cache/types.ts";
 import type { ContentSource, FSAdapterConfig } from "./types.ts";
+import { normalizeFilesystemRetryConfig } from "#veryfront/utils/config-resource-limits.ts";
 
 export const DEFAULT_MAX_RETRIES = 3;
 export const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
@@ -16,12 +17,15 @@ type CacheOverrides = VeryfrontConfigOverrides["cache"];
 export function buildRetryConfig(
   retry?: RetryOverrides,
 ): NonNullable<VeryfrontAPIConfig["retry"]> {
-  return {
-    maxRetries: DEFAULT_MAX_RETRIES,
-    initialDelay: DEFAULT_INITIAL_RETRY_DELAY_MS,
-    maxDelay: DEFAULT_MAX_RETRY_DELAY_MS,
-    ...retry,
-  };
+  return normalizeFilesystemRetryConfig(
+    retry,
+    {
+      maxRetries: DEFAULT_MAX_RETRIES,
+      initialDelay: DEFAULT_INITIAL_RETRY_DELAY_MS,
+      maxDelay: DEFAULT_MAX_RETRY_DELAY_MS,
+    },
+    "retries-after-initial",
+  );
 }
 
 export function buildFileCacheOptions(

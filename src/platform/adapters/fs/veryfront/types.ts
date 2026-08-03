@@ -124,8 +124,10 @@ export interface FSAdapterConfig {
       ttl?: number;
     };
     retry?: {
+      /** Retries after the initial request, from 0 through 9. */
       maxRetries?: number;
-      retryDelay?: number;
+      initialDelay?: number;
+      maxDelay?: number;
     };
   };
   github?: GitHubConfig;

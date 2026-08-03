@@ -1,25 +1,57 @@
 import { logger as baseLogger } from "#veryfront/utils";
 
 const logger = baseLogger.component("path-normalizer");
+const MAX_PATH_CODE_UNITS = 4_096;
+
+function hasAsciiControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit <= 0x1f || codeUnit === 0x7f) return true;
+  }
+  return false;
+}
 
 export class PathNormalizer {
-  constructor(private readonly projectDir?: string) {}
+  private readonly projectDirPrefix?: string;
+
+  constructor(private readonly projectDir?: string) {
+    if (projectDir !== undefined) {
+      this.assertSafePath(projectDir, "project directory");
+      this.projectDirPrefix = projectDir === "/" ? "/" : projectDir.replace(/\/+$/g, "");
+    }
+  }
 
   getProjectDir(): string | undefined {
     return this.projectDir;
   }
 
   normalize(path: string): string {
-    const projectDir = this.projectDir;
-    const wasAbsoluteInProject = projectDir != null && path.startsWith(projectDir);
+    this.assertSafePath(path, "path");
+
+    const projectDir = this.projectDirPrefix;
+    const wasAbsoluteInProject = projectDir !== undefined &&
+      (projectDir === "/"
+        ? path.startsWith("/")
+        : path === projectDir || path.startsWith(`${projectDir}/`));
 
     let normalized = path;
 
     if (wasAbsoluteInProject) {
-      normalized = normalized.slice(projectDir.length);
+      normalized = projectDir === "/" ? normalized.slice(1) : normalized.slice(projectDir.length);
     }
 
     normalized = normalized.replace(/^\/+|\/+$/g, "").replace(/\/+/g, "/");
+
+    // "." segments are legitimate no-ops (projectDir "." conventionally means
+    // the project root elsewhere in this codebase); drop them instead of
+    // rejecting the path. ".." segments would alias a path outside the
+    // project scope, so those are rejected outright.
+    const segments = normalized.split("/").filter((segment) => segment !== ".");
+    const traversalSegment = segments.find((segment) => segment === "..");
+    if (traversalSegment) {
+      throw new TypeError('Filesystem path must not contain ".." segments');
+    }
+    normalized = segments.join("/");
 
     if (normalized.startsWith("@/")) {
       const original = normalized;
@@ -31,10 +63,27 @@ export class PathNormalizer {
       logger.debug("Converted absolute to relative path", {
         absolute: path,
         relative: normalized,
-        projectDir,
+        projectDir: this.projectDir,
       });
     }
 
     return normalized;
+  }
+
+  private assertSafePath(path: string, label: string): void {
+    if (typeof path !== "string") {
+      throw new TypeError(`Filesystem ${label} must be a string`);
+    }
+    if (path.length > MAX_PATH_CODE_UNITS) {
+      throw new TypeError(
+        `Filesystem ${label} exceeds the ${MAX_PATH_CODE_UNITS}-character limit`,
+      );
+    }
+    if (hasAsciiControlCharacter(path)) {
+      throw new TypeError(`Filesystem ${label} must not contain control characters`);
+    }
+    if (path.includes("\\")) {
+      throw new TypeError(`Filesystem ${label} must use forward slashes`);
+    }
   }
 }
