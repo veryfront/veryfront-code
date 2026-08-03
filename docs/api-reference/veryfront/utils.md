@@ -147,7 +147,7 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `sanitizeUrlForSpan` | Return the URL form safe to attach to observability span attributes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/redact.ts#L857) |
 | `shortHash` | Create short hash. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L51) |
 | `simpleHash` | Create simple hash. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L34) |
-| `sleep` | Return a promise that resolves after `ms` milliseconds. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/sleep.ts#L10) |
+| `sleep` | Return a promise that resolves after `ms` milliseconds, or rejects with `abortSignal.reason` if the signal is aborted first. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/sleep.ts#L10) |
 | `startRequest` | Request payload for start. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/perf-timer.ts#L36) |
 | `startTimer` | Starts timer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/perf-timer.ts#L44) |
 | `throwIfAborted` | Throw the normalized abort reason when a signal has already been aborted. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/abort.ts#L14) |

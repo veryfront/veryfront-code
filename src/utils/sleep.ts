@@ -1,11 +1,11 @@
 import { normalizeTimerDurationMs } from "./timer.ts";
 
 /**
- * Return a promise that resolves after `ms` milliseconds.
+ * Return a promise that resolves after `ms` milliseconds, or rejects with
+ * `abortSignal.reason` if the signal is aborted first.
  *
  * Throws `RangeError` synchronously when `ms` is negative, non-finite, or
- * exceeds the portable JavaScript timer range. The returned promise rejects
- * with `abortSignal.reason` if the signal is aborted first.
+ * exceeds the portable JavaScript timer range.
  */
 export function sleep(ms: number, abortSignal?: AbortSignal): Promise<void> {
   const durationMs = normalizeTimerDurationMs(ms, "Sleep duration");
