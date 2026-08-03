@@ -134,12 +134,11 @@ async function fetchEnvironmentVariables(
   headers: HeadersInit = {},
 ): Promise<Response> {
   try {
+    const requestHeaders = new Headers(headers);
+    requestHeaders.set("Authorization", authorization);
+    requestHeaders.set("Accept", "application/json");
     return await fetch(url, {
-      headers: {
-        Authorization: authorization,
-        Accept: "application/json",
-        ...headers,
-      },
+      headers: requestHeaders,
       redirect: "error",
       signal,
     });
@@ -270,3 +269,7 @@ export async function fetchProjectEnvVars(
     throw error;
   }
 }
+
+export const projectEnvFetcherInternals = {
+  fetchEnvironmentVariables,
+} as const;
