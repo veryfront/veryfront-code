@@ -9,7 +9,7 @@ describe("Skills Command", () => {
   ): Promise<{ code: number; stdout: string; stderr: string }> {
     const cliPath = new URL("../../main.ts", import.meta.url).pathname;
     const result = await new Deno.Command(Deno.execPath(), {
-      args: ["run", "-A", cliPath, "skills", "info", ...args, "--json"],
+      args: ["run", "--quiet", "-A", cliPath, "skills", "info", ...args, "--json"],
       env: { VERYFRONT_NO_UPDATE_CHECK: "1", NO_COLOR: "1" },
       stdin: "null",
       stdout: "piped",
