@@ -64,6 +64,7 @@ const MAX_STORED_CHUNKS = 1_000_000;
 const MAX_STORED_EMBEDDING_VALUES = 16_384;
 const MAX_STORED_BYTES = 64 * 1024 * 1024;
 const MAX_ORPHANED_STORE_TEMPS = 1_024;
+const MAX_EMBEDDING_PERSIST_ATTEMPTS = 2;
 const STORE_TEMP_TOKEN_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -613,7 +614,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
 
   async function loadSearchDataWithEmbeddings(): Promise<RagStoreData | null> {
     let loaded = await withLock(async () => await load());
-    while (true) {
+    for (let attempt = 0; attempt < MAX_EMBEDDING_PERSIST_ATTEMPTS; attempt++) {
       if (loaded.data.chunks.length === 0) return null;
 
       const updated = await withStoreProviderFailure(async () =>
@@ -634,6 +635,10 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
       if (persisted.saved) return persisted.data;
       loaded = persisted.loaded;
     }
+    throw RAG_STORE_UNAVAILABLE.create({
+      detail: "The RAG store changed repeatedly while embeddings were persisted.",
+      context: { storagePath },
+    });
   }
 
   async function listContentFiles(dir: string): Promise<string[]> {

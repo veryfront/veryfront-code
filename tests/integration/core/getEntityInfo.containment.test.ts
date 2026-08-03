@@ -49,8 +49,10 @@ describe("getEntityBySlug containment", () => {
       await mkdir(outsideDir, { recursive: true });
       await writeTextFile(join(outsideDir, "secret.mdx"), "# Secret");
       await writeTextFile(join(outsideDir, "index.mdx"), "# Secret index");
-      await Deno.symlink(join(outsideDir, "secret.mdx"), join(pagesDir, "leak.mdx"));
-      await Deno.symlink(outsideDir, join(pagesDir, "linked"));
+      await Deno.symlink(join(outsideDir, "secret.mdx"), join(pagesDir, "leak.mdx"), {
+        type: "file",
+      });
+      await Deno.symlink(outsideDir, join(pagesDir, "linked"), { type: "dir" });
 
       assertEquals(await getEntityBySlug(projectDir, "leak"), null);
       assertEquals(await getEntityBySlug(projectDir, "linked"), null);
@@ -111,7 +113,7 @@ describe("getLayoutEntity containment", () => {
       const outsideLayout = join(root, "outside.mdx");
       await mkdir(layoutsDir, { recursive: true });
       await writeTextFile(outsideLayout, "# Outside layout");
-      await Deno.symlink(outsideLayout, join(layoutsDir, "main.mdx"));
+      await Deno.symlink(outsideLayout, join(layoutsDir, "main.mdx"), { type: "file" });
 
       assertEquals(await getLayoutEntity(projectDir, "main"), null);
       assertEquals(await getLayoutEntity(projectDir, "layouts/main.mdx"), null);

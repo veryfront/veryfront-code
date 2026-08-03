@@ -170,6 +170,24 @@ describe("rendering/app-route-resolver", () => {
       assertEquals(result?.entity.slug, "blog/hello-world");
     });
 
+    it("resolves a nested optional catch-all page at its terminal directory", async () => {
+      const files = new Map([
+        ["/project/app/docs/[[...slug]]/page.mdx", "---\ntitle: Docs\n---\nDocs page"],
+      ]);
+      const dirs = new Set([
+        "/project/app",
+        "/project/app/docs",
+        "/project/app/docs/[[...slug]]",
+      ]);
+      const adapter = createMockAdapter(files, dirs);
+
+      const docs = await getAppRouteEntity("/project", "docs", adapter);
+      const nestedDocs = await getAppRouteEntity("/project", "docs/a", adapter);
+
+      assertEquals(docs?.entity.slug, "docs");
+      assertEquals(nestedDocs?.entity.slug, "docs/a");
+    });
+
     it("rejects traversal slugs before consulting the filesystem", async () => {
       const adapter = createMockAdapter(new Map());
       let resolveCalls = 0;

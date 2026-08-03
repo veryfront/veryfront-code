@@ -159,17 +159,15 @@ async function tryDynamicMatch(
   );
   if (directPage) return directPage;
 
-  if (segments.length === 0) {
-    const optionalDirectory = await findOptionalCatchAllDirectory(currentDir, session);
-    if (optionalDirectory) {
-      return await loadPageFromDirectory(
-        join(currentDir, optionalDirectory),
-        slug,
-        appRoot,
-        virtualRoot,
-        session,
-      );
-    }
+  const optionalDirectory = await findOptionalCatchAllDirectory(currentDir, session);
+  if (optionalDirectory) {
+    return await loadPageFromDirectory(
+      join(currentDir, optionalDirectory),
+      slug,
+      appRoot,
+      virtualRoot,
+      session,
+    );
   }
 
   return null;

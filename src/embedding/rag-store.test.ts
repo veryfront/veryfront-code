@@ -761,6 +761,69 @@ describe("ragStore", () => {
     });
   });
 
+  it("fails safely when embedding persistence repeatedly loses the store race", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      let embeddingAttempts = 0;
+      registerEmbeddingProvider("contended-persist", () =>
+        ({
+          specificationVersion: "v2",
+          provider: "contended-persist",
+          modelId: "test",
+          maxEmbeddingsPerCall: undefined,
+          supportsParallelCalls: true,
+          async doEmbed({ values }: { values: string[] }) {
+            if (values.length > 1 || values[0] !== "query") {
+              embeddingAttempts++;
+              if (embeddingAttempts > 2) {
+                throw new Error("embedding persistence was retried after exhaustion");
+              }
+              await Deno.writeTextFile(
+                storagePath,
+                JSON.stringify({
+                  documents: [{
+                    id: "doc",
+                    title: `External ${embeddingAttempts}`,
+                    source: "external",
+                    type: "txt",
+                    createdAt: embeddingAttempts,
+                  }],
+                  chunks: [{
+                    id: "chunk",
+                    documentId: "doc",
+                    text: "searchable content",
+                    embedding: [],
+                    index: 0,
+                  }],
+                }),
+              );
+            }
+            return {
+              embeddings: values.map((value) => {
+                const vector = new Array<number>(1536).fill(0);
+                vector[0] = value.length;
+                return vector;
+              }),
+              usage: { tokens: 0 },
+              rawResponse: undefined,
+              warnings: [],
+            };
+          },
+        }) as never);
+      const store = ragStore({ model: "contended-persist/test", storagePath });
+      await store.ingest("Doc", "searchable content");
+
+      const error = await assertRejects(
+        () => store.search("query"),
+        VeryfrontError,
+        "changed repeatedly while embeddings were persisted",
+      );
+      assert(error instanceof VeryfrontError);
+      assertEquals(error.slug, "rag-store-unavailable");
+      assertEquals(embeddingAttempts, 2);
+    });
+  });
+
   it("reuses parsed local store data across searches until storage changes", async () => {
     registerTestEmbeddingProvider();
 
