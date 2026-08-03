@@ -288,6 +288,7 @@ export class LayoutApplicator {
             this.dependencyPinningDependencies,
             this.dependencyPinningSource,
             this.requestUrl?.origin,
+            this.config,
           );
         }
 

@@ -32,6 +32,22 @@ const SERVER_ONLY_PACKAGES: ReadonlySet<string> = new Set([
   "oracledb",
   "cassandra-driver",
 ]);
+const ReflectApply = Reflect.apply;
+const SetHas = Set.prototype.has;
+const StringSlice = String.prototype.slice;
+const StringStartsWith = String.prototype.startsWith;
+
+function setHas<T>(set: ReadonlySet<T>, value: T): boolean {
+  return ReflectApply(SetHas, set, [value]) as boolean;
+}
+
+function stringSlice(value: string, start: number): string {
+  return ReflectApply(StringSlice, value, [start]) as string;
+}
+
+function stringStartsWith(value: string, search: string): boolean {
+  return ReflectApply(StringStartsWith, value, [search]) as boolean;
+}
 
 /**
  * True if a bare package specifier's package name is a known server-only
@@ -42,8 +58,10 @@ const SERVER_ONLY_PACKAGES: ReadonlySet<string> = new Set([
  * before matching so both `redis` and `npm:redis@5.11.0` are recognized.
  */
 export function isServerOnlyPackage(packageName: string): boolean {
-  const bare = packageName.startsWith("npm:") ? packageName.slice("npm:".length) : packageName;
-  return SERVER_ONLY_PACKAGES.has(bare);
+  const bare = stringStartsWith(packageName, "npm:")
+    ? stringSlice(packageName, "npm:".length)
+    : packageName;
+  return setHas(SERVER_ONLY_PACKAGES, bare);
 }
 
 export { SERVER_ONLY_PACKAGES };
