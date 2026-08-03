@@ -5,13 +5,12 @@ import {
   assertStringIncludes,
 } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
-import { parse } from "jsr:@std/yaml@1.1.0/parse";
+import { parse } from "#std/yaml/parse";
 
 const ACTION_PATH = ".github/actions/setup-deno/action.yml";
 const WORKFLOWS_DIR = ".github/workflows";
 const LOCAL_ACTION = "./.github/actions/setup-deno";
-const CACHE_ACTION =
-  "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
+const CACHE_ACTION = "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
 const MAX_SETUP_MINUTES = 5;
 
 type YamlRecord = Record<string, unknown>;
@@ -85,10 +84,12 @@ describe("setup-deno CI contract", () => {
     );
     assert(redisWarm && dependencyWarm, "both warm-cache steps must exist");
 
-    for (const [name, step, deadline] of [
-      ["Redis", redisWarm, "2m"],
-      ["dependency", dependencyWarm, "3m"],
-    ] as const) {
+    for (
+      const [name, step, deadline] of [
+        ["Redis", redisWarm, "2m"],
+        ["dependency", dependencyWarm, "3m"],
+      ] as const
+    ) {
       const condition = String(step.if);
       const command = String(step.run);
       assertStringIncludes(condition, "steps.deno-cache.outputs.cache-hit");
@@ -105,7 +106,10 @@ describe("setup-deno CI contract", () => {
 
   it("caps every workflow setup call and keeps fork PRs out of cache writes", async () => {
     const workflowPaths = await workflowPathsUsingSetupDeno();
-    assert(workflowPaths.length > 0, "at least one workflow must use setup-deno");
+    assert(
+      workflowPaths.length > 0,
+      "at least one workflow must use setup-deno",
+    );
 
     let setupCalls = 0;
     for (const path of workflowPaths) {

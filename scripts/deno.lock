@@ -1108,6 +1108,7 @@
       "jsr:@std/fs@1.0.23",
       "jsr:@std/path@1.1.4",
       "jsr:@std/testing@1.0.17",
+      "jsr:@std/yaml@1.1.0",
       "npm:@babel/parser@7.29.2"
     ]
   }
