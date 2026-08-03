@@ -72,6 +72,29 @@ function hasOwn(object: object, key: PropertyKey): boolean {
   return ReflectApply(ObjectPrototypeHasOwnProperty, object, [key]) as boolean;
 }
 
+function snapshotEmbeddedImportMap(value: unknown): ImportMapConfig {
+  if (value === undefined || value === null) return snapshotImportMap({});
+  if (typeof value !== "object") return snapshotImportMap(value);
+
+  const importsDescriptor = ObjectGetOwnPropertyDescriptor(value, "imports");
+  if (importsDescriptor && !hasOwn(importsDescriptor, "value")) {
+    throw new IntrinsicTypeError(
+      "Import-map config resolve.importMap imports cannot be an accessor",
+    );
+  }
+  const scopesDescriptor = ObjectGetOwnPropertyDescriptor(value, "scopes");
+  if (scopesDescriptor && !hasOwn(scopesDescriptor, "value")) {
+    throw new IntrinsicTypeError(
+      "Import-map config resolve.importMap scopes cannot be an accessor",
+    );
+  }
+
+  return snapshotImportMap({
+    imports: importsDescriptor?.value ?? {},
+    scopes: scopesDescriptor?.value ?? {},
+  });
+}
+
 function mapClear<K, V>(map: Map<K, V>): void {
   ReflectApply(MapPrototypeClear, map, []);
 }
@@ -245,7 +268,7 @@ function snapshotPreloadContext(
   if (importMapDescriptor && !hasOwn(importMapDescriptor, "value")) {
     throw new IntrinsicTypeError("Import-map config resolve.importMap cannot be an accessor");
   }
-  const importMap = snapshotImportMap(importMapDescriptor?.value ?? {});
+  const importMap = snapshotEmbeddedImportMap(importMapDescriptor?.value);
   // The loader only consumes resolve.importMap. Keeping the request snapshot
   // minimal avoids invoking unrelated config getters or retaining mutable
   // tenant-controlled configuration behind a cache entry.

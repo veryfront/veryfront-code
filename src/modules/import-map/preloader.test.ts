@@ -144,6 +144,61 @@ describe("modules/import-map/preloader", () => {
       assertEquals(first === changed, false);
     });
 
+    it("ignores extra config import-map metadata without invoking accessors", async () => {
+      clearImportMapCache();
+      const adapter = createMinimalAdapter();
+      let metadataCalls = 0;
+      const importMap = {
+        imports: { package: "https://example.com/package.ts" },
+      };
+      Object.defineProperty(importMap, "metadata", {
+        enumerable: true,
+        get() {
+          metadataCalls++;
+          return { source: "project" };
+        },
+      });
+      const config = { resolve: { importMap } } as VeryfrontConfig;
+
+      const result = await preloadImportMap(
+        "/metadata-project",
+        adapter,
+        "metadata-project",
+        { config },
+      );
+
+      assertEquals(result.imports?.package, "https://example.com/package.ts");
+      assertEquals(metadataCalls, 0);
+    });
+
+    it("rejects accessor-backed config import-map fields without invoking them", async () => {
+      clearImportMapCache();
+      const adapter = createMinimalAdapter();
+      let importsCalls = 0;
+      const importMap = {};
+      Object.defineProperty(importMap, "imports", {
+        enumerable: true,
+        get() {
+          importsCalls++;
+          return { package: "https://example.com/package.ts" };
+        },
+      });
+      const config = { resolve: { importMap } } as VeryfrontConfig;
+
+      await assertRejects(
+        () =>
+          preloadImportMap(
+            "/accessor-import-map-project",
+            adapter,
+            "accessor-import-map-project",
+            { config },
+          ),
+        TypeError,
+        "imports cannot be an accessor",
+      );
+      assertEquals(importsCalls, 0);
+    });
+
     it("binds variant identity and loading to one pre-await config snapshot", async () => {
       const adapter = createMinimalAdapter();
       const releaseLoader = createDeferred<void>();
