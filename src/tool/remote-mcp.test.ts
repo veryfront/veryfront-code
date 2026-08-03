@@ -17,71 +17,19 @@ import {
 } from "#veryfront/agent/service/mcp-server-config.ts";
 
 describe("tool/remote-mcp", () => {
-  it("uses the exact trusted control-plane endpoint for first-party list and call", async () => {
-    const seenRequests: string[] = [];
-    const hostFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-      const endpoint = String(input);
-      assertEquals(init?.redirect, "error");
-      const body = JSON.parse(String(init?.body)) as { id: string; method: string };
-      seenRequests.push(`${endpoint}:${body.method}`);
-      const toolName = endpoint.includes("studio") ? "studio_suggestions" : "list_skills";
-      return Response.json({
-        jsonrpc: "2.0",
-        id: body.id,
-        result: body.method === "tools/list"
-          ? {
-            tools: [{
-              name: toolName,
-              description: "List project skills",
-              inputSchema: { type: "object" },
-            }],
-          }
-          : { content: [{ type: "text", text: '{"skills":[]}' }] },
-      });
-    };
-    const createSource = createHostedControlPlaneMCPToolSourceFactory(
-      {
-        apiMcpUrl: "http://veryfront-api:80/mcp",
-        studioMcpUrl: "http://veryfront-studio:80/mcp",
-      },
-      { hostFetch },
-    );
-    const apiSource = createSource({
-      id: "veryfront-mcp",
-      endpoint: "http://veryfront-api:80/mcp",
-      headers: { Authorization: "Bearer test-token" },
-    }, "veryfront-api");
-    const studioSource = createSource({
-      id: "studio-mcp",
-      endpoint: "http://veryfront-studio:80/mcp",
-      headers: { Authorization: "Bearer test-token" },
-    }, "veryfront-studio");
-
-    assertEquals((await apiSource.listTools()).map((tool) => tool.name), ["list_skills"]);
-    assertEquals(await apiSource.executeTool("list_skills", {}), { skills: [] });
-    assertEquals((await studioSource.listTools()).map((tool) => tool.name), [
-      "studio_suggestions",
-    ]);
-
-    assertEquals(seenRequests, [
-      "http://veryfront-api/mcp:tools/list",
-      "http://veryfront-api/mcp:tools/call",
-      "http://veryfront-studio/mcp:tools/list",
-    ]);
-  });
-
-  it("keeps trusted host transport captured across ambient and prototype changes", async () => {
+  it("uses captured host transport only for exact operator endpoints", async () => {
     const output = await new Deno.Command(Deno.execPath(), {
       args: [
         "run",
         "--quiet",
-        "--allow-env=VERYFRONT_API_URL",
+        "--allow-env=VERYFRONT_API_URL,VERYFRONT_STUDIO_MCP_URL",
         new URL("./remote-mcp-captured-host-fetch.fixture.ts", import.meta.url).href,
       ],
       cwd: Deno.cwd(),
       env: {
         DENO_TESTING: "1",
         VERYFRONT_API_URL: "http://veryfront-api:80",
+        VERYFRONT_STUDIO_MCP_URL: "http://veryfront-studio:80/mcp",
       },
       stdout: "piped",
       stderr: "piped",
@@ -91,10 +39,17 @@ describe("tool/remote-mcp", () => {
     assertEquals(output.success, true, stderr);
     assertEquals(JSON.parse(new TextDecoder().decode(output.stdout)), {
       attackerCalls: 0,
-      capturedCalls: 1,
+      apiResult: { skills: [] },
+      apiToolNames: ["list_skills"],
+      capturedCalls: 3,
       importedFactoryBlocked: true,
       inheritedOptionCalls: 0,
-      toolNames: ["captured_transport"],
+      seenRequests: [
+        "http://veryfront-api/mcp:tools/list",
+        "http://veryfront-api/mcp:tools/call",
+        "http://veryfront-studio/mcp:tools/list",
+      ],
+      studioToolNames: ["studio_suggestions"],
     });
   });
 

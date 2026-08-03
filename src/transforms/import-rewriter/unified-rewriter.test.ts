@@ -312,6 +312,83 @@ describe("rewriteImports with the default strategies", () => {
     });
   }
 
+  it("does not expose host transport authority through a nested data module", async () => {
+    const privateModuleUrl = import.meta.resolve(
+      "#veryfront/tool/internal/remote-mcp-transport.ts",
+    );
+    const nestedModuleUrl = `data:text/javascript,export default import(${
+      JSON.stringify(privateModuleUrl)
+    })`;
+    const projectModule = await loadTransformedProjectModule(
+      [
+        `const target = ${JSON.stringify(nestedModuleUrl)};`,
+        "export const load = async () => (await import(target)).default;",
+      ].join("\n"),
+      "nested-data-private-transport",
+    );
+
+    const privateModule = await projectModule.load() as Record<string, unknown>;
+    assertEquals(
+      typeof privateModule.createRemoteMCPToolSourceWithFetch,
+      "undefined",
+    );
+  });
+
+  it("does not expose host transport authority after runtime URL poisoning", async () => {
+    const privateModuleUrl = import.meta.resolve(
+      "#veryfront/tool/internal/remote-mcp-transport.ts",
+    );
+    const projectModule = await loadTransformedProjectModule(
+      [
+        `const privateModuleUrl = ${JSON.stringify(privateModuleUrl)};`,
+        'const target = "./safe-module.js";',
+        "export const load = async () => {",
+        "  const OriginalURL = globalThis.URL;",
+        "  const originalStartsWith = String.prototype.startsWith;",
+        "  try {",
+        "    let urlCalls = 0;",
+        "    globalThis.URL = class {",
+        "      constructor() {",
+        "        urlCalls++;",
+        "        if (urlCalls === 1) {",
+        "          return {",
+        '            origin: "https://modules.example.test",',
+        "            pathname: { match: () => null },",
+        '            searchParams: { getAll: () => ["on:test"] },',
+        "          };",
+        "        }",
+        "        return {",
+        '          origin: "https://modules.example.test",',
+        "          pathname: privateModuleUrl,",
+        '          search: "",',
+        '          hash: "",',
+        "          searchParams: { set() {}, delete() {} },",
+        "        };",
+        "      }",
+        "    };",
+        "    String.prototype.startsWith = function (prefix) {",
+        "      const value = this.valueOf();",
+        '      if (value === target) return prefix === "./";',
+        "      if (value === privateModuleUrl) return true;",
+        "      return originalStartsWith.call(value, prefix);",
+        "    };",
+        "    return await import(target);",
+        "  } finally {",
+        "    globalThis.URL = OriginalURL;",
+        "    String.prototype.startsWith = originalStartsWith;",
+        "  }",
+        "};",
+      ].join("\n"),
+      "poisoned-url-private-transport",
+    );
+
+    const privateModule = await projectModule.load() as Record<string, unknown>;
+    assertEquals(
+      typeof privateModule.createRemoteMCPToolSourceWithFetch,
+      "undefined",
+    );
+  });
+
   it("preserves ordinary computed dynamic imports", async () => {
     const projectModule = await loadTransformedProjectModule(
       [
