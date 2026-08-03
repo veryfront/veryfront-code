@@ -508,6 +508,74 @@ describe("logger/redact", () => {
       );
     });
 
+    it("keeps credential redaction stable after string, array, and URL globals change", () => {
+      const originalIndexOf = String.prototype.indexOf;
+      const originalStartsWith = String.prototype.startsWith;
+      const originalSearch = String.prototype.search;
+      const originalCharCodeAt = String.prototype.charCodeAt;
+      const originalPush = Array.prototype.push;
+      const originalPop = Array.prototype.pop;
+      const originalAt = Array.prototype.at;
+      const originalDecodeURIComponent = globalThis.decodeURIComponent;
+      let sanitizedUserinfo = "";
+      let sanitizedAssignment = "";
+      let sanitizedEncodedParameter = "";
+
+      try {
+        String.prototype.indexOf = () => -1;
+        String.prototype.startsWith = () => false;
+        String.prototype.search = () => -1;
+        String.prototype.charCodeAt = () => 0;
+        Array.prototype.push = () => 0;
+        Array.prototype.pop = () => undefined;
+        Array.prototype.at = () => undefined;
+        globalThis.decodeURIComponent = () => "page";
+
+        sanitizedUserinfo = sanitizeUrlCredentials(
+          "https://user:synthetic-password@example.test/path",
+        );
+        sanitizedAssignment = sanitizeUrlCredentials(
+          "refreshToken='synthetic-token' request continues",
+        );
+        sanitizedEncodedParameter = sanitizeUrlCredentials(
+          "https://example.test/?access%5Ftoken=synthetic-token&page=2",
+        );
+      } finally {
+        String.prototype.indexOf = originalIndexOf;
+        String.prototype.startsWith = originalStartsWith;
+        String.prototype.search = originalSearch;
+        String.prototype.charCodeAt = originalCharCodeAt;
+        Array.prototype.push = originalPush;
+        Array.prototype.pop = originalPop;
+        Array.prototype.at = originalAt;
+        globalThis.decodeURIComponent = originalDecodeURIComponent;
+      }
+
+      assertEquals(
+        sanitizedUserinfo,
+        `https://user:${REDACTED}@example.test/path`,
+      );
+      assertEquals(
+        sanitizedAssignment,
+        `refreshToken='${REDACTED}' request continues`,
+      );
+      assertEquals(
+        sanitizedEncodedParameter,
+        `https://example.test/?access%5Ftoken=${REDACTED}&page=2`,
+      );
+    });
+
+    it("keeps composite auth fields and trailing warning text visible", () => {
+      const warning =
+        "MCP server started with auth.type='none' (allowUnauthenticated) - all requests accepted";
+
+      assertEquals(sanitizeUrlCredentials(warning), warning);
+      assertEquals(
+        sanitizeUrlCredentials("auth='synthetic-secret' warning remains visible"),
+        `auth='${REDACTED}' warning remains visible`,
+      );
+    });
+
     it("masks common provider token prefixes without assignment syntax", () => {
       const message = "Using token sk-proj-abc123456789";
       const sanitized = sanitizeUrlCredentials(message);

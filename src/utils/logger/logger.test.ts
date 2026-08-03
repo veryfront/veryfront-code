@@ -105,6 +105,84 @@ describe("logger", () => {
     }
   });
 
+  it("contains throwing console access inside the logging boundary", () => {
+    const originalLog = Object.getOwnPropertyDescriptor(console, "log")!;
+    let threw = false;
+
+    Object.defineProperty(console, "log", {
+      configurable: true,
+      get() {
+        throw new Error("project code replaced the console sink");
+      },
+    });
+    try {
+      try {
+        getBaseLogger("SERVER").info("contained console getter");
+      } catch {
+        threw = true;
+      }
+    } finally {
+      Object.defineProperty(console, "log", originalLog);
+    }
+
+    assertEquals(threw, false);
+  });
+
+  it("uses captured subscriber iteration after the Set iterator changes", () => {
+    const originalIterator = Object.getOwnPropertyDescriptor(Set.prototype, Symbol.iterator)!;
+    const messages: string[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => messages.push(entry.message));
+    let threw = false;
+
+    Object.defineProperty(Set.prototype, Symbol.iterator, {
+      configurable: true,
+      value() {
+        throw new Error("project code replaced Set iteration");
+      },
+    });
+    try {
+      try {
+        getBaseLogger("SERVER").info("captured subscriber iteration");
+      } catch {
+        threw = true;
+      }
+    } finally {
+      Object.defineProperty(Set.prototype, Symbol.iterator, originalIterator);
+      unsubscribe();
+    }
+
+    assertEquals(threw, false);
+    assertEquals(messages, ["captured subscriber iteration"]);
+  });
+
+  it("uses captured case conversion in normal and emergency logging", () => {
+    const { getOutput, restore } = captureConsoleLog();
+    const originalToLowerCase = String.prototype.toLowerCase;
+    let threw = false;
+
+    try {
+      withJsonLogFormat(() => {
+        String.prototype.toLowerCase = () => {
+          throw new Error("project code replaced lowercase conversion");
+        };
+        try {
+          getBaseLogger("SERVER").info("captured lowercase conversion");
+        } catch {
+          threw = true;
+        } finally {
+          String.prototype.toLowerCase = originalToLowerCase;
+        }
+      });
+    } finally {
+      String.prototype.toLowerCase = originalToLowerCase;
+      restore();
+    }
+
+    assertEquals(threw, false);
+    const entry = JSON.parse(getOutput()) as LogEntry;
+    assertEquals(entry.message, "captured lowercase conversion");
+  });
+
   describe("getDefaultLevel", () => {
     // Note: Pass explicit values to avoid reading process env in parallel tests.
 

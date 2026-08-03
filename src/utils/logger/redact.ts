@@ -21,10 +21,13 @@
 export const REDACTED = "[REDACTED]";
 
 const apply = Reflect.apply;
-const NativeSet = Set;
+const arrayPop = Array.prototype.pop;
+const arrayPush = Array.prototype.push;
 const NativeUint32Array = Uint32Array;
 const arrayIsArray = Array.isArray;
 const arrayPrototype = Array.prototype;
+const bigIntToString = BigInt.prototype.toString;
+const NativeMap = Map;
 const mapDelete = Map.prototype.delete;
 const mapGet = Map.prototype.get;
 const mapKeys = Map.prototype.keys;
@@ -34,18 +37,31 @@ const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectGetPrototypeOf = Object.getPrototypeOf;
 const objectHasOwn = Object.hasOwn;
 const objectPrototype = Object.prototype;
+const NativeSet = Set;
+const nativeDecodeURIComponent = decodeURIComponent;
+const NativeURL = URL;
+const numberIsFinite = Number.isFinite;
+const numberIsInteger = Number.isInteger;
 const regExpExec = RegExp.prototype.exec;
 const regExpGlobalGetter = objectGetOwnPropertyDescriptor(RegExp.prototype, "global")!.get!;
 const regExpUnicodeGetter = objectGetOwnPropertyDescriptor(RegExp.prototype, "unicode")!.get!;
 const stringCharCodeAt = String.prototype.charCodeAt;
 const stringIncludes = String.prototype.includes;
+const stringIndexOf = String.prototype.indexOf;
 const stringSlice = String.prototype.slice;
+const stringStartsWith = String.prototype.startsWith;
 const stringToLowerCase = String.prototype.toLowerCase;
 const setAdd = Set.prototype.add;
 const setDelete = Set.prototype.delete;
 const setHas = Set.prototype.has;
-const mapIteratorNext = objectGetPrototypeOf(new Map().keys()).next;
+const mapIteratorNext = objectGetPrototypeOf(new NativeMap().keys()).next;
 const mapSizeGetter = objectGetOwnPropertyDescriptor(Map.prototype, "size")!.get!;
+const urlHostGetter = objectGetOwnPropertyDescriptor(NativeURL.prototype, "host")!.get!;
+const urlOriginGetter = objectGetOwnPropertyDescriptor(NativeURL.prototype, "origin")!.get!;
+const urlPasswordGetter = objectGetOwnPropertyDescriptor(NativeURL.prototype, "password")!.get!;
+const urlPathnameGetter = objectGetOwnPropertyDescriptor(NativeURL.prototype, "pathname")!.get!;
+const urlProtocolGetter = objectGetOwnPropertyDescriptor(NativeURL.prototype, "protocol")!.get!;
+const urlUsernameGetter = objectGetOwnPropertyDescriptor(NativeURL.prototype, "username")!.get!;
 const NON_ALPHANUMERIC_PATTERN = /[^a-z0-9]/g;
 const CAMEL_CASE_BOUNDARY_PATTERN = /([a-z0-9])([A-Z])/g;
 const ACRONYM_BOUNDARY_PATTERN = /([A-Z])([A-Z][a-z])/g;
@@ -276,7 +292,7 @@ const SENSITIVE_KEY_PATTERNS = [
 const SENSITIVE_KEY_CACHE_MAX_SIZE = 512;
 /** Avoid retaining attacker-controlled, oversized property names in the cache. */
 const SENSITIVE_KEY_CACHE_MAX_KEY_LENGTH = 128;
-const sensitiveKeyCache = new Map<string, boolean>();
+const sensitiveKeyCache = new NativeMap<string, boolean>();
 
 /** Stop traversing past this depth to keep the pass cheap and stack-safe. */
 const MAX_DEPTH = 16;
@@ -376,7 +392,7 @@ function readSerializationHook(value: object): unknown {
       throw new TypeError("serialization hook prototype chain is cyclic or too deep");
     }
     prototypesVisited++;
-    seenOwners.push(owner);
+    apply(arrayPush, seenOwners, [owner]);
     const descriptor = objectGetOwnPropertyDescriptor(owner, "toJSON");
     if (descriptor !== undefined) {
       if (!objectHasOwn(descriptor, "value")) {
@@ -403,9 +419,11 @@ function redactValue(
   budget.remainingNodes--;
 
   if (typeof value === "string") return sanitizeUrlCredentials(value);
-  if (typeof value === "bigint") return mode === "serialization" ? value.toString() : value;
+  if (typeof value === "bigint") {
+    return mode === "serialization" ? apply(bigIntToString, value, []) as string : value;
+  }
   if (typeof value === "number") {
-    return mode === "serialization" && !Number.isFinite(value) ? null : value;
+    return mode === "serialization" && !numberIsFinite(value) ? null : value;
   }
   if (typeof value === "boolean" || value === null) return value;
   if (typeof value === "undefined" || typeof value === "function" || typeof value === "symbol") {
@@ -421,7 +439,7 @@ function redactValue(
     try {
       const arrayValue = value as unknown[];
       const length = arrayValue.length;
-      if (!Number.isInteger(length) || length < 0 || length > MAX_CONTAINER_ENTRIES) {
+      if (!numberIsInteger(length) || length < 0 || length > MAX_CONTAINER_ENTRIES) {
         return REDACTED;
       }
       const redacted: unknown[] = mode === "compatible" ? new Array(length) : [];
@@ -432,7 +450,7 @@ function redactValue(
         if (mode === "compatible") {
           redacted[index] = item;
         } else {
-          redacted.push(item);
+          apply(arrayPush, redacted, [item]);
         }
       }
       return redacted;
@@ -591,7 +609,12 @@ const SENSITIVE_URL_PARAMS = [
   "x-goog-signature",
 ] as const;
 
-const NORMALIZED_SENSITIVE_URL_PARAMS = new Set(SENSITIVE_URL_PARAMS.map(normalizeToAlphanumeric));
+const NORMALIZED_SENSITIVE_URL_PARAMS = new NativeSet<string>();
+for (let index = 0; index < SENSITIVE_URL_PARAMS.length; index++) {
+  apply(setAdd, NORMALIZED_SENSITIVE_URL_PARAMS, [
+    normalizeToAlphanumeric(SENSITIVE_URL_PARAMS[index]!),
+  ]);
+}
 
 const URL_USERINFO_RE = /(\b[a-z][a-z0-9+.-]*:\/\/|\/\/)([^/?#\s]+)@/gi;
 const HORIZONTAL_WHITESPACE_URL_USERINFO_RE =
@@ -617,7 +640,7 @@ function isHorizontalAssignmentBoundary(character: string): boolean {
 
 function isAsciiLetter(character: string | undefined): boolean {
   if (!character) return false;
-  const code = character.charCodeAt(0);
+  const code = stringCodeUnitAt(character, 0);
   return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
 }
 
@@ -627,7 +650,7 @@ function isAssignmentKeyStartCharacter(character: string | undefined): boolean {
 
 function isAssignmentKeyCharacter(character: string | undefined): boolean {
   if (!character) return false;
-  const code = character.charCodeAt(0);
+  const code = stringCodeUnitAt(character, 0);
   return (
     isAssignmentKeyStartCharacter(character) ||
     (code >= 48 && code <= 57) ||
@@ -686,7 +709,7 @@ function assignmentValueEndsAt(input: string, start: number): boolean {
 function redactAssignmentValue(input: string, start: number): RedactedAssignmentValue {
   let scanStart = start;
   let preserveValueQuote = true;
-  if (input.startsWith(REDACTED, start)) {
+  if (apply(stringStartsWith, input, [REDACTED, start])) {
     const markerEnd = start + REDACTED.length;
     if (assignmentValueEndsAt(input, markerEnd)) {
       return {
@@ -719,6 +742,7 @@ function redactAssignmentValue(input: string, start: number): RedactedAssignment
       if (character === quote) {
         if (quoteStart === scanStart && expectedClosings.length === 0) {
           wrapperQuoteClosed = true;
+          return { end: index + 1, replacement: replacement() };
         }
         quote = "";
         quoteStart = -1;
@@ -734,7 +758,7 @@ function redactAssignmentValue(input: string, start: number): RedactedAssignment
       continue;
     }
     if (character === "{" || character === "[") {
-      expectedClosings.push(character === "{" ? "}" : "]");
+      apply(arrayPush, expectedClosings, [character === "{" ? "}" : "]"]);
       index++;
       continue;
     }
@@ -742,10 +766,10 @@ function redactAssignmentValue(input: string, start: number): RedactedAssignment
       expectedClosings.length > 0 &&
       (character === "}" || character === "]")
     ) {
-      if (expectedClosings.at(-1) !== character) {
+      if (expectedClosings[expectedClosings.length - 1] !== character) {
         return { end: input.length, replacement: replacement() };
       }
-      expectedClosings.pop();
+      apply(arrayPop, expectedClosings, []);
       index++;
       if (
         expectedClosings.length === 0 &&
@@ -798,7 +822,7 @@ function redactCredentialAssignments(
     const markerEnd = valueStart + REDACTED.length;
     if (
       (boundary === "?" || boundary === "&" || boundary === ";") &&
-      input.startsWith(REDACTED, valueStart) &&
+      apply(stringStartsWith, input, [REDACTED, valueStart]) &&
       input[markerEnd] === "#"
     ) {
       // The URL-parameter pass already bounded this credential at the URI
@@ -848,14 +872,13 @@ function isSensitiveAssignmentKey(key: string): boolean {
       const token = tokens[end]!;
       if (token.length === 0) continue;
       candidate += token;
-      if (candidate === "auth") return true;
       for (let index = 0; index < SENSITIVE_KEY_PATTERNS.length; index++) {
         if (candidate === SENSITIVE_KEY_PATTERNS[index]) return true;
       }
     }
   }
 
-  return false;
+  return tokens.length === 1 && tokens[0] === "auth";
 }
 
 function isStandaloneUrlAuthorityBeforeWhitespace(
@@ -863,14 +886,23 @@ function isStandaloneUrlAuthorityBeforeWhitespace(
   user: string,
   password: string,
 ): boolean {
-  const whitespaceIndex = password.search(/[ \t]/);
+  let whitespaceIndex = -1;
+  for (let index = 0; index < password.length; index++) {
+    const codeUnit = stringCodeUnitAt(password, index);
+    if (codeUnit === 0x20 || codeUnit === 0x09) {
+      whitespaceIndex = index;
+      break;
+    }
+  }
   if (whitespaceIndex < 0) return false;
 
   const authority = `${user}:${sliceString(password, 0, whitespaceIndex)}`;
   const candidate = scheme === "//" ? `https://${authority}` : `${scheme}${authority}`;
   try {
-    const url = new URL(candidate);
-    return url.username.length === 0 && url.password.length === 0;
+    const url = new NativeURL(candidate);
+    const username = apply(urlUsernameGetter, url, []) as string;
+    const password = apply(urlPasswordGetter, url, []) as string;
+    return username.length === 0 && password.length === 0;
   } catch {
     return false;
   }
@@ -881,7 +913,7 @@ function decodeUrlParameterName(value: string): string {
   for (let pass = 0; pass < MAX_URL_PARAMETER_DECODE_PASSES; pass++) {
     let next: string;
     try {
-      next = decodeURIComponent(decoded);
+      next = nativeDecodeURIComponent(decoded);
     } catch {
       break;
     }
@@ -917,7 +949,7 @@ export function sanitizeUrlCredentials(input: string): string {
     (match) => {
       const scheme = match[1]!;
       const userinfo = match[2]!;
-      const colon = userinfo.indexOf(":");
+      const colon = apply(stringIndexOf, userinfo, [":"]) as number;
       if (colon === -1) {
         // `scheme://token@host` — the whole userinfo is credential-like.
         return `${scheme}${REDACTED}@`;
@@ -1015,19 +1047,19 @@ export function sanitizeUrlCredentials(input: string): string {
 }
 
 function firstUrlDelimiterIndex(input: string): number {
-  const queryIndex = input.indexOf("?");
-  const hashIndex = input.indexOf("#");
+  const queryIndex = apply(stringIndexOf, input, ["?"]) as number;
+  const hashIndex = apply(stringIndexOf, input, ["#"]) as number;
   if (queryIndex === -1) return hashIndex;
   if (hashIndex === -1) return queryIndex;
-  return Math.min(queryIndex, hashIndex);
+  return queryIndex < hashIndex ? queryIndex : hashIndex;
 }
 
 function sanitizeProtocolRelativeUrlForSpan(input: string): string | null {
-  if (!input.startsWith("//")) return null;
+  if (!apply(stringStartsWith, input, ["//"])) return null;
 
   try {
-    const url = new URL(`https:${input}`);
-    return `//${url.host}${url.pathname}`;
+    const url = new NativeURL(`https:${input}`);
+    return `//${apply(urlHostGetter, url, [])}${apply(urlPathnameGetter, url, [])}`;
   } catch (_) {
     return null;
   }
@@ -1046,17 +1078,21 @@ export function sanitizeUrlForSpan(input: string): string {
   if (typeof input !== "string" || input.length === 0) return input;
 
   try {
-    const url = new URL(input);
-    if (url.protocol === "blob:") {
+    const url = new NativeURL(input);
+    const protocol = apply(urlProtocolGetter, url, []) as string;
+    const pathname = apply(urlPathnameGetter, url, []) as string;
+    const origin = apply(urlOriginGetter, url, []) as string;
+    if (protocol === "blob:") {
       try {
-        const embeddedUrl = new URL(url.pathname);
-        return embeddedUrl.origin === "null" ? "blob:" : `blob:${embeddedUrl.origin}`;
+        const embeddedUrl = new NativeURL(pathname);
+        const embeddedOrigin = apply(urlOriginGetter, embeddedUrl, []) as string;
+        return embeddedOrigin === "null" ? "blob:" : `blob:${embeddedOrigin}`;
       } catch (_) {
         return "blob:";
       }
     }
-    if (url.origin !== "null") return `${url.origin}${url.pathname}`;
-    if (/^[a-z][a-z0-9+.-]*:/i.test(input)) return url.protocol;
+    if (origin !== "null") return `${origin}${pathname}`;
+    if (apply(regExpExec, /^[a-z][a-z0-9+.-]*:/i, [input]) !== null) return protocol;
   } catch (_) {
     // Relative or malformed URL-shaped strings are handled by the fallback.
   }

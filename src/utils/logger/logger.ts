@@ -23,8 +23,19 @@ import {
 } from "./redact.ts";
 import { stringifyRedactedJson } from "./serialization.ts";
 
+const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
+const NativeConsole = console;
 const objectCreate = Object.create;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const NativeSet = Set;
+const setAdd = Set.prototype.add;
+const setClear = Set.prototype.clear;
+const setDelete = Set.prototype.delete;
+const setValues = Set.prototype.values;
+const setIteratorNext = objectGetPrototypeOf(new NativeSet().values()).next;
+const stringToLowerCase = String.prototype.toLowerCase;
+const stringToUpperCase = String.prototype.toUpperCase;
 
 export enum LogLevel {
   DEBUG = 0,
@@ -142,7 +153,7 @@ const LOG_LEVEL_MAP: Readonly<Record<string, LogLevel>> = {
 
 function parseLogLevel(levelString: string | undefined): LogLevel | undefined {
   if (!levelString) return undefined;
-  return LOG_LEVEL_MAP[levelString.toUpperCase()];
+  return LOG_LEVEL_MAP[apply(stringToUpperCase, levelString, []) as string];
 }
 
 /**
@@ -184,7 +195,7 @@ function getDefaultFormat(
 let loggerConfig: LoggerConfig | null = null;
 
 let legacyLogRecordEmitter: LogRecordEmitter | null = null;
-const logRecordSubscribers = new Set<LogRecordEmitter>();
+const logRecordSubscribers = new NativeSet<LogRecordEmitter>();
 
 /**
  * Re-read logger configuration from environment variables.
@@ -230,16 +241,16 @@ export function __registerLogRecordEmitter(emitter: LogRecordEmitter | null): vo
 
 /** Subscribe to process-level structured log records. Returns an unregister function. */
 export function __subscribeLogRecordEmitter(emitter: LogRecordEmitter): () => void {
-  logRecordSubscribers.add(emitter);
+  apply(setAdd, logRecordSubscribers, [emitter]);
   return () => {
-    logRecordSubscribers.delete(emitter);
+    apply(setDelete, logRecordSubscribers, [emitter]);
   };
 }
 
 /** Reset the process-level structured log emitter. Only intended for tests. */
 export function __resetLogRecordEmitterForTests(): void {
   legacyLogRecordEmitter = null;
-  logRecordSubscribers.clear();
+  apply(setClear, logRecordSubscribers, []);
 }
 
 function resolveLoggerConfig(): LoggerConfig {
@@ -439,7 +450,11 @@ class ConsoleLogger implements Logger {
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level,
-      service: sanitizeLogString(this.prefix, "veryfront").toLowerCase(),
+      service: apply(
+        stringToLowerCase,
+        sanitizeLogString(this.prefix, "veryfront"),
+        [],
+      ) as string,
       veryfrontVersion: RUNTIME_VERSION,
       message: REDACTED,
       context: { unserializable_context: REDACTED },
@@ -455,7 +470,7 @@ class ConsoleLogger implements Logger {
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level,
-      service: this.prefix.toLowerCase(),
+      service: apply(stringToLowerCase, this.prefix, []) as string,
       veryfrontVersion: RUNTIME_VERSION,
       // The message string bypasses the key-based context redactor, so scrub
       // credential-shaped text (URL userinfo, ?access_token=, header dumps)
@@ -613,67 +628,83 @@ class ConsoleLogger implements Logger {
   private log(
     level: LogEntry["level"],
     logLevel: LogLevel,
-    consoleFn: (...args: unknown[]) => void,
+    consoleMethod: "debug" | "log" | "warn" | "error",
     message: string,
     args: unknown[],
   ): void {
-    const { level: resolvedLevel, format: resolvedFormat } = resolveLoggerConfig();
-    if (resolvedLevel > logLevel) return;
-
-    let emittedEntry: LogEntry;
-    let line: string;
     try {
-      if (resolvedFormat === "json") {
-        emittedEntry = this.createEntry(level, message, args);
-        line = stringifyLogEntry(emittedEntry);
-      } else {
-        line = this.formatTextLine(level, message, args);
-        emittedEntry = this.createEntry(level, message, args);
-      }
-    } catch {
-      emittedEntry = this.createEmergencyEntry(level);
-      line = resolvedFormat === "json"
-        ? stringifyLogEntry(emittedEntry)
-        : `${level.toUpperCase()}: ${REDACTED}`;
-    }
+      const { level: resolvedLevel, format: resolvedFormat } = resolveLoggerConfig();
+      if (resolvedLevel > logLevel) return;
 
-    if (legacyLogRecordEmitter) {
+      let emittedEntry: LogEntry;
+      let line: string;
       try {
-        legacyLogRecordEmitter(emittedEntry);
-      } catch (_) {
-        /* do not let telemetry export failures affect application logging */
+        if (resolvedFormat === "json") {
+          emittedEntry = this.createEntry(level, message, args);
+          line = stringifyLogEntry(emittedEntry);
+        } else {
+          line = this.formatTextLine(level, message, args);
+          emittedEntry = this.createEntry(level, message, args);
+        }
+      } catch {
+        try {
+          emittedEntry = this.createEmergencyEntry(level);
+          line = resolvedFormat === "json"
+            ? stringifyLogEntry(emittedEntry)
+            : `${apply(stringToUpperCase, level, [])}: ${REDACTED}`;
+        } catch {
+          return;
+        }
       }
-    }
-    for (const subscriber of logRecordSubscribers) {
-      if (subscriber === legacyLogRecordEmitter) continue;
-      try {
-        subscriber(emittedEntry);
-      } catch (_) {
-        /* do not let telemetry export failures affect application logging */
-      }
-    }
 
-    try {
-      consoleFn(line);
+      if (legacyLogRecordEmitter) {
+        try {
+          legacyLogRecordEmitter(emittedEntry);
+        } catch (_) {
+          /* do not let telemetry export failures affect application logging */
+        }
+      }
+
+      const iterator = apply(setValues, logRecordSubscribers, []) as SetIterator<LogRecordEmitter>;
+      while (true) {
+        const next = apply(setIteratorNext, iterator, []) as IteratorResult<LogRecordEmitter>;
+        if (next.done) break;
+        const subscriber = next.value;
+        if (subscriber === legacyLogRecordEmitter) continue;
+        try {
+          subscriber(emittedEntry);
+        } catch (_) {
+          /* do not let telemetry export failures affect application logging */
+        }
+      }
+
+      const consoleFn = NativeConsole[consoleMethod];
+      if (typeof consoleFn === "function") {
+        try {
+          apply(consoleFn, NativeConsole, [line]);
+        } catch (_) {
+          /* logging sink failures must not affect application control flow */
+        }
+      }
     } catch (_) {
-      /* logging sink failures must not affect application control flow */
+      /* every logging concern is contained by this final nonthrowing boundary */
     }
   }
 
   debug(message: string, ...args: unknown[]): void {
-    this.log("debug", LogLevel.DEBUG, console.debug, message, args);
+    this.log("debug", LogLevel.DEBUG, "debug", message, args);
   }
 
   info(message: string, ...args: unknown[]): void {
-    this.log("info", LogLevel.INFO, console.log, message, args);
+    this.log("info", LogLevel.INFO, "log", message, args);
   }
 
   warn(message: string, ...args: unknown[]): void {
-    this.log("warn", LogLevel.WARN, console.warn, message, args);
+    this.log("warn", LogLevel.WARN, "warn", message, args);
   }
 
   error(message: string, ...args: unknown[]): void {
-    this.log("error", LogLevel.ERROR, console.error, message, args);
+    this.log("error", LogLevel.ERROR, "error", message, args);
   }
 
   async time<T>(label: string, fn: () => Promise<T>): Promise<T> {
@@ -847,7 +878,7 @@ export function getBaseLogger(
   prefix: string,
   options?: ConsoleLoggerOptions,
 ): ConsoleLogger {
-  const resolvedPrefix = prefix.toUpperCase();
+  const resolvedPrefix = apply(stringToUpperCase, prefix, []) as string;
   const validPrefix = resolvedPrefix in BASE_LOGGER_MAP ? resolvedPrefix : "VERYFRONT";
 
   if (options?.injectTraceContext === false) {
