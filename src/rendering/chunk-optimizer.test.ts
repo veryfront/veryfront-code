@@ -11,6 +11,7 @@ import {
   type ChunkAnalysis,
   generateChunkManifest,
 } from "./chunk-optimizer.ts";
+import { MAX_IMPORTS_PER_PAGE } from "./chunk-optimizer/limits.ts";
 import { DEFAULT_MAX_FILE_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
 
 describe("rendering/chunk-optimizer", () => {
@@ -193,6 +194,43 @@ describe("rendering/chunk-optimizer", () => {
       assertExists(chunk);
       assertEquals(page.deps.local, ["./local.ts"]);
       assertEquals(chunk.deps, ["pkg"]);
+    });
+
+    it("allows suggested chunks to exceed the per-page import cap", () => {
+      const dependencies = Array.from(
+        { length: MAX_IMPORTS_PER_PAGE + 1 },
+        (_, index) => `pkg-${index}`,
+      );
+      const analysis: ChunkAnalysis = {
+        pages: new Map([
+          [
+            "/pages/index.mdx",
+            {
+              path: "/pages/index.mdx",
+              local: [],
+              remote: [],
+              shared: ["pkg-0", `pkg-${MAX_IMPORTS_PER_PAGE}`],
+            },
+          ],
+        ]),
+        sharedDeps: new Map(),
+        suggestedChunks: [
+          {
+            name: "common",
+            deps: dependencies,
+            pages: ["/pages/index.mdx"],
+            benefit: dependencies.length,
+          },
+        ],
+      };
+
+      const manifest = generateChunkManifest(analysis);
+      const chunk = manifest.chunks.common;
+      const page = manifest.pages["/pages/index.mdx"];
+      assertExists(chunk);
+      assertExists(page);
+      assertEquals(chunk.deps.length, MAX_IMPORTS_PER_PAGE + 1);
+      assertEquals(page.chunks, ["common"]);
     });
 
     it("rejects non-finite chunk sizes", () => {

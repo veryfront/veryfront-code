@@ -86,8 +86,9 @@ function copyStringArray(
   values: unknown,
   label: string,
   budget: ManifestBudget,
+  entryLimit: number,
 ): string[] {
-  const length = readDenseArrayLength(values, label, MAX_IMPORTS_PER_PAGE);
+  const length = readDenseArrayLength(values, label, entryLimit);
 
   const copy: string[] = [];
   for (let index = 0; index < length; index++) {
@@ -180,6 +181,7 @@ function snapshotChunkSuggestion(
       dependencies.value,
       `${label} dependencies`,
       budget,
+      MAX_TOTAL_MANIFEST_DEPENDENCY_ENTRIES,
     ),
     benefit: benefit.value,
   };
@@ -211,16 +213,19 @@ function snapshotPageImports(
       local.value,
       `Page ${pagePath} local dependencies`,
       budget,
+      MAX_IMPORTS_PER_PAGE,
     ),
     remote: copyStringArray(
       remote.value,
       `Page ${pagePath} remote dependencies`,
       budget,
+      MAX_IMPORTS_PER_PAGE,
     ),
     shared: copyStringArray(
       shared.value,
       `Page ${pagePath} shared dependencies`,
       budget,
+      MAX_IMPORTS_PER_PAGE,
     ),
   };
 }

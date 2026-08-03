@@ -4,11 +4,10 @@ import {
   findStaticSideEffectImportSpans,
   type StaticImportSpan,
 } from "#veryfront/transforms/mdx/esm-module-loader/utils/source-spans.ts";
+import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
 import { hasControlCharacter } from "./data-properties.ts";
 import { MAX_IMPORT_SPECIFIER_CHARS, MAX_IMPORTS_PER_PAGE } from "./limits.ts";
 import { hasScheme } from "./specifier.ts";
-
-const TEXT_ENCODER = new TextEncoder();
 
 export interface ImportGroups {
   local: string[];
@@ -418,6 +417,4 @@ export function analyzePageImports(
   return { local, remote, shared };
 }
 
-export function utf8ByteLength(value: string): number {
-  return TEXT_ENCODER.encode(value).byteLength;
-}
+export { utf8ByteLength };
