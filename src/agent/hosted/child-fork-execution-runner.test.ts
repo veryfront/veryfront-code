@@ -12,12 +12,15 @@ import {
 import { createHostedDurableChildForkRunContext } from "./child-fork-run-context.ts";
 import type { AgentResponse } from "../schemas/index.ts";
 import { UNCONFIRMED_AGENT_PROJECT_IDENTITY_MESSAGE } from "../project/context.ts";
-import { getActiveModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
 import {
   createHostedRunEventWriterCapability,
   getActiveHostedRunEventWriterCapability,
   runWithHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
+import { getActiveRunEventSink } from "../../runtime/run-event-sink-context.ts";
+import { streamText } from "../../runtime/runtime-bridge.ts";
+import { createStreamModel } from "../../runtime/runtime-bridge.test-helpers.ts";
+import type { ForkPart } from "../streaming/fork-runtime-stream.ts";
 
 function createRuntimeEventStream(
   events: readonly Record<string, unknown>[],
@@ -360,6 +363,17 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run cont
   let createRunContextCalls = 0;
   let activeDuringStart = false;
   let activeDuringIteration = false;
+  const persisted: unknown[] = [];
+  const order: string[] = [];
+  const model = createStreamModel("test", "test/hosted-child", async () => {
+    order.push("dispatch");
+    return {
+      stream: ReadableStream.from([
+        { type: "text-delta", delta: "Injected context." },
+        { type: "finish", finishReason: "stop", usage: {} },
+      ]),
+    };
+  });
   const result = await executeHostedChildForkWithPreparedTools({
     authToken: "token",
     apiUrl: "https://api.example.com",
@@ -410,8 +424,14 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run cont
         ...context,
         durableRunMirror: {
           handleChunk: async () => {},
-          appendEvents: async () => {},
-          flush: async () => quiescentSnapshot,
+          appendEvents: async (events) => {
+            order.push("append");
+            persisted.push(...events);
+          },
+          flush: async () => {
+            order.push("flush");
+            return quiescentSnapshot;
+          },
           getSnapshot: () => quiescentSnapshot,
           dispose: () => {},
         },
@@ -419,7 +439,12 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run cont
     },
     startRuntime: (input) => {
       assertEquals(input.authToken, "token");
-      activeDuringStart = getActiveModelCallRecorder() !== undefined;
+      activeDuringStart = getActiveRunEventSink() !== undefined;
+      const stream = streamText({
+        model,
+        system: "Hosted child instructions",
+        messages: [{ role: "user", content: "Run child" }],
+      });
       return {
         forkStreamAbortController: new AbortController(),
         childRunMonitorAbortController: null,
@@ -427,8 +452,10 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run cont
         forkToolNames: [],
         streamResult: {
           fullStream: (async function* () {
-            activeDuringIteration = getActiveModelCallRecorder() !== undefined;
-            yield { type: "text-delta", text: "Injected context." } as const;
+            activeDuringIteration = getActiveRunEventSink() !== undefined;
+            for await (const part of stream.fullStream) {
+              yield part as ForkPart;
+            }
           })(),
           steps: Promise.resolve([
             {
@@ -448,6 +475,14 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run cont
   assertEquals(createRunContextCalls, 1);
   assertEquals(activeDuringStart, true);
   assertEquals(activeDuringIteration, true);
+  assertEquals(order.slice(0, 3), ["append", "flush", "dispatch"]);
+  assertEquals(persisted, [{
+    type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+    messages: [
+      { role: "system", content: "Hosted child instructions" },
+      { role: "user", content: [{ type: "text", text: "Run child" }] },
+    ],
+  }]);
   assertEquals(result.success, true);
   if (result.success) {
     assertEquals(result.summary.text, "Injected context.");

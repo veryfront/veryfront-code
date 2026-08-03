@@ -20,12 +20,11 @@ import type {
 } from "#veryfront/provider/types.ts";
 import type { RuntimeReasoningOption } from "#veryfront/agent/types.ts";
 import type {
-  ModelCallContext,
+  AgentRunModelCallContextEvent,
   ModelCallMessage,
-  ModelCallRecorder,
   ModelCallTool,
 } from "./model-call-context.ts";
-import { resolveModelCallRecorder } from "./model-call-recorder-context.ts";
+import { getActiveRunEventSink } from "./run-event-sink-context.ts";
 
 type GenerateTextOptions = {
   model: ModelRuntime;
@@ -46,7 +45,6 @@ type GenerateTextOptions = {
   providerOptions?: Record<string, unknown>;
   reasoning?: RuntimeReasoningOption;
   abortSignal?: AbortSignal;
-  modelCallRecorder?: ModelCallRecorder;
 };
 
 type StreamTextOptions = {
@@ -69,7 +67,6 @@ type StreamTextOptions = {
   reasoning?: RuntimeReasoningOption;
   includeRawChunks?: boolean;
   abortSignal?: AbortSignal;
-  modelCallRecorder?: ModelCallRecorder;
 };
 
 type EmbedOptions = {
@@ -483,18 +480,16 @@ function buildDirectModelOptions(
   };
 }
 
-async function recordModelCallContext(
-  options: DirectTextOptions,
-  directOptions: DirectModelOptions,
-): Promise<void> {
-  const recorder = resolveModelCallRecorder(options.modelCallRecorder);
-  if (!recorder) return;
+async function emitModelCallContextEvent(directOptions: DirectModelOptions): Promise<void> {
+  const sink = getActiveRunEventSink();
+  if (!sink) return;
 
-  const context: ModelCallContext = {
+  const event: AgentRunModelCallContextEvent = {
+    type: "AGENT_RUN_MODEL_CALL_CONTEXT",
     messages: directOptions.prompt,
     ...(directOptions.tools ? { tools: directOptions.tools } : {}),
   };
-  await recorder(structuredClone(context));
+  await sink(structuredClone(event));
 }
 
 function isDirectToolCallPart(
@@ -874,7 +869,7 @@ async function* textDeltasFromStream(stream: ReadableStream<unknown>): AsyncIter
 export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeGenerateTextResult> {
   return resolveDirectTools(options.tools).then(async (tools) => {
     const directOptions = buildDirectModelOptions(options, tools);
-    await recordModelCallContext(options, directOptions);
+    await emitModelCallContextEvent(directOptions);
     if (shouldGenerateViaStream(options.model)) {
       return options.model.doStream(directOptions).then(({ stream }) =>
         buildGenerateResultFromStream(stream)
@@ -888,7 +883,7 @@ export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeG
 export function streamText(options: StreamTextOptions): RuntimeStreamResult {
   const directResultPromise = resolveDirectTools(options.tools).then(async (tools) => {
     const directOptions = buildDirectModelOptions(options, tools);
-    await recordModelCallContext(options, directOptions);
+    await emitModelCallContextEvent(directOptions);
     return options.model.doStream(directOptions);
   });
   // Guard against an unhandled rejection when a branch is consumed lazily (or a

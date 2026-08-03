@@ -65,11 +65,11 @@ import {
   requireConfirmedHostedProjectReference,
   resolveHostedProjectReference,
 } from "./project-reference-resolver.ts";
-import { runWithModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
+import { runWithRunEventSink } from "../../runtime/run-event-sink-context.ts";
 import {
-  createModelCallContextRunEventRecorder,
-  ModelCallContextPersistenceError,
-} from "./model-call-context-run-event-recorder.ts";
+  createDurableRunEventSink,
+  DurableRunEventPersistenceError,
+} from "./durable-run-event-sink.ts";
 
 /** Default value for hosted child fork stream idle timeout ms. */
 export const DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS = 45_000;
@@ -407,12 +407,12 @@ async function executeHostedChildForkWithoutWriterAuthority<
       : undefined;
     const startRuntime = input.startRuntime ?? startHostedChildForkRuntimeWithHostTools;
     if (input.durableChildRun && !runContext.durableRunMirror) {
-      throw new ModelCallContextPersistenceError(
+      throw new DurableRunEventPersistenceError(
         "Durable hosted child run requires an event mirror",
       );
     }
-    const startupModelCallRecorder = runContext.durableRunMirror
-      ? createModelCallContextRunEventRecorder({
+    const startupRunEventSink = runContext.durableRunMirror
+      ? createDurableRunEventSink({
         mirror: runContext.durableRunMirror,
         abortSignal: input.abortSignal,
       })
@@ -450,16 +450,15 @@ async function executeHostedChildForkWithoutWriterAuthority<
         runStep: input.runStep ?? runAgentRuntimeForkStep,
         traceTools,
       });
-    const started = await (startupModelCallRecorder
-      ? runWithModelCallRecorder(startupModelCallRecorder, start)
-      : start());
+    const started =
+      await (startupRunEventSink ? runWithRunEventSink(startupRunEventSink, start) : start());
     childRunMonitorAbortController = started.childRunMonitorAbortController;
     childRunMonitorPromise = started.childRunMonitorPromise;
     const streamAbortSignal = input.abortSignal
       ? AbortSignal.any([input.abortSignal, started.forkStreamAbortController.signal])
       : started.forkStreamAbortController.signal;
-    const modelCallRecorder = runContext.durableRunMirror
-      ? createModelCallContextRunEventRecorder({
+    const runEventSink = runContext.durableRunMirror
+      ? createDurableRunEventSink({
         mirror: runContext.durableRunMirror,
         abortSignal: streamAbortSignal,
       })
@@ -495,9 +494,7 @@ async function executeHostedChildForkWithoutWriterAuthority<
         writeLog: input.writeLog,
         tracePart: input.instrumentation?.tracePart,
       });
-    return await (modelCallRecorder
-      ? runWithModelCallRecorder(modelCallRecorder, consume)
-      : consume());
+    return await (runEventSink ? runWithRunEventSink(runEventSink, consume) : consume());
   } catch (error) {
     return handleHostedChildForkRunContextError({
       error,

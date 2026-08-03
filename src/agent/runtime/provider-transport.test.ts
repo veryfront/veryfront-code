@@ -3,7 +3,8 @@ import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/tes
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { clearModelProviders, type ModelRuntime, registerModelProvider } from "#veryfront/provider";
 import { agent } from "../factory.ts";
-import type { ModelCallContext } from "../../runtime/model-call-context.ts";
+import type { AgentRunModelCallContextEvent } from "../../runtime/model-call-context.ts";
+import { runWithRunEventSink } from "../../runtime/run-event-sink-context.ts";
 import type { ModelTransportRequest } from "../types.ts";
 import {
   __registerLogRecordEmitter,
@@ -112,7 +113,7 @@ describe("agent provider transport hooks", () => {
   });
 
   it("records equivalent context through cloud and server-local runtime paths", async () => {
-    const contexts: ModelCallContext[] = [];
+    const contexts: AgentRunModelCallContextEvent[] = [];
 
     for (const provider of ["cloud", "local"] as const) {
       let runtimePrompt: unknown;
@@ -137,13 +138,15 @@ describe("agent provider transport hooks", () => {
         model: `${provider}/context-parity`,
         system: "Follow the same instructions.",
         skills: [],
-        modelCallRecorder: (context) => {
-          contexts.push(context);
-        },
         resolveModelTransport: () => ({ model: runtime }),
       });
 
-      await assistant.generate({ input: "Use the same normalized input." });
+      await runWithRunEventSink(
+        (event) => {
+          contexts.push(event as unknown as AgentRunModelCallContextEvent);
+        },
+        () => assistant.generate({ input: "Use the same normalized input." }),
+      );
 
       assertEquals(contexts.at(-1)?.messages, runtimePrompt);
     }
@@ -151,6 +154,7 @@ describe("agent provider transport hooks", () => {
     assertEquals(contexts.length, 2);
     assertEquals(contexts[0], contexts[1]);
     assertEquals(contexts[0], {
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
       messages: [
         { role: "system", content: "Follow the same instructions." },
         {

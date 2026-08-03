@@ -46,11 +46,10 @@ export type ModelCallTool =
     args: Record<string, unknown>;
   };
 
-/** Exact provider-agnostic input supplied at one model dispatch boundary. */
-export interface ModelCallContext {
+/** Exact provider-agnostic input persisted before one model dispatch. */
+export interface AgentRunModelCallContextEvent {
+  type: "AGENT_RUN_MODEL_CALL_CONTEXT";
   messages: ModelCallMessage[];
   tools?: ModelCallTool[];
+  [key: string]: unknown;
 }
-
-/** Records the exact provider-agnostic input before model dispatch. */
-export type ModelCallRecorder = (context: ModelCallContext) => void | Promise<void>;
