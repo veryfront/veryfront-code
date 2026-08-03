@@ -208,6 +208,17 @@ export function extractRouteParams(
     params[paramName] = slugSegments[i]!;
   }
 
+  const nextPathSegment = pathSegments[slugSegments.length];
+  const nextParameter = nextPathSegment ? parseRouteParameterSegment(nextPathSegment) : null;
+  if (nextParameter?.kind === "optional-catch-all") {
+    const staticPrefixMatches = pathSegments
+      .slice(0, slugSegments.length)
+      .every((segment, index) => isDynamicSegment(segment) || segment === slugSegments[index]);
+    if (staticPrefixMatches) {
+      params[nextParameter.name] = [];
+    }
+  }
+
   return { params, matched: Object.keys(params).length > 0 };
 }
 

@@ -281,6 +281,16 @@ describe("route-path-utils", () => {
       assertEquals(result.params["slug"], ["getting-started", "intro"]);
     });
 
+    it("extracts optional catch-all params with zero remaining segments", () => {
+      const result = extractRouteParams(
+        "/app/docs/[[...slug]]/page.tsx",
+        "docs",
+      );
+
+      assertEquals(result.matched, true);
+      assertEquals(result.params["slug"], []);
+    });
+
     it("preserves __proto__ route params without changing the params prototype", () => {
       const dynamic = extractRouteParams("/app/users/[__proto__]/page.tsx", "users/123");
       assertEquals(dynamic.matched, true);
