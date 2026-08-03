@@ -7,6 +7,7 @@ import type {
   ToolExecutionContext,
 } from "#veryfront/tool";
 import { defineSchema } from "../../schemas/define.ts";
+import type { AgentServiceFirstPartyMcpServerKind } from "../service/mcp-server-config.ts";
 import {
   filterHostedChatRuntimeLocalTools,
   type HostedChatRuntimeToolAssemblyContext,
@@ -310,6 +311,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly builds provider-compatible runti
     },
   };
   const traceSpans: string[] = [];
+  const trustedKinds: Array<AgentServiceFirstPartyMcpServerKind | undefined> = [];
   const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
     sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
     taskContext,
@@ -328,7 +330,10 @@ Deno.test("prepareHostedChatRuntimeToolAssembly builds provider-compatible runti
     projectScopedRemoteToolOptions: {
       projectNavigationToolNames: ["studio_open_project"],
     },
-    createRemoteToolSource: remoteSourceFromConfig,
+    createRemoteToolSource: (config, trustedKind) => {
+      trustedKinds.push(trustedKind);
+      return remoteSourceFromConfig(config);
+    },
     traceLocalTools: {
       trace: (spanName, operation) => {
         traceSpans.push(spanName);
@@ -346,6 +351,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly builds provider-compatible runti
   assertEquals(toolAssembly.compatibleRemoteToolNames, ["create_file", "studio_open_project"]);
   assertEquals(taskContext.availableToolNames, ["create_file", "sleep", "studio_open_project"]);
   assertEquals(toolAssembly.systemInstructions.includes("Current run tool inventory:"), true);
+  assertEquals(trustedKinds, ["veryfront-api", "veryfront-studio"]);
 
   const runtimeSleepTool = toolAssembly.runtimeTools.sleep;
   assertExists(runtimeSleepTool);
