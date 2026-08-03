@@ -10,7 +10,6 @@ import { delay } from "#std/async.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
-import { ClientClosedError } from "npm:redis@5.11.0";
 import { MiddlewareContext } from "../../core/context.ts";
 import {
   authRateLimit,
@@ -21,52 +20,6 @@ import {
 } from "#veryfront/middleware";
 
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
-
-function createMockRedisClient(): {
-  connect: () => Promise<void>;
-  disconnect: () => Promise<void>;
-  eval: (
-    script: string,
-    options: { keys: string[]; arguments: string[] },
-  ) => Promise<[number, number]>;
-  del: (key: string) => Promise<number>;
-  on: (event: string, listener: (...args: unknown[]) => void) => void;
-  _evalCalls: number;
-  _connectCalls: number;
-  _disconnectCalls: number;
-} {
-  let evalCalls = 0;
-  let connectCalls = 0;
-  let disconnectCalls = 0;
-
-  return {
-    connect: () => {
-      connectCalls += 1;
-      return Promise.resolve();
-    },
-    disconnect: () => {
-      disconnectCalls += 1;
-      return Promise.resolve();
-    },
-    eval: (_script: string, options: { keys: string[]; arguments: string[] }) => {
-      evalCalls += 1;
-      assertEquals(options.keys, ["compat:user-1"]);
-      assertEquals(options.arguments, ["30000"]);
-      return Promise.resolve([1, 30000]);
-    },
-    del: () => Promise.resolve(1),
-    on: () => {},
-    get _evalCalls() {
-      return evalCalls;
-    },
-    get _connectCalls() {
-      return connectCalls;
-    },
-    get _disconnectCalls() {
-      return disconnectCalls;
-    },
-  };
-}
 
 describe("MemoryRateLimitStore", () => {
   let store: MemoryRateLimitStore;
@@ -134,11 +87,13 @@ describe("MemoryRateLimitStore", () => {
     try {
       await boundedStore.increment("existing", 60000);
 
-      await assertRejects(
+      const error = await assertRejects(
         () => boundedStore.increment("overflow", 60000),
-        RangeError,
+        Error,
         "capacity",
       );
+      if (!(error instanceof Error)) throw new Error("Expected a capacity error");
+      assertEquals(error.name, "MemoryRateLimitCapacityError");
 
       const existing = await boundedStore.increment("existing", 60000);
       assertEquals(existing.count, 2);
@@ -267,6 +222,49 @@ describe("rateLimit middleware", () => {
         RangeError,
       );
     }
+
+    assertThrows(
+      () =>
+        rateLimit({
+          maxEntries: 100,
+          store: {
+            increment: () => Promise.resolve({ count: 1, resetAt: Date.now() + 1_000 }),
+            reset: () => Promise.resolve(),
+          },
+        }),
+      TypeError,
+      "maxEntries",
+    );
+  });
+
+  it("keeps active identities available and fails closed for overflow identities", async () => {
+    const maxEntries = 256;
+    const middleware = rateLimit({
+      maxRequests: 2,
+      windowMs: 60_000,
+      maxEntries,
+      trustProxy: true,
+    });
+
+    for (let index = 0; index < maxEntries; index++) {
+      const response = await middleware(
+        createContext(`198.51.100.${index}`),
+        () => Promise.resolve(new Response("OK")),
+      );
+      assertEquals(response?.status, 200);
+    }
+
+    const overflow = await middleware(
+      createContext("203.0.113.1"),
+      () => Promise.resolve(new Response("unexpected")),
+    );
+    const existing = await middleware(
+      createContext("198.51.100.0"),
+      () => Promise.resolve(new Response("OK")),
+    );
+
+    assertEquals(overflow?.status, 503);
+    assertEquals(existing?.status, 200);
   });
 
   it("should fail closed when the rate-limit store is unavailable", async () => {
@@ -321,6 +319,44 @@ describe("rateLimit middleware", () => {
     }
   });
 
+  it("logs key, store, and capacity failures as distinct operational signals", async () => {
+    const originalConsoleError = console.error;
+    const logs: string[] = [];
+    console.error = (...values: unknown[]) => {
+      logs.push(values.map((value) => String(value)).join(" "));
+    };
+
+    try {
+      const keyFailure = rateLimit({ keyGenerator: () => "x".repeat(1_025) });
+      const storeFailure = rateLimit({
+        store: {
+          increment: () => Promise.reject(new Error("unavailable")),
+          reset: () => Promise.resolve(),
+        },
+      });
+      const capacityFailure = rateLimit({ maxEntries: 1, trustProxy: true });
+
+      await keyFailure(createContext(), () => Promise.resolve(new Response("unexpected")));
+      await storeFailure(createContext(), () => Promise.resolve(new Response("unexpected")));
+      await capacityFailure(
+        createContext("198.51.100.1"),
+        () => Promise.resolve(new Response("OK")),
+      );
+      await capacityFailure(
+        createContext("198.51.100.2"),
+        () => Promise.resolve(new Response("unexpected")),
+      );
+
+      const output = logs.join("\n");
+      assertEquals(output.includes("failureKind=key-resolution"), true);
+      assertEquals(output.includes("failureKind=store-unavailable"), true);
+      assertEquals(output.includes("failureKind=capacity-exhausted"), true);
+      assertEquals(output.includes("capacity=1"), true);
+    } finally {
+      console.error = originalConsoleError;
+    }
+  });
+
   it("should fail closed when a store returns an invalid counter", async () => {
     const middleware = rateLimit({
       store: {
@@ -347,110 +383,6 @@ describe("rateLimit middleware", () => {
 
     assertEquals(typeof redisStore.increment, "function");
     assertEquals(typeof redisStore.reset, "function");
-  });
-
-  it("should exercise the legacy Redis rate-limit store export without ext-redis", async () => {
-    const redisStore = new RedisRateLimitStore({ keyPrefix: "compat:" });
-    const mockClient = createMockRedisClient();
-    (redisStore as unknown as {
-      loadClientFactory: () => Promise<() => typeof mockClient>;
-    }).loadClientFactory = () => Promise.resolve(() => mockClient);
-
-    const entry = await redisStore.increment("user-1", 30000);
-    await redisStore.destroy();
-
-    assertEquals(entry.count, 1);
-    assertEquals(entry.resetAt > Date.now(), true);
-    assertEquals(mockClient._evalCalls, 1);
-    assertEquals(mockClient._disconnectCalls, 1);
-  });
-
-  it("should ignore already-closed Redis clients during legacy store destroy", async () => {
-    const redisStore = new RedisRateLimitStore({ keyPrefix: "compat:" });
-    const mockClient = createMockRedisClient();
-    mockClient.disconnect = () => {
-      return Promise.reject(new ClientClosedError());
-    };
-    (redisStore as unknown as {
-      loadClientFactory: () => Promise<() => typeof mockClient>;
-    }).loadClientFactory = () => Promise.resolve(() => mockClient);
-
-    await redisStore.increment("user-1", 30000);
-    await redisStore.destroy();
-    await redisStore.destroy();
-  });
-
-  it("should reject invalid Redis reset keys before connecting", async () => {
-    const redisStore = new RedisRateLimitStore({ keyPrefix: "compat:" });
-    const mockClient = createMockRedisClient();
-    (redisStore as unknown as {
-      loadClientFactory: () => Promise<() => typeof mockClient>;
-    }).loadClientFactory = () => Promise.resolve(() => mockClient);
-
-    await assertRejects(
-      () => redisStore.reset("x".repeat(1025)),
-      RangeError,
-      "1024",
-    );
-
-    assertEquals(mockClient._connectCalls, 0);
-  });
-
-  it("should attach pending Redis connection rejection handling before destroy cancels it", async () => {
-    const redisStore = new RedisRateLimitStore({ keyPrefix: "compat:" });
-    const mockClient = createMockRedisClient();
-    let connectStarted = false;
-    mockClient.connect = () => {
-      connectStarted = true;
-      return new Promise<void>(() => {});
-    };
-    (redisStore as unknown as {
-      loadClientFactory: () => Promise<() => typeof mockClient>;
-    }).loadClientFactory = () => Promise.resolve(() => mockClient);
-
-    const incrementPromise = redisStore.increment("pending", 30000);
-    for (let attempt = 0; attempt < 10 && !connectStarted; attempt++) {
-      await Promise.resolve();
-    }
-
-    const pending = (redisStore as unknown as {
-      clientPromise: Promise<unknown> | null;
-    }).clientPromise;
-    let cancelObserved = false;
-    let catchAttachedBeforeCancel = false;
-    if (pending) {
-      const originalCatch = pending.catch.bind(pending);
-      Object.defineProperty(pending, "catch", {
-        configurable: true,
-        value: (...args: Parameters<Promise<unknown>["catch"]>) => {
-          if (!cancelObserved) catchAttachedBeforeCancel = true;
-          return originalCatch(...args);
-        },
-      });
-    }
-    const internals = redisStore as unknown as {
-      cancelPendingConnection: (() => void) | null;
-    };
-    const originalCancel = internals.cancelPendingConnection;
-    internals.cancelPendingConnection = () => {
-      cancelObserved = true;
-      originalCancel?.();
-    };
-
-    await redisStore.destroy();
-
-    assertExists(pending);
-    assertEquals(catchAttachedBeforeCancel, true);
-    const handledPromise = pending.then(
-      () => "resolved" as const,
-      () => "rejected" as const,
-    );
-    await assertRejects(
-      () => incrementPromise,
-      Error,
-      "superseded",
-    );
-    assertEquals(await handledPromise, "rejected");
   });
 
   it("should fail closed when custom keys are invalid without calling the store", async () => {
@@ -544,6 +476,10 @@ describe("rateLimit middleware", () => {
       "key-resolution",
       "store-increment",
     ]);
+    assertEquals(records.map((record) => record.context?.failureKind), [
+      "key-resolution",
+      "store-unavailable",
+    ]);
   });
 
   it("should emit a capacity-specific store failure signal", async () => {
@@ -584,8 +520,9 @@ describe("rateLimit middleware", () => {
       records[0]?.message,
       "Rate limit store capacity exhausted; request denied",
     );
-    assertEquals(records[0]?.context?.stage, "store-capacity");
-    assertEquals(records[0]?.context?.maxEntries, 1);
+    assertEquals(records[0]?.context?.stage, "store-increment");
+    assertEquals(records[0]?.context?.failureKind, "capacity-exhausted");
+    assertEquals(records[0]?.context?.capacity, 1);
   });
 
   it("should use custom key generator", async () => {

@@ -18,9 +18,7 @@ export interface RootNpmSpecifierLiteralIssue {
   value: string;
 }
 
-const CORE_THIRD_PARTY_IMPORT_ALLOWLIST = new Set<string>([
-  "npm:redis@5.11.0",
-]);
+const CORE_THIRD_PARTY_IMPORT_ALLOWLIST = new Set<string>();
 
 function isThirdPartyImportTarget(target: string): boolean {
   if (target.startsWith("./") || target.startsWith("../")) return false;

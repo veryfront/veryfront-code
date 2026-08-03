@@ -357,6 +357,8 @@ export class RedisRateLimitStore implements RateLimitStore {
     const client = this.client;
     const connectingClient = this.connectingClient;
     const pending = this.clientPromise;
+    // Mark the pending connection rejection as observed before cancellation;
+    // disconnect work below may otherwise leave an unhandled-rejection window.
     pending?.catch(() => {});
     const cancelPendingConnection = this.cancelPendingConnection;
     const clientsToDisconnect = new Set(this.pendingDisconnectClients);

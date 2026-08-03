@@ -5,11 +5,10 @@
 # throwaway npm project, that:
 #   1. a `veryfront` install with co-published required packages runs the CLI
 #      and activates the parser extension under Node
-#   2. the public middleware Redis rate limit store increments under Node
-#   3. the @huggingface/transformers optional peer is declared
-#   4. loading a missing extension fails naming the installable package
-#   5. installing @veryfront/ext-auth-jwt makes the extension load
-#   6. a broken transitive dependency surfaces the real error, not a
+#   2. the @huggingface/transformers optional peer is declared
+#   3. loading a missing extension fails naming the installable package
+#   4. installing @veryfront/ext-auth-jwt makes the extension load
+#   5. a broken transitive dependency surfaces the real error, not a
 #      misleading "extension not installed" skip
 #
 # Requires: `deno task build:npm` output in ./npm, node + npm on PATH.
@@ -88,44 +87,14 @@ if (ast?.type !== 'File') throw new Error('TSX parse failed');
 await extension.teardown?.();
 " || fail "root optional builtin did not register a working CodeParser"
 
-echo "== 2. root install: middleware Redis rate-limit store increments"
-node --input-type=module -e "
-const { RedisRateLimitStore } = await import('veryfront/middleware');
-let evalCalls = 0;
-let disconnectCalls = 0;
-const client = {
-  connect: () => Promise.resolve(),
-  disconnect: () => {
-    disconnectCalls++;
-    return Promise.resolve();
-  },
-  eval: (_script, options) => {
-    evalCalls++;
-    if (options.keys[0] !== 'smoke:user-1') throw new Error('unexpected Redis key');
-    if (options.arguments[0] !== '30000') throw new Error('unexpected Redis window');
-    return Promise.resolve([1, 30000]);
-  },
-  del: () => Promise.resolve(1),
-  on: () => {},
-};
-const store = new RedisRateLimitStore({ keyPrefix: 'smoke:' });
-store.loadClientFactory = () => Promise.resolve(() => client);
-const entry = await store.increment('user-1', 30000);
-await store.destroy();
-if (entry.count !== 1) throw new Error('RedisRateLimitStore did not increment');
-if (entry.resetAt <= Date.now()) throw new Error('RedisRateLimitStore resetAt is not future');
-if (evalCalls !== 1) throw new Error('Redis eval was not called exactly once');
-if (disconnectCalls !== 1) throw new Error('Redis client was not disconnected');
-" || fail "root middleware RedisRateLimitStore did not increment from npm package"
-
-echo "== 3. root install: transformers optional peer declared"
+echo "== 2. root install: transformers optional peer declared"
 node -e "
 const p = require('./node_modules/veryfront/package.json');
 if (!p.peerDependencies?.['@huggingface/transformers']) process.exit(1);
 if (p.peerDependenciesMeta?.['@huggingface/transformers']?.optional !== true) process.exit(1);
 " || fail "@huggingface/transformers optional peer missing from root package.json"
 
-echo "== 4. root install: missing extension failure names the installable package"
+echo "== 3. root install: missing extension failure names the installable package"
 set +e
 MISSING_OUTPUT="$(node -e "
 import('./node_modules/veryfront/esm/src/extensions/first-party-import.js').then(async (m) => {
@@ -139,7 +108,7 @@ set -e
 echo "$MISSING_OUTPUT" | grep -q "install @veryfront/ext-auth-jwt alongside veryfront" ||
   fail "missing-extension error lacks the install hint: $MISSING_OUTPUT"
 
-echo "== 5. with @veryfront/ext-auth-jwt installed: extension loads"
+echo "== 4. with @veryfront/ext-auth-jwt installed: extension loads"
 npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-ext-auth-jwt-*.tgz
 node -e "
 import('./node_modules/veryfront/esm/src/extensions/first-party-import.js').then(async (m) => {
@@ -148,7 +117,7 @@ import('./node_modules/veryfront/esm/src/extensions/first-party-import.js').then
 });
 " || fail "ext-auth-jwt did not load after installing @veryfront/ext-auth-jwt"
 
-echo "== 6. broken transitive dependency surfaces the real error"
+echo "== 5. broken transitive dependency surfaces the real error"
 mv node_modules/jose node_modules/jose.smoke-removed
 set +e
 BROKEN_OUTPUT="$(node -e "

@@ -316,6 +316,23 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         const { rateStore } = createStoreWithMock();
         await rateStore.reset("nonexistent");
       });
+
+      it("should reject an invalid key before loading or connecting Redis", async () => {
+        const rateStore = new RedisRateLimitStore();
+        let factoryLoads = 0;
+        // deno-lint-ignore no-explicit-any
+        (rateStore as any).loadClientFactory = () => {
+          factoryLoads++;
+          return Promise.resolve(() => createMockRedisClient());
+        };
+
+        await assertRejects(
+          () => rateStore.reset("x".repeat(1025)),
+          RangeError,
+          "1024",
+        );
+        assertEquals(factoryLoads, 0);
+      });
     });
 
     describe("destroy", () => {

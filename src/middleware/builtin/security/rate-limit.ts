@@ -25,13 +25,11 @@ const STORE_FAILURE_RETRY_AFTER_SECONDS = 60;
 const STORE_FAILURE_LOG_INTERVAL_MS = MS_PER_MINUTE;
 const logger = serverLogger.component("rate-limit");
 
-class MemoryRateLimitCapacityError extends RangeError {
-  override name = "MemoryRateLimitCapacityError";
+class MemoryRateLimitCapacityError extends Error {
+  override readonly name = "MemoryRateLimitCapacityError";
 
-  constructor(readonly maxEntries: number) {
-    super(
-      `Memory rate limit store capacity of ${maxEntries} entries is exhausted`,
-    );
+  constructor(readonly capacity: number) {
+    super(`Memory rate limit store capacity of ${capacity} entries is exhausted`);
   }
 }
 
@@ -130,9 +128,11 @@ export class MemoryRateLimitStore implements RateLimitStore {
 export interface MemoryRateLimitStoreOptions {
   /**
    * Maximum number of active identities retained by the store.
-   * Size this above the expected concurrent identities in one rate-limit
-   * window. New identities fail closed when all entries are active; existing
-   * identities remain tracked until their windows expire.
+   *
+   * Size this above the peak number of distinct identities expected during one
+   * complete rate-limit window, including burst headroom. New identities fail
+   * closed when every entry is active; active limits are never evicted because
+   * eviction would let identity-flooding attackers reset their quota.
    */
   maxEntries?: number;
 }
@@ -142,6 +142,13 @@ export interface RateLimitOptions {
   maxRequests?: number;
   windowMs?: number;
   store?: RateLimitStore;
+  /**
+   * Capacity of the default in-memory store. It must exceed the peak distinct
+   * identities expected in one complete window plus burst headroom. Capacity
+   * exhaustion denies only previously unseen identities with HTTP 503.
+   * Cannot be combined with a caller-provided `store`.
+   */
+  maxEntries?: number;
   keyGenerator?: (req: Request) => string;
   /**
    * Trust proxy-set forwarding headers (X-Forwarded-For) for keying. Defaults to
@@ -156,6 +163,8 @@ export interface RateLimitOptions {
 export interface AuthRateLimitOptions {
   /** Storage backend. Existing callers can also pass the store directly. */
   store?: RateLimitStore;
+  /** Capacity of the default in-memory store; see `RateLimitOptions.maxEntries`. */
+  maxEntries?: number;
   /** Function to derive a stable client key from the request. */
   keyGenerator?: (req: Request) => string;
   /**
@@ -211,18 +220,6 @@ function storeUnavailableResponse(): Response {
   });
 }
 
-function logRateLimitFailure(
-  message: string,
-  stage: "key-resolution" | "store-increment" | "store-capacity",
-  error: unknown,
-): void {
-  logger.error(message, {
-    stage,
-    errorName: error instanceof Error ? error.name : typeof error,
-    ...(error instanceof MemoryRateLimitCapacityError ? { maxEntries: error.maxEntries } : {}),
-  });
-}
-
 /** Create rate-limit middleware. */
 export function rateLimit(
   optionsOrMaxRequests?: number | RateLimitOptions,
@@ -250,8 +247,11 @@ export function rateLimit(
   const windowMs = requireRateLimitWindowMs(
     options.windowMs ?? DEFAULT_RATE_LIMIT_WINDOW_MS,
   );
+  if (options.store !== undefined && options.maxEntries !== undefined) {
+    throw new TypeError("Rate limit maxEntries cannot be combined with a custom store");
+  }
   const store = options.store === undefined
-    ? new MemoryRateLimitStore(windowMs)
+    ? new MemoryRateLimitStore(windowMs, { maxEntries: options.maxEntries })
     : requireRateLimitStore(options.store);
   if (
     options.trustProxy !== undefined &&
@@ -268,52 +268,44 @@ export function rateLimit(
   }
   const keyGenerator = options.keyGenerator ??
     ((req: Request) => defaultKeyGenerator(req, trustProxy));
-  let lastStoreFailureLogAt: number | undefined;
+  const lastFailureLogAt = new Map<string, number>();
 
   return async (ctx, next) => {
     const req = getRequest(ctx);
     let entry: RateLimitEntry;
-    let key: string;
+    let stage: "key-resolution" | "store-increment" = "key-resolution";
     try {
-      key = requireRateLimitKey(keyGenerator(req));
-    } catch (error) {
-      const now = performance.now();
-      if (
-        lastStoreFailureLogAt === undefined ||
-        now - lastStoreFailureLogAt >= STORE_FAILURE_LOG_INTERVAL_MS
-      ) {
-        lastStoreFailureLogAt = now;
-        logRateLimitFailure(
-          "Rate limit key resolution failed; request denied",
-          "key-resolution",
-          error,
-        );
-      }
-      return storeUnavailableResponse();
-    }
-
-    try {
+      const key = requireRateLimitKey(keyGenerator(req));
+      stage = "store-increment";
       entry = requireRateLimitEntry(await store.increment(key, windowMs));
     } catch (error) {
+      const failureKind = error instanceof MemoryRateLimitCapacityError
+        ? "capacity-exhausted"
+        : stage === "key-resolution"
+        ? "key-resolution"
+        : "store-unavailable";
       const now = performance.now();
+      const lastLogAt = lastFailureLogAt.get(failureKind);
       if (
-        lastStoreFailureLogAt === undefined ||
-        now - lastStoreFailureLogAt >= STORE_FAILURE_LOG_INTERVAL_MS
+        lastLogAt === undefined ||
+        now - lastLogAt >= STORE_FAILURE_LOG_INTERVAL_MS
       ) {
-        lastStoreFailureLogAt = now;
-        if (error instanceof MemoryRateLimitCapacityError) {
-          logRateLimitFailure(
-            "Rate limit store capacity exhausted; request denied",
-            "store-capacity",
-            error,
-          );
-        } else {
-          logRateLimitFailure(
-            "Rate limit store failed; request denied",
-            "store-increment",
-            error,
-          );
-        }
+        lastFailureLogAt.set(failureKind, now);
+        const message = failureKind === "capacity-exhausted"
+          ? "Rate limit store capacity exhausted; request denied"
+          : failureKind === "key-resolution"
+          ? "Rate limit key resolution failed; request denied"
+          : "Rate limit store failed; request denied";
+        logger.error(message, {
+          failureKind,
+          stage,
+          errorName: error instanceof MemoryRateLimitCapacityError
+            ? error.name
+            : error instanceof Error
+            ? "Error"
+            : typeof error,
+          ...(error instanceof MemoryRateLimitCapacityError ? { capacity: error.capacity } : {}),
+        });
       }
       return storeUnavailableResponse();
     }

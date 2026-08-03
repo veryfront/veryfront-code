@@ -245,6 +245,11 @@ describe("findCoreThirdPartySourceImports", () => {
       },
       {
         path: "src/cache/hidden-imports.ts",
+        line: 6,
+        specifier: "npm:redis@5.11.0",
+      },
+      {
+        path: "src/cache/hidden-imports.ts",
         line: 7,
         specifier: "https://esm.sh/zod@4.3.6",
       },
