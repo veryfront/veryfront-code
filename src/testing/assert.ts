@@ -184,6 +184,7 @@ function createNodeAssertImpl(): AssertImpl {
         msgIncludesOrMsg,
         "Expected function to reject",
       );
+      // Returning the rejection reason is a stable public testing helper contract.
       return error;
     },
 
@@ -301,7 +302,7 @@ export function assertThrows(
   return impl.assertThrows(fn, errorClassOrMsg, msgIncludesOrMsg, msg);
 }
 
-/** Assert that an async function rejects. */
+/** Assert that an async function rejects, returning the rejection reason. */
 export function assertRejects(
   fn: () => Promise<unknown>,
   errorClassOrMsg?: ErrorClass | string,

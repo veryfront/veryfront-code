@@ -109,8 +109,8 @@ function hasTrustedFetchSite(request: Request): boolean {
  * Dedicated authority allowlist for privileged local controls.
  *
  * `veryfront.me` is product-controlled and is the hostname printed by the
- * local CLI. `lvh.me` is admitted because the documented local-development
- * workflow reaches projects through it; the hostname alone never grants
+ * local CLI. Veryfront admits `lvh.me` because the documented
+ * local-development workflow reaches projects through it; the hostname alone never grants
  * access because `isTrustedLocalControlRequest` still requires an
  * authenticated loopback transport peer and no proxy hop. Other third-party
  * wildcard DNS and development test domains are not control authorities even
