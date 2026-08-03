@@ -335,6 +335,49 @@ describe("InMemoryBundleManifestStore", () => {
     assertEquals(await store.invalidateSource(metadata.source), 0);
   });
 
+  it("keeps referenced code alive past a shorter code ttl", async () => {
+    using time = new FakeTime();
+    const store = new InMemoryBundleManifestStore();
+    const code: BundleCode = { code: "export default true" };
+    const metadata: BundleMetadata = {
+      hash: "hash",
+      codeHash: "code",
+      size: 10,
+      compiledAt: Date.now(),
+      source: "source.mdx",
+      mode: "development",
+    };
+
+    await store.setBundleCode(metadata.codeHash, code, 10);
+    await store.setBundleMetadata("key", metadata, 100);
+    await time.tickAsync(10);
+
+    assertEquals(await store.getBundleCode(metadata.codeHash), code);
+    await store.deleteBundle("key");
+    assertEquals(await store.getBundleCode(metadata.codeHash), undefined);
+  });
+
+  it("prunes unread expired metadata before resolving referenced code", async () => {
+    using time = new FakeTime();
+    const store = new InMemoryBundleManifestStore();
+    const metadata: BundleMetadata = {
+      hash: "hash",
+      codeHash: "code",
+      size: 10,
+      compiledAt: Date.now(),
+      source: "source.mdx",
+      mode: "development",
+    };
+
+    await store.setBundleCode(metadata.codeHash, { code: "export default true" });
+    await store.setBundleMetadata("key", metadata, 10);
+    await time.tickAsync(10);
+
+    assertEquals(await store.getBundleCode(metadata.codeHash), undefined);
+    assertEquals(await store.invalidateSource(metadata.source), 0);
+    assertEquals((await store.getStats()).totalBundles, 0);
+  });
+
   it("delete bundle", async () => {
     const store = new InMemoryBundleManifestStore();
 

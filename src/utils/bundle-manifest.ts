@@ -51,26 +51,11 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
   private sourceIndex = new Map<string, Set<string>>();
   private codeReferenceCounts = new Map<string, number>();
 
-  private getIfNotExpired<T>(
-    map: Map<string, { value: T; expiry?: number }>,
-    key: string,
-  ): T | undefined {
-    const entry = map.get(key);
-    if (!entry) return undefined;
-
-    if (entry.expiry != null && Date.now() > entry.expiry) {
-      map.delete(key);
-      return undefined;
-    }
-
-    return entry.value;
-  }
-
   async getBundleMetadata(key: string): Promise<BundleMetadata | undefined> {
     const entry = this.metadata.get(key);
     if (!entry) return undefined;
 
-    if (entry.expiry != null && Date.now() > entry.expiry) {
+    if (entry.expiry != null && Date.now() >= entry.expiry) {
       this.removeMetadata(key);
       return undefined;
     }
@@ -102,7 +87,22 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
   }
 
   async getBundleCode(hash: string): Promise<BundleCode | undefined> {
-    return this.getIfNotExpired(this.code, hash);
+    this.pruneExpiredMetadata();
+    const entry = this.code.get(hash);
+    if (!entry) return undefined;
+
+    // Metadata references own code liveness. A shorter code TTL must not turn
+    // a still-valid manifest into a pointer to a missing content blob.
+    if (
+      entry.expiry != null &&
+      Date.now() >= entry.expiry &&
+      !this.codeReferenceCounts.has(hash)
+    ) {
+      this.code.delete(hash);
+      return undefined;
+    }
+
+    return entry.value;
   }
 
   async setBundleCode(hash: string, code: BundleCode, ttlMs?: number): Promise<void> {
@@ -137,6 +137,7 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
   }
 
   async getStats(): Promise<BundleManifestStats> {
+    this.pruneExpiredMetadata();
     let totalSize = 0;
     let oldestBundle: number | undefined;
     let newestBundle: number | undefined;
@@ -162,6 +163,12 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
   private incrementCodeReference(codeHash: string): void {
     const count = this.codeReferenceCounts.get(codeHash) ?? 0;
     this.codeReferenceCounts.set(codeHash, count + 1);
+  }
+
+  private pruneExpiredMetadata(now = Date.now()): void {
+    for (const [key, entry] of this.metadata) {
+      if (entry.expiry != null && now >= entry.expiry) this.removeMetadata(key);
+    }
   }
 
   private decrementCodeReference(codeHash: string): void {

@@ -45,6 +45,33 @@ describe("file-discovery", () => {
     assertEquals(files.every((f) => f.name.includes("test")), true);
   });
 
+  it("filters by glob pattern", async () => {
+    const files = await collectFiles({
+      baseDir: TEST_DIR,
+      extensions: [".ts"],
+      patterns: ["file-*.test.ts"],
+      recursive: false,
+    });
+
+    assertEquals(files.some((f) => f.name === "file-discovery.test.ts"), true);
+    assertEquals(
+      files.every((f) => f.name.startsWith("file-") && f.name.endsWith(".test.ts")),
+      true,
+    );
+  });
+
+  it("filters by single-character glob pattern", async () => {
+    const files = await collectFiles({
+      baseDir: TEST_DIR,
+      extensions: [".ts"],
+      patterns: ["file-discover?.ts"],
+      recursive: false,
+    });
+
+    assertEquals(files.some((f) => f.name === "file-discovery.ts"), true);
+    assertEquals(files.some((f) => f.name === "file-discovery.test.ts"), false);
+  });
+
   it("respects maxDepth", async () => {
     const files = await collectFiles({
       baseDir: join(cwd(), "src"),

@@ -29,7 +29,7 @@ export class EntryManager {
       size: newSize,
       expiry,
       tags,
-      lastAccessed: Date.now(),
+      lastAccessed: this.now(),
     };
 
     listManager.moveToFront(node);
@@ -54,7 +54,7 @@ export class EntryManager {
       size,
       expiry,
       tags,
-      lastAccessed: Date.now(),
+      lastAccessed: this.now(),
     };
 
     const node = new LRUNode(key, entry);

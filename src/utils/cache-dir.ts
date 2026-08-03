@@ -73,22 +73,25 @@ export async function ensureCacheNodeModules(): Promise<void> {
     operation = linkCacheNodeModules(cacheBase);
     nodeModulesLinkOperations.set(cacheBase, operation);
   }
-  await operation;
+  try {
+    await operation;
+  } finally {
+    // The map deduplicates only concurrent work. Retaining every resolved
+    // tenant cache path forever would turn this helper into an unbounded
+    // process-lifetime index. The identity check prevents an older waiter from
+    // deleting a replacement operation.
+    if (nodeModulesLinkOperations.get(cacheBase) === operation) {
+      nodeModulesLinkOperations.delete(cacheBase);
+    }
+  }
 }
 
 async function linkCacheNodeModules(cacheBase: string): Promise<void> {
   try {
     const { createRequire } = await import("node:module");
-    const { lstatSync, symlinkSync, mkdirSync } = await import("node:fs");
+    const { lstatSync, mkdirSync, realpathSync, symlinkSync, unlinkSync } = await import("node:fs");
 
     const targetLink = join(cacheBase, "node_modules");
-
-    try {
-      lstatSync(targetLink);
-      return;
-    } catch (_) {
-      /* expected: symlink doesn't exist yet */
-    }
 
     const require = createRequire(import.meta.url);
     const reactEntry = require.resolve("react");
@@ -98,6 +101,35 @@ async function linkCacheNodeModules(cacheBase: string): Promise<void> {
     if (idx === -1) return;
 
     const nodeModulesDir = reactEntry.substring(0, idx + "/node_modules".length);
+
+    try {
+      const existing = lstatSync(targetLink);
+      if (existing.isSymbolicLink()) {
+        try {
+          if (realpathSync(targetLink) === realpathSync(nodeModulesDir)) return;
+        } catch {
+          // A dangling link is safe to replace without touching its target.
+        }
+        unlinkSync(targetLink);
+      } else if (existing.isDirectory()) {
+        // Preserve a real directory only when it resolves React to the same
+        // framework-owned package. Never remove user-created directories.
+        try {
+          if (
+            realpathSync(join(targetLink, "react")) ===
+              realpathSync(join(nodeModulesDir, "react"))
+          ) return;
+        } catch {
+          // The existing directory is not a usable framework dependency root.
+        }
+        return;
+      } else {
+        // Do not overwrite a non-directory entry in a best-effort helper.
+        return;
+      }
+    } catch (_) {
+      // No entry exists yet. mkdir/symlink below owns creation.
+    }
 
     mkdirSync(cacheBase, { recursive: true });
     symlinkSync(nodeModulesDir, targetLink, "dir");

@@ -52,7 +52,7 @@ function matchesExtensions(fileName: string, extensions: string[] | undefined): 
 
 function matchesPatterns(fileName: string, patterns: string[] | undefined): boolean {
   if (!patterns?.length) return true;
-  return patterns.some((pattern) => fileName.includes(pattern));
+  return patterns.some((pattern) => matchesEntryPattern(fileName, pattern));
 }
 
 /**
@@ -91,13 +91,15 @@ function matchesEntryGlob(name: string, pattern: string): boolean {
   return patternIndex === patternTokens.length;
 }
 
+function matchesEntryPattern(name: string, pattern: string): boolean {
+  return pattern.includes("*") || pattern.includes("?")
+    ? matchesEntryGlob(name, pattern)
+    : name.includes(pattern);
+}
+
 function shouldIgnore(name: string, ignorePatterns: string[] | undefined): boolean {
   if (!ignorePatterns?.length) return false;
-  return ignorePatterns.some((pattern) =>
-    pattern.includes("*") || pattern.includes("?")
-      ? matchesEntryGlob(name, pattern)
-      : name.includes(pattern)
-  );
+  return ignorePatterns.some((pattern) => matchesEntryPattern(name, pattern));
 }
 
 function matchesFile(

@@ -167,6 +167,18 @@ describe("cache-file-ops", () => {
       );
     });
 
+    it("requires custom adapters to classify missing paths", async () => {
+      const fs = createMockFs({
+        stat: () => Promise.reject(new Error("not found")),
+      });
+
+      await assertRejects(
+        () => verifyCacheFileExists(fs, "/cache/file.js", "TEST"),
+        Error,
+        "not found",
+      );
+    });
+
     it("returns false when path is a directory", async () => {
       const fs = createMockFs({
         stat: () => Promise.resolve(DIR_STAT),
