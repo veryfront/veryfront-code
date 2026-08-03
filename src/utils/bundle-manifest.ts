@@ -49,6 +49,7 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
   private metadata = new Map<string, { value: BundleMetadata; expiry?: number }>();
   private code = new Map<string, { value: BundleCode; expiry?: number }>();
   private sourceIndex = new Map<string, Set<string>>();
+  private codeReferenceCounts = new Map<string, number>();
 
   private getIfNotExpired<T>(
     map: Map<string, { value: T; expiry?: number }>,
@@ -66,22 +67,30 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
   }
 
   async getBundleMetadata(key: string): Promise<BundleMetadata | undefined> {
-    return this.getIfNotExpired(this.metadata, key);
+    const entry = this.metadata.get(key);
+    if (!entry) return undefined;
+
+    if (entry.expiry != null && Date.now() > entry.expiry) {
+      this.removeMetadata(key);
+      return undefined;
+    }
+
+    return entry.value;
   }
 
   async setBundleMetadata(key: string, metadata: BundleMetadata, ttlMs?: number): Promise<void> {
     const expiry = ttlMs != null ? Date.now() + ttlMs : undefined;
-
-    // Replacing a key can change its source; drop the key from the previous
-    // source's index so invalidateSource(oldSource) cannot delete the
-    // replacement bundle through a stale index entry.
     const previous = this.metadata.get(key)?.value;
+
+    if (!previous) {
+      this.incrementCodeReference(metadata.codeHash);
+    } else if (previous.codeHash !== metadata.codeHash) {
+      this.decrementCodeReference(previous.codeHash);
+      this.incrementCodeReference(metadata.codeHash);
+    }
+
     if (previous && previous.source !== metadata.source) {
-      const previousKeys = this.sourceIndex.get(previous.source);
-      if (previousKeys) {
-        previousKeys.delete(key);
-        if (previousKeys.size === 0) this.sourceIndex.delete(previous.source);
-      }
+      this.removeSourceReference(key, previous.source);
     }
 
     this.metadata.set(key, { value: metadata, expiry });
@@ -101,27 +110,7 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
   }
 
   async deleteBundle(key: string): Promise<void> {
-    const metadata = await this.getBundleMetadata(key);
-
-    this.metadata.delete(key);
-    if (!metadata) return;
-
-    // Code entries are content-addressed and can be shared by several
-    // bundles; only remove the code once no remaining bundle references it.
-    let codeStillReferenced = false;
-    for (const { value } of this.metadata.values()) {
-      if (value.codeHash === metadata.codeHash) {
-        codeStillReferenced = true;
-        break;
-      }
-    }
-    if (!codeStillReferenced) this.code.delete(metadata.codeHash);
-
-    const sourceKeys = this.sourceIndex.get(metadata.source);
-    if (!sourceKeys) return;
-
-    sourceKeys.delete(key);
-    if (sourceKeys.size === 0) this.sourceIndex.delete(metadata.source);
+    this.removeMetadata(key);
   }
 
   async invalidateSource(source: string): Promise<number> {
@@ -129,7 +118,7 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
     if (!keys) return 0;
 
     const keysArray = [...keys];
-    await Promise.all(keysArray.map((key) => this.deleteBundle(key)));
+    for (const key of keysArray) this.removeMetadata(key);
     this.sourceIndex.delete(source);
 
     return keysArray.length;
@@ -139,6 +128,7 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
     this.metadata.clear();
     this.code.clear();
     this.sourceIndex.clear();
+    this.codeReferenceCounts.clear();
   }
 
   async isAvailable(): Promise<boolean> {
@@ -166,6 +156,40 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
       oldestBundle,
       newestBundle,
     };
+  }
+
+  private incrementCodeReference(codeHash: string): void {
+    const count = this.codeReferenceCounts.get(codeHash) ?? 0;
+    this.codeReferenceCounts.set(codeHash, count + 1);
+  }
+
+  private decrementCodeReference(codeHash: string): void {
+    const count = this.codeReferenceCounts.get(codeHash);
+    if (count != null && count > 1) {
+      this.codeReferenceCounts.set(codeHash, count - 1);
+      return;
+    }
+
+    this.codeReferenceCounts.delete(codeHash);
+    this.code.delete(codeHash);
+  }
+
+  private removeMetadata(key: string): BundleMetadata | undefined {
+    const metadata = this.metadata.get(key)?.value;
+    if (!metadata) return undefined;
+
+    this.metadata.delete(key);
+    this.removeSourceReference(key, metadata.source);
+    this.decrementCodeReference(metadata.codeHash);
+    return metadata;
+  }
+
+  private removeSourceReference(key: string, source: string): void {
+    const sourceKeys = this.sourceIndex.get(source);
+    if (!sourceKeys) return;
+
+    sourceKeys.delete(key);
+    if (sourceKeys.size === 0) this.sourceIndex.delete(source);
   }
 }
 

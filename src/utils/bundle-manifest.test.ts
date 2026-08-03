@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
+import { FakeTime } from "#std/testing/time";
 import { scaleMs } from "#veryfront/testing/timing.ts";
 import {
   type BundleCode,
@@ -143,6 +144,114 @@ describe("InMemoryBundleManifestStore", () => {
 
     assertEquals(await store.getBundleMetadata("second"), second);
     assertEquals(await store.getBundleCode("shared-code"), sharedCode);
+
+    await store.deleteBundle("second");
+    assertEquals(await store.getBundleCode("shared-code"), undefined);
+  });
+
+  it("retains shared code across partial source invalidation", async () => {
+    const store = new InMemoryBundleManifestStore();
+    const sharedCode: BundleCode = { code: "export default 1" };
+    const metadata: BundleMetadata = {
+      hash: "hash",
+      codeHash: "shared-code",
+      size: 10,
+      compiledAt: Date.now(),
+      source: "first.mdx",
+      mode: "development",
+    };
+
+    await store.setBundleCode(metadata.codeHash, sharedCode);
+    await store.setBundleMetadata("first-a", metadata);
+    await store.setBundleMetadata("first-b", { ...metadata, hash: "hash-b" });
+    await store.setBundleMetadata("second", { ...metadata, source: "second.mdx" });
+
+    assertEquals(await store.invalidateSource("first.mdx"), 2);
+    assertEquals(await store.getBundleCode(metadata.codeHash), sharedCode);
+
+    assertEquals(await store.invalidateSource("second.mdx"), 1);
+    assertEquals(await store.getBundleCode(metadata.codeHash), undefined);
+  });
+
+  it("transfers code references when metadata is replaced", async () => {
+    const store = new InMemoryBundleManifestStore();
+    const originalCode: BundleCode = { code: "export default 'original'" };
+    const replacementCode: BundleCode = { code: "export default 'replacement'" };
+    const original: BundleMetadata = {
+      hash: "hash-original",
+      codeHash: "code-original",
+      size: 10,
+      compiledAt: Date.now(),
+      source: "original.mdx",
+      mode: "development",
+    };
+    const replacement: BundleMetadata = {
+      ...original,
+      hash: "hash-replacement",
+      codeHash: "code-replacement",
+      source: "replacement.mdx",
+    };
+
+    await store.setBundleCode(original.codeHash, originalCode);
+    await store.setBundleCode(replacement.codeHash, replacementCode);
+    await store.setBundleMetadata("replaced", original);
+    await store.setBundleMetadata("remaining-original", {
+      ...original,
+      source: "remaining.mdx",
+    });
+    await store.setBundleMetadata("replaced", replacement);
+
+    assertEquals(await store.getBundleCode(original.codeHash), originalCode);
+    assertEquals(await store.getBundleCode(replacement.codeHash), replacementCode);
+
+    await store.deleteBundle("remaining-original");
+    assertEquals(await store.getBundleCode(original.codeHash), undefined);
+    assertEquals(await store.getBundleCode(replacement.codeHash), replacementCode);
+
+    await store.deleteBundle("replaced");
+    assertEquals(await store.getBundleCode(replacement.codeHash), undefined);
+  });
+
+  it("does not double-count an unchanged key and code hash", async () => {
+    const store = new InMemoryBundleManifestStore();
+    const code: BundleCode = { code: "export default true" };
+    const metadata: BundleMetadata = {
+      hash: "hash",
+      codeHash: "code",
+      size: 10,
+      compiledAt: Date.now(),
+      source: "source.mdx",
+      mode: "development",
+    };
+
+    await store.setBundleCode(metadata.codeHash, code);
+    await store.setBundleMetadata("key", metadata);
+    await store.setBundleMetadata("key", { ...metadata, hash: "updated-hash" });
+    await store.deleteBundle("key");
+
+    assertEquals(await store.getBundleCode(metadata.codeHash), undefined);
+  });
+
+  it("releases code and source references when metadata expires", async () => {
+    using time = new FakeTime();
+    const store = new InMemoryBundleManifestStore();
+    const code: BundleCode = { code: "export default true" };
+    const metadata: BundleMetadata = {
+      hash: "hash",
+      codeHash: "code",
+      size: 10,
+      compiledAt: Date.now(),
+      source: "source.mdx",
+      mode: "development",
+    };
+
+    await store.setBundleCode(metadata.codeHash, code);
+    await store.setBundleMetadata("key", metadata, 10);
+    await time.tickAsync(11);
+
+    assertEquals(await store.getBundleMetadata("key"), undefined);
+    assertEquals(await store.getBundleCode(metadata.codeHash), undefined);
+    assertEquals(await store.invalidateSource(metadata.source), 0);
   });
 
   it("delete bundle", async () => {
@@ -188,6 +297,29 @@ describe("InMemoryBundleManifestStore", () => {
     await store.clear();
 
     assertEquals(await store.getBundleMetadata("test-key"), undefined);
+    assertEquals(await store.getBundleCode(metadata.codeHash), undefined);
+  });
+
+  it("clear resets code reference counts", async () => {
+    const store = new InMemoryBundleManifestStore();
+    const code: BundleCode = { code: "export default true" };
+    const metadata: BundleMetadata = {
+      hash: "hash",
+      codeHash: "shared-code",
+      size: 10,
+      compiledAt: Date.now(),
+      source: "source.mdx",
+      mode: "development",
+    };
+
+    await store.setBundleMetadata("first", metadata);
+    await store.setBundleMetadata("second", { ...metadata, source: "second.mdx" });
+    await store.clear();
+
+    await store.setBundleCode(metadata.codeHash, code);
+    await store.setBundleMetadata("after-clear", metadata);
+    await store.deleteBundle("after-clear");
+
     assertEquals(await store.getBundleCode(metadata.codeHash), undefined);
   });
 
