@@ -1,4 +1,8 @@
-import { readRecord, snapshotJsonValue, stringifyJsonValue } from "veryfront/provider/shared";
+import {
+  readRecord,
+  snapshotProviderJsonValue,
+  stringifyJsonValue,
+} from "veryfront/provider/shared";
 import {
   isBoundedOpenAIStreamString,
   MAX_OPENAI_STREAM_IDENTIFIER_BYTES,
@@ -310,7 +314,7 @@ function snapshotOpenAIRawResponseOutputItems(
 ): Array<Record<string, unknown>> {
   let snapshot: unknown;
   try {
-    snapshot = snapshotJsonValue(value, {
+    snapshot = snapshotProviderJsonValue(value, {
       maxBytes: MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES,
     });
   } catch (error) {

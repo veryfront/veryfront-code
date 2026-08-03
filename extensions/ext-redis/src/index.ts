@@ -54,7 +54,7 @@ export default extRedis;
 export { RedisMemory } from "./agent-memory.ts";
 export { createRedisCacheAdministration } from "./cache-administration.ts";
 export { RedisCacheBackend } from "./cache-backend.ts";
-export { RedisRateLimitStore } from "./rate-limit-store.ts";
+export { type RedisRateLimitOptions, RedisRateLimitStore } from "./rate-limit-store.ts";
 export { RedisCacheStore } from "./render-cache-store.ts";
 export { startProxyRoutingInvalidationBus } from "./routing-invalidation-bus.ts";
 export { createRedisRuntimeProvider } from "./redis-runtime-provider.ts";

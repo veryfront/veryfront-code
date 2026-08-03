@@ -70,6 +70,18 @@ function assertJsonEquals(actual: unknown, expected: unknown): void {
   );
 }
 
+async function runNoBrandEval(script: string): Promise<unknown> {
+  const output = await new Deno.Command(Deno.execPath(), {
+    args: ["eval", "--config=deno.json", script],
+    cwd: new URL("../../../", import.meta.url),
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  const stderr = new TextDecoder().decode(output.stderr);
+  assertEquals(output.code, 0, stderr);
+  return JSON.parse(new TextDecoder().decode(output.stdout));
+}
+
 describe("ext-llm-google/google-request-builder", () => {
   it("preserves generateContent request shaping, provider option merge order, and warnings", () => {
     const prompt: RuntimePromptMessage[] = [
@@ -1325,6 +1337,68 @@ describe("ext-llm-google/google-request-builder", () => {
       "Google provider metadata namespace must be an enumerable data property",
     );
     assertEquals(googleGetterReads, 0);
+  });
+
+  it("accepts plain thought-signature and grounding metadata without Proxy detection", async () => {
+    const result = await runNoBrandEval(`
+      Object.defineProperty(globalThis, "caches", {
+        configurable: true,
+        value: {},
+      });
+      Object.defineProperty(globalThis, "WebSocketPair", {
+        configurable: true,
+        value: function WebSocketPair() {},
+      });
+
+      const { canIdentifyProxyWithoutHooks } = await import(
+        "./src/platform/compat/error-introspection.ts"
+      );
+      const { buildGoogleGenerateContentRequest } = await import(
+        "./extensions/ext-llm-google/src/google-request-builder.ts"
+      );
+      const { createGoogleProviderMetadata } = await import(
+        "./extensions/ext-llm-google/src/google-thought-signatures.ts"
+      );
+
+      const metadata = createGoogleProviderMetadata(
+        [{ text: "Private thought.", thought: true, thoughtSignature: "sig_edge" }],
+        { source: "google-search" },
+      );
+      const body = buildGoogleGenerateContentRequest(
+        "google",
+        {
+          prompt: [{
+            role: "assistant",
+            content: [{ type: "reasoning", text: "Private thought." }],
+            providerMetadata: metadata,
+          }],
+        },
+        { push() {}, drain() { return []; } },
+      );
+      console.log(JSON.stringify({
+        canIdentifyProxyWithoutHooks,
+        metadata,
+        parts: body.contents[0].parts,
+      }));
+    `);
+    assertEquals(result, {
+      canIdentifyProxyWithoutHooks: false,
+      metadata: {
+        google: {
+          rawAssistantParts: [{
+            text: "Private thought.",
+            thought: true,
+            thoughtSignature: "sig_edge",
+          }],
+          groundingMetadata: { source: "google-search" },
+        },
+      },
+      parts: [{
+        text: "Private thought.",
+        thought: true,
+        thoughtSignature: "sig_edge",
+      }],
+    });
   });
 
   it("enforces the exact Google raw-part count boundary", () => {

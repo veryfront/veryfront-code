@@ -18,9 +18,13 @@ import {
   TOOL_INPUT_PENDING_THRESHOLD_MS,
   withToolInputStatusTransitions,
 } from "./runtime-loader/tool-input-status.ts";
-import { snapshotJsonValue } from "./runtime-loader/json-snapshot.ts";
+import { snapshotProviderJsonValue } from "./runtime-loader/json-snapshot.ts";
 
-export { jsonValuesEqual, snapshotJsonValue } from "./runtime-loader/json-snapshot.ts";
+export {
+  jsonValuesEqual,
+  snapshotJsonValue,
+  snapshotProviderJsonValue,
+} from "./runtime-loader/json-snapshot.ts";
 export type { JsonSnapshotOptions, JsonSnapshotValue } from "./runtime-loader/json-snapshot.ts";
 export {
   ProviderError,
@@ -146,7 +150,9 @@ export function createWarningCollector(): WarningCollector {
 /** Serialize a JSON-compatible value. */
 export function stringifyJsonValue(value: unknown): string {
   try {
-    const serialized = JSON.stringify(snapshotJsonValue(value, { sortObjectKeys: false }));
+    const serialized = JSON.stringify(
+      snapshotProviderJsonValue(value, { sortObjectKeys: false }),
+    );
     if (serialized === undefined) {
       throw new TypeError("value has no JSON representation");
     }

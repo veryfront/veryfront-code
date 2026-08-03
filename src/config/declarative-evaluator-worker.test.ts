@@ -1003,14 +1003,17 @@ Deno.test("declarative config worker releases admission after a stuck terminatio
   const payload = await createPayload("export default { ready: true };");
   const admission = declarativeConfigWorkerRunnerInternals
     .createAdmissionController(1, 0);
+  const abort = new AbortController();
   let terminationCount = 0;
 
   const first = declarativeConfigWorkerRunnerInternals
     .evaluateWithAdmissionController(
       payload,
-      { timeoutMs: 1 },
+      { signal: abort.signal, timeoutMs: 100 },
       async () => ({
-        postMessage() {},
+        postMessage() {
+          abort.abort();
+        },
         subscribe() {
           return () => {};
         },
@@ -1023,11 +1026,11 @@ Deno.test("declarative config worker releases admission after a stuck terminatio
       5,
     );
 
-  const timeoutError = await assertRejects(
+  const abortError = await assertRejects(
     () => first,
     DeclarativeConfigEvaluationError,
   ) as DeclarativeConfigEvaluationError;
-  assertEquals(timeoutError.reason, "worker-timeout");
+  assertEquals(abortError.reason, "worker-aborted");
   assertEquals(terminationCount, 1);
   await waitForAdmissionState(admission, { active: 0, queued: 0 });
 
