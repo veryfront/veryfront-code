@@ -2,6 +2,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import {
+  createLocalControlAccessDeniedResponse,
   hasProxyForwardingHeaders,
   hasTrustedLocalControlAuthority,
   isTrustedLocalControlRequest,
@@ -22,6 +23,13 @@ function requestFromPeer(hostname?: string, headers: HeadersInit = {}): Request 
 }
 
 describe("local control request admission", () => {
+  it("prevents content sniffing on access-denied responses", () => {
+    const response = createLocalControlAccessDeniedResponse(requestFromPeer("127.0.0.1"));
+
+    assertEquals(response.status, 403);
+    assertEquals(response.headers.get("X-Content-Type-Options"), "nosniff");
+  });
+
   it("requires transport-authenticated loopback provenance", () => {
     assertEquals(
       isTrustedLocalControlRequest(requestFromPeer("127.0.0.2"), {
@@ -70,6 +78,37 @@ describe("local control request admission", () => {
     }
   });
 
+  it("admits direct and same-origin fetches but rejects sibling or cross-site browser work", () => {
+    for (const fetchSite of [undefined, "none", "same-origin"] as const) {
+      const headers: HeadersInit = fetchSite === undefined ? {} : { "sec-fetch-site": fetchSite };
+      assertEquals(
+        isTrustedLocalControlRequest(requestFromPeer("127.0.0.1", headers), {
+          proxyTopologyTrusted: false,
+        }),
+        true,
+        String(fetchSite),
+      );
+    }
+
+    for (
+      const fetchSite of [
+        "same-site",
+        "cross-site",
+        "invalid",
+        "same-origin".repeat(100),
+      ]
+    ) {
+      assertEquals(
+        isTrustedLocalControlRequest(
+          requestFromPeer("127.0.0.1", { "sec-fetch-site": fetchSite }),
+          { proxyTopologyTrusted: false },
+        ),
+        false,
+        fetchSite,
+      );
+    }
+  });
+
   it("allows only exact canonical local-control authorities", () => {
     for (
       const url of [
@@ -79,6 +118,9 @@ describe("local control request admission", () => {
         "http://[::1]:3000/_dev",
         "http://[::ffff:7f00:1]:3000/_dev",
         "http://project.localhost:3000/_dev",
+        "http://lvh.me:3000/_dev",
+        "http://project.lvh.me:3000/_dev",
+        "http://project.preview.lvh.me:3000/_dev",
         "http://veryfront.me:3000/_dev",
         "http://project.veryfront.me:3000/_dev",
         "http://project.preview.veryfront.me:3000/_dev",
@@ -96,10 +138,14 @@ describe("local control request admission", () => {
 
     for (
       const url of [
-        "http://lvh.me:3000/_dev",
-        "http://project.lvh.me:3000/_dev",
+        "http://lvh.me.attacker.example:3000/_dev",
         "http://veryfront.dev:3000/_dev",
         "http://project.veryfront.dev:3000/_dev",
+        "http://production.lvh.me:3000/_dev",
+        "http://project.production.lvh.me:3000/_dev",
+        "http://project.staging.lvh.me:3000/_dev",
+        "http://example.com.prod.lvh.me:3000/_dev",
+        "http://project.unknown.lvh.me:3000/_dev",
         "http://production.veryfront.me:3000/_dev",
         "http://project.staging.veryfront.me:3000/_dev",
         "http://project.unknown.veryfront.me:3000/_dev",

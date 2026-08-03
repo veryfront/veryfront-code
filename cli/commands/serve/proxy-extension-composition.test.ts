@@ -3,14 +3,14 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { type ExtensionLoader, tryResolve } from "veryfront/extensions";
-import { RedisRuntimeProviderName } from "veryfront/extensions/distributed";
 import type { TokenCacheStore } from "#veryfront/extensions/cache/index.ts";
+import { RedisRuntimeProviderName } from "#veryfront/extensions/distributed/index.ts";
 import { createCacheFromEnv, TracingTokenCache } from "#veryfront/proxy/cache/index.ts";
 import { acquireExtensionTokenCacheStoreFromEnv } from "#veryfront/proxy/cache/extension-store.ts";
 import { createProxyShutdownHooks } from "#veryfront/proxy/shutdown-hooks.ts";
 import {
-  activateStandaloneProxyCacheExtension,
-  registerStandaloneProxyCacheExtensionTeardown,
+  activateStandaloneProxyExtensions,
+  registerStandaloneProxyExtensionTeardown,
 } from "./proxy-extension-composition.ts";
 
 describe("standalone proxy extension composition", () => {
@@ -31,60 +31,68 @@ describe("standalone proxy extension composition", () => {
     Deno.env.set("CACHE_TYPE", "memory");
     Deno.env.delete("REDIS_URL");
 
-    loader = await activateStandaloneProxyCacheExtension();
+    loader = await activateStandaloneProxyExtensions();
 
     assertEquals(loader, null);
   });
 
-  it("activates ext-redis when routing invalidation uses Redis", async () => {
+  for (const cacheType of ["extension", "redis"] as const) {
+    it(`activates ext-cache-redis before ${cacheType} cache acquisition`, async () => {
+      Deno.env.set("CACHE_TYPE", cacheType);
+      Deno.env.set("REDIS_URL", "redis://127.0.0.1:6379");
+
+      loader = await activateStandaloneProxyExtensions();
+      const shutdownHooks = createProxyShutdownHooks();
+      await registerStandaloneProxyExtensionTeardown(loader, shutdownHooks.register);
+      const acquisition = await acquireExtensionTokenCacheStoreFromEnv();
+
+      assertEquals(Deno.env.get("CACHE_TYPE"), "extension");
+      assertEquals(loader !== null, true);
+      assertEquals(tryResolve(RedisRuntimeProviderName) !== undefined, true);
+      assertEquals(acquisition.kind, "borrowed");
+      assertStrictEquals(
+        acquisition.store,
+        tryResolve<TokenCacheStore>("TokenCacheStore"),
+      );
+
+      const cache = await createCacheFromEnv({ extensionStore: acquisition });
+      assertEquals(cache instanceof TracingTokenCache, true);
+      await cache.close();
+      assertStrictEquals(
+        tryResolve<TokenCacheStore>("TokenCacheStore"),
+        acquisition.store,
+      );
+
+      assertEquals(await shutdownHooks.settle(), []);
+      assertEquals(tryResolve<TokenCacheStore>("TokenCacheStore"), undefined);
+      assertEquals(tryResolve(RedisRuntimeProviderName), undefined);
+      loader = null;
+    });
+  }
+
+  it("activates the Redis runtime for routing invalidation in memory-cache mode", async () => {
     Deno.env.set("CACHE_TYPE", "memory");
     Deno.env.set("REDIS_URL", "redis://127.0.0.1:6379");
 
-    loader = await activateStandaloneProxyCacheExtension();
+    loader = await activateStandaloneProxyExtensions();
 
     assertEquals(loader !== null, true);
-    assertEquals(tryResolve(RedisRuntimeProviderName) !== undefined, true);
-  });
-
-  it("activates ext-cache-redis before standalone cache acquisition", async () => {
-    Deno.env.set("CACHE_TYPE", "extension");
-    Deno.env.set("REDIS_URL", "redis://127.0.0.1:6379");
-
-    loader = await activateStandaloneProxyCacheExtension();
-    const shutdownHooks = createProxyShutdownHooks();
-    await registerStandaloneProxyCacheExtensionTeardown(loader, shutdownHooks.register);
-    const acquisition = await acquireExtensionTokenCacheStoreFromEnv();
-
-    assertEquals(loader !== null, true);
-    assertEquals(tryResolve(RedisRuntimeProviderName) !== undefined, true);
-    assertEquals(acquisition.kind, "borrowed");
-    assertStrictEquals(
-      acquisition.store,
-      tryResolve<TokenCacheStore>("TokenCacheStore"),
-    );
-
-    const cache = await createCacheFromEnv({ extensionStore: acquisition });
-    assertEquals(cache instanceof TracingTokenCache, true);
-    await cache.close();
-    assertStrictEquals(
-      tryResolve<TokenCacheStore>("TokenCacheStore"),
-      acquisition.store,
-    );
-
-    assertEquals(await shutdownHooks.settle(), []);
     assertEquals(tryResolve<TokenCacheStore>("TokenCacheStore"), undefined);
-    assertEquals(tryResolve(RedisRuntimeProviderName), undefined);
+    assertEquals(tryResolve(RedisRuntimeProviderName) !== undefined, true);
+
+    await loader?.teardownAll();
     loader = null;
+    assertEquals(tryResolve(RedisRuntimeProviderName), undefined);
   });
 
   it("tears down the provider when shutdown registration fails", async () => {
     Deno.env.set("CACHE_TYPE", "extension");
     Deno.env.set("REDIS_URL", "redis://127.0.0.1:6379");
-    loader = await activateStandaloneProxyCacheExtension();
+    loader = await activateStandaloneProxyExtensions();
 
     await assertRejects(
       () =>
-        registerStandaloneProxyCacheExtensionTeardown(loader, () => {
+        registerStandaloneProxyExtensionTeardown(loader, () => {
           throw new Error("shutdown registration failed");
         }),
       Error,
@@ -98,8 +106,8 @@ describe("standalone proxy extension composition", () => {
   it("tears down the provider when shutdown-hook disposal fails", async () => {
     Deno.env.set("CACHE_TYPE", "extension");
     Deno.env.set("REDIS_URL", "redis://127.0.0.1:6379");
-    loader = await activateStandaloneProxyCacheExtension();
-    const teardown = await registerStandaloneProxyCacheExtensionTeardown(
+    loader = await activateStandaloneProxyExtensions();
+    const teardown = await registerStandaloneProxyExtensionTeardown(
       loader,
       () => () => {
         throw new Error("shutdown-hook disposal failed");
@@ -119,7 +127,7 @@ describe("standalone proxy extension composition", () => {
   it("uses Promise intrinsics captured before extension-owned mutation", async () => {
     Deno.env.set("CACHE_TYPE", "extension");
     Deno.env.set("REDIS_URL", "redis://127.0.0.1:6379");
-    loader = await activateStandaloneProxyCacheExtension();
+    loader = await activateStandaloneProxyExtensions();
     const resolveDescriptor = Object.getOwnPropertyDescriptor(Promise, "resolve")!;
     let registration: Promise<() => Promise<void>> | undefined;
 
@@ -130,7 +138,7 @@ describe("standalone proxy extension composition", () => {
           throw new Error("poisoned Promise.resolve");
         },
       });
-      registration = registerStandaloneProxyCacheExtensionTeardown(
+      registration = registerStandaloneProxyExtensionTeardown(
         loader,
         () => () => undefined,
       );
