@@ -480,6 +480,41 @@ describe("ProjectMiddlewareRuntime", () => {
     }
   });
 
+  it("honors an explicit host-execution denial outside proxy mode", async () => {
+    const marker = `__vf_denied_project_middleware_${crypto.randomUUID().replaceAll("-", "")}`;
+    const host = globalThis as unknown as Record<string, unknown>;
+    let sourceReads = 0;
+    const adapter = createAdapter(
+      undefined,
+      `globalThis.${marker} = Deno.env.get("HOST_SECRET"); export default [];`,
+      { onFileRead: () => sourceReads++ },
+    );
+    const runtime = new ProjectMiddlewareRuntime();
+    let routeCalls = 0;
+
+    try {
+      const response = await runtime.execute({
+        request: new Request("https://example.com/resource"),
+        handlerContext: createContext(adapter, {
+          allowHostProjectCodeExecution: false,
+        }),
+        isSharedProxy: false,
+        next: () => {
+          routeCalls++;
+          return Promise.resolve(new Response("route"));
+        },
+      });
+
+      assertEquals(response?.status, 503);
+      assertEquals(response?.headers.get("cache-control"), "no-store");
+      assertEquals(sourceReads, 0);
+      assertEquals(host[marker], undefined);
+      assertEquals(routeCalls, 0);
+    } finally {
+      delete host[marker];
+    }
+  });
+
   it("passes through shared requests when no root middleware exists", async () => {
     const runtime = new ProjectMiddlewareRuntime();
     let routeCalls = 0;

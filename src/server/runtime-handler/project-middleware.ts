@@ -18,7 +18,7 @@ import type { HandlerContext } from "#veryfront/types";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { serverLogger } from "#veryfront/utils";
 import { isWebSocketPath } from "#veryfront/server/runtime-handler/request-utils.ts";
-import { isExplicitlyLocalProject } from "#veryfront/security/project-locality.ts";
+import { isHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
 
 const DEFAULT_MAX_ENTRIES = 100;
@@ -115,7 +115,7 @@ export class ProjectMiddlewareRuntime {
 
     const environment = resolvedEnvironment(ctx);
     const branch = resolvedBranch(ctx);
-    const allowHostProjectCodeExecution = !isSharedProxy || isExplicitlyLocalProject(ctx);
+    const allowHostProjectCodeExecution = isHostProjectCodeExecutionAllowed(ctx);
     const executeMiddleware = async (): Promise<Response | undefined> => {
       let middleware: readonly MiddlewareFunction[];
       try {
