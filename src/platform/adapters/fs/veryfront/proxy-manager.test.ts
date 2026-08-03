@@ -99,6 +99,43 @@ describe("ProxyFSAdapterManager", () => {
         manager.dispose();
       }
     });
+
+    it("disposes the uncached adapter when initialization fails", async () => {
+      let disposeCalls = 0;
+      const manager = createManager({
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = () => Promise.reject(new Error("init failed"));
+          const originalDispose = adapter.dispose.bind(adapter);
+          adapter.dispose = () => {
+            disposeCalls++;
+            originalDispose();
+          };
+          return adapter;
+        },
+      });
+
+      try {
+        await assertRejects(
+          () =>
+            manager.getAdapter(
+              "my-project",
+              "test-token",
+              undefined,
+              false,
+              null,
+              null,
+              "main",
+            ),
+          Error,
+          "init failed",
+        );
+        assertEquals(disposeCalls, 1);
+        assertEquals(manager.hasAdapter("my-project", false, null, "main"), false);
+      } finally {
+        manager.dispose();
+      }
+    });
   });
 
   describe("exact production source", () => {
