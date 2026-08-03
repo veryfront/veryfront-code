@@ -20,6 +20,7 @@ const CONCEPT_FILES = new Set<string>([
   "concepts/eval.md",
   "concepts/run.md",
   "concepts/schedule.md",
+  "concepts/webhook.md",
   "concepts/prompt.md",
   "concepts/resource.md",
   "concepts/skill.md",
@@ -477,6 +478,12 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/runs.md",
     ],
     snippets: ["schedule", "runs", "trigger"],
+  },
+  "concepts/webhook.md": {
+    references: [
+      "../api-reference/veryfront/webhook.md",
+    ],
+    snippets: ["eventFilter", "promptTemplate", "64 KiB", "filtered event is ignored"],
   },
   "concepts/prompt.md": {
     references: ["../api-reference/veryfront/prompt.md"],
