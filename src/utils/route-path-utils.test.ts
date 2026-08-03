@@ -92,6 +92,9 @@ describe("route-path-utils", () => {
         "[[...slug].tsx",
         "[a/b].tsx",
         "[a\\b].tsx",
+        "[my param].tsx",
+        "[slug-name].tsx",
+        "[slug!].tsx",
         "[id]tsx",
         "[id]\n.tsx",
       ] as const;

@@ -36,9 +36,7 @@ export interface ParsedRouteParameter {
 }
 
 function isValidParameterName(name: string): boolean {
-  return name.trim().length > 0 &&
-    !/[\/\\[\]]/.test(name) &&
-    !containsPathControlCharacters(name);
+  return /^\w+$/.test(name);
 }
 
 /** Parse a complete dynamic route segment using the public route grammar. */

@@ -1019,9 +1019,13 @@ async function isWithinRoot(
   ) return false;
 
   try {
-    if (adapter?.fs.realPath) {
-      const canonicalRoot = await adapter.fs.realPath(rootDir);
-      const canonicalPath = await adapter.fs.realPath(filePath);
+    const canonicalize = adapter ? findDataMethod(adapter.fs, "realPath") : undefined;
+    if (adapter && canonicalize) {
+      const canonicalRoot = await Reflect.apply(canonicalize, adapter.fs, [rootDir]);
+      const canonicalPath = await Reflect.apply(canonicalize, adapter.fs, [filePath]);
+      if (typeof canonicalPath !== "string" || typeof canonicalRoot !== "string") {
+        return false;
+      }
       if (!isBoundedPath(canonicalPath) || !isBoundedPath(canonicalRoot)) {
         return false;
       }
@@ -1029,8 +1033,13 @@ async function isWithinRoot(
     }
 
     if (adapter) {
-      if (typeof adapter.fs.lstat === "function") return false;
-      if (!isVirtualFilesystem(adapter.fs) && adapter.id !== "memory") return false;
+      const lstat = findDataMethod(adapter.fs, "lstat");
+      if (lstat) return false;
+      if (
+        !hasNoSymlinkSemantics(adapter.fs) &&
+        !isVirtualFilesystem(adapter.fs) &&
+        adapter.id !== "memory"
+      ) return false;
       if (filePath.split(/[\\/]/).some((segment) => segment === "..")) return false;
       if (pathHelper.isAbsolute(filePath)) return hasPathPrefix(filePath, rootDir);
 
@@ -1049,6 +1058,17 @@ async function isWithinRoot(
   } catch (error) {
     if (!isFileNotFoundError(error)) throw error;
     /* expected: candidate or root may not exist */
+    return false;
+  }
+}
+
+function hasNoSymlinkSemantics(fileSystem: RuntimeAdapter["fs"]): boolean {
+  try {
+    const descriptor = Reflect.getOwnPropertyDescriptor(fileSystem, "symlinkSemantics");
+    return descriptor !== undefined &&
+      "value" in descriptor &&
+      descriptor.value === "none";
+  } catch {
     return false;
   }
 }

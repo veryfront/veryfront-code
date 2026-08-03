@@ -367,6 +367,67 @@ describe("getEntityBySlug", () => {
     assertEquals(page?.entity.slug, "about");
   });
 
+  it("uses lexical containment for adapters that explicitly forbid symlinks", async () => {
+    let resolvedPath = "/project/pages/about.mdx";
+    const source = "# Marker-backed page";
+    const adapter = {
+      id: "edge-store",
+      fs: {
+        symlinkSemantics: "none",
+        resolveFile: () => Promise.resolve(resolvedPath),
+        stat: () =>
+          Promise.resolve({
+            size: source.length,
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            mtime: null,
+          }),
+        readFile: () => Promise.resolve(source),
+        readFileBytesWithinLimit: (_path: string, byteLimit: number) => {
+          const bytes = new TextEncoder().encode(source);
+          return bytes.byteLength <= byteLimit
+            ? Promise.resolve(bytes)
+            : Promise.reject(new RangeError("File exceeds byte limit"));
+        },
+        readDir: async function* () {},
+      },
+    } as unknown as RuntimeAdapter;
+
+    const page = await getEntityBySlug("/project", "about", adapter);
+    assertEquals(page?.entity.content, source);
+
+    resolvedPath = "/outside/secret.mdx";
+    assertEquals(await getEntityBySlug("/project", "secret", adapter), null);
+
+    resolvedPath = "/project/pages/about.mdx";
+    const inheritedMarkerAdapter = {
+      ...adapter,
+      fs: Object.create(adapter.fs),
+    } as RuntimeAdapter;
+    assertEquals(
+      await getEntityBySlug("/project", "about", inheritedMarkerAdapter),
+      null,
+    );
+
+    let markerAccessorReads = 0;
+    const accessorMarkerFs = Object.create(adapter.fs);
+    Object.defineProperty(accessorMarkerFs, "symlinkSemantics", {
+      get() {
+        markerAccessorReads++;
+        return "none";
+      },
+    });
+    assertEquals(
+      await getEntityBySlug("/project", "about", {
+        ...adapter,
+        fs: accessorMarkerFs,
+      } as RuntimeAdapter),
+      null,
+    );
+    assertEquals(markerAccessorReads, 0);
+  });
+
   it("propagates an immediate root canonicalization failure before touching candidates", async () => {
     const rootFailure = new Error("root backend unavailable immediately");
     const adapter = createMockAdapter();
