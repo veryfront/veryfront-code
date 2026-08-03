@@ -226,6 +226,7 @@ describe("agent runtime refresh hooks", () => {
 
   it("continues suppressed unavailable tool calls with a user recovery turn after assistant text", async () => {
     const observedPrompts: Array<Array<{ role?: string; content?: unknown }>> = [];
+    const observedRuntimeMessages: Message[][] = [];
     let callCount = 0;
     let finishedResponse: AgentResponse | undefined;
     const model: ModelRuntime = {
@@ -276,6 +277,10 @@ describe("agent runtime refresh hooks", () => {
       system: "Recover from stale tools.",
       maxSteps: 2,
       resolveModelTransport: async () => ({ model }),
+      resolveRuntimeState({ messages }) {
+        observedRuntimeMessages.push(messages);
+        return {};
+      },
     });
 
     await (await assistant.stream({
@@ -286,6 +291,12 @@ describe("agent runtime refresh hooks", () => {
     })).toDataStreamResponse().text();
 
     assertEquals(callCount, 2);
+    const runtimeMessages = observedRuntimeMessages[1] ?? [];
+    assertEquals(runtimeMessages.at(-1)?.role, "user");
+    assertEquals(
+      isRuntimeGeneratedUserMessage(runtimeMessages.at(-1) ?? {}),
+      true,
+    );
     const retryPrompt = observedPrompts[1] ?? [];
     assertEquals(retryPrompt.at(-1)?.role, "user");
     assertEquals(
@@ -756,15 +767,17 @@ describe("agent runtime refresh hooks", () => {
     const assistant = eagerAgent({
       model: "google/gemini-3.5-flash",
       system: flattenSystemInstructions(
-        withRuntimeToolInventory("Use configured tools.", ["web_search"]),
+        withRuntimeToolInventory("Use configured tools.", ["web_search", "web_fetch"]),
       ),
-      providerTools: ["web_search"],
+      providerTools: ["web_search", "web_fetch"],
       resolveModelTransport: async () => ({ model }),
     });
 
     await assistant.generate({ input: "Search the web" });
 
+    // Google exposes neither native tool, so neither may reach the inventory.
     assertEquals(capturedSystem.includes("- web_search"), false);
+    assertEquals(capturedSystem.includes("- web_fetch"), false);
   });
 
   it("removes provider-native tools from the forced final response after create_agent", async () => {

@@ -2259,17 +2259,19 @@ export class AgentRuntime {
         const unavailableNames = [
           ...new Set(state.suppressedToolCalls.map((toolCall) => toolCall.name)),
         ];
-        currentMessages.push(markRuntimeGeneratedUserMessage({
-          id: `runtime_note_${Date.now()}_${step}`,
-          role: "user",
-          parts: [{
-            type: "text",
-            text: `Runtime recovery: ignored unavailable tool call(s): ${
-              unavailableNames.join(", ")
-            }. Continue using only currently available tools: ${runtimeToolNames.join(", ")}.`,
-          }],
-          timestamp: Date.now(),
-        }));
+        currentMessages.push(
+          markRuntimeGeneratedUserMessage({
+            id: `runtime_note_${Date.now()}_${step}`,
+            role: "user",
+            parts: [{
+              type: "text",
+              text: `Runtime recovery: ignored unavailable tool call(s): ${
+                unavailableNames.join(", ")
+              }. Continue using only currently available tools: ${runtimeToolNames.join(", ")}.`,
+            }],
+            timestamp: Date.now(),
+          }),
+        );
       }
 
       throwIfAborted(abortSignal);

@@ -67,4 +67,24 @@ describe("agent/runtime message origin", () => {
       }
     }
   });
+
+  it("uses captured WeakSet operations after prototype mutation", () => {
+    const runtimeMessage = { role: "user" };
+    const originalAdd = WeakSet.prototype.add;
+    const originalHas = WeakSet.prototype.has;
+    WeakSet.prototype.add = function () {
+      throw new Error("unexpected WeakSet.prototype.add call");
+    };
+    WeakSet.prototype.has = function () {
+      throw new Error("unexpected WeakSet.prototype.has call");
+    };
+    try {
+      markRuntimeGeneratedUserMessage(runtimeMessage);
+      assertEquals(isRuntimeGeneratedUserMessage(runtimeMessage), true);
+      assertEquals(isGenuineUserTurnMessage(runtimeMessage), false);
+    } finally {
+      WeakSet.prototype.add = originalAdd;
+      WeakSet.prototype.has = originalHas;
+    }
+  });
 });
