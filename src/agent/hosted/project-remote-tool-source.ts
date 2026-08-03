@@ -9,10 +9,11 @@ import {
   type ToolExecutionContext,
 } from "#veryfront/tool";
 import {
+  type AgentServiceFirstPartyMcpServerKind,
   type AgentServiceMcpServerConfig,
   type AgentServiceRemoteMcpSourceFactory,
-  createAgentServiceRemoteMcpConfig,
   defaultAgentServiceMcpServers,
+  resolveAgentServiceRemoteMcpConfig,
 } from "../service/mcp-server-config.ts";
 import type { AgentMcpToolPolicy } from "../types.ts";
 import { wrapRemoteToolSourceWithMcpPolicy } from "../mcp-tool-policy.ts";
@@ -313,6 +314,7 @@ function createHostedProjectRemoteToolSourceFromConfig(
   input: CreateHostedProjectRemoteToolSourcesInput,
   server: AgentServiceMcpServerConfig,
   source: RemoteToolSource,
+  trustedKind?: AgentServiceFirstPartyMcpServerKind,
   onProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler,
 ): RemoteToolSource {
   const policySource = createHostedMcpToolPolicySource(source, server.toolPolicy);
@@ -330,7 +332,7 @@ function createHostedProjectRemoteToolSourceFromConfig(
     ...(input.projectScopedRemoteToolOptions !== undefined
       ? { projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions }
       : {}),
-    ...(server.kind === "veryfront-api"
+    ...(trustedKind === "veryfront-api"
       ? {
         filterToolDefinitions: ({ source, toolDefinitions, activeProjectId, context }) =>
           filterVeryfrontApiToolDefinitionsWithAccessProfile({
@@ -373,7 +375,7 @@ export function createHostedProjectRemoteToolSources(
   const hasExplicitMcpServers = input.mcpServers !== undefined;
 
   for (const server of mcpServers) {
-    const remoteConfig = createAgentServiceRemoteMcpConfig({
+    const resolvedRemoteConfig = resolveAgentServiceRemoteMcpConfig({
       server,
       authToken: input.authToken,
       apiMcpUrl: input.apiMcpUrl,
@@ -382,19 +384,21 @@ export function createHostedProjectRemoteToolSources(
       getProjectId: input.getProjectId,
       conversationId: input.conversationId,
     });
-    if (!remoteConfig) {
+    if (!resolvedRemoteConfig) {
       if (hasExplicitMcpServers && server.kind === "veryfront-studio") {
         throwExplicitStudioMcpUnavailable(input);
       }
       continue;
     }
+    const { config: remoteConfig, trustedKind } = resolvedRemoteConfig;
 
     sources.push(
       createHostedProjectRemoteToolSourceFromConfig(
         input,
         server,
-        createRemoteToolSource(remoteConfig, server),
-        server.kind === "veryfront-studio" ? input.onStudioProjectSwitch : undefined,
+        createRemoteToolSource(remoteConfig, trustedKind),
+        trustedKind,
+        trustedKind === "veryfront-studio" ? input.onStudioProjectSwitch : undefined,
       ),
     );
   }

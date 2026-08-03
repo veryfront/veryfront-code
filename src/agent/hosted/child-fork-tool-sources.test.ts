@@ -15,7 +15,7 @@ import type {
 } from "#veryfront/tool";
 import { dynamicTool } from "#veryfront/tool";
 import { defineSchema } from "../../schemas/define.ts";
-import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
+import type { AgentServiceFirstPartyMcpServerKind } from "../service/mcp-server-config.ts";
 import {
   prepareDefaultHostedChildForkSandboxToolSources,
   prepareDefaultHostedChildForkToolSources,
@@ -57,10 +57,10 @@ function createRemoteSourceFixtures() {
 
   const createRemoteToolSource = (
     config: RemoteMCPToolSourceConfig,
-    server?: AgentServiceMcpServerConfig,
+    trustedKind?: AgentServiceFirstPartyMcpServerKind,
   ): RemoteToolSource => {
     createdConfigs.push(config);
-    serverKinds.push(server?.kind);
+    serverKinds.push(trustedKind);
     const sourceId = config.id ?? "source";
 
     return {

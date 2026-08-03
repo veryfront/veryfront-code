@@ -30,10 +30,19 @@ export type AgentServiceMcpServerConfig =
   | AgentServiceVeryfrontStudioMcpServerConfig
   | AgentServiceGenericMcpServerConfig;
 
-/** Creates a remote source while preserving the originating server config. */
+export type AgentServiceFirstPartyMcpServerKind =
+  | "veryfront-api"
+  | "veryfront-studio";
+
+export type ResolvedAgentServiceRemoteMcpConfig = {
+  config: RemoteMCPToolSourceConfig;
+  trustedKind?: AgentServiceFirstPartyMcpServerKind;
+};
+
+/** Creates a remote source with stable first-party provenance resolved by host code. */
 export type AgentServiceRemoteMcpSourceFactory = (
   config: RemoteMCPToolSourceConfig,
-  server?: AgentServiceMcpServerConfig,
+  trustedKind?: AgentServiceFirstPartyMcpServerKind,
 ) => RemoteToolSource;
 
 export type CreateAgentServiceRemoteMcpConfigInput = {
@@ -49,6 +58,18 @@ export type CreateAgentServiceRemoteMcpConfigInput = {
 
 export function defaultAgentServiceMcpServers(): AgentServiceMcpServerConfig[] {
   return [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }];
+}
+
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+
+function readOwnFirstPartyServerKind(
+  server: AgentServiceMcpServerConfig,
+): AgentServiceFirstPartyMcpServerKind | undefined {
+  const descriptor = getOwnPropertyDescriptor(server, "kind");
+  if (!descriptor || !("value" in descriptor)) return undefined;
+  return descriptor.value === "veryfront-api" || descriptor.value === "veryfront-studio"
+    ? descriptor.value
+    : undefined;
 }
 
 function createGenericRemoteMcpConfig(
@@ -108,16 +129,35 @@ function createVeryfrontStudioRemoteMcpConfig(
   };
 }
 
+export function resolveAgentServiceRemoteMcpConfig(
+  input: CreateAgentServiceRemoteMcpConfigInput,
+): ResolvedAgentServiceRemoteMcpConfig | null {
+  const trustedKind = readOwnFirstPartyServerKind(input.server);
+  if (trustedKind === "veryfront-api") {
+    return {
+      config: createVeryfrontApiRemoteMcpConfig(
+        input,
+        input.server as AgentServiceVeryfrontApiMcpServerConfig,
+      ),
+      trustedKind,
+    };
+  }
+
+  if (trustedKind === "veryfront-studio") {
+    const config = createVeryfrontStudioRemoteMcpConfig(
+      input,
+      input.server as AgentServiceVeryfrontStudioMcpServerConfig,
+    );
+    return config ? { config, trustedKind } : null;
+  }
+
+  return {
+    config: createGenericRemoteMcpConfig(input.server as AgentServiceGenericMcpServerConfig),
+  };
+}
+
 export function createAgentServiceRemoteMcpConfig(
   input: CreateAgentServiceRemoteMcpConfigInput,
 ): RemoteMCPToolSourceConfig | null {
-  if (input.server.kind === "veryfront-api") {
-    return createVeryfrontApiRemoteMcpConfig(input, input.server);
-  }
-
-  if (input.server.kind === "veryfront-studio") {
-    return createVeryfrontStudioRemoteMcpConfig(input, input.server);
-  }
-
-  return createGenericRemoteMcpConfig(input.server);
+  return resolveAgentServiceRemoteMcpConfig(input)?.config ?? null;
 }

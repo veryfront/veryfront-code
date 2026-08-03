@@ -7,8 +7,8 @@ import { AGENT_ERROR } from "#veryfront/errors";
 import {
   type AgentServiceMcpServerConfig,
   type AgentServiceRemoteMcpSourceFactory,
-  createAgentServiceRemoteMcpConfig,
   defaultAgentServiceMcpServers,
+  resolveAgentServiceRemoteMcpConfig,
 } from "../service/mcp-server-config.ts";
 import {
   type AgentServiceSandboxToolsOptions,
@@ -125,19 +125,20 @@ export async function prepareDefaultHostedChildForkToolSources(
         continue;
       }
 
-      const remoteConfig = createAgentServiceRemoteMcpConfig({
+      const resolvedRemoteConfig = resolveAgentServiceRemoteMcpConfig({
         server,
         authToken: input.authToken,
         apiMcpUrl: input.apiMcpUrl,
         defaultSourceId: "veryfront-mcp-fork",
       });
-      if (!remoteConfig) {
+      if (!resolvedRemoteConfig) {
         continue;
       }
-      const rawSource = createRemoteToolSource(remoteConfig, server);
+      const { config: remoteConfig, trustedKind } = resolvedRemoteConfig;
+      const rawSource = createRemoteToolSource(remoteConfig, trustedKind);
       const policySource = createHostedMcpToolPolicySource(rawSource, server.toolPolicy);
       const rawDefinitions = await rawSource.listTools();
-      const accessFilteredDefinitions = server.kind === "veryfront-api"
+      const accessFilteredDefinitions = trustedKind === "veryfront-api"
         ? await filterVeryfrontApiToolDefinitionsWithAccessProfile({
           source: rawSource,
           toolDefinitions: rawDefinitions,

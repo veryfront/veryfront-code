@@ -11,6 +11,10 @@ import {
   MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
 } from "./remote-mcp.ts";
 import { createHostedControlPlaneMCPToolSourceFactory } from "#veryfront/agent/hosted/internal/control-plane-mcp-source.ts";
+import {
+  type AgentServiceMcpServerConfig,
+  resolveAgentServiceRemoteMcpConfig,
+} from "#veryfront/agent/service/mcp-server-config.ts";
 
 describe("tool/remote-mcp", () => {
   it("uses the exact trusted control-plane endpoint for first-party list and call", async () => {
@@ -44,12 +48,12 @@ describe("tool/remote-mcp", () => {
         id: "veryfront-mcp",
         endpoint: "http://veryfront-api:80/mcp",
         headers: { Authorization: "Bearer test-token" },
-      }, { kind: "veryfront-api" });
+      }, "veryfront-api");
       const studioSource = createSource({
         id: "studio-mcp",
         endpoint: "http://veryfront-studio:80/mcp",
         headers: { Authorization: "Bearer test-token" },
-      }, { kind: "veryfront-studio" });
+      }, "veryfront-studio");
 
       assertEquals((await apiSource.listTools()).map((tool) => tool.name), ["list_skills"]);
       assertEquals(await apiSource.executeTool("list_skills", {}), { skills: [] });
@@ -99,10 +103,48 @@ describe("tool/remote-mcp", () => {
       const source = createSource({
         id: "generic-mcp",
         endpoint: "http://veryfront-api:80/mcp",
-      }, {
-        kind: "generic",
-        endpoint: "http://veryfront-api:80/mcp",
       });
+
+      await assertRejects(
+        () => source.listTools(),
+        Error,
+        "Outbound network egress blocked",
+      );
+    });
+
+    assertEquals(transportCalls, 0);
+  });
+
+  it("does not trust a server kind accessor that changes after config resolution", async () => {
+    let kindReads = 0;
+    let transportCalls = 0;
+    const endpoint = "http://veryfront-api:80/mcp";
+    const server = {
+      endpoint,
+      headers: { Authorization: "Bearer attacker-controlled" },
+      listMethod: "attacker/list",
+    } as Record<string, unknown>;
+    Object.defineProperty(server, "kind", {
+      configurable: true,
+      enumerable: true,
+      get: () => kindReads++ === 0 ? "generic" : "veryfront-api",
+    });
+
+    await withMockFetch(() => {
+      transportCalls++;
+      return Promise.resolve(Response.json({
+        jsonrpc: "2.0",
+        id: "response-1",
+        result: { tools: [] },
+      }));
+    }, async () => {
+      const resolved = resolveAgentServiceRemoteMcpConfig({
+        server: server as AgentServiceMcpServerConfig,
+        authToken: "host-token",
+        apiMcpUrl: endpoint,
+      });
+      const createSource = createHostedControlPlaneMCPToolSourceFactory({ apiMcpUrl: endpoint });
+      const source = createSource(resolved!.config, resolved!.trustedKind);
 
       await assertRejects(
         () => source.listTools(),
@@ -135,7 +177,12 @@ describe("tool/remote-mcp", () => {
         const createSource = createHostedControlPlaneMCPToolSourceFactory({
           apiMcpUrl: endpoint,
         });
-        const source = createSource({ endpoint }, { endpoint });
+        const resolved = resolveAgentServiceRemoteMcpConfig({
+          server: { endpoint } as AgentServiceMcpServerConfig,
+          authToken: "host-token",
+          apiMcpUrl: endpoint,
+        });
+        const source = createSource(resolved!.config, resolved!.trustedKind);
 
         await assertRejects(
           () => source.listTools(),
@@ -157,7 +204,7 @@ describe("tool/remote-mcp", () => {
     const source = createSource({
       id: "local-api-mcp",
       endpoint: "http://localhost/mcp",
-    }, { kind: "veryfront-api" });
+    }, "veryfront-api");
 
     await assertRejects(
       () => source.listTools(),

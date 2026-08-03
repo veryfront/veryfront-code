@@ -101,7 +101,7 @@ async function loadStudioMcpState(input: {
         );
       },
     },
-    { kind: "veryfront-studio" },
+    "veryfront-studio",
   );
 
   return {

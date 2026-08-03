@@ -8,14 +8,12 @@ import { createRemoteMCPToolSource } from "#veryfront/tool/remote-mcp.ts";
 import { createRemoteMCPToolSourceWithFetch } from "#veryfront/tool/internal/remote-mcp-transport.ts";
 import type { RemoteMCPToolSourceConfig } from "#veryfront/tool";
 import type {
-  AgentServiceMcpServerConfig,
+  AgentServiceFirstPartyMcpServerKind,
   AgentServiceRemoteMcpSourceFactory,
 } from "../../service/mcp-server-config.ts";
 
 // Capture the host transport before project execution can replace global fetch.
 const capturedHostFetch = globalThis.fetch.bind(globalThis);
-const ObjectHasOwn = Object.hasOwn;
-
 function getHostFetch(): typeof fetch {
   return getHostEnv("DENO_TESTING") === "1" ? globalThis.fetch.bind(globalThis) : capturedHostFetch;
 }
@@ -58,16 +56,16 @@ export function createTrustedControlPlaneMCPToolSourceFactory(
     };
   }
 
-  return (config: RemoteMCPToolSourceConfig, server?: AgentServiceMcpServerConfig) => {
-    const serverKind = server !== undefined && ObjectHasOwn(server, "kind")
-      ? server.kind
-      : undefined;
+  return (
+    config: RemoteMCPToolSourceConfig,
+    trustedKind?: AgentServiceFirstPartyMcpServerKind,
+  ) => {
     let trustedTransport: (typeof trustedTransports)[number] | undefined;
     if (typeof config.endpoint === "string") {
       for (let index = 0; index < trustedTransports.length; index++) {
         const candidate = trustedTransports[index]!;
         if (
-          serverKind === candidate.kind &&
+          trustedKind === candidate.kind &&
           (config.endpoint === candidate.configuredEndpoint ||
             config.endpoint === candidate.normalizedEndpoint)
         ) {

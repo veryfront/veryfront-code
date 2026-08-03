@@ -493,9 +493,9 @@ Deno.test("createHostedProjectRemoteToolSources defaults to first-party MCP serv
       capabilities: ["ui_panels"],
     },
     getProjectId: () => "project-1",
-    createRemoteToolSource: (config, server) => {
+    createRemoteToolSource: (config, trustedKind) => {
       configs.push(config);
-      serverKinds.push(server?.kind);
+      serverKinds.push(trustedKind);
       return createRemoteSource({ id: config.id, tools: [projectFileTool("update_file")] });
     },
   });
