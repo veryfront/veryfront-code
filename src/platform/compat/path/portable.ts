@@ -1,4 +1,11 @@
 import type { PathObject } from "./types.ts";
+import {
+  primordialArrayAt as arrayAt,
+  primordialArrayFilter as arrayFilter,
+  primordialArrayJoin as arrayJoin,
+  primordialArrayPop as arrayPop,
+  primordialArrayPush as arrayPush,
+} from "../primordials/array.ts";
 
 interface RootInfo {
   absolute: boolean;
@@ -78,15 +85,15 @@ function normalizeTail(rest: string, absolute: boolean): string[] {
     if (segment === "" || segment === ".") continue;
 
     if (segment !== "..") {
-      normalized.push(segment);
+      arrayPush(normalized, segment);
       continue;
     }
 
-    const previous = normalized.at(-1);
+    const previous = arrayAt(normalized, -1);
     if (previous !== undefined && previous !== "..") {
-      normalized.pop();
+      arrayPop(normalized);
     } else if (!absolute) {
-      normalized.push("..");
+      arrayPush(normalized, "..");
     }
   }
 
@@ -155,7 +162,7 @@ export function portableNormalize(path: string, windows: boolean): string {
   if (path === "") return ".";
 
   const root = analyzeRoot(path, windows);
-  const tail = normalizeTail(root.rest, root.absolute).join("/");
+  const tail = arrayJoin(normalizeTail(root.rest, root.absolute), "/");
   let result = appendRoot(root, tail);
 
   const hadTrailingSeparator = /[\\/]$/.test(path);
@@ -172,9 +179,9 @@ export function portableNormalize(path: string, windows: boolean): string {
 }
 
 export function portableJoin(paths: readonly string[], windows: boolean): string {
-  const nonempty = paths.filter((path) => path.length > 0);
+  const nonempty = arrayFilter(paths, (path) => path.length > 0);
   if (nonempty.length === 0) return "/";
-  return portableNormalize(nonempty.join("/"), windows);
+  return portableNormalize(arrayJoin(nonempty, "/"), windows);
 }
 
 export function portableDirname(path: string, windows: boolean): string {

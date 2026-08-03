@@ -1,14 +1,18 @@
 import { walk } from "#std/fs/walk";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
-import { createCompileArgs, DEFAULT_INCLUDES } from "./compile-binary.ts";
 import { FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES } from "#veryfront/extensions/first-party-defaults.ts";
+import {
+  createCompileArgs,
+  DEFAULT_INCLUDES,
+  PROXY_INCLUDES,
+} from "./compile-binary.ts";
 
 it("compiled CLI embeds the default Node WebSocket extension for HMR", () => {
   const args = createCompileArgs({
     entrypoint: "cli/main.ts",
     extraIncludes: [],
-    output: "/tmp/veryfront",
+    output: "veryfront",
   });
 
   assertEquals(
@@ -97,4 +101,251 @@ it("compiled CLI embeds the auto-loaded Sentry reporter", () => {
     ),
     true,
   );
+});
+
+it("proxy binary embeds only the runtime-resolved proxy entrypoint", async () => {
+  const args = createCompileArgs({
+    entrypoint: "cli/proxy-main.ts",
+    extraIncludes: [],
+    output: "veryfront-proxy",
+    profile: "proxy",
+  });
+
+  for (const include of PROXY_INCLUDES) {
+    assertEquals(
+      args.includes(include),
+      true,
+      `missing proxy include ${include}`,
+    );
+  }
+
+  assertEquals(args.includes("--node-modules-dir=none"), true);
+  assertEquals(args.includes("scripts/build/proxy-deno.lock"), true);
+  assertEquals(args.includes("--frozen"), true);
+  assertEquals(args.includes("extensions/ext-image-sharp/src/index.ts"), false);
+  assertEquals(args.includes("dist/framework-src"), false);
+  assertEquals(args.at(-1), "cli/proxy-main.ts");
+
+  const entrypoint = await Deno.readTextFile("cli/proxy-main.ts");
+  const runtimeImportIndex = entrypoint.indexOf(
+    'import "./commands/serve/proxy-runtime.ts";',
+  );
+  assertEquals(
+    runtimeImportIndex >= 0,
+    true,
+    "proxy entrypoint must evaluate proxy-runtime before extension anchors",
+  );
+  for (
+    const extension of [
+      "ext-auth-jwt",
+      "ext-cache-redis",
+      "ext-redis",
+      "ext-observability-opentelemetry",
+      "ext-observability-sentry",
+    ]
+  ) {
+    const extensionImportIndex = entrypoint.indexOf(
+      `../extensions/${extension}/src/index.ts`,
+    );
+    assertEquals(
+      extensionImportIndex >= 0,
+      true,
+      `proxy entrypoint must statically embed ${extension}`,
+    );
+    assertEquals(
+      runtimeImportIndex < extensionImportIndex,
+      true,
+      `proxy-runtime must evaluate before ${extension} top-level code`,
+    );
+  }
+
+  const lock = JSON.parse(
+    await Deno.readTextFile("scripts/build/proxy-deno.lock"),
+  ) as { npm?: Record<string, unknown> };
+  const packages = Object.keys(lock.npm ?? {});
+  for (const unrelated of ["@huggingface/transformers", "esbuild", "sharp"]) {
+    assertEquals(
+      packages.some((name) =>
+        name === unrelated || name.startsWith(`${unrelated}@`)
+      ),
+      false,
+      `proxy lock must not contain ${unrelated}`,
+    );
+  }
+});
+
+it("proxy release verifies lock freshness and publishes an exact SBOM", async () => {
+  const workflow = await Deno.readTextFile(".github/workflows/cicd.yml");
+  const denoConfig = JSON.parse(await Deno.readTextFile("deno.json")) as {
+    tasks?: Record<string, string>;
+  };
+
+  assertEquals(workflow.includes("deno task build:proxy-lock"), true);
+  assertEquals(
+    workflow.includes("git diff --exit-code -- scripts/build/proxy-deno.lock"),
+    true,
+  );
+  assertEquals(
+    workflow.includes("deno task sbom --lock scripts/build/proxy-deno.lock"),
+    true,
+  );
+  assertEquals(
+    /build-binaries:[\s\S]*?strategy:\n\s+fail-fast: false\n\s+matrix:/
+      .test(workflow),
+    true,
+    "proxy release leg must not cancel existing binary builds",
+  );
+  assertEquals(
+    denoConfig.tasks?.["build:proxy-lock"]?.includes("--frozen=false"),
+    false,
+    "proxy lock refresh must use Deno's default mutable lock mode",
+  );
+
+  for (
+    const { artifact, target } of [
+      {
+        artifact: "veryfront-proxy-linux-x64",
+        target: "x86_64-unknown-linux-gnu",
+      },
+      {
+        artifact: "veryfront-proxy-linux-arm64",
+        target: "aarch64-unknown-linux-gnu",
+      },
+    ]
+  ) {
+    assertEquals(
+      new RegExp(
+        String
+          .raw`target: ${target}[\s\S]*?name: ${artifact}[\s\S]*?entrypoint: cli/proxy-main\.ts[\s\S]*?profile: proxy`,
+      ).test(workflow),
+      true,
+      `release matrix must publish ${artifact} from the proxy profile`,
+    );
+  }
+});
+
+it("proxy profile defaults to the dedicated proxy entrypoint", () => {
+  const args = createCompileArgs({
+    extraIncludes: [],
+    output: "veryfront-proxy",
+    profile: "proxy",
+  });
+
+  assertEquals(args.at(-1), "cli/proxy-main.ts");
+});
+
+it("compiled proxy smoke covers cache and observability providers", async () => {
+  const smoke = await Deno.readTextFile("scripts/build/smoke-proxy-binary.sh");
+
+  for (
+    const contract of [
+      "CACHE_TYPE=memory",
+      "CACHE_TYPE=redis",
+      "TokenCacheStore registered",
+      "ambient-redis",
+      "CACHE_TYPE=memory REDIS_URL=redis://127.0.0.1:1",
+      "[ext-redis] RedisRuntimeProvider registered",
+      "OTEL_TRACES_EXPORTER=otlp",
+      "[otel] Initialized",
+      "run_smoke otel",
+      "run_smoke sentry",
+      "VERYFRONT_ERROR_REPORTER=sentry",
+      "SENTRY_DSN=https://public@example.com/1",
+    ]
+  ) {
+    assertEquals(
+      smoke.includes(contract),
+      true,
+      `missing smoke contract ${contract}`,
+    );
+  }
+
+  assertEquals(
+    smoke.includes('if ! grep -Fq "$expected_log" "$log_file"; then'),
+    true,
+    "missing proxy log markers must print diagnostics before failing",
+  );
+  assertEquals(
+    /if ! grep -Fq "\$expected_log" "\$log_file"; then\s+sleep 1\s+continue/
+      .test(smoke),
+    true,
+    "healthy proxies must retry briefly while asynchronous provider logs flush",
+  );
+  assertEquals(
+    smoke.includes("--connect-timeout") && smoke.includes("--max-time"),
+    true,
+    "health probes must be bounded inside the retry window",
+  );
+  assertEquals(
+    smoke.includes("PROXY_BINARY_MAX_BYTES") &&
+      smoke.includes("188743680"),
+    true,
+    "compiled proxy smoke must enforce a defensible artifact size ceiling",
+  );
+  assertEquals(
+    smoke.includes("${TMPDIR:-/tmp}/veryfront-proxy-smoke.XXXXXX"),
+    true,
+    "smoke temp directory must use a portable mktemp template",
+  );
+});
+
+it("proxy release enforces the cold-start cgroup budget", async () => {
+  const workflow = await Deno.readTextFile(".github/workflows/cicd.yml");
+  const invocation =
+    "bash scripts/build/smoke-proxy-memory.sh ./veryfront-proxy-linux-x64";
+
+  assertEquals(
+    workflow.split(invocation).length - 1,
+    2,
+    "pull-request and main-release jobs must both enforce proxy memory",
+  );
+  assertEquals(
+    workflow.split("if: matrix.name == 'veryfront-proxy-linux-x64'").length -
+      1,
+    2,
+    "provider and memory smoke must execute only for the native x64 proxy",
+  );
+
+  const smoke = await Deno.readTextFile(
+    "scripts/build/smoke-proxy-memory.sh",
+  );
+  for (
+    const contract of [
+      'memory_limit="${PROXY_MEMORY_LIMIT:-1536m}"',
+      'attempts="${PROXY_MEMORY_ATTEMPTS:-3}"',
+      'container_platform="${PROXY_MEMORY_PLATFORM:-}"',
+      '--memory "$memory_limit"',
+      "{{.State.OOMKilled}}",
+      '"/_proxy/health"',
+    ]
+  ) {
+    assertEquals(
+      smoke.includes(contract),
+      true,
+      `missing proxy memory contract ${contract}`,
+    );
+  }
+});
+
+it("proxy binary smoke runs only for same-repository pull requests", async () => {
+  const workflow = await Deno.readTextFile(".github/workflows/cicd.yml");
+
+  assertEquals(
+    workflow.includes(
+      "if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.event_name == 'pull_request' }}",
+    ),
+    true,
+  );
+});
+
+it("full binary remains the default compile profile", () => {
+  const args = createCompileArgs({
+    entrypoint: "cli/main.ts",
+    extraIncludes: [],
+    output: "veryfront",
+  });
+
+  assertEquals(args.includes("extensions/ext-image-sharp/src/index.ts"), true);
+  assertEquals(args.includes("dist/framework-src"), true);
+  assertEquals(args.includes("scripts/build/proxy-deno.lock"), false);
 });

@@ -43,7 +43,7 @@ describe("import-map-loader", () => {
       });
     });
 
-    it("should load deno.json with both imports and scopes", async () => {
+    it("should load deno.json imports and strip scoped framework overrides", async () => {
       await withImportMapTestContext("import-map-load-scopes", async (context, adapter) => {
         const denoConfig = {
           imports: {
@@ -73,7 +73,7 @@ describe("import-map-loader", () => {
         assertExists(importMap.scopes);
         assertEquals(typeof importMap.scopes, "object");
 
-        assertEquals(importMap.scopes?.["/vendor/"]?.["react"], "https://esm.sh/react@17.0.2");
+        assertEquals(importMap.scopes?.["/vendor/"]?.["react"], undefined);
       });
     });
 

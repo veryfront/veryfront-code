@@ -2071,7 +2071,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       const urlString = String(url);
       fetchUrls.push(urlString);
       assertEquals(
-        new Headers(init?.headers).get("authorization"),
+        new Headers(observeFetchRequestInit(init).headers).get("authorization"),
         "Bearer request-scoped-user-token",
       );
       if (urlString === "https://api.veryfront.org/projects/demo-project/environments") {
@@ -2886,7 +2886,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let discoveryCalls = 0;
     let redirect: RequestRedirect | undefined;
     globalThis.fetch = ((_input, init) => {
-      redirect = init?.redirect;
+      redirect = observeFetchRequestInit(init).redirect;
       return Promise.resolve(new Response(null, { status: 403 }));
     }) as typeof fetch;
     const handler = new AgentStreamHandler({

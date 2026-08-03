@@ -15,8 +15,25 @@ import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
+import {
+  DEPENDENCY_PINS_HEADER,
+  SNAPSHOT_CONFLICT_BODY,
+} from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
+import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 const originalPinningFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+
+function createLoopbackRequest(input: string | URL, init?: RequestInit): Request {
+  const headers = new Headers(init?.headers);
+  headers.set("host", new URL(input).host);
+  const request = new Request(input, { ...init, headers });
+  recordRequestPeerFromTransport(request, {
+    runtime: "deno",
+    transport: "tcp",
+    hostname: "127.0.0.1",
+  });
+  return request;
+}
 
 function getImportSpecifiers(source: string): string[] {
   return [...source.matchAll(/\bfrom\s+["']([^"']+)["']/g)]
@@ -67,7 +84,7 @@ describe("server/handlers/dev/files/dev-file.handler", () => {
     );
 
     const encodedPath = base64urlEncode("app/page.tsx");
-    const req = new Request(`http://localhost/_veryfront/fs/${encodedPath}.js`);
+    const req = createLoopbackRequest(`http://localhost/_veryfront/fs/${encodedPath}.js`);
     const ctx = makeCtx({
       adapter,
       isLocalProject: true,
@@ -97,7 +114,7 @@ describe("server/handlers/dev/files/dev-file.handler", () => {
     );
 
     const encodedPath = base64urlEncode("app/page.tsx");
-    const req = new Request(`http://localhost/_veryfront/fs/${encodedPath}.js`);
+    const req = createLoopbackRequest(`http://localhost/_veryfront/fs/${encodedPath}.js`);
     const ctx = makeCtx({
       adapter,
       isLocalProject: true,
@@ -129,7 +146,7 @@ describe("server/handlers/dev/files/dev-file.handler", () => {
     );
 
     const encodedPath = base64urlEncode("app/page.tsx");
-    const req = new Request(`http://localhost/_veryfront/fs/${encodedPath}.js`);
+    const req = createLoopbackRequest(`http://localhost/_veryfront/fs/${encodedPath}.js`);
     const ctx = makeCtx({
       adapter,
       isLocalProject: true,
@@ -199,7 +216,7 @@ describe("server/handlers/dev/files/dev-file.handler", () => {
       );
       const encodedPath = base64urlEncode("app/page.tsx");
       const result = await handler.handle(
-        new Request(
+        createLoopbackRequest(
           `http://localhost/_veryfront/fs/${encodedPath}.js?pins=${
             encodeURIComponent(snapshotA.cacheKey)
           }`,
@@ -223,7 +240,7 @@ describe("server/handlers/dev/files/dev-file.handler", () => {
     }
   });
 
-  it("rejects missing, malformed, duplicate, unknown, and on:unknown pins", async () => {
+  it("rejects invalid pin requests with the canonical snapshot conflict", async () => {
     setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
     const projectDir = await Deno.makeTempDir({ prefix: "vf-dev-file-conflict-" });
 
@@ -237,6 +254,7 @@ describe("server/handlers/dev/files/dev-file.handler", () => {
         isLocalProject: true,
         projectId: "project-a",
         releaseId: "release-a",
+        securityConfig: { cors: true } as HandlerContext["securityConfig"],
       });
       await writePackageDependencies(
         projectDir,
@@ -263,12 +281,26 @@ describe("server/handlers/dev/files/dev-file.handler", () => {
         ]
       ) {
         const result = await handler.handle(
-          new Request(`http://localhost/_veryfront/fs/${encodedPath}.js${query}`),
+          createLoopbackRequest(`http://localhost/_veryfront/fs/${encodedPath}.js${query}`, {
+            headers: { origin: "https://example.test" },
+          }),
           ctx,
         );
 
         assertEquals(result.response?.status, 409, label);
+        assertEquals(await result.response?.text(), "Unknown dependency snapshot", label);
         assertEquals(result.response?.headers.get("cache-control"), "no-store", label);
+        assertEquals(
+          result.response?.headers.get("vary")?.toLowerCase().includes(DEPENDENCY_PINS_HEADER),
+          true,
+          label,
+        );
+        assertEquals(
+          result.response?.headers.get("access-control-allow-origin"),
+          "https://example.test",
+          label,
+        );
+        assertEquals(result.response?.headers.get("x-content-type-options"), "nosniff", label);
       }
 
       assertEquals(bundleCalls, 0);
@@ -289,7 +321,7 @@ describe("server/handlers/dev/files/dev-file.handler", () => {
     );
 
     const encodedPath = base64urlEncode("app/page.tsx");
-    const req = new Request(`http://localhost/_veryfront/fs/${encodedPath}.js`);
+    const req = createLoopbackRequest(`http://localhost/_veryfront/fs/${encodedPath}.js`);
     const ctx = makeCtx({
       adapter,
       isLocalProject: false,
@@ -308,7 +340,7 @@ describe("server/handlers/dev/files/dev-file.handler", () => {
   it("continues for non-local production requests", async () => {
     const handler = new DevFileHandler();
     const encodedPath = base64urlEncode("app/page.tsx");
-    const req = new Request(`http://localhost/_veryfront/fs/${encodedPath}.js`);
+    const req = createLoopbackRequest(`http://localhost/_veryfront/fs/${encodedPath}.js`);
     const ctx = makeCtx({
       isLocalProject: false,
       requestContext: { mode: "production" } as HandlerContext["requestContext"],
@@ -317,5 +349,204 @@ describe("server/handlers/dev/files/dev-file.handler", () => {
     const result = await handler.handle(req, ctx);
 
     assertEquals(result.continue, true);
+  });
+});
+
+describe("server/handlers/dev/files/dev-file.handler operational failures", () => {
+  beforeEach(() => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
+    clearReactVersionCache();
+  });
+
+  afterEach(async () => {
+    const esbuild = await import("veryfront/extensions/bundler");
+    await esbuild.stop();
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalPinningFlag ?? "");
+    clearReactVersionCache();
+  });
+
+  function snapshotProbeConfig(events: string[]): VeryfrontConfig {
+    const config = {} as VeryfrontConfig;
+    Object.defineProperty(config, "react", {
+      get() {
+        events.push("snapshot");
+        return undefined;
+      },
+    });
+    return config;
+  }
+
+  function devFileRequest(): Request {
+    const encodedPath = base64urlEncode("app/page.tsx");
+    return createLoopbackRequest(`http://localhost/_veryfront/fs/${encodedPath}.js`);
+  }
+
+  it("returns the existing 404 for canonical stat absence before snapshot or bundling", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    const events: string[] = [];
+    const adapter = createMockAdapter();
+    adapter.fs.stat = () => Promise.reject(new Deno.errors.NotFound("missing dev file"));
+    const ctx = makeCtx({
+      adapter,
+      config: snapshotProbeConfig(events),
+      isLocalProject: true,
+    });
+    const handler = new DevFileHandler(() => {
+      events.push("bundle");
+      return Promise.resolve("export default null;");
+    });
+
+    const result = await handler.handle(devFileRequest(), ctx);
+
+    assertEquals(result.continue, false);
+    assertEquals(result.response?.status, 404);
+    assertEquals(result.response?.headers.get("cache-control"), "no-store");
+    assertEquals(await result.response?.text(), "export default null; // File not found");
+    assertEquals(events, []);
+  });
+
+  for (
+    const [label, failure] of [
+      [
+        "a NotFound-named lookalike",
+        Object.assign(new Error("not actually absent"), { name: "NotFound" }),
+      ],
+      ["an EACCES failure", Object.assign(new Error("access denied"), { code: "EACCES" })],
+      ["an EIO failure", Object.assign(new Error("I/O failure"), { code: "EIO" })],
+      ["an arbitrary failure", new Error("stat unavailable")],
+      ["a plain ENOENT-shaped rejection", Object.freeze({ code: "ENOENT" })],
+    ] as const
+  ) {
+    it(`fails closed on ${label} from stat before snapshot or bundling`, async () => {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      const events: string[] = [];
+      const adapter = createMockAdapter();
+      adapter.fs.stat = () => Promise.reject(failure);
+      const ctx = makeCtx({
+        adapter,
+        config: snapshotProbeConfig(events),
+        isLocalProject: true,
+      });
+      const handler = new DevFileHandler(() => {
+        events.push("bundle");
+        return Promise.resolve("export default null;");
+      });
+
+      const result = await handler.handle(devFileRequest(), ctx);
+
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 404);
+      assertEquals(result.response?.headers.get("cache-control"), "no-store");
+      assertEquals(
+        await result.response?.text(),
+        "export default null; // File not accessible",
+      );
+      assertEquals(events, []);
+    });
+  }
+
+  it("fails closed on a hostile stat rejection without hooks, snapshot, or bundling", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    const failure = new Proxy({}, {
+      get() {
+        throw new Error("stat rejection must not be read");
+      },
+      getPrototypeOf() {
+        throw new Error("stat rejection prototype must not escape");
+      },
+    });
+    const events: string[] = [];
+    const adapter = createMockAdapter();
+    adapter.fs.stat = () => Promise.reject(failure);
+    const ctx = makeCtx({
+      adapter,
+      config: snapshotProbeConfig(events),
+      isLocalProject: true,
+    });
+    const handler = new DevFileHandler(() => {
+      events.push("bundle");
+      return Promise.resolve("export default null;");
+    });
+
+    const result = await handler.handle(devFileRequest(), ctx);
+
+    assertEquals(result.continue, false);
+    assertEquals(result.response?.status, 404);
+    assertEquals(
+      await result.response?.text(),
+      "export default null; // File not accessible",
+    );
+    assertEquals(events, []);
+  });
+
+  it("keeps snapshot resolution failures out of the snapshot conflict protocol", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-dev-file-resolve-failure-" });
+
+    try {
+      await Deno.writeTextFile(
+        `${projectDir}/package.json`,
+        JSON.stringify({ dependencies: { react: "18.3.1" } }),
+      );
+      const adapter = createMockAdapter();
+      const modulePath = `${projectDir}/app/page.tsx`;
+      adapter.fs.files.set(modulePath, "export default null;");
+      const config = {} as VeryfrontConfig;
+      Object.defineProperty(config, "react", {
+        get(): never {
+          throw new Error("snapshot resolution unavailable");
+        },
+      });
+      const ctx = makeCtx({ projectDir, adapter, config, isLocalProject: true });
+      let bundleCalls = 0;
+      const handler = new DevFileHandler(() => {
+        bundleCalls++;
+        return Promise.resolve("export default null;");
+      });
+      const encodedPath = base64urlEncode("app/page.tsx");
+
+      const result = await handler.handle(
+        createLoopbackRequest(`http://localhost/_veryfront/fs/${encodedPath}.js`),
+        ctx,
+      );
+
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 500);
+      assertEquals(bundleCalls, 0);
+      assertEquals(result.response?.headers.get("cache-control"), "no-store");
+      assertEquals(result.response?.headers.get("content-type"), "application/javascript");
+      const body = await result.response!.text();
+      assertEquals(body, "export default null; // Build error: snapshot resolution unavailable");
+      assertEquals(body === SNAPSHOT_CONFLICT_BODY, false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("keeps bundler rejections out of the snapshot conflict protocol", async () => {
+    const adapter = createMockAdapter();
+    const modulePath = "/project/app/page.tsx";
+    adapter.fs.files.set(modulePath, "export default null;");
+    const ctx = makeCtx({ adapter, isLocalProject: true });
+    let bundleCalls = 0;
+    const handler = new DevFileHandler(() => {
+      bundleCalls++;
+      return Promise.reject(new Error("bundler unavailable"));
+    });
+    const encodedPath = base64urlEncode("app/page.tsx");
+
+    const result = await handler.handle(
+      createLoopbackRequest(`http://localhost/_veryfront/fs/${encodedPath}.js`),
+      ctx,
+    );
+
+    assertEquals(result.continue, false);
+    assertEquals(result.response?.status, 500);
+    assertEquals(bundleCalls, 1);
+    assertEquals(result.response?.headers.get("cache-control"), "no-store");
+    assertEquals(result.response?.headers.get("content-type"), "application/javascript");
+    const body = await result.response!.text();
+    assertEquals(body, "export default null; // Build error: bundler unavailable");
+    assertEquals(body === SNAPSHOT_CONFLICT_BODY, false);
   });
 });
