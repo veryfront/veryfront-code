@@ -13,6 +13,7 @@
 
 import { build, emptyDir } from "#dnt";
 import { STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES } from "#veryfront/extensions/first-party-defaults.ts";
+import { PUBLISHED_RUNTIME_HELPERS } from "../../src/platform/compat/published-runtime-helpers.ts";
 import {
 	BROWSER_SAFE_CLIENT_MODULES,
 	BROWSER_SAFE_DNT_TIMER_MODULES,
@@ -25,6 +26,7 @@ import {
 import { buildExtensionPackages } from "./build-npm-extension-packages.ts";
 import { patchDntArgvPolyfill } from "./dnt-polyfill.ts";
 import { normalizeNpmPackageMetadata } from "./npm-package-metadata.ts";
+import { assertNpmRuntimeHelperContract } from "./npm-runtime-helper-contract.ts";
 import { normalizeEsmShReactNpmShims } from "./npm-react-shims.ts";
 import { NPM_NODE_ENGINE } from "./runtime-support.ts";
 
@@ -192,6 +194,8 @@ await build({
 
 	// Post-build steps
 	async postBuild() {
+		await assertNpmRuntimeHelperContract("./npm/esm", PUBLISHED_RUNTIME_HELPERS);
+
 		const pkgPath = "./npm/package.json";
 		const initialPkg = JSON.parse(await Deno.readTextFile(pkgPath));
 		normalizeNpmPackageMetadata(initialPkg);

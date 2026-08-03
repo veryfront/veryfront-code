@@ -1,15 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { fromFileUrl } from "#veryfront/compat/path/index.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getSkillInfo, listSkills } from "./command.ts";
 
 describe("Skills Command", () => {
-  const repositoryRoot = new URL("../../../", import.meta.url).pathname;
+  const repositoryRoot = fromFileUrl(new URL("../../../", import.meta.url));
 
   async function runSkillsInfo(
     args: string[],
   ): Promise<{ code: number; stdout: string; stderr: string }> {
-    const cliPath = new URL("../../main.ts", import.meta.url).pathname;
+    const cliPath = fromFileUrl(new URL("../../main.ts", import.meta.url));
     const result = await new Deno.Command(Deno.execPath(), {
       args: ["run", "-A", cliPath, "skills", "info", ...args, "--json"],
       cwd: repositoryRoot,

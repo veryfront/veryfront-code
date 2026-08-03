@@ -289,8 +289,8 @@ jobs:
   # ============================================
 
   # Clean-room install of the generated npm packages under Node: bare-install
-  # CLI startup, optional-peer metadata, missing-extension error quality, and
-  # extension package loading (see scripts/test/npm-install-smoke.sh).
+  # CLI startup, optional-peer metadata, extension package loading, and a real
+  # starter dev-server render (see scripts/test/npm-install-smoke.sh).
   tests-npm-install-smoke:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest

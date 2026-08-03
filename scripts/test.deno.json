@@ -15,6 +15,7 @@
     "#std/path.ts": "jsr:@std/path@1.1.4",
     "#std/yaml/parse": "jsr:@std/yaml@1.1.0/parse",
     "#std/testing/bdd": "jsr:@std/testing@1.0.17/bdd",
-    "#std/testing/bdd.ts": "jsr:@std/testing@1.0.17/bdd"
+    "#std/testing/bdd.ts": "jsr:@std/testing@1.0.17/bdd",
+    "es-module-lexer": "npm:es-module-lexer@2.3.1"
   }
 }
