@@ -3,6 +3,7 @@ import {
   assertEquals,
   assertRejects,
   assertStrictEquals,
+  assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -296,6 +297,50 @@ describe("modules/import-map/preloader", () => {
       assertEquals(getterCalls, 0);
     });
 
+    it("rejects accessor-backed config after inherited descriptor poisoning", async () => {
+      const adapter = createMinimalAdapter();
+      const originalValue = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+      let getterCalls = 0;
+      let accessorError: unknown;
+      const context = Object.defineProperty({}, "config", {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return undefined;
+        },
+      });
+
+      try {
+        Object.defineProperty(Object.prototype, "value", {
+          configurable: true,
+          value: {
+            resolve: {
+              importMap: {
+                imports: { poisoned: "https://example.com/poisoned.ts" },
+              },
+            },
+          },
+        });
+        try {
+          await preloadImportMap(
+            "/inherited-value-accessor-context",
+            adapter,
+            "inherited-value-accessor-context",
+            context,
+          );
+        } catch (error) {
+          accessorError = error;
+        }
+      } finally {
+        if (originalValue) Object.defineProperty(Object.prototype, "value", originalValue);
+        else Reflect.deleteProperty(Object.prototype, "value");
+      }
+
+      assertEquals(accessorError instanceof TypeError, true);
+      assertStringIncludes((accessorError as Error).message, "cannot be an accessor");
+      assertEquals(getterCalls, 0);
+    });
+
     it("rejects non-object config context values", async () => {
       const adapter = createMinimalAdapter();
 
@@ -522,6 +567,38 @@ describe("modules/import-map/preloader", () => {
 
       assertEquals(typeof cached, "object");
       assertEquals(cached !== undefined, true);
+    });
+
+    it("rejects accessor-backed projectDir after inherited descriptor poisoning", async () => {
+      const originalValue = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+      let getterCalls = 0;
+      let accessorError: unknown;
+      const context = Object.defineProperty({}, "projectDir", {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return "/accessed-project";
+        },
+      });
+
+      try {
+        Object.defineProperty(Object.prototype, "value", {
+          configurable: true,
+          value: "/inherited-project",
+        });
+        try {
+          await getCachedImportMap("inherited-project", context);
+        } catch (error) {
+          accessorError = error;
+        }
+      } finally {
+        if (originalValue) Object.defineProperty(Object.prototype, "value", originalValue);
+        else Reflect.deleteProperty(Object.prototype, "value");
+      }
+
+      assertEquals(accessorError instanceof TypeError, true);
+      assertStringIncludes((accessorError as Error).message, "cannot be an accessor");
+      assertEquals(getterCalls, 0);
     });
 
     it("preserves project-id lookup compatibility only for one unambiguous variant", async () => {

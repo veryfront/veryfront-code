@@ -38,6 +38,7 @@ const IntrinsicWeakSet = WeakSet;
 const IntrinsicTypeError = TypeError;
 const JSONStringify = JSON.stringify;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const MapPrototypeClear = Map.prototype.clear;
 const MapPrototypeDelete = Map.prototype.delete;
 const MapPrototypeForEach = Map.prototype.forEach;
@@ -67,6 +68,10 @@ const ClearTimeout = clearTimeout;
 
 function monotonicNow(): number {
   return ReflectApply(PerformanceNow, IntrinsicPerformance, []) as number;
+}
+
+function hasOwn(object: object, key: PropertyKey): boolean {
+  return ReflectApply(ObjectPrototypeHasOwnProperty, object, [key]) as boolean;
 }
 
 function mapClear<K, V>(map: Map<K, V>): void {
@@ -196,7 +201,7 @@ function snapshotPreloadContext(
     context,
     "contentSourceId",
   );
-  if (contentSourceDescriptor && !("value" in contentSourceDescriptor)) {
+  if (contentSourceDescriptor && !hasOwn(contentSourceDescriptor, "value")) {
     throw new IntrinsicTypeError("Import-map contentSourceId cannot be an accessor");
   }
   const contentSourceId = contentSourceDescriptor?.value;
@@ -204,7 +209,7 @@ function snapshotPreloadContext(
     throw new IntrinsicTypeError("Import-map contentSourceId must be a string");
   }
   const configDescriptor = ObjectGetOwnPropertyDescriptor(context, "config");
-  if (configDescriptor && !("value" in configDescriptor)) {
+  if (configDescriptor && !hasOwn(configDescriptor, "value")) {
     throw new IntrinsicTypeError("Import-map config cannot be an accessor");
   }
   const config = configDescriptor?.value as VeryfrontConfig | undefined;
@@ -213,7 +218,7 @@ function snapshotPreloadContext(
     throw new IntrinsicTypeError("Import-map config must be an object");
   }
   const resolveDescriptor = ObjectGetOwnPropertyDescriptor(config, "resolve");
-  if (resolveDescriptor && !("value" in resolveDescriptor)) {
+  if (resolveDescriptor && !hasOwn(resolveDescriptor, "value")) {
     throw new IntrinsicTypeError("Import-map config resolve cannot be an accessor");
   }
   const resolve = resolveDescriptor?.value;
@@ -223,7 +228,7 @@ function snapshotPreloadContext(
   const importMapDescriptor = resolve
     ? ObjectGetOwnPropertyDescriptor(resolve, "importMap")
     : undefined;
-  if (importMapDescriptor && !("value" in importMapDescriptor)) {
+  if (importMapDescriptor && !hasOwn(importMapDescriptor, "value")) {
     throw new IntrinsicTypeError("Import-map config resolve.importMap cannot be an accessor");
   }
   const importMap = snapshotImportMap(importMapDescriptor?.value ?? {});
@@ -865,7 +870,7 @@ export class ImportMapPreloader {
     const projectDirDescriptor = context && typeof context === "object"
       ? ObjectGetOwnPropertyDescriptor(context, "projectDir")
       : undefined;
-    if (projectDirDescriptor && !("value" in projectDirDescriptor)) {
+    if (projectDirDescriptor && !hasOwn(projectDirDescriptor, "value")) {
       throw new IntrinsicTypeError("Import-map projectDir cannot be an accessor");
     }
     const contextProjectDir = projectDirDescriptor?.value;

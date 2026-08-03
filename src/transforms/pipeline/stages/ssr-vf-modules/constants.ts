@@ -14,6 +14,15 @@ import { fnv1aHash, hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 
 export const LOG_PREFIX = "[SSR-VF-MODULES]";
 
+// Framework transforms can run after project code has modified shared
+// prototypes. Quote each primitive directly with the captured intrinsic so an
+// inherited Array.prototype.toJSON cannot collapse otherwise distinct keys.
+const JSONStringify = JSON.stringify;
+
+function quoteCacheIdentityPart(value: string): string {
+  return JSONStringify(value);
+}
+
 // Extensions to try when resolving framework files
 export const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
 
@@ -79,10 +88,15 @@ export function buildFrameworkTransformCacheKey(
   const contentFingerprint = `${sourceContent.length}:${hashCodeHex(sourceContent)}:${
     fnv1aHash(sourceContent)
   }`;
-  const identity = importMapFingerprint === undefined
-    ? [projectDir, reactVersion, identifier, contentFingerprint]
-    : [projectDir, reactVersion, importMapFingerprint, identifier, contentFingerprint];
-  return JSON.stringify(identity);
+  const projectPart = quoteCacheIdentityPart(projectDir);
+  const reactPart = quoteCacheIdentityPart(reactVersion);
+  const identifierPart = quoteCacheIdentityPart(identifier);
+  const contentPart = quoteCacheIdentityPart(contentFingerprint);
+  if (importMapFingerprint === undefined) {
+    return `[${projectPart},${reactPart},${identifierPart},${contentPart}]`;
+  }
+  const importMapPart = quoteCacheIdentityPart(importMapFingerprint);
+  return `[${projectPart},${reactPart},${importMapPart},${identifierPart},${contentPart}]`;
 }
 
 // Maximum entries for the per-process framework transform caches.
