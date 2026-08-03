@@ -3,7 +3,7 @@ import { flushSync } from "react-dom";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
-import { unmountReactRoot } from "#veryfront/react/test-utils.ts";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -1113,12 +1113,6 @@ describe("Select", () => {
       );
       assertEquals(rootElement.contains(trigger), true);
       assertEquals(trigger.disabled, true);
-      // The invalid markup lands one commit before the close is announced, so
-      // the disabled trigger is observable while `onOpenChange` is still queued.
-      await waitFor(
-        () => openChanges.length > 0,
-        "default-open duplicate close notification",
-      );
       assertEquals(openChanges, [false]);
     } finally {
       await unmountReactRoot(root);

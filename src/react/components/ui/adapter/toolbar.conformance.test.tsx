@@ -12,7 +12,7 @@ import { flushSync } from "react-dom";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
-import { unmountReactRoot } from "#veryfront/react/test-utils.ts";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { Toolbar, ToolbarButton, ToolbarLink, ToolbarSeparator } from "../toolbar.tsx";
@@ -423,8 +423,7 @@ describe("Builtin Toolbar SSR ownership", () => {
       assert(items[0]?.tabIndex === 0, "first enabled item owns the hydrated tab stop");
       assert(items.slice(1).every((item) => item.tabIndex === -1), "other items remain untabbable");
     } finally {
-      flushSync(() => reactRoot.unmount());
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await unmountReactRoot(reactRoot);
       restore();
     }
   });

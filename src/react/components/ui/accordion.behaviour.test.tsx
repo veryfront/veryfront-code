@@ -10,7 +10,7 @@ import { flushSync } from "react-dom";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
-import { unmountReactRoot } from "#veryfront/react/test-utils.ts";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./accordion.tsx";
