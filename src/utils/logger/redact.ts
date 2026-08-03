@@ -23,6 +23,10 @@ export const REDACTED = "[REDACTED]";
 const apply = Reflect.apply;
 const NativeUint32Array = Uint32Array;
 const arrayIsArray = Array.isArray;
+const mapDelete = Map.prototype.delete;
+const mapGet = Map.prototype.get;
+const mapKeys = Map.prototype.keys;
+const mapSet = Map.prototype.set;
 const objectDefineProperty = Object.defineProperty;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectGetPrototypeOf = Object.getPrototypeOf;
@@ -34,6 +38,11 @@ const stringIncludes = String.prototype.includes;
 const stringSlice = String.prototype.slice;
 const stringSplit = String.prototype.split;
 const stringToLowerCase = String.prototype.toLowerCase;
+const setAdd = Set.prototype.add;
+const setDelete = Set.prototype.delete;
+const setHas = Set.prototype.has;
+const mapIteratorNext = objectGetPrototypeOf(new Map().keys()).next;
+const mapSizeGetter = objectGetOwnPropertyDescriptor(Map.prototype, "size")!.get!;
 const NON_ALPHANUMERIC_PATTERN = /[^a-z0-9]/g;
 const CAMEL_CASE_BOUNDARY_PATTERN = /([a-z0-9])([A-Z])/g;
 const ACRONYM_BOUNDARY_PATTERN = /([A-Z])([A-Z][a-z])/g;
@@ -220,7 +229,7 @@ const MAX_TRAVERSAL_NODES = 4_096;
 export function isSensitiveKey(key: string): boolean {
   const cacheable = key.length <= SENSITIVE_KEY_CACHE_MAX_KEY_LENGTH;
   if (cacheable) {
-    const cached = sensitiveKeyCache.get(key);
+    const cached = apply(mapGet, sensitiveKeyCache, [key]) as boolean | undefined;
     if (cached !== undefined) return cached;
   }
 
@@ -231,11 +240,13 @@ export function isSensitiveKey(key: string): boolean {
   }
 
   if (cacheable) {
-    if (sensitiveKeyCache.size >= SENSITIVE_KEY_CACHE_MAX_SIZE) {
-      const oldestKey = sensitiveKeyCache.keys().next().value as string | undefined;
-      if (oldestKey !== undefined) sensitiveKeyCache.delete(oldestKey);
+    const cacheSize = apply(mapSizeGetter, sensitiveKeyCache, []) as number;
+    if (cacheSize >= SENSITIVE_KEY_CACHE_MAX_SIZE) {
+      const iterator = apply(mapKeys, sensitiveKeyCache, []) as MapIterator<string>;
+      const oldestKey = (apply(mapIteratorNext, iterator, []) as IteratorResult<string>).value;
+      if (oldestKey !== undefined) apply(mapDelete, sensitiveKeyCache, [oldestKey]);
     }
-    sensitiveKeyCache.set(key, sensitive);
+    apply(mapSet, sensitiveKeyCache, [key, sensitive]);
   }
 
   return sensitive;
@@ -317,8 +328,8 @@ function redactValue(
   if (arrayClassification === null) return REDACTED;
 
   if (arrayClassification) {
-    if (depth >= MAX_DEPTH || seen.has(value)) return REDACTED;
-    seen.add(value);
+    if (depth >= MAX_DEPTH || apply(setHas, seen, [value])) return REDACTED;
+    apply(setAdd, seen, [value]);
     try {
       const arrayValue = value as unknown[];
       const length = arrayValue.length;
@@ -342,7 +353,7 @@ function redactValue(
       // serialized contents unknowable, so the complete array fails closed.
       return REDACTED;
     } finally {
-      seen.delete(value);
+      apply(setDelete, seen, [value]);
     }
   }
 
@@ -354,7 +365,7 @@ function redactValue(
   // returns an object, array, or scalar, the serialization API redacts *that*
   // snapshot. The compatibility API keeps scalar serializers such as Date and
   // URL intact, preserving the established generic return contract.
-  if (depth >= MAX_DEPTH || seen.has(value)) return REDACTED;
+  if (depth >= MAX_DEPTH || apply(setHas, seen, [value])) return REDACTED;
   let toJSON: unknown;
   try {
     toJSON = readSerializationHook(value);
@@ -365,7 +376,7 @@ function redactValue(
   }
 
   if (typeof toJSON === "function") {
-    seen.add(value);
+    apply(setAdd, seen, [value]);
     try {
       const serialized = apply(toJSON, value, []);
       if (mode === "serialization") {
@@ -387,11 +398,11 @@ function redactValue(
       // skipped) through: fail closed.
       return REDACTED;
     } finally {
-      seen.delete(value);
+      apply(setDelete, seen, [value]);
     }
   }
 
-  seen.add(value);
+  apply(setAdd, seen, [value]);
   try {
     const out: Record<string, unknown> = {};
     const record = value as Record<string, unknown>;
@@ -430,7 +441,7 @@ function redactValue(
     // unredacted object through: fail closed.
     return REDACTED;
   } finally {
-    seen.delete(value);
+    apply(setDelete, seen, [value]);
   }
 }
 
@@ -844,7 +855,9 @@ export function sanitizeUrlCredentials(input: string): string {
     out,
     (match: string, sep: string, key: string, _val: string) => {
       const decodedKey = decodeUrlParameterName(key);
-      const sensitive = NORMALIZED_SENSITIVE_URL_PARAMS.has(normalizeToAlphanumeric(decodedKey)) ||
+      const sensitive = apply(setHas, NORMALIZED_SENSITIVE_URL_PARAMS, [
+        normalizeToAlphanumeric(decodedKey),
+      ]) ||
         isSensitiveKey(decodedKey);
       return sensitive ? `${sep}${key}=${REDACTED}` : match;
     },

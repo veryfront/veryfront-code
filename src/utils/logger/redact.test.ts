@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   isSensitiveKey,
   REDACTED,
+  redactForSerialization,
   redactSensitive,
   sanitizeSerializedError,
   sanitizeUrlCredentials,
@@ -293,6 +294,35 @@ describe("logger/redact", () => {
 
       assertEquals(sensitive, `refreshToken=${REDACTED}`);
       assertEquals(benign, "mapping: 4 routes resolved");
+    });
+
+    it("keeps structured and URL key redaction stable after collection prototypes change", () => {
+      const originalMapGet = Map.prototype.get;
+      const originalSetHas = Set.prototype.has;
+      let structured: unknown;
+      let url: string;
+
+      try {
+        Map.prototype.get = () => false;
+        Set.prototype.has = () => false;
+        structured = redactForSerialization({
+          prototypeMutationApiKeyProbe3325: "synthetic-opaque-credential",
+        });
+        url = sanitizeUrlCredentials(
+          "https://example.test/callback?code=synthetic-oauth-code",
+        );
+      } finally {
+        Map.prototype.get = originalMapGet;
+        Set.prototype.has = originalSetHas;
+      }
+
+      assertEquals(structured, {
+        prototypeMutationApiKeyProbe3325: REDACTED,
+      });
+      assertEquals(
+        url,
+        `https://example.test/callback?code=${REDACTED}`,
+      );
     });
 
     it("masks common provider token prefixes without assignment syntax", () => {
