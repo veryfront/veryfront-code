@@ -29,6 +29,11 @@ import {
   type AgentRuntimeForkStepRunner,
   runAgentRuntimeForkStep,
 } from "../streaming/fork-runtime-stream.ts";
+import {
+  getActiveHostedRunEventWriterCapability,
+  type HostedRunEventWriterCapability,
+  runWithHostedRunEventWriterCapability,
+} from "./child-run-event-writer-token.ts";
 import type {
   ChildRunExecutionResult,
   ChildRunExecutionSnapshot,
@@ -100,6 +105,7 @@ export type HostedChildForkExecutionRunContextFactoryInput<
 > = {
   authToken: string;
   apiUrl: string;
+  runEventWriterCapability?: HostedRunEventWriterCapability;
   durableChildRun?: HostedChildRunIdentifiers;
   conversationId?: string;
   parentRunId?: string;
@@ -114,6 +120,7 @@ export type ExecuteHostedChildForkWithPreparedToolsInput<
 > = {
   authToken: string;
   apiUrl: string;
+  runEventWriterCapability?: HostedRunEventWriterCapability;
   projectId?: string | null;
   description: string;
   kind: string;
@@ -182,7 +189,7 @@ function createForkRunContext<
       : undefined;
 
   return createHostedDurableChildForkRunContext({
-    apiUrl: input.apiUrl,
+    runEventWriterCapability: input.runEventWriterCapability,
     durableChildRun: input.durableChildRun,
     instrumentation,
     pendingToolLogContext: {
@@ -251,11 +258,11 @@ export type ExecuteHostedChildForkToolInputOptions<
     inputAlreadyHasInvocationContext?: boolean;
   };
 
-/** Input payload for execute hosted child fork tool. */
-export async function executeHostedChildForkToolInput<
+async function executeHostedChildForkToolInputWithoutWriterAuthority<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 >(
   input: ExecuteHostedChildForkToolInputOptions<TAttributes>,
+  runEventWriterCapability: HostedRunEventWriterCapability | undefined,
 ): Promise<ChildRunExecutionResult> {
   const requestedProjectReference = input.forkInput.project_reference;
   if (requestedProjectReference) {
@@ -299,14 +306,19 @@ export async function executeHostedChildForkToolInput<
 
   await input.onRuntimeConfig?.(runtimeConfig);
 
-  const toolAssembly = await input.prepareToolAssembly({
-    runtimeConfig,
-    requestedTools: runtimeConfig.requestedTools,
-    abortSignal: input.abortSignal,
-  });
+  const toolAssembly = await runWithHostedRunEventWriterCapability(
+    runEventWriterCapability,
+    () =>
+      input.prepareToolAssembly({
+        runtimeConfig,
+        requestedTools: runtimeConfig.requestedTools,
+        abortSignal: input.abortSignal,
+      }),
+  );
 
   return executeHostedChildForkWithPreparedTools({
     ...input,
+    runEventWriterCapability,
     description: runtimeConfig.description,
     provider: runtimeConfig.provider,
     forkModel: runtimeConfig.forkModel,
@@ -326,27 +338,28 @@ export async function executeHostedChildForkToolInput<
   });
 }
 
-/** Execute hosted child fork with prepared tools. */
-export async function executeHostedChildForkWithPreparedTools<
+/** Input payload for execute hosted child fork tool. */
+export async function executeHostedChildForkToolInput<
+  TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
+>(
+  input: ExecuteHostedChildForkToolInputOptions<TAttributes>,
+): Promise<ChildRunExecutionResult> {
+  const runEventWriterCapability = input.runEventWriterCapability ??
+    getActiveHostedRunEventWriterCapability();
+
+  return await runWithHostedRunEventWriterCapability(
+    undefined,
+    () => executeHostedChildForkToolInputWithoutWriterAuthority(input, runEventWriterCapability),
+  );
+}
+
+async function executeHostedChildForkWithoutWriterAuthority<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 >(
   input: ExecuteHostedChildForkWithPreparedToolsInput<TAttributes>,
+  runContext: HostedDurableChildForkRunContext,
+  startTime: number,
 ): Promise<ChildRunExecutionResult> {
-  const startTime = input.startTime ?? Date.now();
-  const runContextInput = {
-    authToken: input.authToken,
-    apiUrl: input.apiUrl,
-    durableChildRun: input.durableChildRun,
-    conversationId: input.conversationId,
-    parentRunId: input.parentRunId,
-    description: input.description,
-    instrumentation: input.instrumentation,
-    pendingToolLogWriter: input.pendingToolLogWriter,
-  };
-  const runContext = input.createRunContext
-    ? input.createRunContext(runContextInput)
-    : createForkRunContext(runContextInput);
-
   let closeTooling: (() => Promise<void>) | undefined;
   let closeRuntime: (() => Promise<void>) | undefined;
   let childRunMonitorAbortController: AbortController | null = null;
@@ -503,4 +516,38 @@ export async function executeHostedChildForkWithPreparedTools<
     closeTooling = undefined;
     closeRuntime = undefined;
   }
+}
+
+/** Execute hosted child fork with prepared tools. */
+export async function executeHostedChildForkWithPreparedTools<
+  TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
+>(
+  input: ExecuteHostedChildForkWithPreparedToolsInput<TAttributes>,
+): Promise<ChildRunExecutionResult> {
+  const startTime = input.startTime ?? Date.now();
+  const runEventWriterCapability = input.runEventWriterCapability ??
+    getActiveHostedRunEventWriterCapability();
+  const runContextInput = {
+    authToken: input.authToken,
+    apiUrl: input.apiUrl,
+    ...(runEventWriterCapability ? { runEventWriterCapability } : {}),
+    durableChildRun: input.durableChildRun,
+    conversationId: input.conversationId,
+    parentRunId: input.parentRunId,
+    description: input.description,
+    instrumentation: input.instrumentation,
+    pendingToolLogWriter: input.pendingToolLogWriter,
+  };
+  const runContext = runWithHostedRunEventWriterCapability(
+    runEventWriterCapability,
+    () =>
+      input.createRunContext
+        ? input.createRunContext(runContextInput)
+        : createForkRunContext(runContextInput),
+  );
+
+  return await runWithHostedRunEventWriterCapability(
+    undefined,
+    () => executeHostedChildForkWithoutWriterAuthority(input, runContext, startTime),
+  );
 }

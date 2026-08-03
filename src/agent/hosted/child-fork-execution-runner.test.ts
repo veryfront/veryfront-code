@@ -13,6 +13,11 @@ import { createHostedDurableChildForkRunContext } from "./child-fork-run-context
 import type { AgentResponse } from "../schemas/index.ts";
 import { UNCONFIRMED_AGENT_PROJECT_IDENTITY_MESSAGE } from "../project/context.ts";
 import { getActiveModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
+import {
+  createHostedRunEventWriterCapability,
+  getActiveHostedRunEventWriterCapability,
+  runWithHostedRunEventWriterCapability,
+} from "./child-run-event-writer-token.ts";
 
 function createRuntimeEventStream(
   events: readonly Record<string, unknown>[],
@@ -213,6 +218,60 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the runtime 
   }
 });
 
+Deno.test("executeHostedChildForkWithPreparedTools clears writer authority before provider dispatch", async () => {
+  const capability = createHostedRunEventWriterCapability({
+    apiUrl: "https://api.example.com",
+    runId: "run-parent",
+    runEventAppendToken: "parent-writer-token",
+  });
+  let authorityDuringDispatch: unknown;
+
+  const result = await runWithHostedRunEventWriterCapability(
+    capability,
+    () =>
+      executeHostedChildForkWithPreparedTools({
+        authToken: "user-token",
+        apiUrl: "https://api.example.com",
+        description: "Check the app",
+        kind: "invoke_agent",
+        provider: "anthropic",
+        forkModel: "anthropic/claude-sonnet-4",
+        maxSteps: 4,
+        effectivePrompt: "Do the work.",
+        toolAssembly: {
+          ok: true,
+          forkTools: {},
+          availableToolNames: [],
+        },
+        startRuntime: () => {
+          authorityDuringDispatch = getActiveHostedRunEventWriterCapability();
+          return {
+            forkStreamAbortController: new AbortController(),
+            childRunMonitorAbortController: null,
+            childRunMonitorPromise: Promise.resolve(),
+            forkToolNames: [],
+            streamResult: {
+              fullStream: (async function* () {
+                yield { type: "text-delta", text: "Done." } as const;
+              })(),
+              steps: Promise.resolve([{
+                text: "Done.",
+                finishReason: "stop",
+                messages: [],
+                toolCalls: [],
+                toolResults: [],
+              }]),
+              totalUsage: Promise.resolve(undefined),
+            },
+          };
+        },
+      }),
+  );
+
+  assertEquals(result.success, true);
+  assertEquals(authorityDuringDispatch, undefined);
+});
+
 Deno.test("executeHostedChildForkWithPreparedTools fails closed before provider dispatch without a child writer token", async () => {
   let startRuntimeCalls = 0;
   const result = await executeHostedChildForkWithPreparedTools({
@@ -281,7 +340,6 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run cont
       assertEquals("runEventWriterCapability" in input, false);
       assertEquals(input.apiUrl, "https://api.example.com");
       const context = createHostedDurableChildForkRunContext({
-        apiUrl: input.apiUrl,
         instrumentation: input.instrumentation,
         pendingToolLogContext: {
           conversationId: input.conversationId,

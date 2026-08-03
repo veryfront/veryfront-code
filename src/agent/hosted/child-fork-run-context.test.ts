@@ -12,6 +12,10 @@ import {
   createHostedRunEventWriterCapability,
   runWithHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
+import {
+  createHostedDurableChildForkRunContext as createPublicHostedDurableChildForkRunContext,
+  createHostedRunEventWriterCapability as createPublicHostedRunEventWriterCapability,
+} from "../index.ts";
 
 async function* forkParts(parts: ForkPart[]): AsyncGenerator<ForkPart, void, void> {
   for (const part of parts) {
@@ -73,7 +77,6 @@ Deno.test("createHostedDurableChildForkRunContext wires conversation mirror and 
     () =>
       createHostedDurableChildForkRunContext(
         {
-          apiUrl: "https://api.example.com",
           durableChildRun: {
             childConversationId: "child-conversation-1",
             childRunId: "child-run-1",
@@ -143,7 +146,6 @@ Deno.test("createHostedDurableChildForkRunContext authorizes its mirror with onl
       () =>
         createHostedDurableChildForkRunContext(
           {
-            apiUrl: "https://api.example.com",
             durableChildRun: {
               childConversationId: "11111111-1111-4111-a111-111111111111",
               childRunId: "child-run-1",
@@ -168,6 +170,27 @@ Deno.test("createHostedDurableChildForkRunContext authorizes its mirror with onl
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+Deno.test("public durable child context accepts an explicit opaque writer capability", () => {
+  const context = createPublicHostedDurableChildForkRunContext({
+    runEventWriterCapability: createPublicHostedRunEventWriterCapability({
+      apiUrl: "https://api.example.com",
+      runId: "child-run-public",
+      runEventAppendToken: "child-writer-token",
+    }),
+    durableChildRun: {
+      childConversationId: "11111111-1111-4111-a111-111111111111",
+      childRunId: "child-run-public",
+      childMessageId: "child-message-public",
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+    },
+    pendingToolLogContext: { description: "Check public API" },
+  });
+
+  assertEquals(context.durableRunMirror !== null, true);
+  context.durableRunMirror?.dispose();
 });
 
 Deno.test("createHostedChildForkRunContext closes pending tool calls with host logger", async () => {

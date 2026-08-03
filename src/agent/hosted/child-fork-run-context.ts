@@ -11,6 +11,7 @@ import {
 import {
   createHostedConversationRunChunkMirrorFromCapability,
   getActiveHostedRunEventWriterCapability,
+  type HostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
 import {
   createHostedChildPendingToolLifecycle,
@@ -96,7 +97,7 @@ export interface HostedChildForkRunContextInput {
 
 /** Input payload for hosted durable child fork run context. */
 export interface HostedDurableChildForkRunContextInput {
-  apiUrl: string;
+  runEventWriterCapability?: HostedRunEventWriterCapability;
   durableChildRun?: HostedChildRunIdentifiers;
   instrumentation?: HostedConversationRunChunkMirrorInstrumentation;
   pendingToolLogContext: HostedChildPendingToolLifecycleLogContext;
@@ -171,7 +172,8 @@ export function createHostedChildForkRunContext(
 export function createHostedDurableChildForkRunContext(
   input: HostedDurableChildForkRunContextInput,
 ): HostedDurableChildForkRunContext {
-  const runEventWriterCapability = getActiveHostedRunEventWriterCapability();
+  const runEventWriterCapability = input.runEventWriterCapability ??
+    getActiveHostedRunEventWriterCapability();
   const durableRunMirror = input.durableChildRun
     ? createHostedConversationRunChunkMirrorFromCapability(runEventWriterCapability, {
       conversationId: input.durableChildRun.childConversationId,

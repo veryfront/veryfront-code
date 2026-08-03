@@ -514,6 +514,8 @@ Deno.test("created invoke tools preserve distinct writer capabilities across con
     };
     const createSiblingTool = (label: "a" | "b", conversationId: string) => {
       const capability = createSiblingCapability(label);
+      let executeOrdinaryTool: (() => void) | undefined;
+      let executeNestedDelegation: (() => Promise<void>) | undefined;
       return runWithHostedRunEventWriterCapability(
         capability,
         () =>
@@ -525,6 +527,46 @@ Deno.test("created invoke tools preserve distinct writer capabilities across con
                 mcpServers: [],
               },
               options: {
+                resolveChildAgentExecutionConfig: () => {
+                  assertEquals(getActiveHostedRunEventWriterCapability(), undefined);
+                  return Promise.resolve(undefined);
+                },
+                buildGlobalTools: () => {
+                  const assembledCapability = getActiveHostedRunEventWriterCapability();
+                  if (!assembledCapability) {
+                    throw new Error("Expected writer authority while assembling nested tools");
+                  }
+                  executeOrdinaryTool = () => {
+                    assertEquals(getActiveHostedRunEventWriterCapability(), undefined);
+                  };
+                  executeNestedDelegation = async () => {
+                    const childCapability = await assembledCapability
+                      .mintChildRunEventAppendToken(`run_child_${label}`);
+                    await runWithHostedRunEventWriterCapability(childCapability, async () => {
+                      const activeChildCapability = getActiveHostedRunEventWriterCapability();
+                      const mirror = createHostedConversationRunChunkMirrorFromCapability(
+                        activeChildCapability,
+                        {
+                          conversationId,
+                          latestEventId: 0,
+                          latestExternalEventSequence: 0,
+                        },
+                      );
+                      if (!mirror || !activeChildCapability) {
+                        throw new Error("Expected the child writer capability and mirror");
+                      }
+                      await mirror.appendEvents([
+                        { type: "TEXT_MESSAGE_CONTENT", delta: `child ${label}` },
+                      ]);
+                      await mirror.flush();
+                      mirror.dispose();
+                      await activeChildCapability.mintChildRunEventAppendToken(
+                        `run_grandchild_${label}`,
+                      );
+                    });
+                  };
+                  return {};
+                },
                 createAgentServiceSandboxTools: () =>
                   Promise.resolve({
                     tools: {},
@@ -532,35 +574,12 @@ Deno.test("created invoke tools preserve distinct writer capabilities across con
                     closeSandbox: () => Promise.resolve(),
                   }),
                 startRuntime: async () => {
-                  const rootCapability = getActiveHostedRunEventWriterCapability();
-                  if (!rootCapability) {
-                    throw new Error("Expected the tool's captured root writer capability");
+                  assertEquals(getActiveHostedRunEventWriterCapability(), undefined);
+                  if (!executeOrdinaryTool || !executeNestedDelegation) {
+                    throw new Error("Expected the assembled tool closures");
                   }
-                  const childCapability = await rootCapability.mintChildRunEventAppendToken(
-                    `run_child_${label}`,
-                  );
-                  await runWithHostedRunEventWriterCapability(childCapability, async () => {
-                    const activeChildCapability = getActiveHostedRunEventWriterCapability();
-                    const mirror = createHostedConversationRunChunkMirrorFromCapability(
-                      activeChildCapability,
-                      {
-                        conversationId,
-                        latestEventId: 0,
-                        latestExternalEventSequence: 0,
-                      },
-                    );
-                    if (!mirror || !activeChildCapability) {
-                      throw new Error("Expected the child writer capability and mirror");
-                    }
-                    await mirror.appendEvents([
-                      { type: "TEXT_MESSAGE_CONTENT", delta: `child ${label}` },
-                    ]);
-                    await mirror.flush();
-                    mirror.dispose();
-                    await activeChildCapability.mintChildRunEventAppendToken(
-                      `run_grandchild_${label}`,
-                    );
-                  });
+                  executeOrdinaryTool();
+                  await executeNestedDelegation();
 
                   return {
                     forkStreamAbortController: new AbortController(),

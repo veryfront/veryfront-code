@@ -27,7 +27,10 @@ import {
   snapshotHostedRuntimeSourceIdentity,
 } from "../hosted/runtime-source-binding.ts";
 import { runWithHostedRequestPreparationSignal } from "./request-preparation-context.ts";
-import { getSanitizedHostedRunEventWriterRequest } from "../hosted/child-run-event-writer-token.ts";
+import {
+  getSanitizedHostedRunEventWriterRequest,
+  runWithVerifiedHostedRunEventWriterRequest,
+} from "../hosted/child-run-event-writer-token.ts";
 
 /** Public API contract for hosted agent service routes logger. */
 export type HostedAgentServiceRoutesLogger = {
@@ -299,10 +302,14 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
       rawRequest,
       requestOrCtx,
       tracker: options.tracker,
-      prepareExecution: (req) =>
+      prepareExecution: (request) =>
         runWithHostedRequestPreparationSignal(
           input.request.signal,
-          () => options.prepareExecution(req),
+          () =>
+            runWithVerifiedHostedRunEventWriterRequest(
+              input.req,
+              () => options.prepareExecution(request),
+            ),
         ),
       startDetachedExecution: options.startDetachedExecution,
       cleanupExecution: options.cleanupExecution,

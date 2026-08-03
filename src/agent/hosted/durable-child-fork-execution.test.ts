@@ -1356,6 +1356,76 @@ describe("agent/hosted-durable-child-fork-execution", () => {
     );
   });
 
+  it("rethrows caller cancellation after persisting setup cancellation", async () => {
+    const controller = new AbortController();
+    let executed = false;
+    let cancellationAttempts = 0;
+    const callerAbort = new DOMException("caller cancelled", "AbortError");
+    const capability = createHostedRunEventWriterCapability({
+      apiUrl: API_URL,
+      runId: "run_parent_1",
+      runEventAppendToken: PARENT_RUN_EVENT_TOKEN,
+      fetch: () => {
+        controller.abort(callerAbort);
+        return Promise.reject(callerAbort);
+      },
+    });
+
+    const error = await assertRejects(
+      () =>
+        executeHostedDurableChildFork<DurableChildResult, ChildRunExecutionResult>({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          runEventWriterCapability: capability,
+          forkInput: { description: "Inspect logs", prompt: "Find logs", context: {} },
+          executionOptions: { toolCallId: "tool-call-1", abortSignal: controller.signal },
+          childAgentId: "invoke-agent-child",
+          parentConversationId: PARENT_CONVERSATION_ID,
+          parentRunId: "run_parent_1",
+          parentMessageId: PARENT_MESSAGE_ID,
+          getProjectId: () => PROJECT_ID,
+          defaultModel: "opus",
+          resolveModelId: (model) => `resolved-${model}`,
+          resolveProvider: () => "anthropic",
+          contextUnavailableMessage: "missing context",
+          setupFailedCode: "SETUP_FAILED",
+          executionFailedCode: "INVOKE_AGENT_FAILED",
+          executeLocal: () => {
+            executed = true;
+            return baseSuccessResult();
+          },
+          getExecutionSnapshot: () => null,
+          buildContextUnavailableResult: (message) => ({ status: "missing_context", message }),
+          buildSetupFailureResult: (failure) => ({ status: "setup_failed", failure }),
+          buildTerminalFailureResult: (failure) => ({ status: "terminal_failed", failure }),
+          buildSuccessResult: (success) => ({ status: "completed", success }),
+          runtime: {
+            bootstrapChildRun: () =>
+              Promise.resolve({
+                childConversationId: CHILD_CONVERSATION_ID,
+                childRunId: "run_child_1",
+                childMessageId: CHILD_MESSAGE_ID,
+                latestEventId: 7,
+                latestExternalEventSequence: 3,
+                status: "running",
+              }),
+            createLifecycleAdapter: () => ({
+              cancelled: () => {
+                cancellationAttempts += 1;
+                return Promise.resolve();
+              },
+            }),
+          },
+        }),
+      DOMException,
+      "caller cancelled",
+    );
+
+    assertEquals(error, callerAbort);
+    assertEquals(executed, false);
+    assertEquals(cancellationAttempts, 1);
+  });
+
   it("keeps a rejecting bootstrap observer from masking the bootstrap failure", async () => {
     const callbackErrors: unknown[] = [];
     const result = await executeHostedDurableChildFork<DurableChildResult, ChildRunExecutionResult>(

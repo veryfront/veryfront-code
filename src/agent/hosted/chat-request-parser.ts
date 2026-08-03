@@ -169,8 +169,12 @@ async function withVerifiedRunEventAppendToken(
   };
   registerHostedRunEventWriterToken(
     verifiedRequest,
-    token,
-    removeRunEventAppendTokenHeader(request),
+    {
+      token,
+      sanitizedRequest: removeRunEventAppendTokenHeader(request),
+      projectId,
+      runId,
+    },
   );
   return verifiedRequest;
 }

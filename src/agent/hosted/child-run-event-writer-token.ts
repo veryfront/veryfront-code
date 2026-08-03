@@ -3,6 +3,7 @@ import {
   createVeryfrontApiRequestUrlResolver,
   type VeryfrontApiRequestUrlResolver,
 } from "#veryfront/platform/adapters/veryfront-api-url.ts";
+import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import {
   type ConversationRunChunkMirror,
   createHostedConversationRunChunkMirror,
@@ -10,8 +11,11 @@ import {
 } from "../conversation/run-chunk-mirror.ts";
 
 const DEFAULT_CHILD_RUN_EVENT_WRITER_TOKEN_TIMEOUT_MS = 10_000;
+const MAX_CHILD_RUN_EVENT_WRITER_TOKEN_BYTES = 4 * 1024;
+const MAX_CHILD_RUN_EVENT_WRITER_TOKEN_RESPONSE_BYTES = 16 * 1024;
 const CHILD_RUN_EVENT_WRITER_TOKEN_SETUP_ERROR =
   "Unable to initialize durable child event persistence";
+const utf8Encoder = new TextEncoder();
 
 type Fetch = typeof globalThis.fetch;
 
@@ -43,19 +47,42 @@ type CapabilityState = {
   fetch: Fetch;
 };
 
+type CapabilityScope = {
+  active: boolean;
+  capability: HostedRunEventWriterCapability | undefined;
+};
+
 type VerifiedRequestWriterState = {
   token: string;
   sanitizedRequest: Request;
+  projectId: string;
+  runId: string;
+};
+
+type VerifiedRequestWriterScope = {
+  active: boolean;
+  state: VerifiedRequestWriterState | undefined;
 };
 
 const capabilityState = new WeakMap<HostedRunEventWriterCapability, CapabilityState>();
 const requestRunEventWriterState = new WeakMap<object, VerifiedRequestWriterState>();
-const capabilityStorage = new AsyncLocalStorage<HostedRunEventWriterCapability | undefined>();
+const capabilityStorage = new AsyncLocalStorage<CapabilityScope>();
+const verifiedRequestWriterStorage = new AsyncLocalStorage<VerifiedRequestWriterScope>();
 
 function isNoStoreResponse(response: Response): boolean {
   return response.headers.get("Cache-Control")?.split(",").some((directive) =>
     directive.trim().toLowerCase() === "no-store"
   ) ?? false;
+}
+
+function isValidRunEventWriterToken(token: unknown): token is string {
+  return typeof token === "string" && token.length > 0 && token.trim() === token &&
+    utf8Encoder.encode(token).byteLength <= MAX_CHILD_RUN_EVENT_WRITER_TOKEN_BYTES;
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return value !== null && (typeof value === "object" || typeof value === "function") &&
+    typeof (value as { then?: unknown }).then === "function";
 }
 
 function parseRunEventToken(value: unknown): string {
@@ -68,7 +95,7 @@ function parseRunEventToken(value: unknown): string {
   }
 
   const token = (value as { run_event_token?: unknown }).run_event_token;
-  if (typeof token !== "string" || token.length === 0 || token.trim() !== token) {
+  if (!isValidRunEventWriterToken(token)) {
     throw new HostedChildRunEventWriterTokenExchangeError();
   }
 
@@ -119,7 +146,21 @@ async function exchangeChildRunEventWriterToken(
       throw new HostedChildRunEventWriterTokenExchangeError();
     }
 
-    const token = parseRunEventToken(await response.json());
+    const responseBody = await readResponseTextPrefix(
+      response,
+      MAX_CHILD_RUN_EVENT_WRITER_TOKEN_RESPONSE_BYTES,
+      controller.signal,
+    );
+    if (responseBody.truncated) {
+      throw new HostedChildRunEventWriterTokenExchangeError();
+    }
+    let responseValue: unknown;
+    try {
+      responseValue = JSON.parse(responseBody.text);
+    } catch {
+      throw new HostedChildRunEventWriterTokenExchangeError();
+    }
+    const token = parseRunEventToken(responseValue);
     if (cancellation) {
       throw new HostedChildRunEventWriterTokenExchangeError(cancellation);
     }
@@ -136,10 +177,9 @@ async function exchangeChildRunEventWriterToken(
 /** Retain verified ingress authority without adding it to the parsed request contract. */
 export function registerHostedRunEventWriterToken(
   request: object,
-  token: string,
-  sanitizedRequest: Request,
+  input: VerifiedRequestWriterState,
 ): void {
-  requestRunEventWriterState.set(request, { token, sanitizedRequest });
+  requestRunEventWriterState.set(request, input);
 }
 
 /** Return the credential-free request associated with a verified parsed request. */
@@ -155,10 +195,40 @@ export function createHostedRunEventWriterCapabilityForRequest(
   request: object,
   input: Omit<Parameters<typeof createHostedRunEventWriterCapability>[0], "runEventAppendToken">,
 ): HostedRunEventWriterCapability | undefined {
-  const token = requestRunEventWriterState.get(request)?.token;
+  const directState = requestRunEventWriterState.get(request);
+  const ambientScope = verifiedRequestWriterStorage.getStore();
+  const ambientState = ambientScope?.active ? ambientScope.state : undefined;
+  const candidateState = directState ?? ambientState;
+  const requestRecord = request as Record<string, unknown>;
+  const durableRootRun = requestRecord.durableRootRun;
+  const matchesAmbientRequest = directState !== undefined ||
+    (candidateState !== undefined &&
+      requestRecord.projectId === candidateState.projectId &&
+      typeof durableRootRun === "object" && durableRootRun !== null &&
+      (durableRootRun as Record<string, unknown>).runId === candidateState.runId);
+  const token = matchesAmbientRequest && candidateState?.runId === input.runId
+    ? candidateState.token
+    : undefined;
   return token
     ? createHostedRunEventWriterCapability({ ...input, runEventAppendToken: token })
     : undefined;
+}
+
+/** Allow identity-preserving request clones to reuse a verified writer during preparation. */
+export async function runWithVerifiedHostedRunEventWriterRequest<T>(
+  request: object,
+  operation: () => T | Promise<T>,
+): Promise<T> {
+  const scope: VerifiedRequestWriterScope = {
+    active: true,
+    state: requestRunEventWriterState.get(request),
+  };
+  try {
+    return await verifiedRequestWriterStorage.run(scope, operation);
+  } finally {
+    scope.active = false;
+    scope.state = undefined;
+  }
 }
 
 /** Create an exact-run capability while keeping its credential in module-private state. */
@@ -169,6 +239,9 @@ export function createHostedRunEventWriterCapability(input: {
   timeoutMs?: number;
   fetch?: Fetch;
 }): HostedRunEventWriterCapability {
+  if (!isValidRunEventWriterToken(input.runEventAppendToken)) {
+    throw new HostedChildRunEventWriterTokenExchangeError();
+  }
   const state: CapabilityState = {
     apiUrl: input.apiUrl,
     resolveApiUrl: createVeryfrontApiRequestUrlResolver(input.apiUrl),
@@ -215,13 +288,29 @@ export function createHostedConversationRunChunkMirrorFromCapability(
 export function getActiveHostedRunEventWriterCapability():
   | HostedRunEventWriterCapability
   | undefined {
-  return capabilityStorage.getStore();
+  const scope = capabilityStorage.getStore();
+  return scope?.active ? scope.capability : undefined;
 }
 
-/** Assemble internal child tools while privately binding their exact-run authority. */
+/** Run a bounded internal scope with privately bound exact-run authority. */
 export function runWithHostedRunEventWriterCapability<T>(
   capability: HostedRunEventWriterCapability | undefined,
   operation: () => T,
 ): T {
-  return capabilityStorage.run(capability, operation);
+  const scope: CapabilityScope = { active: true, capability };
+  const revoke = () => {
+    scope.active = false;
+    scope.capability = undefined;
+  };
+  try {
+    const result = capabilityStorage.run(scope, operation);
+    if (isPromiseLike(result)) {
+      return Promise.resolve(result).finally(revoke) as T;
+    }
+    revoke();
+    return result;
+  } catch (error) {
+    revoke();
+    throw error;
+  }
 }

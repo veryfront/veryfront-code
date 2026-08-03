@@ -443,6 +443,8 @@ export type ExecuteHostedDurableChildForkInput<
 > = {
   authToken: string;
   apiUrl: string;
+  /** Opaque exact-parent authority used only to mint this invocation's child writer. */
+  runEventWriterCapability?: HostedRunEventWriterCapability;
   forkInput: HostedChildForkToolInput;
   executionOptions: {
     toolCallId: string;
@@ -756,8 +758,22 @@ export async function executeHostedDurableChildFork<
 >(
   input: ExecuteHostedDurableChildForkInput<TResult, TLocalResult>,
 ): Promise<TResult> {
+  const runEventWriterCapability = input.runEventWriterCapability ??
+    getActiveHostedRunEventWriterCapability();
+  return await runWithHostedRunEventWriterCapability(
+    undefined,
+    () => executeHostedDurableChildForkWithCapability(input, runEventWriterCapability),
+  );
+}
+
+async function executeHostedDurableChildForkWithCapability<
+  TResult,
+  TLocalResult extends ChildRunExecutionResult,
+>(
+  input: ExecuteHostedDurableChildForkInput<TResult, TLocalResult>,
+  runEventWriterCapability: HostedRunEventWriterCapability | undefined,
+): Promise<TResult> {
   throwIfChildRunAborted(input.executionOptions.abortSignal);
-  const runEventWriterCapability = getActiveHostedRunEventWriterCapability();
 
   if (!input.parentConversationId || !input.parentRunId || !input.parentMessageId) {
     return input.buildContextUnavailableResult(input.contextUnavailableMessage);
@@ -869,6 +885,11 @@ export async function executeHostedDurableChildFork<
       throw finalizationError;
     }
 
+    if (cancelled) {
+      throwIfChildRunAborted(input.executionOptions.abortSignal);
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
+
     const failure = {
       targets,
       childConversationId: identifiers.childConversationId,
@@ -877,15 +898,7 @@ export async function executeHostedDurableChildFork<
       terminalErrorCode: terminalState.terminalErrorCode,
       terminalErrorMessage: terminalState.terminalErrorMessage,
     };
-    return cancelled
-      ? input.buildTerminalFailureResult({
-        status: "cancelled",
-        identifiers,
-        targets,
-        terminalErrorCode: terminalState.terminalErrorCode,
-        terminalErrorMessage: terminalState.terminalErrorMessage,
-      })
-      : input.buildSetupFailureResult(failure);
+    return input.buildSetupFailureResult(failure);
   }
 
   return executeHostedDurableChildLifecycle({

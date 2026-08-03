@@ -384,6 +384,69 @@ it("agent service routes remove verified writer credentials before detached call
   assertEquals(JSON.stringify([...detachedRequests[0]!.headers]).includes(sentinel), false);
 });
 
+it("agent service routes preserve verified writer authority across request cloning during preparation", async () => {
+  const childAuthorizations: Array<string | null> = [];
+  let clonedRequest: object | undefined;
+  let detachedCapabilityCreated = false;
+  const { routeSet } = createRouteSet({
+    verifyRunEventAppendToken: () => Promise.resolve(true),
+    prepareExecution: async (request) => {
+      const requestClone = { ...request };
+      clonedRequest = requestClone;
+      const capability = createHostedRunEventWriterCapabilityForRequest(requestClone, {
+        apiUrl: "https://api.example.test",
+        runId: requestClone.durableRootRun?.runId ?? "missing-run",
+        fetch: async (_input, init) => {
+          childAuthorizations.push(new Headers(init?.headers).get("authorization"));
+          return Response.json(
+            { run_event_token: "child-writer-token" },
+            { headers: { "Cache-Control": "no-store" } },
+          );
+        },
+      });
+      await capability?.mintChildRunEventAppendToken("child-run-1");
+      return { executionId: "exec-cloned" };
+    },
+    startDetachedExecution: () => {
+      if (!clonedRequest) {
+        throw new Error("Expected a request clone from preparation");
+      }
+      detachedCapabilityCreated = createHostedRunEventWriterCapabilityForRequest(
+        clonedRequest,
+        {
+          apiUrl: "https://api.example.test",
+          runId: "run-1",
+        },
+      ) !== undefined;
+      return Promise.resolve();
+    },
+  });
+
+  const response = await routeSet.handleDurableChatRunExecuteRequest({
+    request: createAuthenticatedRequest(
+      "/api/runs",
+      {
+        messages: [],
+        context: {
+          conversationId: "00000000-0000-4000-8000-000000000001",
+          projectId: "00000000-0000-4000-8000-000000000005",
+          branchId: null,
+        },
+        durableRootRun: {
+          runId: "run-1",
+          messageId: "00000000-0000-4000-8000-000000000002",
+        },
+      },
+      "POST",
+      { "X-Veryfront-Run-Event-Token": "verified-root-writer-token" },
+    ),
+  });
+
+  assertEquals(response.status, 202);
+  assertEquals(childAuthorizations, ["Bearer verified-root-writer-token"]);
+  assertEquals(detachedCapabilityCreated, false);
+});
+
 it("agent service routes clone verified requests when host headers are immutable", async () => {
   const sentinel = "immutable-root-writer-sentinel";
   const detachedRequests: Request[] = [];

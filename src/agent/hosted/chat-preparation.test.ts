@@ -108,8 +108,12 @@ function createParsedHostedChatRequest(
   if (runEventAppendToken) {
     registerHostedRunEventWriterToken(
       request,
-      runEventAppendToken,
-      new Request("https://agent.example.test/api/runs"),
+      {
+        token: runEventAppendToken,
+        sanitizedRequest: new Request("https://agent.example.test/api/runs"),
+        projectId: request.projectId ?? "project-from-context",
+        runId: request.durableRootRun?.runId ?? "run-1",
+      },
     );
   }
   return request;

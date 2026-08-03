@@ -157,6 +157,8 @@ export type DefaultHostedInvokeAgentProjectRefresh<
 export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedInvokeAgentContext> =
   {
     context: TContext;
+    /** Opaque exact-parent authority used to persist durable delegated child events. */
+    runEventWriterCapability?: HostedRunEventWriterCapability;
     getConfig: () => DefaultHostedInvokeAgentConfig;
     logger: DefaultHostedInvokeAgentLogger;
     trace: DefaultHostedInvokeAgentTrace;
@@ -425,6 +427,7 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
     childConfig?: DefaultHostedChildAgentExecutionConfig;
     onSettled?: (snapshot: ChildRunExecutionSnapshot) => void | Promise<void>;
     durableChildRun?: HostedChildRunIdentifiers;
+    runEventWriterCapability?: HostedRunEventWriterCapability;
   },
 ): Promise<ChildRunExecutionResult> {
   const baseConfig = options.getConfig();
@@ -457,6 +460,9 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
   return executeHostedChildForkToolInput<DefaultHostedInvokeAgentTraceAttributes>({
     apiUrl: config.apiUrl,
     authToken: scopedOptions.context.authToken,
+    ...(runtimeOptions.runEventWriterCapability
+      ? { runEventWriterCapability: runtimeOptions.runEventWriterCapability }
+      : {}),
     projectId: scopedOptions.context.projectId || null,
     forkInput,
     toolCallId: execution.toolCallId,
@@ -585,7 +591,7 @@ export async function executeDefaultHostedInvokeAgentTool<
     input,
     childAgentId,
     executionContext,
-    getActiveHostedRunEventWriterCapability(),
+    options.runEventWriterCapability ?? getActiveHostedRunEventWriterCapability(),
   );
 }
 
@@ -598,7 +604,7 @@ async function executeDefaultHostedInvokeAgentToolWithCapability<
   executionContext: ToolExecutionContext | undefined,
   runEventWriterCapability: HostedRunEventWriterCapability | undefined,
 ): Promise<DefaultHostedInvokeAgentToolResult> {
-  return await runWithHostedRunEventWriterCapability(runEventWriterCapability, async () => {
+  return await runWithHostedRunEventWriterCapability(undefined, async () => {
     let executionSnapshot: ChildRunExecutionSnapshot | null = null;
     const config = options.getConfig();
     const toolCallId = getToolCallId(executionContext);
@@ -644,24 +650,32 @@ async function executeDefaultHostedInvokeAgentToolWithCapability<
       setTraceAttributes: options.setTraceAttributes,
     });
 
-    const executeLocalInvoke = (runtimeOptions: HostedDurableChildExecutionOptions = {}) =>
-      executeForkTask(
-        options,
-        forkInput,
-        {
-          toolCallId,
-          abortSignal,
-          sourceIntegrationPolicy,
-        },
-        {
-          childAgentId,
-          childConfig,
-          onSettled: (snapshot) => {
-            executionSnapshot = snapshot;
-          },
-          durableChildRun: runtimeOptions.durableChildRun,
-        },
+    const executeLocalInvoke = (runtimeOptions: HostedDurableChildExecutionOptions = {}) => {
+      const childRunEventWriterCapability = getActiveHostedRunEventWriterCapability() ??
+        runEventWriterCapability;
+      return runWithHostedRunEventWriterCapability(
+        undefined,
+        () =>
+          executeForkTask(
+            options,
+            forkInput,
+            {
+              toolCallId,
+              abortSignal,
+              sourceIntegrationPolicy,
+            },
+            {
+              childAgentId,
+              childConfig,
+              onSettled: (snapshot) => {
+                executionSnapshot = snapshot;
+              },
+              durableChildRun: runtimeOptions.durableChildRun,
+              runEventWriterCapability: childRunEventWriterCapability,
+            },
+          ),
       );
+    };
 
     durableInvokeRecorder.annotate();
 
@@ -685,6 +699,7 @@ async function executeDefaultHostedInvokeAgentToolWithCapability<
       >({
         authToken: options.context.authToken,
         apiUrl: config.apiUrl,
+        ...(runEventWriterCapability ? { runEventWriterCapability } : {}),
         forkInput,
         executionOptions: {
           toolCallId,
@@ -804,7 +819,8 @@ export function createDefaultHostedInvokeAgentTool<
 >(
   options: DefaultHostedInvokeAgentToolOptions<TContext>,
 ) {
-  const runEventWriterCapability = getActiveHostedRunEventWriterCapability();
+  const runEventWriterCapability = options.runEventWriterCapability ??
+    getActiveHostedRunEventWriterCapability();
   return createHostedChildInvokeTool<
     DefaultHostedInvokeAgentInput,
     DefaultHostedInvokeAgentToolResult

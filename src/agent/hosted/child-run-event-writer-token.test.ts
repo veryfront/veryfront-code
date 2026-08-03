@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import {
   createHostedConversationRunChunkMirrorFromCapability,
   createHostedRunEventWriterCapability,
@@ -29,6 +29,30 @@ Deno.test("explicit authority-less scopes clear and restore ambient writer autho
   });
 
   assertEquals(getActiveHostedRunEventWriterCapability(), undefined);
+});
+
+Deno.test("writer authority is revoked from detached async work after its scope settles", async () => {
+  const capability = createHostedRunEventWriterCapability({
+    apiUrl: "https://api.example.com/",
+    runId: "run_parent",
+    runEventAppendToken: "parent-writer-token",
+  });
+  const releaseDetached = Promise.withResolvers<void>();
+  const detachedFinished = Promise.withResolvers<void>();
+  let detachedCapability: unknown = "not-observed";
+
+  await runWithHostedRunEventWriterCapability(capability, () => {
+    queueMicrotask(async () => {
+      await releaseDetached.promise;
+      detachedCapability = getActiveHostedRunEventWriterCapability();
+      detachedFinished.resolve();
+    });
+    return Promise.resolve();
+  });
+
+  releaseDetached.resolve();
+  await detachedFinished.promise;
+  assertEquals(detachedCapability, undefined);
 });
 
 Deno.test("run event writer capability delegates parent to child to grandchild exactly once without exposing credentials", async () => {
@@ -171,6 +195,59 @@ Deno.test("mintChildRunEventAppendToken rejects responses without no-store", asy
         runEventAppendToken: "parent-writer-token",
         fetch: () => Promise.resolve(Response.json({ run_event_token: "child-writer-token" })),
       }).mintChildRunEventAppendToken("run_child"),
+    HostedChildRunEventWriterTokenExchangeError,
+    "Unable to initialize durable child event persistence",
+  );
+});
+
+Deno.test("mintChildRunEventAppendToken rejects an oversized response body", async () => {
+  await assertRejects(
+    () =>
+      createHostedRunEventWriterCapability({
+        apiUrl: "https://api.example.com",
+        runId: "run_parent",
+        runEventAppendToken: "parent-writer-token",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              `${" ".repeat(20_000)}{"run_event_token":"child-writer-token"}`,
+              { headers: { "Cache-Control": "no-store" } },
+            ),
+          ),
+      }).mintChildRunEventAppendToken("run_child"),
+    HostedChildRunEventWriterTokenExchangeError,
+    "Unable to initialize durable child event persistence",
+  );
+});
+
+Deno.test("mintChildRunEventAppendToken rejects an oversized token", async () => {
+  await assertRejects(
+    () =>
+      createHostedRunEventWriterCapability({
+        apiUrl: "https://api.example.com",
+        runId: "run_parent",
+        runEventAppendToken: "parent-writer-token",
+        fetch: () =>
+          Promise.resolve(
+            Response.json(
+              { run_event_token: "x".repeat(5_000) },
+              { headers: { "Cache-Control": "no-store" } },
+            ),
+          ),
+      }).mintChildRunEventAppendToken("run_child"),
+    HostedChildRunEventWriterTokenExchangeError,
+    "Unable to initialize durable child event persistence",
+  );
+});
+
+Deno.test("run event writer capabilities reject oversized root tokens", () => {
+  assertThrows(
+    () =>
+      createHostedRunEventWriterCapability({
+        apiUrl: "https://api.example.com",
+        runId: "run_parent",
+        runEventAppendToken: "x".repeat(5_000),
+      }),
     HostedChildRunEventWriterTokenExchangeError,
     "Unable to initialize durable child event persistence",
   );
