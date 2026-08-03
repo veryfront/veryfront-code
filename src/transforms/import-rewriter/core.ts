@@ -1,10 +1,10 @@
 import {
   applyComputedDynamicImportPinning,
   applyImportEdits,
-  isFilesystemImportSpecifier,
   parseImportEdits,
 } from "./import-edit.ts";
 import { SECURITY_VIOLATION } from "#veryfront/errors";
+import { isPrivateFrameworkFileSpecifier } from "#veryfront/modules/private-framework-module-policy.ts";
 import { relativeToProjectDir } from "./project-paths.ts";
 import {
   appendDependencyPinningPathKey,
@@ -24,6 +24,8 @@ export interface TransformCoreInput {
   context: RewriteContext;
   strategies: ImportRewriteStrategy[];
 }
+
+const FRAMEWORK_SOURCE_URL = new URL("../../", import.meta.url).href;
 
 function pinSameOriginModuleUrl(
   specifier: string,
@@ -62,11 +64,10 @@ export async function rewriteWithImportRewriteCore(input: TransformCoreInput): P
     const imp = parsed.imports[i]!;
     if (
       guardFrameworkImports && input.context.target === "ssr" &&
-      isFilesystemImportSpecifier(imp.specifier) &&
-      !input.context.allowedFilesystemImportSpecifiers?.has(imp.specifier)
+      isPrivateFrameworkFileSpecifier(imp.specifier, FRAMEWORK_SOURCE_URL)
     ) {
       throw SECURITY_VIOLATION.create({
-        detail: `Project-authored filesystem module import is not allowed: ${imp.specifier}`,
+        detail: `Private Veryfront host module cannot be imported: ${imp.specifier}`,
       });
     }
     const result = rewriteOne(imp.specifier, imp, input.context, input.strategies);

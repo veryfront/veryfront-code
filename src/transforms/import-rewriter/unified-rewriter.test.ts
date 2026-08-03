@@ -306,7 +306,7 @@ describe("rewriteImports with the default strategies", () => {
       assertInstanceOf(error, Error);
       assertStringIncludes(
         error.message,
-        "Project-authored filesystem module import is not allowed",
+        "Private Veryfront host module cannot be imported",
       );
     });
   }

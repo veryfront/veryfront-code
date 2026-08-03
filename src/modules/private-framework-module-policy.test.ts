@@ -2,6 +2,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import {
   canonicalizeFrameworkModulePath,
+  isPrivateFrameworkFileSpecifier,
   isPrivateFrameworkModulePath,
 } from "./private-framework-module-policy.ts";
 
@@ -64,5 +65,52 @@ describe("private framework module policy", () => {
       canonical: "agent/hosted/internal/control-plane-mcp-source.js",
       private: true,
     });
+  });
+
+  it("classifies only file specifiers inside private framework subtrees", () => {
+    const frameworkSourceUrl = new URL("../", import.meta.url).href;
+    const privateModuleUrl = new URL(
+      "agent/hosted/internal/control-plane-mcp-source.ts",
+      frameworkSourceUrl,
+    ).href;
+
+    for (
+      const specifier of [
+        privateModuleUrl,
+        privateModuleUrl.replace("file:", "FILE:"),
+        privateModuleUrl.replace("/src/", "/%73rc/"),
+        privateModuleUrl.replace("file:///", "file://localhost/"),
+        privateModuleUrl.replace("/src/", "/src/../src/"),
+        new URL("tool/internal/remote-mcp-transport.ts", frameworkSourceUrl).pathname,
+      ]
+    ) {
+      assertEquals(
+        isPrivateFrameworkFileSpecifier(specifier, frameworkSourceUrl),
+        true,
+        specifier,
+      );
+    }
+
+    assertEquals(
+      isPrivateFrameworkFileSpecifier(
+        new URL("agent/hosted/default-chat-runtime.ts", frameworkSourceUrl).href,
+        frameworkSourceUrl,
+      ),
+      false,
+    );
+    assertEquals(
+      isPrivateFrameworkFileSpecifier(
+        new URL("../outside-project.ts", frameworkSourceUrl).href,
+        frameworkSourceUrl,
+      ),
+      false,
+    );
+    assertEquals(
+      isPrivateFrameworkFileSpecifier(
+        "https://example.test/src/agent/hosted/internal/private.ts",
+        frameworkSourceUrl,
+      ),
+      false,
+    );
   });
 });

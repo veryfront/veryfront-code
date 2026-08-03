@@ -25,6 +25,66 @@ function slice(value: string, start: number, end?: number): string {
   ) as string;
 }
 
+function isAsciiLetter(value: string | undefined): boolean {
+  return value !== undefined &&
+    ((value >= "a" && value <= "z") || (value >= "A" && value <= "Z"));
+}
+
+function startsWithAsciiCaseInsensitive(value: string, prefix: string): boolean {
+  if (value.length < prefix.length) return false;
+  for (let index = 0; index < prefix.length; index++) {
+    const character = value[index]!;
+    const expected = prefix[index]!;
+    if (
+      character !== expected &&
+      ReflectApply(StringPrototypeToLowerCase, character, []) !== expected
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function stripUrlSuffix(value: string): string {
+  for (let index = 0; index < value.length; index++) {
+    if (value[index] === "?" || value[index] === "#") {
+      return slice(value, 0, index);
+    }
+  }
+  return value;
+}
+
+function extractLocalFilePath(value: string): string | null {
+  let path = stripUrlSuffix(value);
+  if (startsWithAsciiCaseInsensitive(path, "file:")) {
+    path = slice(path, 5);
+    const hasAuthority = (path[0] === "/" || path[0] === "\\") &&
+      (path[1] === "/" || path[1] === "\\");
+    if (hasAuthority) {
+      path = slice(path, 2);
+      let authorityEnd = 0;
+      while (
+        authorityEnd < path.length &&
+        path[authorityEnd] !== "/" && path[authorityEnd] !== "\\"
+      ) {
+        authorityEnd++;
+      }
+      const authority = ReflectApply(
+        StringPrototypeToLowerCase,
+        slice(path, 0, authorityEnd),
+        [],
+      ) as string;
+      if (authority !== "" && authority !== "localhost") return null;
+      path = slice(path, authorityEnd);
+    }
+  }
+
+  const isAbsolutePath = path[0] === "/" || path[0] === "\\" ||
+    (isAsciiLetter(path[0]) && path[1] === ":" &&
+      (path[2] === "/" || path[2] === "\\"));
+  return isAbsolutePath ? path : null;
+}
+
 function trimTrailing(value: string, characters: string): string {
   let result = value;
   while (result.length > 0) {
@@ -128,4 +188,20 @@ export function isPrivateFrameworkModulePath(value: string): boolean {
     }
   }
   return false;
+}
+
+/** Return whether a local file specifier resolves inside a host-only framework subtree. */
+export function isPrivateFrameworkFileSpecifier(
+  value: string,
+  frameworkSourceUrl: string,
+): boolean {
+  const candidatePath = extractLocalFilePath(value);
+  const sourcePath = extractLocalFilePath(frameworkSourceUrl);
+  if (candidatePath === null || sourcePath === null) return false;
+
+  const candidate = canonicalizePath(candidatePath, true);
+  const sourceRoot = trimTrailing(canonicalizePath(sourcePath, true), "/");
+  if (!startsWith(candidate, `${sourceRoot}/`)) return false;
+
+  return isPrivateFrameworkModulePath(slice(candidate, sourceRoot.length + 1));
 }

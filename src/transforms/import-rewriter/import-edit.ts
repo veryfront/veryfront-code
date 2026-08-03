@@ -119,69 +119,6 @@ export async function parseImportEdits(code: string): Promise<ParsedImportEdits>
 
 const COMPUTED_DYNAMIC_IMPORT_MARKER = "__vf_dependency_pinned__";
 
-function hasPrefixAt(value: string, prefix: string, offset: number): boolean {
-  if (value.length - offset < prefix.length) return false;
-  for (let index = 0; index < prefix.length; index++) {
-    if (value[offset + index] !== prefix[index]) return false;
-  }
-  return true;
-}
-
-function isSafeModuleServerPath(value: string, offset: number): boolean {
-  const modulePrefix = "/_vf_modules/";
-  if (!hasPrefixAt(value, modulePrefix, offset)) return false;
-
-  let segmentStart = offset + 1;
-  for (let index = offset; index <= value.length; index++) {
-    const character = value[index];
-    if (character === "\\") return false;
-    if (character === "%") {
-      const high = value[index + 1];
-      const low = value[index + 2];
-      const encodedDotOrSlash = high === "2" &&
-        (low === "e" || low === "E" || low === "f" || low === "F");
-      const encodedBackslash = high === "5" && (low === "c" || low === "C");
-      if (encodedDotOrSlash || encodedBackslash) return false;
-    }
-    if (character === "?" || character === "#" || character === "/" || character === undefined) {
-      const segmentLength = index - segmentStart;
-      if (
-        (segmentLength === 1 && value[segmentStart] === ".") ||
-        (segmentLength === 2 && value[segmentStart] === "." && value[segmentStart + 1] === ".")
-      ) return false;
-      if (character === "?" || character === "#" || character === undefined) break;
-      segmentStart = index + 1;
-    }
-  }
-  return true;
-}
-
-/** Return whether an SSR import names a host filesystem path instead of the module server. */
-export function isFilesystemImportSpecifier(value: string): boolean {
-  const isFileUrl = value.length >= 5 &&
-    (value[0] === "f" || value[0] === "F") &&
-    (value[1] === "i" || value[1] === "I") &&
-    (value[2] === "l" || value[2] === "L") &&
-    (value[3] === "e" || value[3] === "E") &&
-    value[4] === ":";
-  if (isFileUrl || value[0] === "\\") return true;
-  if (value[0] === "/") {
-    if (value[1] !== "/") return !isSafeModuleServerPath(value, 0);
-    let pathStart = 2;
-    while (
-      pathStart < value.length && value[pathStart] !== "/" &&
-      value[pathStart] !== "\\" && value[pathStart] !== "?" && value[pathStart] !== "#"
-    ) pathStart++;
-    return !isSafeModuleServerPath(value, pathStart);
-  }
-
-  const first = value[0];
-  const isDriveLetter = first !== undefined &&
-    ((first >= "a" && first <= "z") || (first >= "A" && first <= "Z"));
-  return isDriveLetter && value[1] === ":" &&
-    (value[2] === "/" || value[2] === "\\");
-}
-
 function restoreMaskedUrls(result: string, urlMap: Map<string, string>): string {
   if (urlMap.size === 0) return result;
 
