@@ -11,7 +11,7 @@ describe("cache/config-hash", () => {
     it("matches the golden hash for the default transform config", async () => {
       assertEquals(
         await computeConfigHash({}),
-        "4b96519f8a12a74bbef6f1a0f92f1825e5e267c6202240b2d32825dab6f6ac6c",
+        "0dea4e3e5437669245bb85a5105b733745dde1e52b76cb86e0375802edcdc90f",
       );
     });
 
@@ -28,8 +28,33 @@ describe("cache/config-hash", () => {
           dev: true,
           dependencyPinningCacheKey: CANONICAL_PIN_KEY,
         }),
-        "a868c7f22dc1518f90f638c07d7d03971d6ff4510b7e706eccf631c2b0269998",
+        "f436b138e6ba376debd7e561469431cbed6811f7df987953737289f3a150f3b7",
       );
+    });
+
+    it("keeps distinct hashes stable when array push and join are poisoned", async () => {
+      const firstConfig = { reactVersion: "18.3.1", dev: false };
+      const secondConfig = { reactVersion: "19.2.4", dev: true };
+      const firstBaseline = await computeConfigHash(firstConfig);
+      const secondBaseline = await computeConfigHash(secondConfig);
+      const originalPush = Array.prototype.push;
+      const originalJoin = Array.prototype.join;
+      let firstPoisoned: string | undefined;
+      let secondPoisoned: string | undefined;
+
+      try {
+        Reflect.set(Array.prototype, "push", () => 0);
+        Reflect.set(Array.prototype, "join", () => "poisoned");
+        firstPoisoned = await computeConfigHash(firstConfig);
+        secondPoisoned = await computeConfigHash(secondConfig);
+      } finally {
+        Reflect.set(Array.prototype, "push", originalPush);
+        Reflect.set(Array.prototype, "join", originalJoin);
+      }
+
+      assertEquals(firstPoisoned, firstBaseline);
+      assertEquals(secondPoisoned, secondBaseline);
+      assertNotEquals(firstPoisoned, secondPoisoned);
     });
 
     it("should return a 64-char hex hash", async () => {
@@ -140,7 +165,7 @@ describe("cache/config-hash", () => {
 
   describe("computeConfigHashSync", () => {
     it("matches the golden identity for the default transform config", () => {
-      assertEquals(computeConfigHashSync({}), "v0.1.1186:19.2.4:react");
+      assertEquals(computeConfigHashSync({}), "v0.1.1189:19.2.4:react");
     });
 
     it("matches the golden identity for a fully scoped transform config", () => {
@@ -156,8 +181,33 @@ describe("cache/config-hash", () => {
           dev: true,
           dependencyPinningCacheKey: CANONICAL_PIN_KEY,
         }),
-        "v0.1.1186:18.3.1:preact:modules:40:https://modules.example.test/_vf_modules:vendor:8:vendor-a:api:24:https://api.example.test:studio:dev:pins:on:z7bg3qnfgtcb:origin:aHR0cHM6Ly9wcmV2aWV3LmV4YW1wbGUudGVzdA",
+        "v0.1.1189:18.3.1:preact:modules:40:https://modules.example.test/_vf_modules:vendor:8:vendor-a:api:24:https://api.example.test:studio:dev:pins:on:z7bg3qnfgtcb:origin:aHR0cHM6Ly9wcmV2aWV3LmV4YW1wbGUudGVzdA",
       );
+    });
+
+    it("keeps distinct sync identities stable when array push and join are poisoned", () => {
+      const firstConfig = { reactVersion: "18.3.1", dev: false };
+      const secondConfig = { reactVersion: "19.2.4", dev: true };
+      const firstBaseline = computeConfigHashSync(firstConfig);
+      const secondBaseline = computeConfigHashSync(secondConfig);
+      const originalPush = Array.prototype.push;
+      const originalJoin = Array.prototype.join;
+      let firstPoisoned: string | undefined;
+      let secondPoisoned: string | undefined;
+
+      try {
+        Reflect.set(Array.prototype, "push", () => 0);
+        Reflect.set(Array.prototype, "join", () => "poisoned");
+        firstPoisoned = computeConfigHashSync(firstConfig);
+        secondPoisoned = computeConfigHashSync(secondConfig);
+      } finally {
+        Reflect.set(Array.prototype, "push", originalPush);
+        Reflect.set(Array.prototype, "join", originalJoin);
+      }
+
+      assertEquals(firstPoisoned, firstBaseline);
+      assertEquals(secondPoisoned, secondBaseline);
+      assertNotEquals(firstPoisoned, secondPoisoned);
     });
 
     it("should return a string", () => {

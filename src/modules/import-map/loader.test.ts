@@ -79,6 +79,20 @@ describe("modules/import-map/loader", () => {
       assert("react" in imports, "should include default react");
     });
 
+    it("probes a canonical deno.json path when the project path has a trailing slash", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/trailing-slash-project/deno.json",
+        JSON.stringify({
+          imports: { "project-package": "https://esm.sh/project-package@1" },
+        }),
+      );
+
+      const { imports } = await loadImportMap("/trailing-slash-project/", adapter);
+
+      assertEquals(imports?.["project-package"], "https://esm.sh/project-package@1");
+    });
+
     it("should use esm.sh URLs for React", async () => {
       const adapter = createMockAdapter();
       const { imports } = await loadImportMap("/any-project", adapter);
@@ -205,8 +219,12 @@ describe("modules/import-map/loader", () => {
         jsonParse: JSON.parse,
         objectEntries: Object.entries,
         objectFromEntries: Object.fromEntries,
+        arrayEvery: Array.prototype.every,
         arrayFilter: Array.prototype.filter,
+        arrayJoin: Array.prototype.join,
         arrayMap: Array.prototype.map,
+        arrayPush: Array.prototype.push,
+        arraySome: Array.prototype.some,
       };
 
       try {
@@ -219,11 +237,23 @@ describe("modules/import-map/loader", () => {
         Object.fromEntries = (() => {
           throw new Error("poisoned Object.fromEntries");
         }) as typeof Object.fromEntries;
+        Array.prototype.every = function () {
+          throw new Error("poisoned Array.prototype.every");
+        };
         Array.prototype.filter = function () {
           throw new Error("poisoned Array.prototype.filter");
         };
+        Array.prototype.join = function () {
+          throw new Error("poisoned Array.prototype.join");
+        };
         Array.prototype.map = function () {
           throw new Error("poisoned Array.prototype.map");
+        };
+        Array.prototype.push = function () {
+          throw new Error("poisoned Array.prototype.push");
+        };
+        Array.prototype.some = function () {
+          throw new Error("poisoned Array.prototype.some");
         };
 
         const { imports, scopes } = await loadImportMap("/poisoned-deno-json", adapter);
@@ -235,8 +265,12 @@ describe("modules/import-map/loader", () => {
         JSON.parse = original.jsonParse;
         Object.entries = original.objectEntries;
         Object.fromEntries = original.objectFromEntries;
+        Array.prototype.every = original.arrayEvery;
         Array.prototype.filter = original.arrayFilter;
+        Array.prototype.join = original.arrayJoin;
         Array.prototype.map = original.arrayMap;
+        Array.prototype.push = original.arrayPush;
+        Array.prototype.some = original.arraySome;
       }
     });
   });

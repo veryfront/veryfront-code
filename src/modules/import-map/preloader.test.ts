@@ -234,6 +234,27 @@ describe("modules/import-map/preloader", () => {
       assertEquals(release === branch, false);
     });
 
+    it("rejects non-object config context values with a targeted error", async () => {
+      const adapter = createMinimalAdapter();
+      const preloader = new ImportMapPreloader({
+        loadImportMap: async () => ({ imports: {} }),
+      });
+
+      for (const config of [null, false, 0, "invalid"]) {
+        await assertRejects(
+          () =>
+            preloader.preload(
+              "/invalid-config-context",
+              adapter,
+              `invalid-config-${String(config)}`,
+              { config } as never,
+            ),
+          TypeError,
+          "Preload import-map config must be a non-null object",
+        );
+      }
+    });
+
     it("snapshots and deep-freezes loader output before publishing it", async () => {
       const adapter = createMinimalAdapter();
       const loadedMap = {

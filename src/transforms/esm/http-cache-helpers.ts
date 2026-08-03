@@ -76,7 +76,7 @@ function compareImportMapKeys(left: [string, string], right: [string, string]): 
   return left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0;
 }
 
-const HTTP_IMPORT_MAP_FINGERPRINT_NAMESPACE = "veryfront:http-import-map:v2";
+const HTTP_IMPORT_MAP_FINGERPRINT_NAMESPACE = "veryfront:http-import-map:v3";
 const HTTP_CACHE_IDENTITY_NAMESPACE = "veryfront:http-module:v2";
 const HTTP_CACHE_FILE_HASH_NAMESPACE = "veryfront:http-module-file:v2";
 

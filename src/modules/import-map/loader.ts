@@ -1,5 +1,5 @@
 import { rendererLogger as logger } from "#veryfront/utils";
-import { dirname } from "#veryfront/compat/path/index.ts";
+import { dirname, join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { getConfig, type VeryfrontConfig } from "#veryfront/config";
@@ -134,7 +134,7 @@ async function loadDenoJsonImportMap(
   let currentPath = startPath;
 
   while (currentPath !== "/" && currentPath !== "") {
-    const denoJsonPath = currentPath === "/" ? "/deno.json" : `${currentPath}/deno.json`;
+    const denoJsonPath = join(currentPath, "deno.json");
 
     try {
       const content = await adapter.fs.readFile(denoJsonPath);

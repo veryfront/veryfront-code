@@ -17,6 +17,7 @@ import {
   prepareHttpCacheRequestOptions,
   resolveBareSpecifier,
 } from "./http-cache-helpers.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 
 describe("transforms/esm/http-cache-helpers", () => {
   describe("cache identity", () => {
@@ -110,6 +111,18 @@ describe("transforms/esm/http-cache-helpers", () => {
       }
 
       assertEquals(hookCalls, 0);
+    });
+
+    it("does not reuse the v2 namespace after changing fingerprint canonicalization", async () => {
+      const importMap = {
+        imports: { pkg: "https://modules.example.com/pkg.js" },
+        scopes: {},
+      };
+      const legacyV2Fingerprint = await computeHash(
+        'veryfront:http-import-map:v2\0import:"pkg":"https://modules.example.com/pkg.js"',
+      );
+
+      assertNotEquals(await fingerprintImportMap(importMap), legacyV2Fingerprint);
     });
 
     it("canonicalizes and fingerprints one import map once per prepared request graph", async () => {

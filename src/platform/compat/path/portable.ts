@@ -1,5 +1,20 @@
 import type { PathObject } from "./types.ts";
 
+const ArrayPrototypeAt = Array.prototype.at;
+const ArrayPrototypeFilter = Array.prototype.filter;
+const ArrayPrototypeJoin = Array.prototype.join;
+const ArrayPrototypePop = Array.prototype.pop;
+const ArrayPrototypePush = Array.prototype.push;
+const ReflectApply = Reflect.apply;
+
+function arrayJoin(values: readonly string[], separator: string): string {
+  return ReflectApply(ArrayPrototypeJoin, values, [separator]) as string;
+}
+
+function arrayPush(values: string[], value: string): void {
+  ReflectApply(ArrayPrototypePush, values, [value]);
+}
+
 interface RootInfo {
   absolute: boolean;
   device: string;
@@ -78,15 +93,15 @@ function normalizeTail(rest: string, absolute: boolean): string[] {
     if (segment === "" || segment === ".") continue;
 
     if (segment !== "..") {
-      normalized.push(segment);
+      arrayPush(normalized, segment);
       continue;
     }
 
-    const previous = normalized.at(-1);
+    const previous = ReflectApply(ArrayPrototypeAt, normalized, [-1]) as string | undefined;
     if (previous !== undefined && previous !== "..") {
-      normalized.pop();
+      ReflectApply(ArrayPrototypePop, normalized, []);
     } else if (!absolute) {
-      normalized.push("..");
+      arrayPush(normalized, "..");
     }
   }
 
@@ -155,7 +170,7 @@ export function portableNormalize(path: string, windows: boolean): string {
   if (path === "") return ".";
 
   const root = analyzeRoot(path, windows);
-  const tail = normalizeTail(root.rest, root.absolute).join("/");
+  const tail = arrayJoin(normalizeTail(root.rest, root.absolute), "/");
   let result = appendRoot(root, tail);
 
   const hadTrailingSeparator = /[\\/]$/.test(path);
@@ -172,9 +187,13 @@ export function portableNormalize(path: string, windows: boolean): string {
 }
 
 export function portableJoin(paths: readonly string[], windows: boolean): string {
-  const nonempty = paths.filter((path) => path.length > 0);
+  const nonempty = ReflectApply(
+    ArrayPrototypeFilter,
+    paths,
+    [(path: string) => path.length > 0],
+  ) as string[];
   if (nonempty.length === 0) return "/";
-  return portableNormalize(nonempty.join("/"), windows);
+  return portableNormalize(arrayJoin(nonempty, "/"), windows);
 }
 
 export function portableDirname(path: string, windows: boolean): string {

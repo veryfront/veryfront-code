@@ -204,7 +204,10 @@ function snapshotPreloadContext(
     "config",
     "Preload import-map context",
   ) as VeryfrontConfig | undefined;
-  if (!config) return ObjectFreeze({ projectDir, contentSourceId });
+  if (config === undefined) return ObjectFreeze({ projectDir, contentSourceId });
+  if (config === null || typeof config !== "object") {
+    throw new IntrinsicTypeError("Preload import-map config must be a non-null object");
+  }
 
   const resolve = readOptionalOwnDataProperty(config, "resolve", "Veryfront config");
   const importMap = resolve && typeof resolve === "object"

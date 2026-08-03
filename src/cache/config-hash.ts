@@ -57,26 +57,28 @@ function buildAsyncConfigIdentity(config: TransformConfig): string {
     config.dependencyPinningCacheKey,
     config.moduleServerOrigin,
   );
-  const fields = [
-    encodeJsonStringProperty("transformVersion", VERSION),
-    encodeJsonStringProperty("reactVersion", config.reactVersion ?? DEFAULT_REACT_VERSION),
-    encodeJsonStringProperty("jsxImportSource", config.jsxImportSource ?? "react"),
-    encodeJsonNullableStringProperty("moduleServerUrl", config.moduleServerUrl ?? null),
-    encodeJsonNullableStringProperty("vendorBundleHash", config.vendorBundleHash ?? null),
-    encodeJsonNullableStringProperty("apiBaseUrl", config.apiBaseUrl ?? null),
-    encodeJsonBooleanProperty("studioEmbed", config.studioEmbed ?? false),
-    encodeJsonBooleanProperty("dev", config.dev ?? false),
-  ];
+  let fields = encodeJsonStringProperty("transformVersion", VERSION);
+  fields += `,${
+    encodeJsonStringProperty("reactVersion", config.reactVersion ?? DEFAULT_REACT_VERSION)
+  }`;
+  fields += `,${encodeJsonStringProperty("jsxImportSource", config.jsxImportSource ?? "react")}`;
+  fields += `,${
+    encodeJsonNullableStringProperty("moduleServerUrl", config.moduleServerUrl ?? null)
+  }`;
+  fields += `,${
+    encodeJsonNullableStringProperty("vendorBundleHash", config.vendorBundleHash ?? null)
+  }`;
+  fields += `,${encodeJsonNullableStringProperty("apiBaseUrl", config.apiBaseUrl ?? null)}`;
+  fields += `,${encodeJsonBooleanProperty("studioEmbed", config.studioEmbed ?? false)}`;
+  fields += `,${encodeJsonBooleanProperty("dev", config.dev ?? false)}`;
   if (dependencyPinningCacheVariant) {
-    fields.push(
-      encodeJsonStringProperty("dependencyPinningCacheVariant", dependencyPinningCacheVariant),
-    );
+    fields += `,${
+      encodeJsonStringProperty("dependencyPinningCacheVariant", dependencyPinningCacheVariant)
+    }`;
   }
-  fields.push(
-    encodeJsonStringProperty("csstype", CSSTYPE_VERSION),
-    encodeJsonStringProperty("tailwind", TAILWIND_VERSION),
-  );
-  return `{${fields.join(",")}}`;
+  fields += `,${encodeJsonStringProperty("csstype", CSSTYPE_VERSION)}`;
+  fields += `,${encodeJsonStringProperty("tailwind", TAILWIND_VERSION)}`;
+  return `{${fields}}`;
 }
 
 function encodeConfigPart(label: string, value: string | undefined): string {
@@ -85,28 +87,26 @@ function encodeConfigPart(label: string, value: string | undefined): string {
 }
 
 function buildSyncConfigIdentity(config: TransformConfig): string {
-  const parts = [
-    `v${VERSION}`,
-    config.reactVersion ?? DEFAULT_REACT_VERSION,
-    config.jsxImportSource ?? "react",
-  ];
+  let identity = `v${VERSION}:${config.reactVersion ?? DEFAULT_REACT_VERSION}:${
+    config.jsxImportSource ?? "react"
+  }`;
   const moduleServerUrlPart = encodeConfigPart("modules", config.moduleServerUrl);
-  if (moduleServerUrlPart) parts.push(moduleServerUrlPart);
+  if (moduleServerUrlPart) identity += `:${moduleServerUrlPart}`;
   const vendorBundleHashPart = encodeConfigPart("vendor", config.vendorBundleHash);
-  if (vendorBundleHashPart) parts.push(vendorBundleHashPart);
+  if (vendorBundleHashPart) identity += `:${vendorBundleHashPart}`;
   const apiBaseUrlPart = encodeConfigPart("api", config.apiBaseUrl);
-  if (apiBaseUrlPart) parts.push(apiBaseUrlPart);
-  if (config.studioEmbed) parts.push("studio");
-  if (config.dev) parts.push("dev");
+  if (apiBaseUrlPart) identity += `:${apiBaseUrlPart}`;
+  if (config.studioEmbed) identity += ":studio";
+  if (config.dev) identity += ":dev";
   const dependencyPinningCacheVariant = buildDependencyPinningCacheVariant(
     config.dependencyPinningCacheKey,
     config.moduleServerOrigin,
   );
   if (dependencyPinningCacheVariant) {
-    parts.push(`pins:${dependencyPinningCacheVariant}`);
+    identity += `:pins:${dependencyPinningCacheVariant}`;
   }
 
-  return parts.join(":");
+  return identity;
 }
 
 /**
