@@ -42,6 +42,34 @@ describe("rendering/cache/cache-payload", () => {
     );
   });
 
+  it("charges compatibility node-map projections only once", () => {
+    const payload = payloadWithNodeMap();
+    const entries = Array.from(
+      { length: 50_000 },
+      (_, index): [number, unknown] => [index, {}],
+    );
+    payload.nodeMapEntries = entries;
+    payload.result.nodeMap = new Map(entries);
+
+    const serialized = serializeCachePayload(payload);
+    const parsed = parseSerializedCachePayload(serialized);
+
+    assertEquals(parsed?.nodeMapEntries?.length, entries.length);
+    assertEquals(parsed?.result.nodeMap?.size, entries.length);
+  });
+
+  it("still rejects node maps beyond the logical node budget", () => {
+    const payload = payloadWithNodeMap();
+    const entries = Array.from(
+      { length: 100_000 },
+      (_, index): [number, unknown] => [index, {}],
+    );
+    payload.nodeMapEntries = entries;
+    payload.result.nodeMap = new Map(entries);
+
+    assertThrows(() => serializeCachePayload(payload), TypeError, "value is too large");
+  });
+
   it("round-trips detached Date values without changing cached frontmatter", () => {
     const payload = payloadWithNodeMap();
     const publicationDate = new Date("2026-07-24T08:30:00.000Z");

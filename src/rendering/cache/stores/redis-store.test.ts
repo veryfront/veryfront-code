@@ -196,6 +196,93 @@ describe("RedisCacheStore", () => {
       }
     });
 
+    it("compare-deletes the exact legacy bytes returned by get", async () => {
+      const legacyPayload = {
+        result: {
+          html: "<p>legacy</p>",
+          frontmatter: { source: "legacy" },
+          stream: null,
+        },
+        storedAt: 1_000,
+      };
+      let raw: string | null = JSON.stringify(legacyPayload);
+      let compared: string | undefined;
+      const client: RedisClient = {
+        ...createRedisClient(),
+        get: () => Promise.resolve(raw),
+        eval: (_script, options) => {
+          compared = options.arguments[0];
+          if (raw === compared) {
+            raw = null;
+            return Promise.resolve(1);
+          }
+          return Promise.resolve(0);
+        },
+      };
+      register(
+        RedisRuntimeProviderName,
+        createRedisProvider(client, () => Promise.resolve()),
+      );
+      const store = createStore({ keyPrefix: "render:" });
+
+      try {
+        const observed = await store.get("legacy-key");
+        assertExists(observed);
+        assertEquals(observed.result.html, "<p>legacy</p>");
+
+        raw = JSON.stringify({
+          ...legacyPayload,
+          result: { ...legacyPayload.result, html: "<p>replacement</p>" },
+        });
+        assertEquals(await store.deleteIfUnchanged("legacy-key", observed), false);
+        assertEquals(compared, JSON.stringify(legacyPayload));
+
+        raw = JSON.stringify(legacyPayload);
+        assertEquals(await store.deleteIfUnchanged("legacy-key", observed), true);
+        assertEquals(compared, JSON.stringify(legacyPayload));
+        assertEquals(raw, null);
+      } finally {
+        await store.destroy();
+        unregister(RedisRuntimeProviderName);
+      }
+    });
+
+    it("uses canonical bytes for independently constructed expectations", async () => {
+      const expected: CachePayload = {
+        result: { html: "<p>canonical</p>", frontmatter: {}, stream: null },
+        storedAt: 1_000,
+      };
+      let raw: string | null = null;
+      const client: RedisClient = {
+        ...createRedisClient(),
+        set: (_key, value) => {
+          raw = value;
+          return Promise.resolve("OK");
+        },
+        eval: (_script, options) => {
+          if (raw === options.arguments[0]) {
+            raw = null;
+            return Promise.resolve(1);
+          }
+          return Promise.resolve(0);
+        },
+      };
+      register(
+        RedisRuntimeProviderName,
+        createRedisProvider(client, () => Promise.resolve()),
+      );
+      const store = createStore({ keyPrefix: "render:" });
+
+      try {
+        await store.set("canonical-key", expected);
+        assertEquals(await store.deleteIfUnchanged("canonical-key", expected), true);
+        assertEquals(raw, null);
+      } finally {
+        await store.destroy();
+        unregister(RedisRuntimeProviderName);
+      }
+    });
+
     it("uses object-shaped SCAN results and closes its owned connection", async () => {
       const scanResults = [
         { cursor: 3, keys: ["render:a"] },

@@ -28,6 +28,7 @@ export interface RedisCacheStoreOptions {
 
 export class RedisCacheStore implements CacheStore {
   private readonly connection: OwnedRedisClientConnection;
+  private readonly observedRawByPayload = new WeakMap<CachePayload, string>();
   private readonly keyPrefix: string;
   private readonly enableFallback: boolean;
   private readonly ttlSeconds: number;
@@ -103,7 +104,9 @@ export class RedisCacheStore implements CacheStore {
       const raw = await client.get(this.storageKey(key));
       if (!raw) return undefined;
 
-      return parseSerializedCachePayload(raw);
+      const parsed = parseSerializedCachePayload(raw);
+      if (parsed !== undefined) this.observedRawByPayload.set(parsed, raw);
+      return parsed;
     } catch (error) {
       this.markRedisUnavailable();
 
@@ -124,9 +127,11 @@ export class RedisCacheStore implements CacheStore {
     try {
       const client = await this.ensureClient();
       // Apply TTL to prevent unbounded Redis growth
-      await client.set(this.storageKey(key), serializeCachePayload(value), {
+      const serialized = serializeCachePayload(value);
+      await client.set(this.storageKey(key), serialized, {
         EX: this.ttlSeconds,
       });
+      this.observedRawByPayload.set(value, serialized);
     } catch (error) {
       this.markRedisUnavailable();
 
@@ -168,10 +173,17 @@ export class RedisCacheStore implements CacheStore {
 
     try {
       const client = await this.ensureClient();
+      // Values returned by get() retain the exact bytes that were observed so
+      // compare-and-delete remains correct across serialization upgrades.
+      // Independently constructed values compare against the current canonical
+      // serialization, which is the only byte sequence they can have observed.
+      const comparisonValue = this.observedRawByPayload.get(expected) ??
+        serializeCachePayload(expected);
       const deleted = await client.eval(COMPARE_AND_DELETE_SCRIPT, {
         keys: [this.storageKey(key)],
-        arguments: [serializeCachePayload(expected)],
+        arguments: [comparisonValue],
       });
+      if (deleted === 1) this.observedRawByPayload.delete(expected);
       return deleted === 1;
     } catch (error) {
       this.markRedisUnavailable();

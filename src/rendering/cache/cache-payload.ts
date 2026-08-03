@@ -175,12 +175,19 @@ function cloneNodeMapEntries(
       }
       if (seen.has(key)) fail("nodeMap contains duplicate keys");
       seen.add(key);
+      return [key, rawValue];
+    });
+  };
 
-      const value = cloneJsonValue(rawValue, state, 1);
+  const cloneEntries = (
+    entries: Array<[number, unknown]>,
+    cloneState: CloneState,
+  ): Array<[number, unknown]> =>
+    entries.map(([key, rawValue]) => {
+      const value = cloneJsonValue(rawValue, cloneState, 1);
       if (value === undefined) fail("nodeMap values cannot be undefined");
       return [key, value];
     });
-  };
 
   const readEntries = (
     rawNodeMapEntries: unknown,
@@ -211,14 +218,7 @@ function cloneNodeMapEntries(
     ownDataValue(result, "nodeMapEntries"),
     "result.nodeMapEntries",
   );
-  if (
-    topLevelEntries !== undefined &&
-    nestedEntries !== undefined &&
-    !nodeMapEntriesEqual(topLevelEntries, nestedEntries)
-  ) {
-    fail("nodeMapEntries conflicts with result.nodeMapEntries");
-  }
-  const serialized = topLevelEntries ?? nestedEntries;
+  const serializedEntries = topLevelEntries ?? nestedEntries;
 
   let resultEntries: Array<[number, unknown]> | undefined;
   const rawResultNodeMap = ownDataValue(result, "nodeMap");
@@ -229,21 +229,50 @@ function cloneNodeMapEntries(
     const keys = Object.keys(rawResultNodeMap);
     // JSON.stringify(Map) produced this exact empty record in origin/main.
     // Prefer the explicit entries array when it is present.
-    if (keys.length > 0 || serialized === undefined) {
+    if (keys.length > 0 || serializedEntries === undefined) {
       resultEntries = normalize(
         keys.map((key) => [key, ownDataValue(rawResultNodeMap, key)]),
       );
     }
   }
 
-  if (
-    serialized !== undefined && resultEntries !== undefined &&
-    !nodeMapEntriesEqual(serialized, resultEntries)
-  ) {
-    fail("nodeMapEntries conflicts with result.nodeMap");
-  }
+  const canonicalRaw = serializedEntries ?? resultEntries;
+  if (canonicalRaw === undefined) return undefined;
 
-  return serialized ?? resultEntries;
+  // Compatibility payloads can contain the same logical node map in three
+  // representations. Charge the canonical data to the payload budget once,
+  // then validate each duplicate independently before comparing it. This
+  // preserves the limit without rejecting valid data merely because an older
+  // reader requires an additional projection on the wire.
+  const canonical = cloneEntries(canonicalRaw, state);
+  const assertCompatible = (
+    candidate: Array<[number, unknown]> | undefined,
+    message: string,
+  ): void => {
+    if (candidate === undefined || candidate === canonicalRaw) return;
+    const validationState: CloneState = {
+      nodes: 0,
+      stringBytes: 0,
+      ancestors: new WeakSet<object>(),
+    };
+    const validated = cloneEntries(candidate, validationState);
+    if (!nodeMapEntriesEqual(canonical, validated)) fail(message);
+  };
+
+  assertCompatible(
+    topLevelEntries,
+    "nodeMapEntries conflicts with the canonical node map",
+  );
+  assertCompatible(
+    nestedEntries,
+    "result.nodeMapEntries conflicts with the canonical node map",
+  );
+  assertCompatible(
+    resultEntries,
+    "result.nodeMap conflicts with the canonical node map",
+  );
+
+  return canonical;
 }
 
 function nodeMapEntriesEqual(
