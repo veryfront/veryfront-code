@@ -7,7 +7,10 @@
 import { isAbsolute, join } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import {
+  primordialArrayFilter as arrayFilter,
+  primordialArrayJoin as arrayJoin,
   primordialArrayMap as arrayMap,
+  primordialArrayPush as arrayPush,
   primordialArraySort as arraySort,
 } from "#veryfront/platform/compat/primordials/array.ts";
 import { rendererLogger } from "#veryfront/utils";
@@ -19,13 +22,20 @@ import { DEFAULT_REACT_VERSION, getReactImportMap } from "./react-cdn.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 
 const logger = rendererLogger.component("http-cache");
+const ArrayIncludes = Array.prototype.includes;
+const EncodeURIComponent = encodeURIComponent;
 const JSONStringify = JSON.stringify;
 const IntrinsicURL = URL;
 const IntrinsicURLSearchParams = URLSearchParams;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectEntries = Object.entries;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const RegExpExec = RegExp.prototype.exec;
 const ReflectApply = Reflect.apply;
+const StringIncludes = String.prototype.includes;
+const StringReplace = String.prototype.replace;
+const StringSlice = String.prototype.slice;
+const StringSplit = String.prototype.split;
 const URLHostnameGet = ObjectGetOwnPropertyDescriptor(
   IntrinsicURL.prototype,
   "hostname",
@@ -82,6 +92,58 @@ function setURLSearchParam(searchParams: URLSearchParams, name: string, value: s
 
 function sortURLSearchParams(searchParams: URLSearchParams): void {
   ReflectApply(URLSearchParamsSort, searchParams, []);
+}
+
+function arrayIncludesValue<T>(values: readonly T[], value: T): boolean {
+  return ReflectApply(ArrayIncludes, values, [value]);
+}
+
+function execRegExp(pattern: RegExp, value: string): RegExpExecArray | null {
+  return ReflectApply(RegExpExec, pattern, [value]);
+}
+
+function testRegExp(pattern: RegExp, value: string): boolean {
+  return execRegExp(pattern, value) !== null;
+}
+
+function stringIncludes(value: string, search: string): boolean {
+  return ReflectApply(StringIncludes, value, [search]);
+}
+
+function stringReplace(value: string, search: string, replacement: string): string {
+  return ReflectApply(StringReplace, value, [search, replacement]);
+}
+
+function stringSlice(value: string, start: number): string {
+  return ReflectApply(StringSlice, value, [start]);
+}
+
+function stringSplit(value: string, separator: string): string[] {
+  return ReflectApply(StringSplit, value, [separator]);
+}
+
+function stripLeadingSlashes(value: string): string {
+  let index = 0;
+  while (value[index] === "/") index++;
+  return index === 0 ? value : stringSlice(value, index);
+}
+
+function decodeEncodedCommas(value: string): string {
+  let decoded = "";
+  let index = 0;
+  while (index < value.length) {
+    if (
+      value[index] === "%" && value[index + 1] === "2" &&
+      (value[index + 2] === "C" || value[index + 2] === "c")
+    ) {
+      decoded += ",";
+      index += 3;
+      continue;
+    }
+    decoded += value[index];
+    index++;
+  }
+  return decoded;
 }
 
 /**
@@ -299,10 +361,14 @@ function parseCanonicalReactEsmPackage(rawUrl: string): CanonicalReactEsmPackage
     const url = new IntrinsicURL(rawUrl);
     if (getURLHostname(url) !== "esm.sh") return null;
 
-    const pathSegments = getURLPathname(url).split("/").filter(Boolean);
+    const pathSegments = arrayFilter(
+      stringSplit(getURLPathname(url), "/"),
+      (segment) => segment.length > 0,
+    );
     const prefix = pathSegments[0] ?? "";
-    const packageIndex = prefix === "stable" || /^v\d+$/.test(prefix) ? 1 : 0;
-    const match = /^(react|react-dom)@(\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)$/.exec(
+    const packageIndex = prefix === "stable" || testRegExp(/^v\d+$/, prefix) ? 1 : 0;
+    const match = execRegExp(
+      /^(react|react-dom)@(\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)$/,
       pathSegments[packageIndex] ?? "",
     );
     if (!match?.[1] || !match[2]) return null;
@@ -339,7 +405,7 @@ export function getEffectiveHttpCacheRequest<T extends HttpCacheIdentityOptions>
   const version = options.reactVersion ?? parsed.version;
   if (version !== parsed.version) {
     parsed.pathSegments[parsed.packageIndex] = `${parsed.packageName}@${version}`;
-    setURLPathname(parsed.url, `/${parsed.pathSegments.join("/")}`);
+    setURLPathname(parsed.url, `/${arrayJoin(parsed.pathSegments, "/")}`);
   }
 
   const effectiveOptions = {
@@ -398,8 +464,8 @@ export function normalizeEsmShUrl(url: URL): void {
   if (getURLHostname(url) !== "esm.sh") return;
 
   const originalPathname = getURLPathname(url);
-  if (originalPathname.includes("/denonext/")) {
-    setURLPathname(url, originalPathname.replace("/denonext/", "/"));
+  if (stringIncludes(originalPathname, "/denonext/")) {
+    setURLPathname(url, stringReplace(originalPathname, "/denonext/", "/"));
   }
 
   const searchParams = getURLSearchParams(url);
@@ -407,15 +473,15 @@ export function normalizeEsmShUrl(url: URL): void {
     setURLSearchParam(searchParams, "target", "es2022");
   }
 
-  const pathname = getURLPathname(url).replace(/^\/+/, "");
-  const isBaseReact = /^react@[\d.]+(?:\?|$)/.test(pathname);
+  const pathname = stripLeadingSlashes(getURLPathname(url));
+  const isBaseReact = testRegExp(/^react@[\d.]+(?:\?|$)/, pathname);
   if (isBaseReact) return;
 
   const existing = getURLSearchParam(searchParams, "external");
-  const externals = existing ? existing.split(",") : [];
-  if (!externals.includes("react")) {
-    externals.push("react");
-    setURLSearchParam(searchParams, "external", externals.join(","));
+  const externals = existing ? stringSplit(existing, ",") : [];
+  if (!arrayIncludesValue(externals, "react")) {
+    arrayPush(externals, "react");
+    setURLSearchParam(searchParams, "external", arrayJoin(externals, ","));
   }
 }
 
@@ -435,10 +501,11 @@ export function normalizeHttpUrl(raw: string): string {
       const external = getURLSearchParam(searchParams, "external");
       if (!external) return normalized;
 
-      const encodedExternal = encodeURIComponent(external);
-      return normalized.replace(
+      const encodedExternal = EncodeURIComponent(external);
+      return stringReplace(
+        normalized,
         `external=${encodedExternal}`,
-        `external=${encodedExternal.replace(/%2C/gi, ",")}`,
+        `external=${decodeEncodedCommas(encodedExternal)}`,
       );
     }
 

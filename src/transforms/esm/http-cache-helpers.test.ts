@@ -140,16 +140,30 @@ describe("transforms/esm/http-cache-helpers", () => {
         "https://esm.sh/lodash@4?z=1&a=2",
         prepareHttpCacheRequestOptions({ cacheDir: ".cache", importMap }),
       );
+      const otherBaseline = await buildHttpCacheIdentity(
+        "https://esm.sh/preact@10?z=2&b=3",
+        prepareHttpCacheRequestOptions({ cacheDir: ".cache", importMap }),
+      );
       const objectDefineProperty = Object.defineProperty;
       const urlDescriptor = Object.getOwnPropertyDescriptor(globalThis, "URL")!;
-      const urlPrototypeDescriptors = Object.getOwnPropertyDescriptors(URL.prototype);
+      const encodeURIComponentDescriptor = Object.getOwnPropertyDescriptor(
+        globalThis,
+        "encodeURIComponent",
+      )!;
+      const urlPrototype = URL.prototype;
+      const urlPrototypeDescriptors = Object.getOwnPropertyDescriptors(urlPrototype);
       const searchParamsPrototypeDescriptors = Object.getOwnPropertyDescriptors(
         URLSearchParams.prototype,
       );
+      const stringPrototypeDescriptors = Object.getOwnPropertyDescriptors(String.prototype);
+      const arrayPrototype: object = Array.prototype;
+      const arrayPrototypeDescriptors = Object.getOwnPropertyDescriptors(arrayPrototype);
+      const regExpPrototypeDescriptors = Object.getOwnPropertyDescriptors(RegExp.prototype);
       let definePropertyCalls = 0;
       let urlCalls = 0;
       let urlPrototypeCalls = 0;
       let poisoned: string;
+      let otherPoisoned: string;
 
       try {
         objectDefineProperty(Object, "defineProperty", {
@@ -171,7 +185,7 @@ describe("transforms/esm/http-cache-helpers", () => {
           writable: true,
         });
         for (const name of ["hostname", "pathname", "searchParams"]) {
-          objectDefineProperty(URL.prototype, name, {
+          objectDefineProperty(urlPrototype, name, {
             configurable: true,
             get() {
               urlPrototypeCalls++;
@@ -183,7 +197,7 @@ describe("transforms/esm/http-cache-helpers", () => {
             },
           });
         }
-        objectDefineProperty(URL.prototype, "toString", {
+        objectDefineProperty(urlPrototype, "toString", {
           configurable: true,
           value() {
             urlPrototypeCalls++;
@@ -201,9 +215,51 @@ describe("transforms/esm/http-cache-helpers", () => {
             writable: true,
           });
         }
+        for (const name of ["includes", "replace", "split"]) {
+          objectDefineProperty(String.prototype, name, {
+            configurable: true,
+            value() {
+              urlPrototypeCalls++;
+              return "https://evil.invalid/collapsed";
+            },
+            writable: true,
+          });
+        }
+        for (const name of ["filter", "includes", "join", "push"]) {
+          objectDefineProperty(arrayPrototype, name, {
+            configurable: true,
+            value() {
+              urlPrototypeCalls++;
+              throw new Error(`poisoned Array.prototype.${name}`);
+            },
+            writable: true,
+          });
+        }
+        for (const name of ["exec", "test"]) {
+          objectDefineProperty(RegExp.prototype, name, {
+            configurable: true,
+            value() {
+              urlPrototypeCalls++;
+              throw new Error(`poisoned RegExp.prototype.${name}`);
+            },
+            writable: true,
+          });
+        }
+        objectDefineProperty(globalThis, "encodeURIComponent", {
+          configurable: true,
+          value() {
+            urlPrototypeCalls++;
+            return "collapsed";
+          },
+          writable: true,
+        });
 
         poisoned = await buildHttpCacheIdentity(
           "https://esm.sh/lodash@4?z=1&a=2",
+          prepareHttpCacheRequestOptions({ cacheDir: ".cache", importMap }),
+        );
+        otherPoisoned = await buildHttpCacheIdentity(
+          "https://esm.sh/preact@10?z=2&b=3",
           prepareHttpCacheRequestOptions({ cacheDir: ".cache", importMap }),
         );
       } finally {
@@ -213,11 +269,17 @@ describe("transforms/esm/http-cache-helpers", () => {
           writable: true,
         });
         objectDefineProperty(globalThis, "URL", urlDescriptor);
-        Object.defineProperties(URL.prototype, urlPrototypeDescriptors);
+        objectDefineProperty(globalThis, "encodeURIComponent", encodeURIComponentDescriptor);
+        Object.defineProperties(urlPrototype, urlPrototypeDescriptors);
         Object.defineProperties(URLSearchParams.prototype, searchParamsPrototypeDescriptors);
+        Object.defineProperties(String.prototype, stringPrototypeDescriptors);
+        Object.defineProperties(arrayPrototype, arrayPrototypeDescriptors);
+        Object.defineProperties(RegExp.prototype, regExpPrototypeDescriptors);
       }
 
       assertEquals(poisoned, baseline);
+      assertEquals(otherPoisoned, otherBaseline);
+      assertNotEquals(poisoned, otherPoisoned);
       assertEquals(definePropertyCalls, 0);
       assertEquals(urlCalls, 0);
       assertEquals(urlPrototypeCalls, 0);
