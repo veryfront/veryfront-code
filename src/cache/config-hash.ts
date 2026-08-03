@@ -14,6 +14,8 @@ import {
 } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { buildDependencyPinningCacheVariant } from "./keys/dependency-pinning.ts";
 
+const JSONStringify = JSON.stringify;
+
 /**
  * Configuration that affects transform output.
  */
@@ -62,7 +64,7 @@ export function computeConfigHash(config: TransformConfig): Promise<string> {
     tailwind: TAILWIND_VERSION,
   };
 
-  return computeHash(JSON.stringify(normalized));
+  return computeHash(JSONStringify(normalized));
 }
 
 /**

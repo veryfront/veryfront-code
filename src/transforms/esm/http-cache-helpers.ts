@@ -15,6 +15,11 @@ import { DEFAULT_REACT_VERSION, getReactImportMap } from "./react-cdn.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 
 const logger = rendererLogger.component("http-cache");
+const ArrayPrototypeMap = Array.prototype.map;
+const ArrayPrototypeSort = Array.prototype.sort;
+const JSONStringify = JSON.stringify;
+const ObjectEntries = Object.entries;
+const ReflectApply = Reflect.apply;
 
 /**
  * Cache interface for dependency injection (matches LRU essential methods).
@@ -77,16 +82,32 @@ const HTTP_CACHE_FILE_HASH_NAMESPACE = "veryfront:http-module-file:v2";
 
 /** Build an order-independent fingerprint covering imports and scoped imports. */
 export function fingerprintImportMap(importMap: ImportMapConfig): Promise<string> {
-  const imports = Object.entries(importMap.imports ?? {}).sort(compareImportMapKeys);
-  const scopes = Object.entries(importMap.scopes ?? {})
-    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
-    .map(([scope, scopedImports]) => [
+  const imports = ReflectApply(
+    ArrayPrototypeSort,
+    ObjectEntries(importMap.imports ?? {}),
+    [compareImportMapKeys],
+  ) as Array<[string, string]>;
+  const sortedScopes = ReflectApply(
+    ArrayPrototypeSort,
+    ObjectEntries(importMap.scopes ?? {}),
+    [([left]: [string, Record<string, string>], [right]: [string, Record<string, string>]) =>
+      left < right ? -1 : left > right ? 1 : 0],
+  ) as Array<[string, Record<string, string>]>;
+  const scopes = ReflectApply(
+    ArrayPrototypeMap,
+    sortedScopes,
+    [([scope, scopedImports]: [string, Record<string, string>]) => [
       scope,
-      Object.entries(scopedImports).sort(compareImportMapKeys),
-    ]);
+      ReflectApply(
+        ArrayPrototypeSort,
+        ObjectEntries(scopedImports),
+        [compareImportMapKeys],
+      ),
+    ]],
+  );
 
   return computeHash(
-    `${HTTP_IMPORT_MAP_FINGERPRINT_NAMESPACE}\0${JSON.stringify({ imports, scopes })}`,
+    `${HTTP_IMPORT_MAP_FINGERPRINT_NAMESPACE}\0${JSONStringify({ imports, scopes })}`,
   );
 }
 

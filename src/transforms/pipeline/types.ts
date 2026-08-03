@@ -143,6 +143,11 @@ export interface TransformPlugin {
   name: string;
   /** Stage this plugin runs at */
   stage: TransformStage;
+  /**
+   * Stable, versioned identity for output-affecting custom plugin behavior.
+   * Custom plugins without an identity still run, but disable persistent caching.
+   */
+  cacheIdentity?: string;
   /** Optional condition - if false, plugin is skipped */
   condition?: (ctx: TransformContext) => boolean;
   /** Transform function - returns new code */

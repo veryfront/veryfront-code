@@ -2,7 +2,7 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { getConfig } from "#veryfront/config";
+import { getConfig, type VeryfrontConfig } from "#veryfront/config";
 import type { ImportMapConfig } from "./types.ts";
 import { getDefaultImportMap } from "./default-import-map.ts";
 import { mergeImportMaps } from "./merger.ts";
@@ -135,9 +135,20 @@ async function loadDenoJsonImportMap(
   return null;
 }
 
+function getConfigImportMap(config: VeryfrontConfig): ImportMapConfig | null {
+  const importMap = config.resolve?.importMap;
+  if (!importMap || typeof importMap !== "object") return null;
+
+  return {
+    imports: importMap.imports ?? {},
+    scopes: importMap.scopes ?? {},
+  };
+}
+
 export function loadImportMap(
   startPath: string,
   adapter?: RuntimeAdapter,
+  config?: VeryfrontConfig,
 ): Promise<ImportMapConfig> {
   return withSpan(
     "modules.importMap.load",
@@ -147,19 +158,19 @@ export function loadImportMap(
       // First, load import map from deno.json (if exists)
       const denoJsonMap = await loadDenoJsonImportMap(startPath, runtimeAdapter);
 
-      // Then, try to get config's import map
+      // Then, try to get config's import map. A config already validated for
+      // the authenticated request takes precedence over re-reading it from the
+      // project source.
       let configMap: ImportMapConfig | null = null;
-      try {
-        const cfg = await getConfig(startPath, runtimeAdapter);
-        const importMap = cfg?.resolve?.importMap;
-        if (importMap && typeof importMap === "object") {
-          configMap = {
-            imports: importMap.imports ?? {},
-            scopes: importMap.scopes ?? {},
-          };
+      if (config) {
+        configMap = getConfigImportMap(config);
+      } else {
+        try {
+          const cfg = await getConfig(startPath, runtimeAdapter);
+          if (cfg) configMap = getConfigImportMap(cfg);
+        } catch (_) {
+          /* expected: config not found or invalid, continue without it */
         }
-      } catch (_) {
-        /* expected: config not found or invalid, continue without it */
       }
 
       // Merge: defaults < deno.json < config
