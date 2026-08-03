@@ -611,6 +611,25 @@ async function writeTextOutput(
   await Deno.writeTextFile(outputPath, text);
 }
 
+const GENERATE_SBOM_USAGE = [
+  "Usage: deno run --allow-read --allow-write scripts/build/generate-sbom.ts [--lock path] [--output path]",
+  "       deno run --allow-read --allow-write scripts/build/generate-sbom.ts --all-manifests --output-dir dist/sbom",
+  "       deno run --allow-read --allow-write scripts/build/generate-sbom.ts --manifest extensions/ext-sandbox-shell-tools/deno.json --output dist/sbom-ext-sandbox-shell-tools.json",
+].join("\n");
+
+function exitUsage(message: string): never {
+  console.error(`Error: ${message}`);
+  console.error(GENERATE_SBOM_USAGE);
+  Deno.exit(2);
+}
+
+function requireNonEmptyPath(value: unknown, flag: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    exitUsage(`${flag} requires a non-empty path`);
+  }
+  return value;
+}
+
 if (import.meta.main) {
   const args = parseArgs(Deno.args, {
     boolean: ["all-manifests"],
@@ -622,8 +641,9 @@ if (import.meta.main) {
     },
   });
 
+  const lockPath = requireNonEmptyPath(args.lock, "--lock");
   const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
-  const lockText = await Deno.readTextFile(args.lock);
+  const lockText = await Deno.readTextFile(lockPath);
 
   if (args["all-manifests"]) {
     const workspaceMembers = workspaceMembersFromDenoConfig(denoConfig);
