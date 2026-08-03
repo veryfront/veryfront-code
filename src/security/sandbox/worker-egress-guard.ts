@@ -11,6 +11,7 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { resolveHostAddresses } from "#veryfront/platform/compat/dns.ts";
 
 export const WORKER_INTERNAL_EGRESS_OVERRIDE_ENV = "VERYFRONT_WORKER_ALLOW_INTERNAL_EGRESS";
+export const WORKER_INTERNAL_EGRESS_ALLOWED_HOSTS_ENV = "VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS";
 
 export class WorkerEgressBlockedError extends Error {
   override name = "WorkerEgressBlockedError";
@@ -20,6 +21,7 @@ export type ResolveWorkerHost = (hostname: string) => Promise<string[]>;
 
 export interface WorkerEgressGuardOptions {
   allowInternalEgress?: boolean;
+  allowedInternalHosts?: readonly string[];
   resolveHost?: ResolveWorkerHost;
 }
 
@@ -115,6 +117,29 @@ function isLocalhostName(hostname: string): boolean {
   return normalized === "localhost" || normalized.endsWith(".localhost");
 }
 
+function normalizeInternalHost(hostname: string): string {
+  return stripIpv6Brackets(hostname.trim().toLowerCase());
+}
+
+function parseAllowedInternalHosts(value: string | undefined): string[] {
+  if (!value) return [];
+
+  const parsed = value.split(",").map((host) => normalizeInternalHost(host)).filter((host) =>
+    host.length > 0
+  );
+  return [...new Set(parsed)];
+}
+
+function getAllowedInternalHosts(): string[] {
+  return parseAllowedInternalHosts(getHostEnv(WORKER_INTERNAL_EGRESS_ALLOWED_HOSTS_ENV));
+}
+
+function isAllowedInternalHost(hostname: string, options: WorkerEgressGuardOptions): boolean {
+  const allowlist = options.allowedInternalHosts ?? getAllowedInternalHosts();
+  if (allowlist.length === 0) return false;
+  return allowlist.includes(normalizeInternalHost(hostname));
+}
+
 async function defaultResolveHost(hostname: string): Promise<string[]> {
   return await resolveHostAddresses(hostname);
 }
@@ -155,6 +180,7 @@ export async function assertWorkerHostEgressAllowed(
   if (options.allowInternalEgress) return;
 
   const host = stripIpv6Brackets(hostname.trim().toLowerCase());
+  if (isAllowedInternalHost(host, options)) return;
   if (isLocalhostName(host) || isInternalEgressIp(host)) {
     throw new WorkerEgressBlockedError(
       `Worker network egress blocked for internal host: ${hostname}`,
@@ -333,6 +359,7 @@ export function installWorkerEgressGuard(options: WorkerEgressGuardOptions = {})
   const baseOptions = {
     ...options,
     allowInternalEgress: options.allowInternalEgress ?? getAllowInternalEgress(),
+    allowedInternalHosts: options.allowedInternalHosts ?? getAllowedInternalHosts(),
   };
 
   const originalFetch = globalThis.fetch.bind(globalThis);

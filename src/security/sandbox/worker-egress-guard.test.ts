@@ -7,6 +7,7 @@ import {
   guardedEgressFetch,
   isInternalEgressIp,
   isInternalEgressOverrideEnabled,
+  WORKER_INTERNAL_EGRESS_ALLOWED_HOSTS_ENV,
   WORKER_INTERNAL_EGRESS_OVERRIDE_ENV,
   WorkerEgressBlockedError,
 } from "./worker-egress-guard.ts";
@@ -72,6 +73,13 @@ describe("worker-egress-guard", () => {
     });
   });
 
+  it("allows hostnames on the trusted internal allowlist even when they resolve internal", async () => {
+    await assertWorkerHostEgressAllowed("api.veryfront.org", {
+      allowedInternalHosts: ["api.veryfront.org"],
+      resolveHost: () => Promise.resolve(["10.255.128.3"]),
+    });
+  });
+
   it("requires hostname resolution by default", async () => {
     await assertRejects(
       () =>
@@ -92,6 +100,10 @@ describe("worker-egress-guard", () => {
 
   it("parses the explicit internal egress override env value", () => {
     assertEquals(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV, "VERYFRONT_WORKER_ALLOW_INTERNAL_EGRESS");
+    assertEquals(
+      WORKER_INTERNAL_EGRESS_ALLOWED_HOSTS_ENV,
+      "VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS",
+    );
     assertEquals(isInternalEgressOverrideEnabled("1"), true);
     assertEquals(isInternalEgressOverrideEnabled("true"), true);
     assertEquals(isInternalEgressOverrideEnabled("yes"), true);
@@ -178,9 +190,9 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
       { fetchImpl },
     );
     assertEquals(res.status, 200);
-    assertEquals(seen[0].auth, "Bearer secret");
-    assertEquals(seen[1].auth, null);
-    assertEquals(seen[1].cookie, null);
+    assertEquals(seen[0]?.auth, "Bearer secret");
+    assertEquals(seen[1]?.auth, null);
+    assertEquals(seen[1]?.cookie, null);
   });
 
   it("preserves Authorization on a same-origin redirect", async () => {
