@@ -84,19 +84,31 @@ export function memoize<Args extends unknown[], Result>(
 }
 
 /**
- * FNV-1a hash algorithm for fast cache key generation.
+ * FNV-1a hash algorithm for fast, framed cache key generation.
  * 10-15x faster than JSON.stringify() and uses 70-80% less memory.
  */
 export function simpleHash(...values: unknown[]): string {
   let hash = HASH_SEED_FNV1A;
 
-  for (const value of values) {
-    const str = typeof value === "string" ? value : String(value);
-
-    for (let i = 0; i < str.length; i++) {
-      hash ^= str.charCodeAt(i);
+  const mix = (text: string): void => {
+    // Length-prefix every segment so argument boundaries cannot collapse
+    // (`["ab", "c"]` must not hash as `["a", "bc"]`).
+    const length = text.length >>> 0;
+    for (let shift = 0; shift < 32; shift += 8) {
+      hash ^= (length >>> shift) & 0xff;
       hash = Math.imul(hash, FNV1A_PRIME_32);
     }
+
+    for (let i = 0; i < text.length; i++) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, FNV1A_PRIME_32);
+    }
+  };
+
+  for (const value of values) {
+    const str = typeof value === "string" ? value : String(value);
+    mix(value === null ? "null" : typeof value);
+    mix(str);
   }
 
   return (hash >>> 0).toString(36);

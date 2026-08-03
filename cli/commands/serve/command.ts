@@ -5,6 +5,7 @@ import { exitProcess, registerTerminationSignals, showHeader } from "#cli/utils"
 import { generateDefaultProjectId } from "../../utils/project.ts";
 import { startCliProductionServer } from "#cli/shared/server-startup";
 import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
+import { runStandaloneProxyRuntime } from "./proxy-runtime.ts";
 
 const STARTUP_ERROR_FLUSH_TIMEOUT_MS = 2_000;
 
@@ -141,39 +142,10 @@ async function runSplit(options: ServeOptions): Promise<void> {
 }
 
 async function runProxy(options: ServeOptions): Promise<void> {
-  showHeader();
-  cliLogger.info(`Starting proxy server on ${options.bindAddress}:${options.port}`);
-
-  const { setEnv } = await import("veryfront/platform");
-  setEnv("PORT", String(options.port));
-  setEnv("HOST", options.bindAddress);
-
-  const {
-    activateStandaloneProxyCacheExtension,
-    registerStandaloneProxyCacheExtensionTeardown,
-  } = await import(
-    "./proxy-extension-composition.ts"
-  );
-  const extensionLoader = await activateStandaloneProxyCacheExtension();
-  const teardownCacheExtension = await registerStandaloneProxyCacheExtensionTeardown(
-    extensionLoader,
-  );
-
-  // DenoHttpServer.serve() blocks until the server stops,
-  // so this import keeps the process alive.
-  try {
-    await import("veryfront/proxy/main");
-  } catch (error) {
-    try {
-      await teardownCacheExtension();
-    } catch (cleanupError) {
-      cliLogger.error("Failed to clean up proxy extensions after startup failure", cleanupError);
-    }
-    throw error;
-  }
-
-  // Keep the process alive (Deno.serve returns immediately in compiled binaries)
-  await new Promise(() => {});
+  await runStandaloneProxyRuntime({
+    bindAddress: options.bindAddress,
+    port: options.port,
+  });
 }
 
 function createDeferredProductionStartupErrorReporter(): {

@@ -3,7 +3,10 @@ import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
-import { asyncLocalStorage } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import {
+  getCurrentRequestContext,
+  runWithRequestContext,
+} from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../../../release-assets/constants.ts";
 import {
@@ -715,7 +718,7 @@ describe(
       const contextBoundAdapter = {
         fs: {
           stat: (path: string) => {
-            if (!asyncLocalStorage.getStore()) {
+            if (!getCurrentRequestContext()) {
               return Promise.reject(new Error("No request context available"));
             }
             return files[path]
@@ -723,7 +726,7 @@ describe(
               : Promise.reject(new Error("not found"));
           },
           readFile: (path: string) => {
-            if (!asyncLocalStorage.getStore()) {
+            if (!getCurrentRequestContext()) {
               return Promise.reject(new Error("No request context available"));
             }
             return files[path] !== undefined
@@ -733,8 +736,8 @@ describe(
         },
       } as unknown as ReturnType<typeof createMockAdapter>;
 
-      const result = await asyncLocalStorage.run(
-        {} as NonNullable<ReturnType<typeof asyncLocalStorage.getStore>>,
+      const result = await runWithRequestContext(
+        { projectSlug: "esbuild-project", token: "esbuild-token" },
         () =>
           esbuild.build({
             bundle: true,

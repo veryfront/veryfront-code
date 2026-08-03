@@ -152,6 +152,18 @@ describe("PathNormalizer", () => {
       );
     });
 
+    it("should reject C1 control characters like the GitHub normalizer", () => {
+      const normalizer = new PathNormalizer();
+      // U+0080 and U+009F bound the C1 range; NUL is the C0 control anchor.
+      for (const codeUnit of [0x00, 0x80, 0x9f]) {
+        assertThrows(
+          () => normalizer.normalize(`src/${String.fromCharCode(codeUnit)}secrets.ts`),
+          TypeError,
+          "must not contain control characters",
+        );
+      }
+    });
+
     it("should reject unbounded paths", () => {
       const normalizer = new PathNormalizer();
       assertThrows(

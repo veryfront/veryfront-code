@@ -196,7 +196,10 @@ export function createHostedDurableChildForkRunContext(
     ...createHostedChildForkRunContext({
       mirror: durableRunMirror,
       messageId: input.durableChildRun?.childMessageId ?? null,
-      pendingToolLogContext: input.pendingToolLogContext,
+      pendingToolLogContext: {
+        ...input.pendingToolLogContext,
+        childRunId: input.durableChildRun?.childRunId,
+      },
       pendingToolLogWriter: input.pendingToolLogWriter,
     }),
   };
