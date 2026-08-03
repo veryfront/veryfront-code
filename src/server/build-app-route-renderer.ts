@@ -333,8 +333,8 @@ async function renderAppRouteToHTMLWithInternals(
   ${stylesheetLink}
 </head>
 <body>
-  <div id="root">${htmlInner}</div>
 ${hydrationDataScript}
+  <div id="root">${htmlInner}</div>
 ${hydrationData ? getProdScripts(slug) : ""}
 </body>
 </html>`;

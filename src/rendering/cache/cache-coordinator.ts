@@ -4,6 +4,11 @@ import type { CachePayload, CacheStore } from "./types.ts";
 import { MemoryCacheStore, type MemoryCacheStoreOptions } from "./stores/index.ts";
 import { markRequestProfilePhase, metrics } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import {
+  bindHtmlNonceFromCache,
+  isHtmlNonceCacheCompatible,
+  sealHtmlNonceForCache,
+} from "#veryfront/html/nonce-injection.ts";
 
 /** Default TTL for cache entries (5 minutes) */
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1_000;
@@ -89,7 +94,7 @@ export class CacheCoordinator {
     return `${this.cachePrefix}${baseKey}`;
   }
 
-  checkCache(slug: string, cacheKey?: string): Promise<CacheLookupResult> {
+  checkCache(slug: string, cacheKey?: string, nonce?: string): Promise<CacheLookupResult> {
     const key = this.buildCacheKey(slug, cacheKey);
 
     return withSpan(
@@ -104,12 +109,24 @@ export class CacheCoordinator {
           return { depAwareSlug: slug, moduleCacheKey: key, cacheStatus: "miss", lookupDurationMs };
         }
 
+        if (!isHtmlNonceCacheCompatible(cached.htmlNoncePlaceholder, nonce)) {
+          await this.store.delete(key);
+          const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
+          recordCacheLookup("miss", lookupDurationMs);
+          return {
+            depAwareSlug: slug,
+            moduleCacheKey: key,
+            cacheStatus: "miss",
+            lookupDurationMs,
+          };
+        }
+
         if (this.isExpired(cached)) {
           if (this.isStaleUsable(cached)) {
             const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
             recordCacheLookup("stale", lookupDurationMs);
             return {
-              cachedResult: this.hydrateResult(cached),
+              cachedResult: this.hydrateResult(cached, nonce),
               depAwareSlug: slug,
               moduleCacheKey: key,
               cachedModule: cached.result.pageModule,
@@ -132,7 +149,7 @@ export class CacheCoordinator {
         const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
         recordCacheLookup("hit", lookupDurationMs);
         return {
-          cachedResult: this.hydrateResult(cached),
+          cachedResult: this.hydrateResult(cached, nonce),
           depAwareSlug: slug,
           moduleCacheKey: key,
           cachedModule: cached.result.pageModule,
@@ -144,7 +161,12 @@ export class CacheCoordinator {
     );
   }
 
-  persistResult(result: RenderResult, slug: string, cacheKey?: string): Promise<void> {
+  persistResult(
+    result: RenderResult,
+    slug: string,
+    cacheKey?: string,
+    nonce?: string,
+  ): Promise<void> {
     if (result.stream) return Promise.resolve();
 
     const key = this.buildCacheKey(slug, cacheKey);
@@ -153,9 +175,10 @@ export class CacheCoordinator {
       "cache.persistResult",
       async () => {
         const now = Date.now();
+        const sealedHtml = sealHtmlNonceForCache(result.html, nonce);
         const payload: CachePayload = {
           result: {
-            html: result.html,
+            html: sealedHtml.html,
             css: result.css,
             frontmatter: result.frontmatter,
             headings: result.headings,
@@ -164,6 +187,9 @@ export class CacheCoordinator {
             ssrHash: result.ssrHash,
             pageModule: result.pageModule,
           },
+          ...(sealedHtml.placeholder === undefined
+            ? {}
+            : { htmlNoncePlaceholder: sealedHtml.placeholder }),
           nodeMapEntries: result.nodeMap ? Array.from(result.nodeMap.entries()) : undefined,
           storedAt: now,
           expiresAt: this.ttlMs ? now + this.ttlMs : undefined,
@@ -215,7 +241,7 @@ export class CacheCoordinator {
     return typeof entry.staleUntil === "number" && Date.now() <= entry.staleUntil;
   }
 
-  private hydrateResult(entry: CachePayload): RenderResult {
+  private hydrateResult(entry: CachePayload, nonce?: string): RenderResult {
     let nodeMap: Map<number, unknown> | undefined;
     if (entry.nodeMapEntries) {
       nodeMap = new Map<number, unknown>(entry.nodeMapEntries);
@@ -229,6 +255,11 @@ export class CacheCoordinator {
 
     return {
       ...entry.result,
+      html: bindHtmlNonceFromCache(
+        entry.result.html,
+        entry.htmlNoncePlaceholder,
+        nonce,
+      ),
       nodeMap,
       stream: null,
     };

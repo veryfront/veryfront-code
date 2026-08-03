@@ -121,8 +121,13 @@ export { __injectCssCacheForTests } from "./css-cache.ts";
  * can supply a context-aware adapter without an unsafe `as any` cast.
  */
 export interface PipelineCacheCoordinator {
-  checkCache(slug: string, cacheKey?: string): Promise<CacheLookupResult>;
-  persistResult(result: RenderResult, slug: string, cacheKey?: string): Promise<void>;
+  checkCache(slug: string, cacheKey?: string, nonce?: string): Promise<CacheLookupResult>;
+  persistResult(
+    result: RenderResult,
+    slug: string,
+    cacheKey?: string,
+    nonce?: string,
+  ): Promise<void>;
 }
 
 export interface RenderPipelineConfig {
@@ -617,7 +622,7 @@ export class RenderPipeline {
 
     if (shouldCache && !options?.skipCacheCheck) {
       const cacheCheckStart = performance.now();
-      cacheResult = await this.config.cacheCoordinator.checkCache(slug, cacheKey);
+      cacheResult = await this.config.cacheCoordinator.checkCache(slug, cacheKey, options?.nonce);
       timing.cacheCheck = Math.round(performance.now() - cacheCheckStart);
 
       if (cacheResult?.cachedResult) {
@@ -892,6 +897,7 @@ export class RenderPipeline {
                 skipCachePersist: options?.skipCachePersist,
                 cacheCoordinator: this.config.cacheCoordinator,
                 logger: renderPipelineLog,
+                nonce: renderOptions.nonce,
               });
 
               timing.total = Math.round(performance.now() - pipelineStartTime);

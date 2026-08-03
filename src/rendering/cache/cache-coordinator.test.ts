@@ -4,6 +4,8 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
 import type { RenderResult } from "../orchestrator/types.ts";
 import { CacheCoordinator } from "./cache-coordinator.ts";
+import { wrapInHTMLShell } from "#veryfront/html/html-shell-generator.ts";
+import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
 
 function makeResult(html: string): RenderResult {
   return {
@@ -62,6 +64,74 @@ describe("CacheCoordinator", () => {
     assertEquals(lookupHit.cacheStatus, "hit");
     assertEquals(typeof lookupHit.lookupDurationMs, "number");
 
+    await coordinator.destroy();
+  });
+
+  it("binds cached framework inline tags to each response nonce", async () => {
+    const coordinator = new CacheCoordinator({ ttlMs: 10_000 });
+    const html = '<script nonce="nonce-a">framework()</script>' +
+      '<style nonce="nonce-a">.framework{}</style>' +
+      '<script nonce="app-owned">application()</script>';
+
+    await coordinator.persistResult(makeResult(html), "nonce-page", undefined, "nonce-a");
+    const hit = await coordinator.checkCache("nonce-page", undefined, "nonce-b");
+
+    assertEquals(hit.cachedResult?.html.includes('nonce="nonce-b">framework()'), true);
+    assertEquals(hit.cachedResult?.html.includes('nonce="nonce-b">.framework{}'), true);
+    assertEquals(hit.cachedResult?.html.includes('nonce="app-owned">application()'), true);
+    assertEquals(hit.cachedResult?.html.includes("nonce-a"), false);
+    assertEquals(hit.cachedResult?.html.includes("veryfront-cache-nonce"), false);
+    await coordinator.destroy();
+  });
+
+  it("rebinds the real production hydration module without blessing app scripts", async () => {
+    const coordinator = new CacheCoordinator({ ttlMs: 10_000 });
+    const shell = await wrapInHTMLShell(
+      '<script src="/app-owned.js" nonce="nonce-a"></script><main>cached</main>',
+      { title: "Cached", slug: "cached", frontmatter: {} },
+      {
+        mode: "production",
+        environment: "production",
+        isLocalProject: false,
+        forceProductionScripts: true,
+        projectSlug: "default",
+        config: {},
+        nonce: "nonce-a",
+      },
+    );
+
+    await coordinator.persistResult(makeResult(shell), "production-shell", undefined, "nonce-a");
+    const hit = await coordinator.checkCache("production-shell", undefined, "nonce-b");
+    const cachedHtml = hit.cachedResult?.html ?? "";
+
+    assertEquals(
+      cachedHtml.includes(
+        `src="${getProdHydrationModulePath()}" nonce="nonce-b"`,
+      ),
+      true,
+    );
+    assertEquals(
+      cachedHtml.includes('src="/app-owned.js" nonce="nonce-a"'),
+      true,
+    );
+    assertEquals(cachedHtml.includes("veryfront-cache-nonce"), false);
+    await coordinator.destroy();
+  });
+
+  it("rejects an unsealed legacy entry for a nonce-protected response", async () => {
+    const coordinator = new CacheCoordinator({ ttlMs: 10_000 });
+    await coordinator.persistResult(
+      makeResult('<script nonce="stale">framework()</script>'),
+      "legacy-nonce-page",
+    );
+
+    const lookup = await coordinator.checkCache(
+      "legacy-nonce-page",
+      undefined,
+      "response-nonce",
+    );
+    assertEquals(lookup.cacheStatus, "miss");
+    assertEquals(lookup.cachedResult, undefined);
     await coordinator.destroy();
   });
 

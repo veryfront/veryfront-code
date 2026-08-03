@@ -2,6 +2,8 @@ import type { RenderResult } from "../orchestrator/types.ts";
 
 export interface CachePayload {
   result: RenderResult;
+  /** Opaque cache-owned slot used to bind inline CSP nonces per response. */
+  htmlNoncePlaceholder?: string;
   storedAt: number;
   expiresAt?: number;
   staleUntil?: number;

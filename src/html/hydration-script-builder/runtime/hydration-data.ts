@@ -8,8 +8,12 @@
  */
 
 import type { PageDataPayload, RuntimeDocument } from "./env.ts";
+import {
+  findServerHydrationDataElement,
+  HYDRATION_DATA_ELEMENT_ID,
+} from "../../hydration-data-element.ts";
 
-export const HYDRATION_DATA_ELEMENT_ID = "veryfront-hydration-data";
+export { findServerHydrationDataElement, HYDRATION_DATA_ELEMENT_ID };
 
 /**
  * Never throws: a missing or malformed payload degrades to an empty object so
@@ -17,7 +21,7 @@ export const HYDRATION_DATA_ELEMENT_ID = "veryfront-hydration-data";
  */
 export function readInitialHydrationData(document: RuntimeDocument): PageDataPayload {
   try {
-    const element = document.getElementById(HYDRATION_DATA_ELEMENT_ID);
+    const element = findServerHydrationDataElement(document);
     return JSON.parse(element && element.textContent ? element.textContent : "{}") || {};
   } catch (_) {
     return {};

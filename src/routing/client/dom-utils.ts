@@ -7,27 +7,22 @@ export {
 import {
   aggregateManagedHeadDescriptors,
   assertManagedHeadDescriptorBudget,
-  descriptorFromManagedHeadRecord,
   deserializeManagedHeadPayload,
   HEAD_LEGACY_MANAGED_ATTRIBUTE,
-  HEAD_PROVENANCE_ATTRIBUTE,
   HEAD_REACT_OWNER_ATTRIBUTE,
   HEAD_ROUTE_MANAGED_ATTRIBUTE,
-  HEAD_SHELL_PROVENANCE_ATTRIBUTE,
-  HEAD_SSR_PAYLOAD_ATTRIBUTE,
   headLinkSingletonKeyFromRecord,
   headMetaSingletonKeyFromRecord,
-  isHeadFrameworkAttribute,
   type ManagedHeadDescriptor,
   managedHeadDescriptorToTransportEntry,
 } from "#veryfront/html/managed-head-protocol.ts";
+import { findServerHydrationDataElement } from "#veryfront/html/hydration-data-element.ts";
 import {
   getManagedHeadNonce,
   retireClientHeadOwnership,
 } from "#veryfront/html/client-head-manager.ts";
 
 const logger = rendererLogger.component("veryfront");
-const PARSED_ROUTE_HEAD_CONTENT_PROPERTY = "__veryfront_parsed_route_head_content";
 
 export function isInternalLink(target: HTMLAnchorElement): boolean {
   const href = target.getAttribute("href");
@@ -218,69 +213,29 @@ export function extractPageDataFromScript(): PageData | null {
   }
 }
 
-function descriptorFromDocumentHeadElement(element: Element): ManagedHeadDescriptor | null {
-  const tagName = element.tagName.toLowerCase();
-  const record = Object.create(null) as Record<string, unknown>;
-  for (const { name, value } of element.attributes) {
-    if (!isHeadFrameworkAttribute(name) && name.toLowerCase() !== "nonce") {
-      record[name.toLowerCase()] = value;
-    }
-  }
-  const supportsText = tagName === "title" || tagName === "script" || tagName === "style";
-  if (supportsText) record[PARSED_ROUTE_HEAD_CONTENT_PROPERTY] = element.textContent ?? "";
-  return descriptorFromManagedHeadRecord(tagName, record, {
-    ...(supportsText && { contentProperty: PARSED_ROUTE_HEAD_CONTENT_PROPERTY }),
-  });
-}
-
-function payloadDescriptors(root: ParentNode | null): ManagedHeadDescriptor[] {
-  if (!root || typeof root.querySelectorAll !== "function") return [];
-  const descriptors: ManagedHeadDescriptor[] = [];
-  for (const element of root.querySelectorAll(`[${HEAD_SSR_PAYLOAD_ATTRIBUTE}]`)) {
-    if (element.getAttribute(HEAD_REACT_OWNER_ATTRIBUTE) !== "1") continue;
-    const payload = element.getAttribute(HEAD_SSR_PAYLOAD_ATTRIBUTE);
-    if (payload) descriptors.push(...deserializeManagedHeadPayload(payload));
-  }
-  return descriptors;
-}
-
 export function snapshotClientRouteHead(
   targetDocument: Document = document,
 ): ClientRouteHeadEntry[] {
-  const descriptors: ManagedHeadDescriptor[] = [];
-  let hasStructuredPayload = false;
-  const hydrationDataScript = targetDocument.getElementById("veryfront-hydration-data");
-  if (hydrationDataScript?.textContent) {
-    try {
-      const hydrationData = JSON.parse(hydrationDataScript.textContent) as {
-        managedHeadPayload?: unknown;
-      };
-      if (typeof hydrationData.managedHeadPayload === "string") {
-        descriptors.push(...deserializeManagedHeadPayload(hydrationData.managedHeadPayload));
-        hasStructuredPayload = true;
-      }
-    } catch {
-      // A partial or corrupt hydration payload cannot own head state. The
-      // provenance fallback below remains safe to snapshot.
-    }
-  }
+  const hydrationDataScript = findServerHydrationDataElement(targetDocument);
+  if (!hydrationDataScript?.textContent) return [];
 
-  const committedDescriptors = payloadDescriptors(targetDocument.getElementById("root"));
-  descriptors.push(...committedDescriptors);
-  const fallbackSelector = [
-    ...(committedDescriptors.length === 0 ? [`[${HEAD_PROVENANCE_ATTRIBUTE}="true"]`] : []),
-    ...(!hasStructuredPayload ? [`[${HEAD_SHELL_PROVENANCE_ATTRIBUTE}="true"]`] : []),
-  ].join(", ");
-  if (fallbackSelector && targetDocument.head?.querySelectorAll) {
-    for (const element of targetDocument.head.querySelectorAll(fallbackSelector)) {
-      const descriptor = descriptorFromDocumentHeadElement(element);
-      if (descriptor) descriptors.push(descriptor);
-    }
-  }
+  try {
+    const hydrationData = JSON.parse(hydrationDataScript.textContent) as {
+      managedHeadPayload?: unknown;
+    };
+    if (typeof hydrationData.managedHeadPayload !== "string") return [];
 
-  const aggregated = aggregateManagedHeadDescriptors(descriptors);
-  assertManagedHeadDescriptorBudget(aggregated);
-  return aggregated.map(managedHeadDescriptorToTransportEntry);
+    const descriptors: ManagedHeadDescriptor[] = deserializeManagedHeadPayload(
+      hydrationData.managedHeadPayload,
+    );
+    const aggregated = aggregateManagedHeadDescriptors(descriptors);
+    assertManagedHeadDescriptorBudget(aggregated);
+    return aggregated.map(managedHeadDescriptorToTransportEntry);
+  } catch {
+    // The server-owned channel is authoritative. Ambiguous, absent, malformed,
+    // or over-budget payloads never fall back to application-controlled DOM.
+    return [];
+  }
 }
 
 /**
@@ -338,7 +293,7 @@ export function parsePageDataFromHTML(html: string): {
   }
 
   let dependencyPinningCacheKey: string | undefined;
-  const hydrationDataScript = doc.getElementById("veryfront-hydration-data");
+  const hydrationDataScript = findServerHydrationDataElement(doc);
   if (hydrationDataScript?.textContent) {
     try {
       const hydrationData = JSON.parse(hydrationDataScript.textContent) as {

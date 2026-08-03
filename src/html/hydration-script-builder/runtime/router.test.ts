@@ -175,6 +175,12 @@ function createRouterHarness(options: HarnessOptions = {}): RouterHarness {
   };
 
   const rootElement = { __reactRoot: { render() {} } } as unknown as RuntimeElement;
+  const hydrationElement = makeElement("script");
+  hydrationElement.id = "veryfront-hydration-data";
+  hydrationElement.textContent = hydrationJson;
+  hydrationElement.setAttribute("type", "application/json");
+  const bodyElement = makeElement("body");
+  bodyElement.firstElementChild = hydrationElement;
   const headElement = makeElement("head");
   const headElements = headElement.children;
   headElement.appendChild = (node: unknown) => {
@@ -196,14 +202,17 @@ function createRouterHarness(options: HarnessOptions = {}): RouterHarness {
     set title(value: string) {
       fallbackTitle = value;
     },
-    body: { prepend() {}, setAttribute() {}, removeAttribute() {}, appendChild() {} },
+    body: bodyElement,
     head: headElement,
     createElement: (tagName: string) => makeElement(tagName),
     querySelector: (selector: string) => headElement.querySelector(selector),
-    querySelectorAll: (selector: string) => headElement.querySelectorAll(selector),
+    querySelectorAll: (selector: string) =>
+      selector === '[id="veryfront-hydration-data"]'
+        ? [hydrationElement]
+        : headElement.querySelectorAll(selector),
     getElementById: (id: string) => {
       if (id === "veryfront-hydration-data") {
-        return { textContent: hydrationJson } as unknown as RuntimeElement;
+        return hydrationElement;
       }
       if (id === "root") return rootElement;
       return headElements.find((element) => element.id === id) ?? null;

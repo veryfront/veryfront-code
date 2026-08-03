@@ -11,7 +11,7 @@ import * as React from "react";
 import { ChatContainer } from "#veryfront/react/primitives/index.ts";
 import type { ChatMessage, ChatStatus } from "#veryfront/agent/react";
 import type { ChatTheme } from "../../theme.ts";
-import { getDocumentNonce } from "../../../ui/csp-nonce.ts";
+import { useDocumentNonce } from "../../../ui/csp-nonce.ts";
 import {
   cn,
   defaultChatTheme,
@@ -118,7 +118,7 @@ export function ChatRoot(
   }: ChatRootProps,
 ): React.ReactElement {
   const theme = React.useMemo(() => mergeThemes(defaultChatTheme, userTheme), [userTheme]);
-  const nonce = getDocumentNonce();
+  const nonce = useDocumentNonce();
   const tokenCSS = React.useMemo(() => generateTokenCSS(), []);
   const [isAtBottom, _setIsAtBottom] = React.useState(true);
   const scrollAreaRef = React.useRef<HTMLDivElement>(null);

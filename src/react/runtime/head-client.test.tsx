@@ -1,6 +1,7 @@
 import React from "react";
 import { flushSync } from "react-dom";
 import { createRoot, hydrateRoot, type Root } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import {
   assert,
@@ -12,6 +13,8 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { applyHeadDirectives, executeScripts } from "#veryfront/routing/client/dom-utils.ts";
 import { escapeManagedHeadRawText } from "#veryfront/html/managed-head-protocol.ts";
 import { retireClientHeadOwnership } from "#veryfront/html/client-head-manager.ts";
+import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
+import { wrapWithServerRenderContext } from "#veryfront/react/server-render-context.ts";
 import { Head } from "./core.ts";
 
 const HEAD_PLACEHOLDER =
@@ -117,6 +120,41 @@ async function unmount(root: Root | undefined): Promise<void> {
 }
 
 describe("Head client management", () => {
+  it("suppresses the expected server-only commit-token difference during hydration", async () => {
+    const children = <title>Hydrated managed head</title>;
+    const { result: serverMarkup } = await runWithHeadCollector((renderContext) =>
+      renderToString(wrapWithServerRenderContext(<Head>{children}</Head>, renderContext))
+    );
+    assert(
+      serverMarkup.includes("data-vf-server-head-commit="),
+      "Expected SSR to emit a server-only managed-head commit token",
+    );
+
+    const { restore } = installDom({
+      body: `<div id="root">${serverMarkup}</div>`,
+    });
+    const recoverableErrors: unknown[] = [];
+    const consoleErrors: unknown[][] = [];
+    const previousConsoleError = console.error;
+    let root: Root | undefined;
+    console.error = (...args: unknown[]) => consoleErrors.push(args);
+
+    try {
+      root = hydrateRoot(rootElement(), <Head>{children}</Head>, {
+        onRecoverableError: (error) => recoverableErrors.push(error),
+      });
+      await waitFor(() => document.title === "Hydrated managed head");
+      await nextTask();
+
+      assertEquals(recoverableErrors, []);
+      assertEquals(consoleErrors, []);
+    } finally {
+      console.error = previousConsoleError;
+      await unmount(root);
+      restore();
+    }
+  });
+
   it("adopts explicit shell singletons late and restores their baseline on unmount", async () => {
     const { restore } = installDom({
       head: `

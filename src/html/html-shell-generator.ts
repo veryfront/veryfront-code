@@ -181,6 +181,7 @@ export function generateHTMLShellParts(
   props?: ComponentProps,
   contentForTailwind?: string,
   projectCSSPromise?: Promise<ProjectCSSResult>,
+  hydrationDataOverrides?: { managedHeadPayload?: string },
 ): Promise<{ start: string; end: string }> {
   return withSpan(
     SpanNames.HTML_GENERATE_SHELL_PARTS,
@@ -192,6 +193,7 @@ export function generateHTMLShellParts(
         props,
         contentForTailwind,
         projectCSSPromise,
+        hydrationDataOverrides,
       ),
     {
       "html.slug": meta.slug || "",
@@ -209,6 +211,7 @@ async function generateHTMLShellPartsImpl(
   props?: ComponentProps,
   contentForTailwind?: string,
   prefetchedProjectCSSPromise?: Promise<ProjectCSSResult>,
+  hydrationDataOverrides?: { managedHeadPayload?: string },
 ): Promise<{ start: string; end: string }> {
   const stylesheetContent = options.globalCSS;
 
@@ -284,7 +287,10 @@ async function generateHTMLShellPartsImpl(
     params ?? {},
     props ?? {},
     { ...options, releaseAssetManifest: releaseManifest },
-    { pretty: useDevScripts, managedHeadPayload },
+    {
+      pretty: useDevScripts,
+      managedHeadPayload: hydrationDataOverrides?.managedHeadPayload ?? managedHeadPayload,
+    },
   );
 
   const nonce = options.nonce ?? "";
@@ -427,6 +433,11 @@ async function generateHTMLShellPartsImpl(
   ${slugForOverlay}
 </head>
 <body${bodyClass ? ` class="${escapeHTML(bodyClass)}"` : ""} suppressHydrationWarning>
+  <!-- Server-owned hydration metadata; this must remain the first body element. -->
+  <script id="veryfront-hydration-data" type="application/json"${nonceAttr}>
+  ${hydrationDataJson}
+  </script>
+
   <div ${rootAttributes}>`;
 
   const relativePagePath = getRelativePagePath(options.pagePath, options.projectDir);
@@ -464,11 +475,6 @@ mermaid.run();
 
   const end = `</div>
   <div id="veryfront-portals"></div>
-
-  <!-- Hydration metadata for component tree reconstruction -->
-  <script id="veryfront-hydration-data" type="application/json"${nonceAttr}>
-  ${hydrationDataJson}
-  </script>
 
   ${scriptTags}
   ${modeScripts}

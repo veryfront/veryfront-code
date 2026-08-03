@@ -39,6 +39,7 @@ interface SerializedCachePayload {
     };
     ssrHash?: string;
   };
+  htmlNoncePlaceholder?: string;
   storedAt: number;
   expiresAt?: number;
   staleUntil?: number;
@@ -105,6 +106,7 @@ export class APICacheStore implements CacheStore {
         pageModule: payload.result.pageModule,
         ssrHash: payload.result.ssrHash,
       },
+      htmlNoncePlaceholder: payload.htmlNoncePlaceholder,
       storedAt: payload.storedAt,
       expiresAt: payload.expiresAt,
       staleUntil: payload.staleUntil,
@@ -129,6 +131,7 @@ export class APICacheStore implements CacheStore {
         pageModule: serialized.result.pageModule,
         ssrHash: serialized.result.ssrHash,
       },
+      htmlNoncePlaceholder: serialized.htmlNoncePlaceholder,
       storedAt: serialized.storedAt,
       expiresAt: serialized.expiresAt,
       staleUntil: serialized.staleUntil,

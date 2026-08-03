@@ -103,6 +103,19 @@ function ToggleFixture(): React.ReactElement {
   );
 }
 
+function readSingleInlineScript(markup: string): string {
+  const dom = new JSDOM(`<!doctype html><html><body>${markup}</body></html>`);
+  try {
+    const scripts = dom.window.document.querySelectorAll("script");
+    assertEquals(scripts.length, 1, "Expected exactly one inline script");
+    const script = scripts.item(0);
+    assertEquals(script.hasAttribute("src"), false, "Expected an inline script");
+    return script.textContent ?? "";
+  } finally {
+    dom.window.close();
+  }
+}
+
 /**
  * Unmount and drain the scheduler task React leaves behind.
  *
@@ -118,10 +131,10 @@ async function unmount(root: Root): Promise<void> {
 describe("react/components/ui/color-mode", () => {
   it("escapes storage keys before embedding them in the inline color-mode script", () => {
     const storageKey = `vf";</script><script>alert(1)</script>//`;
-    const element = ColorModeScript({ defaultMode: "dark", storageKey }) as React.ReactElement<{
-      dangerouslySetInnerHTML: { __html: string };
-    }>;
-    const script = element.props.dangerouslySetInnerHTML.__html;
+    const markup = renderToString(
+      <ColorModeScript defaultMode="dark" storageKey={storageKey} />,
+    );
+    const script = readSingleInlineScript(markup);
 
     assertEquals(script.includes(`</script><script>alert(1)</script>`), false);
     assertStringIncludes(script, `\\u003c/script\\u003e`);
