@@ -307,6 +307,172 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
+  it("only serves module endpoints over GET and HEAD", async () => {
+    for (const prefix of ["/_vf_modules", "/_veryfront/modules"]) {
+      for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+        const response = await serve(
+          new Request(`http://localhost:3000${prefix}/app/actions/save.js`, { method }),
+        );
+        assertEquals(response.status, 405, `${method} ${prefix}`);
+        assertEquals(response.headers.get("allow"), "GET, HEAD", `${method} ${prefix}`);
+      }
+    }
+  });
+
+  it("enforces server-source policy on exact resolved aliases in preview and standalone modes", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-browser-module-resolved-" });
+
+    try {
+      await Deno.mkdir(`${projectDir}/app/actions`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/app/actions/private.ts`,
+        `export const marker = "resolved-server-source";`,
+      );
+      const { serveModule } = await import("./module-server.ts");
+
+      for (const prefix of ["/_vf_modules", "/_veryfront/modules"]) {
+        for (
+          const runtime of [
+            { isLocalProject: false, isProxyMode: true, mode: "preview" },
+            { isLocalProject: true, isProxyMode: false, mode: "production" },
+          ]
+        ) {
+          const response = await serveModule(
+            new Request(`http://localhost:3000${prefix}/actions/private.js`),
+            {
+              projectId: "test",
+              projectDir,
+              adapter: denoAdapter,
+              ...runtime,
+            },
+          );
+          assertEquals(response.status, 404, `${prefix} ${JSON.stringify(runtime)}`);
+          assertEquals((await response.text()).includes("resolved-server-source"), false);
+        }
+      }
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("normalizes configured roots and protects discovery, routes, and middleware", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-browser-module-policy-" });
+
+    try {
+      const protectedFiles = [
+        "server/actions/private.ts",
+        "server/account/route.ts",
+        "middleware.ts",
+        "tools/private.ts",
+        "agents/private.ts",
+        "skills/private.ts",
+        "resources/private.ts",
+        "prompts/private.ts",
+        "workflows/private.ts",
+        "tasks/private.ts",
+        "schedules/private.ts",
+        "webhooks/private.ts",
+        "evals/private.ts",
+        "source/private-tools/private.ts",
+      ];
+      for (const path of protectedFiles) {
+        await Deno.mkdir(`${projectDir}/${path.slice(0, path.lastIndexOf("/")) || "."}`, {
+          recursive: true,
+        });
+        await Deno.writeTextFile(
+          `${projectDir}/${path}`,
+          `export const marker = ${JSON.stringify(path)};`,
+        );
+      }
+
+      const config = {
+        directories: { app: "source/../server" },
+        ai: {
+          tools: {
+            discovery: { paths: ["source/./internal/../private-tools"] },
+          },
+        },
+      };
+      const { serveModule } = await import("./module-server.ts");
+
+      for (const prefix of ["/_vf_modules", "/_veryfront/modules"]) {
+        for (const path of protectedFiles) {
+          const response = await serveModule(
+            new Request(`http://localhost:3000${prefix}/${path.replace(/\.ts$/, ".js")}`),
+            {
+              projectId: "test",
+              projectDir,
+              adapter: denoAdapter,
+              isLocalProject: false,
+              isProxyMode: true,
+              mode: "preview",
+              config,
+            },
+          );
+          assertEquals(response.status, 404, `${prefix}/${path}`);
+          assertEquals((await response.text()).includes(path), false, `${prefix}/${path}`);
+        }
+      }
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("requires an explicit client boundary for RSC app modules", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-browser-module-rsc-" });
+
+    try {
+      await Deno.mkdir(`${projectDir}/app`, { recursive: true });
+      for (const name of ["page", "layout", "template", "error", "loading", "not-found"]) {
+        await Deno.writeTextFile(
+          `${projectDir}/app/${name}.tsx`,
+          `export const marker = "server-${name}"; export default function View() { return null; }`,
+        );
+      }
+      await Deno.writeTextFile(
+        `${projectDir}/app/client.tsx`,
+        `"use client"; export const marker = "browser-client";`,
+      );
+      const { serveModule } = await import("./module-server.ts");
+      const options = {
+        projectId: "test",
+        projectDir,
+        adapter: denoAdapter,
+        isLocalProject: false,
+        isProxyMode: true,
+        mode: "preview",
+        config: { experimental: { rsc: true } },
+      } as const;
+
+      for (const prefix of ["/_vf_modules", "/_veryfront/modules"]) {
+        for (const name of ["page", "layout", "template", "error", "loading", "not-found"]) {
+          const response = await serveModule(
+            new Request(`http://localhost:3000${prefix}/app/${name}.js`),
+            options,
+          );
+          assertEquals(response.status, 404, `${prefix}/app/${name}.js`);
+          assertEquals((await response.text()).includes(`server-${name}`), false);
+        }
+
+        const clientGet = await serveModule(
+          new Request(`http://localhost:3000${prefix}/app/client.js`),
+          options,
+        );
+        assertEquals(clientGet.status, 200, `${prefix} client GET`);
+        assertStringIncludes(await clientGet.text(), "browser-client");
+
+        const clientHead = await serveModule(
+          new Request(`http://localhost:3000${prefix}/app/client.js`, { method: "HEAD" }),
+          options,
+        );
+        assertEquals(clientHead.status, 200, `${prefix} client HEAD`);
+        assertEquals(await clientHead.text(), "");
+      }
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("rejects server-directed source from browser module requests", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-browser-module-boundary-" });
 
@@ -409,6 +575,18 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
           "package.json.js",
           "app/actions/save.js",
           "app/api/private.js",
+          "app/account/route.js",
+          "middleware.js",
+          "tools/private.js",
+          "agents/private.js",
+          "skills/private.js",
+          "resources/private.js",
+          "prompts/private.js",
+          "workflows/private.js",
+          "tasks/private.js",
+          "schedules/private.js",
+          "webhooks/private.js",
+          "evals/private.js",
           ".env.js",
         ]
       ) {

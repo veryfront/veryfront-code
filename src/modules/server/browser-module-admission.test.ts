@@ -42,6 +42,64 @@ describe("browser module admission", () => {
       }),
       true,
     );
+    assertEquals(
+      isProtectedBrowserModulePath("server/actions/update.ts", {
+        directories: { app: "source/../server" },
+      }),
+      true,
+    );
+  });
+
+  it("protects every framework discovery root and configured replacement", () => {
+    for (
+      const root of [
+        "tools",
+        "agents",
+        "skills",
+        "resources",
+        "prompts",
+        "workflows",
+        "tasks",
+        "schedules",
+        "webhooks",
+        "evals",
+      ]
+    ) {
+      assertEquals(isProtectedBrowserModulePath(`${root}/private.ts`), true, root);
+    }
+
+    assertEquals(
+      isProtectedBrowserModulePath("source/private-tools/private.ts", {
+        ai: {
+          tools: {
+            discovery: { paths: ["source/./internal/../private-tools"] },
+          },
+        },
+      }),
+      true,
+    );
+  });
+
+  it("protects app route handlers and root middleware", () => {
+    for (
+      const path of [
+        "app/route.ts",
+        "app/account/route.tsx",
+        "source/server/account/route.js",
+        "middleware.ts",
+        "middleware.js",
+        "middleware.mjs",
+      ]
+    ) {
+      assertEquals(
+        isProtectedBrowserModulePath(
+          path,
+          path.startsWith("source/") ? { directories: { app: "source/server" } } : undefined,
+        ),
+        true,
+        path,
+      );
+    }
   });
 
   it("keeps ordinary browser candidates eligible for deeper checks", () => {

@@ -419,6 +419,11 @@ function createProxyGuard(
     );
   const hasIncompleteEnvironmentIdentity = identityHeadersTrusted &&
     Boolean(headers.environmentId) !== Boolean(headers.environmentName);
+  const hasIncompleteBranchIdentity = identityHeadersTrusted &&
+    Boolean(headers.branchId) !== Boolean(headers.branchName);
+  const hasConflictingBranchIdentity = identityHeadersTrusted &&
+    Boolean(headers.defaultBranchName) &&
+    (Boolean(headers.branchId) || Boolean(headers.branchName));
   const body = hasUntrustedIdentityHeaders
     ? {
       error: "Untrusted identity context",
@@ -439,6 +444,12 @@ function createProxyGuard(
     ? {
       error: "Incomplete environment identity",
       detail: "x-environment-id and x-environment-name must be supplied together",
+    }
+    : hasIncompleteBranchIdentity || hasConflictingBranchIdentity
+    ? {
+      error: "Invalid branch identity",
+      detail:
+        "x-branch-id and x-branch-name must be supplied together and cannot be combined with x-default-branch-name",
     }
     : !proxyTrusted
     ? {

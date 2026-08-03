@@ -201,20 +201,22 @@ export class EnvironmentVariableCache {
     this.assertAdmission(normalizedScope.projectSlug);
 
     const controller = new AbortController();
-    const entry = {
+    const start = Promise.withResolvers<InflightEntry>();
+    const promise = start.promise.then((entry) => this.fetch(entry));
+    const entry: InflightEntry = {
       controller,
       environmentId: normalizedScope.environmentId,
       epoch,
       key,
       projectSlug: normalizedScope.projectSlug,
-      promise: undefined as unknown as Promise<Record<string, string>>,
+      promise,
       removed: false,
       scope: normalizedScope,
-    } satisfies InflightEntry;
+    };
 
     this.addInflight(entry);
-    entry.promise = this.fetch(entry);
-    return entry.promise;
+    start.resolve(entry);
+    return promise;
   }
 
   invalidate(environmentId?: string): void {

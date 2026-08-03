@@ -81,7 +81,12 @@ import {
   inspectBrowserModuleBoundary,
 } from "#veryfront/server/shared/browser-module-boundary.ts";
 import { ensureDefaultParserContracts } from "#veryfront/extensions/parser/defaults.ts";
-import { isProtectedBrowserModulePath } from "./browser-module-admission.ts";
+import {
+  classifyBrowserModuleSourcePath,
+  isProtectedBrowserModulePath,
+} from "./browser-module-admission.ts";
+import { hasUseClientDirective } from "#veryfront/rendering/rsc/page-island.ts";
+import { isRSCEnabled } from "#veryfront/utils/feature-flags.ts";
 
 const logger = serverLogger.component("module-server");
 const PROJECT_FALLBACK_EMBEDDED_POLYFILLS = new Set(["deno"]);
@@ -229,7 +234,11 @@ function isScriptModuleSource(path: string): boolean {
 async function inspectBrowserSourceBoundary(
   source: string,
   sourceFile: string,
+  requiresClientBoundary = false,
 ): Promise<string | null> {
+  if (requiresClientBoundary && !hasUseClientDirective(source, sourceFile)) {
+    return "RSC app module does not declare a client boundary";
+  }
   await ensureDefaultParserContracts();
   const violation = await inspectBrowserModuleBoundary(source, sourceFile);
   return violation ? describeBrowserModuleBoundaryViolation(violation) : null;
@@ -356,6 +365,13 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       const effectiveProjectId = projectUUID ?? projectId;
       const method = req.method.toUpperCase();
       const isHeadRequest = method === "HEAD";
+      if (method !== "GET" && method !== "HEAD") {
+        return createModuleResponse(method, "Method not allowed", HttpStatus.METHOD_NOT_ALLOWED, {
+          "Allow": "GET, HEAD",
+          "Cache-Control": "no-store",
+          "Content-Type": "text/plain; charset=utf-8",
+        });
+      }
       const queryPinValues = url.searchParams.getAll("pins");
       const requestedPinKey = pathPin.found ? pathPin.cacheKey : queryPinValues[0];
       const requestedPinCount = queryPinValues.length + (pathPin.found ? 1 : 0);
@@ -829,9 +845,30 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         }
 
         const { path: sourceFile, isFrameworkFile, embeddedContent } = findResult;
+        const exactSourceKey = isFrameworkFile
+          ? null
+          : projectSourceManifestKey(projectDir, sourceFile);
+        const sourcePolicy = exactSourceKey === null
+          ? null
+          : classifyBrowserModuleSourcePath(exactSourceKey, {
+            config: options.config,
+            rscEnabled: isRSCEnabled(options.config),
+          });
+
+        if (!isFrameworkFile && (!exactSourceKey || sourcePolicy?.protectionReason)) {
+          logger.warn("Rejected protected resolved source from browser module endpoint", {
+            modulePath,
+            sourceFile,
+            exactSourceKey,
+            reason: sourcePolicy?.protectionReason ?? "outside-project",
+          });
+          return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
+            "Content-Type": "text/plain; charset=utf-8",
+            "Cache-Control": "no-store",
+          });
+        }
 
         if (requiresProductionManifestAdmission && !isFrameworkFile) {
-          const exactSourceKey = projectSourceManifestKey(projectDir, sourceFile);
           const admissionManifest = await getReadyManifestForBrowserModuleAdmission(
             options.releaseId!,
             { refreshCachedNull: true },
@@ -880,6 +917,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           const boundaryReason = await inspectBrowserSourceBoundary(
             inspectedBrowserSource,
             sourceFile,
+            sourcePolicy?.requiresClientBoundary === true &&
+              !requiresProductionManifestAdmission,
           );
           if (boundaryReason) {
             logger.warn("Rejected server-only source from browser module endpoint", {

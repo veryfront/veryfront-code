@@ -433,6 +433,69 @@ describe("prepareProjectRequest", () => {
     });
   });
 
+  it("rejects incomplete and conflicting branch identity from a trusted proxy", async () => {
+    for (
+      const identityHeaders of [
+        { "x-branch-id": "branch-id-a" },
+        { "x-branch-name": "feature-a" },
+        {
+          "x-branch-id": "branch-id-a",
+          "x-branch-name": "feature-a",
+          "x-default-branch-name": "main",
+        },
+      ]
+    ) {
+      const req = new Request("http://localhost/page", {
+        headers: {
+          "x-project-slug": "project-a",
+          "x-project-id": "project-id-a",
+          "x-token": "project-token",
+          ...identityHeaders,
+        },
+      });
+
+      const prepared = await prepareProjectRequest({
+        req,
+        url: new URL(req.url),
+        isProxyMode: true,
+        trustProxy: () => Promise.resolve(true),
+      });
+
+      await assertJsonResponse(prepared.proxyGuard!.response, 502, {
+        error: "Invalid branch identity",
+        detail:
+          "x-branch-id and x-branch-name must be supplied together and cannot be combined with x-default-branch-name",
+      });
+    }
+  });
+
+  it("accepts complete preview or default branch identity from a trusted proxy", async () => {
+    for (
+      const identityHeaders of [
+        { "x-branch-id": "branch-id-a", "x-branch-name": "feature-a" },
+        { "x-default-branch-name": "main" },
+      ]
+    ) {
+      const req = new Request("http://localhost/page", {
+        headers: {
+          "x-project-slug": "project-a",
+          "x-project-id": "project-id-a",
+          "x-token": "project-token",
+          ...identityHeaders,
+        },
+      });
+
+      const prepared = await prepareProjectRequest({
+        req,
+        url: new URL(req.url),
+        isProxyMode: true,
+        trustProxy: () => Promise.resolve(true),
+      });
+
+      assertEquals(prepared.proxyGuard, undefined);
+    }
+  });
+
   it("reports missing authentication before validating a trusted environment pair", async () => {
     const req = new Request("http://localhost/page", {
       headers: {
