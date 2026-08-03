@@ -7,6 +7,7 @@ import {
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import {
   DEPLOYMENT_ERROR,
   ENVIRONMENT_NOT_FOUND,
@@ -14,9 +15,14 @@ import {
   SOURCE_DIGEST_MISMATCH,
   VeryfrontError,
 } from "veryfront/errors";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { createApiClient } from "../config.ts";
 import { computeSourceDigest, writePushReceipt } from "../deployment-provenance.ts";
-import type { DeployControlPlane } from "./control-plane.ts";
+import {
+  createHttpDeployControlPlane,
+  type DeployControlPlane,
+  type DeployReleaseAssetManifestBody,
+} from "./control-plane.ts";
 import {
   assertProjectOwnership,
   createDeployProject,
@@ -419,6 +425,29 @@ describe("DeployProject", () => {
           Error,
           "Missing routes: /",
         );
+        assertEquals(controlPlane.createdDeployments, []);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("propagates non-not-found route directory inspection errors before deployment mutation", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      try {
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.config.ts`,
+          'export default { directories: { app: "app\\0" } };\n',
+        );
+
+        await assertRejects(
+          () => executeApply(projectDir, controlPlane),
+          TypeError,
+          "unexpected NUL byte",
+        );
+        assertEquals(controlPlane.createdReleases, []);
         assertEquals(controlPlane.createdDeployments, []);
       } finally {
         await Deno.remove(projectDir, { recursive: true });
@@ -1213,6 +1242,380 @@ describe("deployment verification", () => {
 });
 
 describe("release asset manifest", () => {
+  function manifestControlPlane(response: DeployReleaseAssetManifestBody): DeployControlPlane {
+    return helperControlPlane({
+      getReleaseAssetManifest: () => Promise.resolve(response),
+    });
+  }
+
+  const polling = {
+    expectedRoutes: ["/"],
+    pollIntervalMs: 100,
+    timeoutMs: 100,
+  };
+
+  it("parses a valid ready response for the requested release", async () => {
+    const result = await waitForReleaseAssetManifest(
+      manifestControlPlane(readyManifest()),
+      PROJECT_SLUG,
+      "release-1",
+      polling,
+    );
+
+    assertEquals(result.state, "ready");
+    assertEquals(result.manifest.releaseId, "release-1");
+  });
+
+  it("continues polling through a missing manifest and building state", async () => {
+    using time = new FakeTime();
+    const responses = [null, { state: "building" }, readyManifest()];
+    let reads = 0;
+    const controlPlane = helperControlPlane({
+      getReleaseAssetManifest: () => {
+        const response = responses[Math.min(reads, responses.length - 1)]!;
+        reads++;
+        return Promise.resolve(response);
+      },
+    });
+
+    const pending = waitForReleaseAssetManifest(
+      controlPlane,
+      PROJECT_SLUG,
+      "release-1",
+      { ...polling, timeoutMs: 500 },
+    );
+    await time.tickAsync(0);
+    await time.tickAsync(100);
+    await time.tickAsync(100);
+
+    const result = await pending;
+    assertEquals(result.state, "ready");
+    assertEquals(reads, 3);
+  });
+
+  it("reports the last state after the polling deadline", async () => {
+    using time = new FakeTime();
+    let reads = 0;
+    const controlPlane = helperControlPlane({
+      getReleaseAssetManifest: () => {
+        reads++;
+        return Promise.resolve({ state: "building" });
+      },
+    });
+
+    const rejection = assertRejects(
+      () =>
+        waitForReleaseAssetManifest(controlPlane, PROJECT_SLUG, "release-1", {
+          ...polling,
+          timeoutMs: 250,
+        }),
+      Error,
+      "last state: building",
+    );
+    await time.tickAsync(0);
+    await time.tickAsync(100);
+    await time.tickAsync(100);
+    await time.tickAsync(50);
+
+    await rejection;
+    assertEquals(reads, 3);
+  });
+
+  it("reports missing when a manifest disappears after building", async () => {
+    using time = new FakeTime();
+    const responses = [{ state: "building" }, null];
+    let reads = 0;
+    const controlPlane = helperControlPlane({
+      getReleaseAssetManifest: () => {
+        const response = responses[Math.min(reads, responses.length - 1)]!;
+        reads++;
+        return Promise.resolve(response);
+      },
+    });
+
+    const rejection = assertRejects(
+      () =>
+        waitForReleaseAssetManifest(controlPlane, PROJECT_SLUG, "release-1", {
+          ...polling,
+          timeoutMs: 250,
+        }),
+      Error,
+      "last state: missing",
+    );
+    await time.tickAsync(0);
+    await time.tickAsync(100);
+    await time.tickAsync(100);
+    await time.tickAsync(50);
+
+    await rejection;
+    assertEquals(reads, 3);
+  });
+
+  it("recovers from transient control-plane failures within the polling deadline", async () => {
+    using time = new FakeTime();
+    const unavailable = Object.assign(new Error("service unavailable"), { status: 503 });
+    const connectionReset = Object.assign(new Error("connection reset"), {
+      code: "ECONNRESET",
+    });
+    const responses: Array<DeployReleaseAssetManifestBody | Error> = [
+      unavailable,
+      connectionReset,
+      { state: "building" },
+      readyManifest(),
+    ];
+    let reads = 0;
+    const controlPlane = helperControlPlane({
+      getReleaseAssetManifest: () => {
+        const response = responses[Math.min(reads, responses.length - 1)]!;
+        reads++;
+        return response instanceof Error ? Promise.reject(response) : Promise.resolve(response);
+      },
+    });
+
+    const pending = waitForReleaseAssetManifest(
+      controlPlane,
+      PROJECT_SLUG,
+      "release-1",
+      { ...polling, timeoutMs: 500 },
+    );
+    await time.tickAsync(0);
+    await time.tickAsync(100);
+    await time.tickAsync(100);
+    await time.tickAsync(100);
+
+    const result = await pending;
+    assertEquals(result.state, "ready");
+    assertEquals(reads, 4);
+  });
+
+  it("bounds transient control-plane retries by the original polling deadline", async () => {
+    using time = new FakeTime();
+    let reads = 0;
+    const controlPlane = helperControlPlane({
+      getReleaseAssetManifest: () => {
+        reads++;
+        return Promise.reject(Object.assign(new Error("service unavailable"), { status: 503 }));
+      },
+    });
+
+    const rejection = assertRejects(
+      () =>
+        waitForReleaseAssetManifest(controlPlane, PROJECT_SLUG, "release-1", {
+          ...polling,
+          timeoutMs: 250,
+        }),
+      Error,
+      "last control-plane failure: HTTP 503",
+    );
+    await time.tickAsync(0);
+    await time.tickAsync(100);
+    await time.tickAsync(100);
+    await time.tickAsync(50);
+
+    await rejection;
+    assertEquals(reads, 3);
+  });
+
+  it("enforces the polling deadline through the production HTTP adapter", async () => {
+    using time = new FakeTime();
+    let reads = 0;
+    const signals: AbortSignal[] = [];
+
+    await withMockFetch(
+      ((_input: string | URL | Request, init?: RequestInit) => {
+        reads++;
+        const signal = observeFetchRequestInit(init).signal;
+        if (!signal) return Promise.reject(new Error("asset manifest read has no deadline signal"));
+        signals.push(signal);
+
+        if (reads === 1) {
+          return Promise.resolve(
+            new Response("{}", { status: 503, statusText: "Service Unavailable" }),
+          );
+        }
+
+        return new Promise<Response>((_resolve, reject) => {
+          if (signal.aborted) {
+            reject(signal.reason);
+            return;
+          }
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      }) as typeof fetch,
+      async () => {
+        const config = {
+          apiUrl: "https://control.example.test/api",
+          apiToken: "<TOKEN>",
+          projectSlug: PROJECT_SLUG,
+        };
+        const controlPlane = createHttpDeployControlPlane(config, createApiClient(config));
+        const rejection = assertRejects(
+          () =>
+            waitForReleaseAssetManifest(controlPlane, PROJECT_SLUG, "release-1", {
+              ...polling,
+              timeoutMs: 250,
+            }),
+          Error,
+          "last control-plane failure: HTTP 503",
+        );
+
+        await time.tickAsync(0);
+        assertEquals(reads, 1);
+        await time.tickAsync(100);
+        assertEquals(reads, 2);
+        await time.tickAsync(150);
+
+        await rejection;
+        assertEquals(reads, 2);
+        assertEquals(signals.length, 2);
+        assertEquals(signals[0]?.aborted, false);
+        assertEquals(signals[1]?.aborted, true);
+      },
+    );
+  });
+
+  it("does not retry authentication, validation, or cancellation failures", async () => {
+    for (
+      const error of [
+        Object.assign(new Error("unauthorized"), { status: 401 }),
+        Object.assign(new Error("invalid request"), { status: 422 }),
+        new DOMException("cancelled", "AbortError"),
+      ]
+    ) {
+      let reads = 0;
+      const controlPlane = helperControlPlane({
+        getReleaseAssetManifest: () => {
+          reads++;
+          return Promise.reject(error);
+        },
+      });
+
+      await assertRejects(
+        () => waitForReleaseAssetManifest(controlPlane, PROJECT_SLUG, "release-1", polling),
+        error.constructor as ErrorConstructor,
+        error.message,
+      );
+      assertEquals(reads, 1, `${error.name} must fail without another polling attempt`);
+    }
+  });
+
+  it("rejects legacy ready manifests", async () => {
+    const current = readyManifest();
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(
+          manifestControlPlane({
+            ...current,
+            manifest: { ...current.manifest!, schemaVersion: 1 },
+          }),
+          PROJECT_SLUG,
+          "release-1",
+          polling,
+        ),
+      Error,
+      "invalid or mismatched ready manifest",
+    );
+  });
+
+  it("rejects ready manifests for another release", async () => {
+    const current = readyManifest();
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(
+          manifestControlPlane({
+            ...current,
+            manifest: { ...current.manifest!, releaseId: "release-other" },
+          }),
+          PROJECT_SLUG,
+          "release-1",
+          polling,
+        ),
+      Error,
+      "invalid or mismatched ready manifest",
+    );
+  });
+
+  it("rejects accessor-backed states without executing accessors", async () => {
+    let accessorCalls = 0;
+    const hostileResponse: Record<string, unknown> = {};
+    Object.defineProperty(hostileResponse, "state", {
+      enumerable: true,
+      get() {
+        accessorCalls++;
+        return "ready";
+      },
+    });
+
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(
+          manifestControlPlane(hostileResponse),
+          PROJECT_SLUG,
+          "release-1",
+          polling,
+        ),
+      Error,
+      "invalid state response",
+    );
+    assertEquals(accessorCalls, 0);
+  });
+
+  it("rejects oversized manifest states", async () => {
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(
+          manifestControlPlane({ state: "q".repeat(65) }),
+          PROJECT_SLUG,
+          "release-1",
+          polling,
+        ),
+      Error,
+      "invalid state response",
+    );
+  });
+
+  it("fails closed for partial manifests", async () => {
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(
+          manifestControlPlane({ state: "partial" }),
+          PROJECT_SLUG,
+          "release-1",
+          polling,
+        ),
+      Error,
+      "unsupported partial manifest",
+    );
+  });
+
+  it("fails closed for superseded manifests", async () => {
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(
+          manifestControlPlane({ state: "superseded" }),
+          PROJECT_SLUG,
+          "release-1",
+          polling,
+        ),
+      Error,
+      "Release assets for release-1 were superseded",
+    );
+  });
+
+  it("fails closed for unsupported manifest states", async () => {
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(
+          manifestControlPlane({ state: "unexpected" }),
+          PROJECT_SLUG,
+          "release-1",
+          polling,
+        ),
+      Error,
+      "unsupported state response: unexpected",
+    );
+  });
+
   it("rejects ready empty manifests before deployment", async () => {
     const controlPlane = helperControlPlane({
       getReleaseAssetManifest: () => Promise.resolve(readyManifest({})),

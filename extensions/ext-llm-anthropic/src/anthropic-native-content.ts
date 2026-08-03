@@ -1,4 +1,8 @@
-import { type JsonSnapshotValue, readRecord, snapshotJsonValue } from "veryfront/provider/shared";
+import {
+  type JsonSnapshotValue,
+  readRecord,
+  snapshotProviderJsonValue,
+} from "veryfront/provider/shared";
 
 export type AnthropicProviderToolNameRegistry = Map<string, string>;
 
@@ -109,7 +113,7 @@ export function snapshotAnthropicRawAssistantMetadata(
   value: unknown,
 ): JsonSnapshotValue {
   try {
-    return snapshotJsonValue(value, {
+    return snapshotProviderJsonValue(value, {
       maxBytes: MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_BYTES,
       maxDepth: MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_DEPTH,
       maxNodes: MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_NODES,

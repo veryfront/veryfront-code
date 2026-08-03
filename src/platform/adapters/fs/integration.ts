@@ -4,7 +4,6 @@ import { createFSAdapter } from "./factory.ts";
 import { wrapFSAdapter } from "./wrapper.ts";
 import { logger as baseLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { VeryfrontError } from "#veryfront/errors/types.ts";
 
 const logger = baseLogger.component("fs-integration");
 
@@ -35,46 +34,36 @@ export function enhanceAdapterWithFS(
   return withSpan(
     "platform.fs.enhanceAdapterWithFS",
     async () => {
-      try {
-        logger.debug("Initializing FSAdapter", {
-          type: fsType,
-          projectSlug: config.fs?.veryfront?.projectSlug,
-        });
+      logger.debug("Initializing FSAdapter", {
+        type: fsType,
+        projectSlug: config.fs?.veryfront?.projectSlug,
+      });
 
-        const fsAdapterConfig: FSAdapterConfig = {
-          ...config.fs,
-          projectDir,
-        };
+      const fsAdapterConfig: FSAdapterConfig = {
+        ...config.fs,
+        projectDir,
+      };
 
-        const fsAdapter = await createFSAdapter(fsAdapterConfig);
-        const wrappedFS = wrapFSAdapter(fsAdapter);
+      // An explicitly selected remote filesystem is an authority boundary.
+      // Propagate every initialization failure so callers never continue with
+      // the host-local adapter and serve files from the wrong source.
+      const fsAdapter = await createFSAdapter(fsAdapterConfig);
+      const wrappedFS = wrapFSAdapter(fsAdapter);
 
-        const enhancedAdapter: RuntimeAdapter = new Proxy(adapter, {
-          get(target, prop, receiver) {
-            if (prop === "fs") return wrappedFS;
+      const enhancedAdapter: RuntimeAdapter = new Proxy(adapter, {
+        get(target, prop, receiver) {
+          if (prop === "fs") return wrappedFS;
 
-            const value = Reflect.get(target, prop, receiver);
-            return typeof value === "function" ? value.bind(target) : value;
-          },
-        });
+          const value = Reflect.get(target, prop, receiver);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
 
-        logger.debug("FSAdapter initialized successfully", {
-          type: fsType,
-        });
+      logger.debug("FSAdapter initialized successfully", {
+        type: fsType,
+      });
 
-        return enhancedAdapter;
-      } catch (error) {
-        if (error instanceof VeryfrontError && error.slug === "config-validation-failed") {
-          throw error;
-        }
-        logger.error("Failed to initialize FSAdapter", {
-          error: error instanceof Error ? error.message : String(error),
-          type: fsType,
-        });
-
-        logger.warn("Falling back to local filesystem");
-        return adapter;
-      }
+      return enhancedAdapter;
     },
     { "fs.adapter.type": fsType },
   );
