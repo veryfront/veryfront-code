@@ -16,7 +16,7 @@ describe("tool/remote-mcp", () => {
     controller.abort("caller stopped");
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     await assertRejects(
@@ -55,7 +55,7 @@ describe("tool/remote-mcp", () => {
 
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: (context) => `https://mcp.test/${context?.projectId ?? "default"}`,
+      endpoint: (context) => `https://93.184.216.34/${context?.projectId ?? "default"}`,
       headers: (context) => ({
         Authorization: "Bearer remote-token",
         "x-project-id": String(context?.projectId ?? ""),
@@ -88,7 +88,7 @@ describe("tool/remote-mcp", () => {
       async () => await source.listTools({ projectId: "proj_123" }),
     );
 
-    assertEquals(requestUrl, "https://mcp.test/proj_123");
+    assertEquals(requestUrl, "https://93.184.216.34/proj_123");
     assertEquals(requestMethod, "POST");
     assertEquals(projectHeader, "proj_123");
     assertEquals(acceptHeader, "application/json, text/event-stream");
@@ -109,7 +109,7 @@ describe("tool/remote-mcp", () => {
   it("returns structured MCP tool errors instead of throwing for callTool isError results", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
       headers: { Authorization: "Bearer remote-token" },
     });
 
@@ -138,7 +138,7 @@ describe("tool/remote-mcp", () => {
     let requestBody: Record<string, unknown> | undefined;
     const source = createRemoteMCPToolSource({
       id: "veryfront-mcp",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
       headers: { Authorization: "Bearer remote-token" },
     });
 
@@ -182,7 +182,7 @@ describe("tool/remote-mcp", () => {
   it("prefers structuredContent for MCP isError tool results", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
       headers: { Authorization: "Bearer remote-token" },
     });
 
@@ -213,7 +213,7 @@ describe("tool/remote-mcp", () => {
   it("preserves MCP isError when structuredContent lacks an error field", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     const result = await withMockFetch(async () =>
@@ -240,7 +240,7 @@ describe("tool/remote-mcp", () => {
   it("wraps non-object structured MCP errors with a canonical marker", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     const result = await withMockFetch(async () =>
@@ -264,7 +264,7 @@ describe("tool/remote-mcp", () => {
   it("normalizes remote MCP tool responses with generic error markers", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     const result = await withMockFetch(async () =>
@@ -375,7 +375,7 @@ describe("tool/remote-mcp", () => {
   it("does not surface remote HTTP error bodies", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     const error = await assertRejects(
@@ -396,7 +396,7 @@ describe("tool/remote-mcp", () => {
 
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
       headers: {
         Accept: "application/vnd.custom+json",
       },
@@ -427,7 +427,7 @@ describe("tool/remote-mcp", () => {
   it("parses JSON-RPC results from SSE responses when the MCP server negotiates text/event-stream", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     const tools = await withMockFetch(
@@ -458,7 +458,7 @@ describe("tool/remote-mcp", () => {
   it("applies the tools/list response limit to SSE catalogs", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
     const padding = "x".repeat(MAX_REMOTE_MCP_CALL_RESPONSE_BYTES + 1_024);
 
@@ -483,7 +483,7 @@ describe("tool/remote-mcp", () => {
   it("throws when the remote MCP server responds with a JSON-RPC error", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     await assertRejects(
@@ -505,7 +505,7 @@ describe("tool/remote-mcp", () => {
   it("rejects successful list responses whose declared body exceeds the limit", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     await assertRejects(
@@ -529,7 +529,7 @@ describe("tool/remote-mcp", () => {
     let canceled = false;
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -558,7 +558,7 @@ describe("tool/remote-mcp", () => {
   it("rejects JSON-RPC responses with a mismatched protocol version or request id", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     await assertRejects(
@@ -595,7 +595,7 @@ describe("tool/remote-mcp", () => {
   it("selects only the matching JSON-RPC response from an SSE stream", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     const tools = await withMockFetch(
@@ -619,7 +619,7 @@ describe("tool/remote-mcp", () => {
   it("rejects malformed tool entries atomically instead of returning a partial catalog", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     await assertRejects(
@@ -661,7 +661,7 @@ describe("tool/remote-mcp", () => {
     for (const tool of cases) {
       const source = createRemoteMCPToolSource({
         id: "docs",
-        endpoint: "https://mcp.test",
+        endpoint: "https://93.184.216.34",
       });
       await assertRejects(
         () =>
@@ -683,7 +683,7 @@ describe("tool/remote-mcp", () => {
   it("rejects compact remote schemas above the structural node budget", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
     const emptyValue: unknown[] = [];
     const inputSchema = { enum: new Array(4_096).fill(emptyValue) };
@@ -710,7 +710,7 @@ describe("tool/remote-mcp", () => {
     let callCount = 0;
     const duplicateSource = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
 
     await assertRejects(
@@ -740,7 +740,7 @@ describe("tool/remote-mcp", () => {
     callCount = 0;
     const repeatedCursorSource = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
     await assertRejects(
       () =>
@@ -767,7 +767,7 @@ describe("tool/remote-mcp", () => {
   it("rejects catalogs above the definition and pagination ceilings", async () => {
     const oversizedCatalogSource = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
     const tools = Array.from(
       { length: MAX_REMOTE_MCP_TOOL_DEFINITIONS + 1 },
@@ -796,7 +796,7 @@ describe("tool/remote-mcp", () => {
     let page = 0;
     const endlessSource = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
     await assertRejects(
       () =>
@@ -820,7 +820,7 @@ describe("tool/remote-mcp", () => {
   it("rejects unsafe endpoints and disables redirects for authenticated requests", async () => {
     const credentialEndpointSource = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://user:secret@mcp.test",
+      endpoint: "https://user:secret@93.184.216.34",
     });
     await assertRejects(
       () => credentialEndpointSource.listTools(),
@@ -831,7 +831,7 @@ describe("tool/remote-mcp", () => {
     let redirectMode: RequestRedirect | undefined;
     const redirectSafeSource = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
       headers: { Authorization: "Bearer remote-token" },
     });
 
@@ -853,7 +853,7 @@ describe("tool/remote-mcp", () => {
     let fetchCalled = false;
     const source = createRemoteMCPToolSource({
       id: "docs",
-      endpoint: "https://mcp.test",
+      endpoint: "https://93.184.216.34",
     });
     await withMockFetch(async () => {
       fetchCalled = true;
