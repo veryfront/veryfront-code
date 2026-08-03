@@ -21,10 +21,12 @@ const IntrinsicTypeError = TypeError;
 const JSONStringify = JSON.stringify;
 const MathAbs = Math.abs;
 const NumberIsFinite = Number.isFinite;
+const NumberIsSafeInteger = Number.isSafeInteger;
 const ObjectCreate = Object.create;
 const ObjectFreeze = Object.freeze;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const ObjectPrototype = Object.prototype;
 const ReflectApply = Reflect.apply;
 const ReflectOwnKeys = Reflect.ownKeys;
@@ -34,6 +36,10 @@ const TextEncoderPrototypeEncode = TextEncoder.prototype.encode;
 const controlCharacterPattern = /\p{Cc}/u;
 const encoder = new IntrinsicTextEncoder();
 
+function hasOwn(object: object, key: PropertyKey): boolean {
+  return ReflectApply(ObjectPrototypeHasOwnProperty, object, [key]) as boolean;
+}
+
 interface ImportMapBudget {
   entries: number;
   bytes: number;
@@ -42,7 +48,7 @@ interface ImportMapBudget {
 function readOwnDataProperty(value: object, key: PropertyKey, label: string): unknown {
   const descriptor = ObjectGetOwnPropertyDescriptor(value, key);
   if (!descriptor) return undefined;
-  if (descriptor.get || descriptor.set) {
+  if (!hasOwn(descriptor, "value")) {
     throw new IntrinsicTypeError(`${label} cannot contain accessor properties`);
   }
   return descriptor.value;
@@ -90,7 +96,7 @@ function snapshotStringRecord(
     }
     const descriptor = ObjectGetOwnPropertyDescriptor(value, key);
     if (!descriptor) continue;
-    if (descriptor.get || descriptor.set) {
+    if (!hasOwn(descriptor, "value")) {
       throw new IntrinsicTypeError(`${label} cannot contain accessor properties`);
     }
     if (!descriptor.enumerable) continue;
@@ -161,7 +167,7 @@ export function snapshotImportMap(value: unknown): ImportMapConfig {
       }
       const descriptor = ObjectGetOwnPropertyDescriptor(rawScopes, scope);
       if (!descriptor) continue;
-      if (descriptor.get || descriptor.set) {
+      if (!hasOwn(descriptor, "value")) {
         throw new IntrinsicTypeError("Import map scopes cannot contain accessor properties");
       }
       if (!descriptor.enumerable) continue;
@@ -251,7 +257,7 @@ export function getCustomPluginCacheIdentity(
   return { cacheable: true, identity: ObjectFreeze(identity) };
 }
 
-function boundedOption(value: string | undefined, label: string): string | null {
+function boundedOption(value: unknown, label: string): string | null {
   if (value === undefined) return null;
   if (typeof value !== "string") {
     throw new IntrinsicTypeError(`${label} must be a string`);
@@ -266,10 +272,91 @@ function boundedOption(value: string | undefined, label: string): string | null 
   return value;
 }
 
-function boundedRequiredOption(value: string, label: string): string {
+function boundedRequiredOption(value: unknown, label: string): string {
   const bounded = boundedOption(value, label);
   if (bounded === null) throw new IntrinsicTypeError(`${label} must be a string`);
   return bounded;
+}
+
+function readArrayLength(value: readonly unknown[], label: string): number {
+  const length = readOwnDataProperty(value, "length", label);
+  if (
+    typeof length !== "number" || !NumberIsSafeInteger(length) || length < 0
+  ) {
+    throw new IntrinsicTypeError(`${label} has an invalid length`);
+  }
+  return length;
+}
+
+function readArrayElement(
+  value: readonly unknown[],
+  index: number,
+  label: string,
+): unknown {
+  const descriptor = ObjectGetOwnPropertyDescriptor(value, index);
+  if (!descriptor || !hasOwn(descriptor, "value")) {
+    throw new IntrinsicTypeError(`${label} must contain own data elements`);
+  }
+  return descriptor.value;
+}
+
+function encodeIdentityPrimitive(value: string | number | boolean | null): string {
+  return JSONStringify(value) as string;
+}
+
+function encodeCustomPluginIdentities(
+  plugins: ReadonlyArray<readonly [number, string, number, string]>,
+): string {
+  if (!ArrayIsArray(plugins)) {
+    throw new IntrinsicTypeError("Transform pipeline custom plugin identity must be an array");
+  }
+  const length = readArrayLength(plugins, "Transform pipeline custom plugin identity");
+  if (length > MAX_CUSTOM_PLUGINS) {
+    throw new IntrinsicRangeError(
+      `Transform pipeline cache identity cannot contain more than ${MAX_CUSTOM_PLUGINS} plugins`,
+    );
+  }
+
+  let encoded = `${encodeIdentityPrimitive(length)};`;
+  for (let index = 0; index < length; index++) {
+    const tuple = readArrayElement(
+      plugins,
+      index,
+      `Transform pipeline custom plugin identity ${index}`,
+    );
+    if (!ArrayIsArray(tuple) || readArrayLength(tuple, `Custom plugin identity ${index}`) !== 4) {
+      throw new IntrinsicTypeError(`Custom plugin identity ${index} must be a four-item tuple`);
+    }
+    const pluginIndex = readArrayElement(tuple, 0, `Custom plugin identity ${index}`);
+    const name = readArrayElement(tuple, 1, `Custom plugin identity ${index}`);
+    const stage = readArrayElement(tuple, 2, `Custom plugin identity ${index}`);
+    const cacheIdentity = readArrayElement(tuple, 3, `Custom plugin identity ${index}`);
+    if (pluginIndex !== index) {
+      throw new IntrinsicTypeError(`Custom plugin identity ${index} has an invalid index`);
+    }
+    if (
+      typeof name !== "string" || name.length === 0 || name.length > 256 ||
+      (ReflectApply(StringPrototypeTrim, name, []) as string) !== name ||
+      (ReflectApply(RegExpPrototypeTest, controlCharacterPattern, [name]) as boolean)
+    ) {
+      throw new IntrinsicTypeError(`Custom plugin identity ${index} has an invalid name`);
+    }
+    if (typeof stage !== "number" || !NumberIsFinite(stage) || MathAbs(stage) > 1_000_000) {
+      throw new IntrinsicTypeError(`Custom plugin identity ${index} has an invalid stage`);
+    }
+    if (
+      typeof cacheIdentity !== "string" || cacheIdentity.length === 0 ||
+      (ReflectApply(TextEncoderPrototypeEncode, encoder, [cacheIdentity]) as Uint8Array)
+          .byteLength > MAX_PLUGIN_IDENTITY_BYTES
+    ) {
+      throw new IntrinsicTypeError(
+        `Custom plugin identity ${index} has an invalid cache identity`,
+      );
+    }
+    encoded += `${encodeIdentityPrimitive(pluginIndex)},${encodeIdentityPrimitive(name)},`;
+    encoded += `${encodeIdentityPrimitive(stage)},${encodeIdentityPrimitive(cacheIdentity)};`;
+  }
+  return encoded;
 }
 
 export interface PipelineConfigIdentityInput {
@@ -292,38 +379,82 @@ export interface PipelineConfigIdentityInput {
 export async function computePipelineConfigIdentity(
   input: PipelineConfigIdentityInput,
 ): Promise<string> {
-  const reactVersion = boundedRequiredOption(input.reactVersion, "React version");
-  const jsxImportSource = boundedRequiredOption(input.jsxImportSource, "JSX import source");
-  const projectDir = boundedRequiredOption(input.projectDir, "Project directory");
+  const reactVersion = boundedRequiredOption(
+    readOwnDataProperty(input, "reactVersion", "Transform pipeline identity"),
+    "React version",
+  );
+  const jsxImportSource = boundedRequiredOption(
+    readOwnDataProperty(input, "jsxImportSource", "Transform pipeline identity"),
+    "JSX import source",
+  );
+  const projectDir = boundedRequiredOption(
+    readOwnDataProperty(input, "projectDir", "Transform pipeline identity"),
+    "Project directory",
+  );
+  const studioEmbed = readOwnDataProperty(
+    input,
+    "studioEmbed",
+    "Transform pipeline identity",
+  );
+  const dev = readOwnDataProperty(input, "dev", "Transform pipeline identity");
+  const ssr = readOwnDataProperty(input, "ssr", "Transform pipeline identity");
   if (
-    typeof input.studioEmbed !== "boolean" || typeof input.dev !== "boolean" ||
-    typeof input.ssr !== "boolean"
+    typeof studioEmbed !== "boolean" || typeof dev !== "boolean" ||
+    typeof ssr !== "boolean"
   ) {
     throw new IntrinsicTypeError("Transform pipeline mode identity fields must be booleans");
   }
-  if (!ArrayIsArray(input.customPlugins) || input.customPlugins.length > MAX_CUSTOM_PLUGINS) {
-    throw new IntrinsicRangeError(
-      `Transform pipeline cache identity cannot contain more than ${MAX_CUSTOM_PLUGINS} plugins`,
-    );
-  }
+  const customPlugins = encodeCustomPluginIdentities(
+    readOwnDataProperty(
+      input,
+      "customPlugins",
+      "Transform pipeline identity",
+    ) as ReadonlyArray<readonly [number, string, number, string]>,
+  );
   const baseIdentity = await computeConfigHash({
     reactVersion,
     jsxImportSource,
-    studioEmbed: input.studioEmbed,
-    dev: input.dev,
+    studioEmbed,
+    dev,
   });
-  const identity = [
-    "veryfront:transform-pipeline:v3",
-    baseIdentity,
-    input.ssr,
-    projectDir,
-    boundedOption(input.moduleServerUrl, "Module server URL"),
-    boundedOption(input.moduleServerOrigin, "Module server origin"),
-    boundedOption(input.vendorBundleHash, "Vendor bundle hash"),
-    boundedOption(input.apiBaseUrl, "API base URL"),
-    boundedOption(input.importMapFingerprint, "Import map fingerprint"),
-    boundedOption(input.dependencyPinningCacheKey, "Dependency pinning cache key"),
-    input.customPlugins,
-  ];
-  return computeHash(JSONStringify(identity));
+  let identity = "veryfront:transform-pipeline:v4;";
+  identity += `base=${encodeIdentityPrimitive(baseIdentity)};`;
+  identity += `ssr=${encodeIdentityPrimitive(ssr)};`;
+  identity += `project=${encodeIdentityPrimitive(projectDir)};`;
+  const moduleServerUrl = boundedOption(
+    readOwnDataProperty(input, "moduleServerUrl", "Transform pipeline identity"),
+    "Module server URL",
+  );
+  const moduleServerOrigin = boundedOption(
+    readOwnDataProperty(input, "moduleServerOrigin", "Transform pipeline identity"),
+    "Module server origin",
+  );
+  const vendorBundleHash = boundedOption(
+    readOwnDataProperty(input, "vendorBundleHash", "Transform pipeline identity"),
+    "Vendor bundle hash",
+  );
+  const apiBaseUrl = boundedOption(
+    readOwnDataProperty(input, "apiBaseUrl", "Transform pipeline identity"),
+    "API base URL",
+  );
+  const importMapFingerprint = boundedOption(
+    readOwnDataProperty(input, "importMapFingerprint", "Transform pipeline identity"),
+    "Import map fingerprint",
+  );
+  const dependencyPinningCacheKey = boundedOption(
+    readOwnDataProperty(
+      input,
+      "dependencyPinningCacheKey",
+      "Transform pipeline identity",
+    ),
+    "Dependency pinning cache key",
+  );
+  identity += `module-url=${encodeIdentityPrimitive(moduleServerUrl)};`;
+  identity += `module-origin=${encodeIdentityPrimitive(moduleServerOrigin)};`;
+  identity += `vendor=${encodeIdentityPrimitive(vendorBundleHash)};`;
+  identity += `api=${encodeIdentityPrimitive(apiBaseUrl)};`;
+  identity += `import-map=${encodeIdentityPrimitive(importMapFingerprint)};`;
+  identity += `dependency-pins=${encodeIdentityPrimitive(dependencyPinningCacheKey)};`;
+  identity += `plugins=${customPlugins}`;
+  return computeHash(identity);
 }

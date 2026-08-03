@@ -205,6 +205,76 @@ describe("transform pipeline cache identity", () => {
     assertNotEquals(changed, baseline);
   });
 
+  it("keeps ill-formed Unicode distinct from replacement characters", async () => {
+    const loneSurrogate = await computePipelineConfigIdentity(
+      identityInput({ projectDir: "\ud800" }),
+    );
+    const replacementCharacter = await computePipelineConfigIdentity(
+      identityInput({ projectDir: "\ufffd" }),
+    );
+
+    assertNotEquals(loneSurrogate, replacementCharacter);
+  });
+
+  it("does not consult inherited toJSON hooks while hashing", async () => {
+    const customPlugins = [[0, "custom", TransformStage.FINALIZE, "custom@1"]] as const;
+    const baseline = await computePipelineConfigIdentity(identityInput({ customPlugins }));
+    const arrayToJson = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+    const objectToJson = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+    const stringToJson = Object.getOwnPropertyDescriptor(String.prototype, "toJSON");
+    let hookCalls = 0;
+
+    try {
+      Object.defineProperty(Array.prototype, "toJSON", {
+        configurable: true,
+        value() {
+          hookCalls++;
+          return ["poisoned-array"];
+        },
+        writable: true,
+      });
+      Object.defineProperty(Object.prototype, "toJSON", {
+        configurable: true,
+        value() {
+          hookCalls++;
+          return { poisoned: true };
+        },
+        writable: true,
+      });
+      Object.defineProperty(String.prototype, "toJSON", {
+        configurable: true,
+        value() {
+          hookCalls++;
+          return "poisoned-string";
+        },
+        writable: true,
+      });
+
+      assertEquals(
+        await computePipelineConfigIdentity(identityInput({ customPlugins })),
+        baseline,
+      );
+    } finally {
+      if (arrayToJson) {
+        Object.defineProperty(Array.prototype, "toJSON", arrayToJson);
+      } else {
+        Reflect.deleteProperty(Array.prototype, "toJSON");
+      }
+      if (objectToJson) {
+        Object.defineProperty(Object.prototype, "toJSON", objectToJson);
+      } else {
+        Reflect.deleteProperty(Object.prototype, "toJSON");
+      }
+      if (stringToJson) {
+        Object.defineProperty(String.prototype, "toJSON", stringToJson);
+      } else {
+        Reflect.deleteProperty(String.prototype, "toJSON");
+      }
+    }
+
+    assertEquals(hookCalls, 0);
+  });
+
   it("uses captured primordials for import-map and plugin identities", async () => {
     const original = {
       arrayIsArray: Array.isArray,
