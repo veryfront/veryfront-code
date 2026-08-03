@@ -30,6 +30,14 @@ describe("model-call-context", () => {
     };
     assertEquals(event, { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages, tools });
 
+    const eventWithExtraField: AgentRunModelCallContextEvent = {
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      messages,
+      // @ts-expect-error model-call context events do not accept chunk metadata
+      contextId: "context-1",
+    };
+    assertEquals(eventWithExtraField.type, "AGENT_RUN_MODEL_CALL_CONTEXT");
+
     const providerPrivateReasoning: ModelCallMessage = {
       role: "assistant",
       content: [
