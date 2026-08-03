@@ -23,14 +23,14 @@ describe("ProductionEnvironmentResolver", () => {
     globalThis.fetch = originalFetch;
   });
 
-  it("uses bounded, redirect-safe authenticated transport and selects production exactly", async () => {
+  it("uses bounded, redirect-safe authenticated transport and selects title-case production", async () => {
     let requestInit: RequestInit | undefined;
     globalThis.fetch = ((_input, init) => {
       requestInit = init;
       return Promise.resolve(Response.json({
         data: [
-          { id: "env-preview", name: "preview" },
-          { id: "env-production", name: "production" },
+          { id: "env-preview", name: "Preview" },
+          { id: "env-production", name: "Production" },
         ],
       }));
     }) as typeof fetch;
@@ -63,6 +63,23 @@ describe("ProductionEnvironmentResolver", () => {
       await resolver.resolveNamed({
         ...scope(),
         environmentName: "staging",
+        expectedEnvironmentId: "env-staging",
+      }),
+      "env-staging",
+    );
+  });
+
+  it("matches canonical named environments without depending on API letter case", async () => {
+    globalThis.fetch = (() =>
+      Promise.resolve(Response.json({
+        data: [{ id: "env-staging", name: "Staging" }],
+      }))) as typeof fetch;
+
+    const resolver = new ProjectEnvironmentIdentityResolver();
+    assertEquals(
+      await resolver.resolveNamed({
+        ...scope(),
+        environmentName: "STAGING",
         expectedEnvironmentId: "env-staging",
       }),
       "env-staging",
@@ -198,7 +215,7 @@ describe("ProductionEnvironmentResolver", () => {
       {
         data: [
           { id: "env-prod-one", name: "production" },
-          { id: "env-prod-two", name: "production" },
+          { id: "env-prod-two", name: "Production" },
         ],
       },
     ];

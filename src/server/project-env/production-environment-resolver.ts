@@ -83,9 +83,13 @@ async function cacheKey(scope: NamedProjectEnvironmentScope): Promise<string> {
     frame(scope.apiBaseUrl),
     frame(scope.projectSlug),
     frame(scope.projectId ?? ""),
-    frame(scope.environmentName),
+    frame(normalizeEnvironmentName(scope.environmentName)),
     credentialPrincipal,
   ].join("|");
+}
+
+function normalizeEnvironmentName(value: string): string {
+  return value.toLowerCase();
 }
 
 function mapLookupError(error: unknown, signal?: AbortSignal): Error {
@@ -151,6 +155,7 @@ function parseNamedEnvironmentIdentity(
     });
   }
 
+  const normalizedEnvironmentName = normalizeEnvironmentName(environmentName);
   const matching: NamedProjectEnvironmentIdentity[] = [];
   for (const entry of data) {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
@@ -179,7 +184,7 @@ function parseNamedEnvironmentIdentity(
         detail: "Project environment lookup returned an invalid active release identity",
       });
     }
-    if (name === environmentName) {
+    if (normalizeEnvironmentName(name) === normalizedEnvironmentName) {
       matching.push({
         environmentId: id,
         activeReleaseId: typeof rawActiveReleaseId === "string" ? rawActiveReleaseId : null,

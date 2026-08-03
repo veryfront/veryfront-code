@@ -80,6 +80,10 @@ import {
   describeBrowserModuleBoundaryViolation,
   inspectBrowserModuleBoundary,
 } from "#veryfront/server/shared/browser-module-boundary.ts";
+import {
+  type BrowserModuleBundle,
+  bundleBrowserModuleWithMetadata,
+} from "#veryfront/server/shared/browser-module-bundler.ts";
 import { ensureDefaultParserContracts } from "#veryfront/extensions/parser/defaults.ts";
 import {
   classifyBrowserModuleSourcePath,
@@ -225,6 +229,39 @@ function projectSourceManifestKey(projectDir: string, sourceFile: string): strin
   return segments.every((segment) => segment.length > 0 && segment !== "." && segment !== "..")
     ? relativePath
     : null;
+}
+
+function validateBundledClientDependencies(
+  bundle: BrowserModuleBundle,
+  options: {
+    projectDir: string;
+    config?: VeryfrontConfig;
+    admissionManifest?: ReleaseAssetManifest | null;
+  },
+): { valid: true } | { valid: false; path: string | null; reason: string } {
+  for (const dependency of bundle.dependencies) {
+    const path = projectSourceManifestKey(options.projectDir, dependency.path);
+    if (!path) {
+      return { valid: false, path: null, reason: "outside-project" };
+    }
+
+    const policy = classifyBrowserModuleSourcePath(path, {
+      config: options.config,
+      rscEnabled: true,
+    });
+    if (policy.protectionReason) {
+      return { valid: false, path, reason: policy.protectionReason };
+    }
+
+    if (
+      options.admissionManifest &&
+      !Object.hasOwn(options.admissionManifest.modules, path)
+    ) {
+      return { valid: false, path, reason: "absent-from-release-manifest" };
+    }
+  }
+
+  return { valid: true };
 }
 
 function isScriptModuleSource(path: string): boolean {
@@ -746,9 +783,21 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       const requiresProductionManifestAdmission = !isSSR &&
         options.mode === "production" &&
         options.isLocalProject !== true &&
-        options.isProxyMode !== false &&
-        typeof options.releaseId === "string" &&
-        options.releaseId.length > 0;
+        options.isProxyMode !== false;
+
+      if (
+        requiresProductionManifestAdmission &&
+        !options.releaseId &&
+        !isReservedFrameworkModulePath(filePathWithoutExt)
+      ) {
+        logger.warn("Rejected hosted production browser module without a release", {
+          modulePath,
+        });
+        return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-store",
+        });
+      }
 
       const canUseReleaseModuleResponseCache = method === "GET" || method === "HEAD";
       const canCacheReleaseVersionedModule = canUseReleaseModuleResponseCache &&
@@ -868,9 +917,20 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           });
         }
 
+        let productionAdmissionManifest: ReleaseAssetManifest | null = null;
         if (requiresProductionManifestAdmission && !isFrameworkFile) {
+          if (!options.releaseId) {
+            logger.warn("Rejected hosted production browser module without a release", {
+              modulePath,
+              sourceFile,
+            });
+            return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
+              "Content-Type": "text/plain; charset=utf-8",
+              "Cache-Control": "no-store",
+            });
+          }
           const admissionManifest = await getReadyManifestForBrowserModuleAdmission(
-            options.releaseId!,
+            options.releaseId,
             { refreshCachedNull: true },
           );
           if (!admissionManifest) {
@@ -902,6 +962,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               "Cache-Control": "no-store",
             });
           }
+          productionAdmissionManifest = admissionManifest;
         }
 
         if (requiresProductionManifestAdmission) {
@@ -911,6 +972,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
 
         let code = "";
         let inspectedBrowserSource: string | undefined;
+        let bundledClientBoundary: BrowserModuleBundle | undefined;
 
         if (!isSSR && !isFrameworkFile && isScriptModuleSource(sourceFile)) {
           inspectedBrowserSource = await readSourceFileForVersion(secureFs, findResult);
@@ -929,104 +991,149 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               "Cache-Control": "no-store",
             });
           }
+
+          // `use client` marks a graph boundary, not every file in that graph.
+          // Bundle the boundary so ordinary transitive helpers never become
+          // independently addressable browser entrypoints. The bundler applies
+          // server-only checks to every dependency; the post-build pass below
+          // additionally enforces project path policy and release membership.
+          if (
+            sourcePolicy?.requiresClientBoundary === true &&
+            hasUseClientDirective(inspectedBrowserSource, sourceFile)
+          ) {
+            bundledClientBoundary = await bundleBrowserModuleWithMetadata(sourceFile, {
+              adapter,
+              projectDir,
+              projectId: effectiveProjectId,
+              projectSlug: projectSlug ?? undefined,
+              config: options.config,
+              moduleServerOrigin: url.origin,
+              dependencyPinningCacheKey,
+              dependencyPinningDependencies,
+              dependencyPinningSource: dependencySource,
+            });
+            const dependencyAdmission = validateBundledClientDependencies(
+              bundledClientBoundary,
+              {
+                projectDir,
+                config: options.config,
+                admissionManifest: productionAdmissionManifest,
+              },
+            );
+            if (!dependencyAdmission.valid) {
+              logger.warn("Rejected protected RSC client dependency", {
+                modulePath,
+                dependencyPath: dependencyAdmission.path,
+                reason: dependencyAdmission.reason,
+              });
+              return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
+                "Content-Type": "text/plain; charset=utf-8",
+                "Cache-Control": "no-store",
+              });
+            }
+          }
         }
 
         if (!isHeadRequest) {
-          // Use embedded content for compiled polyfills (no filesystem I/O needed)
-          let source: string;
-          if (inspectedBrowserSource !== undefined) {
-            source = inspectedBrowserSource;
-          } else if (embeddedContent) {
-            source = embeddedContent;
-            logger.debug("Using embedded polyfill content", {
-              path: sourceFile,
-              contentLength: embeddedContent.length,
-            });
+          if (bundledClientBoundary) {
+            code = ensureFilenameDefaultExport(modulePath, bundledClientBoundary.source);
           } else {
-            source = isFrameworkFile
-              ? await platformFs.readTextFile(sourceFile)
-              : await readBoundedModuleSource(
-                secureFs.readFileBytesWithinLimit,
-                sourceFile,
-              );
-          }
+            // Use embedded content for compiled polyfills (no filesystem I/O needed)
+            let source: string;
+            if (inspectedBrowserSource !== undefined) {
+              source = inspectedBrowserSource;
+            } else if (embeddedContent !== undefined) {
+              source = embeddedContent;
+              logger.debug("Using embedded polyfill content", {
+                path: sourceFile,
+                contentLength: embeddedContent.length,
+              });
+            } else {
+              source = isFrameworkFile
+                ? await platformFs.readTextFile(sourceFile)
+                : await readBoundedModuleSource(
+                  secureFs.readFileBytesWithinLimit,
+                  sourceFile,
+                );
+            }
 
-          const userAgent = req.headers.get("user-agent") ?? "";
+            const userAgent = req.headers.get("user-agent") ?? "";
 
-          const studioEmbed = url.searchParams.get("studio_embed") === "true";
-          const shouldInjectPositions = dev || options.mode === "preview";
-          const isJsxFile = /\.(tsx|jsx)$/i.test(sourceFile);
-          if (shouldInjectPositions && !isFrameworkFile && isJsxFile) {
-            const relativeFilePath = sourceFile.startsWith(projectDir)
-              ? sourceFile.slice(projectDir.length).replace(/^\/+/, "")
-              : sourceFile;
-            source = injectNodePositions(source, { filePath: relativeFilePath });
-          }
+            const studioEmbed = url.searchParams.get("studio_embed") === "true";
+            const shouldInjectPositions = dev || options.mode === "preview";
+            const isJsxFile = /\.(tsx|jsx)$/i.test(sourceFile);
+            if (shouldInjectPositions && !isFrameworkFile && isJsxFile) {
+              const relativeFilePath = sourceFile.startsWith(projectDir)
+                ? sourceFile.slice(projectDir.length).replace(/^\/+/, "")
+                : sourceFile;
+              source = injectNodePositions(source, { filePath: relativeFilePath });
+            }
 
-          logger.debug("SSR mode check", {
-            isSSR,
-            isDenoRequest: userAgent.startsWith("Deno/"),
-            hasSSRParam: url.searchParams.get("ssr") === "true",
-            userAgent: userAgent.slice(0, 30),
-          });
+            logger.debug("SSR mode check", {
+              isSSR,
+              isDenoRequest: userAgent.startsWith("Deno/"),
+              hasSSRParam: url.searchParams.get("ssr") === "true",
+              userAgent: userAgent.slice(0, 30),
+            });
 
-          const transformOpts: TransformOptions = {
-            projectId: effectiveProjectId,
-            dev,
-            ssr: isSSR,
-            moduleServerUrl: !isSSR &&
-                dependencyPinningCacheKey.startsWith("on:") &&
-                !pathPin.found
-              ? "/_vf_modules"
-              : undefined,
-            moduleServerOrigin: url.origin,
-            studioEmbed,
-            reactVersion,
-            dependencyPinningCacheKey,
-            dependencyPinningDependencies,
-            dependencyPinningSource: dependencySource,
-          };
-
-          // The dev-module path has two post-steps that stay outside
-          // transformModuleToServable to keep its API small:
-          //   - HMR timestamp injection: runs after the full shared sequence
-          //     (originally between the SSR rewrite and the non-SSR release
-          //     rewrite; reordering is safe because they touch disjoint
-          //     specifiers)
-          //   - addReleaseVersionToFallbackImports: runs after the release rewrite
-          code = await transformModuleToServable({
-            source,
-            sourceFile,
-            projectDir,
-            adapter,
-            transformOpts,
-            isSSR,
-            postTransform: (c) => ensureFilenameDefaultExport(modulePath, c),
-            ssrRewriteOptions: {
-              projectSlug,
-              branch,
-              projectDir,
+            const transformOpts: TransformOptions = {
               projectId: effectiveProjectId,
-              resolveCacheBuster: createSSRTargetCacheBusterResolver({
-                secureFs,
-                projectDir,
-                currentModulePath: modulePath,
-                projectId: effectiveProjectId,
+              dev,
+              ssr: isSSR,
+              moduleServerUrl: !isSSR &&
+                  dependencyPinningCacheKey.startsWith("on:") &&
+                  !pathPin.found
+                ? "/_vf_modules"
+                : undefined,
+              moduleServerOrigin: url.origin,
+              studioEmbed,
+              reactVersion,
+              dependencyPinningCacheKey,
+              dependencyPinningDependencies,
+              dependencyPinningSource: dependencySource,
+            };
+
+            // The dev-module path has two post-steps that stay outside
+            // transformModuleToServable to keep its API small:
+            //   - HMR timestamp injection: runs after the full shared sequence
+            //     (originally between the SSR rewrite and the non-SSR release
+            //     rewrite; reordering is safe because they touch disjoint
+            //     specifiers)
+            //   - addReleaseVersionToFallbackImports: runs after the release rewrite
+            code = await transformModuleToServable({
+              source,
+              sourceFile,
+              projectDir,
+              adapter,
+              transformOpts,
+              isSSR,
+              postTransform: (c) => ensureFilenameDefaultExport(modulePath, c),
+              ssrRewriteOptions: {
                 projectSlug,
                 branch,
+                projectDir,
+                projectId: effectiveProjectId,
+                resolveCacheBuster: createSSRTargetCacheBusterResolver({
+                  secureFs,
+                  projectDir,
+                  currentModulePath: modulePath,
+                  projectId: effectiveProjectId,
+                  projectSlug,
+                  branch,
+                  releaseId: options.releaseId,
+                  reactVersion,
+                }),
+              },
+              releaseRewriteOptions: {
                 releaseId: options.releaseId,
-                reactVersion,
-              }),
-            },
-            releaseRewriteOptions: {
-              releaseId: options.releaseId,
-              manifest: releaseDependencyRewriteEnabled ? releaseDependencyManifest : undefined,
-              manifestReadOptions: { refreshCachedNull: true },
-              dependencyCacheRoot,
-              readDependencySource: (path) => platformFs.readTextFile(path),
-            },
-            profile: true,
-          });
+                manifest: releaseDependencyRewriteEnabled ? releaseDependencyManifest : undefined,
+                manifestReadOptions: { refreshCachedNull: true },
+                dependencyCacheRoot,
+                readDependencySource: (path) => platformFs.readTextFile(path),
+              },
+              profile: true,
+            });
+          }
 
           const hmrTimestamp = url.searchParams.get("t");
           if (hmrTimestamp) {

@@ -107,6 +107,33 @@ describe("environment-resolution", () => {
     assertEquals(result.releaseId, undefined);
   });
 
+  it("requires a release for both hosted browser module path variants", () => {
+    for (
+      const pathname of [
+        "/_vf_modules/components/Secret.js",
+        "/_veryfront/modules/components/Secret.js",
+      ]
+    ) {
+      const result = resolveEnvironment({
+        proxyEnv: "production",
+        reqCtxMode: "production",
+        releaseId: undefined,
+        projectSlug: "my-project",
+        projectId: "proj_123",
+        environmentName: "Production",
+        host: "my-project.production.veryfront.com",
+        isLocalProject: false,
+        isProxyMode: true,
+        pathname,
+        defaultEnvironment: undefined,
+      });
+
+      assertEquals(result.errorResponse?.status, 404, pathname);
+      assertEquals(result.resolvedEnvironment, "production", pathname);
+      assertEquals(result.releaseId, undefined, pathname);
+    }
+  });
+
   it("falls back to preview in standalone production without releaseId", () => {
     const result = resolveEnvironment({
       proxyEnv: undefined,

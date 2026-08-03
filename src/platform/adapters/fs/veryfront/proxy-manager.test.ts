@@ -221,6 +221,16 @@ describe("ProxyFSAdapterManager", () => {
       manager.dispose();
     });
 
+    it("rejects non-positive or non-integral adapter limits", () => {
+      for (const maxAdapters of [0, -1, 1.5, Number.POSITIVE_INFINITY]) {
+        assertThrows(
+          () => createManager({ maxAdapters }),
+          RangeError,
+          "maxAdapters must be a positive safe integer",
+        );
+      }
+    });
+
     it("should accept maxIdleMs option", () => {
       const manager = createManager({ maxIdleMs: 60000 });
       assertExists(manager);
@@ -510,6 +520,124 @@ describe("ProxyFSAdapterManager", () => {
 
         assertNotStrictEquals(first, second);
         assertEquals(observedTokens.toSorted(), ["credential-one", "credential-two"]);
+      } finally {
+        manager.dispose();
+      }
+    });
+
+    it("reserves capacity for pending adapter initialization", async () => {
+      const initializationGate = Promise.withResolvers<void>();
+      const firstInitializationStarted = Promise.withResolvers<void>();
+      let factoryCalls = 0;
+      let firstRequest: Promise<VeryfrontFSAdapter> | undefined;
+      const manager = createManager({
+        maxAdapters: 1,
+        adapterFactory: (config) => {
+          factoryCalls += 1;
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = factoryCalls === 1
+            ? () => {
+              firstInitializationStarted.resolve();
+              return initializationGate.promise;
+            }
+            : () => Promise.resolve();
+          return adapter;
+        },
+      });
+
+      try {
+        firstRequest = manager.getAdapter(
+          "tenant-one",
+          "credential-one",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+        );
+        await firstInitializationStarted.promise;
+
+        const overload = await assertRejects(() =>
+          manager.getAdapter(
+            "tenant-two",
+            "credential-two",
+            undefined,
+            false,
+            null,
+            null,
+            "main",
+          )
+        );
+        assertEquals((overload as { slug?: string }).slug, "service-overloaded");
+        assertEquals(factoryCalls, 1);
+
+        initializationGate.resolve();
+        const first = await firstRequest;
+        assertEquals(manager.getStats().adapters, 1);
+
+        const second = await manager.getAdapter(
+          "tenant-two",
+          "credential-two",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+        );
+        assertNotStrictEquals(first, second);
+        assertEquals(factoryCalls, 2);
+        assertEquals(manager.getStats().adapters, 1);
+      } finally {
+        initializationGate.resolve();
+        await firstRequest?.catch(() => {});
+        manager.dispose();
+      }
+    });
+
+    it("releases a reserved slot after synchronous initialization failure", async () => {
+      let factoryCalls = 0;
+      const manager = createManager({
+        maxAdapters: 1,
+        adapterFactory: (config) => {
+          factoryCalls += 1;
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = factoryCalls === 1
+            ? () => {
+              throw new Error("synchronous initialization failure");
+            }
+            : () => Promise.resolve();
+          return adapter;
+        },
+      });
+
+      try {
+        await assertRejects(
+          () =>
+            manager.getAdapter(
+              "tenant-one",
+              "credential-one",
+              undefined,
+              false,
+              null,
+              null,
+              "main",
+            ),
+          Error,
+          "synchronous initialization failure",
+        );
+
+        const recovered = await manager.getAdapter(
+          "tenant-two",
+          "credential-two",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+        );
+        assertExists(recovered);
+        assertEquals(factoryCalls, 2);
+        assertEquals(manager.getStats().adapters, 1);
       } finally {
         manager.dispose();
       }

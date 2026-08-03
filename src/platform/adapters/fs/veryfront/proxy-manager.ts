@@ -1,6 +1,7 @@
 import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors/error-registry.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry/general.ts";
+import { SERVICE_OVERLOADED } from "#veryfront/errors/error-registry/server.ts";
 import { buildProxyManagerCacheKey } from "#veryfront/cache/keys/index.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
 import type { CacheStats, FSAdapterConfig, ResolvedContentContext } from "./types.ts";
@@ -11,6 +12,13 @@ const logger = baseLogger.component("proxy-fs-adapter-manager");
 
 const DEFAULT_MAX_ADAPTERS = 100;
 const DEFAULT_MAX_IDLE_MS = 30 * 60 * 1_000;
+
+function requirePositiveSafeInteger(value: number, name: string): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new RangeError(`${name} must be a positive safe integer`);
+  }
+  return value;
+}
 
 interface ProjectAdapter {
   adapter: VeryfrontFSAdapter;
@@ -60,7 +68,10 @@ export class ProxyFSAdapterManager {
     this.baseConfig = config.baseConfig;
     this.adapterFactory = config.adapterFactory ??
       ((adapterConfig) => new VeryfrontFSAdapter(adapterConfig));
-    this.maxAdapters = config.maxAdapters ?? DEFAULT_MAX_ADAPTERS;
+    this.maxAdapters = requirePositiveSafeInteger(
+      config.maxAdapters ?? DEFAULT_MAX_ADAPTERS,
+      "maxAdapters",
+    );
     this.maxIdleMs = config.maxIdleMs ?? DEFAULT_MAX_IDLE_MS;
 
     if (config.cleanupIntervalMs) {
@@ -231,8 +242,18 @@ export class ProxyFSAdapterManager {
       return adapter;
     }
 
-    if (this.adapters.size >= this.maxAdapters) {
-      this.evictLeastRecentlyUsed();
+    // A pending initialization already owns a cache slot. Counting only
+    // completed adapters lets a burst of distinct tenant/credential identities
+    // initialize without bound and then commit past maxAdapters. Reuse an LRU
+    // completed slot when possible; if every slot is initializing, fail fast
+    // without starting more work.
+    if (this.adapters.size + this.pendingAdapters.size >= this.maxAdapters) {
+      const evicted = this.evictLeastRecentlyUsed();
+      if (!evicted) {
+        throw SERVICE_OVERLOADED.create({
+          detail: "Proxy filesystem adapter initialization capacity is exhausted",
+        });
+      }
     }
 
     logger.debug("Creating new adapter", {
@@ -434,7 +455,9 @@ export class ProxyFSAdapterManager {
 
     const projectAdapter: ProjectAdapter = { adapter, lastAccessed: Date.now(), identity };
 
-    const initPromise = (async (): Promise<VeryfrontFSAdapter> => {
+    // Defer initialization until after its promise is registered. This makes
+    // capacity admission atomic even when initialize() throws synchronously.
+    const initPromise = Promise.resolve().then(async (): Promise<VeryfrontFSAdapter> => {
       const initStartTime = performance.now();
 
       logger.debug("Adapter initialization START", {
@@ -442,9 +465,8 @@ export class ProxyFSAdapterManager {
         projectSlug,
       });
 
-      projectAdapter.initializing = adapter.initialize();
-
       try {
+        projectAdapter.initializing = adapter.initialize();
         await projectAdapter.initializing;
 
         logger.debug("Adapter initialization DONE", {
@@ -468,13 +490,13 @@ export class ProxyFSAdapterManager {
         projectAdapter.initializing = undefined;
         this.pendingAdapters.delete(cacheKey);
       }
-    })();
+    });
 
     this.pendingAdapters.set(cacheKey, initPromise);
     return initPromise;
   }
 
-  private evictLeastRecentlyUsed(): void {
+  private evictLeastRecentlyUsed(): boolean {
     let oldestCacheKey: string | null = null;
     let oldestTime = Infinity;
 
@@ -485,15 +507,16 @@ export class ProxyFSAdapterManager {
       }
     }
 
-    if (!oldestCacheKey) return;
+    if (!oldestCacheKey) return false;
 
     logger.debug("Evicting LRU adapter", { cacheKey: oldestCacheKey });
 
     const adapter = this.adapters.get(oldestCacheKey);
-    if (!adapter) return;
+    if (!adapter) return false;
 
     adapter.adapter.dispose();
     this.adapters.delete(oldestCacheKey);
+    return true;
   }
 
   private cleanupIdleAdapters(): void {

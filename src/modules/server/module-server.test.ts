@@ -431,7 +431,27 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       }
       await Deno.writeTextFile(
         `${projectDir}/app/client.tsx`,
-        `"use client"; export const marker = "browser-client";`,
+        [
+          `"use client";`,
+          `import { helper } from "./helper.ts";`,
+          `export function client() { return "browser-client:" + helper; }`,
+        ].join("\n"),
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/app/helper.ts`,
+        `export const helper = "transitive-client-helper";`,
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/app/server-helper.ts`,
+        `"use server"; export const secret = "server-only-helper";`,
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/app/leaky-client.tsx`,
+        [
+          `"use client";`,
+          `import { secret } from "./server-helper.ts";`,
+          `export const marker = secret;`,
+        ].join("\n"),
       );
       const { serveModule } = await import("./module-server.ts");
       const options = {
@@ -459,7 +479,10 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
           options,
         );
         assertEquals(clientGet.status, 200, `${prefix} client GET`);
-        assertStringIncludes(await clientGet.text(), "browser-client");
+        const clientCode = await clientGet.text();
+        assertStringIncludes(clientCode, "browser-client");
+        assertStringIncludes(clientCode, "transitive-client-helper");
+        assertStringIncludes(clientCode, "client as default");
 
         const clientHead = await serveModule(
           new Request(`http://localhost:3000${prefix}/app/client.js`, { method: "HEAD" }),
@@ -467,6 +490,19 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
         );
         assertEquals(clientHead.status, 200, `${prefix} client HEAD`);
         assertEquals(await clientHead.text(), "");
+
+        const helperEntry = await serveModule(
+          new Request(`http://localhost:3000${prefix}/app/helper.js`),
+          options,
+        );
+        assertEquals(helperEntry.status, 404, `${prefix} helper entry`);
+
+        const leakyBoundary = await serveModule(
+          new Request(`http://localhost:3000${prefix}/app/leaky-client.js`),
+          options,
+        );
+        assertEquals(leakyBoundary.status, 500, `${prefix} server-only dependency`);
+        assertEquals((await leakyBoundary.text()).includes("server-only-helper"), false);
       }
     } finally {
       await Deno.remove(projectDir, { recursive: true });
@@ -764,7 +800,27 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       );
       await Deno.writeTextFile(
         `${projectDir}/app/client.tsx`,
-        `"use client"; export const marker = "browser-client";`,
+        [
+          `"use client";`,
+          `import { helper } from "./helper.ts";`,
+          `export const marker = "browser-client:" + helper;`,
+        ].join("\n"),
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/app/helper.ts`,
+        `export const helper = "manifested-client-helper";`,
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/app/unlisted-client.tsx`,
+        [
+          `"use client";`,
+          `import { helper } from "./unlisted-helper.ts";`,
+          `export const marker = helper;`,
+        ].join("\n"),
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/app/unlisted-helper.ts`,
+        `export const helper = "unmanifested-client-helper";`,
       );
       registerManifestFetcherForRelease(releaseId, () =>
         Promise.resolve({
@@ -782,6 +838,16 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
               contentType: "text/javascript",
             },
             "app/client.tsx": {
+              contentHash: hash,
+              size: 1,
+              contentType: "text/javascript",
+            },
+            "app/helper.ts": {
+              contentHash: hash,
+              size: 1,
+              contentType: "text/javascript",
+            },
+            "app/unlisted-client.tsx": {
               contentHash: hash,
               size: 1,
               contentType: "text/javascript",
@@ -821,7 +887,9 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
           options,
         );
         assertEquals(clientGet.status, 200, `${prefix}/app/client.js GET`);
-        assertStringIncludes(await clientGet.text(), "browser-client");
+        const clientCode = await clientGet.text();
+        assertStringIncludes(clientCode, "browser-client");
+        assertStringIncludes(clientCode, "manifested-client-helper");
 
         const clientHead = await serveModule(
           new Request(`http://localhost:3000${prefix}/app/client.js`, { method: "HEAD" }),
@@ -829,6 +897,23 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
         );
         assertEquals(clientHead.status, 200, `${prefix}/app/client.js HEAD`);
         assertEquals(await clientHead.text(), "");
+
+        const helperEntry = await serveModule(
+          new Request(`http://localhost:3000${prefix}/app/helper.js`),
+          options,
+        );
+        assertEquals(helperEntry.status, 404, `${prefix}/app/helper.js GET`);
+
+        const unlistedDependency = await serveModule(
+          new Request(`http://localhost:3000${prefix}/app/unlisted-client.js`),
+          options,
+        );
+        assertEquals(unlistedDependency.status, 404, `${prefix}/app/unlisted-client.js GET`);
+        assertEquals(
+          (await unlistedDependency.text()).includes("unmanifested-client-helper"),
+          false,
+          `${prefix}/app/unlisted-client.js GET`,
+        );
       }
     } finally {
       await Deno.remove(projectDir, { recursive: true });
@@ -894,6 +979,47 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
 
       assertEquals(response.status, 200);
       assertStringIncludes(await response.text(), "local-production");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects hosted production project modules without a release identity", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-hosted-production-module-" });
+
+    try {
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/Secret.ts`,
+        `export const secret = "hosted-source-without-release";`,
+      );
+
+      const { serveModule } = await import("./module-server.ts");
+      const options = {
+        projectId: "test",
+        projectDir,
+        adapter: denoAdapter,
+        dev: false,
+        mode: "production",
+        isLocalProject: false,
+        isProxyMode: true,
+      } as const;
+
+      for (const prefix of ["/_vf_modules", "/_veryfront/modules"]) {
+        for (const method of ["GET", "HEAD"]) {
+          const response = await serveModule(
+            new Request(`http://localhost:3000${prefix}/components/Secret.js`, { method }),
+            options,
+          );
+          assertEquals(response.status, 404, `${prefix} ${method}`);
+          assertEquals(response.headers.get("cache-control"), "no-store", `${prefix} ${method}`);
+          assertEquals(
+            (await response.text()).includes("hosted-source-without-release"),
+            false,
+            `${prefix} ${method}`,
+          );
+        }
+      }
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }
