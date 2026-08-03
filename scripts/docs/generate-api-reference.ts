@@ -2859,16 +2859,17 @@ async function main() {
   );
 }
 
-await main();
-if (CHECK_MODE) {
-  let current: boolean;
-  try {
-    current = await checkCommittedReference();
-  } finally {
-    await Deno.remove(OUTPUT_DIR, { recursive: true });
-  }
-  if (!current) Deno.exit(1);
+let referenceIsCurrent = true;
+try {
+  await main();
+  if (CHECK_MODE) referenceIsCurrent = await checkCommittedReference();
+} finally {
+  // The check output is disposable even when generation or comparison fails.
+  // Keeping cleanup around the complete operation avoids leaking a large
+  // generated tree after a failed `deno doc` or formatter subprocess.
+  if (CHECK_MODE) await Deno.remove(OUTPUT_DIR, { recursive: true });
 }
+if (!referenceIsCurrent) Deno.exit(1);
 
 function normalizeGeneratedMarkdown(markdown: string): string {
   return markdown.replace(/[\u2013\u2014]/g, "-");

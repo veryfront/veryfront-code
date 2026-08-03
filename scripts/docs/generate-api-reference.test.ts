@@ -2,6 +2,18 @@ import { assertEquals, assertMatch, assertStringIncludes } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import { compile } from "npm:@mdx-js/mdx@3.1.1";
 
+const CHECK_TEMP_PREFIX = "veryfront-api-reference-check-";
+
+async function listCheckTempDirectories(tempRoot: string): Promise<string[]> {
+  const paths: string[] = [];
+  for await (const entry of Deno.readDir(tempRoot)) {
+    if (entry.isDirectory && entry.name.startsWith(CHECK_TEMP_PREFIX)) {
+      paths.push(entry.name);
+    }
+  }
+  return paths.sort();
+}
+
 async function runGenerator(outputDir: string): Promise<string> {
   const result = await new Deno.Command(Deno.execPath(), {
     args: [
@@ -66,6 +78,47 @@ async function assertGeneratedReferenceIsFormatted(
 }
 
 describe("generate-api-reference", () => {
+  it("removes check output when generation fails", async () => {
+    const sandboxRoot = await Deno.makeTempDir();
+    const emptyRoot = `${sandboxRoot}/cwd`;
+    const tempRoot = `${sandboxRoot}/tmp`;
+    await Deno.mkdir(emptyRoot);
+    await Deno.mkdir(tempRoot);
+    const before = await listCheckTempDirectories(tempRoot);
+    try {
+      const result = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "run",
+          "--allow-all",
+          `--config=${Deno.cwd()}/deno.json`,
+          `${Deno.cwd()}/scripts/docs/generate-api-reference.ts`,
+          "--check",
+        ],
+        cwd: emptyRoot,
+        env: { TMPDIR: tempRoot },
+        stdout: "null",
+        stderr: "piped",
+      }).output();
+
+      assertEquals(
+        result.code === 0,
+        false,
+        "generation should fail without deno.json",
+      );
+      assertStringIncludes(
+        new TextDecoder().decode(result.stderr),
+        "deno.json",
+      );
+      assertEquals(
+        await listCheckTempDirectories(tempRoot),
+        before,
+        "failed check generation must not leak its temporary output",
+      );
+    } finally {
+      await Deno.remove(sandboxRoot, { recursive: true });
+    }
+  });
+
   it("documents alias re-exports from Deno doc reference declarations", async () => {
     const outputDir = await Deno.makeTempDir();
     try {
