@@ -407,40 +407,91 @@ jobs:
   # Version comes directly from deno.json
   # ============================================
 
+  tests-proxy-binary:
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: ./.github/actions/setup-deno
+      - run: deno task build:prepare
+      - name: Verify proxy dependency lock is current
+        run: |
+          deno task build:proxy-lock
+          git diff --exit-code -- scripts/build/proxy-deno.lock
+      - name: Compile proxy binary
+        run: |
+          deno run -A scripts/build/compile-binary.ts \
+            --entrypoint cli/proxy-main.ts \
+            --profile proxy \
+            --target x86_64-unknown-linux-gnu \
+            --output veryfront-proxy-linux-x64
+      - name: Smoke test proxy binary
+        run: bash scripts/build/smoke-proxy-binary.sh ./veryfront-proxy-linux-x64
+
   build-binaries:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' }}
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ contains(matrix.os, 'windows') }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: macos-latest
             target: aarch64-apple-darwin
             name: veryfront-macos-arm64
+            entrypoint: cli/main.ts
+            profile: full
           - os: macos-latest
             target: x86_64-apple-darwin
             name: veryfront-macos-x64
+            entrypoint: cli/main.ts
+            profile: full
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             name: veryfront-linux-x64
+            entrypoint: cli/main.ts
+            profile: full
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             name: veryfront-linux-arm64
+            entrypoint: cli/main.ts
+            profile: full
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: veryfront-proxy-linux-x64
+            entrypoint: cli/proxy-main.ts
+            profile: proxy
           - os: windows-2022
             target: x86_64-pc-windows-msvc
             name: veryfront-windows-x64.exe
+            entrypoint: cli/main.ts
+            profile: full
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: ./.github/actions/setup-deno
 
       - run: deno task build:prepare
 
+      - name: Verify proxy dependency lock is current
+        if: matrix.profile == 'proxy'
+        shell: bash
+        run: |
+          deno task build:proxy-lock
+          git diff --exit-code -- scripts/build/proxy-deno.lock
+
       - name: Compile binary
         shell: bash
         run: |
           deno run -A scripts/build/compile-binary.ts \
+            --entrypoint ${{ matrix.entrypoint }} \
+            --profile ${{ matrix.profile }} \
             --target ${{ matrix.target }} \
             --output ${{ matrix.name }}
+
+      - name: Smoke test proxy binary
+        if: matrix.profile == 'proxy'
+        shell: bash
+        run: bash scripts/build/smoke-proxy-binary.sh ./${{ matrix.name }}
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
@@ -495,7 +546,9 @@ jobs:
       - name: Generate SBOM
         env:
           VERSION: ${{ steps.version.outputs.version }}
-        run: deno task sbom:all --output-dir "dist/sbom-${VERSION}"
+        run: |
+          deno task sbom:all --output-dir "dist/sbom-${VERSION}"
+          deno task sbom --lock scripts/build/proxy-deno.lock --output "dist/sbom-${VERSION}/proxy.json"
 
       - name: Create release GitHub App token
         id: release-app-token
@@ -647,7 +700,9 @@ jobs:
       - name: Generate SBOM
         env:
           VERSION: ${{ steps.version.outputs.version }}
-        run: deno task sbom:all --output-dir "dist/sbom-${VERSION}"
+        run: |
+          deno task sbom:all --output-dir "dist/sbom-${VERSION}"
+          deno task sbom --lock scripts/build/proxy-deno.lock --output "dist/sbom-${VERSION}/proxy.json"
 
       - name: Create git tag
         env:
