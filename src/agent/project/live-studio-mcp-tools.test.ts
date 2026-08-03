@@ -80,6 +80,20 @@ Deno.test("buildStudioMcpHeaders includes auth and optional context headers", ()
   });
 });
 
+Deno.test("createLiveStudioMcpTools keeps caller-provided Studio endpoints guarded", async () => {
+  await assertRejects(
+    () =>
+      createLiveStudioMcpTools({
+        authToken: "auth-token",
+        clientProfile: trustedStudioProfile,
+        getProjectId: () => "project-1",
+        studioMcpUrl: "http://veryfront-studio:80/mcp",
+      }),
+    Error,
+    "Outbound network egress blocked",
+  );
+});
+
 Deno.test("createLiveStudioMcpTools reconnects studio tools when the active project changes", async () => {
   const fixtures = createDeferredRemoteToolFixtures();
   let projectId = "project-1";

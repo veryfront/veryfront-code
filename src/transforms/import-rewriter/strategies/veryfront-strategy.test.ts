@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../../release-assets/constants.ts";
@@ -192,6 +192,28 @@ describe("VeryfrontStrategy", () => {
   });
 
   describe("internal import-map resolution", () => {
+    it("rejects project imports of private host capability modules", () => {
+      for (
+        const specifier of [
+          "#veryfront/agent/hosted/internal/control-plane-mcp-source.ts",
+          "#veryfront/agent/hosted/x/../internal/control-plane-mcp-source.ts",
+          "#veryfront/agent/hosted/%2e%2e/hosted/internal/control-plane-mcp-source.ts",
+          "#veryfront/agent/hosted%2Finternal%2Fcontrol-plane-mcp-source.ts",
+          "#veryfront/agent\\hosted\\internal\\control-plane-mcp-source.ts",
+          "#veryfront/agent/hosted/Internal/control-plane-mcp-source.ts",
+          "#veryfront/agent/hosted/internal./control-plane-mcp-source.ts",
+          "#veryfront/agent/hosted/x/..%20/internal/control-plane-mcp-source.ts",
+          "#veryfront/agent/hosted/.%20/internal/control-plane-mcp-source.ts",
+        ]
+      ) {
+        assertThrows(
+          () => strategy.rewrite(makeInfo(specifier), makeCtx({ target: "ssr" })),
+          TypeError,
+          "Private Veryfront host module cannot be imported",
+        );
+      }
+    });
+
     it("should rewrite #deno-config to the framework-scoped browser stub", () => {
       const result = strategy.rewrite(
         makeInfo("#deno-config"),

@@ -318,6 +318,24 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(response.status, 200);
   });
 
+  it("does not serve private host capability modules through direct or encoded paths", async () => {
+    for (
+      const path of [
+        "/_vf_modules/_veryfront/agent/hosted/internal/control-plane-mcp-source.js",
+        "/_vf_modules/_veryfront/agent/hosted/x/%2e%2e/internal/control-plane-mcp-source.js",
+        "/_vf_modules/_veryfront/agent/hosted%252Finternal%252Fcontrol-plane-mcp-source.js",
+        "/_vf_modules/_veryfront//agent//hosted//internal//control-plane-mcp-source.js",
+        "/_vf_modules/_veryfront/agent/hosted/Internal/control-plane-mcp-source.js",
+        "/_vf_modules/_veryfront/agent/hosted/internal./control-plane-mcp-source.js",
+        "/_vf_modules/_veryfront/agent/hosted/x/..%20/internal/control-plane-mcp-source.js",
+        "/_vf_modules/_veryfront/agent/hosted/.%20/internal/control-plane-mcp-source.js",
+      ]
+    ) {
+      const response = await serve(new Request(`http://localhost:3000${path}`));
+      assertEquals(response.status, 404, path);
+    }
+  });
+
   it("should serve browser-safe framework version modules without #deno-config", async () => {
     const response = await serve(
       new Request("http://localhost:3000/_vf_modules/_veryfront/utils/version.js"),

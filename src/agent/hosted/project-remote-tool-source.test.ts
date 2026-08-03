@@ -505,6 +505,21 @@ Deno.test("createHostedProjectRemoteToolSources defaults to first-party MCP serv
   ]);
 });
 
+Deno.test("createHostedProjectRemoteToolSources keeps caller-provided first-party endpoints guarded", async () => {
+  const sources = createHostedProjectRemoteToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "http://veryfront-api:80/mcp",
+    mcpServers: [{ kind: "veryfront-api" }],
+    getProjectId: () => "project-1",
+  });
+
+  await assertRejects(
+    () => sources[0]!.listTools({ projectId: "project-1" }),
+    Error,
+    "Outbound network egress blocked",
+  );
+});
+
 Deno.test("createHostedProjectRemoteToolSources filters Veryfront API MCP tools with the tool access profile", async () => {
   const executed: Array<{ toolName: string; args: unknown }> = [];
   const sources = createHostedProjectRemoteToolSources({

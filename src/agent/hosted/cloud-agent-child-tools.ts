@@ -4,12 +4,12 @@
  */
 import { createAgentServiceSandboxTools } from "#veryfront/sandbox";
 import {
-  createRemoteMCPToolSource,
   createToolsFromRemoteDefinitions,
   type HostToolSet,
   isToolVisibleTo,
   toolRegistry,
 } from "#veryfront/tool";
+import { createHostedControlPlaneMCPToolSourceFactory } from "./internal/control-plane-mcp-source.ts";
 import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import {
@@ -380,9 +380,10 @@ export function createInvokeAgentTool(
   childContext: ChildRunContext,
   options?: { requireDurable?: boolean },
 ) {
+  const config = getInvokeAgentConfig(context);
   return createDefaultHostedInvokeAgentTool({
     context: childContext,
-    getConfig: () => getInvokeAgentConfig(context),
+    getConfig: () => config,
     logger: context.infrastructure.logger,
     trace: context.trace,
     setTraceAttributes: context.infrastructure.setActiveSpanAttributes,
@@ -412,7 +413,7 @@ export function createInvokeAgentTool(
       refreshProjectSkillIds(context, projectSkillContext),
     createAgentServiceSandboxTools,
     createLiveStudioTools: createLiveStudioMcpTools,
-    createRemoteToolSource: createRemoteMCPToolSource,
+    createRemoteToolSource: createHostedControlPlaneMCPToolSourceFactory(config),
     createToolsFromRemoteDefinitions,
     requireDurableInvokeAgent: options?.requireDurable,
   });

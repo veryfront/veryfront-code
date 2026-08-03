@@ -40,6 +40,7 @@ export interface OutboundFetchBoundary {
     options?: GuardedOutboundFetchOptions,
   ): Promise<Response>;
   createOriginBoundFetch(baseUrl: string): typeof fetch;
+  createTrustedEndpointFetch(endpoint: string): typeof fetch;
 }
 
 // Capture the host transport before tenant code can replace globalThis.fetch.
@@ -166,6 +167,57 @@ function createOriginBoundFetchWithTransport(
   };
 }
 
+function validateTrustedEndpoint(value: string): URL {
+  const endpoint = new URL(value);
+  if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") {
+    throw new TypeError("Trusted endpoint must use http: or https:");
+  }
+  if (endpoint.username || endpoint.password) {
+    throw new TypeError("Trusted endpoint must not include credentials");
+  }
+  if (endpoint.search || endpoint.hash) {
+    throw new TypeError("Trusted endpoint must not include a query or fragment");
+  }
+
+  const rawHostname = endpoint.hostname.replace(/^\[|\]$/gu, "").toLowerCase();
+  const hostname = rawHostname.endsWith(".") ? rawHostname.slice(0, -1) : rawHostname;
+  if (
+    hostname === "localhost" || hostname.endsWith(".localhost") ||
+    /^[0-9.]+$/u.test(hostname) || hostname.includes(":")
+  ) {
+    throw new TypeError("Trusted endpoint must use a non-local hostname");
+  }
+  return endpoint;
+}
+
+function createTrustedEndpointFetchWithTransport(
+  endpointValue: string,
+  transport: OutboundFetchTransport,
+): typeof fetch {
+  const endpoint = validateTrustedEndpoint(endpointValue);
+
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const raw = input instanceof Request ? input.url : input instanceof URL ? input.href : input;
+    const target = new URL(raw, endpoint);
+    if (target.href !== endpoint.href) {
+      throw new OutboundRequestBlockedError(
+        "Control-plane request blocked: destination does not match the trusted endpoint",
+      );
+    }
+
+    const response = await transport.fetch(input instanceof Request ? input : target, {
+      ...init,
+      redirect: "error",
+    });
+    if (response.status >= 300 && response.status < 400) {
+      throw new OutboundRequestBlockedError(
+        "Control-plane request blocked: unexpected redirect",
+      );
+    }
+    return response;
+  };
+}
+
 /**
  * Create an outbound boundary from explicit host-owned transport primitives.
  *
@@ -186,6 +238,9 @@ export function createOutboundFetchBoundary(
     },
     createOriginBoundFetch(baseUrl: string): typeof fetch {
       return createOriginBoundFetchWithTransport(baseUrl, captured);
+    },
+    createTrustedEndpointFetch(endpoint: string): typeof fetch {
+      return createTrustedEndpointFetchWithTransport(endpoint, captured);
     },
   });
 }

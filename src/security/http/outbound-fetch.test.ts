@@ -177,4 +177,75 @@ describe("guardedOutboundFetch", () => {
     );
     assertEquals(calls, 1);
   });
+
+  it("allows one exact operator-configured internal endpoint without weakening guarded fetch", async () => {
+    const requests: Request[] = [];
+    const boundary = createTestBoundary(async (input, init) => {
+      requests.push(new Request(input, init));
+      return Response.json({ ok: true });
+    });
+    const controlPlaneFetch = boundary.createTrustedEndpointFetch(
+      "http://veryfront-api:80/mcp",
+    );
+
+    const response = await controlPlaneFetch("http://veryfront-api/mcp", {
+      method: "POST",
+      headers: { authorization: "Bearer test-token" },
+      body: "{}",
+    });
+
+    assertEquals(response.status, 200);
+    assertEquals(requests.length, 1);
+    assertEquals(requests[0]?.url, "http://veryfront-api/mcp");
+    assertEquals(requests[0]?.redirect, "error");
+
+    await assertRejects(
+      () => controlPlaneFetch("http://veryfront-api/runs"),
+      OutboundRequestBlockedError,
+      "trusted endpoint",
+    );
+    await assertRejects(
+      () => boundary.guardedFetch("http://veryfront-api/mcp"),
+      OutboundRequestBlockedError,
+      "unable to resolve host",
+    );
+    assertEquals(requests.length, 1);
+  });
+
+  it("rejects unsafe trusted endpoint configuration", async () => {
+    const boundary = createTestBoundary(() => Promise.resolve(Response.json({ ok: true })));
+
+    for (
+      const endpoint of [
+        "http://127.0.0.1/mcp",
+        "http://localhost/mcp",
+        "http://localhost./mcp",
+        "http://tools.localhost./mcp",
+        "http://user:secret@veryfront-api/mcp",
+        "http://veryfront-api/mcp?mode=unsafe",
+      ]
+    ) {
+      await assertRejects(
+        async () => boundary.createTrustedEndpointFetch(endpoint),
+        TypeError,
+      );
+    }
+  });
+
+  it("rejects redirects from a trusted control-plane endpoint", async () => {
+    const controlPlaneFetch = createTestBoundary(() =>
+      Promise.resolve(
+        new Response(null, {
+          status: 307,
+          headers: { location: "http://veryfront-api/private" },
+        }),
+      )
+    ).createTrustedEndpointFetch("http://veryfront-api/mcp");
+
+    await assertRejects(
+      () => controlPlaneFetch("http://veryfront-api/mcp"),
+      OutboundRequestBlockedError,
+      "unexpected redirect",
+    );
+  });
 });

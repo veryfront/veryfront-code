@@ -9,8 +9,78 @@ import {
   MAX_REMOTE_MCP_TOOL_LIST_PAGES,
   MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
 } from "./remote-mcp.ts";
+import { createHostedControlPlaneMCPToolSourceFactory } from "#veryfront/agent/hosted/internal/control-plane-mcp-source.ts";
 
 describe("tool/remote-mcp", () => {
+  it("uses the exact trusted control-plane endpoint for first-party list and call", async () => {
+    const seenRequests: string[] = [];
+
+    await withMockFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const endpoint = String(input);
+      assertEquals(init?.redirect, "error");
+      const body = JSON.parse(String(init?.body)) as { id: string; method: string };
+      seenRequests.push(`${endpoint}:${body.method}`);
+      const toolName = endpoint.includes("studio") ? "studio_suggestions" : "list_skills";
+      return Response.json({
+        jsonrpc: "2.0",
+        id: body.id,
+        result: body.method === "tools/list"
+          ? {
+            tools: [{
+              name: toolName,
+              description: "List project skills",
+              inputSchema: { type: "object" },
+            }],
+          }
+          : { content: [{ type: "text", text: '{"skills":[]}' }] },
+      });
+    }, async () => {
+      const createSource = createHostedControlPlaneMCPToolSourceFactory({
+        apiMcpUrl: "http://veryfront-api:80/mcp",
+        studioMcpUrl: "http://veryfront-studio:80/mcp",
+      });
+      const apiSource = createSource({
+        id: "veryfront-mcp",
+        endpoint: "http://veryfront-api:80/mcp",
+        headers: { Authorization: "Bearer test-token" },
+      });
+      const studioSource = createSource({
+        id: "studio-mcp",
+        endpoint: "http://veryfront-studio:80/mcp",
+        headers: { Authorization: "Bearer test-token" },
+      });
+
+      assertEquals((await apiSource.listTools()).map((tool) => tool.name), ["list_skills"]);
+      assertEquals(await apiSource.executeTool("list_skills", {}), { skills: [] });
+      assertEquals((await studioSource.listTools()).map((tool) => tool.name), [
+        "studio_suggestions",
+      ]);
+    });
+
+    assertEquals(seenRequests, [
+      "http://veryfront-api/mcp:tools/list",
+      "http://veryfront-api/mcp:tools/call",
+      "http://veryfront-studio/mcp:tools/list",
+    ]);
+  });
+
+  it("keeps untrusted endpoints guarded when the host trusts first-party MCP", async () => {
+    const createSource = createHostedControlPlaneMCPToolSourceFactory({
+      apiMcpUrl: "http://veryfront-api:80/mcp",
+      studioMcpUrl: "http://veryfront-studio:80/mcp",
+    });
+    const source = createSource({
+      id: "custom-mcp",
+      endpoint: "http://tenant-mcp:80/mcp",
+    });
+
+    await assertRejects(
+      () => source.listTools(),
+      Error,
+      "Outbound network egress blocked",
+    );
+  });
+
   it("normalizes non-Error caller abort reasons", async () => {
     const controller = new AbortController();
     controller.abort("caller stopped");
