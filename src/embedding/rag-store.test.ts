@@ -5,6 +5,7 @@ import { exists, readTextFile, withTempDir } from "#veryfront/testing/deno-compa
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { join } from "#veryfront/compat/path";
+import { VeryfrontError } from "#veryfront/errors";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { ragStore } from "./rag-store.ts";
 import { clearEmbeddingProviders, registerEmbeddingProvider } from "./resolve.ts";
@@ -343,17 +344,41 @@ describe("ragStore", () => {
         storagePath,
       });
 
-      await assertRejects(
+      const error = await assertRejects(
         () => store.listDocuments(),
-        Error,
+        VeryfrontError,
         "malformed JSON",
       );
+      assert(error instanceof VeryfrontError);
+      assertEquals(error.slug, "rag-store-corrupt");
+      assertEquals(error.message.includes(storagePath), false);
+      assertEquals(error.context, { storagePath });
       await assertRejects(
         () => store.removeDocument("anything"),
         Error,
         "malformed JSON",
       );
       assertEquals(await readTextFile(storagePath), original);
+    });
+  });
+
+  it("reports an unreadable store without exposing its path in the message", async () => {
+    await withTempDir(async (tempDir) => {
+      const store = ragStore({
+        model: "local/test-model",
+        storagePath: tempDir,
+      });
+
+      const error = await assertRejects(
+        () => store.listDocuments(),
+        VeryfrontError,
+        "could not be read",
+      );
+
+      assert(error instanceof VeryfrontError);
+      assertEquals(error.slug, "rag-store-unavailable");
+      assertEquals(error.message.includes(tempDir), false);
+      assertEquals(error.context, { storagePath: tempDir });
     });
   });
 

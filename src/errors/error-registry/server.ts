@@ -133,13 +133,22 @@ export const FALLBACK_EXHAUSTED = defineError({
   suggestion: "Check service availability and connectivity",
 });
 
-/** Persisted RAG index failed validation and was left untouched. */
+/** Persisted RAG index is malformed or failed structural validation. */
 export const RAG_STORE_CORRUPT = defineError({
   slug: "rag-store-corrupt",
   category: "SERVER",
   status: 500,
   title: "RAG store file is corrupt",
   suggestion: "Repair or move the store file aside, then retry; it was not overwritten",
+});
+
+/** Persisted RAG index could not be read and was left untouched. */
+export const RAG_STORE_UNAVAILABLE = defineError({
+  slug: "rag-store-unavailable",
+  category: "SERVER",
+  status: 500,
+  title: "RAG store file is unavailable",
+  suggestion: "Check storage availability and file permissions, then retry",
 });
 
 /** Registry fragment for SERVER errors (slug → definition). */
@@ -161,4 +170,5 @@ export const SERVER_REGISTRY = {
   "release-not-found": RELEASE_NOT_FOUND,
   "fallback-exhausted": FALLBACK_EXHAUSTED,
   "rag-store-corrupt": RAG_STORE_CORRUPT,
+  "rag-store-unavailable": RAG_STORE_UNAVAILABLE,
 } as const;

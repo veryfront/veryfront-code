@@ -40,7 +40,7 @@ interface LegacyUploadStoreData {
   uploads: RagDocumentMeta[];
   chunks: LegacyStoredChunk[];
 }
-import { INVALID_ARGUMENT, RAG_STORE_CORRUPT } from "#veryfront/errors";
+import { INVALID_ARGUMENT, RAG_STORE_CORRUPT, RAG_STORE_UNAVAILABLE } from "#veryfront/errors";
 
 type ResolvedRagStoreConfig = RagStoreConfig & { model: string };
 
@@ -371,8 +371,16 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
 
   function corruptStoreError(detail: string, cause?: unknown): Error {
     return RAG_STORE_CORRUPT.create({
-      detail: `RAG store file "${storagePath}" is corrupt (${detail}). ` +
+      detail: `RAG store file is corrupt (${detail}). ` +
         "It was preserved as-is and no data was overwritten.",
+      cause,
+      context: { storagePath },
+    });
+  }
+
+  function unavailableStoreError(cause: unknown): Error {
+    return RAG_STORE_UNAVAILABLE.create({
+      detail: "RAG store file could not be read. It was left untouched.",
       cause,
       context: { storagePath },
     });
@@ -384,8 +392,12 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
       snapshot = await readStoreFileSnapshot();
     } catch (err) {
       // Expected on first run, and when the file disappears between stat and read.
-      if (!isNotFoundError(err)) throw err;
-      snapshot = null;
+      if (isNotFoundError(err)) {
+        snapshot = null;
+      } else {
+        storeDataCache = null;
+        throw unavailableStoreError(err);
+      }
     }
 
     if (snapshot === null) {
