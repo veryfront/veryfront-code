@@ -99,6 +99,43 @@ describe("ragStore", () => {
     });
   });
 
+  it("preserves the live store when its atomic replacement fails", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      await Deno.mkdir(join(tempDir, "data"), { recursive: true });
+      const original = JSON.stringify({ documents: [], chunks: [] });
+      await Deno.writeTextFile(storagePath, original);
+
+      const store = ragStore({
+        model: "local/test-model",
+        storagePath,
+      });
+      const renameDescriptor = Object.getOwnPropertyDescriptor(Deno, "rename");
+      assert(renameDescriptor !== undefined);
+      Object.defineProperty(Deno, "rename", {
+        ...renameDescriptor,
+        value: () => Promise.reject(new Error("simulated rename failure")),
+      });
+
+      try {
+        await assertRejects(
+          () => store.ingest("Must not persist", "replacement content"),
+          Error,
+          "simulated rename failure",
+        );
+      } finally {
+        Object.defineProperty(Deno, "rename", renameDescriptor);
+      }
+
+      assertEquals(await readTextFile(storagePath), original);
+      const entries: string[] = [];
+      for await (const entry of Deno.readDir(join(tempDir, "data"))) {
+        entries.push(entry.name);
+      }
+      assertEquals(entries, ["index.json"]);
+    });
+  });
+
   it("refreshes an existing local document while preserving its id", async () => {
     registerTestEmbeddingProvider();
 

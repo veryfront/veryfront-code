@@ -3,6 +3,7 @@ import {
   mkdir,
   readDir,
   readTextFile,
+  remove,
   stat,
   writeTextFile,
 } from "#veryfront/platform/compat/fs.ts";
@@ -443,7 +444,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
     }
     const payload = JSON.stringify(data);
     // Atomic write: write to temp file then rename to prevent corruption on crash
-    const tmpPath = storagePath + ".tmp";
+    const tmpPath = `${storagePath}.tmp.${crypto.randomUUID()}`;
     await writeTextFile(tmpPath, payload);
     try {
       if (typeof Deno !== "undefined") {
@@ -452,9 +453,15 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
         const fs = await import("node:fs/promises");
         await fs.rename(tmpPath, storagePath);
       }
-    } catch (_) {
-      // expected: rename not available in all environments, fall back to direct write
-      await writeTextFile(storagePath, payload);
+    } catch (error) {
+      try {
+        await remove(tmpPath);
+      } catch (cleanupError) {
+        if (!isNotFoundError(cleanupError)) {
+          serverLogger.warn("[rag-store] Failed to clean up temporary store file", cleanupError);
+        }
+      }
+      throw error;
     }
     await updateStoreDataCache(data, payload);
   }
