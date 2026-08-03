@@ -616,6 +616,60 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
+  it("rejects encoded cross-project paths before registry access", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-cross-project-encoded-" });
+    const originalFetch = globalThis.fetch;
+    let fetchCalls = 0;
+
+    try {
+      globalThis.fetch = () => {
+        fetchCalls++;
+        return Promise.resolve(
+          new Response(`export const secret = "cross-project-private";`, { status: 200 }),
+        );
+      };
+
+      const { serveModule } = await import("./module-server.ts");
+      for (
+        const path of [
+          "app%2factions%2fsecret.js",
+          "app%2Factions%2Fsecret.js",
+          "app%5cactions%5csecret.js",
+          "app%5Cactions%5Csecret.js",
+          "app%252factions%252fsecret.js",
+          "app%252Factions%252Fsecret.js",
+          "app%255cactions%255csecret.js",
+          "app%255Cactions%255Csecret.js",
+          "components/encoded%20name.js",
+        ]
+      ) {
+        for (const method of ["GET", "HEAD"]) {
+          const response = await serveModule(
+            new Request(`http://localhost:3000/_vf_modules/_cross/remote@1.0.0/@/${path}`, {
+              method,
+            }),
+            {
+              projectId: "local-project",
+              projectDir,
+              adapter: denoAdapter,
+              isLocalProject: false,
+            },
+          );
+          assertEquals(response.status, 400, `${path} ${method}`);
+          assertEquals(
+            (await response.text()).includes("cross-project-private"),
+            false,
+            `${path} ${method}`,
+          );
+        }
+      }
+      assertEquals(fetchCalls, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("admits production browser modules only from a ready release manifest", async () => {
     // The rollout flag may disable manifest-based rendering optimizations, but
     // it must never disable the production browser-module security boundary.
@@ -687,6 +741,94 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
         });
         assertEquals(spoofed.status, 404);
         assertEquals((await spoofed.text()).includes("not-listed"), false);
+      }
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("requires client boundaries for manifested production RSC app modules", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-browser-module-rsc-production-" });
+    const releaseId = `rel-browser-rsc-${crypto.randomUUID()}`;
+    const hash = "d".repeat(64);
+
+    try {
+      await Deno.mkdir(`${projectDir}/app`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/app/page.tsx`,
+        `export const marker = "server-page"; export default function Page() { return null; }`,
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/app/layout.tsx`,
+        `export const marker = "server-layout"; export default function Layout() { return null; }`,
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/app/client.tsx`,
+        `"use client"; export const marker = "browser-client";`,
+      );
+      registerManifestFetcherForRelease(releaseId, () =>
+        Promise.resolve({
+          state: "ready",
+          manifest_version: 1,
+          manifest: manifest({}, releaseId, "source", {
+            "app/page.tsx": {
+              contentHash: hash,
+              size: 1,
+              contentType: "text/javascript",
+            },
+            "app/layout.tsx": {
+              contentHash: hash,
+              size: 1,
+              contentType: "text/javascript",
+            },
+            "app/client.tsx": {
+              contentHash: hash,
+              size: 1,
+              contentType: "text/javascript",
+            },
+          }),
+        }));
+
+      const { serveModule } = await import("./module-server.ts");
+      const options = {
+        projectId: "test",
+        projectDir,
+        adapter: denoAdapter,
+        dev: false,
+        mode: "production",
+        releaseId,
+        config: { experimental: { rsc: true } },
+      } as const;
+
+      for (const prefix of ["/_vf_modules", "/_veryfront/modules"]) {
+        for (const name of ["page", "layout"]) {
+          for (const method of ["GET", "HEAD"]) {
+            const response = await serveModule(
+              new Request(`http://localhost:3000${prefix}/app/${name}.js`, { method }),
+              options,
+            );
+            assertEquals(response.status, 404, `${prefix}/app/${name}.js ${method}`);
+            assertEquals(
+              (await response.text()).includes(`server-${name}`),
+              false,
+              `${prefix}/app/${name}.js ${method}`,
+            );
+          }
+        }
+
+        const clientGet = await serveModule(
+          new Request(`http://localhost:3000${prefix}/app/client.js`),
+          options,
+        );
+        assertEquals(clientGet.status, 200, `${prefix}/app/client.js GET`);
+        assertStringIncludes(await clientGet.text(), "browser-client");
+
+        const clientHead = await serveModule(
+          new Request(`http://localhost:3000${prefix}/app/client.js`, { method: "HEAD" }),
+          options,
+        );
+        assertEquals(clientHead.status, 200, `${prefix}/app/client.js HEAD`);
+        assertEquals(await clientHead.text(), "");
       }
     } finally {
       await Deno.remove(projectDir, { recursive: true });

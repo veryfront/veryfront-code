@@ -917,8 +917,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           const boundaryReason = await inspectBrowserSourceBoundary(
             inspectedBrowserSource,
             sourceFile,
-            sourcePolicy?.requiresClientBoundary === true &&
-              !requiresProductionManifestAdmission,
+            sourcePolicy?.requiresClientBoundary === true,
           );
           if (boundaryReason) {
             logger.warn("Rejected server-only source from browser module endpoint", {
