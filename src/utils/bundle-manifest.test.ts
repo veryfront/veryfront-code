@@ -380,6 +380,36 @@ describe("InMemoryBundleManifestStore", () => {
     assertEquals(await store.getBundleCode(metadata.codeHash), undefined);
   });
 
+  it("does not expose stored bundle code records to caller mutation", async () => {
+    const store = new InMemoryBundleManifestStore();
+    const code: BundleCode = {
+      code: "export default 'original'",
+      css: ".original { color: red; }",
+      sourceMap: "{}",
+    };
+
+    await store.setBundleCode("code", code);
+    code.code = "export default 'mutated after set'";
+    code.css = ".mutated { color: blue; }";
+
+    const firstRead = await store.getBundleCode("code");
+    assertEquals(firstRead, {
+      code: "export default 'original'",
+      css: ".original { color: red; }",
+      sourceMap: "{}",
+    });
+
+    assertExists(firstRead);
+    firstRead.code = "export default 'mutated after read'";
+    firstRead.sourceMap = "mutated";
+
+    assertEquals(await store.getBundleCode("code"), {
+      code: "export default 'original'",
+      css: ".original { color: red; }",
+      sourceMap: "{}",
+    });
+  });
+
   it("prunes unread expired metadata before resolving referenced code", async () => {
     using time = new FakeTime();
     const store = new InMemoryBundleManifestStore();

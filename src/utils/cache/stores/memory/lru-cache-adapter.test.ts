@@ -245,16 +245,18 @@ describe("LRUCacheAdapter", () => {
         now: () => now,
       });
       cacheWithClock.set("expired", "value", 10, ["expired-tag"]);
+      cacheWithClock.set("fresh", "value", 100, ["fresh-tag"]);
       const retainedSize = cacheWithClock.getStats().sizeBytes;
       now = 110;
 
-      expect(cacheWithClock.getStats()).toEqual({
-        entries: 0,
-        sizeBytes: 0,
-        maxEntries: 5,
-        maxSizeBytes: 1024,
-        tags: 0,
-      });
+      expect([...cacheWithClock.keys()]).toEqual(["fresh"]);
+      const stats = cacheWithClock.getStats();
+      expect(stats.entries).toBe(1);
+      expect(stats.sizeBytes).toBeLessThan(retainedSize);
+      expect(stats.sizeBytes).toBeGreaterThan(0);
+      expect(stats.maxEntries).toBe(5);
+      expect(stats.maxSizeBytes).toBe(1024);
+      expect(stats.tags).toBe(1);
       expect(retainedSize).toBeGreaterThan(0);
     });
   });
