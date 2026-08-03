@@ -412,7 +412,12 @@ describe("cli/templates", () => {
       "./integrations/_base/files/lib/token-store.ts",
       import.meta.url,
     );
+    const tokenStoreExamplesPath = new URL(
+      "./integrations/_base/files/lib/token-store-examples.ts",
+      import.meta.url,
+    );
     const tokenStore = await Deno.readTextFile(tokenStorePath);
+    const tokenStoreExamples = await Deno.readTextFile(tokenStoreExamplesPath);
 
     assertEquals(
       tokenStore.includes("createDefaultTokenStore"),
@@ -428,6 +433,11 @@ describe("cli/templates", () => {
       tokenStore.includes("The built-in memory store is for development and test."),
       true,
       "token-store.ts header should match the development/test memory-store guard",
+    );
+    assertEquals(
+      tokenStoreExamples.includes("Development/test in-memory backend."),
+      true,
+      "token-store-examples.ts should match the development/test memory-store guard",
     );
     assertEquals(
       tokenStore.includes("getDefaultTokenStore"),

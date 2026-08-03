@@ -63,7 +63,7 @@ interface MemoryRow {
 }
 
 /**
- * Development-only in-memory backend. Values are still encrypted (the store
+ * Development/test in-memory backend. Values are still encrypted (the store
  * requires `TOKEN_ENCRYPTION_KEY` in every mode) but nothing is durable and
  * nothing is shared across workers, so creation is refused in production.
  */
