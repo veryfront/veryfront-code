@@ -222,6 +222,41 @@ describe("ragStore", () => {
     });
   });
 
+  it("treats a missing temp cleanup directory as empty on first publication", async () => {
+    await withTempDir(async (tempDir) => {
+      const storageDirectory = join(tempDir, "data");
+      const storagePath = join(storageDirectory, "index.json");
+      const readDirDescriptor = Object.getOwnPropertyDescriptor(Deno, "readDir");
+      assert(readDirDescriptor !== undefined);
+      const originalReadDir = Deno.readDir.bind(Deno);
+      let storageDirectoryScans = 0;
+      Object.defineProperty(Deno, "readDir", {
+        ...readDirDescriptor,
+        value: (path: string | URL) => {
+          if (String(path) === storageDirectory) {
+            storageDirectoryScans++;
+            return {
+              [Symbol.asyncIterator]() {
+                return this;
+              },
+              next: () => Promise.reject(new Deno.errors.NotFound("missing storage directory")),
+            };
+          }
+          return originalReadDir(path);
+        },
+      });
+
+      try {
+        const store = ragStore({ model: "local/test-model", storagePath });
+        await store.ingest("Published", "new content");
+        assertEquals(storageDirectoryScans, 1);
+        assertEquals(await exists(storagePath), true);
+      } finally {
+        Object.defineProperty(Deno, "readDir", readDirDescriptor);
+      }
+    });
+  });
+
   it("classifies caller-created invalid persisted data as an invalid argument", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");

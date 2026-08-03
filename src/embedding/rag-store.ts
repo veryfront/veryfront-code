@@ -361,30 +361,36 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
     const storageName = basename(storagePath);
     const uniqueTempPrefix = `${storageName}.tmp.`;
     let matchingTemps = 0;
-    for await (const entry of readDir(storageDirectory)) {
-      const isLegacyTemp = entry.name === `${storageName}.tmp`;
-      const token = entry.name.startsWith(uniqueTempPrefix)
-        ? entry.name.slice(uniqueTempPrefix.length)
-        : null;
-      if (!isLegacyTemp && (token === null || !STORE_TEMP_TOKEN_PATTERN.test(token))) continue;
-      matchingTemps++;
-      if (matchingTemps > MAX_ORPHANED_STORE_TEMPS) {
-        throw RAG_STORE_UNAVAILABLE.create({
-          detail: "Too many orphaned RAG store temporary files require cleanup.",
-          context: { storagePath },
-        });
+    try {
+      for await (const entry of readDir(storageDirectory)) {
+        const isLegacyTemp = entry.name === `${storageName}.tmp`;
+        const token = entry.name.startsWith(uniqueTempPrefix)
+          ? entry.name.slice(uniqueTempPrefix.length)
+          : null;
+        if (!isLegacyTemp && (token === null || !STORE_TEMP_TOKEN_PATTERN.test(token))) continue;
+        matchingTemps++;
+        if (matchingTemps > MAX_ORPHANED_STORE_TEMPS) {
+          throw RAG_STORE_UNAVAILABLE.create({
+            detail: "Too many orphaned RAG store temporary files require cleanup.",
+            context: { storagePath },
+          });
+        }
+        if (!entry.isFile || entry.isSymlink) {
+          throw RAG_STORE_UNAVAILABLE.create({
+            detail: "A RAG store temporary path is not a regular file.",
+            context: { storagePath },
+          });
+        }
+        try {
+          await remove(join(storageDirectory, entry.name));
+        } catch (error) {
+          if (!isCanonicalNotFoundError(error)) throw unavailableStoreError(error);
+        }
       }
-      if (!entry.isFile || entry.isSymlink) {
-        throw RAG_STORE_UNAVAILABLE.create({
-          detail: "A RAG store temporary path is not a regular file.",
-          context: { storagePath },
-        });
-      }
-      try {
-        await remove(join(storageDirectory, entry.name));
-      } catch (error) {
-        if (!isCanonicalNotFoundError(error)) throw unavailableStoreError(error);
-      }
+    } catch (error) {
+      if (isCanonicalNotFoundError(error)) return;
+      if (isVeryfrontError(error)) throw error;
+      throw unavailableStoreError(error);
     }
   }
 
