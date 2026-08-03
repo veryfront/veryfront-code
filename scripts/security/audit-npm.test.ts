@@ -68,3 +68,16 @@ describe("buildAuditPackageJson", () => {
     assertEquals(pkg.peerDependenciesMeta, undefined);
   });
 });
+
+describe("audit task", () => {
+  it("audits the independent Storybook package lock", async () => {
+    const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
+
+    assertEquals(
+      denoConfig.tasks.audit.includes(
+        "npm --prefix storybook audit --package-lock-only --audit-level=high",
+      ),
+      true,
+    );
+  });
+});
