@@ -48,6 +48,19 @@ function fetchFromMockApi(
   );
 }
 
+function responseWithBodyCleanup(
+  status: number,
+  cancel: () => void | Promise<void>,
+): Response {
+  const response = new Response("discard me", { status });
+  if (!response.body) throw new Error("Expected response body");
+  Object.defineProperty(response.body, "cancel", {
+    configurable: true,
+    value: cancel,
+  });
+  return response;
+}
+
 describe("project-env/fetcher", () => {
   it("maps unknown transport failures to typed 502 semantics", async () => {
     const originalFetch = globalThis.fetch;
@@ -151,6 +164,97 @@ describe("project-env/fetcher", () => {
       );
     } finally {
       await server.shutdown();
+    }
+  });
+
+  it("preserves the authorization error when response cleanup throws synchronously", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        responseWithBodyCleanup(403, () => {
+          throw new Error("cleanup failed synchronously");
+        }),
+      )) as typeof fetch;
+
+    try {
+      const error = await assertRejects(() =>
+        fetchProjectEnvVars(
+          "https://api.veryfront.test",
+          "my-project",
+          "env-123",
+          "test-token",
+        )
+      );
+      assertEquals((error as { slug?: string }).slug, "permission-denied");
+      assertEquals((error as { status?: number }).status, 403);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("preserves the internal request error when response cleanup rejects", async () => {
+    const originalFetch = globalThis.fetch;
+    let fetchCount = 0;
+    globalThis.fetch = (() => {
+      fetchCount++;
+      return Promise.resolve(
+        fetchCount === 1
+          ? responseWithBodyCleanup(200, () => Promise.resolve())
+          : responseWithBodyCleanup(500, () => Promise.reject(new Error("cleanup rejected"))),
+      );
+    }) as typeof fetch;
+
+    try {
+      const error = await assertRejects(() =>
+        withInternalCredentials("runtime-user", "runtime-pass", () =>
+          fetchProjectEnvVars(
+            "https://api.veryfront.test",
+            "my-project",
+            "env-123",
+            "test-token",
+          ))
+      );
+      assertEquals((error as { slug?: string }).slug, "network-error");
+      assertEquals((error as { status?: number }).status, 502);
+      assertEquals(fetchCount, 2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("does not wait for response cleanup before the privileged fetch", async () => {
+    const originalFetch = globalThis.fetch;
+    let fetchCount = 0;
+    let timeoutId: number | undefined;
+    globalThis.fetch = (() => {
+      fetchCount++;
+      return Promise.resolve(
+        fetchCount === 1
+          ? responseWithBodyCleanup(200, () => new Promise<void>(() => {}))
+          : Response.json({ data: [{ key: "API_KEY", value: "plaintext-value" }] }),
+      );
+    }) as typeof fetch;
+
+    try {
+      const timeout = Symbol("timeout");
+      const deadline = new Promise<typeof timeout>((resolve) => {
+        timeoutId = setTimeout(() => resolve(timeout), 100);
+      });
+      const result = await Promise.race([
+        withInternalCredentials("runtime-user", "runtime-pass", () =>
+          fetchProjectEnvVars(
+            "https://api.veryfront.test",
+            "my-project",
+            "env-123",
+            "test-token",
+          )),
+        deadline,
+      ]);
+      assertEquals(result, { API_KEY: "plaintext-value" });
+      assertEquals(fetchCount, 2);
+    } finally {
+      clearTimeout(timeoutId);
+      globalThis.fetch = originalFetch;
     }
   });
 

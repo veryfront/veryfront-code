@@ -215,7 +215,7 @@ export async function fetchProjectEnvVars(
   );
 
   if (!response.ok) {
-    await response.body?.cancel();
+    discardResponseBody(response);
     logger.warn("Project credential cannot access requested environment", {
       projectSlug,
       environmentId,
@@ -228,7 +228,7 @@ export async function fetchProjectEnvVars(
   // has proved access to this canonical project/environment pair.
   const internalAuthorization = getInternalAuthorization();
   if (internalAuthorization) {
-    await response.body?.cancel();
+    discardResponseBody(response);
     response = await fetchEnvironmentVariables(
       internalUrl,
       internalAuthorization,
@@ -240,7 +240,7 @@ export async function fetchProjectEnvVars(
   }
 
   if (!response.ok) {
-    await response.body?.cancel();
+    discardResponseBody(response);
     logger.warn("Failed to fetch env vars", {
       projectSlug,
       environmentId,
