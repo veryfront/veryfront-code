@@ -14,19 +14,78 @@ const LOG_PREFIX = "[GitHubApiClient]";
 
 const RATE_LIMIT_WARNING_THRESHOLD = 100;
 const RETRY_JITTER_MAX_MS = 1_000;
+const MAX_REPOSITORY_SEGMENT_LENGTH = 256;
+const MAX_ENDPOINT_VALUE_LENGTH = 4_096;
 
-function encodeUrlPathSegment(value: string): string {
-  if (value === "." || value === "..") {
-    throw new TypeError("GitHub URL paths must not contain dot segments");
+function encodeRepositorySegment(value: string, label: string): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_REPOSITORY_SEGMENT_LENGTH ||
+    value.trim() !== value ||
+    value.normalize("NFC") !== value ||
+    /\p{Cc}/u.test(value)
+  ) {
+    throw new TypeError(`GitHub ${label} must be a bounded canonical path segment`);
+  }
+
+  let decoded = value;
+  for (let depth = 0; depth <= value.length; depth++) {
+    if (
+      decoded === "." ||
+      decoded === ".." ||
+      decoded.includes("/") ||
+      decoded.includes("\\") ||
+      decoded.trim() !== decoded ||
+      /\p{Cc}/u.test(decoded)
+    ) {
+      throw new TypeError(`GitHub ${label} must be a single non-traversal path segment`);
+    }
+
+    let next: string;
+    try {
+      next = decodeURIComponent(decoded);
+    } catch {
+      throw new TypeError(`GitHub ${label} contains malformed percent-encoding`);
+    }
+    if (next === decoded) return encodeURIComponent(value);
+    decoded = next;
+  }
+
+  throw new TypeError(`GitHub ${label} contains excessive percent-encoding`);
+}
+
+function encodeEndpointValue(value: string, label: string): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_ENDPOINT_VALUE_LENGTH ||
+    value === "." ||
+    value === ".." ||
+    /\p{Cc}/u.test(value)
+  ) {
+    throw new TypeError(`GitHub ${label} must be bounded non-empty text`);
   }
   return encodeURIComponent(value);
 }
 
-function encodeRepositorySegment(value: string, field: "owner" | "repo"): string {
-  if (value === "." || value === ".." || /[\\/]/u.test(value)) {
-    throw new TypeError(`GitHub ${field} must be a single URL path segment`);
+function encodeContentsPath(path: string): { normalized: string; encoded: string } {
+  if (
+    typeof path !== "string" ||
+    path.length > MAX_ENDPOINT_VALUE_LENGTH ||
+    /\p{Cc}/u.test(path)
+  ) {
+    throw new TypeError("GitHub contents path must be bounded text without control characters");
   }
-  return encodeUrlPathSegment(value);
+  const normalized = path.replace(/^\/+/, "");
+  const segments = normalized.split("/");
+  if (segments.some((segment) => segment === "." || segment === "..")) {
+    throw new TypeError("GitHub contents path must not contain traversal segments");
+  }
+  return {
+    normalized,
+    encoded: segments.map(encodeURIComponent).join("/"),
+  };
 }
 
 class GitHubBlobIntegrityError extends Error {}
@@ -47,7 +106,7 @@ export class GitHubApiClient {
 
   constructor(private readonly config: ResolvedGitHubConfig) {
     const owner = encodeRepositorySegment(config.owner, "owner");
-    const repo = encodeRepositorySegment(config.repo, "repo");
+    const repo = encodeRepositorySegment(config.repo, "repository");
     this.repositoryEndpoint = `/repos/${owner}/${repo}`;
   }
 
@@ -58,7 +117,7 @@ export class GitHubApiClient {
   async getTree(ref?: string): Promise<GitHubTreeResponse> {
     const treeRef = ref ?? this.config.ref;
     const endpoint = `${this.repositoryEndpoint}/git/trees/${
-      encodeUrlPathSegment(treeRef)
+      encodeEndpointValue(treeRef, "tree ref")
     }?recursive=1`;
 
     logger.debug(`${LOG_PREFIX} Fetching tree`, { ref: treeRef });
@@ -80,20 +139,19 @@ export class GitHubApiClient {
     ref?: string,
   ): Promise<GitHubContentItem | GitHubContentItem[]> {
     const contentRef = ref ?? this.config.ref;
-    const normalizedPath = path.replace(/^\/+/, "");
-    const encodedPath = normalizedPath.split("/").map(encodeUrlPathSegment).join("/");
-    const endpoint = `${this.repositoryEndpoint}/contents/${encodedPath}?ref=${
-      encodeURIComponent(contentRef)
+    const { normalized, encoded } = encodeContentsPath(path);
+    const endpoint = `${this.repositoryEndpoint}/contents/${encoded}?ref=${
+      encodeEndpointValue(contentRef, "contents ref")
     }`;
 
-    logger.debug(`${LOG_PREFIX} Fetching contents`, { path: normalizedPath });
+    logger.debug(`${LOG_PREFIX} Fetching contents`, { path: normalized });
 
     const raw = await this.request(endpoint);
     return getGitHubContentsResponseSchema().parse(raw);
   }
 
   async getBlob(sha: string): Promise<GitHubBlobResponse> {
-    const endpoint = `${this.repositoryEndpoint}/git/blobs/${encodeUrlPathSegment(sha)}`;
+    const endpoint = `${this.repositoryEndpoint}/git/blobs/${encodeEndpointValue(sha, "blob SHA")}`;
 
     logger.debug(`${LOG_PREFIX} Fetching blob`, { sha });
 
@@ -117,7 +175,7 @@ export class GitHubApiClient {
     if (expectedSize > byteLimit) {
       throw new RangeError(`GitHub blob exceeds ${byteLimit} bytes`);
     }
-    const endpoint = `${this.repositoryEndpoint}/git/blobs/${encodeUrlPathSegment(sha)}`;
+    const endpoint = `${this.repositoryEndpoint}/git/blobs/${encodeEndpointValue(sha, "blob SHA")}`;
 
     logger.debug(`${LOG_PREFIX} Fetching bounded raw blob`, { sha, expectedSize });
 

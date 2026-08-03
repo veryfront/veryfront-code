@@ -43,28 +43,34 @@ describe("GitHubApiClient", () => {
     it("should be instantiable with config", () => {
       assertExists(createClient());
     });
-  });
 
-  describe("repoId", () => {
-    it("should return owner/repo format", () => {
-      assertEquals(createClient().repoId, "test-owner/test-repo");
-    });
-
-    it("rejects repository identities that can escape their URL segments", () => {
+    it("rejects repository identity that could escape its URL segments", () => {
       for (
         const [field, value] of [
-          ["owner", "trusted/../../users"],
-          ["owner", "trusted\\..\\users"],
-          ["repo", ".."],
+          ["owner", ".."],
+          ["owner", "%2e%2e"],
+          ["owner", "%25252e%25252e"],
+          ["owner", "team/other"],
+          ["owner", "team%2Fother"],
           ["repo", "."],
+          ["repo", "..\\other"],
+          ["repo", "repo%5Cother"],
+          ["repo", "repo\u0000name"],
+          ["repo", "r".repeat(257)],
         ] as const
       ) {
         assertThrows(
           () => new GitHubApiClient({ ...mockConfig, [field]: value }),
           TypeError,
-          `GitHub ${field} must be a single URL path segment`,
+          "GitHub",
         );
       }
+    });
+  });
+
+  describe("repoId", () => {
+    it("should return owner/repo format", () => {
+      assertEquals(createClient().repoId, "test-owner/test-repo");
     });
   });
 
@@ -147,11 +153,72 @@ describe("GitHubApiClient", () => {
       );
     });
 
-    it("rejects raw dot segments before URL construction", async () => {
-      await assertRejects(
-        () => createClient().getContents("../../user/repos"),
-        TypeError,
-        "GitHub URL paths must not contain dot segments",
+    it("rejects literal traversal segments before fetching", async () => {
+      let fetchCalls = 0;
+      await withMockFetch(
+        () => {
+          fetchCalls++;
+          return Promise.resolve(Response.json({}));
+        },
+        async () => {
+          await assertRejects(
+            () => createClient().getContents("../secrets"),
+            TypeError,
+            "traversal",
+          );
+        },
+      );
+      assertEquals(fetchCalls, 0);
+    });
+  });
+
+  describe("endpoint construction", () => {
+    it("rejects dot-only endpoint values before fetching", async () => {
+      let fetchCalls = 0;
+      await withMockFetch(
+        () => {
+          fetchCalls++;
+          return Promise.resolve(Response.json({}));
+        },
+        async () => {
+          await assertRejects(() => createClient().getTree(".."), TypeError);
+          await assertRejects(() => createClient().getBlob("."), TypeError);
+        },
+      );
+      assertEquals(fetchCalls, 0);
+    });
+
+    it("encodes repository identity, refs, and blob identifiers as path segments", async () => {
+      const requestedUrls: string[] = [];
+      const client = new GitHubApiClient({
+        ...mockConfig,
+        owner: "test owner",
+        repo: "repo#name",
+      });
+
+      await withMockFetch(
+        (input) => {
+          const url = String(input);
+          requestedUrls.push(url);
+          return Promise.resolve(
+            url.includes("/git/trees/")
+              ? Response.json({ sha: "tree", tree: [], truncated: false })
+              : Response.json({ sha: "blob", size: 0, content: "", encoding: "base64" }),
+          );
+        },
+        async () => {
+          await client.getTree("feature/secure?recursive=0");
+          await client.getBlob("sha/../other");
+        },
+      );
+
+      assertEquals(
+        new URL(requestedUrls[0]!).pathname,
+        "/repos/test%20owner/repo%23name/git/trees/feature%2Fsecure%3Frecursive%3D0",
+      );
+      assertEquals(
+        new URL(requestedUrls[1]!).pathname,
+        "/repos/test%20owner/repo%23name/git/blobs/sha%2F..%2Fother",
       );
     });
   });
