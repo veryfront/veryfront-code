@@ -44,6 +44,8 @@ export interface RewriteContext {
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
   /** Exact package source namespace used to prove write-back authority. */
   dependencyPinningSource?: DependencyPinningSourceInput;
+  /** Exact filesystem URLs inserted by the trusted SSR module loader. */
+  allowedFilesystemImportSpecifiers?: ReadonlySet<string>;
   /** Collect inert unresolved-dependency metadata for cache-hit replay. */
   onDependencyResolutionObserved?: (
     observation: DependencyResolutionObservation,

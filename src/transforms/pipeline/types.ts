@@ -72,6 +72,8 @@ export interface TransformOptions {
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
   /** Exact package source namespace used to prove write-back authority. */
   dependencyPinningSource?: DependencyPinningSourceInput;
+  /** Exact filesystem URLs inserted by the trusted SSR module loader. */
+  allowedFilesystemImportSpecifiers?: ReadonlySet<string>;
   /** Internal collector for unresolved dependency cache metadata. */
   onDependencyResolutionObserved?: (
     observation: DependencyResolutionObservation,
@@ -127,6 +129,8 @@ export interface TransformContext {
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
   /** Exact package source namespace used to prove write-back authority. */
   dependencyPinningSource?: DependencyPinningSourceInput;
+  /** Exact filesystem URLs inserted by the trusted SSR module loader. */
+  allowedFilesystemImportSpecifiers?: ReadonlySet<string>;
   /** Internal collector for unresolved dependency cache metadata. */
   onDependencyResolutionObserved?: (
     observation: DependencyResolutionObservation,

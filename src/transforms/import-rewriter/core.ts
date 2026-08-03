@@ -62,7 +62,8 @@ export async function rewriteWithImportRewriteCore(input: TransformCoreInput): P
     const imp = parsed.imports[i]!;
     if (
       guardFrameworkImports && input.context.target === "ssr" &&
-      isFilesystemImportSpecifier(imp.specifier)
+      isFilesystemImportSpecifier(imp.specifier) &&
+      !input.context.allowedFilesystemImportSpecifiers?.has(imp.specifier)
     ) {
       throw SECURITY_VIOLATION.create({
         detail: `Project-authored filesystem module import is not allowed: ${imp.specifier}`,

@@ -123,8 +123,16 @@ describe("module-loader/module-transform-cache", () => {
       dependencyPinningCacheKey: CHANGED_PIN_KEY,
       moduleServerOrigin: "https://b.example",
     });
+    await transformModuleCodeWithCache({
+      ...baseInput,
+      mode: "development",
+      reactVersion: "19.0.0",
+      dependencyPinningCacheKey: CHANGED_PIN_KEY,
+      moduleServerOrigin: "https://b.example",
+      allowedFilesystemImportSpecifiers: new Set(["file:///tmp/generated.js"]),
+    });
 
-    assertEquals(new Set(cacheKeys).size, 6);
+    assertEquals(new Set(cacheKeys).size, 7);
   });
 
   it("preserves the legacy outer transform identity when pinning is off", async () => {

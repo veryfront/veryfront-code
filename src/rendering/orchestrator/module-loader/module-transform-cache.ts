@@ -64,6 +64,7 @@ interface TransformOptions {
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
   dependencyPinningSource?: DependencyPinningSourceInput;
+  allowedFilesystemImportSpecifiers?: ReadonlySet<string>;
   onDependencyResolutionObserved?: (
     observation: DependencyResolutionObservation,
   ) => void;
@@ -142,6 +143,7 @@ export interface TransformModuleCodeWithCacheInput {
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
   dependencyPinningSource?: DependencyPinningSourceInput;
+  allowedFilesystemImportSpecifiers?: ReadonlySet<string>;
   ttlSeconds?: number;
   onProgress?: TransformProgressListener;
   signal?: AbortSignal;
@@ -213,8 +215,16 @@ export async function transformModuleCodeWithCache(
     input.mode,
     reactVersion,
   ];
+  const allowedFilesystemImportSpecifiers = input.allowedFilesystemImportSpecifiers?.size
+    ? [...input.allowedFilesystemImportSpecifiers].sort()
+    : undefined;
+  const configVariants: unknown[] = [];
+  if (cacheVariant) configVariants.push(cacheVariant);
+  if (allowedFilesystemImportSpecifiers) {
+    configVariants.push({ allowedFilesystemImportSpecifiers });
+  }
   const configHash = hashCodeHex(JSON.stringify(
-    cacheVariant ? [...legacyConfig, cacheVariant] : legacyConfig,
+    configVariants.length > 0 ? [...legacyConfig, ...configVariants] : legacyConfig,
   ));
   const cacheKey = generateTransformCacheKey(
     scopedPath,
@@ -236,6 +246,7 @@ export async function transformModuleCodeWithCache(
     dependencyPinningCacheKey: input.dependencyPinningCacheKey,
     dependencyPinningDependencies: input.dependencyPinningDependencies,
     dependencyPinningSource: input.dependencyPinningSource,
+    allowedFilesystemImportSpecifiers: input.allowedFilesystemImportSpecifiers,
     onDependencyResolutionObserved: (observation: DependencyResolutionObservation) => {
       dependencyResolutionObservations.set(observation.packageName, observation);
     },

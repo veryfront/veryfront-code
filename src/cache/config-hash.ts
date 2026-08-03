@@ -36,6 +36,8 @@ interface TransformConfig {
   dev?: boolean;
   /** Stable VERYFRONT_DEPENDENCY_PINNING + package dependency-map state. */
   dependencyPinningCacheKey?: string;
+  /** Exact filesystem URLs inserted by the trusted SSR module loader. */
+  allowedFilesystemImportSpecifiers?: ReadonlySet<string>;
 }
 
 /**
@@ -48,6 +50,9 @@ export function computeConfigHash(config: TransformConfig): Promise<string> {
     config.dependencyPinningCacheKey,
     config.moduleServerOrigin,
   );
+  const allowedFilesystemImportSpecifiers = config.allowedFilesystemImportSpecifiers?.size
+    ? [...config.allowedFilesystemImportSpecifiers].sort()
+    : undefined;
   const normalized = {
     transformVersion: VERSION,
     reactVersion: config.reactVersion ?? DEFAULT_REACT_VERSION,
@@ -58,6 +63,7 @@ export function computeConfigHash(config: TransformConfig): Promise<string> {
     studioEmbed: config.studioEmbed ?? false,
     dev: config.dev ?? false,
     ...(dependencyPinningCacheVariant ? { dependencyPinningCacheVariant } : {}),
+    ...(allowedFilesystemImportSpecifiers ? { allowedFilesystemImportSpecifiers } : {}),
     csstype: CSSTYPE_VERSION,
     tailwind: TAILWIND_VERSION,
   };
@@ -87,6 +93,14 @@ export function computeConfigHashSync(config: TransformConfig): string {
   );
   if (dependencyPinningCacheVariant) {
     parts.push(`pins:${dependencyPinningCacheVariant}`);
+  }
+  if (config.allowedFilesystemImportSpecifiers?.size) {
+    parts.push(
+      encodeConfigPart(
+        "filesystem-imports",
+        JSON.stringify([...config.allowedFilesystemImportSpecifiers].sort()),
+      ),
+    );
   }
 
   return parts.join(":");

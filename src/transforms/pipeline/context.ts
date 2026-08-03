@@ -39,6 +39,7 @@ function buildContext(
     dependencyPinningCacheKey: options.dependencyPinningCacheKey,
     dependencyPinningDependencies: options.dependencyPinningDependencies,
     dependencyPinningSource: options.dependencyPinningSource,
+    allowedFilesystemImportSpecifiers: options.allowedFilesystemImportSpecifiers,
     onDependencyResolutionObserved: options.onDependencyResolutionObserved,
     onProgress: options.onProgress,
   };

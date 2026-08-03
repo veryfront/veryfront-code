@@ -218,6 +218,7 @@ export function runPipeline(
         studioEmbed: ctx.studioEmbed,
         dev: ctx.dev,
         dependencyPinningCacheKey,
+        allowedFilesystemImportSpecifiers: ctx.allowedFilesystemImportSpecifiers,
       });
 
       const depsHash = await computeDepsHashSafe(
