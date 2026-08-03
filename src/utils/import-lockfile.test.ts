@@ -653,6 +653,220 @@ describe("import-lockfile", () => {
       assertEquals(historicalCalls, 2);
     });
 
+    it("should retain durable mutation history after a timed-out owner is collected", async () => {
+      const moduleUrl = new URL("./import-lockfile.ts", import.meta.url).href;
+      const source = `
+        import { createLockfileManager } from ${JSON.stringify(moduleUrl)};
+
+        const forceGc = globalThis.gc;
+        if (typeof forceGc !== "function") throw new Error("gc is unavailable");
+
+        async function waitForCollection(isCollected) {
+          for (let index = 0; index < 300 && !isCollected(); index++) {
+            const pressure = new Array(100_000).fill(index);
+            forceGc();
+            await new Promise((resolve) => setTimeout(resolve, 2));
+            if (pressure.length === 0) throw new Error("unreachable");
+          }
+          return isCollected();
+        }
+
+        function createBackingStore(coordinationKey, initialLockfile) {
+          const canonicalDir = "/backing/project";
+          const canonicalFile = canonicalDir + "/veryfront.lock";
+          const store = new Map();
+          if (initialLockfile !== undefined) store.set(canonicalFile, initialLockfile);
+          const backingPath = (path) => path.endsWith("/veryfront.lock") ? canonicalFile : path;
+          return {
+            canonicalDir,
+            canonicalFile,
+            store,
+            adapter: {
+              coordinationKey,
+              exists: (path) => Promise.resolve(store.has(backingPath(path))),
+              readFile: (path) => {
+                const value = store.get(backingPath(path));
+                return value === undefined
+                  ? Promise.reject(new Error("ENOENT"))
+                  : Promise.resolve(value);
+              },
+              writeFile: (path, value) => {
+                store.set(backingPath(path), value);
+                return Promise.resolve();
+              },
+              remove: (path) => {
+                store.delete(backingPath(path));
+                return Promise.resolve();
+              },
+            },
+          };
+        }
+
+        async function runClearScenario() {
+          const pendingUrl = "https://cdn.test/pending.ts";
+          const backing = createBackingStore("gc-clear-" + crypto.randomUUID());
+          const pending = createLockfileManager("/alias", {
+            ...backing.adapter,
+            realPath: () => Promise.reject(new Error("unresolved")),
+          });
+          await pending.set(pendingUrl, {
+            resolved: pendingUrl,
+            integrity: "sha256-pending",
+          });
+
+          let ownerCollected = false;
+          const registry = new FinalizationRegistry(() => {
+            ownerCollected = true;
+          });
+          async function clearThenLoseOwner() {
+            let recovered = false;
+            const never = new Promise(() => {});
+            const fs = {
+              ...backing.adapter,
+              realPath: (path) => {
+                if (!recovered) return Promise.reject(new Error("unresolved"));
+                if (path === "/project") return Promise.resolve(backing.canonicalDir);
+                if (path === "/alias") return never;
+                return Promise.resolve(backing.canonicalDir);
+              },
+            };
+            registry.register(fs, undefined);
+            const manager = createLockfileManager("/project", fs);
+            await manager.clear();
+            recovered = true;
+            try {
+              await manager.read();
+            } catch (error) {
+              return error?.context?.reason;
+            }
+          }
+
+          const failedReason = await clearThenLoseOwner();
+          await waitForCollection(() => ownerCollected);
+          const healthy = createLockfileManager("/bridge", {
+            ...backing.adapter,
+            realPath: () => Promise.resolve(backing.canonicalDir),
+          });
+          await healthy.read();
+          await pending.flush();
+
+          return {
+            failedReason,
+            ownerCollected,
+            diskExists: backing.store.has(backing.canonicalFile),
+            pendingHas: await pending.has(pendingUrl),
+          };
+        }
+
+        async function runWriteScenario() {
+          const oldUrl = "https://cdn.test/old.ts";
+          const freshUrl = "https://cdn.test/fresh.ts";
+          const backing = createBackingStore(
+            "gc-write-" + crypto.randomUUID(),
+            JSON.stringify({
+              version: 1,
+              imports: {
+                [oldUrl]: { resolved: oldUrl, integrity: "sha256-old" },
+              },
+            }),
+          );
+          const stale = createLockfileManager("/alias", {
+            ...backing.adapter,
+            realPath: () => Promise.reject(new Error("unresolved")),
+          });
+          await stale.read();
+
+          let ownerCollected = false;
+          const registry = new FinalizationRegistry(() => {
+            ownerCollected = true;
+          });
+          async function writeThenLoseOwner() {
+            let recovered = false;
+            const never = new Promise(() => {});
+            const fs = {
+              ...backing.adapter,
+              realPath: (path) => {
+                if (!recovered) return Promise.reject(new Error("unresolved"));
+                if (path === "/project") return Promise.resolve(backing.canonicalDir);
+                if (path === "/alias") return never;
+                return Promise.resolve(backing.canonicalDir);
+              },
+            };
+            registry.register(fs, undefined);
+            const manager = createLockfileManager("/project", fs);
+            await manager.write({
+              version: 1,
+              imports: {
+                [freshUrl]: { resolved: freshUrl, integrity: "sha256-fresh" },
+              },
+            });
+            recovered = true;
+            try {
+              await manager.read();
+            } catch (error) {
+              return error?.context?.reason;
+            }
+          }
+
+          const failedReason = await writeThenLoseOwner();
+          await waitForCollection(() => ownerCollected);
+          const healthy = createLockfileManager("/bridge", {
+            ...backing.adapter,
+            realPath: () => Promise.resolve(backing.canonicalDir),
+          });
+          await healthy.read();
+          const disk = JSON.parse(backing.store.get(backing.canonicalFile));
+
+          return {
+            failedReason,
+            ownerCollected,
+            diskHasOld: Object.hasOwn(disk.imports, oldUrl),
+            diskHasFresh: Object.hasOwn(disk.imports, freshUrl),
+            staleHasOld: await stale.has(oldUrl),
+            staleHasFresh: await stale.has(freshUrl),
+          };
+        }
+
+        console.log(JSON.stringify({
+          clear: await runClearScenario(),
+          write: await runWriteScenario(),
+        }));
+      `;
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "eval",
+          "--no-check",
+          "--frozen",
+          "--config=deno.json",
+          "--v8-flags=--expose-gc",
+          source,
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      const stderr = new TextDecoder().decode(output.stderr);
+      assertEquals(output.success, true, stderr);
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(output.stdout)),
+        {
+          clear: {
+            failedReason: "access-failed",
+            ownerCollected: true,
+            diskExists: false,
+            pendingHas: false,
+          },
+          write: {
+            failedReason: "access-failed",
+            ownerCollected: true,
+            diskHasOld: false,
+            diskHasFresh: true,
+            staleHasOld: false,
+            staleHasFresh: true,
+          },
+        },
+      );
+    });
+
     it("should reconcile mutation state through the current healthy adapter", async () => {
       const pendingUrl = "https://cdn.com/pending.ts";
       const coordinationKey = "healthy-canonical-reconciliation-test-store";
