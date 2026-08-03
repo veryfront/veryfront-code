@@ -134,7 +134,7 @@ export function withRetryOnTransient<T>(
     shouldRetry: (error) => isTransientError(error),
     onRetry: ({ error }) => {
       logger.warn(`${context}: transient error, retrying once`, {
-        error: error.message,
+        error: getSafeErrorMessage(error),
       });
     },
   });

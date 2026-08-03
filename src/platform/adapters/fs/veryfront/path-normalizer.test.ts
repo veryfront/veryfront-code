@@ -17,6 +17,16 @@ describe("PathNormalizer", () => {
     it("should be instantiable with projectDir", () => {
       assertExists(new PathNormalizer("/project"));
     });
+
+    it("should reject traversal segments in projectDir", () => {
+      for (const projectDir of ["/project/..", "../project", "/project//../root"]) {
+        assertThrows(
+          () => new PathNormalizer(projectDir),
+          TypeError,
+          'project directory must not contain ".." segments',
+        );
+      }
+    });
   });
 
   describe("normalize", () => {

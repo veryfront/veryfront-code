@@ -44,13 +44,9 @@ export class PathNormalizer {
 
     // "." segments are legitimate no-ops (projectDir "." conventionally means
     // the project root elsewhere in this codebase); drop them instead of
-    // rejecting the path. ".." segments would alias a path outside the
-    // project scope, so those are rejected outright.
+    // rejecting the path. Parent-directory segments were rejected before any
+    // configured project prefix could be stripped.
     const segments = normalized.split("/").filter((segment) => segment !== ".");
-    const traversalSegment = segments.find((segment) => segment === "..");
-    if (traversalSegment) {
-      throw new TypeError('Filesystem path must not contain ".." segments');
-    }
     normalized = segments.join("/");
 
     if (normalized.startsWith("@/")) {
@@ -84,6 +80,9 @@ export class PathNormalizer {
     }
     if (path.includes("\\")) {
       throw new TypeError(`Filesystem ${label} must use forward slashes`);
+    }
+    if (path.split("/").some((segment) => segment === "..")) {
+      throw new TypeError(`Filesystem ${label} must not contain ".." segments`);
     }
   }
 }
