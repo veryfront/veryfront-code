@@ -31,6 +31,59 @@ export function buildTransformedModuleSpecifier(
   return moduleUrl.href;
 }
 
+interface TransformedModuleWriter {
+  writeTextFile(path: string, contents: string): Promise<void>;
+}
+
+type TransformedModuleImporter = (
+  specifier: string,
+) => Promise<Record<string, unknown>>;
+
+const transformedModuleFileTails = new Map<string, Promise<void>>();
+
+/**
+ * Keep the mutable backing file stable until its versioned import finishes.
+ * Different component paths remain independent, and the tail entry is removed
+ * after the final waiter so the coordination map does not grow with every file.
+ */
+async function withTransformedModuleFileAccess<T>(
+  componentFile: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = transformedModuleFileTails.get(componentFile) ?? Promise.resolve();
+  let release!: () => void;
+  const turn = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(() => turn);
+  transformedModuleFileTails.set(componentFile, tail);
+
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (transformedModuleFileTails.get(componentFile) === tail) {
+      transformedModuleFileTails.delete(componentFile);
+    }
+  }
+}
+
+async function writeAndImportTransformedModule(
+  componentFile: string,
+  transformedCode: string,
+  contentHash: string,
+  writer: TransformedModuleWriter,
+  importer: TransformedModuleImporter = (specifier) => import(specifier),
+): Promise<Record<string, unknown>> {
+  return await withTransformedModuleFileAccess(componentFile, async () => {
+    await writer.writeTextFile(componentFile, transformedCode);
+    return await importer(buildTransformedModuleSpecifier(componentFile, contentHash));
+  });
+}
+
+export { writeAndImportTransformedModule as _writeAndImportTransformedModuleForTest };
+
 export async function loadModuleFromSource(
   source: string,
   filePath: string,
@@ -103,10 +156,11 @@ export async function loadModuleFromSource(
       const componentDir = componentFile.substring(0, componentFile.lastIndexOf("/"));
       const fs = createFileSystem();
       await fs.mkdir(componentDir, { recursive: true });
-      await fs.writeTextFile(componentFile, transformedCode);
-
-      return await import(
-        buildTransformedModuleSpecifier(componentFile, await computeHash(transformedCode))
+      return await writeAndImportTransformedModule(
+        componentFile,
+        transformedCode,
+        await computeHash(transformedCode),
+        fs,
       );
     },
     {

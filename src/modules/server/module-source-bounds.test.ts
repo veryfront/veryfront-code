@@ -42,10 +42,7 @@ describe("serveModule source size bounds", () => {
     const response = await serve("/_vf_modules/components/Huge.json");
     const body = await response.text();
 
-    assertEquals(
-      response.status === 200 && body.length > MAX_SERVABLE_MODULE_SOURCE_BYTES,
-      false,
-      `oversized module was served in full (status ${response.status}, ${body.length} chars)`,
-    );
+    assertEquals(response.status, 500);
+    assertEquals(JSON.parse(body), { error: "Module source exceeds 5242880 bytes" });
   });
 });
