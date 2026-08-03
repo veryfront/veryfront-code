@@ -2201,6 +2201,75 @@ describe("import-lockfile", () => {
       assertEquals(Object.keys(onDisk.imports).sort(), [aUrl, bUrl, baseUrl]);
     });
 
+    it("should serialize aliased paths when only one shared adapter has realPath", async () => {
+      const canonicalPath = "/backing/project/veryfront.lock";
+      const baseUrl = "https://cdn.com/base.ts";
+      const aUrl = "https://cdn.com/a.ts";
+      const bUrl = "https://cdn.com/b.ts";
+      const store = new Map<string, string>([[
+        canonicalPath,
+        JSON.stringify({
+          version: 1,
+          imports: {
+            [baseUrl]: { resolved: baseUrl, integrity: "sha256-base" },
+          },
+        }),
+      ]]);
+      const backingPath = (path: string): string =>
+        path === "/project/veryfront.lock" || path === "/alias/veryfront.lock"
+          ? canonicalPath
+          : path;
+      const firstWriteStarted = Promise.withResolvers<void>();
+      const secondWriteStarted = Promise.withResolvers<void>();
+      const releaseFirstWrite = Promise.withResolvers<void>();
+      let writes = 0;
+      const writeFile = async (path: string, content: string): Promise<void> => {
+        writes++;
+        if (writes === 1) {
+          firstWriteStarted.resolve();
+          await releaseFirstWrite.promise;
+        } else if (writes === 2) {
+          secondWriteStarted.resolve();
+        }
+        store.set(backingPath(path), content);
+      };
+      const shared = {
+        coordinationKey: "mixed-realpath-alias-test-store",
+        exists: (path: string) => Promise.resolve(store.has(backingPath(path))),
+        readFile: (path: string) => {
+          const content = store.get(backingPath(path));
+          return content === undefined
+            ? Promise.reject(new Error("ENOENT"))
+            : Promise.resolve(content);
+        },
+        writeFile,
+        remove: (path: string) => {
+          store.delete(backingPath(path));
+          return Promise.resolve();
+        },
+      } satisfies FSAdapter;
+      const managerA = createLockfileManager("/project", shared);
+      const managerB = createLockfileManager("/alias", {
+        ...shared,
+        realPath: () => Promise.resolve("/backing/project"),
+      });
+      await managerA.set(aUrl, { resolved: aUrl, integrity: "sha256-a" });
+      await managerB.set(bUrl, { resolved: bUrl, integrity: "sha256-b" });
+
+      const flushA = managerA.flush();
+      await firstWriteStarted.promise;
+      const flushB = managerB.flush();
+      const secondWriteBeforeRelease = await resolvesWithin(secondWriteStarted.promise);
+      releaseFirstWrite.resolve();
+      await Promise.all([flushA, flushB]);
+
+      assertEquals(secondWriteBeforeRelease, false);
+      const onDisk = JSON.parse(store.get(canonicalPath)!) as {
+        imports: Record<string, unknown>;
+      };
+      assertEquals(Object.keys(onDisk.imports).sort(), [aUrl, bUrl, baseUrl]);
+    });
+
     it("should serialize real symlink aliases by canonical backing path", async () => {
       const root = await Deno.makeTempDir({ prefix: "veryfront-lockfile-alias-" });
       const projectDir = `${root}/project`;

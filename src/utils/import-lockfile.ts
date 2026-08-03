@@ -539,6 +539,7 @@ interface LockfileSharedStateReference {
 }
 
 const lockfileSharedStateReferences = new NativeMap<string, LockfileSharedStateReference>();
+const lockfileSharedStateAccessIdentities = new NativeWeakMap<LockfileSharedState, bigint>();
 const lockfileCoordinationDomainByAdapter = new NativeWeakMap<
   FSAdapter,
   LockfileCoordinationDomain
@@ -560,6 +561,7 @@ const sharedLockfileCoordinationRegistry = new NativeFinalizationRegistry<{
   }
 });
 let nextLockfileMutationSequence = 1n;
+let nextLockfileSharedStateAccessIdentity = 1n;
 const lockfileSharedStateRegistry = new NativeFinalizationRegistry<{
   stateKey: string;
   unregisterToken: object;
@@ -591,6 +593,16 @@ function resolveLockfileSharedState(state: LockfileSharedState): LockfileSharedS
     current = parent;
   }
   return root;
+}
+
+function getLockfileSharedStateAccessKey(state: LockfileSharedState): string {
+  const root = resolveLockfileSharedState(state);
+  let identity = getWeakMapValue(lockfileSharedStateAccessIdentities, root);
+  if (identity === undefined) {
+    identity = nextLockfileSharedStateAccessIdentity++;
+    setWeakMapValue(lockfileSharedStateAccessIdentities, root, identity);
+  }
+  return `lockfile-state:${identity}`;
 }
 
 function registerLockfileSharedState(
@@ -1106,10 +1118,14 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
       unresolvedRecord.state = new NativeWeakRef(managerSharedState);
       setMapValue(coordinationDomain.records, unresolvedRecord.recordKey, unresolvedRecord);
     }
+    const state = resolveLockfileSharedState(managerSharedState);
     return {
-      state: resolveLockfileSharedState(managerSharedState),
-      accessQueueKey: stateKeys[stateKeys.length - 1] ??
-        apply(jsonStringify, NativeJSON, [[accessKey, lockfilePath]]) as string,
+      state,
+      // Queue by the reconciled state root rather than the manager's current
+      // spelling of the path. A shared adapter with realPath can bridge an
+      // alias owned by an adapter without realPath; both must then serialize
+      // through the same queue to protect the read-merge-write window.
+      accessQueueKey: getLockfileSharedStateAccessKey(state),
     };
   }
 
