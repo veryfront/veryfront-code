@@ -20,6 +20,9 @@ export class RateLimiter {
   private readonly now: () => number;
 
   constructor(maxMessages: number, options: RateLimiterOptions = {}) {
+    if (!options || typeof options !== "object" || Array.isArray(options)) {
+      throw new TypeError("Rate limiter options must be an object");
+    }
     if (!Number.isSafeInteger(maxMessages) || maxMessages <= 0) {
       throw new RangeError("maxMessages must be a positive safe integer");
     }

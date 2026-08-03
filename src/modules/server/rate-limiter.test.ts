@@ -74,6 +74,14 @@ describe("modules/server/rate-limiter", () => {
       }
     });
 
+    it("rejects invalid options with a stable error", () => {
+      assertThrows(
+        () => new RateLimiter(1, null as never),
+        TypeError,
+        "options",
+      );
+    });
+
     it("fails closed when the clock returns a non-finite value", () => {
       const limiter = new RateLimiter(1, { now: () => Number.NaN });
       assertEquals(limiter.check(mockSocket()), false);

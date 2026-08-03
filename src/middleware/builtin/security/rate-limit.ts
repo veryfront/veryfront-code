@@ -51,6 +51,9 @@ export class MemoryRateLimitStore implements RateLimitStore {
     windowMs: number,
     options: MemoryRateLimitStoreOptions = {},
   ) {
+    if (!options || typeof options !== "object" || Array.isArray(options)) {
+      throw new TypeError("Memory rate limit store options must be an object");
+    }
     const normalizedWindowMs = requireRateLimitWindowMs(windowMs);
     const maxEntries = options.maxEntries ??
       DEFAULT_MEMORY_RATE_LIMIT_MAX_ENTRIES;
@@ -299,11 +302,7 @@ export function rateLimit(
         logger.error(message, {
           failureKind,
           stage,
-          errorName: error instanceof MemoryRateLimitCapacityError
-            ? error.name
-            : error instanceof Error
-            ? "Error"
-            : typeof error,
+          errorName: error instanceof Error ? error.name : typeof error,
           ...(error instanceof MemoryRateLimitCapacityError ? { capacity: error.capacity } : {}),
         });
       }

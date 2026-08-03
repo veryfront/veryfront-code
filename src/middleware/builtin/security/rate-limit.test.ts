@@ -102,6 +102,14 @@ describe("MemoryRateLimitStore", () => {
     }
   });
 
+  it("rejects invalid store options with a stable error", () => {
+    assertThrows(
+      () => new MemoryRateLimitStore(60000, null as never),
+      TypeError,
+      "options",
+    );
+  });
+
   it("should release retained entries when destroyed", async () => {
     const boundedStore = new MemoryRateLimitStore(60000, { maxEntries: 1 });
     await boundedStore.increment("first", 60000);
@@ -449,7 +457,11 @@ describe("rateLimit middleware", () => {
       });
       const storeFailure = rateLimit({
         store: {
-          increment: () => Promise.reject(new Error("backend unavailable")),
+          increment: () => {
+            const error = new Error("backend unavailable");
+            error.name = "BackendUnavailableError";
+            return Promise.reject(error);
+          },
           reset: () => Promise.resolve(),
         },
       });
@@ -479,6 +491,10 @@ describe("rateLimit middleware", () => {
     assertEquals(records.map((record) => record.context?.failureKind), [
       "key-resolution",
       "store-unavailable",
+    ]);
+    assertEquals(records.map((record) => record.context?.errorName), [
+      "Error",
+      "BackendUnavailableError",
     ]);
   });
 
