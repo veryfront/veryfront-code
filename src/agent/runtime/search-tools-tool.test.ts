@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type {
   RuntimeToolCatalogEntry,
@@ -49,8 +49,10 @@ describe("search_tools tool", () => {
       const result = await tool.execute({ names: ["read_file"] });
 
       assertEquals(result.results.length, 1);
-      assertEquals(result.results[0].name, "read_file");
-      assertEquals(result.results[0].state, "available");
+      const [entry] = result.results;
+      assertExists(entry);
+      assertEquals(entry.name, "read_file");
+      assertEquals(entry.state, "available");
     });
 
     it("returns active for tools that are in the activated set", async () => {
@@ -58,7 +60,9 @@ describe("search_tools tool", () => {
       const tool = createSearchToolsTool(makeOptions(context));
       const result = await tool.execute({ names: ["read_file"] });
 
-      assertEquals(result.results[0].state, "active");
+      const [entry] = result.results;
+      assertExists(entry);
+      assertEquals(entry.state, "active");
     });
 
     it("returns requires_grant for tools marked requiresGrant", async () => {
@@ -66,7 +70,9 @@ describe("search_tools tool", () => {
       const tool = createSearchToolsTool(makeOptions(context));
       const result = await tool.execute({ names: ["premium_tool"] });
 
-      assertEquals(result.results[0].state, "requires_grant");
+      const [entry] = result.results;
+      assertExists(entry);
+      assertEquals(entry.state, "requires_grant");
     });
 
     it("does not return input schemas in results", async () => {
@@ -74,8 +80,10 @@ describe("search_tools tool", () => {
       const tool = createSearchToolsTool(makeOptions(context));
       const result = await tool.execute({ names: ["read_file"] });
 
-      assertEquals("inputSchema" in result.results[0], false);
-      assertEquals("parameters" in result.results[0], false);
+      const [entry] = result.results;
+      assertExists(entry);
+      assertEquals("inputSchema" in entry, false);
+      assertEquals("parameters" in entry, false);
     });
   });
 
@@ -99,7 +107,9 @@ describe("search_tools tool", () => {
       const result = await tool.execute({ names: ["read_file", "mystery_tool"] });
 
       assertEquals(result.results.length, 1);
-      assertEquals(result.results[0].name, "read_file");
+      const [entry] = result.results;
+      assertExists(entry);
+      assertEquals(entry.name, "read_file");
     });
   });
 
@@ -167,6 +177,7 @@ describe("search_tools tool", () => {
       const result = await tool.execute({ names: ["read_file"] });
 
       const r = result.results[0];
+      assertExists(r);
       assertEquals(typeof r.name, "string");
       assertEquals(typeof r.description, "string");
       assertEquals(typeof r.source, "string");
@@ -192,8 +203,12 @@ describe("search_tools tool", () => {
       const resultA = await toolA.execute({ names: ["read_file"] });
       const resultB = await toolB.execute({ names: ["read_file"] });
 
-      assertEquals(resultA.results[0].state, "active");
-      assertEquals(resultB.results[0].state, "available");
+      const [entryA] = resultA.results;
+      const [entryB] = resultB.results;
+      assertExists(entryA);
+      assertExists(entryB);
+      assertEquals(entryA.state, "active");
+      assertEquals(entryB.state, "available");
     });
   });
 });

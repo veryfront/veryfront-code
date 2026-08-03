@@ -3,11 +3,20 @@ import "#veryfront/skill/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects, assertThrows } from "@std/assert";
 import { resolve } from "node:path";
 import {
+  SKILL_CATALOG_MAX_DOCUMENT_CHARACTERS,
+  SKILL_CATALOG_MAX_METADATA_CHARACTERS,
+  SKILL_CATALOG_MAX_PATH_ENTRIES,
+  SKILL_CATALOG_MAX_SKILLS,
+  SKILL_DOCUMENT_MAX_CHARACTERS,
   SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
   SKILL_STEERING_PATH_MAX_ENTRIES,
   SKILL_SUBDIR_MAX_ENTRIES,
   SKILL_TEXT_FILE_MAX_BYTES,
 } from "#veryfront/skill/limits.ts";
+import {
+  createSkillOperationBudget,
+  SkillOperationTimeoutError,
+} from "#veryfront/skill/operation-budget.ts";
 import {
   getRuntimeProjectInstructions,
   getRuntimeProjectSkillCatalog,
@@ -19,12 +28,6 @@ import type {
   RuntimeProjectFilesApiOptions,
 } from "./project-files-client.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
-import {
-  SKILL_CATALOG_MAX_DOCUMENT_CHARACTERS,
-  SKILL_CATALOG_MAX_METADATA_CHARACTERS,
-  SKILL_CATALOG_MAX_PATH_ENTRIES,
-  SKILL_CATALOG_MAX_SKILLS,
-} from "#veryfront/skill/limits.ts";
 
 const PROJECT_CONTEXT = {
   projectId: "project-1",
@@ -181,11 +184,12 @@ Deno.test("builtin directory skills take precedence over flat files with the sam
   });
 });
 
-Deno.test("built-in catalog rejects work beyond the cumulative skill limit", () => {
+Deno.test("built-in catalogs enforce the cumulative retained skill limit", () => {
   withTempDir((rootDir) => {
     for (let index = 0; index <= SKILL_CATALOG_MAX_SKILLS; index += 1) {
       Deno.writeTextFileSync(resolve(rootDir, `skill-${index}.md`), "# Skill");
     }
+
     assertThrows(
       () => loadRuntimeBuiltinSkillCatalog({ skillsDir: rootDir }),
       RangeError,
@@ -322,7 +326,7 @@ Deno.test("getRuntimeProjectInstructions returns the first available instruction
     {
       ...PROJECT_CONTEXT,
       path: "AGENTS.md",
-      maximumContentCharacters: 1_048_576,
+      maximumContentCharacters: SKILL_DOCUMENT_MAX_CHARACTERS,
     },
   ]);
 });
@@ -355,19 +359,55 @@ Deno.test("getRuntimeProjectInstructions rejects untrusted custom loader respons
   );
 });
 
-Deno.test("getRuntimeProjectSkillCatalog returns builtin skills when project files are unavailable", async () => {
-  const builtinSkills = [
-    {
-      id: "plan",
-      name: "plan",
-      description: "Plan",
-      instructions: "# Plan",
-      allowedTools: [],
-    },
-  ];
-  const { catalog } = createSkillCatalog({ builtinSkills, paths: null });
+Deno.test("project catalog deadlines settle non-cooperative listing clients", async () => {
+  await assertRejects(
+    () =>
+      getRuntimeProjectSkillCatalog({
+        ...PROJECT_CONTEXT,
+        builtinSkills: [],
+        operationBudget: createSkillOperationBudget({ timeoutMs: 5 }),
+        getProjectFiles: () => new Promise(() => {}),
+        getProjectFile: () => Promise.resolve(null),
+      }),
+    SkillOperationTimeoutError,
+    "timed out",
+  );
+});
 
-  assertEquals(await catalog(), builtinSkills);
+Deno.test("project catalog forwards one cancellation signal through listing and reads", async () => {
+  const controller = new AbortController();
+  const signals: Array<AbortSignal | undefined> = [];
+  const timeouts: Array<number | undefined> = [];
+  const skillPath = "skills/research/SKILL.md";
+
+  const skills = await getRuntimeProjectSkillCatalog({
+    ...PROJECT_CONTEXT,
+    builtinSkills: [],
+    operationBudget: createSkillOperationBudget({
+      abortSignal: controller.signal,
+      timeoutMs: 1_000,
+    }),
+    getProjectFiles: (options) => {
+      signals.push(options.abortSignal);
+      timeouts.push(options.timeoutMs);
+      return Promise.resolve(options.pathPrefix === "skills" ? [{ path: skillPath }] : []);
+    },
+    getProjectFile: (options) => {
+      signals.push(options.abortSignal);
+      timeouts.push(options.timeoutMs);
+      return Promise.resolve({
+        path: skillPath,
+        content: "---\nname: research\ndescription: Research\n---\nBody",
+      });
+    },
+  });
+
+  assertEquals(skills.map((skill) => skill.id), ["research"]);
+  assertEquals(signals.every((signal) => signal === controller.signal), true);
+  assertEquals(
+    timeouts.every((timeout) => typeof timeout === "number" && timeout > 0 && timeout <= 1_000),
+    true,
+  );
 });
 
 Deno.test("project catalog snapshots builtin definitions before awaiting project discovery", async () => {
@@ -543,6 +583,47 @@ Deno.test("project skill catalog rejects oversized discovery before scheduling f
   assertEquals(fileReads, 0);
 });
 
+Deno.test("project catalogs reject documents beyond the aggregate retained budget", async () => {
+  const documentCount = SKILL_CATALOG_MAX_DOCUMENT_CHARACTERS /
+      SKILL_DOCUMENT_MAX_CHARACTERS +
+    1;
+  const paths = Array.from(
+    { length: documentCount },
+    (_unused, index) => `skills/skill-${index}/SKILL.md`,
+  );
+  const maximumDocument = "x".repeat(SKILL_DOCUMENT_MAX_CHARACTERS);
+
+  await assertRejects(
+    () =>
+      getRuntimeProjectSkillCatalog({
+        ...PROJECT_CONTEXT,
+        builtinSkills: [],
+        getProjectFiles: (options) =>
+          Promise.resolve(
+            options.pathPrefix === "skills" ? paths.map((path) => ({ path })) : [],
+          ),
+        getProjectFile: ({ path }) => Promise.resolve({ path, content: maximumDocument }),
+      }),
+    RangeError,
+    `${SKILL_CATALOG_MAX_DOCUMENT_CHARACTERS} characters`,
+  );
+});
+
+Deno.test("getRuntimeProjectSkillCatalog returns builtin skills when project files are unavailable", async () => {
+  const builtinSkills = [
+    {
+      id: "plan",
+      name: "plan",
+      description: "Plan",
+      instructions: "# Plan",
+      allowedTools: [],
+    },
+  ];
+  const { catalog } = createSkillCatalog({ builtinSkills, paths: null });
+
+  assertEquals(await catalog(), builtinSkills);
+});
+
 Deno.test("getRuntimeProjectSkillCatalog parses project directory skills and references", async () => {
   const { catalog, filesCalls, fileCalls } = createSkillCatalog({
     paths: [
@@ -573,19 +654,27 @@ Deno.test("getRuntimeProjectSkillCatalog parses project directory skills and ref
     "resources/schema.json",
   ]);
   assertEquals(filesCalls.map(withoutRuntimeBudgetFields), [
-    { ...PROJECT_CONTEXT, pathPrefix: "skills", maximumEntries: SKILL_CATALOG_MAX_PATH_ENTRIES },
+    {
+      ...PROJECT_CONTEXT,
+      pathPrefix: "skills",
+      maximumEntries: SKILL_CATALOG_MAX_PATH_ENTRIES,
+    },
     {
       ...PROJECT_CONTEXT,
       pathPrefix: ".veryfront/skills",
       maximumEntries: SKILL_CATALOG_MAX_PATH_ENTRIES,
     },
-    { ...PROJECT_CONTEXT, pathPrefix: "agents", maximumEntries: SKILL_CATALOG_MAX_PATH_ENTRIES },
+    {
+      ...PROJECT_CONTEXT,
+      pathPrefix: "agents",
+      maximumEntries: SKILL_CATALOG_MAX_PATH_ENTRIES,
+    },
   ]);
   assertEquals(fileCalls.map(withoutRuntimeBudgetFields), [
     {
       ...PROJECT_CONTEXT,
       path: "skills/research/SKILL.md",
-      maximumContentCharacters: 1_048_576,
+      maximumContentCharacters: SKILL_DOCUMENT_MAX_CHARACTERS,
     },
   ]);
 });
@@ -965,7 +1054,7 @@ Deno.test("project skill catalog stops scheduling after a fetch failure and awai
   assertEquals(fileFetches, fetchesAtRejection);
 });
 
-Deno.test("project catalog admits 3000 readable files and rejects 3001", async () => {
+Deno.test("project catalog enforces per-directory bounds and accepts the aggregate readable budget", async () => {
   const skillPath = "skills/research/SKILL.md";
   const readablePaths = ["references", "resources", "assets"].flatMap((directory) =>
     Array.from(
@@ -975,7 +1064,7 @@ Deno.test("project catalog admits 3000 readable files and rejects 3001", async (
   );
   const skillContent = "---\nname: research\ndescription: Research\n---\nBody";
 
-  const catalog = await getRuntimeProjectSkillCatalog({
+  const skills = await getRuntimeProjectSkillCatalog({
     ...PROJECT_CONTEXT,
     builtinSkills: [],
     getProjectFiles: async () => [
@@ -984,7 +1073,7 @@ Deno.test("project catalog admits 3000 readable files and rejects 3001", async (
     ],
     getProjectFile: async ({ path }) => path === skillPath ? { path, content: skillContent } : null,
   });
-  assertEquals(catalog[0]?.references?.length, SKILL_LOADABLE_REFERENCE_MAX_ENTRIES);
+  assertEquals(skills[0]?.references?.length, SKILL_LOADABLE_REFERENCE_MAX_ENTRIES);
 
   await assertRejects(
     () =>
@@ -993,15 +1082,41 @@ Deno.test("project catalog admits 3000 readable files and rejects 3001", async (
         builtinSkills: [],
         getProjectFiles: async () => [
           { path: skillPath },
-          ...readablePaths.map((path) => ({ path })),
-          { path: `skills/research/assets/${SKILL_SUBDIR_MAX_ENTRIES}.txt` },
+          ...Array.from(
+            { length: SKILL_SUBDIR_MAX_ENTRIES + 1 },
+            (_unused, index) => ({ path: `skills/research/resources/${index}.txt` }),
+          ),
         ],
         getProjectFile: async ({ path }) =>
           path === skillPath ? { path, content: skillContent } : null,
       }),
     RangeError,
-    `at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
+    "resources/",
   );
+});
+
+Deno.test("project catalog rejects paths beyond its aggregate retained budget before reads", async () => {
+  let fileReads = 0;
+  const paths = Array.from(
+    { length: SKILL_CATALOG_MAX_PATH_ENTRIES + 1 },
+    (_unused, index) => ({ path: `skills/research/references/${index}.txt` }),
+  );
+
+  await assertRejects(
+    () =>
+      getRuntimeProjectSkillCatalog({
+        ...PROJECT_CONTEXT,
+        builtinSkills: [],
+        getProjectFiles: (options) => Promise.resolve(options.pathPrefix === "skills" ? paths : []),
+        getProjectFile: () => {
+          fileReads += 1;
+          return Promise.resolve(null);
+        },
+      }),
+    RangeError,
+    `${SKILL_CATALOG_MAX_PATH_ENTRIES} entries`,
+  );
+  assertEquals(fileReads, 0);
 });
 
 Deno.test("project steering path lists are bounded before lookup", async () => {
