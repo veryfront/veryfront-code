@@ -15,12 +15,17 @@ import type {
 } from "#veryfront/tool";
 import { dynamicTool } from "#veryfront/tool";
 import { defineSchema } from "../../schemas/define.ts";
-import type { AgentServiceFirstPartyMcpServerKind } from "../service/mcp-server-config.ts";
+import type {
+  AgentServiceFirstPartyMcpServerKind,
+  AgentServiceMcpServerConfig,
+} from "../service/mcp-server-config.ts";
 import {
   prepareDefaultHostedChildForkSandboxToolSources,
   prepareDefaultHostedChildForkToolSources,
 } from "./child-fork-tool-sources.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
+import { createHostedControlPlaneMCPToolSourceFactory } from "./internal/control-plane-mcp-source.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 const trustedStudioProfile: RuntimeClientProfile = {
   id: "veryfront-studio",
@@ -83,6 +88,44 @@ function createRemoteSourceFixtures() {
   };
 
   return { createdConfigs, serverKinds, executeCalls, createRemoteToolSource };
+}
+
+async function assertChildServerUsesGuardedGenericEgress(
+  server: AgentServiceMcpServerConfig,
+): Promise<void> {
+  const studioMcpUrl = "http://127.0.0.1/studio-mcp";
+  let liveStudioCalls = 0;
+  let transportCalls = 0;
+
+  await withMockFetch(() => {
+    transportCalls++;
+    return Promise.resolve(Response.json({}));
+  }, async () => {
+    const result = await prepareDefaultHostedChildForkToolSources({
+      authToken: "token-1",
+      apiMcpUrl: "http://127.0.0.1/api-mcp",
+      mcpServers: [server],
+      studioMcpUrl,
+      clientProfile: trustedStudioProfile,
+      getProjectId: () => "project-1",
+      createRemoteToolSource: createHostedControlPlaneMCPToolSourceFactory({
+        apiMcpUrl: "http://127.0.0.1/api-mcp",
+        studioMcpUrl,
+      }),
+      createLiveStudioTools: () => {
+        liveStudioCalls++;
+        return Promise.resolve({ tools: {}, close: () => Promise.resolve() });
+      },
+    });
+
+    assertEquals(result.ok, false);
+    if (!result.ok) {
+      assertEquals(result.errorMessage.includes("Outbound network egress blocked"), true);
+    }
+  });
+
+  assertEquals(liveStudioCalls, 0);
+  assertEquals(transportCalls, 0);
 }
 
 function commandPayload(status: BackgroundCommand["status"]): BackgroundCommand {
@@ -452,6 +495,34 @@ Deno.test("prepareDefaultHostedChildForkToolSources preserves explicit MCP opt-o
   }
 
   assertEquals(result.forkTools, {});
+});
+
+Deno.test("child assembly keeps inherited Studio kinds on guarded generic egress", async () => {
+  const studioMcpUrl = "http://127.0.0.1/studio-mcp";
+  const server = Object.assign(
+    Object.create({ kind: "veryfront-studio" }) as Record<string, unknown>,
+    { endpoint: studioMcpUrl },
+  ) as AgentServiceMcpServerConfig;
+
+  await assertChildServerUsesGuardedGenericEgress(server);
+});
+
+Deno.test("child assembly ignores accessor-backed Studio kinds without invoking them", async () => {
+  const studioMcpUrl = "http://127.0.0.1/studio-mcp";
+  const server = { endpoint: studioMcpUrl } as Record<string, unknown>;
+  let kindReads = 0;
+  Object.defineProperty(server, "kind", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      kindReads++;
+      return "veryfront-studio";
+    },
+  });
+
+  await assertChildServerUsesGuardedGenericEgress(server as AgentServiceMcpServerConfig);
+
+  assertEquals(kindReads, 0);
 });
 
 Deno.test("prepareDefaultHostedChildForkToolSources reports Studio setup failures", async () => {

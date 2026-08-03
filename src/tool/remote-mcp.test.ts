@@ -166,8 +166,11 @@ describe("tool/remote-mcp", () => {
         authToken: "host-token",
         apiMcpUrl: endpoint,
       });
+      if (!resolved.config) {
+        throw new Error("Expected generic MCP config");
+      }
       const createSource = createHostedControlPlaneMCPToolSourceFactory({ apiMcpUrl: endpoint });
-      const source = createSource(resolved!.config, resolved!.trustedKind);
+      const source = createSource(resolved.config, resolved.trustedKind);
 
       await assertRejects(
         () => source.listTools(),

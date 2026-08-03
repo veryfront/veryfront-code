@@ -375,7 +375,7 @@ export function createHostedProjectRemoteToolSources(
   const hasExplicitMcpServers = input.mcpServers !== undefined;
 
   for (const server of mcpServers) {
-    const resolvedRemoteConfig = resolveAgentServiceRemoteMcpConfig({
+    const { config: remoteConfig, trustedKind } = resolveAgentServiceRemoteMcpConfig({
       server,
       authToken: input.authToken,
       apiMcpUrl: input.apiMcpUrl,
@@ -384,13 +384,12 @@ export function createHostedProjectRemoteToolSources(
       getProjectId: input.getProjectId,
       conversationId: input.conversationId,
     });
-    if (!resolvedRemoteConfig) {
-      if (hasExplicitMcpServers && server.kind === "veryfront-studio") {
+    if (!remoteConfig) {
+      if (hasExplicitMcpServers && trustedKind === "veryfront-studio") {
         throwExplicitStudioMcpUnavailable(input);
       }
       continue;
     }
-    const { config: remoteConfig, trustedKind } = resolvedRemoteConfig;
 
     sources.push(
       createHostedProjectRemoteToolSourceFromConfig(

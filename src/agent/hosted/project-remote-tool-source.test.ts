@@ -13,6 +13,7 @@ import { VeryfrontError } from "#veryfront/errors";
 import { createUnconfirmedProjectContextSwitchResult } from "../project/context.ts";
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
 
 function projectFileTool(name: string): ToolDefinition {
   return {
@@ -686,6 +687,40 @@ Deno.test("createHostedProjectRemoteToolSources throws for explicit Studio MCP w
     "studioMcpUrl was not provided",
   );
   assertEquals(error.slug, "config-invalid");
+});
+
+Deno.test("createHostedProjectRemoteToolSources reuses snapshotted Studio provenance", () => {
+  let kindReads = 0;
+  const server = new Proxy({ kind: "veryfront-studio" } as AgentServiceMcpServerConfig, {
+    get(target, property, receiver) {
+      if (property === "kind") {
+        kindReads++;
+        throw new Error("Studio kind must not be read after provenance resolution");
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+
+  const error = assertThrows(
+    () =>
+      createHostedProjectRemoteToolSources({
+        authToken: "token-1",
+        apiMcpUrl: "https://api.example/mcp",
+        mcpServers: [server],
+        clientProfile: {
+          id: "veryfront-studio",
+          type: "web",
+          trusted: true,
+          capabilities: ["ui_panels"],
+        },
+        getProjectId: () => "project-1",
+      }),
+    VeryfrontError,
+    "studioMcpUrl was not provided",
+  );
+
+  assertEquals(error.slug, "config-invalid");
+  assertEquals(kindReads, 0);
 });
 
 Deno.test("createHostedProjectRemoteToolSources throws for explicit Studio MCP from disallowed client", () => {

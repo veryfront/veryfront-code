@@ -99,7 +99,18 @@ export async function prepareDefaultHostedChildForkToolSources(
   try {
     const mcpServers = input.mcpServers ?? defaultAgentServiceMcpServers();
     for (const server of mcpServers) {
-      if (server.kind === "veryfront-studio") {
+      const { config: remoteConfig, trustedKind } = resolveAgentServiceRemoteMcpConfig({
+        server,
+        authToken: input.authToken,
+        apiMcpUrl: input.apiMcpUrl,
+        studioMcpUrl: input.studioMcpUrl,
+        clientProfile: input.clientProfile,
+        getProjectId: input.getProjectId,
+        conversationId: input.conversationId,
+        defaultSourceId: "veryfront-mcp-fork",
+      });
+
+      if (trustedKind === "veryfront-studio") {
         const studioTools = await createLiveStudioTools({
           authToken: input.authToken,
           clientProfile: input.clientProfile,
@@ -125,16 +136,9 @@ export async function prepareDefaultHostedChildForkToolSources(
         continue;
       }
 
-      const resolvedRemoteConfig = resolveAgentServiceRemoteMcpConfig({
-        server,
-        authToken: input.authToken,
-        apiMcpUrl: input.apiMcpUrl,
-        defaultSourceId: "veryfront-mcp-fork",
-      });
-      if (!resolvedRemoteConfig) {
+      if (!remoteConfig) {
         continue;
       }
-      const { config: remoteConfig, trustedKind } = resolvedRemoteConfig;
       const rawSource = createRemoteToolSource(remoteConfig, trustedKind);
       const policySource = createHostedMcpToolPolicySource(rawSource, server.toolPolicy);
       const rawDefinitions = await rawSource.listTools();

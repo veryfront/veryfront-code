@@ -113,3 +113,27 @@ Deno.test("createAgentServiceRemoteMcpConfig gates Studio MCP by client profile"
     "x-project-id": "project-2",
   });
 });
+
+Deno.test("MCP server provenance ignores inherited descriptor values", async () => {
+  const output = await new Deno.Command(Deno.execPath(), {
+    args: [
+      "run",
+      "--quiet",
+      new URL("./mcp-server-config-hostile-prototype.fixture.ts", import.meta.url).pathname,
+    ],
+    cwd: Deno.cwd(),
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+
+  const stderr = new TextDecoder().decode(output.stderr);
+  assertEquals(output.success, true, stderr);
+  assertEquals(
+    JSON.parse(new TextDecoder().decode(output.stdout)),
+    {
+      endpoint: "http://127.0.0.1/generic-mcp",
+      kindReads: 0,
+      trustedKind: null,
+    },
+  );
+});

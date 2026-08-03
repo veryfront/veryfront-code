@@ -35,7 +35,7 @@ export type AgentServiceFirstPartyMcpServerKind =
   | "veryfront-studio";
 
 export type ResolvedAgentServiceRemoteMcpConfig = {
-  config: RemoteMCPToolSourceConfig;
+  config: RemoteMCPToolSourceConfig | null;
   trustedKind?: AgentServiceFirstPartyMcpServerKind;
 };
 
@@ -61,12 +61,13 @@ export function defaultAgentServiceMcpServers(): AgentServiceMcpServerConfig[] {
 }
 
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const hasOwn = Object.hasOwn;
 
 function readOwnFirstPartyServerKind(
   server: AgentServiceMcpServerConfig,
 ): AgentServiceFirstPartyMcpServerKind | undefined {
   const descriptor = getOwnPropertyDescriptor(server, "kind");
-  if (!descriptor || !("value" in descriptor)) return undefined;
+  if (!descriptor || !hasOwn(descriptor, "value")) return undefined;
   return descriptor.value === "veryfront-api" || descriptor.value === "veryfront-studio"
     ? descriptor.value
     : undefined;
@@ -131,7 +132,7 @@ function createVeryfrontStudioRemoteMcpConfig(
 
 export function resolveAgentServiceRemoteMcpConfig(
   input: CreateAgentServiceRemoteMcpConfigInput,
-): ResolvedAgentServiceRemoteMcpConfig | null {
+): ResolvedAgentServiceRemoteMcpConfig {
   const trustedKind = readOwnFirstPartyServerKind(input.server);
   if (trustedKind === "veryfront-api") {
     return {
@@ -148,7 +149,7 @@ export function resolveAgentServiceRemoteMcpConfig(
       input,
       input.server as AgentServiceVeryfrontStudioMcpServerConfig,
     );
-    return config ? { config, trustedKind } : null;
+    return { config, trustedKind };
   }
 
   return {
@@ -159,5 +160,5 @@ export function resolveAgentServiceRemoteMcpConfig(
 export function createAgentServiceRemoteMcpConfig(
   input: CreateAgentServiceRemoteMcpConfigInput,
 ): RemoteMCPToolSourceConfig | null {
-  return resolveAgentServiceRemoteMcpConfig(input)?.config ?? null;
+  return resolveAgentServiceRemoteMcpConfig(input).config;
 }
