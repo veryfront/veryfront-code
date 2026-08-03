@@ -197,6 +197,26 @@ describe("worker-egress-guard", () => {
     });
   });
 
+  it("ignores IP literals and localhost names on the allowlist", async () => {
+    await assertRejects(
+      () =>
+        assertWorkerHostEgressAllowed("169.254.169.254", {
+          allowedInternalHosts: ["169.254.169.254"],
+        }),
+      WorkerEgressBlockedError,
+      "internal host",
+    );
+    await assertRejects(
+      () =>
+        assertWorkerHostEgressAllowed("localhost", {
+          allowedInternalHosts: ["localhost"],
+          resolveHost: () => Promise.resolve(["127.0.0.1"]),
+        }),
+      WorkerEgressBlockedError,
+      "internal host",
+    );
+  });
+
   it("normalizes explicit allowlist entries for case and whitespace", async () => {
     await assertWorkerHostEgressAllowed("api.veryfront.org", {
       allowedInternalHosts: [" API.VERYFRONT.ORG "],

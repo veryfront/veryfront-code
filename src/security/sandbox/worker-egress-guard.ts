@@ -7,10 +7,12 @@
  * Self-hosted deployments can open narrow exceptions:
  *
  * - `VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS` (or the `allowedInternalHosts`
- *   option, which takes precedence) holds a comma-separated list of hostnames
- *   that may resolve to internal addresses. Entries and the requested host are
- *   both normalized (trimmed, lowercased, IPv6 brackets stripped) before an
- *   exact-match comparison; only the listed hosts bypass the guard.
+ *   option, which takes precedence) holds a comma-separated list of DNS
+ *   hostnames that may resolve to internal addresses. Entries and the
+ *   requested host are both normalized (trimmed, lowercased, IPv6 brackets
+ *   stripped) before an exact-match comparison; only the listed hosts bypass
+ *   the guard. IP literals and localhost names are ignored on the allowlist
+ *   and never bypass the guard through it.
  * - `VERYFRONT_WORKER_ALLOW_INTERNAL_EGRESS` (or the `allowInternalEgress`
  *   option) disables internal-address blocking entirely and should be reserved
  *   for fully trusted self-hosted environments.
@@ -259,11 +261,16 @@ function getAllowedInternalHosts(): string[] {
 
 function isAllowedInternalHost(hostname: string, options: WorkerEgressGuardOptions): boolean {
   const entries = options.allowedInternalHosts ?? getAllowedInternalHosts();
+  // Only DNS hostnames may be allowlisted: IP literals and localhost names in
+  // the allowlist would bypass the metadata/loopback guard without the
+  // explicit allowInternalEgress override.
   const allowlist = entries.map((host) => normalizeInternalHost(host)).filter((host) =>
-    host.length > 0
+    host.length > 0 && !isIpLiteral(host) && !isLocalhostName(host)
   );
   if (allowlist.length === 0) return false;
-  return allowlist.includes(normalizeInternalHost(hostname));
+  const host = normalizeInternalHost(hostname);
+  if (isIpLiteral(host) || isLocalhostName(host)) return false;
+  return allowlist.includes(host);
 }
 
 async function defaultResolveHost(hostname: string): Promise<string[]> {
