@@ -307,11 +307,15 @@ describe("project-env/cache", () => {
 
   it("rejects excess global work without invoking the fetcher and recovers capacity", async () => {
     const firstFetch = deferred<Record<string, string>>();
+    const firstFetchStarted = deferred<void>();
     let fetchCount = 0;
     const cache = new EnvironmentVariableCache(
       async (input) => {
         fetchCount++;
-        if (input.projectSlug === "project-a") return await firstFetch.promise;
+        if (input.projectSlug === "project-a") {
+          firstFetchStarted.resolve();
+          return await firstFetch.promise;
+        }
         return { OWNER: input.projectSlug };
       },
       60_000,
@@ -320,7 +324,7 @@ describe("project-env/cache", () => {
     );
 
     const first = cache.get(scope());
-    await delay(0);
+    await firstFetchStarted.promise;
     const overload = await assertRejects(() =>
       cache.get(scope({
         projectSlug: "project-b",
@@ -346,10 +350,12 @@ describe("project-env/cache", () => {
 
   it("bounds distinct in-flight work per project while preserving exact deduplication", async () => {
     const firstFetch = deferred<Record<string, string>>();
+    const firstFetchStarted = deferred<void>();
     let fetchCount = 0;
     const cache = new EnvironmentVariableCache(
       async () => {
         fetchCount++;
+        firstFetchStarted.resolve();
         return await firstFetch.promise;
       },
       60_000,
@@ -359,7 +365,7 @@ describe("project-env/cache", () => {
 
     const first = cache.get(scope());
     const deduplicated = cache.get(scope());
-    await delay(0);
+    await firstFetchStarted.promise;
     const overload = await assertRejects(() => cache.get(scope({ environmentId: "env-other" })));
     assertEquals((overload as { slug?: string }).slug, "service-overloaded");
     assertEquals(fetchCount, 1);
