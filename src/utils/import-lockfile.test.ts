@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 import {
   computeIntegrity,
   createEmptyLockfile,
@@ -232,14 +233,81 @@ describe("import-lockfile", () => {
       assertEquals(await fs.exists("/project/veryfront.lock"), false);
     });
 
-    it("should reset to empty lockfile on version mismatch", async () => {
+    it("should fail explicitly on version mismatch instead of substituting an empty lockfile", async () => {
       const data = { version: 99, imports: { x: { resolved: "x", integrity: "y" } } };
       const fs = createMockFS({ "/project/veryfront.lock": JSON.stringify(data) });
       const mgr = createLockfileManager("/project", fs);
 
-      const result = await mgr.read();
-      assertEquals(result?.version, 1);
-      assertEquals(Object.keys(result!.imports).length, 0);
+      const error = await assertRejects(() => mgr.read(), VeryfrontError);
+      assertExists(error);
+      if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
+      assertEquals(error.slug, "version-mismatch");
+      const context = error.context as { actualVersion?: number };
+      assertEquals(context.actualVersion, 99);
+    });
+
+    it("should preserve a newer-format lockfile on disk after a version mismatch", async () => {
+      const newerContent = JSON.stringify({
+        version: 99,
+        imports: { "https://cdn.com/newer.ts": { resolved: "x", integrity: "y" } },
+      });
+      const fs = createMockFS({ "/project/veryfront.lock": newerContent });
+      const mgr = createLockfileManager("/project", fs);
+
+      await assertRejects(() => mgr.read(), VeryfrontError);
+
+      // A flush after the failed read must not overwrite the newer-format file.
+      await assertRejects(
+        () =>
+          mgr.set("https://cdn.com/mod.ts", {
+            resolved: "https://cdn.com/mod.ts",
+            integrity: "sha256-abc",
+          }).then(() => mgr.flush()),
+        VeryfrontError,
+      );
+
+      assertEquals(await fs.readFile("/project/veryfront.lock"), newerContent);
+    });
+
+    it("should not clobber entries flushed by another manager on the same projectDir", async () => {
+      const fs = createMockFS({
+        "/project/veryfront.lock": JSON.stringify({
+          version: 1,
+          imports: {
+            "https://cdn.com/base.ts": {
+              resolved: "https://cdn.com/base.ts",
+              integrity: "sha256-base",
+            },
+          },
+        }),
+      });
+      const mgrA = createLockfileManager("/project", fs);
+      const mgrB = createLockfileManager("/project", fs);
+
+      // Both managers warm their caches from the same on-disk state.
+      assertEquals(await mgrA.has("https://cdn.com/base.ts"), true);
+      assertEquals(await mgrB.has("https://cdn.com/base.ts"), true);
+
+      await mgrA.set("https://cdn.com/a.ts", {
+        resolved: "https://cdn.com/a.ts",
+        integrity: "sha256-a",
+      });
+      await mgrA.flush();
+
+      await mgrB.set("https://cdn.com/b.ts", {
+        resolved: "https://cdn.com/b.ts",
+        integrity: "sha256-b",
+      });
+      await mgrB.flush();
+
+      const onDisk = JSON.parse(await fs.readFile("/project/veryfront.lock")) as {
+        imports: Record<string, unknown>;
+      };
+      assertEquals(Object.keys(onDisk.imports).sort(), [
+        "https://cdn.com/a.ts",
+        "https://cdn.com/b.ts",
+        "https://cdn.com/base.ts",
+      ]);
     });
   });
 

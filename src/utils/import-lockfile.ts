@@ -1,7 +1,7 @@
 import { computeHash } from "./hash-utils.ts";
 import { serverLogger } from "./logger/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { CACHE_ERROR, NETWORK_ERROR } from "#veryfront/errors/error-registry.ts";
+import { CACHE_ERROR, NETWORK_ERROR, VERSION_MISMATCH } from "#veryfront/errors/error-registry.ts";
 
 const logger = serverLogger.component("lockfile");
 
@@ -35,7 +35,13 @@ export async function verifyIntegrity(content: string, integrity: string): Promi
   return computed === integrity;
 }
 
-/** Public API contract for lockfile manager. */
+/**
+ * Public API contract for lockfile manager.
+ *
+ * Reads and mutations fail closed with a `version-mismatch` error when the
+ * on-disk lockfile uses an unsupported format version, so an older Veryfront
+ * build can never destroy data written by a newer one.
+ */
 export interface LockfileManager {
   read(): Promise<LockfileData | null>;
   write(data: LockfileData): Promise<void>;
@@ -77,37 +83,54 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   const fs = fsAdapter ?? createPlatformFSAdapter();
   const lockfilePath = `${projectDir}/${LOCKFILE_NAME}`;
   let cache: LockfileData | null = null;
-  let dirty = false;
+  const pendingEntries = new Map<string, LockfileEntry>();
 
-  async function read(): Promise<LockfileData | null> {
-    if (cache) return cache;
-
+  async function readFromDisk(): Promise<LockfileData | null> {
+    let content: string;
     try {
       const exists = await fs.exists(lockfilePath);
       if (!exists) return null;
-
-      const content = await fs.readFile(lockfilePath);
-      const parsed = JSON.parse(content) as LockfileData;
-
-      if (parsed.version !== LOCKFILE_VERSION) {
-        logger.warn(
-          `[lockfile] Version mismatch, expected ${LOCKFILE_VERSION}, got ${parsed.version}`,
-        );
-        cache = createEmptyLockfile();
-        return cache;
-      }
-
-      cache = parsed;
-      return cache;
+      content = await fs.readFile(lockfilePath);
     } catch (e) {
       logger.debug(`Could not read lockfile: ${e}`);
       return null;
     }
+
+    let parsed: LockfileData;
+    try {
+      parsed = JSON.parse(content) as LockfileData;
+    } catch (e) {
+      logger.debug(`Could not parse lockfile: ${e}`);
+      return null;
+    }
+
+    if (parsed.version !== LOCKFILE_VERSION) {
+      // Fail closed: silently substituting an empty lockfile here would let the
+      // next flush() overwrite a newer-format file and destroy the user's data.
+      throw VERSION_MISMATCH.create({
+        detail: `Lockfile ${lockfilePath} uses format version ${parsed.version}, but this ` +
+          `Veryfront build supports version ${LOCKFILE_VERSION}. The file was left untouched; ` +
+          "upgrade Veryfront or migrate the lockfile before reading or modifying it.",
+        context: {
+          lockfilePath,
+          expectedVersion: LOCKFILE_VERSION,
+          actualVersion: parsed.version,
+        },
+      });
+    }
+
+    return parsed;
   }
 
-  async function write(data: LockfileData): Promise<void> {
-    cache = data;
+  async function read(): Promise<LockfileData | null> {
+    if (cache) return cache;
 
+    const data = await readFromDisk();
+    if (data) cache = data;
+    return data;
+  }
+
+  async function writeToDisk(data: LockfileData): Promise<void> {
     const sorted: LockfileData = {
       version: data.version,
       imports: Object.fromEntries(
@@ -116,8 +139,16 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     };
 
     await fs.writeFile(lockfilePath, `${JSON.stringify(sorted, null, 2)}\n`);
-    dirty = false;
     logger.debug(`Written ${Object.keys(data.imports).length} entries`);
+  }
+
+  async function write(data: LockfileData): Promise<void> {
+    // Revalidate the on-disk format before replacing it. This throws when the
+    // file was written by a newer Veryfront build, preserving that data.
+    await readFromDisk();
+    await writeToDisk(data);
+    cache = data;
+    pendingEntries.clear();
   }
 
   async function get(url: string): Promise<LockfileEntry | null> {
@@ -129,7 +160,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     const data = (await read()) ?? createEmptyLockfile();
     data.imports[url] = entry;
     cache = data;
-    dirty = true;
+    pendingEntries.set(url, entry);
   }
 
   async function has(url: string): Promise<boolean> {
@@ -139,7 +170,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
 
   async function clear(): Promise<void> {
     cache = createEmptyLockfile();
-    dirty = false;
+    pendingEntries.clear();
 
     if (!fs.remove) return;
 
@@ -150,8 +181,22 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   }
 
   async function flush(): Promise<void> {
-    if (!dirty || !cache) return;
-    await write(cache);
+    if (pendingEntries.size === 0) return;
+
+    // Read-merge-write: several managers can share one projectDir, so writing
+    // this manager's whole cache would clobber entries flushed by the others.
+    // Merge only this manager's pending entries onto the current disk state.
+    const snapshot = new Map(pendingEntries);
+    const merged = (await readFromDisk()) ?? createEmptyLockfile();
+    for (const [url, entry] of snapshot) {
+      merged.imports[url] = entry;
+    }
+
+    await writeToDisk(merged);
+    cache = merged;
+    for (const [url, entry] of snapshot) {
+      if (pendingEntries.get(url) === entry) pendingEntries.delete(url);
+    }
   }
 
   return { read, write, get, set, has, clear, flush };
