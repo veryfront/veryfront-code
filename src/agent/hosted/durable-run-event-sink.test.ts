@@ -6,6 +6,7 @@ import type { ConversationRunMirrorSnapshot } from "../conversation/run-mirror.t
 import { generateText } from "../../runtime/runtime-bridge.ts";
 import { createGenerateModel } from "../../runtime/runtime-bridge.test-helpers.ts";
 import { runWithRunEventSink } from "../../runtime/run-event-sink-context.ts";
+import type { AgentRunModelCallContextEvent } from "../../runtime/model-call-context.ts";
 import {
   createDurableRunEventSink,
   DurableRunEventPersistenceError,
@@ -65,7 +66,7 @@ describe("agent/hosted/durable-run-event-sink", () => {
         },
       },
     });
-    const event = {
+    const event: AgentRunModelCallContextEvent = {
       type: "AGENT_RUN_MODEL_CALL_CONTEXT",
       messages: [{ role: "system", content: "Use available skills." }],
       tools: [{ type: "function", name: "search", inputSchema: { type: "object" } }],
@@ -91,14 +92,60 @@ describe("agent/hosted/durable-run-event-sink", () => {
 
   it("persists a direct context above 2 MiB as one unchanged event", async () => {
     const target = mirror();
-    const event = {
+    const event: AgentRunModelCallContextEvent = {
       type: "AGENT_RUN_MODEL_CALL_CONTEXT",
-      messages: [{ role: "user", content: "x".repeat(2 * 1024 * 1024 + 1) }],
+      messages: [{
+        role: "user",
+        content: [{ type: "text", text: "x".repeat(2 * 1024 * 1024 + 1) }],
+      }],
     };
 
     await createDurableRunEventSink({ mirror: target.result })(event);
 
     assertEquals(target.appended, [[event]]);
+  });
+
+  it("serializes concurrent events that share a durable mirror", async () => {
+    const firstAppendStarted = Promise.withResolvers<void>();
+    const releaseFirstAppend = Promise.withResolvers<void>();
+    const order: string[] = [];
+    let pendingEventCount = 0;
+    const getSnapshot = () => snapshot({ pendingEventCount });
+    const target: ConversationRunChunkMirror = {
+      handleChunk: async () => {},
+      appendEvents: async (events) => {
+        const content = (events[0] as unknown as {
+          messages: [{ content: string }];
+        }).messages[0].content;
+        order.push(`append:${content}`);
+        if (content === "first") {
+          firstAppendStarted.resolve();
+          await releaseFirstAppend.promise;
+        }
+        pendingEventCount += events.length;
+      },
+      flush: async () => {
+        order.push("flush");
+        pendingEventCount = 0;
+        return getSnapshot();
+      },
+      getSnapshot,
+      dispose: () => {},
+    };
+    const first = createDurableRunEventSink({ mirror: target })({
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      messages: [{ role: "system", content: "first" }],
+    });
+    await firstAppendStarted.promise;
+    const second = createDurableRunEventSink({ mirror: target })({
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      messages: [{ role: "system", content: "second" }],
+    });
+
+    releaseFirstAppend.resolve();
+    await Promise.all([first, second]);
+
+    assertEquals(order, ["append:first", "flush", "append:second", "flush"]);
   });
 
   it("rejects append failures and a request over the general body limit", async () => {

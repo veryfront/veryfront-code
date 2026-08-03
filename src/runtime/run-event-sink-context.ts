@@ -1,29 +1,21 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { AgentRunEventSink } from "./model-call-context.ts";
 
-/** Internal event passed from runtime boundaries to the active run writer. */
-export interface RuntimeRunEvent {
-  type: string;
-  [key: string]: unknown;
-}
-
-/** Internal sink for run events produced below the hosted execution layer. */
-export type RuntimeRunEventSink = (event: RuntimeRunEvent) => void | Promise<void>;
-
-const runEventSinkStorage = new AsyncLocalStorage<RuntimeRunEventSink>();
+const runEventSinkStorage = new AsyncLocalStorage<AgentRunEventSink>();
 
 /** Return the run event sink scoped to the current execution, if configured. */
-export function getActiveRunEventSink(): RuntimeRunEventSink | undefined {
+export function getActiveRunEventSink(): AgentRunEventSink | undefined {
   return runEventSinkStorage.getStore();
 }
 
-/** Scope an operation to an internal run event sink. */
-export function runWithRunEventSink<T>(sink: RuntimeRunEventSink, operation: () => T): T {
+/** Scope an operation to a run event sink. */
+export function runWithRunEventSink<T>(sink: AgentRunEventSink, operation: () => T): T {
   return runEventSinkStorage.run(sink, operation);
 }
 
 /** Keep a sink active while a lazy async iterable is consumed. */
 export function scopeAsyncIterableWithRunEventSink<T>(
-  sink: RuntimeRunEventSink,
+  sink: AgentRunEventSink,
   source: AsyncIterable<T>,
 ): AsyncIterable<T> {
   return {

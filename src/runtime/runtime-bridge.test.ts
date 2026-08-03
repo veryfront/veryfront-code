@@ -1,8 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { type AgentRunEvent, runWithRunEventSink } from "../agent/index.ts";
 import { generateText, streamText } from "./runtime-bridge.ts";
-import { runWithRunEventSink } from "./run-event-sink-context.ts";
 import {
   collectAsync,
   createGenerateModel,
@@ -311,7 +311,7 @@ describe("runtime-bridge", () => {
     }
   });
 
-  it("isolates nested recorder mutations from generate and stream provider inputs", async () => {
+  it("isolates nested sink mutations from generate and stream provider inputs", async () => {
     for (const mode of ["generate", "stream"] as const) {
       const expectedPrompt = [{
         role: "user" as const,
@@ -354,7 +354,8 @@ describe("runtime-bridge", () => {
         },
       };
 
-      const sink = (context: Record<string, unknown>) => {
+      const sink = (event: AgentRunEvent) => {
+        const context = event as unknown as Record<string, unknown>;
         const messages = context.messages as Array<Record<string, unknown>>;
         const message = messages[0] as { role?: string; content?: Array<Record<string, unknown>> };
         const content = message?.content;

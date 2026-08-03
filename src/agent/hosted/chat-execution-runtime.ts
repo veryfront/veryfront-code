@@ -57,10 +57,10 @@ import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifec
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
 import { finalizeHostedChatRun } from "./hosted-chat-finalization.ts";
 import {
-  type RuntimeRunEventSink,
   runWithRunEventSink,
   scopeAsyncIterableWithRunEventSink,
 } from "../../runtime/run-event-sink-context.ts";
+import type { AgentRunEventSink } from "../../runtime/model-call-context.ts";
 import {
   createDurableRunEventSink,
   DurableRunEventPersistenceError,
@@ -105,7 +105,7 @@ export interface HostedChatExecutionRuntimeBootstrap {
   capturedMessageId: string | null;
   capturedConversationId?: string;
   mirroredToolChunkState: MirroredToolChunkState;
-  runEventSink?: RuntimeRunEventSink;
+  runEventSink?: AgentRunEventSink;
 }
 
 /** Input payload for create hosted chat execution runtime bootstrap. */

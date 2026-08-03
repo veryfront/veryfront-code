@@ -591,7 +591,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
                 | { type: "finish" }
               >;
               for await (const part of fullStream) {
-                if (part.type === "text-delta") {
+                if (part.type === "text-delta" && "text" in part) {
                   yield { type: "text-delta", id: "root", delta: part.text } as const;
                 }
               }
@@ -633,6 +633,124 @@ describe("agent/hosted-chat-execution-runtime", () => {
     );
     assertEquals(JSON.stringify(uiChunks).includes("AGENT_RUN_MODEL_CALL_CONTEXT"), false);
     assertEquals(lazyScopeActive, true);
+  });
+
+  it("drains queued root events before a subsequent model dispatch", async () => {
+    const order: string[] = [];
+    const persisted: unknown[] = [];
+    let pendingEventCount = 0;
+    const mirror = createDurableRunMirror({ chunks: [], flushes: [] });
+    mirror.handleChunk = async () => {
+      pendingEventCount += 1;
+      order.push("queue-ui");
+    };
+    mirror.appendEvents = async (events) => {
+      pendingEventCount += events.length;
+      persisted.push(...events);
+      order.push("append-context");
+    };
+    mirror.flush = async () => {
+      order.push("flush");
+      pendingEventCount = 0;
+      return mirror.getSnapshot();
+    };
+    mirror.getSnapshot = () => ({
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+      pendingEventCount,
+      consecutiveFailures: 0,
+      disabled: false,
+      hasFlushTimer: pendingEventCount > 0,
+      hasRetryTimer: false,
+      inFlight: false,
+    });
+    let dispatches = 0;
+    const model = createStreamModel("test", "test/hosted-root-two-step", async () => {
+      dispatches += 1;
+      order.push(`dispatch-${dispatches}`);
+      return {
+        stream: ReadableStream.from([
+          { type: "text-delta", delta: `step ${dispatches}` },
+          { type: "finish", finishReason: "stop", usage: {} },
+        ]),
+      };
+    });
+    const agent: HostedChatRuntimeAgent = {
+      stream: async () => {
+        const first = streamText({
+          model,
+          messages: [{ role: "user", content: "First step" }],
+        });
+        return {
+          steps: Promise.resolve([{}, {}]),
+          toUIMessageStream: () =>
+            (async function* () {
+              const firstStream = first.fullStream as unknown as AsyncIterable<
+                | { type: "text-delta"; text: string }
+                | { type: string }
+              >;
+              for await (const part of firstStream) {
+                if (part.type === "text-delta" && "text" in part) {
+                  yield { type: "text-delta", id: "root", delta: part.text } as const;
+                }
+              }
+              const second = streamText({
+                model,
+                messages: [{ role: "user", content: "Second step" }],
+              });
+              const secondStream = second.fullStream as unknown as AsyncIterable<
+                | { type: "text-delta"; text: string }
+                | { type: string }
+              >;
+              for await (const part of secondStream) {
+                if (part.type === "text-delta" && "text" in part) {
+                  yield { type: "text-delta", id: "root", delta: part.text } as const;
+                }
+              }
+            })(),
+        };
+      },
+    };
+    const bootstrap = await createHostedChatExecutionRuntimeBootstrap({
+      agent,
+      cleanup: async () => {},
+      lifecycleAdapter: createLifecycleAdapter({ durableRunMirror: mirror }),
+      finalMessages: [],
+      conversationId: "conversation-1",
+      abortSignal: new AbortController().signal,
+      durableRunEventMirror: mirror,
+      createRootStreamWatchdog,
+    });
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "test/hosted-root-two-step",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: new AbortController().signal,
+      bootstrap,
+    });
+
+    for await (const _chunk of runtime.agentUIStream) {
+      // Consume both steps so the hosted mirror queues the first step before the second dispatch.
+    }
+
+    assertEquals(dispatches, 2);
+    assertEquals(
+      persisted.filter((event) =>
+        (event as { type?: string }).type === "AGENT_RUN_MODEL_CALL_CONTEXT"
+      ).length,
+      2,
+    );
+    const secondDispatch = order.indexOf("dispatch-2");
+    const secondContextFlush = order.lastIndexOf("flush", secondDispatch);
+    const secondContextAppend = order.lastIndexOf("append-context", secondContextFlush);
+    const priorEventFlush = order.lastIndexOf("flush", secondContextAppend - 1);
+    const priorUiEvent = order.lastIndexOf("queue-ui", priorEventFlush);
+    assertEquals(
+      priorUiEvent < priorEventFlush && priorEventFlush < secondContextAppend &&
+        secondContextAppend < secondContextFlush && secondContextFlush < secondDispatch,
+      true,
+    );
   });
 
   it("finalizes the agent run span when bootstrapping hosted chat execution fails", async () => {

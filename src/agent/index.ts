@@ -105,10 +105,14 @@
  */
 
 export type {
+  AgentRunEvent,
+  AgentRunEventSink,
   AgentRunModelCallContextEvent,
   ModelCallMessage,
   ModelCallTool,
 } from "../runtime/model-call-context.ts";
+
+export { runWithRunEventSink } from "../runtime/run-event-sink-context.ts";
 
 export type {
   Agent,

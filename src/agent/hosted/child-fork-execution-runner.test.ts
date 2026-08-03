@@ -489,6 +489,135 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run cont
   }
 });
 
+Deno.test("executeHostedChildForkWithPreparedTools drains queued child events before a subsequent model dispatch", async () => {
+  let pendingEventCount = 0;
+  let dispatches = 0;
+  let queueChildEvent = () => {};
+  const persisted: unknown[] = [];
+  const order: string[] = [];
+  const model = createStreamModel("test", "test/hosted-child-two-step", async () => {
+    dispatches += 1;
+    order.push(`dispatch-${dispatches}`);
+    return {
+      stream: ReadableStream.from([
+        { type: "text-delta", delta: `step ${dispatches}` },
+        { type: "finish", finishReason: "stop", usage: {} },
+      ]),
+    };
+  });
+  const result = await executeHostedChildForkWithPreparedTools({
+    authToken: "token",
+    apiUrl: "https://api.example.com",
+    description: "Check two steps",
+    kind: "invoke_agent",
+    provider: "anthropic",
+    forkModel: "anthropic/claude-sonnet-4",
+    maxSteps: 4,
+    effectivePrompt: "Do the work.",
+    toolAssembly: { ok: true, forkTools: {}, availableToolNames: [] },
+    durableChildRun: {
+      childConversationId: "11111111-1111-4111-a111-111111111111",
+      childRunId: "child-run-two-step",
+      childMessageId: "22222222-2222-4222-a222-222222222222",
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+    },
+    createRunContext: (input) => {
+      const context = createHostedDurableChildForkRunContext({
+        instrumentation: input.instrumentation,
+        pendingToolLogContext: {
+          conversationId: input.conversationId,
+          parentRunId: input.parentRunId,
+          description: input.description,
+        },
+        pendingToolLogWriter: input.pendingToolLogWriter,
+      });
+      const getSnapshot = () => ({
+        latestEventId: 0,
+        latestExternalEventSequence: 0,
+        pendingEventCount,
+        consecutiveFailures: 0,
+        disabled: false,
+        hasFlushTimer: pendingEventCount > 0,
+        hasRetryTimer: false,
+        inFlight: false,
+      });
+      queueChildEvent = () => {
+        pendingEventCount += 1;
+        order.push("queue-child");
+      };
+      return {
+        ...context,
+        durableRunMirror: {
+          handleChunk: async () => {
+            pendingEventCount += 1;
+            order.push("queue-child");
+          },
+          appendEvents: async (events) => {
+            pendingEventCount += events.length;
+            persisted.push(...events);
+            order.push("append-context");
+          },
+          flush: async () => {
+            order.push("flush");
+            pendingEventCount = 0;
+            return getSnapshot();
+          },
+          getSnapshot,
+          dispose: () => {},
+        },
+      };
+    },
+    startRuntime: () => {
+      const first = streamText({
+        model,
+        messages: [{ role: "user", content: "First child step" }],
+      });
+      return {
+        forkStreamAbortController: new AbortController(),
+        childRunMonitorAbortController: null,
+        childRunMonitorPromise: Promise.resolve(),
+        forkToolNames: [],
+        streamResult: {
+          fullStream: (async function* () {
+            for await (const part of first.fullStream) yield part as ForkPart;
+            queueChildEvent();
+            const second = streamText({
+              model,
+              messages: [{ role: "user", content: "Second child step" }],
+            });
+            for await (const part of second.fullStream) yield part as ForkPart;
+          })(),
+          steps: Promise.resolve([
+            { text: "step 1", finishReason: "stop", messages: [], toolCalls: [], toolResults: [] },
+            { text: "step 2", finishReason: "stop", messages: [], toolCalls: [], toolResults: [] },
+          ]),
+          totalUsage: Promise.resolve(undefined),
+        },
+      };
+    },
+  });
+
+  assertEquals(result.success, true);
+  assertEquals(dispatches, 2);
+  assertEquals(
+    persisted.filter((event) =>
+      (event as { type?: string }).type === "AGENT_RUN_MODEL_CALL_CONTEXT"
+    ).length,
+    2,
+  );
+  const secondDispatch = order.indexOf("dispatch-2");
+  const secondContextFlush = order.lastIndexOf("flush", secondDispatch);
+  const secondContextAppend = order.lastIndexOf("append-context", secondContextFlush);
+  const priorEventFlush = order.lastIndexOf("flush", secondContextAppend - 1);
+  const priorChildEvent = order.lastIndexOf("queue-child", priorEventFlush);
+  assertEquals(
+    priorChildEvent < priorEventFlush && priorEventFlush < secondContextAppend &&
+      secondContextAppend < secondContextFlush && secondContextFlush < secondDispatch,
+    true,
+  );
+});
+
 Deno.test("executeHostedChildForkToolInput resolves runtime config and prepares tools", async () => {
   const callbacks: string[] = [];
 

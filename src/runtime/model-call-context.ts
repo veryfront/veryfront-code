@@ -51,5 +51,10 @@ export interface AgentRunModelCallContextEvent {
   type: "AGENT_RUN_MODEL_CALL_CONTEXT";
   messages: ModelCallMessage[];
   tools?: ModelCallTool[];
-  [key: string]: unknown;
 }
+
+/** Event produced by an agent run runtime boundary. */
+export type AgentRunEvent = AgentRunModelCallContextEvent;
+
+/** Receives events produced within one scoped agent run execution. */
+export type AgentRunEventSink = (event: AgentRunEvent) => void | Promise<void>;

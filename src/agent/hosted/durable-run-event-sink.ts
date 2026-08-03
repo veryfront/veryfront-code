@@ -5,21 +5,44 @@ import {
   MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
 } from "../conversation/run-event-limits.ts";
 import { DurableRunEventPersistenceError } from "../conversation/private-run-event.ts";
-import type { RuntimeRunEventSink } from "../../runtime/run-event-sink-context.ts";
+import type { AgentRunEventSink } from "../../runtime/model-call-context.ts";
 
 const DEFAULT_DURABLE_RUN_EVENT_PERSISTENCE_TIMEOUT_MS = 30_000;
+const persistenceTails = new WeakMap<ConversationRunChunkMirror, Promise<void>>();
 
 export { DurableRunEventPersistenceError } from "../conversation/private-run-event.ts";
 
-function assertWritable(snapshot: ConversationRunMirrorSnapshot): void {
+function assertEnabled(snapshot: ConversationRunMirrorSnapshot): void {
   if (snapshot.disabled) {
     throw new DurableRunEventPersistenceError("Required durable run event mirror is disabled");
   }
-  if (
-    snapshot.hasRetryTimer || snapshot.inFlight || snapshot.pendingEventCount !== 0 ||
-    snapshot.hasFlushTimer
-  ) {
+}
+
+function isDrained(snapshot: ConversationRunMirrorSnapshot): boolean {
+  return !snapshot.hasRetryTimer && !snapshot.inFlight && snapshot.pendingEventCount === 0 &&
+    !snapshot.hasFlushTimer;
+}
+
+function assertDrained(snapshot: ConversationRunMirrorSnapshot): void {
+  assertEnabled(snapshot);
+  if (!isDrained(snapshot)) {
     throw new DurableRunEventPersistenceError("Required durable run event was not flushed");
+  }
+}
+
+async function serializePersistence(
+  mirror: ConversationRunChunkMirror,
+  operation: () => Promise<void>,
+): Promise<void> {
+  const previous = persistenceTails.get(mirror) ?? Promise.resolve();
+  const current = previous.then(operation);
+  persistenceTails.set(mirror, current);
+  try {
+    await current;
+  } finally {
+    if (persistenceTails.get(mirror) === current) {
+      persistenceTails.delete(mirror);
+    }
   }
 }
 
@@ -66,25 +89,37 @@ export function createDurableRunEventSink(input: {
   mirror: ConversationRunChunkMirror;
   abortSignal?: AbortSignal;
   timeoutMs?: number;
-}): RuntimeRunEventSink {
+}): AgentRunEventSink {
   return async (event) => {
     try {
-      assertWritable(input.mirror.getSnapshot());
+      assertEnabled(input.mirror.getSnapshot());
       assertSupportedEventSize(event);
-      await withPersistenceDeadline({
-        abortSignal: input.abortSignal,
-        timeoutMs: input.timeoutMs ?? DEFAULT_DURABLE_RUN_EVENT_PERSISTENCE_TIMEOUT_MS,
-        operation: async (abortSignal) => {
-          await input.mirror.appendEvents([event]);
-          abortSignal.throwIfAborted();
-          assertWritable(
-            await input.mirror.flush({
-              abortSignal,
-              throwOnTimeoutRetry: true,
-            }),
-          );
-          assertWritable(input.mirror.getSnapshot());
-        },
+      await serializePersistence(input.mirror, async () => {
+        await withPersistenceDeadline({
+          abortSignal: input.abortSignal,
+          timeoutMs: input.timeoutMs ?? DEFAULT_DURABLE_RUN_EVENT_PERSISTENCE_TIMEOUT_MS,
+          operation: async (abortSignal) => {
+            const snapshot = input.mirror.getSnapshot();
+            assertEnabled(snapshot);
+            if (!isDrained(snapshot)) {
+              assertDrained(
+                await input.mirror.flush({
+                  abortSignal,
+                  throwOnTimeoutRetry: true,
+                }),
+              );
+            }
+            await input.mirror.appendEvents([{ ...event }]);
+            abortSignal.throwIfAborted();
+            assertDrained(
+              await input.mirror.flush({
+                abortSignal,
+                throwOnTimeoutRetry: true,
+              }),
+            );
+            assertDrained(input.mirror.getSnapshot());
+          },
+        });
       });
     } catch (error) {
       input.mirror.dispose();
