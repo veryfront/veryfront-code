@@ -4,7 +4,10 @@ import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
 import { agentLogger } from "#veryfront/utils";
 import { createError, getErrorMessage, INVALID_ARGUMENT, toError } from "#veryfront/errors";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
-import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import {
+  canIdentifyProxyWithoutHooks,
+  isProxyWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";
 
 interface ContractSchemaShape {
   __zod?: unknown;
@@ -202,6 +205,9 @@ function snapshotMcpConfig(
   if (value === undefined) return undefined;
   if (typeof value !== "object" || value === null) {
     schemaError(toolId, "MCP configuration must be a bounded JSON object");
+  }
+  if (!canIdentifyProxyWithoutHooks) {
+    schemaError(toolId, "MCP configuration must contain only data properties");
   }
   if (isProxyWithoutHooks(value)) {
     schemaError(toolId, "MCP configuration must contain only data properties");

@@ -289,6 +289,69 @@ describe("tool factory", () => {
       );
     });
 
+    it("rejects MCP config objects before descriptor inspection when proxy detection is unavailable", async () => {
+      const script = `
+        Object.defineProperty(globalThis, "caches", {
+          configurable: true,
+          value: {},
+        });
+        Object.defineProperty(globalThis, "WebSocketPair", {
+          configurable: true,
+          value: function WebSocketPair() {},
+        });
+
+        const {
+          canIdentifyProxyWithoutHooks,
+        } = await import("./src/platform/compat/error-introspection.ts");
+        const { tool } = await import("./src/tool/factory.ts");
+
+        let trapCalls = 0;
+        const mcp = new Proxy({ enabled: true }, {
+          ownKeys() {
+            trapCalls += 1;
+            throw new Error("ownKeys trap must not escape");
+          },
+          getOwnPropertyDescriptor() {
+            trapCalls += 1;
+            throw new Error("descriptor trap must not escape");
+          },
+        });
+        const result = {
+          canIdentifyProxyWithoutHooks,
+          trapCalls,
+          message: "",
+        };
+        try {
+          tool({
+            id: "edge-mcp-config",
+            description: "desc",
+            inputSchema: { type: "object" },
+            execute: async () => null,
+            mcp,
+          });
+        } catch (error) {
+          result.message = error instanceof Error ? error.message : String(error);
+          result.trapCalls = trapCalls;
+        }
+        console.log(JSON.stringify(result));
+      `;
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: ["eval", "--config=deno.json", script],
+        cwd: new URL("../../", import.meta.url),
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      const stderr = new TextDecoder().decode(output.stderr);
+      assertEquals(output.code, 0, stderr);
+
+      const result = JSON.parse(new TextDecoder().decode(output.stdout));
+      assertEquals(result, {
+        canIdentifyProxyWithoutHooks: false,
+        trapCalls: 0,
+        message: 'Tool "edge-mcp-config" MCP configuration must contain only data properties',
+      });
+    });
+
     it("snapshots raw schemas and metadata at construction", () => {
       const inputSchema: JsonSchema = {
         type: "object",
