@@ -99,7 +99,7 @@ describe("webhook command", () => {
       Deno.chdir(projectDir);
       const result = await runCommand({
         _: ["webhook", "run", "pull-request"],
-        payload: "closed.json",
+        payload: `${projectDir}/closed.json`,
         json: true,
       } as ParsedArgs);
 
@@ -178,7 +178,7 @@ describe("webhook command", () => {
       Deno.chdir(projectDir);
       const result = await runCommand({
         _: ["webhook", "run", "pull-request"],
-        payload: "opened.json",
+        payload: `${projectDir}/opened.json`,
         json: true,
       } as ParsedArgs);
 
