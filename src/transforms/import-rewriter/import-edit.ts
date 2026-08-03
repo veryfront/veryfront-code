@@ -147,13 +147,13 @@ function buildComputedDynamicImportHelper(
     isFrameworkImport = separator === undefined || separator === "/" || separator === "\\\\" || separator === "%";
   }
   if (isFrameworkImport) {
-    throw new TypeError("Computed #veryfront imports must use a string literal");
+    return ${name}RejectedSpecifier("Computed #veryfront imports must use a string literal");
   }
   const privateFrameworkRoot = ${
       privateFrameworkRoot ? JSON.stringify(privateFrameworkRoot) : "undefined"
     };
   if (privateFrameworkRoot && ${name}HasPrefix(specifier, privateFrameworkRoot)) {
-    throw new TypeError("Computed framework imports must use a string literal");
+    return ${name}RejectedSpecifier("Computed framework imports must use a string literal");
   }`
     : `
   const specifier = value;
@@ -166,6 +166,17 @@ function ${name}HasPrefix(value, prefix) {
   }
   return true;
 }
+${
+    guardFrameworkImports
+      ? `function ${name}RejectedSpecifier(message) {
+  return {
+    [Symbol.toPrimitive]() {
+      throw new TypeError(message);
+    },
+  };
+}`
+      : ""
+  }
 function ${name}(value, parentUrl, modulePath) {
   ${frameworkImportGuard}
   const isRelative = specifier.startsWith("./") || specifier.startsWith("../");
