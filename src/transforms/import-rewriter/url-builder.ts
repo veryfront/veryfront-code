@@ -131,6 +131,26 @@ const DEPENDENCY_PINNING_PATH_MARKER = "_pins/";
 const MODULE_SERVER_PATH_PREFIXES = ["/_vf_modules/"] as const;
 const DEPENDENCY_PINNING_PATH_KEY_PATTERN = /^on:[A-Za-z0-9._-]+$/;
 
+interface UrlComponents {
+  path: string;
+  params: URLSearchParams;
+  hash: string;
+}
+
+function splitUrlComponents(url: string): UrlComponents {
+  const hashIndex = url.indexOf("#");
+  const hash = hashIndex === -1 ? "" : url.slice(hashIndex);
+  const urlWithoutHash = hashIndex === -1 ? url : url.slice(0, hashIndex);
+  const queryIndex = urlWithoutHash.indexOf("?");
+  return {
+    path: queryIndex === -1 ? urlWithoutHash : urlWithoutHash.slice(0, queryIndex),
+    params: new URLSearchParams(
+      queryIndex === -1 ? "" : urlWithoutHash.slice(queryIndex + 1),
+    ),
+    hash,
+  };
+}
+
 function decodeDependencyPinningPathKey(encodedKey: string): string | undefined {
   try {
     const cacheKey = decodeURIComponent(encodedKey);
@@ -152,14 +172,7 @@ export function appendDependencyPinningPathKey(
 ): string {
   if (!dependencyPinningCacheKey?.startsWith("on:")) return url;
 
-  const hashIndex = url.indexOf("#");
-  const hash = hashIndex === -1 ? "" : url.slice(hashIndex);
-  const urlWithoutHash = hashIndex === -1 ? url : url.slice(0, hashIndex);
-  const queryIndex = urlWithoutHash.indexOf("?");
-  const path = queryIndex === -1 ? urlWithoutHash : urlWithoutHash.slice(0, queryIndex);
-  const params = new URLSearchParams(
-    queryIndex === -1 ? "" : urlWithoutHash.slice(queryIndex + 1),
-  );
+  const { path, params, hash } = splitUrlComponents(url);
 
   for (const prefix of MODULE_SERVER_PATH_PREFIXES) {
     const prefixIndex = path.indexOf(prefix);
@@ -303,14 +316,7 @@ export function appendSameOriginSSRDependencyPinningPathKey(
       `${target.pathname}${target.search}${target.hash}`,
       dependencyPinningCacheKey,
     );
-    const hashIndex = moduleUrl.indexOf("#");
-    const hash = hashIndex === -1 ? "" : moduleUrl.slice(hashIndex);
-    const urlWithoutHash = hashIndex === -1 ? moduleUrl : moduleUrl.slice(0, hashIndex);
-    const queryIndex = urlWithoutHash.indexOf("?");
-    const path = queryIndex === -1 ? urlWithoutHash : urlWithoutHash.slice(0, queryIndex);
-    const params = new URLSearchParams(
-      queryIndex === -1 ? "" : urlWithoutHash.slice(queryIndex + 1),
-    );
+    const { path, params, hash } = splitUrlComponents(moduleUrl);
 
     params.set("ssr", "true");
     return `${path}?${params.toString()}${hash}`;
@@ -345,7 +351,7 @@ export function extractDependencyPinningPathKey(
       : encodedKeyAndPath.slice(0, separatorIndex);
     const cacheKey = decodeDependencyPinningPathKey(encodedKey);
     if (!cacheKey) {
-      return { pathname, found: false, malformed: false };
+      return { pathname, found: true, malformed: true };
     }
     if (separatorIndex === -1) {
       return { pathname, found: true, malformed: true };

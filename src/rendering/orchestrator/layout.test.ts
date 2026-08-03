@@ -8,18 +8,20 @@ import { LayoutOrchestrator } from "./layout.ts";
 
 describe("rendering/orchestrator/layout", () => {
   it("threads the trusted local-project identity through MDX layout preloading", async () => {
+    const projectDir = "/<PROJECT_DIR>";
     const originalLoadModuleESM = mdxRenderer.loadModuleESM;
     const mutableRenderer = mdxRenderer as unknown as {
       loadModuleESM: typeof mdxRenderer.loadModuleESM;
     };
     let observedIsLocalProject: unknown;
     mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
-      observedIsLocalProject = options?.isLocalProject;
+      observedIsLocalProject = (options as { isLocalProject?: unknown } | undefined)
+        ?.isLocalProject;
       return Promise.resolve({ default: () => null });
     };
 
     const orchestrator = new LayoutOrchestrator({
-      projectDir: "/<PROJECT_DIR>",
+      projectDir,
       projectId: "local-project",
       projectSlug: "local-project",
       contentSourceId: "local-main",
@@ -34,7 +36,7 @@ describe("rendering/orchestrator/layout", () => {
     });
     const layouts = [{
       kind: "mdx",
-      path: "/<PROJECT_DIR>/layout.mdx",
+      path: `${projectDir}/layout.mdx`,
       bundle: { compiledCode: "export default function Layout() { return null; }" },
     }] as LayoutItem[];
 

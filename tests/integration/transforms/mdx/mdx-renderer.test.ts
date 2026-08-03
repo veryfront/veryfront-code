@@ -75,6 +75,26 @@ describe(
       });
     });
 
+    denoOnlyIt("preserves the positional loadModuleESM signature", async () => {
+      await withIsolatedCache(async (projectDir) => {
+        const compiled = `
+        export const marker = "legacy-signature";
+        export default marker;
+      `;
+
+        const mod = await mdxRenderer.loadModuleESM(
+          compiled,
+          undefined,
+          "test-mdx",
+          projectDir,
+          "test-mdx",
+          "test",
+        );
+
+        assertEquals(mod.default as unknown, "legacy-signature");
+      });
+    });
+
     denoOnlyIt("extractLayout prefers MDXLayout", async () => {
       await withIsolatedCache(async (projectDir) => {
         const compiled = `

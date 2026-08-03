@@ -15,6 +15,7 @@
 import { type Logger, rendererLogger as globalLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import { defineError } from "#veryfront/errors";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import type { ModuleFetcherContext } from "../types.ts";
 import { getModulePathCache } from "../cache/index.ts";
@@ -60,6 +61,22 @@ export {
  * This prevents pods from getting stuck on deeply nested or slow transforms.
  */
 const TRANSFORM_TREE_TIMEOUT_MS = 30_000;
+
+const MALFORMED_DEPENDENCY_PIN = defineError({
+  slug: "dependency-pin-malformed",
+  category: "MODULE",
+  status: 400,
+  title: "Dependency snapshot module path is malformed",
+  suggestion: "Use a valid dependency snapshot module path",
+});
+
+const DEPENDENCY_PIN_MISMATCH = defineError({
+  slug: "dependency-pin-mismatch",
+  category: "MODULE",
+  status: 400,
+  title: "Dependency snapshot module path does not match the request",
+  suggestion: "Use the dependency snapshot path for the active request",
+});
 
 /**
  * Error thrown when transform tree exceeds the timeout.
@@ -114,14 +131,18 @@ function unwrapDependencyPinningPath(
   );
 
   if (extracted.malformed) {
-    throw new TypeError("Malformed dependency snapshot module path");
+    throw MALFORMED_DEPENDENCY_PIN.create({
+      detail: "Malformed dependency snapshot module path",
+    });
   }
   if (!extracted.found && isReservedDependencyPinningPath(pathname)) {
     throw new TypeError("Malformed dependency snapshot module path");
   }
   if (!extracted.found) return modulePath;
   if (extracted.cacheKey !== expectedCacheKey) {
-    throw new TypeError("Dependency snapshot module path does not match the request snapshot");
+    throw DEPENDENCY_PIN_MISMATCH.create({
+      detail: "Dependency snapshot module path does not match the request snapshot",
+    });
   }
 
   // Deliberately asymmetric with the unpinned branch above: a pinned path's

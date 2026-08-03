@@ -6,6 +6,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { join } from "#veryfront/compat/path";
+import { VeryfrontError } from "#veryfront/errors";
 import {
   CircularModuleDependencyError,
   createModuleFetcherContext,
@@ -547,20 +548,29 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     });
 
     for (
-      const [name, path, message] of [
+      const [name, path, slug, message] of [
         [
           "a different request snapshot",
           "/_vf_modules/_pins/on%3Asnapshot-b/components/Child.js",
+          "dependency-pin-mismatch",
           "does not match the request snapshot",
         ],
         [
           "a malformed path",
           "/_vf_modules/_pins/on%3Asnapshot-a",
+          "dependency-pin-malformed",
+          "Malformed dependency snapshot module path",
+        ],
+        [
+          "an invalid reserved pin key",
+          "/_vf_modules/_pins/project-dir/components/Child.js",
+          "dependency-pin-malformed",
           "Malformed dependency snapshot module path",
         ],
         [
           "a reserved path with an invalid snapshot key",
           "/_vf_modules/_pins/not-a-snapshot/components/Child.js",
+          "dependency-pin-malformed",
           "Malformed dependency snapshot module path",
         ],
       ] as const
@@ -580,7 +590,13 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
           dependencyPinningCacheKey: "on:snapshot-a",
         });
 
-        await assertRejects(() => fetchAndCacheModule(path, ctx), TypeError, message);
+        const error = await assertRejects(
+          () => fetchAndCacheModule(path, ctx),
+          VeryfrontError,
+          message,
+        );
+        if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
+        assertEquals(error.slug, slug);
         assertEquals(resolveCount, 0);
       });
     }

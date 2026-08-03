@@ -6,7 +6,7 @@ import {
   fetchProjectEnvVars,
   PROJECT_ENV_RESPONSE_MAX_BYTES,
   projectEnvFetcherInternals,
-} from "./fetcher.ts";
+} from "#veryfront/server/project-env/fetcher.ts";
 
 const INTERNAL_USER_ENV = "VERYFRONT_API_INTERNAL_USER";
 const INTERNAL_PASS_ENV = "VERYFRONT_API_INTERNAL_PASS";
