@@ -16,7 +16,13 @@ import {
 } from "#veryfront/observability/application-errors.ts";
 import { register, unregister } from "#veryfront/extensions/contracts.ts";
 import { SandboxShellToolsProviderName } from "#veryfront/extensions/sandbox/index.ts";
-import { createRemoteMCPToolSource, tool, toolRegistry } from "#veryfront/tool";
+import {
+  createRemoteMCPToolSource,
+  type RemoteMCPToolSourceConfig,
+  type RemoteToolSource,
+  tool,
+  toolRegistry,
+} from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { __resetLogRecordEmitterForTests, agentLogger } from "#veryfront/utils/logger/index.ts";
 import {
@@ -41,7 +47,6 @@ import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
 import { initializeNodeAgentServiceSentryApplicationErrors } from "../service/node-sentry.ts";
 import { getRemoteToolSourceFactory } from "./cloud-agent-config.ts";
-import type { RemoteMCPToolSourceConfig, RemoteToolSource } from "#veryfront/tool";
 
 type CaptureRecord = {
   error: unknown;

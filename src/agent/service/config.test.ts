@@ -38,6 +38,15 @@ describe("agent/agent-service-config", () => {
     assertEquals(agentServiceConfigSchema.parse({}).PORT, 3001);
   });
 
+  it("derives the MCP URL without duplicating path separators", () => {
+    const config = parseAgentServiceConfig({
+      VERYFRONT_API_URL: "https://api.example.com/",
+    });
+
+    assertEquals(config.VERYFRONT_API_URL, "https://api.example.com/");
+    assertEquals(config.VERYFRONT_MCP_URL, "https://api.example.com/mcp");
+  });
+
   it("builds agent service config defaults", () => {
     const config = parseHostedAgentServiceConfig({});
 
