@@ -7,6 +7,7 @@ import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { join } from "#veryfront/compat/path";
 import { VeryfrontError } from "#veryfront/errors";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { withLocalJsonStoreLock } from "./local-json-store-lock.ts";
 import { ragStore } from "./rag-store.ts";
 import { clearEmbeddingProviders, registerEmbeddingProvider } from "./resolve.ts";
 
@@ -121,6 +122,96 @@ describe("ragStore", () => {
         assertEquals(await exists(storagePath), true);
       } finally {
         Object.defineProperty(Deno, "readDir", readDirDescriptor);
+      }
+    });
+  });
+
+  for (const phase of ["open", "iteration"] as const) {
+    it(`retries when a lock directory disappears during readDir ${phase}`, async () => {
+      await withTempDir(async (tempDir) => {
+        const storagePath = join(tempDir, "data", "index.json");
+        const lockDirectory = `${storagePath}.veryfront-rag.lock`;
+        await Deno.mkdir(lockDirectory, { recursive: true });
+        await Deno.writeTextFile(
+          join(lockDirectory, `.owner.recovering.${crypto.randomUUID()}`),
+          `${JSON.stringify({ token: crypto.randomUUID(), createdAtMs: 0 })}\n`,
+        );
+
+        const readDirDescriptor = Object.getOwnPropertyDescriptor(Deno, "readDir");
+        assert(readDirDescriptor !== undefined);
+        const originalReadDir = Deno.readDir.bind(Deno);
+        let changed = false;
+        Object.defineProperty(Deno, "readDir", {
+          ...readDirDescriptor,
+          value: (path: string | URL) => {
+            if (!changed && String(path) === lockDirectory) {
+              changed = true;
+              if (phase === "open") {
+                return {
+                  [Symbol.asyncIterator]() {
+                    return {
+                      async next() {
+                        await Deno.remove(lockDirectory, { recursive: true });
+                        throw new Deno.errors.NotFound("lock directory disappeared");
+                      },
+                    };
+                  },
+                } satisfies AsyncIterable<Deno.DirEntry>;
+              }
+              const entries = originalReadDir(path);
+              return (async function* () {
+                for await (const entry of entries) {
+                  yield entry;
+                  await Deno.remove(lockDirectory, { recursive: true });
+                  throw new Deno.errors.NotFound("lock directory disappeared");
+                }
+              })();
+            }
+            return originalReadDir(path);
+          },
+        });
+
+        try {
+          await withLocalJsonStoreLock(storagePath, async () => undefined);
+          assertEquals(changed, true);
+          assertEquals(await exists(lockDirectory), false);
+        } finally {
+          Object.defineProperty(Deno, "readDir", readDirDescriptor);
+        }
+      });
+    });
+  }
+
+  it("removes an owner-only lock when the lease write fails", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const lockDirectory = `${storagePath}.veryfront-rag.lock`;
+      const writeTextFileDescriptor = Object.getOwnPropertyDescriptor(Deno, "writeTextFile");
+      assert(writeTextFileDescriptor !== undefined);
+      const originalWriteTextFile = Deno.writeTextFile.bind(Deno);
+      Object.defineProperty(Deno, "writeTextFile", {
+        ...writeTextFileDescriptor,
+        value: (
+          path: string | URL,
+          data: string,
+          options?: Deno.WriteFileOptions,
+        ) => {
+          if (String(path).endsWith(".lease")) {
+            return Promise.reject(new Error("lease write failed"));
+          }
+          return originalWriteTextFile(path, data, options);
+        },
+      });
+
+      try {
+        await assertRejects(
+          () => withLocalJsonStoreLock(storagePath, async () => undefined),
+          Error,
+          "lease write failed",
+        );
+        assertEquals(await exists(lockDirectory), false);
+      } finally {
+        Object.defineProperty(Deno, "writeTextFile", writeTextFileDescriptor);
       }
     });
   });

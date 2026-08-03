@@ -109,6 +109,22 @@ async function readBoundedText(fs: FileSystem, path: string): Promise<string | n
   }
 }
 
+async function readDirectoryEntryNames(
+  fs: FileSystem,
+  lockDirectory: string,
+): Promise<string[] | null> {
+  const entryNames: string[] = [];
+  try {
+    for await (const entry of fs.readDir(lockDirectory)) {
+      entryNames.push(entry.name);
+    }
+  } catch (error) {
+    if (isCanonicalNotFoundError(error)) return null;
+    throw error;
+  }
+  return entryNames;
+}
+
 async function readObservation(
   fs: FileSystem,
   lockDirectory: string,
@@ -135,11 +151,11 @@ async function readObservation(
   let ownerFileName: string | null = OWNER_FILE_NAME;
   let ownerText = await readBoundedText(fs, join(lockDirectory, OWNER_FILE_NAME));
   if (ownerText === null) {
-    directoryEntryNames = [];
+    directoryEntryNames = await readDirectoryEntryNames(fs, lockDirectory);
+    if (directoryEntryNames === null) return null;
     const ownerMarkers: string[] = [];
-    for await (const entry of fs.readDir(lockDirectory)) {
-      directoryEntryNames.push(entry.name);
-      if (LOCK_OWNER_MARKER_PATTERN.test(entry.name)) ownerMarkers.push(entry.name);
+    for (const entryName of directoryEntryNames) {
+      if (LOCK_OWNER_MARKER_PATTERN.test(entryName)) ownerMarkers.push(entryName);
     }
     if (ownerMarkers.length > 1) {
       throw new LocalJsonStoreLockError(
@@ -172,10 +188,8 @@ async function readObservation(
     // independently so ambiguous ownership can never make a live lock appear
     // ownerless and stale merely because the directory mtime is old.
     if (directoryEntryNames === null) {
-      directoryEntryNames = [];
-      for await (const entry of fs.readDir(lockDirectory)) {
-        directoryEntryNames.push(entry.name);
-      }
+      directoryEntryNames = await readDirectoryEntryNames(fs, lockDirectory);
+      if (directoryEntryNames === null) return null;
     }
     let newestLeaseMtimeMs: number | null = null;
     for (const entryName of directoryEntryNames) {
