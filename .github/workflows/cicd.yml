@@ -427,6 +427,8 @@ jobs:
             --output veryfront-proxy-linux-x64
       - name: Smoke test proxy binary
         run: bash scripts/build/smoke-proxy-binary.sh ./veryfront-proxy-linux-x64
+      - name: Enforce proxy memory limit
+        run: bash scripts/build/smoke-proxy-memory.sh ./veryfront-proxy-linux-x64
 
   build-binaries:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' }}
@@ -494,9 +496,14 @@ jobs:
             --output ${{ matrix.name }}
 
       - name: Smoke test proxy binary
-        if: matrix.profile == 'proxy'
+        if: matrix.name == 'veryfront-proxy-linux-x64'
         shell: bash
         run: bash scripts/build/smoke-proxy-binary.sh ./${{ matrix.name }}
+
+      - name: Enforce proxy memory limit
+        if: matrix.name == 'veryfront-proxy-linux-x64'
+        shell: bash
+        run: bash scripts/build/smoke-proxy-memory.sh ./veryfront-proxy-linux-x64
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:

@@ -276,6 +276,44 @@ it("compiled proxy smoke covers cache and observability providers", async () => 
   );
 });
 
+it("proxy release enforces the cold-start cgroup budget", async () => {
+  const workflow = await Deno.readTextFile(".github/workflows/cicd.yml");
+  const invocation =
+    "bash scripts/build/smoke-proxy-memory.sh ./veryfront-proxy-linux-x64";
+
+  assertEquals(
+    workflow.split(invocation).length - 1,
+    2,
+    "pull-request and main-release jobs must both enforce proxy memory",
+  );
+  assertEquals(
+    workflow.split("if: matrix.name == 'veryfront-proxy-linux-x64'").length -
+      1,
+    2,
+    "provider and memory smoke must execute only for the native x64 proxy",
+  );
+
+  const smoke = await Deno.readTextFile(
+    "scripts/build/smoke-proxy-memory.sh",
+  );
+  for (
+    const contract of [
+      'memory_limit="${PROXY_MEMORY_LIMIT:-1536m}"',
+      'attempts="${PROXY_MEMORY_ATTEMPTS:-3}"',
+      'container_platform="${PROXY_MEMORY_PLATFORM:-}"',
+      '--memory "$memory_limit"',
+      "{{.State.OOMKilled}}",
+      '"/_proxy/health"',
+    ]
+  ) {
+    assertEquals(
+      smoke.includes(contract),
+      true,
+      `missing proxy memory contract ${contract}`,
+    );
+  }
+});
+
 it("proxy binary smoke runs only for same-repository pull requests", async () => {
   const workflow = await Deno.readTextFile(".github/workflows/cicd.yml");
 
