@@ -1373,7 +1373,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function categorizeNodes(
   nodes: DocNode[],
-  importPath: string,
+  _importPath: string,
 ): CategorizedExports {
   const result: CategorizedExports = {
     functions: [],
@@ -1407,7 +1407,14 @@ function categorizeNodes(
         pushNodeSummary(result.classes, name, desc, sourceHref);
         break;
       case "variable":
-        pushNodeSummary(result.constants, name, desc, sourceHref);
+        pushNodeSummary(
+          !isScreamingSnakeName(name) && isReactComponentVariable(node)
+            ? result.components
+            : result.constants,
+          name,
+          desc,
+          sourceHref,
+        );
         break;
       default:
         break;
@@ -1490,6 +1497,15 @@ function addSourceDocStats(target: SourceDocStats, next: SourceDocStats): void {
 
 function isComponentLikeName(name: string): boolean {
   return /^[A-Z]/.test(name);
+}
+
+function isScreamingSnakeName(name: string): boolean {
+  return /^[A-Z][A-Z0-9_]*$/.test(name) && name.includes("_");
+}
+
+function isReactComponentVariable(node: DocNode): boolean {
+  const sourcePath = getRelativeSourcePath(node.location);
+  return isComponentLikeName(node.name) && sourcePath.endsWith(".tsx");
 }
 
 function pushNodeSummary(

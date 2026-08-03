@@ -127,8 +127,37 @@ describe("generate-api-reference", () => {
         "| `RuntimeMetadata` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L1) |",
         "first-line declarations must keep a source anchor",
       );
-      const providerComponents = markdownSection(providerReference, "Components");
+      const providerComponents = markdownSection(
+        providerReference,
+        "Components",
+      );
       const providerConstants = markdownSection(providerReference, "Constants");
+      const chatComponents = markdownSection(chatReference, "Components");
+      const chatConstants = markdownSection(chatReference, "Constants");
+      const uiComponents = markdownSection(uiReference, "Components");
+      const uiConstants = markdownSection(uiReference, "Constants");
+      for (const componentName of ["AgentCard", "Chat", "Message"]) {
+        assertEquals(
+          hasExportRow(chatComponents, componentName),
+          true,
+          `${componentName} must be classified as a component`,
+        );
+        assertEquals(
+          hasExportRow(chatConstants, componentName),
+          false,
+          `${componentName} must not be classified as a constant`,
+        );
+      }
+      assertEquals(
+        hasExportRow(uiComponents, "Tabs"),
+        true,
+        "Tabs must be classified as a component",
+      );
+      assertEquals(
+        hasExportRow(uiConstants, "Tabs"),
+        false,
+        "Tabs must not be classified as a constant",
+      );
       for (
         const constantName of [
           "DEFAULT_VERYFRONT_CLOUD_MODEL_ID",
@@ -338,5 +367,12 @@ function markdownSection(markdown: string, heading: string): string {
   if (start < 0) return "";
   const contentStart = start + startMarker.length;
   const nextHeading = markdown.indexOf("\n### ", contentStart);
-  return markdown.slice(contentStart, nextHeading < 0 ? undefined : nextHeading);
+  return markdown.slice(
+    contentStart,
+    nextHeading < 0 ? undefined : nextHeading,
+  );
+}
+
+function hasExportRow(section: string, name: string): boolean {
+  return section.split("\n").some((line) => line.startsWith(`| \`${name}\` |`));
 }

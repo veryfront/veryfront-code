@@ -392,43 +392,17 @@ async function clearInterruptedTransition(
 async function restoreUnexpectedRecovery(
   fs: FileSystem,
   lockDirectory: string,
-  recoveryDirectory: string,
-  expected: LockObservation,
+  _recoveryDirectory: string,
+  _expected: LockObservation,
 ): Promise<void> {
   if (await fs.exists(lockDirectory)) {
     throw new LocalJsonStoreLockError(
       "RAG store lock ownership changed during stale-lock recovery",
     );
   }
-  const rename = fs.rename?.bind(fs);
-  if (!rename) {
-    throw new LocalJsonStoreLockError(
-      "The native filesystem cannot restore RAG store lock ownership",
-    );
-  }
-  try {
-    await rename(recoveryDirectory, lockDirectory);
-  } catch (cause) {
-    throw new LocalJsonStoreLockError(
-      "RAG store lock ownership changed while stale-lock recovery was being restored",
-      { cause },
-    );
-  }
-
-  let restored: LockObservation | null;
-  try {
-    restored = await readObservation(fs, lockDirectory);
-  } catch (cause) {
-    throw new LocalJsonStoreLockError(
-      "RAG store lock ownership changed while stale-lock recovery was being restored",
-      { cause },
-    );
-  }
-  if (restored === null || !sameGeneration(expected, restored)) {
-    throw new LocalJsonStoreLockError(
-      "RAG store lock ownership changed while stale-lock recovery was being restored",
-    );
-  }
+  throw new LocalJsonStoreLockError(
+    "RAG store lock ownership changed during stale-lock recovery",
+  );
 }
 
 /**

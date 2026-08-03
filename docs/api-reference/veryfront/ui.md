@@ -65,6 +65,7 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `AlertAction` | Trailing action slot for `<Alert>` (button or link). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/alert.tsx#L89) |
 | `AlertContent` | Message body for `<Alert>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/alert.tsx#L70) |
 | `AlertIcon` | Leading icon slot for `<Alert>` (size-4 recommended). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/alert.tsx#L51) |
+| `AppShell` | Compound AppShell. Compose: | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L628) |
 | `Avatar` | Render a user / agent / entity avatar. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/avatar.tsx#L37) |
 | `Badge` | Render a badge. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/badge.tsx#L38) |
 | `Button` | Render an action button. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/button.tsx#L126) |
@@ -81,6 +82,7 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `CollapsibleTrigger` | Toggle through the active disclosure adapter. `asChild` composes onto one child. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L148) |
 | `ColorModeProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L61) |
 | `ColorModeScript` | Inline script to prevent flash of wrong color mode on SSR. Render this in &lt;head&gt; before any content. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L153) |
+| `ColorModeToggle` | Simple toggle button for color mode. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L178) |
 | `Command` | Command root - owns the filter query and item registry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L167) |
 | `CommandDialog` | A Command palette inside a modal Dialog overlay. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L332) |
 | `CommandEmpty` | Shown when the query matches no items. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L468) |
@@ -148,14 +150,19 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `Select` | Select root - owns the selected value, disclosure state, and option registry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L372) |
 | `SelectContent` | Listbox surface - rendered below the trigger while open. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L1075) |
 | `SelectGroup` | Groups related options. Add one SelectLabel or an explicit accessible name. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L1306) |
+| `SelectItem` | A selectable option nested within the root's single SelectContent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L1137) |
 | `SelectLabel` | Non-interactive label; labels its nearest SelectGroup when present. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L1262) |
 | `SelectSeparator` | Divider between option groups. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L1292) |
+| `SelectTrigger` | Trigger - keeps focus while controlling and navigating the listbox. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L935) |
 | `SelectValue` | Displays custom children, the selected label, or a placeholder. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L1053) |
 | `Shimmer` | Render shimmering text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/shimmer.tsx#L27) |
 | `Skeleton` | Render an animated placeholder bar. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/skeleton.tsx#L16) |
+| `Slot` | Render `Slot` - merge props onto its single child element. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/slot.tsx#L198) |
 | `Status` | Render a status dot + label. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/status.tsx#L39) |
 | `Switch` | A toggle switch. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/switch.tsx#L59) |
 | `SwitchField` | A switch with a label + optional description, label-left / switch-right. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/switch.tsx#L92) |
+| `Tabs` | Tablist container - manages active state and passes context to items. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tabs.tsx#L42) |
+| `TabsItem` | Individual tab - renders as a button, or an anchor when `href` is set. Forwards native props/ref and composes the caller's `onClick` with the internal selection (caller's runs first, then the tab activates), so a consumer-supplied handler adds to - never overrides - selection. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tabs.tsx#L81) |
 | `Tag` | Static metadata chip. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tag.tsx#L16) |
 | `TagButton` | Tag rendered as a button. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tag.tsx#L50) |
 | `TagGroup` | Wrapping container for a row of tags. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tag.tsx#L67) |
@@ -291,21 +298,14 @@ export default function App({ children }: { children: React.ReactNode }) {
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `AppShell` | Compound AppShell. Compose: | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L628) |
 | `badgeVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/badge.tsx#L13) |
 | `buttonVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/button.tsx#L20) |
-| `ColorModeToggle` | Simple toggle button for color mode. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L178) |
 | `cx` | Re-export of the class joiner, matching upstream's `cx`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/cva.ts#L13) |
 | `inputVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/input.tsx#L12) |
 | `labelVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/label.tsx#L17) |
 | `pillVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/pill.tsx#L15) |
-| `SelectItem` | A selectable option nested within the root's single SelectContent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L1137) |
-| `SelectTrigger` | Trigger - keeps focus while controlling and navigating the listbox. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L935) |
 | `selectTriggerVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L36) |
-| `Slot` | Render `Slot` - merge props onto its single child element. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/slot.tsx#L198) |
 | `switchTrackVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/switch.tsx#L15) |
-| `Tabs` | Tablist container - manages active state and passes context to items. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tabs.tsx#L42) |
-| `TabsItem` | Individual tab - renders as a button, or an anchor when `href` is set. Forwards native props/ref and composes the caller's `onClick` with the internal selection (caller's runs first, then the tab activates), so a consumer-supplied handler adds to - never overrides - selection. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tabs.tsx#L81) |
 | `textareaVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/textarea.tsx#L11) |
 | `toolbarVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toolbar.tsx#L27) |
 | `useAppShell` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L108) |

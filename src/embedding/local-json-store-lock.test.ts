@@ -25,23 +25,50 @@ async function seedExpiredLock(storagePath: string): Promise<SeededLock> {
   return { lockDirectory, ownerToken, ownerLeasePath };
 }
 
-async function waitUntil(predicate: () => boolean | Promise<boolean>): Promise<void> {
-  const deadline = Date.now() + 2_000;
-  while (!await predicate()) {
-    if (Date.now() >= deadline) throw new Error("Timed out waiting for lock test state");
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-}
-
-async function makeEveryLeaseExpired(lockDirectory: string): Promise<void> {
-  for await (const entry of Deno.readDir(lockDirectory)) {
-    if (entry.name.endsWith(".lease")) {
-      await Deno.utime(join(lockDirectory, entry.name), new Date(0), new Date(0));
-    }
-  }
-}
-
 describe("local JSON RAG store lock generations", () => {
+  it("fails closed without overwriting an empty lock directory created during recovery restoration", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const seeded = await seedExpiredLock(storagePath);
+      const recoveryDirectory = `${seeded.lockDirectory}.recovering`;
+      const renameDescriptor = Object.getOwnPropertyDescriptor(Deno, "rename");
+      assert(renameDescriptor !== undefined);
+      const originalRename = Deno.rename.bind(Deno);
+      let createdReplacement = false;
+      let restorationAttempted = false;
+      Object.defineProperty(Deno, "rename", {
+        ...renameDescriptor,
+        value: async (from: string | URL, to: string | URL) => {
+          const fromPath = String(from);
+          const toPath = String(to);
+          if (fromPath === seeded.lockDirectory && toPath === recoveryDirectory) {
+            await Deno.remove(seeded.ownerLeasePath);
+          }
+          if (fromPath === recoveryDirectory && toPath === seeded.lockDirectory) {
+            restorationAttempted = true;
+            createdReplacement = true;
+            await Deno.mkdir(seeded.lockDirectory);
+          }
+          await originalRename(from, to);
+        },
+      });
+
+      try {
+        await assertRejects(
+          () => withLocalJsonStoreLock(storagePath, async () => undefined),
+          LocalJsonStoreLockError,
+          "ownership changed during stale-lock recovery",
+        );
+        assertEquals(createdReplacement, false);
+        assertEquals(restorationAttempted, false);
+        assertEquals(await exists(seeded.lockDirectory), false);
+        assertEquals(await exists(recoveryDirectory), true);
+      } finally {
+        Object.defineProperty(Deno, "rename", renameDescriptor);
+      }
+    });
+  });
+
   it("fails closed when another owner appears while an unexpected recovery is restored", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");
@@ -86,11 +113,12 @@ describe("local JSON RAG store lock generations", () => {
         await assertRejects(
           () => withLocalJsonStoreLock(storagePath, async () => undefined),
           LocalJsonStoreLockError,
-          "ownership changed while stale-lock recovery was being restored",
+          "ownership changed during stale-lock recovery",
         );
         assertEquals(moved, true);
-        assertEquals(collided, true);
-        assertEquals(await exists(seeded.lockDirectory), true);
+        assertEquals(collided, false);
+        assertEquals(await exists(seeded.lockDirectory), false);
+        assertEquals(await exists(recoveryDirectory), true);
       } finally {
         Object.defineProperty(Deno, "rename", renameDescriptor);
       }
@@ -99,7 +127,7 @@ describe("local JSON RAG store lock generations", () => {
 
   for (const mutation of ["add", "remove", "replace"] as const) {
     const pastTense = mutation === "add" ? "added" : mutation === "remove" ? "removed" : "replaced";
-    it(`restores a stale lock when a lease is ${pastTense} before the move`, async () => {
+    it(`fails closed when a lease is ${pastTense} before the recovery move`, async () => {
       await withTempDir(async (tempDir) => {
         const storagePath = join(tempDir, "data", "index.json");
         const seeded = await seedExpiredLock(storagePath);
@@ -139,31 +167,18 @@ describe("local JSON RAG store lock generations", () => {
           },
         });
 
-        let settled = false;
         try {
-          const pending = withLocalJsonStoreLock(storagePath, async () => undefined).finally(() => {
-            settled = true;
-          });
-          await waitUntil(() => restores === 1);
-          assertEquals(await exists(seeded.lockDirectory), true);
-
-          if (mutation === "remove") {
-            await pending;
-          } else {
-            // A valid owner that points at another token cannot make a fresh
-            // foreign lease stale. Every observed lease governs recovery.
-            await new Promise((resolve) => setTimeout(resolve, 50));
-            assertEquals(settled, false);
-            assertEquals(await exists(foreignLeasePath), true);
-            await makeEveryLeaseExpired(seeded.lockDirectory);
-            await pending;
-          }
+          await assertRejects(
+            () => withLocalJsonStoreLock(storagePath, async () => undefined),
+            LocalJsonStoreLockError,
+            "ownership changed during stale-lock recovery",
+          );
 
           assertEquals(mutated, true);
-          assertEquals(restores, 1);
-          assertEquals(recoveryMoves >= 2, true);
+          assertEquals(restores, 0);
+          assertEquals(recoveryMoves, 1);
           assertEquals(await exists(seeded.lockDirectory), false);
-          assertEquals(await exists(recoveryDirectory), false);
+          assertEquals(await exists(recoveryDirectory), true);
         } finally {
           Object.defineProperty(Deno, "rename", renameDescriptor);
         }
