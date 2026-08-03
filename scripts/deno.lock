@@ -18,6 +18,7 @@
     "jsr:@ts-morph/common@0.27": "0.27.0",
     "npm:@babel/parser@7.29.2": "7.29.2",
     "npm:@mdx-js/mdx@3.1.1": "3.1.1",
+    "npm:es-module-lexer@2.3.1": "2.3.1",
     "npm:esbuild@0.28.1": "0.28.1"
   },
   "jsr": {
@@ -364,6 +365,9 @@
       "dependencies": [
         "dequal"
       ]
+    },
+    "es-module-lexer@2.3.1": {
+      "integrity": "sha512-shc1dbU90Yl/xq1QrC7QRtfcwURZuVRfPhZbDoldJ1cn1gzDvBaBWlv0eFolj5+0znnPJz5TXLxsN77X/12KTA=="
     },
     "esast-util-from-estree@2.0.0": {
       "integrity": "sha512-4CyanoAudUSBAn5K13H4JhsMH6L9ZP7XbLVe/dKybkxMO7eDyLsT8UHl9TRNrU2Gr9nz+FovfSIjuXWJ81uVwQ==",
