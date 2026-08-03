@@ -104,12 +104,13 @@ export async function fetchModuleViaHTTP(
   const fallbackHost = requireProjectSlug(projectSlug);
   const timeoutMs = requireFetchTimeout(options.timeoutMs ?? HTTP_FETCH_TIMEOUT_MS);
   const fetchFn = options.fetchFn ?? fetch;
-  const moduleUrl = new URL(
+  const moduleServerUrl = new URL(
     options.moduleServerOrigin ?? `http://${fallbackHost}:${fallbackPort}`,
   );
-  if (moduleUrl.protocol !== "http:" && moduleUrl.protocol !== "https:") {
+  if (moduleServerUrl.protocol !== "http:" && moduleServerUrl.protocol !== "https:") {
     throw new TypeError("Module server origin must use http or https");
   }
+  const moduleUrl = new URL(moduleServerUrl.origin);
   moduleUrl.pathname = `/${normalizedPath}`;
   moduleUrl.searchParams.set("ssr", "true");
   if (dependencyPinningCacheKey?.startsWith("on:")) {

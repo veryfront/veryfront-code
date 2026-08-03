@@ -96,6 +96,51 @@ describe("module-fetcher/http-fetcher", () => {
     );
   });
 
+  it("strips credentials, path, query, and fragment from the module server origin", async () => {
+    const warnings: string[] = [];
+    const logger = {
+      debug: () => {},
+      warn: (message: string) => warnings.push(message),
+    } as unknown as Logger;
+    const adapter = {
+      env: {
+        get(key: string) {
+          if (key === "VERYFRONT_DEV_PORT") return "3001";
+          return undefined;
+        },
+      },
+    } as RuntimeAdapter;
+    let requestedUrl = "";
+
+    const result = await fetchModuleViaHTTP(
+      "_vf_modules/shared/Secret.js",
+      adapter,
+      () => Promise.resolve(null),
+      logger,
+      "docs",
+      true,
+      "on:pins-a",
+      {
+        moduleServerOrigin:
+          "https://user:pass@example.test:8443/debug/source.js?token=secret#fragment",
+        fetchFn: ((input) => {
+          requestedUrl = String(input);
+          return Promise.resolve(new Response("missing", { status: 404 }));
+        }) as typeof fetch,
+      },
+    );
+
+    assertEquals(result, null);
+    assertEquals(
+      requestedUrl,
+      "https://example.test:8443/_vf_modules/shared/Secret.js?ssr=true&pins=on%3Apins-a",
+    );
+    assertEquals(warnings.length, 1);
+    assertEquals(warnings[0]?.includes("user:pass"), false);
+    assertEquals(warnings[0]?.includes("token=secret"), false);
+    assertEquals(warnings[0]?.includes("#fragment"), false);
+  });
+
   it("resolves nested HTTP imports with bounded concurrency", async () => {
     const importCount = MAX_MDX_MODULE_TRANSFORM_CONCURRENCY + 4;
     const moduleCode = Array.from(
