@@ -387,6 +387,7 @@ describe("server/handlers/dev/files/dev-file.handler operational failures", () =
 
     assertEquals(result.continue, false);
     assertEquals(result.response?.status, 404);
+    assertEquals(result.response?.headers.get("cache-control"), "no-store");
     assertEquals(await result.response?.text(), "export default null; // File not found");
     assertEquals(events, []);
   });
@@ -493,6 +494,7 @@ describe("server/handlers/dev/files/dev-file.handler operational failures", () =
       assertEquals(result.continue, false);
       assertEquals(result.response?.status, 500);
       assertEquals(bundleCalls, 0);
+      assertEquals(result.response?.headers.get("cache-control"), "no-store");
       assertEquals(result.response?.headers.get("content-type"), "application/javascript");
       const body = await result.response!.text();
       assertEquals(body, "export default null; // Build error: snapshot resolution unavailable");
@@ -522,6 +524,7 @@ describe("server/handlers/dev/files/dev-file.handler operational failures", () =
     assertEquals(result.continue, false);
     assertEquals(result.response?.status, 500);
     assertEquals(bundleCalls, 1);
+    assertEquals(result.response?.headers.get("cache-control"), "no-store");
     assertEquals(result.response?.headers.get("content-type"), "application/javascript");
     const body = await result.response!.text();
     assertEquals(body, "export default null; // Build error: bundler unavailable");

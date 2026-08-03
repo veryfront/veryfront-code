@@ -10,8 +10,57 @@ import {
   DASHBOARD_CSRF_HEADER_NAME,
   DASHBOARD_SESSION_PATH,
 } from "veryfront/extensions/dev-ui/protocol";
+
 const MAX_RETRIES = 2;
 const RETRY_DELAYS_MS = [200, 500];
+const MAX_ERROR_BODY_BYTES = 2_048;
+const MAX_ERROR_DETAIL_CHARS = 512;
+
+async function readErrorBodyPrefix(
+  response: Response,
+  maxBytes: number,
+): Promise<{ text: string; truncated: boolean }> {
+  const body = response.body;
+  if (!body) return { text: "", truncated: false };
+
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let remaining = maxBytes;
+  let text = "";
+  let completed = false;
+  let truncated = false;
+
+  try {
+    while (remaining > 0) {
+      const { done, value } = await reader.read();
+      if (done) {
+        completed = true;
+        text += decoder.decode();
+        break;
+      }
+
+      const selected = value.byteLength <= remaining ? value : value.subarray(0, remaining);
+      text += decoder.decode(selected, { stream: true });
+      remaining -= selected.byteLength;
+      if (selected.byteLength < value.byteLength) {
+        truncated = true;
+        break;
+      }
+    }
+    if (!completed && remaining === 0) truncated = true;
+  } finally {
+    if (!completed) {
+      try {
+        void reader.cancel().catch(() => {});
+      } catch {
+        // Response-stream cancellation is best-effort cleanup.
+      }
+    }
+    reader.releaseLock();
+  }
+
+  return { text, truncated };
+}
 
 export interface DevServerClientOptions {
   port: number;
@@ -68,7 +117,30 @@ export class DevServerClient {
 
   private async pull(path: string, init?: RequestInit): Promise<unknown> {
     const response = await this.fetchWithRetries(path, init);
-    return await response.json();
+    await this.throwForHttpError(path, response);
+
+    const mediaType = response.headers.get("content-type")
+      ?.split(";", 1)[0]
+      ?.trim()
+      .toLowerCase();
+    if (mediaType === "application/json" || mediaType?.endsWith("+json")) {
+      return await response.json();
+    }
+    return await response.text();
+  }
+
+  private async throwForHttpError(path: string, response: Response): Promise<void> {
+    if (response.ok) return;
+
+    const { text, truncated } = await readErrorBodyPrefix(response, MAX_ERROR_BODY_BYTES);
+    const normalized = text.replace(/\s+/g, " ").trim();
+    const detail = normalized.slice(0, MAX_ERROR_DETAIL_CHARS);
+    const suffix = truncated || normalized.length > MAX_ERROR_DETAIL_CHARS ? "…" : "";
+    throw new Error(
+      `Dev server request ${path} failed with HTTP ${response.status}${
+        detail ? `: ${detail}${suffix}` : ""
+      }`,
+    );
   }
 
   private async ensureDashboardMutationSession(): Promise<
@@ -77,6 +149,7 @@ export class DevServerClient {
     if (this.dashboardSession) return this.dashboardSession;
 
     const response = await this.fetchWithRetries(DASHBOARD_SESSION_PATH, { method: "GET" });
+    await this.throwForHttpError(DASHBOARD_SESSION_PATH, response);
     const setCookie = response.headers.get("set-cookie");
     const cookiePair = setCookie?.split(";", 1)[0]?.trim();
     const separator = cookiePair?.indexOf("=") ?? -1;

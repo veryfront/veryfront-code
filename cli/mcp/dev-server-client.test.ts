@@ -3,12 +3,36 @@ import "#veryfront/schemas/_test-setup.ts";
  * Tests for MCP dev server client
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { DevDashboardHandler } from "#veryfront/server/handlers/dev/dashboard/index.ts";
 import type { HandlerContext } from "#veryfront/server/handlers/types.ts";
 import { DevServerClient, type DevServerClientOptions } from "./dev-server-client.ts";
+
+async function withLocalServer(
+  handler: (request: Request) => Response | Promise<Response>,
+  run: (port: number) => Promise<void>,
+): Promise<void> {
+  const controller = new AbortController();
+  const server = Deno.serve(
+    { hostname: "127.0.0.1", port: 0, signal: controller.signal, onListen: () => {} },
+    handler,
+  );
+  const { port } = server.addr as Deno.NetAddr;
+
+  try {
+    await run(port);
+  } finally {
+    controller.abort();
+    await server.finished;
+  }
+}
 
 function localContext(): HandlerContext {
   return {
@@ -56,6 +80,51 @@ describe("mcp/dev-server-client", () => {
       it("has triggerHmr method", () => {
         client = createClient();
         assertEquals(typeof client.triggerHmr, "function");
+      });
+
+      it("parses JSON responses while preserving successful text responses", async () => {
+        let requestCount = 0;
+        await withLocalServer(
+          () => {
+            requestCount++;
+            return requestCount === 1
+              ? new Response('{"ready":true}', {
+                headers: { "content-type": "application/problem+json; charset=utf-8" },
+              })
+              : new Response("export const ready = true;", {
+                headers: { "content-type": "application/javascript" },
+              });
+          },
+          async (port) => {
+            const localClient = new DevServerClient({ port });
+            assertEquals(await localClient.getStats(), { ready: true });
+            assertEquals(await localClient.getStats(), "export const ready = true;");
+          },
+        );
+      });
+
+      it("rejects non-success responses with bounded status-aware diagnostics", async () => {
+        const omittedTail = "must-not-appear";
+        await withLocalServer(
+          () =>
+            new Response(`upstream unavailable ${"x".repeat(4_096)} ${omittedTail}`, {
+              status: 502,
+              headers: { "content-type": "text/plain" },
+            }),
+          async (port) => {
+            const localClient = new DevServerClient({ port });
+            const error = await assertRejects(
+              () => localClient.getStats(),
+              Error,
+              "HTTP 502",
+            ) as Error;
+
+            assertStringIncludes(error.message, "upstream unavailable");
+            assertEquals(error.message.endsWith("…"), true);
+            assertEquals(error.message.includes(omittedTail), false);
+            assertEquals(error.message.length < 700, true);
+          },
+        );
       });
 
       it("bootstraps the dashboard mutation session before triggering HMR over HTTP", async () => {

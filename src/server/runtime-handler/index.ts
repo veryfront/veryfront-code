@@ -73,7 +73,7 @@ import {
   type DevUiAssetProvider,
   DevUiAssetProviderName,
   snapshotDevUiAssetProvider,
-} from "veryfront/extensions/dev-ui";
+} from "#veryfront/extensions/dev-ui";
 
 // Extracted modules
 import {

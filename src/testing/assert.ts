@@ -166,7 +166,7 @@ function createNodeAssertImpl(): AssertImpl {
       errorClassOrMsg?: ErrorClass | string,
       msgIncludesOrMsg?: string,
       _msg?: string,
-    ): Promise<void> {
+    ): Promise<unknown> {
       let threw = false;
       let error: unknown;
 
@@ -184,6 +184,7 @@ function createNodeAssertImpl(): AssertImpl {
         msgIncludesOrMsg,
         "Expected function to reject",
       );
+      return error;
     },
 
     assertStringIncludes(actual: string, expected: string, msg?: string): void {

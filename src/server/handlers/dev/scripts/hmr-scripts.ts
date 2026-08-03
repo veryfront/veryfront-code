@@ -27,6 +27,7 @@ interface HMRScriptOptions {
 function getUpdateJSFunction(logPrefix: string): string {
   return `
   const PROJECT_STYLESHEET_IDS = ['vf-project-css', 'vf-tailwind-css'];
+  let stylesheetUpdateQueue = Promise.resolve();
 
   function getProjectStylesheet() {
     for (const id of PROJECT_STYLESHEET_IDS) {
@@ -123,7 +124,18 @@ function getUpdateJSFunction(logPrefix: string): string {
     return true;
   }
 
-  async function applyStyleUpdate(changedPath, styleHref) {
+  function applyStyleUpdate(changedPath, styleHref) {
+    const update = stylesheetUpdateQueue.then(() =>
+      applyStyleUpdateNow(changedPath, styleHref)
+    );
+    stylesheetUpdateQueue = update.then(
+      () => undefined,
+      () => undefined,
+    );
+    return update;
+  }
+
+  async function applyStyleUpdateNow(changedPath, styleHref) {
     if (styleHref) {
       try {
         const swapped = await swapProjectStylesheet(styleHref);

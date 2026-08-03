@@ -132,7 +132,10 @@ export class DevFileHandler extends BaseHandler {
   private createErrorModule(message: string, status: number): Response {
     return new Response(`export default null; // ${message}`, {
       status,
-      headers: { "content-type": "application/javascript" },
+      headers: {
+        "cache-control": "no-store",
+        "content-type": "application/javascript",
+      },
     });
   }
 }
