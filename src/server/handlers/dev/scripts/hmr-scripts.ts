@@ -26,6 +26,16 @@ interface HMRScriptOptions {
  */
 function getUpdateJSFunction(logPrefix: string): string {
   return `
+  const PROJECT_STYLESHEET_IDS = ['vf-project-css', 'vf-tailwind-css'];
+
+  function getProjectStylesheet() {
+    for (const id of PROJECT_STYLESHEET_IDS) {
+      const stylesheet = document.getElementById(id);
+      if (stylesheet) return stylesheet;
+    }
+    return null;
+  }
+
   function refreshStylesheets(changedPath) {
     // Try targeted stylesheet refresh first
     if (changedPath) {
@@ -40,8 +50,8 @@ function getUpdateJSFunction(logPrefix: string): string {
     }
 
     // Fall back to the generated project stylesheet.
-    const projectStylesheet = document.getElementById('vf-project-css');
-    if (projectStylesheet) {
+    const projectStylesheet = getProjectStylesheet();
+    if (projectStylesheet instanceof HTMLLinkElement) {
       projectStylesheet.href = '/_vf_styles/styles.css?t=' + Date.now();
       dlog('${logPrefix} Project stylesheet refreshed');
       return true;
@@ -50,7 +60,7 @@ function getUpdateJSFunction(logPrefix: string): string {
   }
 
   async function swapProjectStylesheet(nextHref) {
-    const current = document.getElementById('vf-project-css');
+    const current = getProjectStylesheet();
     if (!(current instanceof HTMLLinkElement) || !nextHref || !current.parentNode) {
       return false;
     }
@@ -92,7 +102,7 @@ function getUpdateJSFunction(logPrefix: string): string {
         }
 
         pending.removeAttribute('data-vf-stylesheet-pending');
-        pending.id = 'vf-project-css';
+        pending.id = current.id;
         current.remove();
         resolve(true);
       }

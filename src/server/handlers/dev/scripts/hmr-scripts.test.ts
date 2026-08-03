@@ -9,9 +9,18 @@ describe("server/handlers/dev/scripts/hmr-scripts", () => {
     assertStringIncludes(script, "async function swapProjectStylesheet(nextHref)");
     assertStringIncludes(script, "pending.setAttribute('data-vf-stylesheet-pending', 'true');");
     assertStringIncludes(script, "pending.removeAttribute('data-vf-stylesheet-pending');");
-    assertStringIncludes(script, "pending.id = 'vf-project-css';");
-    assertStringIncludes(script, "document.getElementById('vf-project-css')");
+    assertStringIncludes(script, "pending.id = current.id;");
     assertStringIncludes(script, "current.remove();");
+  });
+
+  it("supports both current and legacy preview stylesheet ids", () => {
+    const script = getHMRScript(3000);
+    assertStringIncludes(
+      script,
+      "const PROJECT_STYLESHEET_IDS = ['vf-project-css', 'vf-tailwind-css'];",
+    );
+    assertStringIncludes(script, "getProjectStylesheet()");
+    assertStringIncludes(script, "document.getElementById(id)");
   });
 
   it("falls back to full reload when CSS hot-swap cannot find a stylesheet", () => {

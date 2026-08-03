@@ -14,7 +14,7 @@ import {
 } from "../runtime/load-skill-tool.ts";
 import type { MutableAgentProjectContext } from "../project/context.ts";
 import {
-  createRuntimeProjectFilesClient,
+  createStrictRuntimeProjectFilesClient,
   type RuntimeProjectFilesClient,
   type RuntimeProjectFilesClientOptions,
   type RuntimeProjectFilesFetch,
@@ -122,7 +122,7 @@ function createProjectFilesClientOptions(
 function createDefaultProjectFilesClient(
   options: HostedProjectSteeringAdapterOptions,
 ): RuntimeProjectFilesClient {
-  return createRuntimeProjectFilesClient(createProjectFilesClientOptions(options));
+  return createStrictRuntimeProjectFilesClient(createProjectFilesClientOptions(options));
 }
 
 function createDefaultProjectSkillLoader(

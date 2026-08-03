@@ -20,6 +20,7 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "baseUrl": "../..",
     "paths": {
+      "veryfront": ["./npm/esm/src/index.d.ts"],
       "react": ["./storybook/node_modules/@types/react"],
       "react/jsx-runtime": ["./storybook/node_modules/@types/react/jsx-runtime"],
       "react/jsx-dev-runtime": ["./storybook/node_modules/@types/react/jsx-dev-runtime"],

@@ -160,8 +160,64 @@ run_rc_publish() {
   done
 }
 
+is_npm_package_not_found() {
+  printf '%s\n' "$1" | grep -Eq '(^|[[:space:]])(E404|404 Not Found)([[:space:]]|$)'
+}
+
+sanitize_npm_lookup_output() {
+  printf '%s\n' "$1" \
+    | sed -E \
+      -e '/^npm error A complete log of this run can be found in:/d' \
+      -e 's#Bearer [A-Za-z0-9._~-]+#Bearer <REDACTED>#g' \
+      -e 's#([?&]token=)[^[:space:]&]+#\1<REDACTED>#g' \
+      -e 's#(_authToken=)[^[:space:]]+#\1<REDACTED>#g' \
+      -e 's#/Users/[^[:space:]]+#<path>#g' \
+      -e 's#/home/[^[:space:]]+#<path>#g' \
+      -e 's#/var/folders/[^[:space:]]+#<path>#g'
+}
+
+ensure_package_names_registered() {
+  MISSING_PACKAGE_NAMES=0
+  PACKAGE_NAME_LOOKUP_FAILURES=0
+
+  for PACKAGE_NAME in $(package_names_from_workspace); do
+    set +e
+    NPM_LOOKUP_OUTPUT="$(npm view "${PACKAGE_NAME}@*" name 2>&1)"
+    NPM_LOOKUP_STATUS=$?
+    set -e
+
+    if [ "${NPM_LOOKUP_STATUS}" -eq 0 ]; then
+      continue
+    fi
+
+    if is_npm_package_not_found "${NPM_LOOKUP_OUTPUT}"; then
+      echo "::error::${PACKAGE_NAME} is not registered on npm." >&2
+      MISSING_PACKAGE_NAMES=1
+      continue
+    fi
+
+    echo "::error::npm registry lookup failed for ${PACKAGE_NAME} (status ${NPM_LOOKUP_STATUS})." >&2
+    SANITIZED_NPM_LOOKUP_OUTPUT="$(sanitize_npm_lookup_output "${NPM_LOOKUP_OUTPUT}")"
+    if [ -n "${SANITIZED_NPM_LOOKUP_OUTPUT}" ]; then
+      printf '%s\n' "${SANITIZED_NPM_LOOKUP_OUTPUT}" >&2
+    fi
+    PACKAGE_NAME_LOOKUP_FAILURES=1
+  done
+
+  if [ "${PACKAGE_NAME_LOOKUP_FAILURES}" -ne 0 ]; then
+    echo "::error::Resolve the npm registry lookup failures above, then rerun the stable release preflight." >&2
+    return 1
+  fi
+
+  if [ "${MISSING_PACKAGE_NAMES}" -ne 0 ]; then
+    echo "::error::The unregistered package names are listed above. Publish each package once with a prerelease version and a non-latest dist-tag, then configure trusted publishing. Do not publish ${VERSION} manually; keep that stable version available for this CI provenance release." >&2
+    return 1
+  fi
+}
+
 run_preflight() {
   require_env VERSION GITHUB_SHA
+  ensure_package_names_registered
 
   for PACKAGE_NAME in $(package_names_from_workspace); do
     if npm view "${PACKAGE_NAME}@${VERSION}" version 2>/dev/null; then

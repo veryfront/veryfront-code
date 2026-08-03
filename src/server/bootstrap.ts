@@ -166,7 +166,7 @@ function createBootstrapPrimeContracts(): Record<string, unknown> {
   };
 }
 
-/** @internal Snapshot the explicit Node WebSocket implementation for this generation. */
+/** @internal Snapshot the extension-provided Node WebSocket implementation for this generation. */
 export function resolveNodeWebSocketServerProviderForBootstrap():
   | Readonly<NodeWebSocketServerProvider>
   | undefined {

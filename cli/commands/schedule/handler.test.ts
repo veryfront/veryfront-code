@@ -1,20 +1,31 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { clearProjectAgentRuntimeRegistries } from "../../../src/agent/project/agent-runtime.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+import { VeryfrontError } from "veryfront/errors";
 import type { CreateScheduleRunFromSourceResult, Run, VeryfrontRunsClient } from "veryfront/runs";
 import { setJsonMode } from "../../shared/json-output.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
 import {
+  createLocalScheduleTimeout,
   formatRemoteScheduleRunOutput,
   handleScheduleCommand,
+  normalizeLocalScheduleInput,
   resolveRemoteScheduleTarget,
   waitForRemoteScheduleRun,
 } from "./handler.ts";
 
-const originalCwd = Deno.cwd();
+// Derived from the module URL rather than load-time Deno.cwd(): under
+// `deno test --parallel` this module can be evaluated while a sibling test
+// file is chdir'd into a soon-to-be-deleted temp directory.
+const originalCwd = new URL("../../../", import.meta.url);
 const originalExit = Deno.exit;
 const originalFetch = globalThis.fetch;
 const originalConsoleLog = console.log;
@@ -271,6 +282,72 @@ describe("schedule command", () => {
       "Remote schedule runs use the source already pushed to Veryfront and do not accept --input.",
     );
   });
+
+  it("propagates a configured local timeout signal to the target", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-schedule-local-timeout-" });
+    const output: string[] = [];
+
+    try {
+      await Deno.mkdir(`${projectDir}/schedules`, { recursive: true });
+      await Deno.mkdir(`${projectDir}/tasks`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/veryfront.config.ts`,
+        "export default {};\n",
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/schedules/timed-task.ts`,
+        [
+          "export default {",
+          '  id: "timed-task",',
+          '  schedule: "0 8 * * *",',
+          '  target: { kind: "task", id: "signal-aware" },',
+          "  timeoutSeconds: 30,",
+          "};",
+          "",
+        ].join("\n"),
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/tasks/signal-aware.ts`,
+        [
+          "export default {",
+          '  name: "Signal aware",',
+          "  run({ signal }) {",
+          "    return { signalPresent: signal instanceof AbortSignal };",
+          "  },",
+          "};",
+          "",
+        ].join("\n"),
+      );
+
+      Deno.chdir(projectDir);
+      setJsonMode(true);
+      console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+      // deno-lint-ignore no-explicit-any
+      (Deno as any).exit = (code = 0) => {
+        throw new ExitSentinel(code);
+      };
+
+      let exitCode: number | undefined;
+      try {
+        await handleScheduleCommand({
+          _: ["schedule", "run", "timed-task"],
+          json: true,
+        } as ParsedArgs);
+      } catch (error) {
+        if (!(error instanceof ExitSentinel)) throw error;
+        exitCode = error.code;
+      }
+
+      assertEquals(exitCode, 0);
+      assertEquals(JSON.parse(output.at(-1) ?? "{}").data.output, {
+        signalPresent: true,
+      });
+    } finally {
+      Deno.chdir(originalCwd);
+      await stopEsbuild();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
 });
 
 describe("remote schedule polling", () => {
@@ -280,6 +357,23 @@ describe("remote schedule polling", () => {
     assertEquals(
       resolveRemoteScheduleTarget(makeRun({ target: "eval:unsupported" }), fallback),
       fallback,
+    );
+    assertEquals(
+      resolveRemoteScheduleTarget(makeRun({ target: "task:Invalid Target" }), fallback),
+      fallback,
+    );
+    assertEquals(
+      resolveRemoteScheduleTarget(makeRun({ target: `task:${"x".repeat(257)}` }), fallback),
+      fallback,
+    );
+    assertThrows(
+      () =>
+        resolveRemoteScheduleTarget(
+          makeRun({ target: "eval:unsupported" }),
+          { kind: "task", id: "Invalid Target" } as never,
+        ),
+      Error,
+      "Remote schedule returned an invalid target.",
     );
   });
 
@@ -341,6 +435,29 @@ describe("remote schedule polling", () => {
     );
 
     assertEquals(run.status, "completed");
+  });
+
+  it("rejects invalid cloud timeout metadata before polling", async () => {
+    let polls = 0;
+    const client = {
+      get: () => {
+        polls++;
+        return Promise.resolve(makeRun());
+      },
+    } satisfies Pick<VeryfrontRunsClient, "get">;
+
+    for (const timeoutSeconds of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      await assertRejects(
+        () =>
+          waitForRemoteScheduleRun(
+            client,
+            makeAcceptedScheduleRun(timeoutSeconds),
+          ),
+        Error,
+        "Remote schedule returned an invalid execution timeout.",
+      );
+    }
+    assertEquals(polls, 0);
   });
 
   it("does not spend the execution timeout while the remote run is queued", async () => {
@@ -514,6 +631,34 @@ describe("remote schedule polling", () => {
     );
   });
 
+  it("falls back when the cloud run records an unsafe timeout", async () => {
+    const client = {
+      get: () =>
+        Promise.resolve(
+          makeRun({
+            status: "running",
+            completed_at: null,
+            timeout_seconds: Number.MAX_SAFE_INTEGER + 1,
+            started_at: "1970-01-01T00:00:00.000Z",
+          }),
+        ),
+    } satisfies Pick<VeryfrontRunsClient, "get">;
+    let now = 0;
+
+    await assertRejects(
+      () =>
+        waitForRemoteScheduleRun(client, makeAcceptedScheduleRun(1), {
+          now: () => now,
+          sleep: () => {
+            now += 32_000;
+            return Promise.resolve();
+          },
+        }),
+      Error,
+      `Timed out waiting for scheduled run: ${runId}`,
+    );
+  });
+
   it("stops polling when a remote run never leaves the queue", async () => {
     const client = {
       get: () =>
@@ -535,5 +680,67 @@ describe("remote schedule polling", () => {
       Error,
       `Timed out waiting for scheduled run to start: ${runId}`,
     );
+  });
+});
+
+describe("local schedule execution boundaries", () => {
+  it("requires input overrides to contain a JSON object", () => {
+    const input = { queue: "priority" };
+    assertEquals(normalizeLocalScheduleInput(input), input);
+
+    for (const value of [null, "priority", 42, true, []]) {
+      const error = assertThrows(
+        () => normalizeLocalScheduleInput(value),
+        VeryfrontError,
+        "--input JSON file must contain a JSON object.",
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "invalid-argument");
+    }
+  });
+
+  it("preserves long execution deadlines with bounded timer chunks", () => {
+    const callbacks: Array<() => void> = [];
+    const delays: number[] = [];
+    const timeout = createLocalScheduleTimeout(5, {
+      maxDelaySeconds: 2,
+      setTimer: (callback, delayMs) => {
+        callbacks.push(callback);
+        delays.push(delayMs);
+        return callbacks.length as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearTimer: () => {},
+    });
+
+    assertEquals(timeout.signal?.aborted, false);
+    assertEquals(delays, [2_000]);
+
+    callbacks.shift()?.();
+    assertEquals(timeout.signal?.aborted, false);
+    assertEquals(delays, [2_000, 2_000]);
+
+    callbacks.shift()?.();
+    assertEquals(timeout.signal?.aborted, false);
+    assertEquals(delays, [2_000, 2_000, 1_000]);
+
+    callbacks.shift()?.();
+    assertEquals(timeout.signal?.aborted, true);
+    assertEquals(timeout.signal?.reason instanceof DOMException, true);
+    assertEquals(timeout.signal?.reason.name, "TimeoutError");
+  });
+
+  it("disposes the active execution timer after completion", () => {
+    const cleared: number[] = [];
+    const timeout = createLocalScheduleTimeout(30, {
+      setTimer: () => 17 as unknown as ReturnType<typeof setTimeout>,
+      clearTimer: (timerId) => cleared.push(timerId as unknown as number),
+    });
+
+    timeout.dispose();
+    timeout.dispose();
+
+    assertEquals(cleared, [17]);
+    assertEquals(timeout.signal?.aborted, false);
+    assertEquals(createLocalScheduleTimeout(undefined).signal, undefined);
   });
 });

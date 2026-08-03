@@ -40,6 +40,10 @@ async function withTempDirAsync(fn: (dir: string) => Promise<void>): Promise<voi
   }
 }
 
+function assertDoesNotExposePath(error: Error, rootDir: string): void {
+  assertEquals(error.message.includes(rootDir), false);
+}
+
 Deno.test("resolveRuntimeBuiltinSkillsDir resolves repo-root skills from dist-like paths", () => {
   withTempDir((rootDir) => {
     const baseDir = resolve(rootDir, "dist", "src", "skills");
@@ -252,17 +256,17 @@ Deno.test("runtime builtin skill reads enforce the shared text-file budget", () 
       largeContent,
     );
 
-    assertThrows(
+    const directoryError = assertThrows(
       () => readRuntimeBuiltinDirectorySkill(rootDir, "directory-skill"),
       RangeError,
       `exceeds ${SKILL_TEXT_FILE_MAX_BYTES} bytes`,
     );
-    assertThrows(
+    const flatError = assertThrows(
       () => readRuntimeBuiltinFlatSkill(rootDir, "flat-skill"),
       RangeError,
       `exceeds ${SKILL_TEXT_FILE_MAX_BYTES} bytes`,
     );
-    assertThrows(
+    const referenceError = assertThrows(
       () =>
         readRuntimeBuiltinSkillReferenceFile(
           rootDir,
@@ -272,6 +276,9 @@ Deno.test("runtime builtin skill reads enforce the shared text-file budget", () 
       RangeError,
       `exceeds ${SKILL_TEXT_FILE_MAX_BYTES} bytes`,
     );
+    for (const error of [directoryError, flatError, referenceError]) {
+      assertDoesNotExposePath(error, rootDir);
+    }
   });
 });
 
@@ -279,11 +286,12 @@ Deno.test("runtime builtin skill reads reject malformed UTF-8", () => {
   withTempDir((rootDir) => {
     Deno.writeFileSync(resolve(rootDir, "writer.md"), new Uint8Array([0xc3, 0x28]));
 
-    assertThrows(
+    const error = assertThrows(
       () => readRuntimeBuiltinFlatSkill(rootDir, "writer"),
       TypeError,
       "must contain valid UTF-8",
     );
+    assertDoesNotExposePath(error, rootDir);
   });
 });
 

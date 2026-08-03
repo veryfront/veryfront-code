@@ -6,6 +6,10 @@
  */
 
 import { REQUEST_TIMEOUT_MS } from "#cli/shared/constants";
+import {
+  DASHBOARD_CSRF_HEADER_NAME,
+  DASHBOARD_SESSION_PATH,
+} from "veryfront/extensions/dev-ui/protocol";
 const MAX_RETRIES = 2;
 const RETRY_DELAYS_MS = [200, 500];
 
@@ -15,6 +19,7 @@ export interface DevServerClientOptions {
 
 export class DevServerClient {
   private baseUrl: string;
+  private dashboardSession?: { cookieHeader: string; csrfToken: string };
 
   constructor(options: DevServerClientOptions) {
     this.baseUrl = `http://localhost:${options.port}`;
@@ -48,24 +53,53 @@ export class DevServerClient {
     return this.pull("/_dev/api/stats");
   }
 
-  triggerHmr(path?: string): Promise<unknown> {
-    return this.pull("/_dev/api/hmr-trigger", {
+  async triggerHmr(path?: string): Promise<unknown> {
+    const session = await this.ensureDashboardMutationSession();
+    return await this.pull("/_dev/api/hmr-trigger", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Cookie": session.cookieHeader,
+        [DASHBOARD_CSRF_HEADER_NAME]: session.csrfToken,
+      },
       body: JSON.stringify(path ? { path } : {}),
     });
   }
 
   private async pull(path: string, init?: RequestInit): Promise<unknown> {
+    const response = await this.fetchWithRetries(path, init);
+    return await response.json();
+  }
+
+  private async ensureDashboardMutationSession(): Promise<
+    { cookieHeader: string; csrfToken: string }
+  > {
+    if (this.dashboardSession) return this.dashboardSession;
+
+    const response = await this.fetchWithRetries(DASHBOARD_SESSION_PATH, { method: "GET" });
+    const setCookie = response.headers.get("set-cookie");
+    const cookiePair = setCookie?.split(";", 1)[0]?.trim();
+    const separator = cookiePair?.indexOf("=") ?? -1;
+    if (!cookiePair || separator <= 0) {
+      throw new Error("Dev server did not issue a dashboard session");
+    }
+
+    this.dashboardSession = {
+      cookieHeader: cookiePair,
+      csrfToken: cookiePair.slice(separator + 1),
+    };
+    return this.dashboardSession;
+  }
+
+  private async fetchWithRetries(path: string, init?: RequestInit): Promise<Response> {
     let lastError: unknown;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const response = await fetch(`${this.baseUrl}${path}`, {
+        return await fetch(`${this.baseUrl}${path}`, {
           ...init,
           signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         });
-        return await response.json();
       } catch (error) {
         lastError = error;
 

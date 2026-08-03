@@ -304,10 +304,12 @@ different requests would share the same store.
 Use chat context providers only when nested components need direct state access.
 Prefer preset props or composition components first.
 
-## Render Markdown directly
+## Present Markdown source safely
 
-Use `veryfront/markdown` when a page or custom message surface needs the same
-renderer without the rest of the chat composition:
+`veryfront/markdown` is the dependency-free Markdown boundary used by chat
+surfaces. Without an installed rich renderer, it preserves the exact source in
+an escaped `<pre><code>` element. This is useful when source visibility matters
+more than semantic formatting:
 
 ````tsx
 import { Markdown } from "veryfront/markdown";
@@ -329,45 +331,74 @@ export default function Result() {
 }
 ````
 
-CommonMark and GitHub Flavored Markdown, including tables, task lists, and
-strikethrough, are server-rendered. Fenced source is also present in the server
-HTML. Shiki highlighting and Mermaid SVG rendering are browser enhancements;
-if either enhancement cannot load or render, the source remains readable.
+The default does not claim that CommonMark, GFM, highlighting, or diagrams were
+rendered. It emits no Markdown-authored links, images, or raw HTML, and the
+escaped source is present in server HTML.
 
-Replace fenced-code rendering without changing inline code:
+### Install a semantic renderer
 
-```tsx
-<Markdown
-  renderCodeBlock={({ language, code }) => (
-    <pre data-language={language}>
-      <code>{code}</code>
-    </pre>
-  )}
->
-  {answer}
-</Markdown>;
-```
-
-Use `components` to replace an HTML element renderer. Consumer entries win
-over the built-in link, table, cell, blockquote, and code-fence renderers:
+Semantic Markdown is an explicit extension capability. Select a trusted
+extension or application adapter that implements `MarkdownRendererProps`, then
+install its component for the relevant subtree. In this example,
+`ProjectMarkdownRenderer` comes from that adapter:
 
 ```tsx
-<Markdown
-  components={{
-    a: ({ href, children }) => <a href={href}>{children}</a>,
-  }}
->
-  {"Review the [Markdown section](#render-markdown-directly)."}
-</Markdown>;
+import { Markdown, MarkdownRendererProvider } from "veryfront/markdown";
+import { ProjectMarkdownRenderer } from "./project-markdown-renderer.tsx";
+
+export default function Result() {
+  return (
+    <MarkdownRendererProvider renderer={ProjectMarkdownRenderer}>
+      <Markdown>{answer}</Markdown>
+    </MarkdownRendererProvider>
+  );
+}
 ```
 
-Raw HTML and unsafe link protocols are not emitted by the default pipeline.
-`remarkPlugins`, `rehypePlugins`, and custom components execute as trusted
-application code and can change those guarantees; never build plugin lists
-from untrusted input. Remote Markdown images can initiate browser requests, so
-override the `img` component when untrusted content needs a stricter image or
-privacy policy. Bound untrusted Markdown size before rendering when the
-application accepts arbitrarily large documents.
+The per-instance `renderer` prop takes precedence over the provider. Pass
+`renderer={null}` when a nested surface must display plain source even though
+an ancestor installed a renderer.
+
+Parser-dependent options are forwarded only after a renderer has been selected.
+For example, replace fenced-code rendering without changing the renderer used
+for the rest of the document:
+
+```tsx
+<MarkdownRendererProvider renderer={ProjectMarkdownRenderer}>
+  <Markdown
+    renderCodeBlock={({ language, code }) => (
+      <pre data-language={language}>
+        <code>{code}</code>
+      </pre>
+    )}
+  >
+    {answer}
+  </Markdown>
+</MarkdownRendererProvider>;
+```
+
+Use `components` to pass framework-neutral element overrides to the selected
+renderer:
+
+```tsx
+<MarkdownRendererProvider renderer={ProjectMarkdownRenderer}>
+  <Markdown
+    components={{
+      a: ({ href, children }) => <a href={href}>{children}</a>,
+    }}
+  >
+    {"Review the [Markdown section](#present-markdown-source-safely)."}
+  </Markdown>
+</MarkdownRendererProvider>;
+```
+
+The extension owns parsing, sanitization, unsafe link protocols, image policy,
+highlighting, and diagram security. Configure parser-specific `remarkPlugins`
+or `rehypePlugins` on that extension, not on core `Markdown`; removed or unknown
+core props are rejected instead of ignored. Renderer failures propagate, so
+handle them with an application error boundary when recovery is required.
+Never derive plugin lists from untrusted input, and bound untrusted source size
+before rendering.
 
 ## Verify it worked
 
@@ -382,8 +413,8 @@ Run `veryfront dev` and open the page that renders the chat UI:
 - A conversation persistence failure renders an alert with the failed
   operation.
 - A chat using `memoryConversationStore()` starts empty after a page reload.
-- Standalone Markdown is semantic in the initial server HTML, and fenced code
-  remains readable before browser enhancement.
+- Standalone Markdown source is escaped and readable in the initial server
+  HTML; an injected renderer is used only in the subtree where it is installed.
 
 If the assistant response is empty, check the dev-server log for provider or
 agent errors and confirm the AG-UI route is mounted.

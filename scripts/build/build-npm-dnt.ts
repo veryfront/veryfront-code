@@ -12,6 +12,7 @@
  */
 
 import { build, emptyDir } from "#dnt";
+import { STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES } from "#veryfront/extensions/first-party-defaults.ts";
 import {
 	BROWSER_SAFE_CLIENT_MODULES,
 	BROWSER_SAFE_DNT_TIMER_MODULES,
@@ -174,9 +175,6 @@ await build({
 		dependencies: {
 			"@types/react": npmDependencyRange(denoConfigSet, "@types/react"),
 			"@types/react-dom": npmDependencyRange(denoConfigSet, "@types/react-dom"),
-			// Root deno.json intentionally rejects core npm imports; ws is a
-			// Node-only dynamic import used by the npm server/HMR path.
-			"ws": "8.21.0",
 		},
 		keywords: [
 			"react",
@@ -313,17 +311,9 @@ await build({
 		pkg.dependencies ??= {};
 		// Add after build-local npm install so releases do not require the
 		// just-built auto-loaded extension versions to already exist in the registry.
-		pkg.dependencies["@veryfront/ext-bundler-esbuild"] = version;
-		pkg.dependencies["@veryfront/ext-content-mdx"] = version;
-		pkg.dependencies["@veryfront/ext-css-tailwind"] = version;
-		pkg.dependencies["@veryfront/ext-dev-ui-react"] = version;
-		// ext-parser-babel provides the CodeParser contract that `veryfront serve`
-		// needs to vet client-page modules for /_veryfront/rsc/module hydration;
-		// without it the endpoint 404s and client pages render without hydrating.
-		pkg.dependencies["@veryfront/ext-parser-babel"] = version;
-		// Skill discovery parses YAML through the extension contract; ship the
-		// first-party implementation while keeping @std/yaml out of core.
-		pkg.dependencies["@veryfront/ext-yaml"] = version;
+		for (const extensionDirectory of STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES) {
+			pkg.dependencies[`@veryfront/${extensionDirectory}`] = version;
+		}
 		pkg.files = ["esm", "script", "bin", "assets", "tsconfig.json", "LICENSE", "NOTICE", "README.md"];
 		pkg.exports["./tsconfig.json"] = "./tsconfig.json";
 		addTypesExportEntries(pkg.exports);
@@ -357,12 +347,9 @@ async function verifyNpmRootImportLifecycle(): Promise<void> {
 async function installBuiltNpmLifecycleConsumer(consumerDirectory: string): Promise<void> {
 	const localPackageDirectories = await Promise.all([
 		Deno.realPath("./npm"),
-		Deno.realPath("./npm/extensions/ext-bundler-esbuild"),
-		Deno.realPath("./npm/extensions/ext-content-mdx"),
-		Deno.realPath("./npm/extensions/ext-css-tailwind"),
-		Deno.realPath("./npm/extensions/ext-dev-ui-react"),
-		Deno.realPath("./npm/extensions/ext-parser-babel"),
-		Deno.realPath("./npm/extensions/ext-yaml"),
+		...STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES.map((extensionDirectory) =>
+			Deno.realPath(`./npm/extensions/${extensionDirectory}`)
+		),
 	]);
 	await Deno.writeTextFile(
 		`${consumerDirectory}/package.json`,
@@ -408,7 +395,7 @@ if (metadata?.name !== "public-api") {
   throw new Error("public runtime Skill parser default unavailable");
 }
 
-const { createEvalCliBuiltinExtensions } = await import(
+const { createBuiltinExtensions, createEvalCliBuiltinExtensions } = await import(
   "./node_modules/veryfront/esm/src/extensions/builtin-extensions.js"
 );
 const { getDeferredExtensionState } = await import(
@@ -431,6 +418,34 @@ const logger = {
   warn() {},
   error() {},
 };
+
+for (const [extensionName, contractName] of [
+  ["ext-css-tailwind", "CSSProcessor"],
+  ["ext-dev-ui-react", "DevUiAssetProvider"],
+  ["ext-node-websocket-ws", "NodeWebSocketServerProvider"],
+]) {
+  const candidate = createBuiltinExtensions().find(
+    (entry) => entry.extension.name === extensionName,
+  );
+  if (!candidate) throw new Error("standard builtin missing: " + extensionName);
+  const standardDeferred = getDeferredExtensionState(candidate);
+  if (!standardDeferred) throw new Error("standard builtin was not deferred: " + extensionName);
+  const standardExtension = await standardDeferred.load(logger);
+  if (!standardExtension) throw new Error("standard builtin failed to load: " + extensionName);
+  let provided;
+  await standardExtension.setup?.({
+    get() {},
+    require(contract) { throw new Error("unexpected extension contract: " + contract); },
+    provide(contract, implementation) {
+      if (contract === contractName) provided = implementation;
+    },
+    config: {},
+    logger,
+  });
+  if (!provided) throw new Error("standard builtin did not provide " + contractName);
+  await standardExtension.teardown?.();
+}
+
 const deferred = getDeferredExtensionState(resolved);
 if (!deferred) throw new Error("bundled MLflow extension was not deferred");
 const extension = await deferred.load(logger);

@@ -58,6 +58,7 @@ describe("agent/service/node-sentry", () => {
   it("resolves Agent Sentry config from the existing service env", () => {
     assertEquals(
       resolveNodeAgentServiceSentryConfig({
+        SENTRY_ENABLED: "true",
         SENTRY_DSN: " https://public@example.ingest.sentry.io/1 ",
         SENTRY_ENVIRONMENT: "staging",
         SENTRY_RELEASE: "release-1",
@@ -73,7 +74,7 @@ describe("agent/service/node-sentry", () => {
     assertStrictEquals(resolveNodeAgentServiceSentryConfig({}), undefined);
   });
 
-  it("honors explicit Sentry enablement while preserving the legacy DSN behavior when unset", () => {
+  it("requires explicit Sentry enablement", () => {
     const dsn = "https://public@errors.example.test/42";
 
     assertEquals(
@@ -84,7 +85,7 @@ describe("agent/service/node-sentry", () => {
       resolveNodeAgentServiceSentryConfig({ SENTRY_ENABLED: "false", SENTRY_DSN: dsn }),
       undefined,
     );
-    assertEquals(resolveNodeAgentServiceSentryConfig({ SENTRY_DSN: dsn })?.dsn, dsn);
+    assertStrictEquals(resolveNodeAgentServiceSentryConfig({ SENTRY_DSN: dsn }), undefined);
   });
 
   it("warns once without exposing secrets when Sentry is explicitly enabled without a DSN", async () => {
@@ -130,7 +131,7 @@ describe("agent/service/node-sentry", () => {
     }
   });
 
-  it("does not warn or load the SDK when disabled or compatibility-unset without a DSN", async () => {
+  it("does not warn or load the SDK when disabled or unset without a DSN", async () => {
     resetNodeAgentServiceSentryForTests();
     const originalWarn = console.warn;
     const warnings: unknown[][] = [];
@@ -148,13 +149,13 @@ describe("agent/service/node-sentry", () => {
         env: { SENTRY_ENABLED: "false", SENTRY_DSN: "   " },
         loadExtension,
       });
-      const compatibilityUnset = await initializeNodeAgentServiceSentryApplicationErrors({
+      const unset = await initializeNodeAgentServiceSentryApplicationErrors({
         env: { SENTRY_DSN: "   " },
         loadExtension,
       });
 
       assertEquals(disabled.enabled, false);
-      assertEquals(compatibilityUnset.enabled, false);
+      assertEquals(unset.enabled, false);
       assertEquals(warnings, []);
       assertEquals(loadCount, 0);
     } finally {
@@ -272,6 +273,7 @@ describe("agent/service/node-sentry", () => {
     const otelRecords: string[] = [];
     const lifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
       env: {
+        SENTRY_ENABLED: "true",
         SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
         SENTRY_ENVIRONMENT: "staging",
       },
@@ -310,6 +312,7 @@ describe("agent/service/node-sentry", () => {
     const otelRecords: string[] = [];
     const lifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
       env: {
+        SENTRY_ENABLED: "true",
         SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
       },
       flushTimeoutMs: 5,
@@ -351,14 +354,14 @@ describe("agent/service/node-sentry", () => {
     const secondReporter = createReporter();
 
     const firstLifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
-      env: { SENTRY_DSN: "https://public@example.ingest.sentry.io/1" },
+      env: { SENTRY_ENABLED: "true", SENTRY_DSN: "https://public@example.ingest.sentry.io/1" },
       loadExtension: () =>
         Promise.resolve({
           createNodeSentryApplicationErrorReporter: () => firstReporter,
         }),
     });
     const secondLifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
-      env: { SENTRY_DSN: "https://public@example.ingest.sentry.io/2" },
+      env: { SENTRY_ENABLED: "true", SENTRY_DSN: "https://public@example.ingest.sentry.io/2" },
       loadExtension: () =>
         Promise.resolve({
           createNodeSentryApplicationErrorReporter: () => secondReporter,
@@ -396,7 +399,7 @@ describe("agent/service/node-sentry", () => {
     const firstReporter = createReporter();
     const secondReporter = createReporter();
     const firstLifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
-      env: { SENTRY_DSN: "https://public@example.ingest.sentry.io/1" },
+      env: { SENTRY_ENABLED: "true", SENTRY_DSN: "https://public@example.ingest.sentry.io/1" },
       loadExtension: () =>
         Promise.resolve({
           createNodeSentryApplicationErrorReporter: () => firstReporter,
@@ -408,7 +411,7 @@ describe("agent/service/node-sentry", () => {
       ) => void)
       | undefined;
     const replacement = initializeNodeAgentServiceSentryApplicationErrors({
-      env: { SENTRY_DSN: "https://public@example.ingest.sentry.io/2" },
+      env: { SENTRY_ENABLED: "true", SENTRY_DSN: "https://public@example.ingest.sentry.io/2" },
       loadExtension: () =>
         new Promise((resolve) => {
           resolveReplacement = resolve;
@@ -451,7 +454,7 @@ describe("agent/service/node-sentry", () => {
   it("preserves the current reporter when replacement loading or construction fails", async () => {
     const reporter = createReporter();
     const lifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
-      env: { SENTRY_DSN: "https://public@example.ingest.sentry.io/1" },
+      env: { SENTRY_ENABLED: "true", SENTRY_DSN: "https://public@example.ingest.sentry.io/1" },
       loadExtension: () =>
         Promise.resolve({
           createNodeSentryApplicationErrorReporter: () => reporter,
@@ -472,7 +475,10 @@ describe("agent/service/node-sentry", () => {
       ) {
         try {
           await initializeNodeAgentServiceSentryApplicationErrors({
-            env: { SENTRY_DSN: "https://public@example.ingest.sentry.io/2" },
+            env: {
+              SENTRY_ENABLED: "true",
+              SENTRY_DSN: "https://public@example.ingest.sentry.io/2",
+            },
             loadExtension,
           });
           throw new Error("Expected replacement initialization to fail");
@@ -509,14 +515,14 @@ describe("agent/service/node-sentry", () => {
       ) => void)
       | undefined;
     const firstInit = initializeNodeAgentServiceSentryApplicationErrors({
-      env: { SENTRY_DSN: "https://public@example.ingest.sentry.io/1" },
+      env: { SENTRY_ENABLED: "true", SENTRY_DSN: "https://public@example.ingest.sentry.io/1" },
       loadExtension: () =>
         new Promise((resolve) => {
           resolveFirst = resolve;
         }),
     });
     const secondLifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
-      env: { SENTRY_DSN: "https://public@example.ingest.sentry.io/2" },
+      env: { SENTRY_ENABLED: "true", SENTRY_DSN: "https://public@example.ingest.sentry.io/2" },
       loadExtension: () =>
         Promise.resolve({
           createNodeSentryApplicationErrorReporter: () => secondReporter,

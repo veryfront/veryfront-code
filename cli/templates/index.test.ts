@@ -76,6 +76,14 @@ describe("cli/templates", () => {
     }
   });
 
+  it("does not make baseline framework extensions starter-specific", async () => {
+    const files = await getTemplate("saas-starter");
+    assertExists(files);
+
+    assertEquals(files.some((file) => file.path === "veryfront.config.ts"), false);
+    assertEquals(templateConfigs["saas-starter"], undefined);
+  });
+
   it("imports globals.css from each styled starter root layout", async () => {
     for (const templateName of STYLED_STARTER_TEMPLATES) {
       const layoutPath = new URL(`./files/${templateName}/app/layout.tsx`, import.meta.url);

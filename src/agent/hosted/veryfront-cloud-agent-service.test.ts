@@ -348,6 +348,7 @@ Deno.test("startAgentService keeps application-error reporting active after read
       .setInitializeApplicationErrorsForTests(async () => {
         const lifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
           env: {
+            SENTRY_ENABLED: "true",
             SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
           },
           flushTimeoutMs: 5,
@@ -468,6 +469,7 @@ Deno.test("startAgentService captures, flushes, and resets terminal startup fail
       .setInitializeApplicationErrorsForTests(async () => {
         const lifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
           env: {
+            SENTRY_ENABLED: "true",
             SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
           },
           flushTimeoutMs: 5,
@@ -703,6 +705,7 @@ Deno.test("hosted nested delegates inherit child scope and durable lineage", () 
   assertEquals(context.conversationId, "child-conversation");
   assertEquals(context.parentRunId, "child-run");
   assertEquals(context.parentMessageId, "child-message");
+  assertEquals("runEventAppendToken" in context, false);
 });
 
 Deno.test("hosted nested delegates clear inherited skill catalog state for empty child selectors", () => {
