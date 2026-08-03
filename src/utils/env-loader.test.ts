@@ -299,9 +299,12 @@ describe("env-loader", () => {
         await loadEnv({ cwd: tempDir, override: true });
 
         const output = getOutput();
+        const entry = JSON.parse(output) as LogEntry;
+        assertEquals(
+          entry.message,
+          "VERYFRONT_API_BASE_URL loaded: https://user:[REDACTED]@api.example.com/api",
+        );
         assertEquals(output.includes("hybrid-basic-secret"), false);
-        assertEquals(output.includes("[REDACTED]"), true);
-        assertEquals(output.includes("api.example.com"), true);
       } finally {
         restore();
         if (previousValue === undefined) deleteEnv("VERYFRONT_API_BASE_URL");
