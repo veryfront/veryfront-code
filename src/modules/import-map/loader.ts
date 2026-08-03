@@ -1,4 +1,5 @@
 import { getConfig, type VeryfrontConfig } from "#veryfront/config";
+import { IMPORT_MAP_INVALID, isVeryfrontError } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
@@ -15,7 +16,6 @@ import type { ImportMapConfig } from "./types.ts";
 // executable modules so replacing shared globals cannot redirect resolution.
 const JSONParse = JSON.parse;
 const ArrayIsArray = Array.isArray;
-const IntrinsicTypeError = TypeError;
 const ObjectCreate = Object.create;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectPrototype = Object.prototype;
@@ -41,6 +41,23 @@ function stringSlice(value: string, start: number, end?: number): string {
   ) as string;
 }
 
+function isFrameworkOwnedSpecifier(specifier: string): boolean {
+  return specifier === "react" || specifier === "react-dom" ||
+    stringStartsWith(specifier, "react/") ||
+    stringStartsWith(specifier, "react-dom/") ||
+    stringStartsWith(specifier, "veryfront/");
+}
+
+function removeFrameworkOwnedMappings(record: Record<string, string>): void {
+  const keys = ReflectOwnKeys(record);
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index];
+    if (typeof key === "string" && isFrameworkOwnedSpecifier(key)) {
+      delete record[key];
+    }
+  }
+}
+
 function readOwnDataProperty(
   value: object,
   key: PropertyKey,
@@ -49,18 +66,20 @@ function readOwnDataProperty(
   const descriptor = ObjectGetOwnPropertyDescriptor(value, key);
   if (!descriptor) return undefined;
   if (!("value" in descriptor)) {
-    throw new IntrinsicTypeError(`${label} cannot contain accessor properties`);
+    throw IMPORT_MAP_INVALID.create({
+      detail: `${label} cannot contain accessor properties`,
+    });
   }
   return descriptor.value;
 }
 
 function assertPlainObject(value: unknown, label: string): asserts value is object {
   if (value === null || typeof value !== "object" || ArrayIsArray(value)) {
-    throw new IntrinsicTypeError(`${label} must be a plain object`);
+    throw IMPORT_MAP_INVALID.create({ detail: `${label} must be a plain object` });
   }
   const prototype = ObjectGetPrototypeOf(value);
   if (prototype !== ObjectPrototype && prototype !== null) {
-    throw new IntrinsicTypeError(`${label} must be a plain object`);
+    throw IMPORT_MAP_INVALID.create({ detail: `${label} must be a plain object` });
   }
 }
 
@@ -140,11 +159,13 @@ function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConf
       descriptor.value as Readonly<Record<string, string>>,
       true,
     );
+    removeFrameworkOwnedMappings(scopes[scope]);
   }
 
   // Framework and React mappings are authoritative, guaranteeing one React
-  // instance and preventing a project npm override from redirecting core code.
-  delete imports["react/"];
+  // instance and preventing exact, prefix, or scoped project overrides from
+  // redirecting core code.
+  removeFrameworkOwnedMappings(imports);
   const defaultImports = DEFAULT_IMPORT_MAP.imports ?? ObjectCreate(null);
   const defaultKeys = ReflectOwnKeys(defaultImports);
   for (let index = 0; index < defaultKeys.length; index++) {
@@ -214,13 +235,24 @@ async function loadDenoJsonImportMap(
 }
 
 function getConfigImportMap(config: VeryfrontConfig): ImportMapConfig | null {
-  assertPlainObject(config, "Veryfront config");
-  const resolve = readOwnDataProperty(config, "resolve", "Veryfront config");
-  if (resolve === undefined) return null;
-  assertPlainObject(resolve, "Veryfront config resolve");
-  const importMap = readOwnDataProperty(resolve, "importMap", "Veryfront config resolve");
-  if (importMap === undefined || importMap === null) return null;
-  return snapshotImportMap(importMap);
+  try {
+    assertPlainObject(config, "Veryfront config");
+    const resolve = readOwnDataProperty(config, "resolve", "Veryfront config");
+    if (resolve === undefined) return null;
+    assertPlainObject(resolve, "Veryfront config resolve");
+    const importMap = readOwnDataProperty(
+      resolve,
+      "importMap",
+      "Veryfront config resolve",
+    );
+    if (importMap === undefined || importMap === null) return null;
+    return snapshotImportMap(importMap);
+  } catch (error) {
+    if (isVeryfrontError(error)) throw error;
+    throw IMPORT_MAP_INVALID.create({
+      detail: "Veryfront config resolve importMap is invalid",
+    });
+  }
 }
 
 export function loadImportMap(

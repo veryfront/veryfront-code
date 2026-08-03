@@ -1937,8 +1937,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
     Deno.env.delete("VERYFRONT_API_BASE_URL");
     globalThis.fetch = ((url, init) => {
       fetchUrls.push(String(url));
+      const headers = init && "headers" in init ? init.headers : undefined;
       assertEquals(
-        new Headers(init?.headers).get("authorization"),
+        new Headers(headers).get("authorization"),
         "Bearer request-scoped-user-token",
       );
       assertEquals(

@@ -40,20 +40,7 @@ function arrayPush(values: string[], value: string): void {
   ReflectApply(ArrayPrototypePush, values, [value]);
 }
 
-/**
- * Build esm.sh URL with proper configuration.
- *
- * @param pkg - Package name (e.g., "react", "lodash")
- * @param version - Package version (optional)
- * @param subpath - Subpath (e.g., "/jsx-runtime")
- * @param options - URL options
- */
-export function buildEsmShUrl(
-  pkg: string,
-  version?: string,
-  subpath?: string,
-  options?: EsmShOptions,
-): string {
+function buildEsmShParams(options?: EsmShOptions): string[] {
   const params: string[] = [];
 
   if (options?.external?.length) {
@@ -72,11 +59,44 @@ export function buildEsmShUrl(
     arrayPush(params, `deps=${arrayJoin(deps, ",")}`);
   }
 
+  return params;
+}
+
+/**
+ * Build esm.sh URL with proper configuration.
+ *
+ * @param pkg - Package name (e.g., "react", "lodash")
+ * @param version - Package version (optional)
+ * @param subpath - Subpath (e.g., "/jsx-runtime")
+ * @param options - URL options
+ */
+export function buildEsmShUrl(
+  pkg: string,
+  version?: string,
+  subpath?: string,
+  options?: EsmShOptions,
+): string {
+  const params = buildEsmShParams(options);
+
   const versionStr = version ? `@${version}` : "";
   const pathStr = subpath ?? "";
   const queryStr = params.length ? `?${arrayJoin(params, "&")}` : "";
 
   return `https://esm.sh/${pkg}${versionStr}${pathStr}${queryStr}`;
+}
+
+/**
+ * Build an esm.sh package-prefix URL. esm.sh's `&option/` form keeps the
+ * trailing slash required by the import-map prefix-matching algorithm.
+ */
+function buildEsmShPrefixUrl(
+  pkg: string,
+  version: string,
+  options?: EsmShOptions,
+): string {
+  const params = buildEsmShParams(options);
+  const optionStr = params.length ? `&${arrayJoin(params, "&")}` : "";
+  return `https://esm.sh/${pkg}@${version}${optionStr}/`;
 }
 
 /**
@@ -95,6 +115,16 @@ export function buildReactUrl(
   });
 }
 
+function buildReactPrefixUrl(
+  pkg: "react" | "react-dom",
+  version: string,
+): string {
+  return buildEsmShPrefixUrl(pkg, version, {
+    external: ["react"],
+    deps: { csstype: CSSTYPE_VERSION },
+  });
+}
+
 /**
  * Get complete React import map for a specific version.
  */
@@ -106,8 +136,10 @@ export function getReactImportMap(version: string): Record<string, string> {
     "react-dom/server": buildReactUrl("react-dom", version, "/server", true),
     "react/jsx-runtime": buildReactUrl("react", version, "/jsx-runtime", true),
     "react/jsx-dev-runtime": buildReactUrl("react", version, "/jsx-dev-runtime", true),
-    // Prefix match for any react/* subpath imports
-    "react/": buildReactUrl("react", version, "/", true),
+    // Prefix matches cover future package exports without allowing a project
+    // import map to redirect React or ReactDOM subpaths.
+    "react/": buildReactPrefixUrl("react", version),
+    "react-dom/": buildReactPrefixUrl("react-dom", version),
   };
 }
 
