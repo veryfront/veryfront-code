@@ -195,12 +195,23 @@ function cloneNodeMapEntries(
   ): Array<[number, unknown]> | undefined => {
     if (rawNodeMapEntries === undefined) return undefined;
     if (!Array.isArray(rawNodeMapEntries)) fail(`${label} must be an array`);
+    const length = ownDataValue(rawNodeMapEntries, "length");
+    if (
+      typeof length !== "number" || !Number.isSafeInteger(length) ||
+      length < 0
+    ) {
+      fail(`${label} has an invalid length`);
+    }
+    if (length > MAX_NODE_MAP_ENTRIES) {
+      fail("nodeMap contains too many entries");
+    }
     const entries: Array<[unknown, unknown]> = [];
-    for (let index = 0; index < rawNodeMapEntries.length; index++) {
+    for (let index = 0; index < length; index++) {
       if (!Object.hasOwn(rawNodeMapEntries, index)) fail(`${label} is sparse`);
       const entry = ownDataValue(rawNodeMapEntries, index);
       if (
-        !Array.isArray(entry) || entry.length !== 2 || !Object.hasOwn(entry, 0) ||
+        !Array.isArray(entry) || ownDataValue(entry, "length") !== 2 ||
+        !Object.hasOwn(entry, 0) ||
         !Object.hasOwn(entry, 1)
       ) {
         fail(`${label} must contain complete [number, value] pairs`);
@@ -223,10 +234,23 @@ function cloneNodeMapEntries(
   let resultEntries: Array<[number, unknown]> | undefined;
   const rawResultNodeMap = ownDataValue(result, "nodeMap");
   if (rawResultNodeMap instanceof Map) {
-    resultEntries = normalize([...Map.prototype.entries.call(rawResultNodeMap)]);
+    const entries: Array<[unknown, unknown]> = [];
+    Map.prototype.forEach.call(
+      rawResultNodeMap,
+      (rawValue: unknown, rawKey: unknown) => {
+        if (entries.length >= MAX_NODE_MAP_ENTRIES) {
+          fail("nodeMap contains too many entries");
+        }
+        entries.push([rawKey, rawValue]);
+      },
+    );
+    resultEntries = normalize(entries);
   } else if (rawResultNodeMap !== undefined) {
     if (!isPlainRecord(rawResultNodeMap)) fail("result.nodeMap must be a Map or record");
     const keys = Object.keys(rawResultNodeMap);
+    if (keys.length > MAX_NODE_MAP_ENTRIES) {
+      fail("nodeMap contains too many entries");
+    }
     // JSON.stringify(Map) produced this exact empty record in origin/main.
     // Prefer the explicit entries array when it is present.
     if (keys.length > 0 || serializedEntries === undefined) {

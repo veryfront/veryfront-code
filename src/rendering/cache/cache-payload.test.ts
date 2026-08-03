@@ -70,6 +70,48 @@ describe("rendering/cache/cache-payload", () => {
     assertThrows(() => serializeCachePayload(payload), TypeError, "value is too large");
   });
 
+  it("rejects oversized node-map arrays before walking their entries", () => {
+    const payload = payloadWithNodeMap();
+    let ordinaryLengthReads = 0;
+    let lengthDescriptorReads = 0;
+    let indexDescriptorReads = 0;
+    const oversized = new Proxy(new Array(100_001), {
+      get(target, key, receiver) {
+        if (key === "length") ordinaryLengthReads++;
+        return Reflect.get(target, key, receiver);
+      },
+      getOwnPropertyDescriptor(target, key) {
+        if (key === "length") lengthDescriptorReads++;
+        if (typeof key === "string" && /^\d+$/.test(key)) {
+          indexDescriptorReads++;
+        }
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+    payload.nodeMapEntries = oversized as Array<[number, unknown]>;
+
+    assertEquals(parseCachePayload(payload), undefined);
+    assertEquals(ordinaryLengthReads, 0);
+    assertEquals(lengthDescriptorReads, 1);
+    assertEquals(indexDescriptorReads, 0);
+  });
+
+  it("reads node-map pair lengths without invoking ordinary property access", () => {
+    const payload = payloadWithNodeMap();
+    let ordinaryLengthReads = 0;
+    const pair = new Proxy<[number, unknown]>([1, { safe: true }], {
+      get(target, key, receiver) {
+        if (key === "length") ordinaryLengthReads++;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    payload.nodeMapEntries = [pair];
+    payload.result.nodeMap = new Map([[1, { safe: true }]]);
+
+    assertEquals(parseCachePayload(payload)?.nodeMapEntries, [[1, { safe: true }]]);
+    assertEquals(ordinaryLengthReads, 0);
+  });
+
   it("round-trips detached Date values without changing cached frontmatter", () => {
     const payload = payloadWithNodeMap();
     const publicationDate = new Date("2026-07-24T08:30:00.000Z");
