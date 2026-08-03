@@ -36,8 +36,16 @@ function asSteps(value: unknown, context: string): YamlRecord[] {
   return value.map((step, index) => asRecord(step, `${context}[${index}]`));
 }
 
+function isReusableWorkflowCall(value: unknown): value is string {
+  return typeof value === "string" &&
+    (/^\.\/\.github\/workflows\/[^/]+\.ya?ml$/.test(value) ||
+      /^[^/\s]+\/[^/\s]+\/\.github\/workflows\/[^/@\s]+\.ya?ml@[^@\s]+$/.test(
+        value,
+      ));
+}
+
 function stepsForSetupScan(job: YamlRecord, context: string): YamlRecord[] {
-  if (job.steps === undefined) return [];
+  if (job.steps === undefined && isReusableWorkflowCall(job.uses)) return [];
   return asSteps(job.steps, `${context}.steps`);
 }
 
@@ -86,24 +94,46 @@ async function workflowPathsUsingSetupDeno(): Promise<string[]> {
 }
 
 describe("setup-deno CI contract", () => {
-  it("skips workflow jobs without steps", () => {
+  it("skips only valid reusable-workflow jobs without steps", () => {
     assertEquals(
       stepsForSetupScan(
         { uses: "./.github/workflows/reusable.yml" },
-        "reusable job",
+        "local reusable job",
       ),
-      [],
-    );
-    assertEquals(
-      stepsForSetupScan({ "runs-on": "ubuntu-latest" }, "ordinary job"),
       [],
     );
     assertEquals(
       stepsForSetupScan(
-        { uses: "actions/checkout@v7" },
-        "invalid job-level action",
+        {
+          uses:
+            "veryfront/veryfront-code/.github/workflows/reusable.yml@main",
+        },
+        "owner reusable job",
       ),
       [],
+    );
+    assertThrows(
+      () => stepsForSetupScan({ "runs-on": "ubuntu-latest" }, "ordinary job"),
+      Error,
+      "ordinary job.steps must be an array",
+    );
+    assertThrows(
+      () =>
+        stepsForSetupScan(
+          { uses: "actions/checkout@v7" },
+          "invalid job-level action",
+        ),
+      Error,
+      "invalid job-level action.steps must be an array",
+    );
+    assertThrows(
+      () =>
+        stepsForSetupScan(
+          { uses: "./.github/workflows/nested/reusable.yml" },
+          "invalid local reusable job",
+        ),
+      Error,
+      "invalid local reusable job.steps must be an array",
     );
     assertThrows(
       () =>
