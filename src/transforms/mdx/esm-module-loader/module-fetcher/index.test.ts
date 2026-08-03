@@ -582,6 +582,7 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
         } as unknown as RuntimeAdapter;
         const ctx = createModuleFetcherContext("/cache", adapter, "/project", "proj-pinned", {
           dependencyPinningCacheKey: "on:snapshot-a",
+          strictMissingModules: false,
         });
 
         const error = await assertRejects(

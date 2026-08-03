@@ -15,7 +15,7 @@
 import { type Logger, rendererLogger as globalLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
-import { defineError } from "#veryfront/errors";
+import { defineError, VeryfrontError } from "#veryfront/errors";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import type { ModuleFetcherContext } from "../types.ts";
 import { getModulePathCache } from "../cache/index.ts";
@@ -108,6 +108,12 @@ function getLog(context?: { logger?: Logger }): Logger {
 
 function isFatalModuleFetchError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
+  if (
+    error instanceof VeryfrontError &&
+    (error.slug === "dependency-pin-malformed" || error.slug === "dependency-pin-mismatch")
+  ) {
+    return true;
+  }
   return error.name === "MissingModuleError" ||
     error instanceof TransformTreeTimeoutError ||
     error instanceof CircularModuleDependencyError ||
