@@ -132,7 +132,7 @@ function buildComputedDynamicImportHelper(
   name: string,
   isSSR: boolean,
   guardFrameworkImports: boolean,
-  privateFrameworkRoot?: string,
+  guardFilesystemImports: boolean,
 ): string {
   const frameworkImportGuard = guardFrameworkImports
     ? `
@@ -149,22 +149,74 @@ function buildComputedDynamicImportHelper(
   if (isFrameworkImport) {
     return ${name}RejectedSpecifier("Computed #veryfront imports must use a string literal");
   }
-  const privateFrameworkRoot = ${
-      privateFrameworkRoot ? JSON.stringify(privateFrameworkRoot) : "undefined"
-    };
-  if (privateFrameworkRoot && ${name}HasPrefix(specifier, privateFrameworkRoot)) {
-    return ${name}RejectedSpecifier("Computed framework imports must use a string literal");
+  if (${guardFilesystemImports} && ${name}IsFilesystemSpecifier(specifier)) {
+    return ${name}RejectedSpecifier("Computed filesystem imports must use a string literal");
   }`
     : `
   const specifier = value;
   if (typeof specifier !== "string") return specifier;`;
   return `
-function ${name}HasPrefix(value, prefix) {
-  if (value.length < prefix.length) return false;
+function ${name}HasPrefixAt(value, prefix, offset) {
+  if (value.length - offset < prefix.length) return false;
   for (let index = 0; index < prefix.length; index++) {
-    if (value[index] !== prefix[index]) return false;
+    if (value[offset + index] !== prefix[index]) return false;
   }
   return true;
+}
+function ${name}HasPrefix(value, prefix) {
+  return ${name}HasPrefixAt(value, prefix, 0);
+}
+function ${name}IsSafeModulePath(value, offset) {
+  const modulePrefix = "/_vf_modules/";
+  if (!${name}HasPrefixAt(value, modulePrefix, offset)) return false;
+
+  let segmentStart = offset + 1;
+  for (let index = offset; index <= value.length; index++) {
+    const character = value[index];
+    if (character === "\\\\") return false;
+    if (character === "%") {
+      const high = value[index + 1];
+      const low = value[index + 2];
+      const encodedDotOrSlash = high === "2" &&
+        (low === "e" || low === "E" || low === "f" || low === "F");
+      const encodedBackslash = high === "5" && (low === "c" || low === "C");
+      if (encodedDotOrSlash || encodedBackslash) return false;
+    }
+    if (character === "?" || character === "#" || character === "/" || character === undefined) {
+      const segmentLength = index - segmentStart;
+      if (
+        (segmentLength === 1 && value[segmentStart] === ".") ||
+        (segmentLength === 2 && value[segmentStart] === "." && value[segmentStart + 1] === ".")
+      ) return false;
+      if (character === "?" || character === "#" || character === undefined) break;
+      segmentStart = index + 1;
+    }
+  }
+  return true;
+}
+function ${name}IsFilesystemSpecifier(value) {
+  const isFileUrl = value.length >= 5 &&
+    (value[0] === "f" || value[0] === "F") &&
+    (value[1] === "i" || value[1] === "I") &&
+    (value[2] === "l" || value[2] === "L") &&
+    (value[3] === "e" || value[3] === "E") &&
+    value[4] === ":";
+  if (isFileUrl || value[0] === "\\\\") return true;
+  if (value[0] === "/") {
+    if (value[1] !== "/") return !${name}IsSafeModulePath(value, 0);
+    let pathStart = 2;
+    while (
+      pathStart < value.length && value[pathStart] !== "/" &&
+      value[pathStart] !== "\\\\" && value[pathStart] !== "?" && value[pathStart] !== "#"
+    ) pathStart++;
+    return !${name}IsSafeModulePath(value, pathStart);
+  }
+
+  const first = value[0];
+  const isDriveLetter = first !== undefined &&
+    ((first >= "a" && first <= "z") || (first >= "A" && first <= "Z"));
+  return isDriveLetter && value[1] === ":" &&
+    (value[2] === "/" || value[2] === "\\\\");
 }
 ${
     guardFrameworkImports
@@ -267,7 +319,7 @@ export function applyComputedDynamicImportPinning(
   options: {
     ssr?: boolean;
     guardFrameworkImports?: boolean;
-    privateFrameworkRoot?: string;
+    guardFilesystemImports?: boolean;
   } = {},
 ): string {
   // A project can write the marker itself, so it is not proof that the
@@ -297,7 +349,7 @@ export function applyComputedDynamicImportPinning(
       helperName,
       options.ssr === true,
       options.guardFrameworkImports === true,
-      options.privateFrameworkRoot,
+      options.guardFilesystemImports === true,
     )
   }\n`;
   return restoreMaskedUrls(result, parsed.urlMap);

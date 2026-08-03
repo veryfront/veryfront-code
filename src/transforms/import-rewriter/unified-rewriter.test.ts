@@ -218,22 +218,40 @@ describe("rewriteImports with the default strategies", () => {
     assertStringIncludes(error.message, "Computed #veryfront imports must use a string literal");
   });
 
-  it("rejects a computed framework file URL before native resolution", async () => {
-    const projectModule = await loadTransformedProjectModule(
-      [
-        `const target = import.meta.resolve("#veryfront/agent/hosted/internal/control-plane-mcp-source.ts");`,
-        `export const load = () => import(target);`,
-      ].join("\n"),
-      "resolved-file-url",
-    );
-    const error = await assertRejects(
-      () => Promise.resolve().then(() => projectModule.load()),
-      Error,
-    );
+  for (
+    const [variant, targetExpression] of [
+      ["canonical", "resolved"],
+      ["uppercase scheme", '"FILE:" + resolved.slice(5)'],
+      ["encoded path", 'resolved.replace("/src/", "/%73rc/")'],
+      ["localhost authority", 'resolved.replace("file:///", "file://localhost/")'],
+      ["dot segments", 'resolved.replace("/src/", "/src/../src/")'],
+      ["pathname", "new URL(resolved).pathname"],
+      ["Windows drive", '"C:\\\\framework\\\\private.ts"'],
+      ["module-root traversal", '"/_vf_modules/../private.ts"'],
+      ["encoded module-root traversal", '"/_vf_modules/%2e%2e/private.ts"'],
+    ] as const
+  ) {
+    it(`rejects a computed framework ${variant} file specifier`, async () => {
+      const projectModule = await loadTransformedProjectModule(
+        [
+          `const resolved = import.meta.resolve("#veryfront/agent/hosted/internal/control-plane-mcp-source.ts");`,
+          `const target = ${targetExpression};`,
+          `export const load = () => import(target);`,
+        ].join("\n"),
+        `resolved-file-${variant.replaceAll(" ", "-")}`,
+      );
+      const error = await assertRejects(
+        () => Promise.resolve().then(() => projectModule.load()),
+        Error,
+      );
 
-    assertInstanceOf(error, Error);
-    assertStringIncludes(error.message, "Computed framework imports must use a string literal");
-  });
+      assertInstanceOf(error, Error);
+      assertStringIncludes(
+        error.message,
+        "Computed filesystem imports must use a string literal",
+      );
+    });
+  }
 
   it("preserves ordinary computed dynamic imports", async () => {
     const projectModule = await loadTransformedProjectModule(
