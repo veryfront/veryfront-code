@@ -1124,10 +1124,6 @@ describe("Select", () => {
       );
       assertEquals(rootElement.contains(trigger), true);
       assertEquals(trigger.disabled, true);
-      await waitFor(
-        () => openChanges.length === 1,
-        "default-open duplicate close event",
-      );
       assertEquals(openChanges, [false]);
     } finally {
       await unmount(root);

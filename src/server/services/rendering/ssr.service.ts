@@ -205,6 +205,7 @@ export class SSRService implements SSRServiceLike {
       return {
         status: HTTP_UNAVAILABLE,
         html: ErrorPages.serverError("Isolated rendering is temporarily unavailable."),
+        htmlProvenance: "framework",
         isStreaming: false,
         cacheStrategy: "no-cache",
         slug,

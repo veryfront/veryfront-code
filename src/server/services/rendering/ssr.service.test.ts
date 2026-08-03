@@ -300,6 +300,7 @@ describe("server/services/rendering/ssr.service", () => {
 
         assertEquals(result.status, 503);
         assertEquals(result.cacheStrategy, "no-cache");
+        assertEquals(result.htmlProvenance, "framework");
         assertEquals(rendererRequests, 0);
       });
 
