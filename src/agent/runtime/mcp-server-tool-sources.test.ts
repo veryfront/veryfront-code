@@ -15,6 +15,7 @@ import {
 } from "./mcp-server-tool-sources.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { runWithExactRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 Deno.test("getRequestedUnresolvedBooleanToolNames keeps legacy delegation local", () => {
   assertEquals(
@@ -72,15 +73,14 @@ Deno.test("getRuntimeRemoteToolSources builds MCP sources with bearer auth and a
     tools: { search_docs: true },
     mcpServers: [{
       id: "docs",
-      transport: { type: "http", url: "https://docs.example.com/mcp" },
+      transport: { type: "http", url: "https://93.184.216.34/mcp" },
       auth: { type: "bearer", token: () => "docs-token" },
       toolPolicy: { allow: ["search_docs"] },
-      fetch: createMcpFetch(calls),
     }],
   });
 
   assertEquals(sources?.length, 1);
-  assertEquals(await sources?.[0]?.listTools(), [{
+  assertEquals(await withMockFetch(createMcpFetch(calls), () => sources![0]!.listTools()), [{
     name: "search_docs",
     description: "Search docs",
     parameters: { type: "object", properties: {} },
@@ -97,7 +97,6 @@ Deno.test("getRuntimeRemoteToolSources blocks denied MCP tool execution", async 
       id: "docs",
       transport: { type: "http", url: "https://docs.example.com/mcp" },
       toolPolicy: { deny: ["delete_docs"] },
-      fetch: createMcpFetch(calls),
     }],
   });
 

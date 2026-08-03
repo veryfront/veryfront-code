@@ -314,6 +314,59 @@ describe("S3BlobStorage", () => {
     assert(client.commands[3] instanceof PutObjectCommand);
   });
 
+  it("coalesces concurrent bucket initialization", async () => {
+    let releaseBucketCheck: (() => void) | undefined;
+    const bucketCheck = new Promise<void>((resolve) => {
+      releaseBucketCheck = resolve;
+    });
+    let bucketChecks = 0;
+    const client = new StubClient(async (command) => {
+      if (command instanceof HeadBucketCommand) {
+        bucketChecks++;
+        await bucketCheck;
+      }
+      return {};
+    });
+    const storage = new S3BlobStorage(config({ autoCreateBucket: true }), { client });
+
+    const first = storage.put(new Uint8Array([1]), { id: "first" });
+    const second = storage.put(new Uint8Array([2]), { id: "second" });
+    await Promise.resolve();
+    assertEquals(bucketChecks, 1);
+
+    releaseBucketCheck?.();
+    await Promise.all([first, second]);
+    assertEquals(bucketChecks, 1);
+    assertEquals(
+      client.commands.filter((command) => command instanceof PutObjectCommand).length,
+      2,
+    );
+  });
+
+  it("allows bucket initialization to retry after a provider failure", async () => {
+    const providerFailure = new Error("bucket check failed");
+    let bucketChecks = 0;
+    const client = new StubClient((command) => {
+      if (command instanceof HeadBucketCommand) {
+        bucketChecks++;
+        if (bucketChecks === 1) throw providerFailure;
+      }
+      return {};
+    });
+    const storage = new S3BlobStorage(config({ autoCreateBucket: true }), { client });
+
+    let caught: unknown;
+    try {
+      await storage.put(new Uint8Array([1]), { id: "first" });
+    } catch (error) {
+      caught = error;
+    }
+    assertStrictEquals(caught, providerFailure);
+
+    await storage.put(new Uint8Array([2]), { id: "second" });
+    assertEquals(bucketChecks, 2);
+  });
+
   it("does not perform bucket discovery unless auto-create is selected", async () => {
     const client = new StubClient();
     const storage = new S3BlobStorage(config(), { client });

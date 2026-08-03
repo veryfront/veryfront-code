@@ -15,6 +15,8 @@ const LOG_PREFIX = "[GitHubApiClient]";
 const RATE_LIMIT_WARNING_THRESHOLD = 100;
 const RETRY_JITTER_MAX_MS = 1_000;
 
+class GitHubBlobIntegrityError extends Error {}
+
 interface RateLimitInfo {
   limit: number;
   remaining: number;
@@ -77,6 +79,55 @@ export class GitHubApiClient {
     return getGitHubBlobResponseSchema().parse(raw);
   }
 
+  async getBlobBytesWithinLimit(
+    sha: string,
+    expectedSize: number,
+    byteLimit: number,
+  ): Promise<Uint8Array> {
+    if (
+      !Number.isSafeInteger(expectedSize) ||
+      expectedSize < 0 ||
+      !Number.isSafeInteger(byteLimit) ||
+      byteLimit <= 0
+    ) {
+      throw new RangeError("GitHub bounded blob sizes must be safe non-negative integers");
+    }
+    if (expectedSize > byteLimit) {
+      throw new RangeError(`GitHub blob exceeds ${byteLimit} bytes`);
+    }
+    const endpoint = `/repos/${this.config.owner}/${this.config.repo}/git/blobs/${sha}`;
+
+    logger.debug(`${LOG_PREFIX} Fetching bounded raw blob`, { sha, expectedSize });
+
+    return await retryWithBackoff(
+      async () => {
+        const response = await fetch(`${this.baseUrl}${endpoint}`, {
+          headers: this.requestHeaders("application/vnd.github.raw+json"),
+        });
+        this.updateRateLimitInfo(response);
+        if (!response.ok) {
+          await response.body?.cancel();
+          throw this.createAPIError(response.status, "", endpoint);
+        }
+        return await this.readExactResponseBytes(response, expectedSize, byteLimit);
+      },
+      {
+        maxAttempts: this.config.retry.maxRetries,
+        initialDelay: this.config.retry.initialDelay,
+        maxDelay: this.config.retry.maxDelay,
+        shouldRetry: (error) => {
+          if (error instanceof GitHubBlobIntegrityError) return false;
+          const err = error instanceof Error ? error : new Error(String(error));
+          return !(this.isClientError(err) && !this.isRateLimitError(err));
+        },
+        computeDelay: (attempt, error) => {
+          const err = error instanceof Error ? error : new Error(String(error));
+          return this.calculateRetryDelay(attempt + 1, err);
+        },
+      },
+    );
+  }
+
   getRateLimitInfo(): RateLimitInfo | null {
     return this.rateLimitInfo;
   }
@@ -87,12 +138,7 @@ export class GitHubApiClient {
     return retryWithBackoff(
       async () => {
         const response = await fetch(url, {
-          headers: {
-            Authorization: `Bearer ${this.config.token}`,
-            Accept: "application/vnd.github.v3+json",
-            "User-Agent": "veryfront-server",
-            "X-GitHub-Api-Version": "2022-11-28",
-          },
+          headers: this.requestHeaders("application/vnd.github.v3+json"),
         });
 
         this.updateRateLimitInfo(response);
@@ -128,6 +174,75 @@ export class GitHubApiClient {
         },
       },
     );
+  }
+
+  private requestHeaders(accept: string): Record<string, string> {
+    return {
+      Authorization: `Bearer ${this.config.token}`,
+      Accept: accept,
+      "User-Agent": "veryfront-server",
+      "X-GitHub-Api-Version": "2022-11-28",
+    };
+  }
+
+  private async readExactResponseBytes(
+    response: Response,
+    expectedSize: number,
+    byteLimit: number,
+  ): Promise<Uint8Array> {
+    const declaredLength = response.headers.get("Content-Length");
+    if (declaredLength !== null) {
+      const parsedLength = Number(declaredLength);
+      if (!Number.isSafeInteger(parsedLength) || parsedLength < 0 || parsedLength > byteLimit) {
+        await response.body?.cancel();
+        throw new GitHubBlobIntegrityError(
+          `GitHub raw blob exceeds ${byteLimit} bytes before streaming`,
+        );
+      }
+    }
+    const body = response.body;
+    if (body === null) {
+      if (expectedSize === 0) return new Uint8Array();
+      throw new GitHubBlobIntegrityError("GitHub raw blob response has no body");
+    }
+
+    const bytes = new Uint8Array(expectedSize);
+    const reader = body.getReader();
+    let offset = 0;
+    try {
+      while (true) {
+        const result = await reader.read();
+        if (result.done) break;
+        if (!(result.value instanceof Uint8Array)) {
+          throw new GitHubBlobIntegrityError("GitHub raw blob returned a non-byte chunk");
+        }
+        if (result.value.byteLength > expectedSize - offset) {
+          throw new GitHubBlobIntegrityError(
+            `GitHub raw blob does not match its admitted ${expectedSize}-byte tree entry`,
+          );
+        }
+        bytes.set(result.value, offset);
+        offset += result.value.byteLength;
+      }
+    } catch (error) {
+      try {
+        await reader.cancel(error);
+      } catch (cancelError) {
+        throw new AggregateError(
+          [error, cancelError],
+          "GitHub raw blob read and cancellation both failed",
+        );
+      }
+      throw error;
+    } finally {
+      reader.releaseLock();
+    }
+    if (offset !== expectedSize) {
+      throw new GitHubBlobIntegrityError(
+        `GitHub raw blob does not match its admitted ${expectedSize}-byte tree entry`,
+      );
+    }
+    return bytes;
   }
 
   private updateRateLimitInfo(response: Response): void {

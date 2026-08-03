@@ -82,6 +82,9 @@ function createHandlerContext(
       mode: input.mode ?? "preview",
       branch: "main",
     },
+    // These cache-lifecycle tests deliberately exercise the dedicated-runtime
+    // host loader; worker isolation has its own contract tests.
+    allowHostProjectCodeExecution: true,
   };
 }
 

@@ -10,6 +10,7 @@ import type {
 } from "../types.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { INVALID_ARGUMENT, NETWORK_ERROR, TOKEN_STORAGE_ERROR } from "#veryfront/errors";
+import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { base64urlEncodeBytes, logger as baseLogger } from "#veryfront/utils";
 import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/index.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
@@ -387,7 +388,7 @@ async function fetchWithStrictAbort(
   signal: AbortSignal,
 ): Promise<Response> {
   throwIfAborted(signal);
-  const pending = Promise.resolve().then(() => fetch(input, { ...init, signal }));
+  const pending = Promise.resolve().then(() => guardedOutboundFetch(input, { ...init, signal }));
   try {
     return await awaitAbortable(pending, signal);
   } catch (error) {

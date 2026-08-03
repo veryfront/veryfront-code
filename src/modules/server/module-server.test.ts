@@ -11,6 +11,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   buildServerTimingHeader,
   finalizeRequestProfiling,
@@ -230,10 +231,10 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     const secret = "sensitive adapter failure";
     const adapter = createMockAdapter();
     adapter.fs.files.set(sourcePath, "export const page = true;");
-    const originalReadFile = adapter.fs.readFile.bind(adapter.fs);
-    adapter.fs.readFile = (path) => {
+    const originalReadFile = adapter.fs.readFileBytesWithinLimit!.bind(adapter.fs);
+    adapter.fs.readFileBytesWithinLimit = (path, byteLimit) => {
       if (path === sourcePath) return Promise.reject(new Error(secret));
-      return originalReadFile(path);
+      return originalReadFile(path, byteLimit);
     };
     const request = new Request("http://localhost:3000/_vf_modules/page.js");
     const options = {
@@ -1199,7 +1200,6 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
   it("path-binds same-origin absolute module literals before strict child lookup", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-absolute-module-pins-" });
     const packageJsonPath = `${projectDir}/package.json`;
-    const originalFetch = globalThis.fetch;
 
     try {
       setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
@@ -1216,9 +1216,9 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       await Deno.writeTextFile(
         `${projectDir}/components/Parent.ts`,
         [
-          `export { value as absolute } from "http://localhost:3000/_vf_modules/shared/Absolute.js";`,
-          `export { value as protocol } from "//localhost:3000/_vf_modules/shared/Protocol.js";`,
-          `export { value as foreign } from "https://cdn.example/_vf_modules/shared/Foreign.js";`,
+          `export { value as absolute } from "http://93.184.216.34:3000/_vf_modules/shared/Absolute.js";`,
+          `export { value as protocol } from "//93.184.216.34:3000/_vf_modules/shared/Protocol.js";`,
+          `export { value as foreign } from "https://1.1.1.1/_vf_modules/shared/Foreign.js";`,
         ].join("\n"),
       );
       await Deno.writeTextFile(`${projectDir}/shared/Absolute.ts`, `export const value = "abs";`);
@@ -1227,7 +1227,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       const snapshot = await getDependencyPinningSnapshot(projectDir);
       const encodedKey = encodeURIComponent(snapshot.cacheKey);
       const parentUrl = new URL(
-        `http://localhost:3000/_vf_modules/_pins/${encodedKey}/components/Parent.js`,
+        `http://93.184.216.34:3000/_vf_modules/_pins/${encodedKey}/components/Parent.js`,
       );
       const absolutePath = `/_vf_modules/_pins/${encodedKey}/shared/Absolute.js`;
       const protocolPath = `/_vf_modules/_pins/${encodedKey}/shared/Protocol.js`;
@@ -1239,7 +1239,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       assertStringIncludes(parentCode, protocolPath);
       assertStringIncludes(
         parentCode,
-        "https://cdn.example/_vf_modules/shared/Foreign.js",
+        "https://1.1.1.1/_vf_modules/shared/Foreign.js",
       );
 
       for (const childPath of [absolutePath, protocolPath]) {
@@ -1251,42 +1251,44 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       }
 
       const nestedFetches: string[] = [];
-      globalThis.fetch = async (
-        input: RequestInfo | URL,
-        init?: RequestInit,
-      ): Promise<Response> => {
-        const request = input instanceof Request ? input : new Request(input, init);
-        const requestUrl = new URL(request.url);
-        if (
-          requestUrl.origin === parentUrl.origin &&
-          requestUrl.pathname.startsWith("/_vf_modules/")
-        ) {
-          nestedFetches.push(requestUrl.href);
-          return await serve(request, projectDir);
-        }
-        if (requestUrl.origin === "https://cdn.example") {
-          return new Response(`export const value = "foreign";`, {
-            headers: { "content-type": "application/javascript" },
-          });
-        }
-        return await originalFetch(input, init);
-      };
-
-      const ssrParentUrl = new URL(parentUrl);
-      ssrParentUrl.searchParams.set("ssr", "true");
-      const ssrParentResponse = await serve(new Request(ssrParentUrl), projectDir);
-      assertEquals(ssrParentResponse.status, 200);
-      for (const childName of ["Absolute.js", "Protocol.js"]) {
-        const childFetch = nestedFetches.find((href) =>
-          new URL(href).pathname.endsWith(`/shared/${childName}`)
-        );
-        assertEquals(childFetch !== undefined, true);
-        const childUrl = new URL(childFetch!);
-        assertEquals(childUrl.searchParams.get("ssr"), "true");
-        assertEquals(childUrl.searchParams.get("pins"), snapshot.cacheKey);
-      }
+      await withMockFetch(
+        async (
+          input: RequestInfo | URL,
+          init?: RequestInit,
+        ): Promise<Response> => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const requestUrl = new URL(request.url);
+          if (
+            requestUrl.origin === parentUrl.origin &&
+            requestUrl.pathname.startsWith("/_vf_modules/")
+          ) {
+            nestedFetches.push(requestUrl.href);
+            return await serve(request, projectDir);
+          }
+          if (requestUrl.origin === "https://1.1.1.1") {
+            return new Response(`export const value = "foreign";`, {
+              headers: { "content-type": "application/javascript" },
+            });
+          }
+          throw new Error(`Unexpected module fetch: ${requestUrl.href}`);
+        },
+        async () => {
+          const ssrParentUrl = new URL(parentUrl);
+          ssrParentUrl.searchParams.set("ssr", "true");
+          const ssrParentResponse = await serve(new Request(ssrParentUrl), projectDir);
+          assertEquals(ssrParentResponse.status, 200);
+          for (const childName of ["Absolute.js", "Protocol.js"]) {
+            const childFetch = nestedFetches.find((href) =>
+              new URL(href).pathname.endsWith(`/shared/${childName}`)
+            );
+            assertEquals(childFetch !== undefined, true);
+            const childUrl = new URL(childFetch!);
+            assertEquals(childUrl.searchParams.get("ssr"), "true");
+            assertEquals(childUrl.searchParams.get("pins"), snapshot.cacheKey);
+          }
+        },
+      );
     } finally {
-      globalThis.fetch = originalFetch;
       clearReactVersionCache();
       await Deno.remove(projectDir, { recursive: true });
     }

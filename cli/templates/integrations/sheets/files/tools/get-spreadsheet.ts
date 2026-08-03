@@ -4,7 +4,7 @@ import { createSheetsClient } from "../lib/sheets-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "get-spreadsheet",
+  id: "sheets-get-spreadsheet",
   description:
     "Get metadata about a Google Sheets spreadsheet including all sheet names, properties, and structure. Use this to discover available sheets and their dimensions.",
   inputSchema: defineSchema((v) =>

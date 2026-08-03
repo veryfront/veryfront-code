@@ -12,19 +12,35 @@ export interface RequestLimits {
   maxFileSize?: number;
 }
 
-export const DEFAULT_LIMITS: Required<RequestLimits> = {
+/**
+ * Framework-owned request limits.
+ *
+ * Freeze the public value so importing code cannot silently weaken the
+ * process-wide defaults for later requests.
+ */
+export const DEFAULT_LIMITS: Readonly<Required<RequestLimits>> = Object.freeze({
   maxBodySize: DEFAULT_MAX_BODY_SIZE_BYTES,
   maxUrlLength: DEFAULT_MAX_URL_LENGTH_BYTES,
   maxHeaderSize: DEFAULT_MAX_HEADER_SIZE_BYTES,
   maxFileSize: DEFAULT_MAX_FILE_SIZE_BYTES,
-};
+});
 
 export interface ParseJsonOptions {
   limits?: RequestLimits;
+  /**
+   * HTML-encode string values in the validated result.
+   *
+   * @deprecated Prefer contextual output encoding. This option remains for
+   * compatibility with existing consumers.
+   */
   sanitize?: boolean;
 }
 
 export interface ParseFormOptions {
+  limits?: RequestLimits;
+}
+
+export interface ParseQueryOptions {
   limits?: RequestLimits;
 }
 

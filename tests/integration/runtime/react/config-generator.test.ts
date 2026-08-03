@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
   createReactVersionSwitcher,
@@ -56,7 +56,7 @@ describe("React Config Generator", () => {
         const config = await readJson(`${context.projectDir}/deno.react19.json`);
 
         assertEquals(typeof config.imports.react, "string");
-        assertEquals(config.imports.react.includes("19.0.0"), true);
+        assertEquals(config.imports.react.includes(REACT_CONFIGS["19"].exact), true);
       });
     });
 
@@ -122,7 +122,7 @@ describe("React Config Generator", () => {
     it("returns React 19 imports", () => {
       const imports = getReactImports("19");
       assertEquals(typeof imports.react, "string");
-      assert(imports.react?.includes("19.0.0"));
+      assert(imports.react?.includes(REACT_CONFIGS["19"].exact));
     });
 
     it("throws on invalid version", () => {
@@ -191,12 +191,14 @@ describe("React Config Generator", () => {
       });
     });
 
-    it("handles malformed deno.json", async () => {
+    it("rejects malformed deno.json", async () => {
       await withTestContext("detect-malformed", async (context: TestContext) => {
         await writeTextFile(`${context.projectDir}/deno.json`, "invalid json {");
 
-        const detected = await detectReactVersionFromConfig(context.projectDir);
-        assertEquals(detected, null);
+        await assertRejects(
+          () => detectReactVersionFromConfig(context.projectDir),
+          SyntaxError,
+        );
       });
     });
   });

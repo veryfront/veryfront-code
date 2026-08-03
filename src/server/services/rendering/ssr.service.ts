@@ -29,6 +29,7 @@ import {
 } from "#veryfront/utils/constants/index.ts";
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import { isHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 
 const logger = serverLogger.component("ssr-service");
 
@@ -61,6 +62,11 @@ const defaultRendererProvider: RendererProvider = {
 export interface SSRRenderResult {
   status: number;
   html?: string;
+  /**
+   * Marks a complete HTML document produced solely by framework-owned error
+   * templates. Application render output must leave this unset.
+   */
+  htmlProvenance?: "framework";
   stream?: ReadableStream<Uint8Array>;
   isStreaming: boolean;
   etag?: string;
@@ -129,6 +135,7 @@ function buildNotFoundResult(slug: string): SSRRenderResult {
   return {
     status: HTTP_NOT_FOUND,
     html: ErrorPages.notFound(slug || "/"),
+    htmlProvenance: "framework",
     isStreaming: false,
     cacheStrategy: "no-cache",
     failure: { kind: "not-found" },
@@ -179,12 +186,31 @@ export class SSRService implements SSRServiceLike {
   }
 
   async getRenderer(ctx: HandlerContext): Promise<RendererAdapter> {
+    if (!isHostProjectCodeExecutionAllowed(ctx)) {
+      throw new Error(
+        "Project renderers without host execution capability require generation-owned isolated renderer admission",
+      );
+    }
     return this.rendererProvider.getRenderer(ctx);
   }
 
   async renderPage(ctx: HandlerContext, options: SSRRenderOptions): Promise<SSRRenderResult> {
     const { request, url, slug, nonce, studioEmbed, projectId, pageId, noHmr, useNoCache } =
       options;
+
+    // Project source without an explicit host capability is not trusted to
+    // execute in the server process. Dedicated single-project runtimes may
+    // grant the capability; all other projects require isolated admission.
+    if (!isHostProjectCodeExecutionAllowed(ctx)) {
+      return {
+        status: HTTP_UNAVAILABLE,
+        html: ErrorPages.serverError("Isolated rendering is temporarily unavailable."),
+        htmlProvenance: "framework",
+        isStreaming: false,
+        cacheStrategy: "no-cache",
+        slug,
+      };
+    }
 
     const renderSessionId = `${ctx.projectSlug || "default"}-${slug || "index"}-${Date.now()}`;
     const preRenderHeap = getHeapStats();
@@ -353,6 +379,7 @@ export class SSRService implements SSRServiceLike {
         return {
           status: HTTP_NOT_FOUND,
           html: ErrorPages.undeployed(),
+          htmlProvenance: "framework",
           isStreaming: false,
           cacheStrategy: "no-cache",
           failure: outcome,
@@ -362,6 +389,7 @@ export class SSRService implements SSRServiceLike {
         return {
           status: outcome.status,
           html: ErrorPages.memoryPressure(),
+          htmlProvenance: "framework",
           isStreaming: false,
           cacheStrategy: "no-cache",
           failure: outcome,
@@ -424,6 +452,7 @@ export class SSRService implements SSRServiceLike {
         return {
           status: HTTP_INTERNAL_SERVER_ERROR,
           html: ErrorPages.serverError(),
+          htmlProvenance: "framework",
           isStreaming: false,
           cacheStrategy: "no-cache",
           failure: outcome,
@@ -436,6 +465,7 @@ export class SSRService implements SSRServiceLike {
     return {
       status: HTTP_UNAVAILABLE,
       html: ErrorPages.memoryPressure(),
+      htmlProvenance: "framework",
       isStreaming: false,
       cacheStrategy: "no-cache",
       slug,

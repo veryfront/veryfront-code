@@ -33,6 +33,7 @@ export interface MessageActionBarActionProps {
 interface MessageActionBarContextValue {
   content: string;
   copied: boolean;
+  copyFailed: boolean;
   onCopy: (event: React.MouseEvent<HTMLButtonElement>) => void;
   onEdit?: (content: string) => void;
   onRegenerate?: () => void;
@@ -50,15 +51,16 @@ function MessageActionBarCopy({
   icon,
   className,
 }: MessageActionBarActionProps): React.ReactElement | null {
-  const { copied, onCopy } = useMessageActionBar();
+  const { copied, copyFailed, onCopy } = useMessageActionBar();
   if (copied) return null;
+  const label = copyFailed ? "Unable to copy. Try again" : "Copy to clipboard";
   return (
     <button
       type="button"
       onClick={onCopy}
       className={cn(ACTION_BUTTON, className)}
-      title="Copy to clipboard"
-      aria-label="Copy to clipboard"
+      title={label}
+      aria-label={label}
     >
       {icon ?? <CopyIcon className="size-3.5" />}
     </button>
@@ -142,18 +144,33 @@ function MessageActionBarRoot({
   onRegenerate,
   ref,
 }: MessageActionBarProps): React.ReactElement {
-  const { copied, copy } = useClipboard();
-  const doCopy = React.useCallback(() => void copy(content), [copy, content]);
+  const clipboard = useClipboard();
+  const isCurrentContent = clipboard.text === content;
+  const copied = isCurrentContent && clipboard.copied;
+  const copyFailed = isCurrentContent && clipboard.failed;
+  const doCopy = React.useCallback(
+    (ownerDocument?: Document) => void clipboard.copy(content, ownerDocument),
+    [clipboard.copy, content],
+  );
   const handleCopy = React.useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
-      if (onCopy) onCopy(event, doCopy);
-      else doCopy();
+      const ownerDocument = event.currentTarget.ownerDocument;
+      const next = (): void => doCopy(ownerDocument);
+      if (onCopy) onCopy(event, next);
+      else next();
     },
     [doCopy, onCopy],
   );
   const context = React.useMemo<MessageActionBarContextValue>(
-    () => ({ content, copied, onCopy: handleCopy, onEdit, onRegenerate }),
-    [content, copied, handleCopy, onEdit, onRegenerate],
+    () => ({
+      content,
+      copied,
+      copyFailed,
+      onCopy: handleCopy,
+      onEdit,
+      onRegenerate,
+    }),
+    [content, copied, copyFailed, handleCopy, onEdit, onRegenerate],
   );
 
   return (
@@ -173,6 +190,14 @@ function MessageActionBarRoot({
             <MessageActionBarEdit />
           </>
         )}
+        <span
+          className="sr-only"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {copied ? "Copied to clipboard" : copyFailed ? "Unable to copy to clipboard" : ""}
+        </span>
       </div>
     </MessageActionBarContext.Provider>
   );

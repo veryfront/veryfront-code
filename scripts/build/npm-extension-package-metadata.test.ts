@@ -1,6 +1,15 @@
-import { assertEquals, assertStringIncludes, assertThrows } from "#std/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
-import { createDntExtensionEntryPoints } from "./build-npm-extension-packages.ts";
+import {
+  assertPackageEntryPointsExist,
+  createDntExtensionEntryPoints,
+  extensionPackageEntryPointPaths,
+} from "./build-npm-extension-packages.ts";
 import {
   bareImportPackageNames,
   createExtensionPackageSpec,
@@ -49,10 +58,9 @@ describe("manifestDependencies", () => {
       "@aws-sdk/client-s3": "3.980.0",
       "@aws-sdk/lib-storage": "3.980.0",
     });
-    assertEquals(manifest.veryfront?.npm?.nodeEngine, ">=20.0.0");
   });
 
-  it("pins the audit-clean Sharp release and its Node runtime floor", async () => {
+  it("pins the audit-clean Sharp release", async () => {
     const manifest = JSON.parse(
       await Deno.readTextFile("extensions/ext-image-sharp/deno.json"),
     ) as ExtensionManifest & {
@@ -60,7 +68,6 @@ describe("manifestDependencies", () => {
     };
 
     assertEquals(manifestDependencies(manifest), { sharp: "0.35.3" });
-    assertEquals(manifest.veryfront?.npm?.nodeEngine, ">=20.9.0");
   });
 
   it("pins bash-tool's required AI SDK peer in the sandbox extension", async () => {
@@ -111,7 +118,7 @@ describe("manifestDependencies", () => {
 });
 
 describe("createExtensionPackageSpec", () => {
-  it("externalizes Redis through dependency-free Veryfront leaf contracts", async () => {
+  it("externalizes every public Veryfront contract consumed by Redis", async () => {
     const [manifest, actualRootConfig] = await Promise.all([
       Deno.readTextFile("extensions/ext-redis/deno.json").then((source) =>
         JSON.parse(source) as ExtensionManifest
@@ -135,10 +142,17 @@ describe("createExtensionPackageSpec", () => {
         .map((mapping) => mapping.subPath)
         .toSorted(),
       [
+        "errors",
         "errors/general",
         "errors/module",
         "extensions/distributed",
+        "extensions/distributed/agent-memory-support",
+        "extensions/distributed/cache-support",
+        "extensions/distributed/rate-limit-support",
+        "extensions/distributed/routing-invalidation-support",
         "extensions/types",
+        "observability",
+        "observability/otlp-setup",
         "platform/env",
         "utils/logger",
         "workflow/claude-code/types",
@@ -192,7 +206,7 @@ describe("createExtensionPackageSpec", () => {
     assertEquals(spec.packageJson.name, "@veryfront/ext-sandbox-shell-tools");
     assertEquals(spec.packageJson.version, "0.1.985");
     assertEquals(spec.packageJson.license, "Apache-2.0");
-    assertEquals(spec.packageJson.engines, { node: ">=18.0.0" });
+    assertEquals(spec.packageJson.engines, { node: ">=22.3.0" });
     assertEquals(spec.packageJson.dependencies, {
       "bash-tool": "1.3.16",
       "just-bash": "2.14.5",
@@ -230,7 +244,7 @@ describe("createExtensionPackageSpec", () => {
       veryfront: {
         extension: true,
         npm: {
-          nodeEngine: ">=20.0.0",
+          nodeEngine: ">=24.0.0",
           runtimePackages: [{
             name: "@veryfront/ext-example-node",
             export: "./node",
@@ -254,7 +268,32 @@ describe("createExtensionPackageSpec", () => {
 
     assertEquals(
       specs.map((spec) => spec.packageJson.engines),
-      [{ node: ">=20.0.0" }, { node: ">=20.0.0" }],
+      [{ node: ">=24.0.0" }, { node: ">=24.0.0" }],
+    );
+  });
+
+  it("rejects an extension Node floor below the framework minimum", () => {
+    const manifest: ExtensionManifest = {
+      name: "@veryfront/ext-example",
+      exports: "./src/index.ts",
+      veryfront: {
+        extension: true,
+        npm: { nodeEngine: ">=22.2.0" },
+      },
+    };
+
+    assertThrows(
+      () =>
+        createExtensionPackageSpec({
+          manifestPath: "extensions/ext-example/deno.json",
+          manifest,
+          rootConfig,
+          rootDir: "/repo",
+          version: "0.1.985",
+          license: "Apache-2.0",
+        }),
+      Error,
+      "cannot be lower than the Veryfront minimum >=22.3.0",
     );
   });
 
@@ -592,6 +631,70 @@ describe("createDntExtensionEntryPoints", () => {
         { name: "./deno", path: "/repo/extensions/ext-alpha/src/deno.ts" },
       ],
     );
+  });
+});
+
+describe("generated extension package entry points", () => {
+  it("collects every file from nested and conditional package exports", () => {
+    assertEquals(
+      extensionPackageEntryPointPaths({
+        main: "./esm/index.js",
+        module: "./esm/index.js",
+        types: "./esm/index.d.ts",
+        exports: {
+          ".": {
+            import: {
+              types: "./esm/src/index.d.ts",
+              default: "./esm/src/index.js",
+            },
+          },
+          "./node": [null, { import: "./esm/node.js" }],
+        },
+      }),
+      [
+        "./esm/index.d.ts",
+        "./esm/index.js",
+        "./esm/node.js",
+        "./esm/src/index.d.ts",
+        "./esm/src/index.js",
+      ],
+    );
+  });
+
+  it("rejects a package whose declared public entry point was not emitted", async () => {
+    const outDir = await Deno.makeTempDir();
+    try {
+      await Deno.mkdir(`${outDir}/esm/src`, { recursive: true });
+      await Deno.writeTextFile(`${outDir}/esm/src/index.js`, "export {};\n");
+
+      await assertPackageEntryPointsExist({
+        outDir,
+        packageName: "@veryfront/ext-example",
+        packageJson: {
+          exports: { ".": { import: "./esm/src/index.js" } },
+        },
+      });
+
+      await assertRejects(
+        () =>
+          assertPackageEntryPointsExist({
+            outDir,
+            packageName: "@veryfront/ext-example",
+            packageJson: {
+              exports: {
+                ".": {
+                  import: "./esm/src/index.js",
+                  types: "./esm/src/index.d.ts",
+                },
+              },
+            },
+          }),
+        Error,
+        "@veryfront/ext-example package entry point ./esm/src/index.d.ts was not emitted",
+      );
+    } finally {
+      await Deno.remove(outDir, { recursive: true });
+    }
   });
 });
 

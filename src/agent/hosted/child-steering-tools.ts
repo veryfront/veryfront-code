@@ -1,6 +1,11 @@
 import type { HostToolDefinition, HostToolSet, ToolExecutionContext } from "#veryfront/tool";
 import { toChildRunToolInputRecord } from "../child-run/execution-support.ts";
-import { getConfirmedProjectContextSwitchId } from "../project/context.ts";
+import {
+  type ConfirmedAgentProjectContextSwitch,
+  createUnconfirmedProjectContextSwitchResult,
+  getConfirmedProjectContextSwitch,
+  isClaimedSuccessfulProjectContextSwitchResult,
+} from "../project/context.ts";
 import {
   getProjectSteeringMutation,
   isSuccessfulProjectSteeringMutationResult,
@@ -14,7 +19,10 @@ export type HostedChildSteeringMutationHandler = (
 ) => Promise<void> | void;
 
 /** Handler for hosted child project switch. */
-export type HostedChildProjectSwitchHandler = (projectId: string) => Promise<void> | void;
+export type HostedChildProjectSwitchHandler = (
+  projectId: string,
+  confirmedProject?: Readonly<ConfirmedAgentProjectContextSwitch>,
+) => Promise<void> | void;
 
 /** Input payload for wrap hosted child steering mutation tool. */
 export type WrapHostedChildSteeringMutationToolInput = {
@@ -86,13 +94,16 @@ export function wrapHostedChildProjectSwitchTool(
       const normalizedToolInput = toChildRunToolInputRecord(toolInput);
       const result = await originalExecute(toolInput, execOptions);
       const projectReference = normalizedToolInput.project_reference;
-      const confirmedProjectId = typeof projectReference === "string"
-        ? getConfirmedProjectContextSwitchId(result, projectReference)
+      const confirmedProject = typeof projectReference === "string"
+        ? getConfirmedProjectContextSwitch(result, projectReference)
         : null;
-      if (confirmedProjectId) {
-        await input.onConfirmedProjectSwitch(confirmedProjectId);
+      if (confirmedProject) {
+        await input.onConfirmedProjectSwitch(confirmedProject.projectId, confirmedProject);
+        return result;
       }
-      return result;
+      return isClaimedSuccessfulProjectContextSwitchResult(result)
+        ? createUnconfirmedProjectContextSwitchResult()
+        : result;
     },
   };
 }

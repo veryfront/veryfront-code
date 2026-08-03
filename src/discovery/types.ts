@@ -30,6 +30,8 @@ export interface FileDiscoveryContext {
     path: typeof import("node:path");
   };
   baseDir?: string;
+  /** Explicit host-owned capability for trusted local/dedicated runtimes only. */
+  allowHostProjectCodeExecution?: boolean;
 }
 
 /**
@@ -51,6 +53,8 @@ export interface DiscoveryConfig {
   evalDirs?: string[];
   verbose?: boolean;
   fsAdapter?: FileSystemAdapter;
+  /** Explicit host-owned capability required before executable modules are imported. */
+  allowHostProjectCodeExecution?: boolean;
 }
 
 /**

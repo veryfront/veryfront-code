@@ -6,11 +6,28 @@ import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
 import { clearConfigCache } from "#veryfront/config";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
-import { deriveTaskId, discoverTasks, findTaskById } from "./discovery.ts";
-import { discoverProjectTaskRuntime, listProjectRuntimeTasks } from "./project-runtime.ts";
+import {
+  deriveTaskId,
+  discoverTasks as discoverTasksRaw,
+  findTaskById as findTaskByIdRaw,
+} from "./discovery.ts";
+import {
+  discoverProjectTaskRuntime as discoverProjectTaskRuntimeRaw,
+  listProjectRuntimeTasks,
+} from "./project-runtime.ts";
 import { runTriggerTarget } from "../trigger/local-runner.ts";
 import { isTaskDefinition } from "./types.ts";
 import type { DiscoveryResult } from "#veryfront/discovery";
+
+const discoverTasks: typeof discoverTasksRaw = (options) =>
+  discoverTasksRaw({ ...options, allowHostProjectCodeExecution: true });
+const findTaskById: typeof findTaskByIdRaw = (taskId, options) =>
+  findTaskByIdRaw(taskId, { ...options, allowHostProjectCodeExecution: true });
+const discoverProjectTaskRuntime: typeof discoverProjectTaskRuntimeRaw = (options) =>
+  discoverProjectTaskRuntimeRaw({
+    ...options,
+    allowHostProjectCodeExecution: true,
+  });
 
 function createMockAdapter(files: Record<string, string>): FileSystemAdapter {
   const normalize = (path: string): string => path.replace(/^\/project\/?/, "").replace(/^\/+/, "");

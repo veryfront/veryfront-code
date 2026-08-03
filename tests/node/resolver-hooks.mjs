@@ -16,6 +16,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = pathResolve(__dirname, "../..");
 
 const importMap = {};
+const workspacePackageMap = {};
+const workspacePackagePatterns = [];
 
 const stdImportMap = {
   "#std/assert": "./src/testing/assert.ts",
@@ -60,11 +62,61 @@ const fallbackAliasMap = {
   ...reactImportMap,
 };
 
+function registerWorkspaceExport(packageName, exportName, target, workspaceDir) {
+  if (typeof target !== "string") return;
+  const suffix = exportName === "."
+    ? ""
+    : exportName.startsWith("./")
+    ? `/${exportName.slice(2)}`
+    : null;
+  if (suffix === null) return;
+
+  const specifier = `${packageName}${suffix}`;
+  const absoluteTarget = pathResolve(workspaceDir, target);
+  if (specifier.includes("*") && absoluteTarget.includes("*")) {
+    const [specifierPrefix, specifierSuffix = ""] = specifier.split("*");
+    const [targetPrefix, targetSuffix = ""] = absoluteTarget.split("*");
+    workspacePackagePatterns.push({
+      specifierPrefix,
+      specifierSuffix,
+      targetPrefix,
+      targetSuffix,
+    });
+    return;
+  }
+  if (!specifier.includes("*")) workspacePackageMap[specifier] = absoluteTarget;
+}
+
+function registerWorkspacePackage(workspaceEntry) {
+  if (typeof workspaceEntry !== "string") return;
+  const workspaceDir = pathResolve(projectRoot, workspaceEntry);
+  try {
+    const config = JSON.parse(readFileSync(pathResolve(workspaceDir, "deno.json"), "utf-8"));
+    if (typeof config.name !== "string" || !config.name) return;
+    if (typeof config.exports === "string") {
+      registerWorkspaceExport(config.name, ".", config.exports, workspaceDir);
+      return;
+    }
+    if (!config.exports || typeof config.exports !== "object" || Array.isArray(config.exports)) {
+      return;
+    }
+    for (const [exportName, target] of Object.entries(config.exports)) {
+      registerWorkspaceExport(config.name, exportName, target, workspaceDir);
+    }
+  } catch {
+    // Invalid workspace metadata is surfaced by the normal Node resolver when
+    // a test imports that package; unrelated test files remain runnable.
+  }
+}
+
 try {
   const denoJsonPath = pathResolve(projectRoot, "deno.json");
   const denoJson = JSON.parse(readFileSync(denoJsonPath, "utf-8"));
   for (const [key, value] of Object.entries(denoJson.imports || {})) {
     if (typeof value === "string") importMap[key] = value;
+  }
+  for (const workspaceEntry of denoJson.workspace || []) {
+    registerWorkspacePackage(workspaceEntry);
   }
 } catch (e) {
   console.warn("Could not read deno.json:", e.message);
@@ -177,6 +229,25 @@ function resolveAliasSpecifier(specifier) {
   return null;
 }
 
+function resolveWorkspacePackage(specifier) {
+  const exact = workspacePackageMap[specifier];
+  if (exact) return findActualFile(exact);
+  for (const pattern of workspacePackagePatterns) {
+    if (
+      !specifier.startsWith(pattern.specifierPrefix) ||
+      !specifier.endsWith(pattern.specifierSuffix)
+    ) {
+      continue;
+    }
+    const matched = specifier.slice(
+      pattern.specifierPrefix.length,
+      specifier.length - pattern.specifierSuffix.length,
+    );
+    return findActualFile(`${pattern.targetPrefix}${matched}${pattern.targetSuffix}`);
+  }
+  return null;
+}
+
 function resolveJsrStdSpecifier(specifier) {
   if (!specifier.startsWith("jsr:@std/")) return null;
   const jsrSubpath = specifier.slice("jsr:@std/".length);
@@ -202,6 +273,14 @@ export async function resolve(specifier, context, nextResolve) {
     return {
       shortCircuit: true,
       url: pathToFileURL(jsrStdPath).href + querySuffix,
+    };
+  }
+
+  const workspacePath = resolveWorkspacePackage(cleanSpecifier);
+  if (workspacePath) {
+    return {
+      shortCircuit: true,
+      url: pathToFileURL(workspacePath).href + querySuffix,
     };
   }
 

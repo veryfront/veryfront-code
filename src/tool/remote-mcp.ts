@@ -5,6 +5,7 @@ import type { JsonSchema } from "./schema/json-schema.ts";
 import { hasToolExecutionErrorMarker } from "./result.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "./types.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
+import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 
 /** Default timeout for a single outbound remote MCP request. */
 const REMOTE_MCP_REQUEST_TIMEOUT_MS = 30_000;
@@ -51,7 +52,6 @@ export interface RemoteMCPToolSourceConfig {
   id?: string;
   endpoint: ResolvableValue<string>;
   headers?: ResolvableValue<HeadersInit | undefined>;
-  fetch?: typeof fetch;
   listMethod?: string;
   callMethod?: string;
 }
@@ -666,7 +666,6 @@ async function postJsonRpc(
   endpoint: string,
   headers: Headers,
   body: Record<string, unknown>,
-  fetchImpl: typeof fetch,
   callerSignal: AbortSignal | undefined,
   maxResponseBytes: number,
 ): Promise<unknown> {
@@ -678,7 +677,7 @@ async function postJsonRpc(
   const requestScope = createRequestSignalScope(callerSignal);
 
   try {
-    const response = await fetchImpl(endpoint, {
+    const response = await guardedOutboundFetch(endpoint, {
       method: "POST",
       headers,
       body: serializedBody,
@@ -830,7 +829,6 @@ export function createRemoteMCPToolSource(
     async listTools(context) {
       const endpoint = validateEndpoint(await resolveValue(config.endpoint, context));
       const headers = await resolveHeaders(config.headers, context);
-      const fetchImpl = config.fetch ?? globalThis.fetch;
 
       const definitions: ToolDefinition[] = [];
       const definitionNames = new Set<string>();
@@ -847,7 +845,6 @@ export function createRemoteMCPToolSource(
             method: listMethod,
             ...(cursor !== undefined ? { params: { cursor } } : {}),
           },
-          fetchImpl,
           context?.abortSignal,
           MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
         );
@@ -915,7 +912,6 @@ export function createRemoteMCPToolSource(
               ...(meta ? { _meta: meta } : {}),
             },
           },
-          config.fetch ?? globalThis.fetch,
           context?.abortSignal,
           MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
         );

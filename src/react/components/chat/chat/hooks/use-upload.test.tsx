@@ -1,6 +1,6 @@
 import * as React from "react";
 import { flushSync } from "react-dom";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import {
   assert,
@@ -177,6 +177,18 @@ function installDom(): {
   };
 }
 
+/**
+ * Unmount and drain the scheduler task React leaves behind.
+ *
+ * React's scheduler holds a `setImmediate` until it next runs. It completes on
+ * its own, but the test has to yield once more or Deno's leak sanitizer sees
+ * the timer still pending.
+ */
+async function unmount(root: Root): Promise<void> {
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("useUpload", () => {
   it("creates collision-resistant attachment ids with Web Crypto", () => {
     assertEquals(
@@ -226,7 +238,7 @@ describe("useUpload", () => {
     assertStrictEquals(actual, expected);
   });
 
-  it("releases previews and preserves the allocation error when a batch cannot finish", () => {
+  it("releases previews and preserves the allocation error when a batch cannot finish", async () => {
     const dom = installDom();
     let latest: UseUploadResult | null = null;
     const createObjectURL = URL.createObjectURL;
@@ -261,7 +273,7 @@ describe("useUpload", () => {
       assertStrictEquals(actual, allocationError);
       assertEquals(dom.revokedObjectURLs, ["blob:test-preview-1"]);
       assertEquals((latest as unknown as UseUploadResult).attachments, []);
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       dom.restore();
     }
@@ -279,7 +291,7 @@ describe("useUpload", () => {
     assertEquals(parseChatUploadResponse(oversizedUnicode), null);
   });
 
-  it("clamps transport progress to the documented percentage range", () => {
+  it("clamps transport progress to the documented percentage range", async () => {
     const dom = installDom();
     PendingXMLHttpRequest.instances = [];
     let latest: UseUploadResult | null = null;
@@ -305,13 +317,13 @@ describe("useUpload", () => {
         (latest as unknown as UseUploadResult).attachments[0]?.progress,
         100,
       );
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       dom.restore();
     }
   });
 
-  it("aborts pending uploads and releases previews on unmount", () => {
+  it("aborts pending uploads and releases previews on unmount", async () => {
     const dom = installDom();
     PendingXMLHttpRequest.instances = [];
     let latest: UseUploadResult | null = null;
@@ -331,7 +343,7 @@ describe("useUpload", () => {
       assertEquals(PendingXMLHttpRequest.instances.length, 1);
       assertEquals((latest as unknown as UseUploadResult).attachments.length, 1);
 
-      flushSync(() => root.unmount());
+      await unmount(root);
 
       assertEquals(PendingXMLHttpRequest.instances[0]?.aborted, true);
       assertEquals(dom.revokedObjectURLs, ["blob:test-preview-1"]);
@@ -340,7 +352,7 @@ describe("useUpload", () => {
     }
   });
 
-  it("finishes clear cleanup and reports transport abort errors exactly", () => {
+  it("finishes clear cleanup and reports transport abort errors exactly", async () => {
     const dom = installDom();
     PendingXMLHttpRequest.instances = [];
     const previousReportError = (globalThis as { reportError?: (error: unknown) => void })
@@ -374,7 +386,7 @@ describe("useUpload", () => {
       assertEquals((latest as unknown as UseUploadResult).attachments, []);
       assertEquals(reported.length, 1);
       assertStrictEquals(reported[0], abortError);
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       if (previousReportError) {
         (globalThis as { reportError?: (error: unknown) => void }).reportError =
@@ -386,7 +398,7 @@ describe("useUpload", () => {
     }
   });
 
-  it("uses the latest retry and ignores a late completion from the aborted request", () => {
+  it("uses the latest retry and ignores a late completion from the aborted request", async () => {
     const dom = installDom();
     PendingXMLHttpRequest.instances = [];
     let latest: UseUploadResult | null = null;
@@ -419,7 +431,7 @@ describe("useUpload", () => {
         "https://cdn.example.com/current.txt",
       );
       assertEquals((latest as unknown as UseUploadResult).attachments[0]?.uploadId, "current");
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       dom.restore();
     }
@@ -464,13 +476,13 @@ describe("useUpload", () => {
         (latest as unknown as UseUploadResult).attachments[0]?.url,
         "https://cdn.example.com/current.txt",
       );
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       dom.restore();
     }
   });
 
-  it("accepts a new-scope upload from a descendant layout effect during handoff", () => {
+  it("accepts a new-scope upload from a descendant layout effect during handoff", async () => {
     const dom = installDom();
     PendingXMLHttpRequest.instances = [];
     let latest: UseUploadResult | null = null;
@@ -501,13 +513,13 @@ describe("useUpload", () => {
         "Bearer new",
       );
       assertEquals((latest as unknown as UseUploadResult).attachments.length, 1);
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       dom.restore();
     }
   });
 
-  it("removal aborts ownership and a late callback cannot resurrect the attachment", () => {
+  it("removal aborts ownership and a late callback cannot resurrect the attachment", async () => {
     const dom = installDom();
     PendingXMLHttpRequest.instances = [];
     let latest: UseUploadResult | null = null;
@@ -532,13 +544,13 @@ describe("useUpload", () => {
       request.responseText = '{"url":"https://cdn.example.com/late.txt","id":"late"}';
       flushSync(() => staleOnload?.());
       assertEquals((latest as unknown as UseUploadResult).attachments, []);
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       dom.restore();
     }
   });
 
-  it("inline retries are epoch-owned and keep only the latest FileReader result", () => {
+  it("inline retries are epoch-owned and keep only the latest FileReader result", async () => {
     const dom = installDom();
     PendingFileReader.instances = [];
     let latest: UseUploadResult | null = null;
@@ -566,13 +578,13 @@ describe("useUpload", () => {
         (latest as unknown as UseUploadResult).attachments[0]?.url,
         "data:text/plain;base64,Y3VycmVudA==",
       );
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       dom.restore();
     }
   });
 
-  it("retained callbacks are inert after unmount and allocate no previews", () => {
+  it("retained callbacks are inert after unmount and allocate no previews", async () => {
     const dom = installDom();
     PendingXMLHttpRequest.instances = [];
     let latest: UseUploadResult | null = null;
@@ -585,7 +597,7 @@ describe("useUpload", () => {
       const root = createRoot(document.getElementById("root")!);
       flushSync(() => root.render(<Capture />));
       const retained = latest as unknown as UseUploadResult;
-      flushSync(() => root.unmount());
+      await unmount(root);
 
       retained.upload([new File(["image"], "late.png", { type: "image/png" })]);
       retained.remove("missing");
@@ -660,7 +672,7 @@ describe("useUpload", () => {
           </React.Suspense>,
         )
       );
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       dom.restore();
     }

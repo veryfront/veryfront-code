@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { updateTask } from "../../lib/asana-client.ts";
+import { updateTask } from "../lib/asana-client.ts";
 
 export default tool({
-  id: "update-task",
+  id: "asana-update-task",
   description: "Update an existing Asana task.",
   inputSchema: defineSchema((v) => v.object({
     taskGid: v.string().describe("The GID of the task to update"),

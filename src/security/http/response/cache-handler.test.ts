@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { buildCacheControl } from "./cache-handler.ts";
 import { CACHE_DURATIONS } from "./constants.ts";
 
@@ -53,9 +53,8 @@ describe("security/http/response/cache-handler", () => {
         );
       });
 
-      it("should fallback for unknown string preset", () => {
-        // TypeScript wouldn't normally allow this but testing runtime behavior
-        assertEquals(buildCacheControl("unknown" as never), "public, max-age=0");
+      it("rejects unknown string presets", () => {
+        assertThrows(() => buildCacheControl("unknown" as never), TypeError);
       });
     });
 
@@ -104,6 +103,34 @@ describe("security/http/response/cache-handler", () => {
         assert(result.includes("max-age=3600"));
         assert(result.includes("immutable"));
         assert(result.includes("must-revalidate"));
+      });
+
+      it("rejects malformed and accessor-backed cache options", () => {
+        for (
+          const strategy of [
+            { maxAge: -1 },
+            { maxAge: 1.5 },
+            { maxAge: Number.POSITIVE_INFINITY },
+            { maxAge: 60, staleWhileRevalidate: -1 },
+            { maxAge: 60, public: "yes" },
+            { maxAge: 60, unknown: true },
+            Object.create({ maxAge: 60 }),
+          ]
+        ) {
+          assertThrows(() => buildCacheControl(strategy as never), TypeError);
+        }
+
+        let getterCalls = 0;
+        const strategy = {} as Record<string, unknown>;
+        Object.defineProperty(strategy, "maxAge", {
+          enumerable: true,
+          get() {
+            getterCalls++;
+            return 60;
+          },
+        });
+        assertThrows(() => buildCacheControl(strategy as never), TypeError);
+        assertEquals(getterCalls, 0);
       });
     });
   });

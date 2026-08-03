@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getRecord } from "../../lib/airtable-client.ts";
+import { getRecord } from "../lib/airtable-client.ts";
 
 export default tool({
-  id: "get-record",
+  id: "airtable-get-record",
   description:
     "Get a specific record from an Airtable table by its ID. Returns the full record with all field values.",
   inputSchema: defineSchema((v) => v.object({

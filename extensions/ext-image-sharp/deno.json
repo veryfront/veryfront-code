@@ -5,9 +5,6 @@
   "veryfront": {
     "extension": true,
     "activation": "explicit",
-    "npm": {
-      "nodeEngine": ">=20.9.0"
-    },
     "contracts": {
       "provides": ["ImageOptimizationEngine"]
     },

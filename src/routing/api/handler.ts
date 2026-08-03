@@ -3,18 +3,39 @@ import { join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getConfig } from "#veryfront/config";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import { createError, toError } from "#veryfront/errors";
+import {
+  createError,
+  createErrorResponseFromDefinition,
+  PROJECT_EXECUTION_UNAVAILABLE,
+  toError,
+} from "#veryfront/errors";
 import { badGateway, internalServerError, notFound } from "#veryfront/http/responses";
 import type { CORSConfig } from "#veryfront/security";
 import { applyCORSHeaders, handleCORSPreflight } from "#veryfront/security";
 import { type APIContext } from "./context-builder.ts";
 import { ApiRouteMatcher, type RouteMatch } from "./api-route-matcher.ts";
 import type { APIRoute } from "./module-loader/types.ts";
-import { loadHandlerModule } from "./module-loader/loader.ts";
+import { loadHandlerModule, prepareHandlerModule } from "./module-loader/loader.ts";
 import { discoverAppRoutes, discoverPagesRoutes } from "./route-discovery.ts";
-import { executeAppRoute, executePagesRoute, type ExecuteRouteOptions } from "./route-executor.ts";
+import {
+  executeAppRoute,
+  executePagesRoute,
+  executePreparedAppRoute,
+  executePreparedPagesRoute,
+  type ExecuteRouteOptions,
+} from "./route-executor.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { HandlerContext } from "#veryfront/types";
+import type { PreparedWorkerModule } from "#veryfront/security/sandbox/worker-types.ts";
+import {
+  evictWorkerScopeIfPresent,
+  isWorkerIsolationEnabled,
+} from "#veryfront/security/sandbox/worker-pool.ts";
+import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
+import {
+  isHostProjectCodeExecutionAllowed,
+  isSharedProjectRuntime,
+} from "#veryfront/security/project-locality.ts";
 
 /** Max entries in the loaded-handler LRU cache */
 const HANDLER_CACHE_MAX_ENTRIES = 256;
@@ -60,6 +81,7 @@ export function sanitizeLoadErrorForResponse(message: string, projectDir?: strin
  */
 interface APIRouteHandlerDeps {
   loadHandlerModule?: typeof loadHandlerModule;
+  prepareHandlerModule?: typeof prepareHandlerModule;
   discoverPagesRoutes?: typeof discoverPagesRoutes;
   discoverAppRoutes?: typeof discoverAppRoutes;
   getConfig?: typeof getConfig;
@@ -77,6 +99,7 @@ export function __injectDepsForTests(deps: APIRouteHandlerDeps | null): void {
 function getDeps(): Required<APIRouteHandlerDeps> {
   return {
     loadHandlerModule: injectedDeps?.loadHandlerModule ?? loadHandlerModule,
+    prepareHandlerModule: injectedDeps?.prepareHandlerModule ?? prepareHandlerModule,
     discoverPagesRoutes: injectedDeps?.discoverPagesRoutes ?? discoverPagesRoutes,
     discoverAppRoutes: injectedDeps?.discoverAppRoutes ?? discoverAppRoutes,
     getConfig: injectedDeps?.getConfig ?? getConfig,
@@ -98,13 +121,18 @@ export type APIHandler = (ctx: APIContext) => Promise<Response> | Response;
  * produced it, so a later route can never report an earlier route's error.
  */
 interface LoadAttempt {
-  handler: APIRoute | null;
+  route: LoadedRoute | null;
   errorMessage: string | null;
 }
 
+type LoadedRoute =
+  | { readonly kind: "host"; readonly handler: APIRoute }
+  | { readonly kind: "isolated"; readonly module: PreparedWorkerModule };
+
 export class APIRouteHandler {
   private router = new ApiRouteMatcher();
-  private routeCache = new LRUCache<string, APIRoute>({ maxEntries: HANDLER_CACHE_MAX_ENTRIES });
+  private routeCache = new LRUCache<string, LoadedRoute>({ maxEntries: HANDLER_CACHE_MAX_ENTRIES });
+  private executionScopeId = crypto.randomUUID();
   private activeRequests = 0;
   private destroyRequested = false;
   private destroyed = false;
@@ -218,8 +246,27 @@ export class APIRouteHandler {
           params: match.params,
         });
 
-        const { handler, errorMessage } = await this.loadHandler(match);
-        if (!handler) {
+        const isLocalProject = ctx?.isLocalProject === true;
+        const allowHostProjectCodeExecution = isHostProjectCodeExecutionAllowed(ctx);
+        if (!allowHostProjectCodeExecution && isSharedProjectRuntime(ctx)) {
+          const unavailable = createErrorResponseFromDefinition(
+            PROJECT_EXECUTION_UNAVAILABLE,
+            {
+              detail:
+                "Shared runtimes require a dedicated isolated project runtime for API execution",
+              instance: pathname,
+            },
+          );
+          unavailable.headers.set("cache-control", "no-store");
+          return await applyCORSHeaders({
+            request,
+            response: unavailable,
+            config: this.corsConfig ?? undefined,
+          }) ?? unavailable;
+        }
+        const useHostRealm = allowHostProjectCodeExecution && !isWorkerIsolationEnabled();
+        const { route, errorMessage } = await this.loadRoute(match, useHostRealm);
+        if (!route) {
           const msg = errorMessage ?? "Handler not found";
 
           try {
@@ -252,14 +299,39 @@ export class APIRouteHandler {
         const isolationOptions: ExecuteRouteOptions = {
           modulePath: match.route.page,
           projectDir: this.projectDir,
-          isLocalProject: ctx?.isLocalProject,
+          isLocalProject,
+          allowHostProjectCodeExecution: useHostRealm,
         };
 
-        const response = isAppRoute
-          ? await executeAppRoute(handler, request, match, pathname, adapter, isolationOptions)
+        const applicationRequest = createApplicationRequest(request);
+        const response = route.kind === "isolated"
+          ? isAppRoute
+            ? await executePreparedAppRoute(applicationRequest, match, pathname, {
+              executionScopeId: this.executionScopeId,
+              module: route.module,
+              modulePath: match.route.page,
+              projectDir: this.projectDir,
+              isLocalProject,
+            })
+            : await executePreparedPagesRoute(applicationRequest, match, pathname, {
+              executionScopeId: this.executionScopeId,
+              module: route.module,
+              modulePath: match.route.page,
+              projectDir: this.projectDir,
+              isLocalProject,
+            })
+          : isAppRoute
+          ? await executeAppRoute(
+            route.handler,
+            applicationRequest,
+            match,
+            pathname,
+            adapter,
+            isolationOptions,
+          )
           : await executePagesRoute(
-            handler,
-            request,
+            route.handler,
+            applicationRequest,
             match,
             pathname,
             adapter,
@@ -279,38 +351,54 @@ export class APIRouteHandler {
     ).finally(() => this.completeRequest());
   }
 
-  private loadHandler(match: RouteMatch): Promise<LoadAttempt> {
+  private loadRoute(match: RouteMatch, useHostRealm: boolean): Promise<LoadAttempt> {
     const modulePath = match.route.page;
+    const cacheKey = `${useHostRealm ? "host" : "isolated"}:${modulePath}`;
 
     return withSpan(
-      "api.loadHandler",
+      "api.loadRoute",
       async () => {
         const adapter = await this.ensureAdapter();
         await this.ensureConfig(adapter);
 
-        const cached = this.routeCache.get(modulePath);
-        if (cached) return { handler: cached, errorMessage: null };
+        const cached = this.routeCache.get(cacheKey);
+        if (cached) return { route: cached, errorMessage: null };
 
         try {
           const deps = getDeps();
+          if (!useHostRealm) {
+            const module = await deps.prepareHandlerModule({
+              projectDir: this.projectDir,
+              modulePath,
+              adapter,
+              config: this.config ?? undefined,
+            });
+            const prepared: LoadedRoute = Object.freeze({ kind: "isolated", module });
+            this.routeCache.set(cacheKey, prepared);
+            return { route: prepared, errorMessage: null };
+          }
+
           const handler = await deps.loadHandlerModule({
             projectDir: this.projectDir,
             modulePath,
             adapter,
             config: this.config ?? undefined,
+            allowHostProjectCodeExecution: true,
           });
 
           // Only cache handlers that export at least one HTTP method.
           // Empty objects ({}) from failed imports are truthy but useless —
           // caching them would prevent retry after the user fixes the import.
-          const usable = handler && Object.keys(handler).length > 0 ? handler : null;
-          if (usable) this.routeCache.set(modulePath, usable);
+          const usable = handler && Object.keys(handler).length > 0
+            ? Object.freeze({ kind: "host", handler }) satisfies LoadedRoute
+            : null;
+          if (usable) this.routeCache.set(cacheKey, usable);
 
-          return { handler: usable, errorMessage: null };
+          return { route: usable, errorMessage: null };
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           logger.error(`[API] Failed to load handler for ${modulePath}: ${msg}`);
-          return { handler: null, errorMessage: msg };
+          return { route: null, errorMessage: msg };
         }
       },
       { "api.modulePath": modulePath },
@@ -318,6 +406,9 @@ export class APIRouteHandler {
   }
 
   clearCache(): void {
+    const previousScopeId = this.executionScopeId;
+    this.executionScopeId = crypto.randomUUID();
+    evictWorkerScopeIfPresent(previousScopeId);
     this.routeCache.clear();
     this.router.clearCache();
   }
@@ -342,6 +433,7 @@ export class APIRouteHandler {
     if (this.destroyed) return;
 
     this.destroyed = true;
+    evictWorkerScopeIfPresent(this.executionScopeId);
     this.routeCache.destroy();
     this.router.destroy();
   }

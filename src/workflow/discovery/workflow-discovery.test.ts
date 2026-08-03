@@ -4,7 +4,18 @@ import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileSystemAdapter, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
-import { discoverWorkflows, findWorkflowById } from "./workflow-discovery.ts";
+import {
+  discoverWorkflows as discoverWorkflowsRaw,
+  findWorkflowById as findWorkflowByIdRaw,
+} from "./workflow-discovery.ts";
+
+const discoverWorkflows: typeof discoverWorkflowsRaw = (options) =>
+  discoverWorkflowsRaw({ ...options, allowHostProjectCodeExecution: true });
+const findWorkflowById: typeof findWorkflowByIdRaw = (workflowId, options) =>
+  findWorkflowByIdRaw(workflowId, {
+    ...options,
+    allowHostProjectCodeExecution: true,
+  });
 
 function createMockAdapter(files: Record<string, string>): FileSystemAdapter {
   const normalize = (path: string): string => path.replace(/^\/project\/?/, "").replace(/^\/+/, "");

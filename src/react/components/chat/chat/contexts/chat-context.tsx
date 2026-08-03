@@ -77,10 +77,25 @@ export interface ChatContextValue {
   theme: ChatTheme;
 }
 
-const [ChatContext, useChatContext] = createStrictContext<ChatContextValue>(
+const [ChatContext, useChatContextStrict] = createStrictContext<ChatContextValue>(
   "useChatContext",
   "a ChatRoot or Chat component",
 );
+
+/**
+ * Read the enclosing chat's shared state (messages, input, submit/stop, model,
+ * attachments, branches, theme). Provided by `<Chat.Root>` / `<Chat>`; throws
+ * when used outside one.
+ *
+ * @example
+ * ```tsx
+ * function SendButton() {
+ *   const { onSubmit, isLoading } = useChatContext();
+ *   return <button onClick={() => onSubmit()} disabled={isLoading}>Send</button>;
+ * }
+ * ```
+ */
+export const useChatContext = useChatContextStrict;
 
 /** React hook for chat context optional. */
 export function useChatContextOptional(): ChatContextValue | null {
@@ -89,4 +104,3 @@ export function useChatContextOptional(): ChatContextValue | null {
 
 /** Render chat context provider. */
 export const ChatContextProvider = ChatContext.Provider;
-export { useChatContext };

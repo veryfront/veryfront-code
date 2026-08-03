@@ -5,7 +5,9 @@
  * hooks after module initialization. Lifecycle coordination therefore uses
  * captured intrinsics and temporarily shadows each observed Promise's
  * constructor so native `then` cannot consult a mutated constructor or
- * `Symbol.species`.
+ * `Symbol.species`. A Promise whose constructor cannot be shadowed is observed
+ * only while its complete constructor path still uses the captured intrinsic
+ * hooks.
  *
  * @internal
  */
@@ -18,9 +20,16 @@ const defineProperty = Object.defineProperty;
 const deleteProperty = Reflect.deleteProperty;
 const freeze = Object.freeze;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const getPrototypeOf = Object.getPrototypeOf;
 const hasOwnProperty = Object.prototype.hasOwnProperty;
+const isExtensible = Object.isExtensible;
 const nativePromiseThen = Promise.prototype.then;
+const nativePromisePrototype = Promise.prototype;
 const promiseSpecies = Symbol.species;
+const nativePromiseSpeciesGetter = getOwnPropertyDescriptor(
+  NativePromise,
+  promiseSpecies,
+)?.get;
 
 const safePromiseSpeciesHolder = createObject(null) as Record<PropertyKey, unknown>;
 defineProperty(
@@ -67,6 +76,56 @@ function pinPromiseConstructor<T>(promise: Promise<T>): Promise<T> {
   return promise;
 }
 
+function hasVerifiedIntrinsicPromiseSpeciesHook(): boolean {
+  const speciesDescriptor = getOwnPropertyDescriptor(
+    NativePromise,
+    promiseSpecies,
+  );
+  return typeof nativePromiseSpeciesGetter === "function" &&
+    speciesDescriptor !== undefined &&
+    hasOwn(speciesDescriptor, "get") &&
+    speciesDescriptor.get === nativePromiseSpeciesGetter &&
+    speciesDescriptor.set === undefined;
+}
+
+function hasVerifiedIntrinsicPromisePrototypeConstructor(): boolean {
+  const constructorDescriptor = getOwnPropertyDescriptor(
+    nativePromisePrototype,
+    "constructor",
+  );
+  return constructorDescriptor !== undefined &&
+    hasOwn(constructorDescriptor, "value") &&
+    constructorDescriptor.value === NativePromise;
+}
+
+function createContinuationWithVerifiedIntrinsicConstructor<T, R>(
+  promise: Promise<T>,
+  originalConstructor: PropertyDescriptor | undefined,
+  onFulfilled: (value: T) => R,
+  onRejected: (reason: unknown) => R,
+): Promise<R> {
+  const ownsIntrinsicConstructor = originalConstructor !== undefined &&
+    hasOwn(originalConstructor, "value") &&
+    originalConstructor.value === NativePromise;
+  const inheritsIntrinsicConstructor = originalConstructor === undefined &&
+    getPrototypeOf(promise) === nativePromisePrototype &&
+    hasVerifiedIntrinsicPromisePrototypeConstructor();
+  if (
+    (!ownsIntrinsicConstructor && !inheritsIntrinsicConstructor) ||
+    !hasVerifiedIntrinsicPromiseSpeciesHook()
+  ) {
+    throw new NativeTypeError(
+      "Cannot safely observe a Promise without verified intrinsic constructor hooks",
+    );
+  }
+
+  const continuation = apply(nativePromiseThen, promise, [
+    onFulfilled,
+    onRejected,
+  ]) as Promise<R>;
+  return pinPromiseConstructor(continuation);
+}
+
 /**
  * Construct a core-owned Promise whose constructor lookup remains intrinsic.
  *
@@ -99,8 +158,25 @@ export function createIntrinsicPromiseContinuation<T, R>(
 ): Promise<R> {
   const originalConstructor = getOwnPropertyDescriptor(promise, "constructor");
   if (originalConstructor?.configurable === false) {
-    throw new NativeTypeError(
-      "Cannot safely observe a Promise with a fixed constructor",
+    if (!hasOwn(originalConstructor, "value")) {
+      throw new NativeTypeError(
+        "Cannot safely observe a Promise with a fixed constructor",
+      );
+    }
+    return createContinuationWithVerifiedIntrinsicConstructor(
+      promise,
+      originalConstructor,
+      onFulfilled,
+      onRejected,
+    );
+  }
+
+  if (originalConstructor === undefined && !isExtensible(promise)) {
+    return createContinuationWithVerifiedIntrinsicConstructor(
+      promise,
+      originalConstructor,
+      onFulfilled,
+      onRejected,
     );
   }
 

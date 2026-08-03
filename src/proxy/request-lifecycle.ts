@@ -1,4 +1,5 @@
 import type { Context, Span } from "#veryfront/observability";
+import { ensureError } from "#veryfront/errors";
 
 export interface ProxyRequestLifecycle {
   end(statusCode: number, error?: Error): void;
@@ -40,7 +41,7 @@ export async function runProxyRequestLifecycle(
       lifecycle.end(response.status);
       return response;
     } catch (error) {
-      const spanError = error instanceof Error ? error : new Error(String(error));
+      const spanError = ensureError(error);
       lifecycle.end(500, spanError);
       throw error;
     }

@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
+import type { HandlerContext, SecurityConfig } from "#veryfront/types";
 import { AuthHandler } from "./auth.ts";
 
 /**
@@ -12,12 +13,16 @@ describe("AuthHandler realm sanitization", () => {
     return new AuthHandler();
   }
 
-  function createCtx(realm?: unknown) {
+  function createCtx(realm?: unknown): HandlerContext {
     const basic: Record<string, unknown> = { username: "admin", password: "secret" };
     if (realm !== undefined) basic.realm = realm;
     return {
-      securityConfig: { auth: { basic } },
-      adapter: { env: { get: () => "" } },
+      projectDir: "/tmp/auth-test",
+      securityConfig: { auth: { basic } } as unknown as SecurityConfig,
+      cspUserHeader: null,
+      adapter: {
+        env: { get: () => "" },
+      } as unknown as HandlerContext["adapter"],
       isLocalProject: false,
     };
   }
@@ -25,8 +30,8 @@ describe("AuthHandler realm sanitization", () => {
   async function getWwwAuthenticate(handler: AuthHandler, realm?: unknown): Promise<string> {
     const ctx = createCtx(realm);
     const req = new Request("http://localhost/test");
-    const result = await handler.handle(req, ctx as any);
-    const response = (result as any).response as Response;
+    const result = await handler.handle(req, ctx);
+    const response = result.response as Response;
     return response.headers.get("WWW-Authenticate") ?? "";
   }
 
@@ -73,5 +78,392 @@ describe("AuthHandler realm sanitization", () => {
     const handler = createHandler();
     const header = await getWwwAuthenticate(handler, 12345);
     expect(header).toBe('Basic realm="12345"');
+  });
+
+  it("does not invoke conversion hooks on an invalid realm value", async () => {
+    const handler = createHandler();
+    let conversions = 0;
+    const hostileRealm = {
+      [Symbol.toPrimitive]() {
+        conversions++;
+        throw new Error("realm conversion must not run");
+      },
+    };
+
+    const header = await getWwwAuthenticate(handler, hostileRealm);
+
+    expect(header).toBe('Basic realm="Secure Area"');
+    expect(conversions).toBe(0);
+  });
+
+  it("keeps the outer Basic challenge request-local during CORS re-entry", async () => {
+    const handler = createHandler();
+    const outerCtx = createCtx("Outer Realm");
+    if (!outerCtx.securityConfig) throw new Error("test security config is required");
+
+    outerCtx.securityConfig.cors = {
+      origin: () => {
+        void handler.handle(
+          new Request("http://localhost/inner"),
+          createCtx("Inner Realm"),
+        );
+        return true;
+      },
+    };
+
+    const result = await handler.handle(
+      new Request("http://localhost/outer", {
+        headers: { origin: "https://client.example" },
+      }),
+      outerCtx,
+    );
+
+    expect(result.response?.headers.get("WWW-Authenticate")).toBe(
+      'Basic realm="Outer Realm"',
+    );
+  });
+
+  it("applies the resolved CORS and security policy to unauthorized responses", async () => {
+    const handler = createHandler();
+    const ctx = createCtx();
+    if (!ctx.securityConfig) throw new Error("test security config is required");
+    ctx.securityConfig.cors = {
+      origin: "https://client.example",
+      credentials: true,
+    };
+    const req = new Request("http://localhost/test", {
+      headers: { origin: "https://client.example" },
+    });
+
+    const result = await handler.handle(req, ctx);
+    const response = result.response as Response;
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(
+      "https://client.example",
+    );
+    expect(response.headers.get("Access-Control-Allow-Credentials")).toBe("true");
+    expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+  });
+
+  it("returns a Bearer challenge with the same hardened unauthorized response", async () => {
+    const handler = createHandler();
+    const ctx: HandlerContext = {
+      projectDir: "/tmp/auth-test",
+      securityConfig: {
+        auth: { bearer: { token: "expected-token" } },
+        cors: { origin: "https://client.example" },
+      } as SecurityConfig,
+      cspUserHeader: null,
+      adapter: {
+        env: { get: () => "" },
+      } as unknown as HandlerContext["adapter"],
+      isLocalProject: false,
+    };
+    const req = new Request("http://localhost/test", {
+      headers: {
+        authorization: "Bearer wrong-token",
+        origin: "https://client.example",
+      },
+    });
+
+    const result = await handler.handle(req, ctx);
+    const response = result.response as Response;
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("WWW-Authenticate")).toBe("Bearer");
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(
+      "https://client.example",
+    );
+    expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+  });
+
+  it("fails closed when environment variables configure both auth modes", async () => {
+    const handler = createHandler();
+    const credentials: Record<string, string> = {
+      VERYFRONT_BASIC_USER: "admin",
+      VERYFRONT_BASIC_PASS: "secret",
+      VERYFRONT_BEARER_TOKEN: "expected-token",
+    };
+    const ctx: HandlerContext = {
+      projectDir: "/tmp/auth-test",
+      securityConfig: null,
+      cspUserHeader: null,
+      adapter: {
+        env: { get: (name: string) => credentials[name] },
+      } as unknown as HandlerContext["adapter"],
+      isLocalProject: false,
+    };
+
+    for (
+      const authorization of [
+        `Basic ${btoa("admin:secret")}`,
+        "Bearer expected-token",
+      ]
+    ) {
+      const result = await handler.handle(
+        new Request("http://localhost/test", {
+          headers: { authorization },
+        }),
+        ctx,
+      );
+
+      expect(result.continue).not.toBe(true);
+      expect(result.response?.status).toBe(401);
+      expect(result.response?.headers.get("WWW-Authenticate")).toBe(
+        'Basic realm="Secure Area", Bearer',
+      );
+    }
+  });
+
+  it("fails closed for every partial, empty, or competing environment auth state", async () => {
+    const handler = createHandler();
+    const values = [undefined, "", "configured"] as const;
+    const basicAuthorization = `Basic ${btoa("configured:configured")}`;
+    const bearerAuthorization = "Bearer configured";
+
+    for (const username of values) {
+      for (const password of values) {
+        for (const token of values) {
+          const credentials: Readonly<Record<string, string | undefined>> = {
+            VERYFRONT_BASIC_USER: username,
+            VERYFRONT_BASIC_PASS: password,
+            VERYFRONT_BEARER_TOKEN: token,
+          };
+          const ctx: HandlerContext = {
+            projectDir: "/tmp/auth-test",
+            securityConfig: null,
+            cspUserHeader: null,
+            adapter: {
+              env: { get: (name: string) => credentials[name] },
+            } as unknown as HandlerContext["adapter"],
+            isLocalProject: false,
+          };
+          const authDisabled = username === undefined &&
+            password === undefined &&
+            token === undefined;
+          const validBasic = username === "configured" &&
+            password === "configured" &&
+            token === undefined;
+          const validBearer = username === undefined &&
+            password === undefined &&
+            token === "configured";
+
+          if (authDisabled) {
+            const result = await handler.handle(
+              new Request("http://localhost/test"),
+              ctx,
+            );
+            expect(result.continue).toBe(true);
+            continue;
+          }
+
+          if (validBasic || validBearer) {
+            const result = await handler.handle(
+              new Request("http://localhost/test", {
+                headers: {
+                  authorization: validBasic ? basicAuthorization : bearerAuthorization,
+                },
+              }),
+              ctx,
+            );
+            expect(result.continue).toBe(true);
+            continue;
+          }
+
+          for (
+            const authorization of [
+              undefined,
+              basicAuthorization,
+              bearerAuthorization,
+            ]
+          ) {
+            const headers = authorization === undefined ? undefined : { authorization };
+            const result = await handler.handle(
+              new Request("http://localhost/test", { headers }),
+              ctx,
+            );
+            const response = result.response as Response;
+
+            expect(result.continue).not.toBe(true);
+            expect(response.status).toBe(401);
+            expect(response.headers.get("WWW-Authenticate")).toBe(
+              'Basic realm="Secure Area", Bearer',
+            );
+            expect(await response.text()).toBe("Unauthorized");
+          }
+        }
+      }
+    }
+  });
+
+  it("does not expose an authentication bypass through test globals", async () => {
+    const globals = globalThis as Record<string, unknown>;
+    const hadFlag = Object.hasOwn(globals, "__vfTestEnv");
+    const previousFlag = globals.__vfTestEnv;
+    globals.__vfTestEnv = true;
+    try {
+      const ctx: HandlerContext = {
+        projectDir: "/tmp/auth-test",
+        securityConfig: null,
+        cspUserHeader: null,
+        adapter: {
+          env: {
+            get: (name: string) => name === "VERYFRONT_BEARER_TOKEN" ? "required" : undefined,
+          },
+        } as unknown as HandlerContext["adapter"],
+        isLocalProject: false,
+      };
+
+      const result = await new AuthHandler().handle(
+        new Request("http://localhost/test"),
+        ctx,
+      );
+
+      expect(result.response?.status).toBe(401);
+    } finally {
+      if (hadFlag) globals.__vfTestEnv = previousFlag;
+      else delete globals.__vfTestEnv;
+    }
+  });
+
+  it("rejects accessor-backed explicit auth without invoking accessors", async () => {
+    let getterCalls = 0;
+    const auth = Object.defineProperty({}, "bearer", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return { token: "must-not-be-trusted" };
+      },
+    });
+    const securityConfig = Object.defineProperty({}, "auth", {
+      enumerable: true,
+      value: auth,
+    }) as SecurityConfig;
+    const ctx: HandlerContext = {
+      projectDir: "/tmp/auth-test",
+      securityConfig,
+      cspUserHeader: null,
+      adapter: {
+        env: { get: () => undefined },
+      } as unknown as HandlerContext["adapter"],
+      isLocalProject: false,
+    };
+
+    const result = await new AuthHandler().handle(
+      new Request("http://localhost/test", {
+        headers: { authorization: "Bearer must-not-be-trusted" },
+      }),
+      ctx,
+    );
+
+    expect(result.response?.status).toBe(401);
+    expect(getterCalls).toBe(0);
+  });
+
+  it("rejects an accessor-backed security auth field without invoking it", async () => {
+    let getterCalls = 0;
+    const securityConfig = Object.defineProperty({}, "auth", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return { bearer: { token: "must-not-be-trusted" } };
+      },
+    }) as SecurityConfig;
+    const ctx: HandlerContext = {
+      projectDir: "/tmp/auth-test",
+      securityConfig,
+      cspUserHeader: null,
+      adapter: {
+        env: { get: () => undefined },
+      } as unknown as HandlerContext["adapter"],
+      isLocalProject: false,
+    };
+
+    const result = await new AuthHandler().handle(
+      new Request("http://localhost/test", {
+        headers: { authorization: "Bearer must-not-be-trusted" },
+      }),
+      ctx,
+    );
+
+    expect(result.response?.status).toBe(401);
+    expect(getterCalls).toBe(0);
+  });
+
+  it("fails closed when explicit auth proxy inspection fails", async () => {
+    const auth = new Proxy({}, {
+      ownKeys() {
+        throw new Error("hostile proxy");
+      },
+    });
+    const ctx: HandlerContext = {
+      projectDir: "/tmp/auth-test",
+      securityConfig: { auth } as unknown as SecurityConfig,
+      cspUserHeader: null,
+      adapter: {
+        env: { get: () => undefined },
+      } as unknown as HandlerContext["adapter"],
+      isLocalProject: false,
+    };
+
+    const result = await new AuthHandler().handle(
+      new Request("http://localhost/test"),
+      ctx,
+    );
+
+    expect(result.response?.status).toBe(401);
+  });
+
+  it("rejects malformed or competing explicit auth config without exposing credentials", async () => {
+    const handler = createHandler();
+    const invalidAuthConfigs: readonly unknown[] = [
+      {},
+      { basic: {} },
+      { basic: { username: "admin" } },
+      { basic: { password: "secret" } },
+      { basic: { username: "", password: "secret" } },
+      { basic: { username: "admin", password: "" } },
+      { bearer: {} },
+      { bearer: { token: "" } },
+      {
+        basic: { username: "admin", password: "secret" },
+        bearer: { token: "private-token" },
+      },
+      { basic: undefined },
+      { unknownMode: { secret: "must-not-leak" } },
+      "invalid-auth-config",
+    ];
+
+    for (const auth of invalidAuthConfigs) {
+      const ctx: HandlerContext = {
+        projectDir: "/tmp/auth-test",
+        securityConfig: { auth } as unknown as SecurityConfig,
+        cspUserHeader: null,
+        adapter: {
+          env: { get: () => undefined },
+        } as unknown as HandlerContext["adapter"],
+        isLocalProject: false,
+      };
+      const result = await handler.handle(
+        new Request("http://localhost/test", {
+          headers: { authorization: "Bearer private-token" },
+        }),
+        ctx,
+      );
+      const response = result.response as Response;
+      const body = await response.text();
+
+      expect(response.status).toBe(401);
+      expect(response.headers.get("WWW-Authenticate")).toBe(
+        'Basic realm="Secure Area", Bearer',
+      );
+      expect(body).toBe("Unauthorized");
+      expect(body).not.toContain("admin");
+      expect(body).not.toContain("secret");
+      expect(body).not.toContain("private-token");
+    }
   });
 });

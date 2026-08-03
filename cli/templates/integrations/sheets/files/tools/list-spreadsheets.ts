@@ -4,7 +4,7 @@ import { createSheetsClient } from "../lib/sheets-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "list-spreadsheets",
+  id: "sheets-list-spreadsheets",
   description:
     "List recent Google Sheets spreadsheets from Google Drive. Returns spreadsheet names, IDs, and metadata.",
   inputSchema: defineSchema((v) =>

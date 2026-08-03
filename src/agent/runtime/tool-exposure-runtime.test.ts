@@ -5,6 +5,11 @@ import type { ModelRuntime } from "#veryfront/provider";
 import { defineSchema } from "#veryfront/schemas";
 import { type RemoteToolSource, tool, type ToolDefinition } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/index.ts";
 import { agent } from "../index.ts";
 import type { AgentConfig, Message } from "../types.ts";
 import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
@@ -59,6 +64,7 @@ function restrictedSkillMessages(input: string): Message[] {
         toolName: "load_skill",
         result: {
           skillId: "restricted-runtime-test",
+          instructions: "# Restricted runtime test",
           allowedTools: ["form_input"],
           references: [],
           scripts: [],
@@ -72,6 +78,167 @@ function restrictedSkillMessages(input: string): Message[] {
     },
   ];
 }
+
+async function assertReferenceLoadPreservesActivePolicy(
+  mode: "generate" | "stream",
+): Promise<void> {
+  const observedTools: string[][] = [];
+  const loadInputs: unknown[] = [];
+  let dangerousExecutionCount = 0;
+  let step = 0;
+
+  function nextModelOutput(options: unknown): {
+    content: unknown[];
+    finishReason: "tool-calls" | "stop";
+  } {
+    observedTools.push(toolNames(options));
+    step += 1;
+    if (step === 1) {
+      return {
+        content: [{
+          type: "tool-call",
+          toolCallId: `${mode}-load-body`,
+          toolName: "load_skill",
+          input: { skillId: "restricted" },
+        }],
+        finishReason: "tool-calls",
+      };
+    }
+    if (step === 2) {
+      return {
+        content: [{
+          type: "tool-call",
+          toolCallId: `${mode}-load-reference`,
+          toolName: "load_skill",
+          input: { skillId: "restricted", file: "references/guide.md" },
+        }],
+        finishReason: "tool-calls",
+      };
+    }
+    if (step === 3) {
+      return {
+        content: [{
+          type: "tool-call",
+          toolCallId: `${mode}-dangerous-write`,
+          toolName: "dangerous_write",
+          input: {},
+        }],
+        finishReason: "tool-calls",
+      };
+    }
+    return {
+      content: [{ type: "text", text: "done" }],
+      finishReason: "stop",
+    };
+  }
+
+  const model: ModelRuntime = {
+    provider: "hosted",
+    modelId: `hosted/reference-policy-${mode}`,
+    async doGenerate(options: unknown) {
+      const output = nextModelOutput(options);
+      return {
+        ...output,
+        content: output.content.map((part) => {
+          if (
+            typeof part === "object" && part !== null &&
+            (part as { type?: unknown }).type === "tool-call"
+          ) {
+            return {
+              ...part,
+              input: JSON.stringify((part as { input: unknown }).input),
+            };
+          }
+          return part;
+        }),
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      };
+    },
+    async doStream(options: unknown) {
+      const output = nextModelOutput(options);
+      const parts = output.content.map((part) =>
+        typeof part === "object" && part !== null &&
+          (part as { type?: unknown }).type === "text"
+          ? { type: "text-delta", text: (part as { text: string }).text }
+          : part
+      );
+      return {
+        stream: createRuntimeStream([
+          ...parts,
+          { type: "finish", finishReason: output.finishReason },
+        ]),
+      };
+    },
+  };
+  try {
+    const assistant = agent(
+      {
+        id: `reference-policy-${mode}`,
+        model: `hosted/reference-policy-${mode}`,
+        system: "Use tools when needed.",
+        skills: true,
+        tools: {
+          load_skill: tool({
+            id: "load_skill",
+            description: "Load a skill body or one advertised reference",
+            inputSchema: defineSchema((v) =>
+              v.object({
+                skillId: v.string(),
+                file: v.string().optional(),
+              })
+            )(),
+            execute: (input) => {
+              loadInputs.push(input);
+              const file = (input as { file?: string }).file;
+              return file ? { skillId: "restricted", file, content: "reference contents" } : {
+                skillId: "restricted",
+                instructions: "# Restricted",
+                allowedTools: ["load_skill"],
+                references: ["references/guide.md"],
+                scripts: [],
+              };
+            },
+          }),
+          dangerous_write: tool({
+            id: "dangerous_write",
+            description: "Must remain unavailable under the active skill policy",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => {
+              dangerousExecutionCount += 1;
+              return { success: true };
+            },
+          }),
+        },
+        maxSteps: 4,
+        resolveModelTransport: () => ({ model }),
+        __vfToolLoadingMode: "eager",
+      } as AgentConfig & RuntimeToolFilterConfig,
+    );
+
+    if (mode === "generate") {
+      const response = await assistant.generate({ input: "Load the guide, then write" });
+      assertEquals(response.toolCalls[2]?.status, "error");
+    } else {
+      await (await assistant.stream({ input: "Load the guide, then write" }))
+        .toDataStreamResponse().text();
+    }
+
+    assertEquals(loadInputs, [
+      { skillId: "restricted" },
+      { skillId: "restricted", file: "references/guide.md" },
+    ]);
+    assertEquals(observedTools[2]?.includes("dangerous_write"), false);
+    assertEquals(dangerousExecutionCount, 0);
+  } finally {
+    toolRegistry.delete("load_skill");
+    toolRegistry.delete("dangerous_write");
+  }
+}
+
+it("reference loads preserve active skill policy in generate and stream execution", async () => {
+  await assertReferenceLoadPreservesActivePolicy("generate");
+  await assertReferenceLoadPreservesActivePolicy("stream");
+});
 
 it("deferred generate searches, exposes on the next step, and executes once", async () => {
   const observedTools: string[][] = [];
@@ -831,6 +998,103 @@ it("provider-executed tools bypass local deferred exposure gating", async () => 
 
   assertEquals(response.toolCalls[0]?.status, "completed");
   assertEquals(response.toolCalls[0]?.result, { results: ["release"] });
+});
+
+it("omits provider tools when the runtime cannot call tools", async () => {
+  const observedTools: string[][] = [];
+  const observedSystems: string[] = [];
+  const model: ModelRuntime = {
+    provider: "anthropic",
+    modelId: "claude-without-tools",
+    runtimeCapabilities: { toolCalling: false },
+    async doGenerate(options: unknown) {
+      observedTools.push(toolNames(options));
+      observedSystems.push(systemPrompt(options));
+      return {
+        content: [{ type: "text", text: "done" }],
+        finishReason: "stop",
+      };
+    },
+    async doStream(options: unknown) {
+      observedTools.push(toolNames(options));
+      observedSystems.push(systemPrompt(options));
+      return {
+        stream: createRuntimeStream([
+          { type: "text-delta", text: "done" },
+          { type: "finish", finishReason: "stop" },
+        ]),
+      };
+    },
+  };
+  const assistant = agent({
+    id: "provider-tools-unsupported",
+    model: "anthropic/claude-without-tools",
+    system: flattenSystemInstructions(
+      withRuntimeToolInventory("Answer directly.", ["web_search"]),
+    ),
+    skills: false,
+    providerTools: ["web_search"],
+    maxSteps: 1,
+    resolveModelTransport: () => ({ model }),
+  });
+
+  await assistant.generate({ input: "hi" });
+  await (await assistant.stream({ input: "hi" })).toDataStreamResponse().text();
+
+  assertEquals(observedTools, [[], []]);
+  assertEquals(observedSystems.length, 2);
+  for (const system of observedSystems) {
+    assertEquals(system.includes("- web_search"), false);
+  }
+});
+
+it("legacy local tool suppression does not claim an explicit capability declaration", async () => {
+  const entries: LogEntry[] = [];
+  const originalWarn = console.warn;
+  console.warn = () => undefined;
+  __resetLogRecordEmitterForTests();
+  __registerLogRecordEmitter((entry) => entries.push(entry));
+
+  try {
+    const model: ModelRuntime = {
+      provider: "local",
+      modelId: "legacy-local-model",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+        };
+      },
+      async doStream() {
+        return { stream: new ReadableStream() };
+      },
+    };
+    const assistant = agent({
+      id: "legacy-local-tool-warning",
+      model: "local/legacy-local-model",
+      system: "Answer directly.",
+      skills: false,
+      tools: { get_release: releaseTool() },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+
+    await assistant.generate({ input: "hi" });
+
+    const warning = entries.find((entry) =>
+      entry.level === "warn" && entry.component === "agent" &&
+      entry.message.includes("Tools will be skipped")
+    );
+    assertEquals(
+      warning?.message,
+      'Agent "legacy-local-tool-warning" has tools configured, but model ' +
+        '"local/legacy-local-model" does not support tool calling. Tools will be skipped.',
+    );
+    assertEquals(warning?.message.includes("declares"), false);
+  } finally {
+    __resetLogRecordEmitterForTests();
+    console.warn = originalWarn;
+  }
 });
 
 it("veryfront-cloud Anthropic and OpenAI transports default to framework fallback", async () => {

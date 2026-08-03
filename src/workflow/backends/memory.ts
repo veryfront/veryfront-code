@@ -21,6 +21,10 @@ import {
   type WorkflowRunUpdate,
 } from "./types.ts";
 import { requeueRun } from "./shared/requeue-run.ts";
+import {
+  appendRetainedCheckpoint,
+  deleteOldestCheckpointOccurrences,
+} from "./checkpoint-retention.ts";
 import { ORCHESTRATION_ERROR, RESOURCE_NOT_FOUND } from "#veryfront/errors";
 import { requireWorkflowSourceIntegrationPolicy } from "../source-integration-policy.ts";
 
@@ -207,7 +211,7 @@ export class MemoryBackend implements WorkflowBackend {
   saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void> {
     logger.debug("Saving checkpoint", { checkpointId: checkpoint.id, runId });
     const checkpoints = this.checkpoints.get(runId) ?? [];
-    checkpoints.push(structuredClone(checkpoint));
+    appendRetainedCheckpoint(checkpoints, checkpoint);
     this.checkpoints.set(runId, checkpoints);
     return Promise.resolve();
   }
@@ -227,7 +231,7 @@ export class MemoryBackend implements WorkflowBackend {
     }
 
     const checkpoints = this.checkpoints.get(storageRunId) ?? [];
-    checkpoints.push(structuredClone(checkpoint));
+    appendRetainedCheckpoint(checkpoints, checkpoint);
     this.checkpoints.set(storageRunId, checkpoints);
     return Promise.resolve(true);
   }
@@ -261,8 +265,7 @@ export class MemoryBackend implements WorkflowBackend {
     const checkpoints = this.checkpoints.get(runId);
     if (!checkpoints) return Promise.resolve();
 
-    const idsToDelete = new Set(checkpointIds);
-    this.checkpoints.set(runId, checkpoints.filter((c) => !idsToDelete.has(c.id)));
+    this.checkpoints.set(runId, deleteOldestCheckpointOccurrences(checkpoints, checkpointIds));
 
     logger.debug("Deleted checkpoints", { count: checkpointIds.length });
     return Promise.resolve();

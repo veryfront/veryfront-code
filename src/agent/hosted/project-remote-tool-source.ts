@@ -19,7 +19,12 @@ import { wrapRemoteToolSourceWithMcpPolicy } from "../mcp-tool-policy.ts";
 import { CONFIG_INVALID, PERMISSION_DENIED } from "#veryfront/errors";
 import { toChildRunToolInputRecord } from "../child-run/execution-support.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
-import { getConfirmedProjectContextSwitchId } from "../project/context.ts";
+import {
+  type ConfirmedAgentProjectContextSwitch,
+  createUnconfirmedProjectContextSwitchResult,
+  getConfirmedProjectContextSwitch,
+  isClaimedSuccessfulProjectContextSwitchResult,
+} from "../project/context.ts";
 import {
   getProjectSteeringMutation,
   isSuccessfulProjectSteeringMutationResult,
@@ -36,6 +41,7 @@ export type HostedProjectRemoteToolSourceMutationHandler = (
 /** Handler for hosted project remote tool source project switch. */
 export type HostedProjectRemoteToolSourceProjectSwitchHandler = (
   projectId: string,
+  confirmedProject?: Readonly<ConfirmedAgentProjectContextSwitch>,
 ) => Promise<void> | void;
 
 /** Input payload for hosted project remote tool source prepare tool. */
@@ -212,15 +218,18 @@ export function createHostedProjectRemoteToolSource(
 
       if (isProjectNavigationRemoteTool(toolName, input.projectScopedRemoteToolOptions)) {
         const requestedProjectReference = trustedToolInput.project_reference;
-        const confirmedProjectId = typeof requestedProjectReference === "string"
-          ? getConfirmedProjectContextSwitchId(result, requestedProjectReference)
+        const confirmedProject = typeof requestedProjectReference === "string"
+          ? getConfirmedProjectContextSwitch(result, requestedProjectReference)
           : null;
 
-        if (confirmedProjectId) {
-          await input.onProjectSwitch?.(confirmedProjectId);
+        if (confirmedProject) {
+          await input.onProjectSwitch?.(confirmedProject.projectId, confirmedProject);
+          return result;
         }
 
-        return result;
+        return isClaimedSuccessfulProjectContextSwitchResult(result)
+          ? createUnconfirmedProjectContextSwitchResult()
+          : result;
       }
 
       const mutation = getProjectSteeringMutation({

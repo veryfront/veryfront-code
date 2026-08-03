@@ -13,18 +13,19 @@
  * - VERYFRONT_SERVER_URL: URL of the production server service
  * - VERYFRONT_PROXY_URL: Optional proxy bind URL (e.g. http://0.0.0.0:8080)
  * - LOCAL_PROJECTS: JSON map of slug → filesystem path (for dev)
- * - CACHE_TYPE: "memory" (default) or "redis"
- * - REDIS_URL: Redis connection URL (required if CACHE_TYPE=redis)
+ * - CACHE_TYPE: "memory" (default) or "extension"
  * - VERYFRONT_PROXY_EXPECTED_REPLICAS: Minimum proxy replicas required to acknowledge routing changes
  * - VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET: HMAC secret for Redis routing events and acknowledgements
  * - VERYFRONT_API_INTERNAL_URL: API URL for internal endpoints (falls back to VERYFRONT_PROXY_API_BASE_URL)
  * - VERYFRONT_API_INTERNAL_USER: Basic auth user for internal API
  * - VERYFRONT_API_INTERNAL_PASS: Basic auth pass for internal API
  * - SHUTDOWN_DRAIN_TIMEOUT_MS: Time to wait for active SSE responses during shutdown
+ * - SHUTDOWN_CLEANUP_TIMEOUT_MS: Total time allowed for post-drain cleanup
  */
 
-import { createProxyHandler, INTERNAL_PROXY_HEADERS, type ProxyConfig } from "./handler.ts";
+import { createProxyHandler, type ProxyConfig } from "./handler.ts";
 import { createCacheFromEnv } from "./cache/index.ts";
+import { acquireExtensionTokenCacheStoreFromEnv } from "./cache/extension-store.ts";
 import {
   getReplayableRequestBodies,
   getUpstreamRetryCount,
@@ -45,16 +46,22 @@ import {
   endSpan,
   extractContext,
   initializeOTLPWithApis,
-  injectContext,
   ProxySpanNames,
   shutdownOTLP,
   startServerSpan,
   withContext,
   withSpan,
 } from "./tracing.ts";
+import { settleProxyShutdownHooksOrThrow } from "./shutdown-hooks.ts";
+import {
+  DEFAULT_PROXY_SHUTDOWN_CLEANUP_TIMEOUT_MS,
+  parseProxyShutdownCleanupTimeoutMs,
+  type ProxyShutdownFailure,
+  runProxyShutdownSteps,
+} from "./shutdown-lifecycle.ts";
 import { proxyLogger, runWithProxyRequestContext } from "./logger.ts";
 import { getProxyFailureLogLevel } from "./log-noise.ts";
-import { RendererRouter } from "./renderer-router.ts";
+import { createRendererRouterFromEnvironment } from "./renderer-router.ts";
 import { ServerResolver } from "./server-resolver.ts";
 import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isProduction } from "#veryfront/platform/environment.ts";
@@ -92,6 +99,7 @@ import {
 } from "#veryfront/observability/application-errors.ts";
 import { initializeSentryFromEnv } from "#veryfront/observability/sentry.ts";
 import { getTraceContext } from "./tracing.ts";
+import { createSplitForwardRequestInit } from "./split-forward-request.ts";
 
 await initializeSentryFromEnv("veryfront-proxy");
 
@@ -141,15 +149,7 @@ if (!serverUrlFromEnv && isProduction()) {
 }
 const PRODUCTION_SERVER_URL = serverUrlFromEnv || "http://localhost:3001";
 
-const discoveryHost = getEnv("VERYFRONT_SERVER_DISCOVERY_HOST");
-const staticTargets = getEnv("VERYFRONT_SERVER_TARGETS");
-const rendererRouter = (discoveryHost || staticTargets)
-  ? new RendererRouter(
-    discoveryHost || "static-targets",
-    PRODUCTION_SERVER_URL,
-    parseInt(getEnv("VERYFRONT_SERVER_DISCOVERY_INTERVAL_MS") || "15000") || 15_000,
-  )
-  : null;
+const rendererRouter = createRendererRouterFromEnvironment(PRODUCTION_SERVER_URL);
 
 // Dedicated server resolver: routes environments to their dedicated server if assigned
 const apiInternalUrl = getEnv("VERYFRONT_API_INTERNAL_URL") || config.apiBaseUrl;
@@ -178,6 +178,10 @@ const VERYFRONT_SERVER_RETRY_DELAY_MS = parseInt(
 const SHUTDOWN_DRAIN_TIMEOUT_MS = parseProxyDrainTimeoutMs(
   getEnv("SHUTDOWN_DRAIN_TIMEOUT_MS"),
   DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS,
+);
+const SHUTDOWN_CLEANUP_TIMEOUT_MS = parseProxyShutdownCleanupTimeoutMs(
+  getEnv("SHUTDOWN_CLEANUP_TIMEOUT_MS"),
+  DEFAULT_PROXY_SHUTDOWN_CLEANUP_TIMEOUT_MS,
 );
 const routingInvalidationSecret = getEnv("VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET") ?? "";
 const routingInvalidationSecretBytes =
@@ -211,12 +215,13 @@ const { createAuthProvider } = await importFirstPartyExtensionModule<AuthJwtExte
 register("AuthProvider", createAuthProvider({}));
 
 // Initialize cache and proxy handler
-const cache = await createCacheFromEnv();
+const extensionStore = await acquireExtensionTokenCacheStoreFromEnv();
+const cache = await createCacheFromEnv({ extensionStore });
 const routingInvalidationLogger = {
   debug: (msg: string, extra?: Record<string, unknown>) => proxyLogger.debug(msg, extra),
   info: (msg: string, extra?: Record<string, unknown>) => proxyLogger.info(msg, extra),
   warn: (msg: string, extra?: Record<string, unknown>) => proxyLogger.warn(msg, extra),
-  error: (msg: string, error?: Error, extra?: Record<string, unknown>) =>
+  error: (msg: string, error?: unknown, extra?: Record<string, unknown>) =>
     proxyLogger.error(msg, extra ?? {}, error),
 };
 const proxyHandler = createProxyHandler({
@@ -451,22 +456,6 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
             env: ctx.environment,
           });
 
-          const newHeaders = new Headers(req.headers);
-          for (const header of INTERNAL_PROXY_HEADERS) newHeaders.delete(header);
-          if (ctx.token) newHeaders.set("x-token", ctx.token);
-          newHeaders.set("x-project-slug", ctx.projectSlug || "");
-          newHeaders.set("x-environment", ctx.environment);
-          newHeaders.set("x-forwarded-host", ctx.host);
-          if (ctx.localPath) newHeaders.set("x-project-path", ctx.localPath);
-          if (ctx.projectId) newHeaders.set("x-project-id", ctx.projectId);
-          if (ctx.releaseId) newHeaders.set("x-release-id", ctx.releaseId);
-          if (ctx.environmentId) newHeaders.set("x-environment-id", ctx.environmentId);
-          if (ctx.branchId) newHeaders.set("x-branch-id", ctx.branchId);
-          if (ctx.branchName) newHeaders.set("x-branch-name", ctx.branchName);
-          newHeaders.delete("host");
-
-          injectContext(newHeaders);
-
           const maxRetries = getUpstreamRetryCount(
             req,
             url.pathname,
@@ -523,13 +512,15 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
                   withSpan(
                     ProxySpanNames.HTTP_CLIENT_FETCH,
                     () =>
-                      fetch(serverUrl.toString(), {
-                        method: req.method,
-                        headers: newHeaders,
-                        body: upstreamBodies[attempt] ?? null,
-                        redirect: "manual",
-                        signal: abortController.signal,
-                      }),
+                      fetch(
+                        serverUrl.toString(),
+                        createSplitForwardRequestInit(
+                          req,
+                          ctx,
+                          upstreamBodies[attempt] ?? null,
+                          abortController.signal,
+                        ),
+                      ),
                     {
                       "http.method": req.method,
                       "http.url": serverUrl.toString(),
@@ -750,7 +741,7 @@ async function router(req: Request): Promise<Response> {
     } else if (url.pathname.startsWith("/_vf/api/")) {
       response = await handleApiProxy(req, url);
     } else if (isReleaseAssetPath(url.pathname)) {
-      response = await handleReleaseAssetRequest(url, { apiBaseUrl: config.apiBaseUrl }) ??
+      response = await handleReleaseAssetRequest(req, url, { apiBaseUrl: config.apiBaseUrl }) ??
         await forwardToServer(req, url);
     } else {
       response = await forwardToServer(req, url);
@@ -774,12 +765,43 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   proxyLogger.info(`Received ${signal}, initiating graceful shutdown`, {
     inFlightRequests: proxyRequestDrainTracker.getInFlightCount(),
     drainTimeoutMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
+    cleanupTimeoutMs: SHUTDOWN_CLEANUP_TIMEOUT_MS,
   });
+
+  const reportShutdownFailure = ({ step, error, timedOut }: ProxyShutdownFailure): void => {
+    try {
+      captureApplicationError(error, { boundary: `process.shutdown.${step}` });
+    } catch (reportingError) {
+      try {
+        proxyLogger.error(
+          "Failed to capture proxy shutdown error",
+          { step },
+          reportingError,
+        );
+      } catch {
+        // Diagnostics must never skip later cleanup owners.
+      }
+    }
+    try {
+      proxyLogger.error(
+        timedOut ? "Proxy shutdown step timed out" : "Proxy shutdown step failed",
+        { step, timedOut },
+        error,
+      );
+    } catch {
+      // Diagnostics must never skip later cleanup owners.
+    }
+  };
 
   try {
     // New requests receive the draining response after shuttingDown is set.
     // Keep this replica subscribed while already-started responses finish.
-    const drained = await proxyRequestDrainTracker.waitForDrain(SHUTDOWN_DRAIN_TIMEOUT_MS);
+    let drained = false;
+    try {
+      drained = await proxyRequestDrainTracker.waitForDrain(SHUTDOWN_DRAIN_TIMEOUT_MS);
+    } catch (error) {
+      reportShutdownFailure({ step: "request_drain", error, timedOut: false });
+    }
     if (!drained) {
       const now = performance.now();
       proxyLogger.warn("Proxy drain timeout exceeded, forcing shutdown", {
@@ -794,26 +816,52 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
       });
     }
 
-    await routingInvalidationBus?.close();
-
-    const closed = await closeProxyServerWithin(
-      () => server.close(),
-      PROXY_SERVER_CLOSE_TIMEOUT_MS,
-    );
-    if (!closed) {
-      proxyLogger.warn(
-        "Proxy server close timed out; process exit will close remaining connections",
-        {
-          closeTimeoutMs: PROXY_SERVER_CLOSE_TIMEOUT_MS,
+    const cleanupFailures = await runProxyShutdownSteps([
+      {
+        name: "routing_invalidation_bus",
+        run: () => routingInvalidationBus?.close(),
+      },
+      {
+        name: "http_server",
+        run: async () => {
+          const closed = await closeProxyServerWithin(
+            () => server.close(),
+            PROXY_SERVER_CLOSE_TIMEOUT_MS,
+          );
+          if (!closed) {
+            proxyLogger.warn(
+              "Proxy server close timed out; process exit will close remaining connections",
+              { closeTimeoutMs: PROXY_SERVER_CLOSE_TIMEOUT_MS },
+            );
+          }
         },
-      );
+      },
+      { name: "renderer_router", run: () => rendererRouter?.close() },
+      { name: "server_resolver", run: () => serverResolver.close() },
+      { name: "proxy_handler", run: () => proxyHandler.close() },
+      {
+        name: "extension_owners",
+        requires: ["proxy_handler"],
+        run: () => settleProxyShutdownHooksOrThrow(),
+      },
+      { name: "telemetry", run: () => shutdownOTLP() },
+      {
+        name: "application_error_flush",
+        run: async () => {
+          await flushApplicationErrors();
+        },
+      },
+    ], {
+      timeoutMs: SHUTDOWN_CLEANUP_TIMEOUT_MS,
+      onFailure: reportShutdownFailure,
+    });
+    if (cleanupFailures.length === 0) {
+      proxyLogger.info("Closed connections");
+    } else {
+      proxyLogger.warn("Proxy shutdown completed with cleanup failures", {
+        failureCount: cleanupFailures.length,
+      });
     }
-    rendererRouter?.close();
-    serverResolver.close();
-    await proxyHandler.close();
-    await shutdownOTLP();
-    await flushApplicationErrors();
-    proxyLogger.info("Closed connections");
   } catch (error) {
     captureApplicationError(error, { boundary: "process.shutdown" });
     proxyLogger.error("Error while shutting down proxy", error);

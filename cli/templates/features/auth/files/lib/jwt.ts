@@ -16,14 +16,14 @@ function base64UrlEncode(bytes: ArrayBuffer): string {
     .replace(/=+$/, "");
 }
 
-function base64UrlDecodeToBytes(input: string): Uint8Array {
+function base64UrlDecodeToBytes(input: string): Uint8Array<ArrayBuffer> {
   return Uint8Array.from(
     atob(input.replace(/-/g, "+").replace(/_/g, "/")),
     (c) => c.charCodeAt(0),
   );
 }
 
-function encodeText(input: string): Uint8Array {
+function encodeText(input: string): Uint8Array<ArrayBuffer> {
   return new TextEncoder().encode(input);
 }
 

@@ -12,6 +12,15 @@ import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
 import { refreshLoggerConfig } from "#veryfront/utils";
 import { register, tryResolve } from "#veryfront/extensions/contracts.ts";
+import { RscActionAuthorizationProviderName } from "#veryfront/extensions/auth/index.ts";
+import {
+  beginContractGeneration,
+  commitContractGeneration,
+  completeContractGenerationRetirement,
+  drainContractGeneration,
+  sealContractGeneration,
+  stageContract,
+} from "#veryfront/extensions/contract-registry-internal.ts";
 import type { Bundler } from "#veryfront/extensions/bundler/bundler.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import {
@@ -29,6 +38,21 @@ import {
   rscDisabledConfig,
   rscEnabledConfig,
 } from "./endpoint-router.test-helpers.ts";
+
+async function withAllowedRscActions<T>(run: () => Promise<T>): Promise<T> {
+  const generation = beginContractGeneration();
+  stageContract(generation, RscActionAuthorizationProviderName, {
+    authorize: () => true,
+  });
+  commitContractGeneration(generation);
+  try {
+    return await run();
+  } finally {
+    sealContractGeneration(generation);
+    await drainContractGeneration(generation);
+    completeContractGenerationRetirement(generation);
+  }
+}
 
 describe("server/services/rsc/endpoints/endpoint-router", () => {
   afterEach(async () => {
@@ -189,6 +213,63 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
     });
   });
 
+  describe("shared runtime execution isolation", () => {
+    for (const endpoint of ["render", "render/page", "stream", "stream/page", "payload"]) {
+      it(`fails closed for shared ${endpoint} execution`, async () => {
+        const result = await handleRSCEndpoint(
+          makeParams({
+            pathname: `/_veryfront/rsc/${endpoint}`,
+            config: rscEnabledConfig,
+            isLocalProject: false,
+            allowHostProjectCodeExecution: false,
+          }),
+        );
+
+        assertEquals(result?.status, 503);
+        assertEquals(result?.headers.get("cache-control"), "no-store");
+        assertEquals(result?.headers.get("content-type"), "application/problem+json");
+        assertEquals(
+          (await result?.json() as { type?: string }).type,
+          "https://veryfront.com/docs/errors/project-execution-unavailable",
+        );
+      });
+    }
+
+    it("fails closed for shared server actions before authorization or import", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/action",
+          config: rscEnabledConfig,
+          isLocalProject: false,
+          allowHostProjectCodeExecution: false,
+          req: new Request("http://localhost/_veryfront/rsc/action", {
+            method: "POST",
+            body: "{}",
+          }),
+        }),
+      );
+
+      assertEquals(result?.status, 503);
+      assertEquals(result?.headers.get("cache-control"), "no-store");
+    });
+
+    it("does not conflate a dedicated production runtime with a shared runtime", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/action",
+          config: rscEnabledConfig,
+          isLocalProject: false,
+          allowHostProjectCodeExecution: true,
+          req: new Request("http://localhost/_veryfront/rsc/action", {
+            method: "GET",
+          }),
+        }),
+      );
+
+      assertEquals(result?.status, 405);
+    });
+  });
+
   describe("render endpoint", () => {
     it("renders components from the request filesystem adapter", async () => {
       const pagePath = "/virtual/project/app/page.tsx";
@@ -217,7 +298,7 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
           contentSourceId: "preview-main",
           adapter,
           config: rscEnabledConfig,
-          isLocalProject: false,
+          isLocalProject: true,
           mode: "development",
         }),
       );
@@ -228,7 +309,7 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
   });
 
   describe("action endpoint", () => {
-    it("rejects non-POST with 405", async () => {
+    it("rejects non-POST without permitting the response to be cached", async () => {
       const result = await handleRSCEndpoint(
         makeParams({
           pathname: "/_veryfront/rsc/action",
@@ -238,6 +319,8 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       );
       assertEquals(result instanceof Response, true);
       assertEquals(result!.status, 405);
+      assertEquals(result!.headers.get("cache-control"), "no-store");
+      assertEquals(result!.headers.get("vary"), RSC_DEPENDENCY_PINNING_HEADER);
       const body = await result!.text();
       assertStringIncludes(body, "Method Not Allowed");
     });
@@ -266,23 +349,26 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
 
       let result: Response | null;
       try {
-        result = await handleRSCEndpoint(
-          makeParams({
-            pathname: "/_veryfront/rsc/action",
-            config: rscEnabledConfig,
-            adapter,
-            req: new Request("http://localhost/_veryfront/rsc/action", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ id: "save", args: [] }),
+        result = await withAllowedRscActions(() =>
+          handleRSCEndpoint(
+            makeParams({
+              pathname: "/_veryfront/rsc/action",
+              config: rscEnabledConfig,
+              adapter,
+              req: new Request("http://localhost/_veryfront/rsc/action", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ id: "save", args: [] }),
+              }),
             }),
-          }),
+          )
         );
       } finally {
         console.error = originalConsoleError;
       }
 
       assertEquals(result?.status, 500);
+      assertEquals(result?.headers.get("cache-control"), "no-store");
       const body = await result!.json();
       assertEquals(body, { ok: false, error: "action failed" });
       assertEquals(JSON.stringify(body).includes(sensitiveMessage), false);
@@ -1288,6 +1374,23 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
   });
 
   describe("action endpoint - POST handling", () => {
+    it("fails closed without a generation-owned authorization provider", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/action",
+          config: rscEnabledConfig,
+          req: new Request("http://localhost/_veryfront/rsc/action", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ id: "valid-action", args: [] }),
+          }),
+        }),
+      );
+
+      assertEquals(result?.status, 503);
+      assertEquals(result?.headers.get("cache-control"), "no-store");
+    });
+
     it("handles POST action with missing body id", async () => {
       const result = await handleRSCEndpoint(
         makeParams({
@@ -1338,16 +1441,18 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
     });
 
     it("handles POST action with valid id but non-existent file returns error", async () => {
-      const result = await handleRSCEndpoint(
-        makeParams({
-          pathname: "/_veryfront/rsc/action",
-          config: rscEnabledConfig,
-          req: new Request("http://localhost/_veryfront/rsc/action", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ id: "valid-action", args: ["hello"] }),
+      const result = await withAllowedRscActions(() =>
+        handleRSCEndpoint(
+          makeParams({
+            pathname: "/_veryfront/rsc/action",
+            config: rscEnabledConfig,
+            req: new Request("http://localhost/_veryfront/rsc/action", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ id: "valid-action", args: ["hello"] }),
+            }),
           }),
-        }),
+        )
       );
       assertEquals(result instanceof Response, true);
       assertEquals(result!.status, 404);
@@ -1761,6 +1866,7 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
             adapter: branchAAdapter,
             config: rscEnabledConfig,
             isLocalProject: false,
+            allowHostProjectCodeExecution: false,
             mode: "development",
           }),
         );
@@ -1774,6 +1880,7 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
             adapter: branchBAdapter,
             config: rscEnabledConfig,
             isLocalProject: false,
+            allowHostProjectCodeExecution: false,
             mode: "development",
           }),
         );
@@ -1807,11 +1914,13 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
             adapter: branchBAdapter,
             config: rscEnabledConfig,
             isLocalProject: false,
+            allowHostProjectCodeExecution: false,
             mode: "development",
           }),
         );
 
-        assertEquals(renderB?.status, 200);
+        assertEquals(renderB?.status, 503);
+        assertEquals(renderB?.headers.get("cache-control"), "no-store");
       } finally {
         __resetRSCHandlerForTests();
         setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");

@@ -43,7 +43,8 @@ Automatic `max_tokens` defaults based on model family:
 
 | Model                        | Default max_tokens |
 | ---------------------------- | ------------------ |
-| Claude Opus/Sonnet 4.6       | 128,000            |
+| Claude Opus 4.8/4.7/4.6      | 128,000            |
+| Claude Sonnet 4.6            | 64,000             |
 | Claude Opus/Sonnet/Haiku 4.5 | 64,000             |
 | Claude Opus 4.1              | 32,000             |
 | Claude 3 Haiku               | 4,096              |
@@ -69,6 +70,20 @@ runtime.doGenerate({
 Effort-to-budget mapping: `low` = 1024, `medium` = 4096, `high` = 16384, `max` = 32768.
 
 When thinking is enabled, `temperature` and `topP` are automatically dropped (Anthropic rejects the combo).
+
+### Exact Replay
+
+Thinking, redacted thinking, ordinary `tool_use`, server-tool calls, and
+server-tool results are retained in assistant provider metadata for later
+turns. Manual callers must carry that metadata forward with the canonical
+assistant message.
+
+Raw replay is limited to six assistant messages, 4,096 total content blocks,
+and 8 MiB. When canonical calls or provider-executed results survive, their
+IDs, names, semantic inputs or results, multiplicity, and interleaving must
+match the raw blocks before transport. Structurally valid raw-only history is
+accepted only when the corresponding canonical projection is absent, for
+example after compaction.
 
 ### Prompt Caching
 
@@ -103,7 +118,13 @@ Already-versioned IDs (e.g. `anthropic.code_execution_20250522`) pass through ve
 
 ### MCP Servers
 
-Pass Anthropic-native MCP servers via `mcpServers`. Keys are automatically converted from camelCase to snake_case:
+Pass Anthropic-native MCP server connection details via `mcpServers`. The runtime validates
+that every server has a unique name and an absolute HTTPS URL, emits the current
+`mcp_servers` wire shape, and adds the required
+`mcp-client-2025-11-20` beta without dropping unrelated caller betas.
+
+Every server is paired with exactly one `mcp_toolset`. When no toolset is supplied, the
+runtime generates one that enables all tools:
 
 ```ts
 runtime.doGenerate({
@@ -112,13 +133,78 @@ runtime.doGenerate({
     type: "url",
     url: "https://example.com/mcp",
     name: "my-server",
-    authorizationToken: "Bearer ...",
-    toolConfiguration: {
-      enabled: true,
-      allowedTools: ["search"],
+    authorizationToken: "opaque-access-token",
+  }],
+});
+```
+
+For current per-tool configuration, add a provider tool whose `name` exactly matches the
+MCP server name. Camel-case arguments are converted recursively to Anthropic's wire names:
+
+```ts
+runtime.doGenerate({
+  prompt: [...],
+  mcpServers: [{
+    type: "url",
+    url: "https://example.com/mcp",
+    name: "my-server",
+    authorizationToken: "opaque-access-token",
+  }],
+  tools: [{
+    type: "provider",
+    id: "anthropic.mcp_toolset",
+    name: "my-server",
+    args: {
+      defaultConfig: {
+        enabled: false,
+        deferLoading: true,
+      },
+      configs: {
+        search: {
+          enabled: true,
+          deferLoading: false,
+        },
+      },
     },
   }],
 });
+```
+
+The previously documented convenience form remains supported and is translated to the
+current MCPToolset allowlist contract:
+
+```ts
+mcpServers: [{
+  type: "url",
+  url: "https://example.com/mcp",
+  name: "my-server",
+  toolConfiguration: {
+    enabled: true,
+    allowedTools: ["search"],
+  },
+}];
+```
+
+Do not configure the same server or toolset through both `mcpServers` and raw
+`providerOptions`. Ambiguous definitions, duplicate names/toolsets, dangling toolsets,
+unknown MCP fields, non-HTTPS URLs, and malformed tool configuration fail before a network
+request is made. If raw `mcp_servers` and `tools` are supplied through `providerOptions`,
+they must already use Anthropic's current wire contract:
+
+```ts
+providerOptions: {
+  anthropic: {
+    mcp_servers: [{
+      type: "url",
+      url: "https://example.com/mcp",
+      name: "my-server",
+    }],
+    tools: [{
+      type: "mcp_toolset",
+      mcp_server_name: "my-server",
+    }],
+  },
+}
 ```
 
 ### Container

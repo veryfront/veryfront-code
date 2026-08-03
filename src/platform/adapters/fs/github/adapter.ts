@@ -19,6 +19,8 @@ import {
 const LOG_PREFIX = "[GitHubFSAdapter]";
 
 export class GitHubFSAdapter implements FSAdapter {
+  /** Git tree symlink blobs are excluded from the adapter's readable index. */
+  readonly symlinkSemantics = "none" as const;
   private readonly config: ResolvedGitHubConfig;
   private readonly client: GitHubApiClient;
   private readonly cache: FileCache;
@@ -100,6 +102,11 @@ export class GitHubFSAdapter implements FSAdapter {
   async readTextFile(path: string): Promise<string> {
     await this.ensureInitialized();
     return this.readOps.readTextFile(path);
+  }
+
+  async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    await this.ensureInitialized();
+    return await this.readOps.readFileBytesWithinLimit(path, byteLimit);
   }
 
   async exists(path: string): Promise<boolean> {

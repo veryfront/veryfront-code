@@ -40,6 +40,8 @@ import { AgentAvatar as AvatarImpl } from "./agent-avatar.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "../../../ui/popover.tsx";
 import { MessageSources } from "./message-sources.tsx";
 export type { MessageSourcesProps } from "./message-sources.tsx";
+import { MessageHeader, MessageHeaderCompound } from "./message-header.tsx";
+export type { MessageHeaderNameProps, MessageHeaderTimestampProps } from "./message-header.tsx";
 import {
   MessagePart,
   MessageReasoning,
@@ -112,9 +114,7 @@ function MessageRoot(
         }),
       [message.parts, role],
     );
-    const parts = React.useMemo(() => groupPartsInOrder(answerParts), [
-      answerParts,
-    ]);
+    const parts = React.useMemo(() => groupPartsInOrder(answerParts), [answerParts]);
     const textContent = React.useMemo(
       () => getTextContentFromParts(answerParts),
       [answerParts],
@@ -132,10 +132,13 @@ function MessageRoot(
       [getBranches, message.id],
     );
 
-    const { copied, copy } = useClipboard();
+    const clipboard = useClipboard();
+    const isCurrentCopy = clipboard.text === textContent;
+    const copied = isCurrentCopy && clipboard.copied;
+    const copyFailed = isCurrentCopy && clipboard.failed;
     const onCopy = React.useCallback(
-      () => copy(textContent),
-      [copy, textContent],
+      (ownerDocument?: Document) => clipboard.copy(textContent, ownerDocument),
+      [clipboard.copy, textContent],
     );
 
     const contextValue = React.useMemo<MessageContextValue>(
@@ -154,6 +157,7 @@ function MessageRoot(
           : undefined,
         onCopy,
         copied,
+        copyFailed,
         onEdit: editMessage
           ? (content: string) => {
             editMessage(message.id, content);
@@ -177,6 +181,7 @@ function MessageRoot(
         switchBranch,
         onCopy,
         copied,
+        copyFailed,
         editMessage,
         onFeedbackProp,
         overrides.feedback,
@@ -190,6 +195,7 @@ function MessageRoot(
         <MessageItem
           ref={ref}
           role={message.role}
+          data-message-id={message.id}
           // Studio `Message` anatomy: a full-width vertical column. Assistant
           // turns are left-aligned with a header (avatar + name + timestamp) on
           // top; user turns are right-aligned and capped at `max-w-[80%]`.
@@ -236,134 +242,6 @@ function MessageAvatar(
 MessageAvatar.displayName = "Message.Avatar";
 
 // ---------------------------------------------------------------------------
-// Message.Header — avatar + name + timestamp (Studio `ChatMessageHeader`)
-// ---------------------------------------------------------------------------
-
-interface MessageHeaderProps {
-  className?: string;
-  /** Compose the header's inner row yourself; omit for the default anatomy. */
-  children?: React.ReactNode;
-}
-
-/** Format a timestamp as a short `HH:MM` label (matches Studio's meta line). */
-function formatTimestamp(createdAt: ChatMessage["createdAt"]): string {
-  if (!createdAt) return "";
-  const date = createdAt instanceof Date ? createdAt : new Date(createdAt);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
-/** Props for `Message.Header.Name`. */
-export interface MessageHeaderNameProps {
-  className?: string;
-  /** Override the default agent/author label. */
-  children?: React.ReactNode;
-}
-
-/**
- * The agent/author name shown in the header. Reads the same identity from
- * `MessageContext` (+ optional `ChatContext`) the default header uses — with no
- * agent it falls back to the `"Assistant"` placeholder. Pass `children` to
- * replace the text without losing the styling/position.
- */
-function MessageHeaderName(
-  { className, children }: MessageHeaderNameProps,
-): React.ReactElement {
-  const { message } = useMessageContext();
-  const chat = useChatContextOptional();
-  // The label carries the "Assistant" placeholder; the avatar deliberately does
-  // NOT (so `AgentAvatar` can fall back to the provider logomark for `model`).
-  const agentName = metadataString(message.metadata, "agentName") ??
-    chat?.agent?.name ??
-    metadataString(message.metadata, "agentId");
-  const displayName = agentName ?? "Assistant";
-  return (
-    <span className={cn("min-w-0 truncate font-medium", className)}>
-      {children ?? displayName}
-    </span>
-  );
-}
-MessageHeaderName.displayName = "Message.Header.Name";
-
-/** Props for `Message.Header.Timestamp`. */
-export interface MessageHeaderTimestampProps {
-  className?: string;
-}
-
-/**
- * The right-aligned `HH:MM` timestamp in the header (`ml-auto`). Reads
- * `message.createdAt` from context and renders nothing when there's no valid
- * time — identical to the default header's inline behaviour.
- */
-function MessageHeaderTimestamp(
-  { className }: MessageHeaderTimestampProps,
-): React.ReactElement | null {
-  const { message } = useMessageContext();
-  const timestamp = formatTimestamp(message.createdAt);
-  if (!timestamp) return null;
-  return (
-    <span
-      className={cn("ml-auto text-sm text-[var(--faint)]", className)}
-      suppressHydrationWarning
-    >
-      {timestamp}
-    </span>
-  );
-}
-MessageHeaderTimestamp.displayName = "Message.Header.Timestamp";
-
-/**
- * Assistant message header — agent avatar (`size-8`) + name on the left, a
- * right-aligned timestamp. Ported 1:1 from Studio's `ChatMessageHeader`
- * (`pt-px pb-2`, `flex items-center gap-2`, name `font-medium`, timestamp
- * `text-sm ml-auto`). User turns have no header. Pass `children` to recompose
- * the inner row from `Message.Header.Name` / `Message.Header.Timestamp`.
- */
-function MessageHeader(
-  { className, children }: MessageHeaderProps,
-): React.ReactElement | null {
-  const { message, role } = useMessageContext();
-  const chat = useChatContextOptional();
-  if (role === "user") return null;
-
-  // The avatar gets only REAL agent identity (like `Message.Avatar`): with no
-  // agent, `AgentAvatar` falls back to the provider logomark for
-  // `metadata.model`. Folding the "Assistant" placeholder into `name` would
-  // make that fallback unreachable — the label below still shows it.
-  const agentName = metadataString(message.metadata, "agentName") ??
-    chat?.agent?.name ??
-    metadataString(message.metadata, "agentId");
-  const avatarUrl = metadataString(message.metadata, "agentAvatarUrl") ??
-    chat?.agent?.avatarUrl ?? undefined;
-
-  return (
-    // `w-full` so the timestamp's `ml-auto` reaches the right edge — the Root
-    // is `items-start`, which would otherwise shrink the header to its content.
-    <div className={cn("flex w-full items-center gap-2 pt-px pb-3", className)}>
-      {children ?? (
-        <>
-          <AvatarImpl
-            name={agentName}
-            avatarUrl={avatarUrl}
-            model={metadataString(message.metadata, "model")}
-            className="size-8"
-          />
-          <MessageHeaderName />
-          <MessageHeaderTimestamp />
-        </>
-      )}
-    </div>
-  );
-}
-MessageHeader.displayName = "Message.Header";
-
-/** `Message.Header` compound — the header row plus its addressable leaves. */
-const MessageHeaderCompound = Object.assign(MessageHeader, {
-  Name: MessageHeaderName,
-  Timestamp: MessageHeaderTimestamp,
-});
-
-// ---------------------------------------------------------------------------
 // Message.Content
 // ---------------------------------------------------------------------------
 
@@ -387,7 +265,7 @@ export interface MessageContentProps {
   className?: string;
   /** Swap the code block used in the answer markdown (forwarded to `Markdown`). */
   codeBlock?: (props: CodeBlockProps) => React.ReactNode;
-  /** Override markdown element renderers (merged over the built-in defaults). */
+  /** Element overrides forwarded to the installed rich-Markdown renderer. */
   markdownComponents?: Components;
   /**
    * Compose the body yourself. Receives each grouped part in order; return a
@@ -396,6 +274,8 @@ export interface MessageContentProps {
    * `Message.Sources` where you want them.
    */
   children?: (part: PartGroup, index: number) => React.ReactNode;
+  /** React 19: ref is a regular prop, forwarded to the body column. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 function MessageContent({
@@ -403,6 +283,7 @@ function MessageContent({
   codeBlock,
   markdownComponents,
   children,
+  ref,
 }: MessageContentProps): React.ReactElement {
   const { message, role, parts, textContent } = useMessageContext();
   const chat = useChatContextOptional();
@@ -411,6 +292,7 @@ function MessageContent({
     const fileParts = message.parts.filter((p) => p.type === "file");
     return (
       <div
+        ref={ref}
         className={cn(
           chat?.theme.message?.user ?? defaultChatTheme.message?.user,
           className,
@@ -449,6 +331,7 @@ function MessageContent({
 
   return (
     <div
+      ref={ref}
       className={cn(
         chat?.theme.message?.assistant ?? defaultChatTheme.message?.assistant,
         // `w-full` because `Message.Root` is `items-start`, which would
@@ -520,10 +403,15 @@ function ActionButton(
   }: MessageActionProps & {
     label: string;
     defaultIcon: React.ReactNode;
-    action: () => void;
+    action: (ownerDocument: Document) => void;
   },
 ): React.ReactElement {
-  const handleClick = (e: React.MouseEvent<HTMLElement>) => onClick ? onClick(e, action) : action();
+  const handleClick = (event: React.MouseEvent<HTMLElement>): void => {
+    const ownerDocument = event.currentTarget.ownerDocument;
+    const next = (): void => action(ownerDocument);
+    if (onClick) onClick(event, next);
+    else next();
+  };
 
   if (asChild) {
     return (
@@ -557,15 +445,17 @@ ActionButton.displayName = "Message.ActionButton";
 export function MessageCopyAction(
   props: MessageActionProps,
 ): React.ReactElement | null {
-  const { onCopy, copied, textContent } = useMessageContext();
+  const { onCopy, copied, copyFailed, textContent } = useMessageContext();
   if (!textContent) return null;
+  const label = copied ? "Copied!" : copyFailed ? "Unable to copy. Try again" : "Copy to clipboard";
   return (
     <ActionButton
       ref={props.ref}
       {...props}
-      label={copied ? "Copied!" : "Copy to clipboard"}
+      aria-live="polite"
+      label={label}
       defaultIcon={copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
-      action={() => void onCopy()}
+      action={(ownerDocument) => void onCopy(ownerDocument)}
     />
   );
 }
@@ -583,7 +473,7 @@ export function MessageRegenerateAction(
       {...props}
       label="Regenerate response"
       defaultIcon={<RefreshCwIcon className="size-3.5" />}
-      action={onRegenerate}
+      action={() => onRegenerate()}
     />
   );
 }
@@ -611,16 +501,19 @@ MessageEditAction.displayName = "Message.EditAction";
 export interface MessageActionsProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Compose your own bar; when omitted, the default cluster is rendered. */
   children?: React.ReactNode;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 function MessageActionsWrapper(
-  { children, className, ...props }: MessageActionsProps,
+  { children, className, ref, ...props }: MessageActionsProps,
 ): React.ReactElement | null {
   const { textContent } = useMessageContext();
   if (!textContent) return null;
   return (
     <div
       {...props}
+      ref={ref}
       className={cn(
         "flex items-center gap-0.5 opacity-0 group-hover/msg:opacity-100 transition-all duration-200",
         className,
@@ -641,17 +534,21 @@ MessageActionsWrapper.displayName = "Message.Actions";
 // Message.Feedback
 // ---------------------------------------------------------------------------
 
-interface MessageFeedbackWrapperProps {
+interface MessageFeedbackWrapperProps extends React.HTMLAttributes<HTMLDivElement> {
   className?: string;
+  /** React 19: ref is a regular prop, forwarded to the feedback row. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 function MessageFeedbackWrapper(
-  { className }: MessageFeedbackWrapperProps,
+  { className, ref, ...props }: MessageFeedbackWrapperProps,
 ): React.ReactElement | null {
   const { message, onFeedback, feedback } = useMessageContext();
   if (!onFeedback) return null;
   return (
     <FeedbackImpl
+      {...props}
+      ref={ref}
       messageId={message.id}
       feedback={feedback}
       onFeedback={(_msgId, value) => onFeedback(value)}
@@ -805,12 +702,14 @@ MessageBranchPicker.displayName = "Message.BranchPicker";
 // ---------------------------------------------------------------------------
 
 function MessageContinuing(
-  { className, children }: { className?: string; children?: React.ReactNode },
+  { className, children, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.ReactElement | null {
   const { isStreaming } = useMessageContext();
   if (!isStreaming) return null;
   return (
-    <div className={cn("mt-3 text-sm", className)}>
+    <div {...props} ref={ref} className={cn("mt-3 text-sm", className)}>
       {children ?? <Shimmer duration={1}>Continuing...</Shimmer>}
     </div>
   );

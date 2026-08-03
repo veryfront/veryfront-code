@@ -1,6 +1,7 @@
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { AgentMetadata, PromptSuggestion } from "#veryfront/agent/react";
@@ -66,7 +67,7 @@ describe("getAgentPromptSuggestionItems", () => {
 });
 
 describe("ChatEmpty suggestions", () => {
-  it("renders labels and hands the { label, prompt } object to onSuggestionSelect", () => {
+  it("renders labels and hands the { label, prompt } object to onSuggestionSelect", async () => {
     const restoreDom = installDom();
     const clicked: PromptSuggestion[] = [];
     try {
@@ -90,13 +91,13 @@ describe("ChatEmpty suggestions", () => {
         { label: "Triage login", prompt: "Triage a user who cannot sign in." },
       ], "click sends the full { label, prompt } — no .find needed");
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
     } finally {
       restoreDom();
     }
   });
 
-  it("keeps legacy onSuggestionClick handlers receiving prompt text", () => {
+  it("keeps legacy onSuggestionClick handlers receiving prompt text", async () => {
     const restoreDom = installDom();
     const clicked: string[] = [];
     try {
@@ -116,7 +117,7 @@ describe("ChatEmpty suggestions", () => {
       assert(button, "renders the legacy suggestion chip");
       flushSync(() => button.click());
       assertEquals(clicked, ["Triage the login incident."]);
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
     } finally {
       restoreDom();
     }

@@ -1,16 +1,11 @@
 /**
  * Runtime-compatible, no-hook value introspection.
  *
- * The Node compatibility implementation exposes runtime internal-slot checks
- * across supported runtimes without consulting mutable global constructors.
+ * Node-compatible hosts expose internal-slot checks that do not consult
+ * mutable global constructors. Browser and edge imports must remain linkable
+ * even though those hosts do not provide `node:util/types`.
  */
-import {
-  isAsyncFunction as nativeAsyncFunctionBrandCheck,
-  isNativeError as nativeErrorBrandCheck,
-  isPromise as nativePromiseBrandCheck,
-  isProxy as nativeProxyBrandCheck,
-  isUint8Array as nativeUint8ArrayBrandCheck,
-} from "node:util/types";
+import { nativeBrandChecks } from "./native-brand-checks.ts";
 
 const createObject = Object.create;
 const defineProperty = Object.defineProperty;
@@ -22,6 +17,13 @@ const apply = Reflect.apply;
 const NativeError = Error;
 const NativeAsyncFunctionPrototype = getPrototypeOf(async function () {});
 const toStringTagSymbol = Symbol.toStringTag;
+
+const unavailableBrandCheck = (_value: unknown): boolean => false;
+const nativeAsyncFunctionBrandCheck = nativeBrandChecks?.isAsyncFunction ?? unavailableBrandCheck;
+const nativeErrorBrandCheck = nativeBrandChecks?.isNativeError ?? unavailableBrandCheck;
+const nativePromiseBrandCheck = nativeBrandChecks?.isPromise ?? unavailableBrandCheck;
+const nativeProxyBrandCheck = nativeBrandChecks?.isProxy ?? unavailableBrandCheck;
+const nativeUint8ArrayBrandCheck = nativeBrandChecks?.isUint8Array ?? unavailableBrandCheck;
 
 function hasOwn(object: object, key: PropertyKey): boolean {
   return apply(objectHasOwnProperty, object, [key]) as boolean;
@@ -54,23 +56,25 @@ function clonePropertyDescriptor(descriptor: PropertyDescriptor): PropertyDescri
 }
 
 /**
- * Probe the runtime's actual stack-descriptor behavior without trusting a
- * mutable version or feature flag. A temporary own `prepareStackTrace` value
- * shadows both own and inherited project hooks for the synchronous probe and
- * the original descriptor is restored before this function returns.
+ * Run `read` while an own `prepareStackTrace` data property shadows both own
+ * and inherited project hooks, so no user formatter observes or rewrites a
+ * stack the runtime materializes. The original descriptor is restored before
+ * returning. `restored` reports whether the shadow was removed again.
  */
-function detectSafeErrorStackDescriptorInspection(): boolean {
+function withShadowedStackFormatter<T>(
+  read: () => T,
+): { value: T | undefined; restored: boolean } {
   let originalFormatter: PropertyDescriptor | undefined;
   try {
     const descriptor = getOwnPropertyDescriptor(NativeError, "prepareStackTrace");
     originalFormatter = descriptor ? clonePropertyDescriptor(descriptor) : undefined;
   } catch (_) {
-    return false;
+    return { value: undefined, restored: false };
   }
 
   let installed = false;
   let restored = false;
-  let stackDescriptor: PropertyDescriptor | undefined;
+  let value: T | undefined;
   try {
     defineProperty(
       NativeError,
@@ -78,7 +82,7 @@ function detectSafeErrorStackDescriptorInspection(): boolean {
       createDataDescriptor(undefined),
     );
     installed = true;
-    stackDescriptor = getOwnPropertyDescriptor(new NativeError(), "stack");
+    value = read();
   } catch (_) {
     // A non-configurable formatter or hostile runtime disables stack capture.
   } finally {
@@ -92,14 +96,99 @@ function detectSafeErrorStackDescriptorInspection(): boolean {
       }
     }
   }
-
-  if (!restored || !stackDescriptor || !hasOwn(stackDescriptor, "get")) return false;
-  return typeof stackDescriptor.get === "function";
+  return { value, restored };
 }
 
+/**
+ * Probe the runtime's actual stack-descriptor behavior without trusting a
+ * mutable version or feature flag, and capture the runtime's own stack getter.
+ *
+ * The getter is shared by every error the runtime creates, so its identity is
+ * what later distinguishes a runtime-installed accessor from one an attacker
+ * or an instrumentation layer defined on a specific error.
+ */
+function detectNativeErrorStackGetter(): ((this: unknown) => unknown) | undefined {
+  const probe = withShadowedStackFormatter(() =>
+    getOwnPropertyDescriptor(new NativeError(), "stack")
+  );
+  const stackDescriptor = probe.value;
+  if (!probe.restored || !stackDescriptor || !hasOwn(stackDescriptor, "get")) {
+    return undefined;
+  }
+  const getter = stackDescriptor.get;
+  return typeof getter === "function" ? getter : undefined;
+}
+
+const NATIVE_ERROR_STACK_GETTER = detectNativeErrorStackGetter();
+
 /** True when own stack descriptors can be inspected without formatting them. */
-export const canInspectErrorStackDescriptorWithoutHooks =
-  detectSafeErrorStackDescriptorInspection();
+export const canInspectErrorStackDescriptorWithoutHooks = NATIVE_ERROR_STACK_GETTER !== undefined;
+
+const MAX_ERROR_PROTOTYPE_CHAIN_DEPTH = 100;
+
+/**
+ * True when `key` is absent or resolves to a data property across the whole
+ * prototype chain, so the runtime can read it without running project code.
+ */
+function resolvesWithoutAccessor(value: object, key: PropertyKey): boolean {
+  let current: object | null = value;
+  for (
+    let depth = 0;
+    current !== null && depth < MAX_ERROR_PROTOTYPE_CHAIN_DEPTH;
+    depth++
+  ) {
+    if (nativeProxyBrandCheck(current)) return false;
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = getOwnPropertyDescriptor(current, key);
+    } catch (_) {
+      return false;
+    }
+    if (descriptor) return hasOwn(descriptor, "value");
+    try {
+      current = getPrototypeOf(current);
+    } catch (_) {
+      return false;
+    }
+  }
+  return current === null;
+}
+
+/**
+ * Read a native Error's stack without letting project code observe the read.
+ *
+ * Data-valued stacks are returned directly. An accessor is only invoked when it
+ * is the runtime's own getter, and then only with `Error.prepareStackTrace`
+ * shadowed; any other accessor fails closed rather than running foreign code.
+ *
+ * Materializing a lazy stack makes the runtime format the error header, which
+ * reads `name` and `message`. Both must therefore resolve to data properties,
+ * or the read is skipped rather than allowed to trigger a project accessor.
+ */
+export function readNativeErrorStackWithoutHooks(error: Error): string | undefined {
+  if (!NATIVE_ERROR_STACK_GETTER) return undefined;
+
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = getOwnPropertyDescriptor(error, "stack");
+  } catch (_) {
+    return undefined;
+  }
+  if (!descriptor) return undefined;
+  if (hasOwn(descriptor, "value")) {
+    return typeof descriptor.value === "string" ? descriptor.value : undefined;
+  }
+  if (descriptor.get !== NATIVE_ERROR_STACK_GETTER) return undefined;
+  if (
+    !resolvesWithoutAccessor(error, "message") ||
+    !resolvesWithoutAccessor(error, "name")
+  ) {
+    return undefined;
+  }
+
+  const stack = withShadowedStackFormatter(() => apply(NATIVE_ERROR_STACK_GETTER, error, [])).value;
+  return typeof stack === "string" ? stack : undefined;
+}
 
 /**
  * Identify native Error values without evaluating project-owned Proxy traps.

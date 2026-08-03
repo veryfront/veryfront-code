@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { extractDescriptionText, listComments } from "../../lib/jira-client.ts";
+import { extractDescriptionText, listComments } from "../lib/jira-client.ts";
 
 export default tool({
-  id: "list-comments",
+  id: "jira-list-comments",
   description: "List comments on a Jira issue.",
   inputSchema: defineSchema((v) =>
     v.object({

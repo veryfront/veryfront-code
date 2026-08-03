@@ -284,8 +284,9 @@ describe("RenderPipeline helpers", () => {
         "adapter",
         "mode",
         "projectDir",
+        "isLocalProject",
       ];
-      assertEquals(requiredFields.length, 8);
+      assertEquals(requiredFields.length, 9);
     });
 
     it("should accept development mode", () => {

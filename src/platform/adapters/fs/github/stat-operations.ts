@@ -84,11 +84,15 @@ export class GitHubStatOperations {
     this.directoryIndex.add("");
 
     for (const entry of entries) {
+      // Git represents symbolic links as blob entries with mode 120000. This
+      // virtual adapter never follows them: omit them entirely so every path it
+      // admits has symlink-free storage semantics.
+      if (entry.mode === "120000") continue;
       if (entry.type === "blob") {
         this.fileIndex.set(entry.path, {
           path: entry.path,
           sha: entry.sha,
-          size: entry.size ?? 0,
+          ...(entry.size === undefined ? {} : { size: entry.size }),
           type: "blob",
         });
         this.addDirectoryHierarchy(entry.path);
@@ -134,7 +138,7 @@ export class GitHubStatOperations {
         isFile: true,
         isDirectory: false,
         isSymlink: false,
-        size: fileEntry.size,
+        size: fileEntry.size ?? 0,
         mtime: null,
       };
       this.cache.set(cacheKey, info);

@@ -14,6 +14,11 @@ import type {
 import type { KVNamespace } from "./types.ts";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
 import { containsPathControlCharacters } from "#veryfront/utils/route-path-utils.ts";
+import {
+  copyFixedUint8ArrayWithinLimit,
+  getFixedUint8ArrayByteLength,
+} from "../../bounded-text-reader.ts";
+import { requireBoundedFileReadLimit } from "../../bounded-file-read.ts";
 
 /** @see https://developers.cloudflare.com/kv/platform/limits/ */
 const CLOUDFLARE_KV_MAX_KEY_BYTES = 512;
@@ -24,6 +29,61 @@ const CLOUDFLARE_KV_LIST_PAGE_SIZE = 1_000;
 /** Defensive bound aligned with Cloudflare's external-operation ceiling. */
 const CLOUDFLARE_KV_MAX_LIST_REQUESTS = 1_000;
 const textEncoder = new TextEncoder();
+
+async function readStreamWithinLimit(
+  stream: ReadableStream<Uint8Array>,
+  byteLimit: number,
+): Promise<Uint8Array> {
+  const admittedLimit = requireBoundedFileReadLimit(byteLimit);
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const result = await reader.read();
+      if (result.done) break;
+
+      const chunkBytes = getFixedUint8ArrayByteLength(
+        result.value,
+        "Cloudflare KV stream chunk",
+      );
+      if (chunkBytes > admittedLimit - totalBytes) {
+        throw new RangeError(`Cloudflare KV value exceeds ${admittedLimit} bytes`);
+      }
+      if (chunkBytes === 0) continue;
+
+      chunks.push(
+        copyFixedUint8ArrayWithinLimit(
+          result.value,
+          chunkBytes,
+          "Cloudflare KV stream chunk",
+        ),
+      );
+      totalBytes += chunkBytes;
+    }
+  } catch (readError) {
+    try {
+      await reader.cancel(readError);
+    } catch (cancelError) {
+      throw new AggregateError(
+        [readError, cancelError],
+        "Cloudflare KV bounded read and stream cancellation both failed",
+      );
+    }
+    throw readError;
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
 
 function utf8ByteLength(value: string, stopAfter = Number.POSITIVE_INFINITY): number {
   let bytes = 0;
@@ -326,7 +386,12 @@ export class CloudflareFileSystemAdapter implements FileSystemAdapter {
         context: { path: normalizedPath },
       });
     }
-    return typeof content === "string" ? content : new TextDecoder().decode(content);
+    if (typeof content !== "string") {
+      throw CONFIG_INVALID.create({
+        detail: "Cloudflare KV returned a non-text response for a text read",
+      });
+    }
+    return content;
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
@@ -339,7 +404,30 @@ export class CloudflareFileSystemAdapter implements FileSystemAdapter {
         context: { path: normalizedPath },
       });
     }
-    return typeof content === "string" ? textEncoder.encode(content) : new Uint8Array(content);
+    if (content instanceof ArrayBuffer) return new Uint8Array(content);
+    if (typeof content === "string") return textEncoder.encode(content);
+    throw CONFIG_INVALID.create({
+      detail: "Cloudflare KV returned a non-binary response for a binary read",
+    });
+  }
+
+  async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    const admittedLimit = requireBoundedFileReadLimit(byteLimit);
+    const normalizedPath = normalizeVirtualPath(path);
+    assertFilePath(normalizedPath, "read");
+    const content = await this.getKV().get(normalizedPath, "stream");
+    if (content === null) {
+      throw FILE_NOT_FOUND.create({
+        detail: `File not found: ${normalizedPath}`,
+        context: { path: normalizedPath },
+      });
+    }
+    if (!(content instanceof ReadableStream)) {
+      throw CONFIG_INVALID.create({
+        detail: "Cloudflare KV returned a non-stream response for a bounded read",
+      });
+    }
+    return await readStreamWithinLimit(content, admittedLimit);
   }
 
   async writeFile(path: string, content: string): Promise<void> {
@@ -465,8 +553,13 @@ export class CloudflareFileSystemAdapter implements FileSystemAdapter {
 
     const value = await kv.get(normalizedPath, "arrayBuffer");
     if (value !== null) {
+      if (!(value instanceof ArrayBuffer)) {
+        throw CONFIG_INVALID.create({
+          detail: "Cloudflare KV returned a non-binary response for file metadata",
+        });
+      }
       return {
-        size: typeof value === "string" ? utf8ByteLength(value) : value.byteLength,
+        size: value.byteLength,
         isFile: true,
         isDirectory: false,
         isSymlink: false,

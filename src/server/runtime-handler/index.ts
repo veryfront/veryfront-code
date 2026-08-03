@@ -284,6 +284,8 @@ export interface RuntimeHandlerOptions {
   defaultReleaseId?: string;
   /** Default environment for standalone mode (preview or production). Defaults to preview for safety. */
   defaultEnvironment?: "preview" | "production";
+  /** Host-owned capability for dedicated single-project runtime execution. */
+  allowHostProjectCodeExecution?: boolean;
 }
 
 export function createVeryfrontHandler(
@@ -550,6 +552,7 @@ export function createVeryfrontHandler(
             headers,
             requestContext: reqCtx,
             isProxyMode,
+            allowHostProjectCodeExecution: opts.allowHostProjectCodeExecution,
             proxyTrust: { proxyTrusted },
             securityConfig: securityLoader.getSecurityConfig(),
             cspUserHeader: securityLoader.getCspUserHeader(),

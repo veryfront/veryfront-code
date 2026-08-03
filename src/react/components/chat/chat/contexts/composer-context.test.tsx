@@ -3,6 +3,7 @@ import { assert, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
   ComposerContextProvider,
+  useChatInputContext,
   useComposerContext,
   useComposerContextOptional,
 } from "./composer-context.tsx";
@@ -47,6 +48,23 @@ describe("ComposerContextProvider / useComposerContext", () => {
       threw = true;
     }
     assert(threw, "a misplaced useComposerContext is a loud error, not silent");
+  });
+
+  it("names the canonical hook and provider in missing-context errors", () => {
+    function Orphan() {
+      useChatInputContext();
+      return null;
+    }
+    let detail = "";
+    try {
+      renderToString(<Orphan />);
+    } catch (error) {
+      detail = String(error);
+    }
+    assertStringIncludes(
+      detail,
+      "useChatInputContext must be used within a ChatInput or Chat component",
+    );
   });
 
   it("useComposerContextOptional returns null outside a provider, without throwing", () => {

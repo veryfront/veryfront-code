@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getProject } from "../../lib/gitlab-client.ts";
+import { getProject } from "../lib/gitlab-client.ts";
 
 export default tool({
-  id: "get-project",
+  id: "gitlab-get-project",
   description: "Get detailed information about a GitLab project.",
   inputSchema: defineSchema((v) =>
     v.object({

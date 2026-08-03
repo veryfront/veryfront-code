@@ -25,9 +25,14 @@ interface ActiveFsContext {
 function createAdapter(
   storage = new AsyncLocalStorage<ActiveFsContext>(),
   middlewareSource?: string,
-  options: { requireContextForFileAccess?: boolean } = {},
+  options: {
+    requireContextForFileAccess?: boolean;
+    onFileAccess?: () => void;
+    onFileRead?: () => void;
+  } = {},
 ): RuntimeAdapter {
   const assertContext = () => {
+    options.onFileAccess?.();
     if (options.requireContextForFileAccess && !storage.getStore()) {
       throw new Error("[test] No request context available");
     }
@@ -44,6 +49,7 @@ function createAdapter(
     },
     readFile: () => {
       assertContext();
+      options.onFileRead?.();
       return Promise.resolve(middlewareSource ?? "");
     },
     runWithContext: <T>(
@@ -294,7 +300,51 @@ describe("ProjectMiddlewareRuntime", () => {
     ]);
   });
 
-  it("preserves request and response identity for non-HMR WebSocket upgrade handling", async () => {
+  it("exposes application auth while withholding infrastructure headers", async () => {
+    const adapter = createAdapter();
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () =>
+        Promise.resolve([
+          (c) =>
+            Response.json({
+              authorization: c.req.headers.get("authorization"),
+              cookie: c.req.headers.get("cookie"),
+              proxyAuthorization: c.req.headers.get("proxy-authorization"),
+              forwardedHost: c.req.headers.get("x-forwarded-host"),
+              projectId: c.req.headers.get("x-project-id"),
+              platformToken: c.req.headers.get("x-token"),
+              dispatchSignature: c.req.headers.get("x-veryfront-dispatch-jws"),
+            }),
+        ]),
+    });
+    const response = await execute(
+      runtime,
+      createContext(adapter),
+      new Request("https://example.com/resource", {
+        headers: {
+          authorization: "Bearer application-token",
+          cookie: "session=application-cookie",
+          "proxy-authorization": "Basic infrastructure-proxy-token",
+          "x-forwarded-host": "internal-proxy.example",
+          "x-project-id": "infrastructure-project",
+          "x-token": "platform-service-token",
+          "x-veryfront-dispatch-jws": "signed-dispatch-request",
+        },
+      }),
+    );
+
+    assertEquals(await response?.json(), {
+      authorization: "Bearer application-token",
+      cookie: "session=application-cookie",
+      proxyAuthorization: null,
+      forwardedHost: null,
+      projectId: null,
+      platformToken: null,
+      dispatchSignature: null,
+    });
+  });
+
+  it("detaches the project request while preserving WebSocket and response behavior", async () => {
     const adapter = createAdapter();
     const request = new Request("https://example.com/socket", {
       headers: { upgrade: "websocket" },
@@ -305,7 +355,8 @@ describe("ProjectMiddlewareRuntime", () => {
       loadMiddleware: () =>
         Promise.resolve([
           async (c, next) => {
-            assertEquals(c.req === request, true);
+            assertEquals(c.req === request, false);
+            assertEquals(c.req.headers.get("upgrade"), "websocket");
             middlewareSawRequest = true;
             return await next();
           },
@@ -384,25 +435,102 @@ describe("ProjectMiddlewareRuntime", () => {
     assertEquals(await response?.text(), "recovered");
   });
 
-  it("rejects malformed shared production middleware before routing", async () => {
+  it("returns an unavailable response before reading or evaluating shared middleware", async () => {
+    const marker = `__vf_project_middleware_${crypto.randomUUID().replaceAll("-", "")}`;
+    const host = globalThis as unknown as Record<string, unknown>;
+    let sourceReads = 0;
     const adapter = createAdapter(
       undefined,
-      "export const middleware = () => new Response('untrusted');",
+      `globalThis.${marker} = Deno.env.get("HOST_SECRET"); export default [];`,
+      { onFileRead: () => sourceReads++ },
     );
     const runtime = new ProjectMiddlewareRuntime();
     let routeCalls = 0;
 
-    await assertRejects(
-      () =>
-        execute(runtime, createContext(adapter), undefined, () => {
+    try {
+      const response = await execute(
+        runtime,
+        createContext(adapter),
+        undefined,
+        () => {
           routeCalls++;
           return Promise.resolve(new Response("route"));
+        },
+      );
+
+      assertEquals(response?.status, 503);
+      assertEquals(response?.headers.get("cache-control"), "no-store");
+      assertEquals(response?.headers.get("content-type"), "application/problem+json");
+      const problem = await response?.json();
+      assertEquals(problem?.title, "Project execution unavailable");
+
+      const headResponse = await execute(
+        runtime,
+        createContext(adapter),
+        new Request("https://example.com/resource", { method: "HEAD" }),
+      );
+      assertEquals(headResponse?.status, 503);
+      assertEquals(headResponse?.headers.get("cache-control"), "no-store");
+      assertEquals(await headResponse?.text(), "");
+      assertEquals(sourceReads, 0);
+      assertEquals(host[marker], undefined);
+      assertEquals(routeCalls, 0);
+    } finally {
+      delete host[marker];
+    }
+  });
+
+  it("honors an explicit host-execution denial outside proxy mode", async () => {
+    const marker = `__vf_denied_project_middleware_${crypto.randomUUID().replaceAll("-", "")}`;
+    const host = globalThis as unknown as Record<string, unknown>;
+    let sourceReads = 0;
+    const adapter = createAdapter(
+      undefined,
+      `globalThis.${marker} = Deno.env.get("HOST_SECRET"); export default [];`,
+      { onFileRead: () => sourceReads++ },
+    );
+    const runtime = new ProjectMiddlewareRuntime();
+    let routeCalls = 0;
+
+    try {
+      const response = await runtime.execute({
+        request: new Request("https://example.com/resource"),
+        handlerContext: createContext(adapter, {
+          allowHostProjectCodeExecution: false,
         }),
-      TypeError,
-      "Invalid middleware export",
+        isSharedProxy: false,
+        next: () => {
+          routeCalls++;
+          return Promise.resolve(new Response("route"));
+        },
+      });
+
+      assertEquals(response?.status, 503);
+      assertEquals(response?.headers.get("cache-control"), "no-store");
+      assertEquals(sourceReads, 0);
+      assertEquals(host[marker], undefined);
+      assertEquals(routeCalls, 0);
+    } finally {
+      delete host[marker];
+    }
+  });
+
+  it("passes through shared requests when no root middleware exists", async () => {
+    const runtime = new ProjectMiddlewareRuntime();
+    let routeCalls = 0;
+
+    const response = await execute(
+      runtime,
+      createContext(createAdapter()),
+      undefined,
+      () => {
+        routeCalls++;
+        return Promise.resolve(new Response("route"));
+      },
     );
 
-    assertEquals(routeCalls, 0);
+    assertEquals(routeCalls, 1);
+    assertEquals(await response?.text(), "route");
   });
 
   it("keeps the compiled middleware cache bounded", async () => {
@@ -554,7 +682,7 @@ describe("ProjectMiddlewareRuntime", () => {
     assertEquals(routeCalls, 0);
   });
 
-  it("uses the same middleware runtime for local, standalone, and unauthenticated contexts", async () => {
+  it("separates shared middleware cache entries from host-execution entries", async () => {
     const adapter = createAdapter();
     let loads = 0;
     const runtime = new ProjectMiddlewareRuntime({
@@ -578,7 +706,7 @@ describe("ProjectMiddlewareRuntime", () => {
     await execute(runtime, createContext(adapter, { isLocalProject: true }), undefined, next);
     await execute(runtime, createContext(adapter, { proxyToken: undefined }), undefined, next);
 
-    assertEquals(loads, 1);
+    assertEquals(loads, 2);
     assertEquals(routeCalls, 3);
   });
 

@@ -60,6 +60,11 @@ function createMockInstruments(): MetricsInstruments & {
   _buildDuration: MockHistogram;
   _bundleSizeHistogram: MockHistogram;
   _bundleCounter: MockCounter;
+  _dependencyArtifactBuildCounter: MockCounter;
+  _dependencyArtifactBuildDuration: MockHistogram;
+  _dependencyArtifactBuildBytes: MockHistogram;
+  _dependencyArtifactBuildAssetCount: MockHistogram;
+  _dependencyArtifactBuildExternalImportCount: MockHistogram;
   _dataFetchDuration: MockHistogram;
   _dataFetchCounter: MockCounter;
   _dataFetchErrorCounter: MockCounter;
@@ -87,6 +92,11 @@ function createMockInstruments(): MetricsInstruments & {
   const buildDuration = createMockHistogram();
   const bundleSizeHistogram = createMockHistogram();
   const bundleCounter = createMockCounter();
+  const dependencyArtifactBuildCounter = createMockCounter();
+  const dependencyArtifactBuildDuration = createMockHistogram();
+  const dependencyArtifactBuildBytes = createMockHistogram();
+  const dependencyArtifactBuildAssetCount = createMockHistogram();
+  const dependencyArtifactBuildExternalImportCount = createMockHistogram();
   const dataFetchDuration = createMockHistogram();
   const dataFetchCounter = createMockCounter();
   const dataFetchErrorCounter = createMockCounter();
@@ -116,6 +126,11 @@ function createMockInstruments(): MetricsInstruments & {
     buildDuration: buildDuration as never,
     bundleSizeHistogram: bundleSizeHistogram as never,
     bundleCounter: bundleCounter as never,
+    dependencyArtifactBuildCounter: dependencyArtifactBuildCounter as never,
+    dependencyArtifactBuildDuration: dependencyArtifactBuildDuration as never,
+    dependencyArtifactBuildBytes: dependencyArtifactBuildBytes as never,
+    dependencyArtifactBuildAssetCount: dependencyArtifactBuildAssetCount as never,
+    dependencyArtifactBuildExternalImportCount: dependencyArtifactBuildExternalImportCount as never,
     dataFetchDuration: dataFetchDuration as never,
     dataFetchCounter: dataFetchCounter as never,
     dataFetchErrorCounter: dataFetchErrorCounter as never,
@@ -164,6 +179,11 @@ function createMockInstruments(): MetricsInstruments & {
     _buildDuration: buildDuration,
     _bundleSizeHistogram: bundleSizeHistogram,
     _bundleCounter: bundleCounter,
+    _dependencyArtifactBuildCounter: dependencyArtifactBuildCounter,
+    _dependencyArtifactBuildDuration: dependencyArtifactBuildDuration,
+    _dependencyArtifactBuildBytes: dependencyArtifactBuildBytes,
+    _dependencyArtifactBuildAssetCount: dependencyArtifactBuildAssetCount,
+    _dependencyArtifactBuildExternalImportCount: dependencyArtifactBuildExternalImportCount,
     _dataFetchDuration: dataFetchDuration,
     _dataFetchCounter: dataFetchCounter,
     _dataFetchErrorCounter: dataFetchErrorCounter,
@@ -473,6 +493,103 @@ describe("observability/metrics/recorder", () => {
     });
   });
 
+  describe("recordDependencyArtifactBuild", () => {
+    it("should record lifecycle, output, and remaining external metrics", () => {
+      recorder.recordDependencyArtifactBuild({
+        event: "success",
+        durationMs: 120,
+        totalBytes: 2048,
+        assetCount: 3,
+        remainingExternalImportCount: 1,
+      });
+
+      assertEquals(instruments._dependencyArtifactBuildCounter._value, 1);
+      assertEquals(
+        instruments._dependencyArtifactBuildCounter._lastAttributes,
+        { event: "success" },
+      );
+      assertEquals(instruments._dependencyArtifactBuildDuration._value, 120);
+      assertEquals(instruments._dependencyArtifactBuildBytes._value, 2048);
+      assertEquals(instruments._dependencyArtifactBuildAssetCount._value, 3);
+      assertEquals(
+        instruments._dependencyArtifactBuildExternalImportCount._value,
+        1,
+      );
+    });
+
+    it("should label failed builds without recording unavailable output", () => {
+      recorder.recordDependencyArtifactBuild({
+        event: "failure",
+        durationMs: 40,
+        failureCode: "dependency_artifact_graph_incomplete",
+      });
+
+      assertEquals(instruments._dependencyArtifactBuildCounter._value, 1);
+      assertEquals(
+        instruments._dependencyArtifactBuildCounter._lastAttributes,
+        {
+          event: "failure",
+          failure_code: "dependency_artifact_graph_incomplete",
+        },
+      );
+      assertEquals(instruments._dependencyArtifactBuildDuration._value, 40);
+      assertEquals(instruments._dependencyArtifactBuildBytes._value, 0);
+      assertEquals(instruments._dependencyArtifactBuildAssetCount._value, 0);
+    });
+
+    it("normalizes dependency artifact measurements", () => {
+      recorder.recordDependencyArtifactBuild({
+        event: "success",
+        durationMs: Number.POSITIVE_INFINITY,
+        totalBytes: Number.MAX_SAFE_INTEGER + 100,
+        assetCount: 3.9,
+        remainingExternalImportCount: -1,
+      });
+
+      assertEquals(instruments._dependencyArtifactBuildDuration._value, 0);
+      assertEquals(
+        instruments._dependencyArtifactBuildBytes._value,
+        Number.MAX_SAFE_INTEGER,
+      );
+      assertEquals(instruments._dependencyArtifactBuildAssetCount._value, 3);
+      assertEquals(
+        instruments._dependencyArtifactBuildExternalImportCount._value,
+        0,
+      );
+    });
+
+    it("isolates dependency artifact builds from telemetry backend failures", () => {
+      let attemptedWrites = 0;
+      instruments._dependencyArtifactBuildCounter.add = () => {
+        attemptedWrites += 1;
+        throw new Error("counter unavailable");
+      };
+      for (
+        const histogram of [
+          instruments._dependencyArtifactBuildDuration,
+          instruments._dependencyArtifactBuildBytes,
+          instruments._dependencyArtifactBuildAssetCount,
+          instruments._dependencyArtifactBuildExternalImportCount,
+        ]
+      ) {
+        histogram.record = () => {
+          attemptedWrites += 1;
+          throw new Error("histogram unavailable");
+        };
+      }
+
+      recorder.recordDependencyArtifactBuild({
+        event: "success",
+        durationMs: 120,
+        totalBytes: 2048,
+        assetCount: 3,
+        remainingExternalImportCount: 1,
+      });
+
+      assertEquals(attemptedWrites, 5);
+    });
+  });
+
   describe("recordDataFetch", () => {
     it("should record data fetch duration and increment counter", () => {
       recorder.recordDataFetch(100);
@@ -527,6 +644,11 @@ describe("observability/metrics/recorder", () => {
         buildDuration: null,
         bundleSizeHistogram: null,
         bundleCounter: null,
+        dependencyArtifactBuildCounter: null,
+        dependencyArtifactBuildDuration: null,
+        dependencyArtifactBuildBytes: null,
+        dependencyArtifactBuildAssetCount: null,
+        dependencyArtifactBuildExternalImportCount: null,
         dataFetchDuration: null,
         dataFetchCounter: null,
         dataFetchErrorCounter: null,
@@ -574,10 +696,12 @@ describe("observability/metrics/recorder", () => {
       nullRecorder.recordRSCError();
       nullRecorder.recordBuild(100);
       nullRecorder.recordBundle(100);
+      nullRecorder.recordDependencyArtifactBuild({ event: "claim" });
       nullRecorder.recordDataFetch(100);
       nullRecorder.recordDataFetchError();
       nullRecorder.recordCorsRejection();
       nullRecorder.recordSecurityHeaders();
+      nullRecorder.recordError();
     });
   });
 });

@@ -1,7 +1,7 @@
 ---
 title: "veryfront/ui"
-description: "`veryfront/ui` - the public UI primitive library. Dependency-light forks of Veryfront Studio's design system (cva/Slot inlined; colours remapped to veryfront's `[var(--token)]` vocabulary; zero external packages). These are the base layer the `veryfront/chat` components are built on: `chat` depends on `ui`, never the reverse."
-order: 38
+description: "`veryfront/ui`: the public UI primitive library. Dependency-light forks of Veryfront Studio's design system (cva/Slot inlined; colours remapped to veryfront's `[var(--token)]` vocabulary; zero external packages). These are the base layer the `veryfront/chat` components are built on: `chat` depends on `ui`, never the reverse."
+order: 39
 ---
 
 ## Import
@@ -12,8 +12,8 @@ import {
   generateTokenCSS,
   getDocumentNonce,
   getFileTypeLabel,
+  useAdapter,
   useColorModeOptional,
-  Alert,
 } from "veryfront/ui";
 ```
 
@@ -57,11 +57,15 @@ export default function App({ children }: { children: React.ReactNode }) {
 
 | Name | Description | Source |
 |------|-------------|--------|
+| `Accordion` | Render a set of togglable sections. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/accordion.tsx#L87) |
+| `AccordionContent` | The section body: retained in the DOM and hidden while its section is closed. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/accordion.tsx#L302) |
+| `AccordionItem` | A single togglable section. Its open/collapse MECHANICS come from the active adapter's `disclosure` slot (controlled by the Accordion's single/multiple coordination), so an engine swap drives every item's collapse while the Accordion keeps owning which sections may be open. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/accordion.tsx#L167) |
+| `AccordionTrigger` | The clickable header that toggles its section (via the disclosure slot). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/accordion.tsx#L231) |
 | `Alert` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/alert.tsx#L28) |
 | `AlertAction` | Trailing action slot for `<Alert>` (button or link). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/alert.tsx#L89) |
 | `AlertContent` | Message body for `<Alert>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/alert.tsx#L70) |
 | `AlertIcon` | Leading icon slot for `<Alert>` (size-4 recommended). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/alert.tsx#L51) |
-| `AppShell` | Compound AppShell. Compose: | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L529) |
+| `AppShell` | Compound AppShell. Compose: | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L628) |
 | `Avatar` | Render a user / agent / entity avatar. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/avatar.tsx#L37) |
 | `Badge` | Render a badge. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/badge.tsx#L38) |
 | `Button` | Render an action button. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/button.tsx#L126) |
@@ -71,88 +75,89 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `Checkbox` | A checkbox with an overlaid check indicator. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/checkbox.tsx#L23) |
 | `CheckboxField` | A checkbox paired with a clickable label and optional description. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/checkbox.tsx#L62) |
 | `CheckboxGroup` | Vertical group of checkboxes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/checkbox.tsx#L91) |
-| `CodeBlock` | Render a syntax-highlighted code block (or a mermaid diagram). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/code-block.tsx#L438) |
-| `Collapsible` | Collapsible root - owns open state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L29) |
-| `CollapsibleContent` | Collapsible content - rendered only while open. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L80) |
-| `CollapsibleTrigger` | Toggles the collapsible. `asChild` merges onto the child element. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L54) |
-| `ColorModeProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L47) |
-| `ColorModeScript` | Inline script to prevent flash of wrong color mode on SSR. Render this in &lt;head&gt; before any content. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L127) |
-| `ColorModeToggle` | Simple toggle button for color mode. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L149) |
-| `Command` | Command root - owns the filter query and the item registry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L35) |
-| `CommandDialog` | A Command palette inside a modal Dialog overlay. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L94) |
-| `CommandEmpty` | Shown when the query matches no items. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L173) |
-| `CommandGroup` | A labelled group of items; auto-hides when all its items are filtered out. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L191) |
-| `CommandInput` | Search input row - bound to the command's filter query. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L117) |
-| `CommandItem` | A selectable, filterable result row. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L233) |
-| `CommandItemContent` | Flex column wrapper for an item's title + description. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L279) |
-| `CommandItemDescription` | Item secondary text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L293) |
-| `CommandItemTitle` | Item primary text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L286) |
-| `CommandList` | Scrollable results list. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L155) |
-| `CommandSeparator` | Divider between groups. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L216) |
-| `CommandShortcut` | Trailing shortcut / metadata text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L305) |
+| `CodeBlock` | Render escaped source or delegate to explicit syntax/diagram capabilities. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/code-block.tsx#L270) |
+| `CodeBlockRendererProvider` | Provide extension-owned syntax and diagram renderers to a React subtree. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/code-block.tsx#L80) |
+| `Collapsible` | Collapsible root whose open-state mechanics come from the active adapter. Public parts register their realized IDs through context, so opaque wrappers and multiple triggers retain unique DOM IDs and synchronized ARIA references without inspecting or rewriting the consumer's React tree. Supply root `triggerId` and `contentId` values when the same relationships must be present in static SSR output, before refs can register rendered parts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L81) |
+| `CollapsibleContent` | Collapsible content retained in the DOM and hidden while closed. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L205) |
+| `CollapsibleTrigger` | Toggle through the active disclosure adapter. `asChild` composes onto one child. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L148) |
+| `ColorModeProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L60) |
+| `ColorModeScript` | Inline script to prevent flash of wrong color mode on SSR. Render this in &lt;head&gt; before any content. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L152) |
+| `ColorModeToggle` | Simple toggle button for color mode. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L176) |
+| `Command` | Command root - owns the filter query and item registry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L166) |
+| `CommandDialog` | A Command palette inside a modal Dialog overlay. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L331) |
+| `CommandEmpty` | Shown when the query matches no items. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L456) |
+| `CommandGroup` | A labelled group of items; auto-hides when all its items are filtered out. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L478) |
+| `CommandInput` | Search input row - bound to the command's filter query. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L354) |
+| `CommandItem` | A selectable, filterable result row nested within `CommandList`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L537) |
+| `CommandItemContent` | Flex column wrapper for an item's title + description. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L625) |
+| `CommandItemDescription` | Item secondary text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L639) |
+| `CommandItemTitle` | Item primary text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L632) |
+| `CommandList` | The root's single scrollable results list. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L416) |
+| `CommandSeparator` | Divider between groups. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L515) |
+| `CommandShortcut` | Trailing shortcut / metadata text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L651) |
 | `DesignTokenStyle` | Scoped design-token stylesheet. Idempotent - render it anywhere. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tokens.tsx#L23) |
-| `Dialog` | Dialog root - owns open state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L35) |
-| `DialogAction` | Recommended action button (primary, default size). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L143) |
-| `DialogBody` | Scrollable body area with a bottom edge-fade. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L107) |
-| `DialogCancel` | Alternate button (secondary, default size) that closes the dialog. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L162) |
-| `DialogClose` | Closes the dialog. `asChild` merges onto the child element. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L185) |
-| `DialogContent` | Modal surface - overlay + centered panel, rendered while open. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L47) |
-| `DialogDescription` | Dialog description - body text, left-aligned. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L91) |
-| `DialogFooter` | Sticky footer row - action left, cancel right. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L124) |
-| `DialogForm` | Layout-neutral `<form>` shell (`display: contents`) wrapping header/body/footer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L131) |
-| `DialogHeader` | Left-aligned title + description block. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L67) |
-| `DialogTitle` | Dialog title - Studio Heading level 2 (20px). Semibold so Inter reads at Studio's medium-on-Söhne weight (workbench heading convention). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L75) |
-| `DialogTrigger` | Trigger - opens the dialog. `asChild` merges onto the child element. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L40) |
-| `Drawer` | Drawer root - owns open state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/drawer.tsx#L29) |
-| `DrawerBody` | Scrollable body area. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/drawer.tsx#L86) |
-| `DrawerClose` | Closes the drawer. `asChild` merges onto the child element. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/drawer.tsx#L113) |
-| `DrawerContent` | Bottom sheet - overlay + sliding surface with a drag handle. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/drawer.tsx#L41) |
-| `DrawerFooter` | Sticky footer, full-width stacked actions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/drawer.tsx#L98) |
-| `DrawerHeader` | Header column wrapper. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/drawer.tsx#L79) |
-| `DrawerTitle` | Drawer title - 18px medium (Studio Heading-ish). Add `sr-only` to hide. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/drawer.tsx#L66) |
-| `DrawerTrigger` | Trigger - opens the drawer. `asChild` merges onto the child element. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/drawer.tsx#L34) |
+| `Dialog` | Dialog root - owns open state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L34) |
+| `DialogAction` | Recommended action button (primary, default size). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L183) |
+| `DialogBody` | Scrollable body area with a bottom edge-fade. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L147) |
+| `DialogCancel` | Alternate button (secondary, default size) that closes the dialog. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L202) |
+| `DialogClose` | Closes the dialog. `asChild` merges onto the child element. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L225) |
+| `DialogContent` | Modal surface - overlay + centered panel, rendered while open. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L48) |
+| `DialogDescription` | Dialog description - body text, left-aligned. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L112) |
+| `DialogFooter` | Sticky footer row - action left, cancel right. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L164) |
+| `DialogForm` | Layout-neutral `<form>` shell (`display: contents`) wrapping header/body/footer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L171) |
+| `DialogHeader` | Left-aligned title + description block. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L71) |
+| `DialogTitle` | Dialog title - Studio Heading level 2 (20px). Semibold so Inter reads at Studio's medium-on-Söhne weight (workbench heading convention). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L79) |
+| `DialogTrigger` | Trigger - opens the dialog. `asChild` merges onto the child element. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L39) |
+| `Drawer` | Drawer root - owns open state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/drawer.tsx#L32) |
+| `DrawerBody` | Scrollable body area. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/drawer.tsx#L108) |
+| `DrawerClose` | Closes the drawer. `asChild` merges onto the child element. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/drawer.tsx#L135) |
+| `DrawerContent` | Bottom sheet - overlay + sliding surface with a drag handle. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/drawer.tsx#L46) |
+| `DrawerFooter` | Sticky footer, full-width stacked actions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/drawer.tsx#L120) |
+| `DrawerHeader` | Header column wrapper. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/drawer.tsx#L101) |
+| `DrawerTitle` | Drawer title - 18px medium (Studio Heading-ish). Add `sr-only` to hide. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/drawer.tsx#L71) |
+| `DrawerTrigger` | Trigger - opens the drawer. `asChild` merges onto the child element. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/drawer.tsx#L37) |
 | `DropdownMenu` | DropdownMenu root - owns open state and the positioning anchor. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L30) |
-| `DropdownMenuContent` | Menu surface - rendered below the trigger while open. No border (Studio). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L54) |
-| `DropdownMenuGroup` | Groups related items with a tight inner gap (Studio: `gap-px p-0.5`). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L73) |
-| `DropdownMenuItem` | A selectable menu item. Icons render at `size-3.5` (14px). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L92) |
-| `DropdownMenuItemMeta` | Trailing metadata text - keyboard shortcuts, counts, badges. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L128) |
-| `DropdownMenuLabel` | Non-interactive section label - full-strength foreground (Studio). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L155) |
-| `DropdownMenuSeparator` | Full-width divider between groups (Studio: `-mx-2.5 my-2`). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L148) |
+| `DropdownMenuContent` | Menu surface - rendered below the trigger while open. No border (Studio). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L53) |
+| `DropdownMenuGroup` | Groups related items with a tight inner gap (Studio: `gap-px p-0.5`). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L167) |
+| `DropdownMenuItem` | A selectable menu item. Icons render at `size-3.5` (14px). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L186) |
+| `DropdownMenuItemMeta` | Trailing metadata text - keyboard shortcuts, counts, badges. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L232) |
+| `DropdownMenuLabel` | Non-interactive section label - full-strength foreground (Studio). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L264) |
+| `DropdownMenuSeparator` | Full-width divider between groups (Studio: `-mx-2.5 my-2`). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L252) |
 | `DropdownMenuTrigger` | Trigger - toggles the menu; the positioning anchor. `asChild` merges onto the child element, which must forward `ref` to its DOM node. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L38) |
 | `FileType` | Soft-fill badge - rounded square, tinted background, extension label. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/file-type.tsx#L245) |
 | `FileTypeThumb` | Solid-fill thumbnail - full-saturation square with white `.ext` text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/file-type.tsx#L266) |
-| `IconButton` | Render an icon-only button with a hover tooltip. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icon-button.tsx#L21) |
-| `Input` | Render a text input. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/input.tsx#L46) |
+| `IconButton` | Render an icon-only button with a hover tooltip. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icon-button.tsx#L20) |
+| `Input` | Render a text input. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/input.tsx#L44) |
 | `Label` | Render a form label. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/label.tsx#L48) |
-| `List` | Vertical list container. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/list.tsx#L25) |
-| `ListItem` | A single list row. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/list.tsx#L67) |
-| `ListLabel` | Section heading - uppercase, faint. Use for date groups etc. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/list.tsx#L35) |
+| `List` | Vertical list container. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/list.tsx#L50) |
+| `ListItem` | A single list row. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/list.tsx#L109) |
+| `ListLabel` | Section heading - uppercase, faint. Use for date groups etc. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/list.tsx#L60) |
 | `LoadingButton` | Button that pulses subtly while pending and blocks double-submits. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/button.tsx#L160) |
 | `Pill` | Render a selection-trigger pill. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/pill.tsx#L49) |
-| `Popover` | Popover root - owns open state and the positioning anchor. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L29) |
-| `PopoverActions` | Right-aligned button row, for use inside a footer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L141) |
-| `PopoverBody` | Body content region (Studio: `px-5 last:pb-5 flex flex-col gap-4`). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L110) |
-| `PopoverContent` | Popover surface - rendered below the trigger while open. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L53) |
-| `PopoverFooter` | Footer region; pass `bordered` for a top divider (Studio). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L123) |
-| `PopoverHeader` | Small section label inside a popover (Studio: Heading level 5). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L91) |
-| `PopoverTitle` | Primary heading slot at the top of a popover (Studio: Heading level 4). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L72) |
-| `PopoverTrigger` | Trigger - toggles the popover; the positioning anchor. `asChild` merges onto the child element, which must forward `ref` to its DOM node. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L37) |
+| `Popover` | Popover root - owns open state and the positioning anchor. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L26) |
+| `PopoverActions` | Right-aligned button row, for use inside a footer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L138) |
+| `PopoverBody` | Body content region (Studio: `px-5 last:pb-5 flex flex-col gap-4`). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L107) |
+| `PopoverContent` | Popover surface - rendered below the trigger while open. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L49) |
+| `PopoverFooter` | Footer region; pass `bordered` for a top divider (Studio). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L120) |
+| `PopoverHeader` | Small section label inside a popover (Studio: Heading level 5). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L88) |
+| `PopoverTitle` | Primary heading slot at the top of a popover (Studio: Heading level 4). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L69) |
+| `PopoverTrigger` | Trigger - toggles the popover; the positioning anchor. `asChild` merges onto the child element, which must forward `ref` to its DOM node. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L34) |
 | `ProgressBar` | Render a progress track. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/progress-bar.tsx#L38) |
 | `Radio` | A single radio input. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/radio.tsx#L19) |
 | `RadioField` | A radio paired with a clickable label and optional description. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/radio.tsx#L47) |
 | `RadioGroup` | Vertical group of radios. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/radio.tsx#L76) |
 | `ScrollFade` | A scroll container with auto edge-fade affordances. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/scroll-fade.tsx#L31) |
-| `Select` | Select root - owns the selected value, open state, and label registry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L69) |
-| `SelectContent` | Listbox surface - rendered below the trigger while open. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L188) |
-| `SelectGroup` | Groups related options (semantic only in this basic version). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L282) |
-| `SelectItem` | A selectable option. Shows a check when it is the current value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L221) |
-| `SelectLabel` | Non-interactive section label. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L260) |
-| `SelectSeparator` | Divider between option groups. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L275) |
-| `SelectTrigger` | Trigger - shows the current value and toggles the listbox. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L147) |
-| `SelectValue` | Displays the selected option's label, or a placeholder. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L175) |
+| `Select` | Select root - owns the selected value, disclosure state, and option registry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L372) |
+| `SelectContent` | Listbox surface - rendered below the trigger while open. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L1075) |
+| `SelectGroup` | Groups related options. Add one SelectLabel or an explicit accessible name. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L1306) |
+| `SelectItem` | A selectable option nested within the root's single SelectContent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L1137) |
+| `SelectLabel` | Non-interactive label; labels its nearest SelectGroup when present. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L1262) |
+| `SelectSeparator` | Divider between option groups. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L1292) |
+| `SelectTrigger` | Trigger - keeps focus while controlling and navigating the listbox. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L935) |
+| `SelectValue` | Displays custom children, the selected label, or a placeholder. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L1053) |
 | `Shimmer` | Render shimmering text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/shimmer.tsx#L27) |
 | `Skeleton` | Render an animated placeholder bar. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/skeleton.tsx#L16) |
-| `Slot` | Render `Slot` - merge props onto its single child element. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/slot.tsx#L70) |
+| `Slot` | Render `Slot` - merge props onto its single child element. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/slot.tsx#L166) |
 | `Status` | Render a status dot + label. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/status.tsx#L39) |
 | `Switch` | A toggle switch. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/switch.tsx#L59) |
 | `SwitchField` | A switch with a label + optional description, label-left / switch-right. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/switch.tsx#L92) |
@@ -162,11 +167,25 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `TagButton` | Tag rendered as a button. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tag.tsx#L50) |
 | `TagGroup` | Wrapping container for a row of tags. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tag.tsx#L67) |
 | `TagLink` | Tag rendered as an external link. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tag.tsx#L32) |
-| `Textarea` | Render a textarea. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/textarea.tsx#L43) |
-| `Tooltip` | Tooltip root - owns open state and the positioning anchor. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tooltip.tsx#L36) |
-| `TooltipContent` | Tooltip content - portalled + positioned while hovered/focused. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tooltip.tsx#L135) |
-| `TooltipProvider` | Provider for shared tooltip config. Basic: a passthrough for API parity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tooltip.tsx#L29) |
-| `TooltipTrigger` | Tooltip trigger. `asChild` merges onto the child element (e.g. a Button). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tooltip.tsx#L58) |
+| `Textarea` | Render a textarea. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/textarea.tsx#L42) |
+| `Toast` | A single toast surface. Renders as a live region and arms an auto-dismiss timer that calls `onClose` after `duration`. Compose `ToastTitle`, `ToastDescription` and `ToastClose` inside it. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toast-parts.tsx#L137) |
+| `ToastClose` | Manual close button for `<Toast>` (renders an ✕ glyph when given no children). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toast-parts.tsx#L228) |
+| `ToastDescription` | Secondary supporting line for `<Toast>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toast-parts.tsx#L210) |
+| `Toaster` | Render the active adapter's viewport for `<ToastProvider viewport="manual">`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toast.tsx#L125) |
+| `ToastProvider` | Holds the toast queue (via the active adapter: builtin by default) and mounts the viewport. Wrap the part of the app that needs notifications. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toast.tsx#L96) |
+| `ToastTitle` | Heading line for `<Toast>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toast-parts.tsx#L192) |
+| `ToastViewport` | Render the active adapter's viewport for `<ToastProvider viewport="manual">`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toast.tsx#L125) |
+| `ToggleGroup` | Render a group of toggles with shared selection (via the adapter engine). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toggle-group.tsx#L27) |
+| `ToggleGroupItem` | A single toggle within a `ToggleGroup`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toggle-group.tsx#L50) |
+| `Toolbar` | A container that groups controls behind one tab stop with roving focus. The roving MECHANICS come from the active adapter's `toolbar` slot (`useAdapter().toolbar`): builtin by default, swappable via `UIAdapterProvider`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toolbar.tsx#L53) |
+| `ToolbarButton` | A ghost icon button that participates in the toolbar's roving focus. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toolbar.tsx#L75) |
+| `ToolbarLink` | An anchor styled like a `ToolbarButton` that joins the roving focus. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toolbar.tsx#L102) |
+| `ToolbarSeparator` | A thin rule dividing groups of items within a toolbar. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toolbar.tsx#L134) |
+| `Tooltip` | Tooltip root that owns trigger interaction, IDs, and dismissal state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tooltip.tsx#L292) |
+| `TooltipContent` | Tooltip content, portalled and collision-positioned against its trigger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tooltip.tsx#L808) |
+| `TooltipProvider` | Provide a shared opening delay. The default is 700 ms and values are clamped to 0-5000 ms. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tooltip.tsx#L274) |
+| `TooltipTrigger` | Tooltip trigger. The default span is keyboard-focusable; `asChild` merges behavior onto one child element and retains that element's focus contract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tooltip.tsx#L512) |
+| `UIAdapterProvider` | Provide (a partial) UI-primitive adapter to the subtree. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/context.tsx#L21) |
 
 ### Functions
 
@@ -174,59 +193,73 @@ export default function App({ children }: { children: React.ReactNode }) {
 |------|-------------|--------|
 | `cva` | Build a class-name function from a base plus a variants config. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/cva.ts#L45) |
 | `generateTokenCSS` | Generates the scoped CSS for the design tokens. Every rule matches BOTH the canonical `[data-vf-ui]` scope and the `[data-vf-chat]` compat alias, so tokens don't leak to the page and existing consumers keep working. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/design-tokens.ts#L184) |
-| `getDocumentNonce` | Reuse the server-issued CSP nonce for client-created style/script elements during hydration and SPA updates. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/csp-nonce.ts#L5) |
+| `getDocumentNonce` | Reuse the response-scoped CSP nonce for framework-owned inline elements during SSR, hydration, and SPA updates. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/csp-nonce.ts#L5) |
 | `getFileTypeLabel` | Human label for a file extension, falling back to the media type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/file-type.tsx#L233) |
-| `useColorModeOptional` | Non-throwing variant - returns `null` when there is no `ColorModeProvider`. Use for components that should render standalone (e.g. a `CodeBlock` dropped into markdown) and fall back to light mode. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L117) |
+| `useAdapter` | Resolve the active UI-primitive adapter. Never returns null (defaults to builtin). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/context.tsx#L53) |
+| `useColorModeOptional` | Non-throwing variant - returns `null` when there is no `ColorModeProvider`. Use for components that should render standalone (e.g. a `CodeBlock` dropped into markdown) and fall back to light mode. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L142) |
+| `useToast` | Returns `{ toast, dismiss }`. Call `toast(options)` to enqueue (returns the new id), `toast.custom((id) => node)` for a fully custom toast, and `dismiss(id)` to remove one early. Must be used within a `ToastProvider`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toast.tsx#L136) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
+| `AccordionContentProps` | Props accepted by `<AccordionContent>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/accordion.tsx#L296) |
+| `AccordionItemProps` | Props accepted by `<AccordionItem>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/accordion.tsx#L145) |
+| `AccordionProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/accordion.tsx#L84) |
+| `AccordionTriggerProps` | Props accepted by `<AccordionTrigger>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/accordion.tsx#L221) |
 | `AlertProps` | Props accepted by `<Alert>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/alert.tsx#L23) |
-| `AppShellHeaderProps` | Props accepted by `AppShellHeader`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L434) |
-| `AppShellOpenState` | Per-side visibility map. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L94) |
-| `AppShellProps` | Props accepted by `AppShell`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L100) |
+| `AppShellHeaderProps` | Props accepted by `AppShellHeader`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L533) |
+| `AppShellOpenState` | Per-side visibility map. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L155) |
+| `AppShellProps` | Props accepted by `AppShell`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L161) |
 | `AppShellSide` | Which edge a sidebar docks to. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L29) |
-| `AppShellSidebarProps` | Props accepted by `AppShellSidebar`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L230) |
-| `AppShellTriggerProps` | Props accepted by `AppShellTrigger`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L466) |
+| `AppShellSidebarProps` | Props accepted by `AppShellSidebar`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L319) |
+| `AppShellTriggerProps` | Props accepted by `AppShellTrigger`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L565) |
 | `AvatarProps` | Props accepted by `<Avatar>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/avatar.tsx#L25) |
 | `BadgeProps` | Props accepted by `<Badge>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/badge.tsx#L32) |
 | `ButtonProps` | Props accepted by `<Button>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/button.tsx#L116) |
 | `CardProps` | Props accepted by `<Card>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/card.tsx#L44) |
 | `CheckboxFieldProps` | Props accepted by `<CheckboxField>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/checkbox.tsx#L56) |
 | `CheckboxProps` | Props accepted by `<Checkbox>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/checkbox.tsx#L16) |
-| `CodeBlockProps` | Props accepted by `<CodeBlock>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/code-block.tsx#L237) |
-| `CollapsibleProps` | Props accepted by `<Collapsible>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L21) |
-| `ColorModeProviderProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L40) |
-| `CommandDialogProps` | Props accepted by `<CommandDialog>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L86) |
-| `CommandInputProps` | Props accepted by `<CommandInput>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L111) |
-| `CommandItemProps` | Props accepted by `<CommandItem>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L223) |
-| `DialogActionProps` | Props accepted by `<DialogAction>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L138) |
-| `DialogProps` | Props accepted by `<Dialog>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L27) |
-| `DrawerProps` | Props accepted by `<Drawer>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/drawer.tsx#L21) |
-| `DropdownMenuContentProps` | Props accepted by `<DropdownMenuContent>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L48) |
-| `DropdownMenuItemProps` | Props accepted by `<DropdownMenuItem>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L84) |
+| `CodeBlockMode` | Light/dark presentation mode forwarded to extension-owned renderers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/code-block.tsx#L18) |
+| `CodeBlockProps` | Props accepted by `<CodeBlock>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/code-block.tsx#L103) |
+| `CodeBlockRendererProviderProps` | Props accepted by `CodeBlockRendererProvider`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/code-block.tsx#L42) |
+| `CodeBlockRenderers` | Optional rich rendering capabilities supplied outside core. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/code-block.tsx#L36) |
+| `CodeDiagramRendererProps` | Framework-neutral input for an extension-owned diagram renderer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/code-block.tsx#L28) |
+| `CodeSyntaxRendererProps` | Framework-neutral input for an extension-owned syntax renderer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/code-block.tsx#L21) |
+| `CollapsibleProps` | Props accepted by `<Collapsible>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L15) |
+| `ColorModeProviderProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L53) |
+| `CommandDialogProps` | Props accepted by `<CommandDialog>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L323) |
+| `CommandInputProps` | Props accepted by `<CommandInput>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L348) |
+| `CommandItemProps` | Props accepted by `<CommandItem>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L527) |
+| `DialogActionProps` | Props accepted by `<DialogAction>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L178) |
+| `DialogProps` | Props accepted by `<Dialog>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L26) |
+| `DisclosureParts` | Role-tagged slots an adapter provides for a single open/close **disclosure** (the Collapsible primitive; Accordion composes one disclosure per item). The archetype is the overlay disclosure minus the portal/positioning: one or more triggers toggle a region whose node remains mounted and is hidden while closed. Public Collapsible parts coordinate their realized IDs without inspecting the consumer's React tree, then pass synchronized `aria-controls` and `aria-labelledby` props through these slots. Adapters must preserve those explicit relationships while supplying their own defaults for direct slot use. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L44) |
+| `DisclosureProps` | Normalized disclosure state shared by every overlay primitive. Matches `useDisclosure` exactly; adapters drop any engine-specific extras (e.g. Base UI's 2nd `eventDetails` arg on `onOpenChange`). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L27) |
+| `DrawerProps` | Props accepted by `<Drawer>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/drawer.tsx#L24) |
+| `DropdownMenuContentProps` | Props accepted by `<DropdownMenuContent>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L47) |
+| `DropdownMenuItemProps` | Props accepted by `<DropdownMenuItem>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L178) |
 | `DropdownMenuProps` | Props accepted by `<DropdownMenu>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L22) |
 | `FileTypeProps` | Props accepted by `<FileType>` / `<FileTypeThumb>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/file-type.tsx#L239) |
-| `IconButtonProps` | Props accepted by `<IconButton>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icon-button.tsx#L13) |
-| `InputProps` | Props accepted by `<Input>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/input.tsx#L37) |
+| `IconButtonProps` | Props accepted by `<IconButton>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icon-button.tsx#L12) |
+| `InputProps` | Props accepted by `<Input>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/input.tsx#L35) |
 | `LabelProps` | Props accepted by `<Label>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/label.tsx#L42) |
-| `ListItemProps` | Props accepted by `ListItem`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/list.tsx#L51) |
-| `ListLabelProps` | Props accepted by `ListLabel`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/list.tsx#L30) |
-| `ListProps` | Props accepted by `List`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/list.tsx#L20) |
+| `ListItemProps` | Props accepted by `ListItem`. Standalone clickable rows receive button semantics and keyboard activation by default. Rows with a trailing action should use `onActivate` so both controls have native, sibling semantics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/list.tsx#L80) |
+| `ListLabelProps` | Props accepted by `ListLabel`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/list.tsx#L55) |
+| `ListProps` | Props accepted by `List`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/list.tsx#L45) |
+| `PartialUIAdapter` | A partial adapter map: unspecified keys fall back to `builtin`, so a consumer can override one primitive and leave the rest zero-dependency. This is what `UIAdapterProvider` accepts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L224) |
 | `PillProps` | Props accepted by `<Pill>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/pill.tsx#L41) |
-| `PopoverContentProps` | Props accepted by `<PopoverContent>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L47) |
-| `PopoverProps` | Props accepted by `<Popover>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L21) |
+| `PopoverContentProps` | Props accepted by `<PopoverContent>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L43) |
+| `PopoverProps` | Props accepted by `<Popover>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L18) |
 | `ProgressBarProps` | Props accepted by `<ProgressBar>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/progress-bar.tsx#L30) |
 | `RadioFieldProps` | Props accepted by `<RadioField>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/radio.tsx#L41) |
 | `RadioProps` | Props accepted by `<Radio>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/radio.tsx#L14) |
 | `ScrollFadeProps` | Props accepted by `<ScrollFade>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/scroll-fade.tsx#L21) |
-| `SelectItemProps` | Props accepted by `<SelectItem>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L215) |
-| `SelectProps` | Props accepted by `<Select>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L58) |
-| `SelectTriggerProps` | Props accepted by `<SelectTrigger>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L141) |
+| `SelectItemProps` | Props accepted by `<SelectItem>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L1127) |
+| `SelectProps` | Props accepted by `<Select>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L355) |
+| `SelectTriggerProps` | Props accepted by `<SelectTrigger>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L856) |
 | `ShimmerProps` | Props accepted by `<Shimmer>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/shimmer.tsx#L15) |
 | `SkeletonProps` | Props accepted by `<Skeleton>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/skeleton.tsx#L11) |
-| `SlotProps` | Props accepted by `<Slot>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/slot.tsx#L65) |
+| `SlotProps` | Props accepted by `<Slot>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/slot.tsx#L140) |
 | `StatusColor` | Dot colour, keyed to the `--status-*` palette. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/status.tsx#L13) |
 | `StatusProps` | Props accepted by `<Status>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/status.tsx#L16) |
 | `SwitchFieldProps` | Props accepted by `<SwitchField>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/switch.tsx#L86) |
@@ -234,8 +267,26 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `TabsItemProps` | Props accepted by `<TabsItem>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tabs.tsx#L68) |
 | `TabsProps` | Props accepted by `<Tabs>` (the tablist container). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tabs.tsx#L34) |
 | `TagLinkProps` | Props accepted by `<TagLink>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tag.tsx#L27) |
-| `TextareaProps` | Props accepted by `<Textarea>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/textarea.tsx#L37) |
-| `TooltipContentProps` | Props accepted by `<TooltipContent>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tooltip.tsx#L129) |
+| `TextareaProps` | Props accepted by `<Textarea>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/textarea.tsx#L36) |
+| `ToastAction` | A toast button: a label plus what to do when it's pressed. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toast-parts.tsx#L49) |
+| `ToastFn` | Imperative enqueue function: call `toast(options)`, or `toast.custom(render)`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toast-parts.tsx#L75) |
+| `ToastOptions` | Options accepted by `toast(...)` when enqueuing a notification. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toast-parts.tsx#L57) |
+| `ToastParts` | Toast is imperative (a queue + hook), not a floating surface, so its adapter slot is `Provider` + `useToast` rather than role-tagged render slots. The builtin holds a queue and mounts a viewport; a Sonner adapter would mount `<Toaster/>` and map `useToast().toast` onto Sonner's `toast()`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L196) |
+| `ToastProps` | Props accepted by `<Toast>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toast-parts.tsx#L122) |
+| `ToastProviderProps` | Normalized queue and viewport options every toast adapter provider accepts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L173) |
+| `ToastState` | The imperative Toast API a skin part reads from inside a `ToastProvider`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L165) |
+| `ToastVariant` | One of the `cva` colour schemes a toast can take. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toast-parts.tsx#L46) |
+| `ToastViewportProps` | Normalized props for an adapter-owned manual toast viewport. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L185) |
+| `ToggleGroupItemProps` | Props accepted by `<ToggleGroupItem>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toggle-group.tsx#L39) |
+| `ToggleGroupParts` | Role-tagged slots an adapter provides for the ToggleGroup primitive: a set of pressable items with shared `single` / `multiple` selection. The Root owns the selection state machine; the Item self-wires through the adapter's internal context (reads its pressed state, toggles on click). The skin keeps only the visual classes; `data-state="on"|"off"` on each Item is the styling hook. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L91) |
+| `ToggleGroupProps` | Props accepted by `<ToggleGroup>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toggle-group.tsx#L24) |
+| `ToolbarButtonProps` | Props accepted by `<ToolbarButton>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toolbar.tsx#L69) |
+| `ToolbarLinkProps` | Props accepted by `<ToolbarLink>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toolbar.tsx#L94) |
+| `ToolbarParts` | Role-tagged slots an adapter provides for the Toolbar primitive: a `role="toolbar"` container sharing one tab stop, with roving-tabindex arrow-key navigation over its items. The Root owns the roving mechanics; each Item registers as a roving stop (engines rove their own item components, so the skin routes its buttons/links through `Item`). Separators stay pure skin. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L140) |
+| `ToolbarProps` | Props accepted by `<Toolbar>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toolbar.tsx#L41) |
+| `ToolbarSeparatorProps` | Props accepted by `<ToolbarSeparator>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toolbar.tsx#L126) |
+| `TooltipContentProps` | Props accepted by `<TooltipContent>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tooltip.tsx#L802) |
+| `UIAdapter` | The adapter surface. Each new primitive must also be added to the explicit composition in `context.tsx`, which prevents `undefined` overrides from erasing inherited or builtin slots. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L210) |
 | `VariantProps` | Extracts the variant props of a `cva` function, like upstream's helper. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/cva.ts#L36) |
 
 ### Constants
@@ -245,18 +296,45 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `badgeVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/badge.tsx#L13) |
 | `buttonVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/button.tsx#L20) |
 | `cx` | Re-export of the class joiner, matching upstream's `cx`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/cva.ts#L13) |
-| `inputVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/input.tsx#L13) |
+| `inputVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/input.tsx#L12) |
 | `labelVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/label.tsx#L17) |
 | `pillVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/pill.tsx#L15) |
-| `selectTriggerVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L21) |
+| `selectTriggerVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L36) |
 | `switchTrackVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/switch.tsx#L15) |
 | `textareaVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/textarea.tsx#L11) |
-| `useAppShell` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L47) |
+| `toolbarVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/toolbar.tsx#L27) |
+| `useAppShell` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L108) |
 | `useColorMode` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L23) |
 
 ## Deep imports
 
 These import paths group focused functionality under this module. Each is a separate barrel; import only what you need.
+
+### `veryfront/ui/adapter`
+
+UI primitive-adapter contract (RFC 0001: bring-your-own UI primitive adapters). A behavioural primitive is split into a **Skin** (Tailwind / `cva` / `[var(--token)]` classes, authored once) and **Mechanics** (focus, dismiss, positioning, ARIA, keyboard) supplied by a swappable **adapter**. The contract is **role-tagged component slots + normalized controlled or uncontrolled disclosure props** (`open`, `defaultOpen`, `onOpenChange`): deliberately NOT prop-getters (those only fit React Aria's hooks; Base UI / Ariakit invert composition via `render`). Every adapter: the zero-dependency `builtin` and any third-party engine (Base UI, Radix, React Aria): satisfies these exact shapes, so one set of skin classes works everywhere. Types only. No runtime, no engine imports: this file is safe to pull into `veryfront/ui/adapter` from a consumer-authored adapter.
+
+```ts
+import type { DisclosureParts, DisclosureProps, MultipleToggleGroupRootProps } from "veryfront/ui/adapter";
+```
+
+#### Types
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `DisclosureParts` | Role-tagged slots an adapter provides for a single open/close **disclosure** (the Collapsible primitive; Accordion composes one disclosure per item). The archetype is the overlay disclosure minus the portal/positioning: one or more triggers toggle a region whose node remains mounted and is hidden while closed. Public Collapsible parts coordinate their realized IDs without inspecting the consumer's React tree, then pass synchronized `aria-controls` and `aria-labelledby` props through these slots. Adapters must preserve those explicit relationships while supplying their own defaults for direct slot use. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L44) |
+| `DisclosureProps` | Normalized disclosure state shared by every overlay primitive. Matches `useDisclosure` exactly; adapters drop any engine-specific extras (e.g. Base UI's 2nd `eventDetails` arg on `onOpenChange`). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L27) |
+| `MultipleToggleGroupRootProps` | Multiple-selection adapter root. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L121) |
+| `PartialUIAdapter` | A partial adapter map: unspecified keys fall back to `builtin`, so a consumer can override one primitive and leave the rest zero-dependency. This is what `UIAdapterProvider` accepts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L224) |
+| `SingleToggleGroupRootProps` | Single-selection adapter root. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L113) |
+| `ToastParts` | Toast is imperative (a queue + hook), not a floating surface, so its adapter slot is `Provider` + `useToast` rather than role-tagged render slots. The builtin holds a queue and mounts a viewport; a Sonner adapter would mount `<Toaster/>` and map `useToast().toast` onto Sonner's `toast()`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L196) |
+| `ToastProviderProps` | Normalized queue and viewport options every toast adapter provider accepts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L173) |
+| `ToastState` | The imperative Toast API a skin part reads from inside a `ToastProvider`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L165) |
+| `ToastViewportProps` | Normalized props for an adapter-owned manual toast viewport. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L185) |
+| `ToggleGroupParts` | Role-tagged slots an adapter provides for the ToggleGroup primitive: a set of pressable items with shared `single` / `multiple` selection. The Root owns the selection state machine; the Item self-wires through the adapter's internal context (reads its pressed state, toggles on click). The skin keeps only the visual classes; `data-state="on"|"off"` on each Item is the styling hook. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L91) |
+| `ToggleGroupRootProps` | Discriminated selection contract implemented by every ToggleGroup adapter. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L129) |
+| `ToolbarParts` | Role-tagged slots an adapter provides for the Toolbar primitive: a `role="toolbar"` container sharing one tab stop, with roving-tabindex arrow-key navigation over its items. The Root owns the roving mechanics; each Item registers as a roving stop (engines rove their own item components, so the skin routes its buttons/links through `Item`). Separators stay pure skin. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L140) |
+| `UIAdapter` | The adapter surface. Each new primitive must also be added to the explicit composition in `context.tsx`, which prevents `undefined` overrides from erasing inherited or builtin slots. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/adapter/contract.ts#L210) |
 
 ### `veryfront/ui/icons`
 

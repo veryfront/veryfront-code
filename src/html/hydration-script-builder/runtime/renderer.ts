@@ -19,7 +19,7 @@ import { normalizeRouteParams } from "./shared.ts";
 import type { ComponentLoader } from "./component-loader.ts";
 import type { SnapshotModuleImporter } from "./snapshot-modules.ts";
 import { appendDependencyPinningVersion, buildPinnedRscModuleUrl } from "./module-urls.ts";
-import { HYDRATION_DATA_ELEMENT_ID } from "./hydration-data.ts";
+import { findServerHydrationDataElement } from "./hydration-data.ts";
 
 /**
  * True when a dynamic import failed because the module could not be fetched
@@ -155,7 +155,7 @@ export function createHydrationRenderer(deps: HydrationRendererDeps): HydrationR
       }
     })();
 
-    const dataScript = document.getElementById(HYDRATION_DATA_ELEMENT_ID);
+    const dataScript = findServerHydrationDataElement(document);
     if (!dataScript) {
       logError("Hydration data not found");
       return;
@@ -393,7 +393,7 @@ export function createHydrationRenderer(deps: HydrationRendererDeps): HydrationR
     void renderPage(window.location.pathname);
 
     // Store initial page data in history state for instant back navigation
-    const initialDataScript = document.getElementById(HYDRATION_DATA_ELEMENT_ID);
+    const initialDataScript = findServerHydrationDataElement(document);
     if (initialDataScript) {
       try {
         const pageData = JSON.parse(initialDataScript.textContent || "{}");

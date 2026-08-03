@@ -1,3 +1,4 @@
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
@@ -12,8 +13,9 @@ import { runEval as runEvalDefinition } from "#veryfront/eval/runner.ts";
 import { datasets, evalAgent, type EvalReport, metrics } from "veryfront/eval";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { toolRegistry } from "#veryfront/tool";
 import {
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
@@ -153,6 +155,12 @@ function createDeps(
       logs: null,
       duration_ms: 10,
     }),
+    executeDependencyArtifactBuild: async () => ({
+      success: true,
+      result: { state: "ready", assetCount: 2 },
+      logs: null,
+      duration_ms: 11,
+    }),
     executeStyleArtifactBuild: async () => ({
       success: true,
       result: {
@@ -208,6 +216,8 @@ async function signedRequest(
   const { jws, publicKeyPem } = await createControlPlaneSignature(rawBody, {
     requestId: String(body.runId),
     projectId: String(body.projectId),
+    requestMethod: "POST",
+    requestPath: path,
   });
 
   return {
@@ -581,6 +591,63 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       duration_ms: 12,
     });
     assertEquals(receivedConfig, { environment_name: "preview" });
+    assertEquals(attemptedProjectDiscovery, false);
+  });
+
+  it("dispatches dependency artifact builds without project discovery", async () => {
+    let receivedConfig: Record<string, unknown> | undefined;
+    let attemptedProjectDiscovery = false;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      ensureProjectDiscovery: async () => {
+        attemptedProjectDiscovery = true;
+        return createEmptyDiscoveryResult();
+      },
+      executeDependencyArtifactBuild: async (input) => {
+        receivedConfig = input.request.config;
+        return {
+          success: true,
+          result: { state: "ready", assetCount: 2 },
+          logs: null,
+          duration_ms: 11,
+        };
+      },
+    }));
+    const config = {
+      artifact_id: "11111111-1111-4111-8111-111111111111",
+      attempt_count: 1,
+      identity: {
+        origin_key: "npm:public",
+        package_name: "fixture-package",
+        exact_version: "1.2.3",
+        subpath: "",
+        target: "es2022",
+        profile: "standard-v1",
+      },
+      policy: { decision: "allow" },
+    };
+    const body = {
+      runId: "run_dependency_artifact_1",
+      kind: "task",
+      target: "task:dependency-artifact-build",
+      projectId: "proj-1",
+      config,
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_dependency_artifact_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.json(), {
+      success: true,
+      result: { state: "ready", assetCount: 2 },
+      logs: null,
+      duration_ms: 11,
+    });
+    assertEquals(receivedConfig, config);
     assertEquals(attemptedProjectDiscovery, false);
   });
 
@@ -1200,7 +1267,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   it("executes discovered project tool steps from control-plane workflow runs", async () => {
     await stopEsbuild();
     agentRegistry.clearAll();
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
 
     try {
       const adapter = createMockAdapter();
@@ -1270,23 +1337,28 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           mode: "preview" as const,
         },
         resolvedEnvironment: "preview",
+        allowHostProjectCodeExecution: true,
       } as HandlerContext;
 
-      const result = await runWithRequestContext(
-        {
-          projectSlug: "demo-project",
-          projectId: "proj-1",
-          token: "runtime-token",
-          productionMode: false,
-          branch: "main",
-        },
-        () => handler.handle(request, ctx),
+      const result = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy(undefined),
+        () =>
+          runWithRequestContext(
+            {
+              projectSlug: "demo-project",
+              projectId: "proj-1",
+              token: "runtime-token",
+              productionMode: false,
+              branch: "main",
+            },
+            () => handler.handle(request, ctx),
+          ),
       );
 
       assertExists(result.response);
       assertEquals(result.response.status, 200);
       const response = await result.response.json();
-      assertEquals(response.success, true);
+      assertEquals(response.success, true, response.error ?? undefined);
       assertEquals(response.result, {
         lookup: {
           message: "hello from control plane",
@@ -1300,7 +1372,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertEquals(response.artifacts, undefined);
     } finally {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
       await stopEsbuild();
     }
   });

@@ -11,6 +11,13 @@ import { SSRModuleLoader } from "./ssr-module-loader/index.ts";
 import { extractComponent } from "./extract-component.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveDependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { TransformedModuleCoordinator } from "./transformed-module-coordinator.ts";
+
+const transformedModuleFileSystem = createFileSystem();
+const transformedModuleCoordinator = new TransformedModuleCoordinator(
+  transformedModuleFileSystem,
+);
 
 export async function loadModuleFromSource(
   source: string,
@@ -82,11 +89,13 @@ export async function loadModuleFromSource(
       const componentFile = join(tmpDir, normalizeModulePath(relativeFilePath));
 
       const componentDir = componentFile.substring(0, componentFile.lastIndexOf("/"));
-      const fs = createFileSystem();
-      await fs.mkdir(componentDir, { recursive: true });
-      await fs.writeTextFile(componentFile, transformedCode);
-
-      return await import(`file://${componentFile}?t=${Date.now()}`);
+      await transformedModuleFileSystem.mkdir(componentDir, { recursive: true });
+      return await transformedModuleCoordinator.importTransformedModule(
+        componentFile,
+        transformedCode,
+        await computeHash(transformedCode),
+        tmpDir,
+      );
     },
     {
       "react.file": fileName,

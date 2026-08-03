@@ -2,6 +2,13 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
 import { buildChildRunResultSummary } from "../child-run/result-summary.ts";
+import { UNCONFIRMED_AGENT_PROJECT_IDENTITY_MESSAGE } from "../project/context.ts";
+import {
+  createHostedConversationRunChunkMirrorFromCapability,
+  createHostedRunEventWriterCapability,
+  getActiveHostedRunEventWriterCapability,
+  runWithHostedRunEventWriterCapability,
+} from "./child-run-event-writer-token.ts";
 import {
   createDefaultHostedInvokeAgentTool,
   type DefaultHostedInvokeAgentConfig,
@@ -259,6 +266,63 @@ Deno.test("default hosted invoke resolves and runs configured child against the 
   assertEquals(captured.prompt?.includes("Extract the application."), true);
 });
 
+Deno.test("default hosted invoke rejects unconfirmed project identities before child setup", async () => {
+  const context: DefaultHostedInvokeAgentContext = {
+    authToken: "token-123",
+    projectId: "project-123",
+    projectSlug: "current-project",
+    branchId: "branch-123",
+    model: "sonnet",
+  };
+  const downstreamCalls: string[] = [];
+
+  await assertRejects(
+    () =>
+      executeDefaultHostedInvokeAgentTool(
+        createTestOptions({
+          context,
+          enableDurableInvokeAgent: false,
+          options: {
+            resolveProjectReference: () =>
+              Promise.resolve({ projectId: " noncanonical-project-id " }),
+            resolveChildAgentExecutionConfig: () => {
+              downstreamCalls.push("resolve-child-config");
+              return Promise.resolve(undefined);
+            },
+            buildGlobalTools: () => {
+              downstreamCalls.push("build-tools");
+              return {};
+            },
+            startRuntime: () => {
+              downstreamCalls.push("start-runtime");
+              throw new Error("unexpected runtime start");
+            },
+          },
+        }),
+        {
+          description: "inspect target",
+          prompt: "Inspect the target project.",
+          context: {},
+          agent_id: "security-reviewer",
+          project_reference: "target-project",
+        },
+        "security-reviewer",
+        { toolCallId: "tool-call-invalid-target" },
+      ),
+    TypeError,
+    UNCONFIRMED_AGENT_PROJECT_IDENTITY_MESSAGE,
+  );
+
+  assertEquals(downstreamCalls, []);
+  assertEquals(context, {
+    authToken: "token-123",
+    projectId: "project-123",
+    projectSlug: "current-project",
+    branchId: "branch-123",
+    model: "sonnet",
+  });
+});
+
 Deno.test("executeDefaultHostedInvokeAgentTool returns durable context failure before local execution", async () => {
   const traceAttributes: DefaultHostedInvokeAgentTraceAttributes[] = [];
   const result = await executeDefaultHostedInvokeAgentTool(
@@ -373,4 +437,238 @@ Deno.test("createDefaultHostedInvokeAgentTool treats omitted context as empty st
   });
   assertEquals(traceAttributes.at(-1)?.["child.agent.id"], "ingest-invoice-agent");
   assertEquals(traceAttributes.at(-1)?.["tool.call.id"], "tool-call-missing-context");
+});
+
+Deno.test("created invoke tools preserve distinct writer capabilities across concurrent execution", async () => {
+  const originalFetch = globalThis.fetch;
+  const tokenRequests: Array<{ authorization: string | null; url: string }> = [];
+  const mirrorRequests: Array<{ authorization: string | null; url: string }> = [];
+  const createBarrier = () => {
+    let arrivals = 0;
+    let release: (() => void) | undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return () => {
+      arrivals += 1;
+      if (arrivals === 2) {
+        release?.();
+      }
+      return released;
+    };
+  };
+  const waitForSiblingChildExchange = createBarrier();
+  const waitForSiblingGrandchildExchange = createBarrier();
+
+  try {
+    globalThis.fetch = (() => {
+      throw new Error("capability-backed mirrors must not use the mutable global fetch");
+    }) as typeof fetch;
+
+    const createSiblingCapability = (label: "a" | "b") => {
+      let exchangeIndex = 0;
+      return createHostedRunEventWriterCapability({
+        apiUrl: `https://writer-${label}.example.test`,
+        runId: `run_root_${label}`,
+        runEventAppendToken: `root-${label}-writer-token`,
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          if (request.url.endsWith("/events")) {
+            mirrorRequests.push({
+              authorization: request.headers.get("Authorization"),
+              url: request.url,
+            });
+            const url = new URL(request.url);
+            const pathParts = url.pathname.split("/");
+            const conversationId = pathParts[pathParts.indexOf("conversations") + 1];
+            const runId = pathParts[pathParts.indexOf("runs") + 1];
+            return Response.json({
+              latestEventId: 1,
+              latestExternalEventSequence: 1,
+              appendedCount: 1,
+              run: {
+                runId,
+                conversationId,
+                latestEventId: 1,
+                latestExternalEventSequence: 1,
+              },
+            });
+          }
+          tokenRequests.push({
+            authorization: request.headers.get("Authorization"),
+            url: request.url,
+          });
+          const isChildExchange = exchangeIndex === 0;
+          exchangeIndex += 1;
+          await (isChildExchange
+            ? waitForSiblingChildExchange()
+            : waitForSiblingGrandchildExchange());
+          return Response.json(
+            {
+              run_event_token: isChildExchange
+                ? `child-${label}-writer-token`
+                : `grandchild-${label}-writer-token`,
+            },
+            { headers: { "Cache-Control": "no-store" } },
+          );
+        },
+      });
+    };
+    const createSiblingTool = (label: "a" | "b", conversationId: string) => {
+      const capability = createSiblingCapability(label);
+      let executeOrdinaryTool: (() => void) | undefined;
+      let executeNestedDelegation: (() => Promise<void>) | undefined;
+      return runWithHostedRunEventWriterCapability(
+        capability,
+        () =>
+          createDefaultHostedInvokeAgentTool(
+            createTestOptions({
+              enableDurableInvokeAgent: false,
+              config: {
+                apiUrl: `https://runtime-${label}.example.test`,
+                mcpServers: [],
+              },
+              options: {
+                resolveChildAgentExecutionConfig: () => {
+                  assertEquals(getActiveHostedRunEventWriterCapability(), undefined);
+                  return Promise.resolve(undefined);
+                },
+                buildGlobalTools: () => {
+                  const assembledCapability = getActiveHostedRunEventWriterCapability();
+                  if (!assembledCapability) {
+                    throw new Error("Expected writer authority while assembling nested tools");
+                  }
+                  executeOrdinaryTool = () => {
+                    assertEquals(getActiveHostedRunEventWriterCapability(), undefined);
+                  };
+                  executeNestedDelegation = async () => {
+                    const childCapability = await assembledCapability
+                      .mintChildRunEventWriterCapability(`run_child_${label}`);
+                    await runWithHostedRunEventWriterCapability(childCapability, async () => {
+                      const activeChildCapability = getActiveHostedRunEventWriterCapability();
+                      const mirror = createHostedConversationRunChunkMirrorFromCapability(
+                        activeChildCapability,
+                        {
+                          expectedRunId: `run_child_${label}`,
+                          conversationId,
+                          latestEventId: 0,
+                          latestExternalEventSequence: 0,
+                        },
+                      );
+                      if (!mirror || !activeChildCapability) {
+                        throw new Error("Expected the child writer capability and mirror");
+                      }
+                      await mirror.appendEvents([
+                        { type: "TEXT_MESSAGE_CONTENT", delta: `child ${label}` },
+                      ]);
+                      await mirror.flush();
+                      mirror.dispose();
+                      await activeChildCapability.mintChildRunEventWriterCapability(
+                        `run_grandchild_${label}`,
+                      );
+                    });
+                  };
+                  return {};
+                },
+                createAgentServiceSandboxTools: () =>
+                  Promise.resolve({
+                    tools: {},
+                    sandbox: {} as never,
+                    closeSandbox: () => Promise.resolve(),
+                  }),
+                startRuntime: async () => {
+                  assertEquals(getActiveHostedRunEventWriterCapability(), undefined);
+                  if (!executeOrdinaryTool || !executeNestedDelegation) {
+                    throw new Error("Expected the assembled tool closures");
+                  }
+                  executeOrdinaryTool();
+                  await executeNestedDelegation();
+
+                  return {
+                    forkStreamAbortController: new AbortController(),
+                    childRunMonitorAbortController: null,
+                    childRunMonitorPromise: Promise.resolve(),
+                    forkToolNames: [],
+                    streamResult: {
+                      fullStream: (async function* () {
+                        yield { type: "text-delta", text: `child ${label} complete` } as const;
+                      })(),
+                      steps: Promise.resolve([
+                        {
+                          text: `child ${label} complete`,
+                          finishReason: "stop",
+                          messages: [],
+                          toolCalls: [],
+                          toolResults: [],
+                        },
+                      ]),
+                      totalUsage: Promise.resolve(undefined),
+                    },
+                  };
+                },
+              },
+            }),
+          ),
+      );
+    };
+
+    const toolA = createSiblingTool("a", "11111111-1111-4111-8111-111111111111");
+    const toolB = createSiblingTool("b", "22222222-2222-4222-8222-222222222222");
+    assertEquals(getActiveHostedRunEventWriterCapability(), undefined);
+
+    await Promise.all([
+      toolA.execute(
+        { description: "child a", prompt: "Run child a", context: {}, agent_id: "child-a" },
+        { toolCallId: "tool-call-a" },
+      ),
+      toolB.execute(
+        { description: "child b", prompt: "Run child b", context: {}, agent_id: "child-b" },
+        { toolCallId: "tool-call-b" },
+      ),
+    ]);
+
+    assertEquals(getActiveHostedRunEventWriterCapability(), undefined);
+    assertEquals(
+      tokenRequests.toSorted((left, right) => left.url.localeCompare(right.url)),
+      [
+        {
+          authorization: "Bearer child-a-writer-token",
+          url:
+            "https://writer-a.example.test/runs/run_child_a/children/run_grandchild_a/event-writer-token",
+        },
+        {
+          authorization: "Bearer root-a-writer-token",
+          url:
+            "https://writer-a.example.test/runs/run_root_a/children/run_child_a/event-writer-token",
+        },
+        {
+          authorization: "Bearer child-b-writer-token",
+          url:
+            "https://writer-b.example.test/runs/run_child_b/children/run_grandchild_b/event-writer-token",
+        },
+        {
+          authorization: "Bearer root-b-writer-token",
+          url:
+            "https://writer-b.example.test/runs/run_root_b/children/run_child_b/event-writer-token",
+        },
+      ],
+    );
+    assertEquals(
+      mirrorRequests.toSorted((left, right) => left.url.localeCompare(right.url)),
+      [
+        {
+          authorization: "Bearer child-a-writer-token",
+          url:
+            "https://writer-a.example.test/conversations/11111111-1111-4111-8111-111111111111/runs/run_child_a/events",
+        },
+        {
+          authorization: "Bearer child-b-writer-token",
+          url:
+            "https://writer-b.example.test/conversations/22222222-2222-4222-8222-222222222222/runs/run_child_b/events",
+        },
+      ],
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

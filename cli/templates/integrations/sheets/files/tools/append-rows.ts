@@ -4,7 +4,7 @@ import { createSheetsClient } from "../lib/sheets-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "append-rows",
+  id: "sheets-append-rows",
   description:
     "Append rows to a Google Sheets range. Use for trackers, logs, and adding records without overwriting existing rows.",
   inputSchema: defineSchema((v) =>

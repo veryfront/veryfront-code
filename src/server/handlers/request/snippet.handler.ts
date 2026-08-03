@@ -4,12 +4,15 @@ import { serverLogger } from "#veryfront/utils";
 import { renderSnippet } from "#veryfront/rendering/snippet-renderer.ts";
 import {
   createErrorResponse,
+  createErrorResponseFromDefinition,
   FILE_NOT_FOUND,
   getErrorMessage,
+  PROJECT_EXECUTION_UNAVAILABLE,
   SECURITY_VIOLATION,
   VeryfrontError,
 } from "#veryfront/errors";
-import { validatePathSync } from "#veryfront/security";
+import { validatePath, ValidationPresets } from "#veryfront/security";
+import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import {
   createHandlerDependencyPinningSource,
   getHandlerDependencyPinningIdentity,
@@ -26,12 +29,30 @@ export class SnippetHandler extends BaseHandler {
     patterns: [{ pattern: /^\/(@\/|@components\/)/, method: "GET" }],
   };
 
-  handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+  async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const url = new URL(req.url);
     const { pathname } = url;
 
     if (!pathname.startsWith("/@/") && !pathname.startsWith("/@components/")) {
-      return Promise.resolve(this.continue());
+      return this.continue();
+    }
+
+    if (isSharedProjectRuntime(ctx)) {
+      const problem = createErrorResponseFromDefinition(
+        PROJECT_EXECUTION_UNAVAILABLE,
+        {
+          detail:
+            "Shared runtimes require a dedicated isolated project runtime for snippet rendering",
+          instance: pathname,
+        },
+      );
+      const response = this.createResponseBuilder(ctx)
+        .withCORS(req, ctx.securityConfig?.cors)
+        .withSecurity(ctx.securityConfig ?? undefined, req)
+        .withCache("no-store")
+        .withHeaders(problem.headers)
+        .build(problem.body, problem.status);
+      return Promise.resolve(this.respond(response));
     }
 
     logger.debug("Handling snippet request", {
@@ -41,27 +62,31 @@ export class SnippetHandler extends BaseHandler {
 
     const filePath = this.resolveFilePath(pathname);
 
-    const pathResult = validatePathSync(filePath, {
-      baseDir: ctx.projectDir,
-    });
-
-    if (!pathResult.valid) {
-      logger.warn("Path traversal blocked in snippet request", { pathname, filePath });
-      const error = SECURITY_VIOLATION.create({
-        detail: "Invalid snippet path",
-      });
-      return Promise.resolve({ response: createErrorResponse(error) });
-    }
-
     logger.debug("Resolved file path", { filePath });
 
     return this.withProxyContext(ctx, async () => {
       try {
-        const content = await ctx.adapter.fs.readFile(filePath);
+        const fs = ctx.adapter.fs;
+        const stableAdapter = { fs } as typeof ctx.adapter;
+        const pathResult = await validatePath(filePath, {
+          ...ValidationPresets.internal(ctx.projectDir),
+          adapter: stableAdapter,
+        });
+
+        if (!pathResult.valid || !pathResult.canonicalPath) {
+          logger.warn("Path traversal blocked in snippet request", { pathname, filePath });
+          const error = SECURITY_VIOLATION.create({
+            detail: "Invalid snippet path",
+          });
+          return { response: createErrorResponse(error) };
+        }
+
+        const admittedPath = pathResult.canonicalPath;
+        const content = await fs.readFile(admittedPath);
 
         if (!content) {
           logger.debug("File not found or empty", { filePath });
-          return this.respondNotFound(ctx, filePath);
+          return this.respondNotFound(ctx, admittedPath);
         }
 
         const moduleServerUrl = this.getModuleServerUrl(ctx.moduleServerUrl, url);
@@ -72,12 +97,12 @@ export class SnippetHandler extends BaseHandler {
         const result = await renderSnippet(content, {
           mode: isDev ? "development" : "production",
           projectDir: ctx.projectDir,
-          adapter: ctx.adapter,
+          adapter: stableAdapter,
           isLocalProject: ctx.isLocalProject,
           projectId: dependencyIdentity.projectId,
           contentSourceId: dependencyIdentity.contentSourceId,
           dependencyPinningSource: createHandlerDependencyPinningSource(ctx),
-          filePath,
+          filePath: admittedPath,
           moduleServerUrl,
           projectSlug: dependencyIdentity.projectSlug,
           config: ctx.config,

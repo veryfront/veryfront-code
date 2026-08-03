@@ -126,7 +126,7 @@ describe("loadExtensionFactory()", () => {
     assertEquals(resolved.source, "package");
   });
 
-  it("does not call DNT's incompatible import.meta.resolve ponyfill on Node 18", () => {
+  it("does not call DNT's incompatible import.meta.resolve ponyfill on Node", () => {
     let resolverCalls = 0;
     assertCanonicalExtensionImport(
       "file:///project/extension.ts",

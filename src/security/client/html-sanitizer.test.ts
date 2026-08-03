@@ -134,4 +134,14 @@ describe("jsonForInlineScript", () => {
     assertStringIncludes(result, "\\u0026");
     assertEquals(JSON.parse(result), value);
   });
+
+  it("rejects top-level values that JSON cannot serialize", () => {
+    for (const value of [undefined, () => undefined, Symbol("value")]) {
+      assertThrows(
+        () => jsonForInlineScript(value),
+        TypeError,
+        "must be JSON-serializable",
+      );
+    }
+  });
 });

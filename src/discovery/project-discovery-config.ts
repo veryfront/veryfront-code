@@ -26,6 +26,8 @@ type ProjectDiscoveryConfigInput = {
   config?: VeryfrontConfig | null;
   fsAdapter?: FileSystemAdapter;
   verbose?: boolean;
+  /** Explicit host-owned capability for trusted local/dedicated runtimes only. */
+  allowHostProjectCodeExecution?: boolean;
 };
 
 export type ProjectDiscoveryConfig = DiscoveryConfig & {
@@ -113,5 +115,6 @@ export function createProjectDiscoveryConfig(
     ),
     fsAdapter: input.fsAdapter,
     verbose: input.verbose ?? false,
+    allowHostProjectCodeExecution: input.allowHostProjectCodeExecution === true,
   };
 }

@@ -77,7 +77,7 @@ Deno.test("browser error adapters do not retain Node imports", async () => {
 	);
 });
 
-Deno.test("the public observability barrel does not eagerly import Node v8", async () => {
+Deno.test("the public observability barrel does not eagerly import Node-only helpers", async () => {
 	const output = await new Deno.Command(Deno.execPath(), {
 		args: [
 			"bundle",
@@ -97,5 +97,9 @@ Deno.test("the public observability barrel does not eagerly import Node v8", asy
 	assert(
 		!/\b(?:from|import)\s*["']node:v8["']/.test(bundle),
 		"the public observability barrel must not retain a browser-eager node:v8 import",
+	);
+	assert(
+		!/\b(?:from|import)\s*["']node:util\/types["']/.test(bundle),
+		"the public observability barrel must not retain a browser-eager node:util/types import",
 	);
 });

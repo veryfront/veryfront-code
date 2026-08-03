@@ -7,6 +7,8 @@ export interface SSROptions {
   identifierPrefix?: string;
   namespaceURI?: string;
   nonce?: string;
+  /** @internal Request-owned capabilities propagated through React Suspense. */
+  renderContext?: import("../../server-render-context.ts").ServerRenderContextValue;
   progressiveChunkSize?: number;
   /** Maximum UTF-8 bytes retained when an SSR result must be buffered. */
   maxBufferedBytes?: number;
@@ -37,5 +39,6 @@ export interface HTMLWrapOptions {
   links: Array<{ rel: string; href: string }>;
   scripts: Array<{ src: string; type?: string }>;
   bootstrapScripts: string[];
+  bootstrapModules?: string[];
   nonce?: string;
 }

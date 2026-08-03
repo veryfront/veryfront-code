@@ -5,7 +5,9 @@ export interface StartStdioJsonRpcOptions<TRequest, TResponse> {
   isRunning: () => boolean;
   parseRequest: (payload: unknown) => TRequest;
   handleRequest: (request: TRequest) => Promise<TResponse>;
-  toErrorResponse: (error: unknown) => TResponse;
+  toParseErrorResponse: (error: unknown) => TResponse;
+  toInvalidRequestResponse: (error: unknown) => TResponse;
+  toErrorResponse: (error: unknown, request: TRequest) => TResponse;
 }
 
 export function startStdioJsonRpc<TRequest, TResponse>(
@@ -38,12 +40,27 @@ export function startStdioJsonRpc<TRequest, TResponse>(
           buffer = buffer.slice(newlineIndex + 1);
           if (!line) continue;
 
+          let payload: unknown;
           try {
-            const request = options.parseRequest(JSON.parse(line));
+            payload = JSON.parse(line);
+          } catch (error) {
+            await writeResponse(options.toParseErrorResponse(error));
+            continue;
+          }
+
+          let request: TRequest;
+          try {
+            request = options.parseRequest(payload);
+          } catch (error) {
+            await writeResponse(options.toInvalidRequestResponse(error));
+            continue;
+          }
+
+          try {
             const response = await options.handleRequest(request);
             await writeResponse(response);
           } catch (error) {
-            await writeResponse(options.toErrorResponse(error));
+            await writeResponse(options.toErrorResponse(error, request));
           }
         }
       } catch {

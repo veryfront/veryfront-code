@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import type { AgentOption } from "./agent-picker.tsx";
@@ -87,6 +88,35 @@ describe("AgentPicker — preset (back-compat)", () => {
     );
     assertStringIncludes(html, "Lawyer Agent");
     assertStringIncludes(html, "border-[var(--input-border)]");
+  });
+
+  it("represents loading rows as one disabled listbox option", async () => {
+    const dom = installDom();
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "root element exists");
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(<AgentPicker agents={[]} isLoading />);
+      });
+
+      const trigger = rootElement.querySelector("button");
+      assert(trigger, "trigger renders");
+      flushSync(() => trigger.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+      await settle();
+
+      const loading = document.querySelector<HTMLElement>('[aria-label="Loading agents"]');
+      assert(loading, "loading option renders");
+      assertEquals(loading.getAttribute("role"), "option");
+      assertEquals(loading.getAttribute("aria-disabled"), "true");
+      assertEquals(loading.getAttribute("aria-selected"), "false");
+      assertEquals(loading.querySelectorAll('[aria-hidden="true"]').length, 3);
+
+      await unmountReactRoot(root);
+      await settle();
+    } finally {
+      dom.restore();
+    }
   });
 });
 
@@ -199,7 +229,7 @@ describe("AgentPicker — composability contract", () => {
       assertEquals(created, 1);
       assertEquals(managed, 0);
 
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
     } finally {
       dom.restore();

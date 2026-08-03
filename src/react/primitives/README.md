@@ -164,11 +164,11 @@ Tool call display.
 ```tsx
 <ToolInvocation
   name={tool.name}
-  args={tool.args}
-  status={tool.status}
+  input={tool.input}
+  state={tool.state}
   className="border-l-4 border-blue-500 pl-4 my-2"
 >
-  <ToolResult result={tool.result} />
+  <ToolResult output={tool.output} />
 </ToolInvocation>;
 ```
 
@@ -178,8 +178,8 @@ Tool result display with optional custom renderer.
 
 ```tsx
 <ToolResult
-  result={tool.result}
-  renderResult={(result) => <CustomResultDisplay data={result} />}
+  output={tool.output}
+  renderOutput={(output) => <CustomResultDisplay data={output} />}
   className="mt-2 p-2 bg-gray-100 rounded font-mono text-sm"
 />;
 ```
@@ -190,7 +190,7 @@ List of tool calls.
 
 ```tsx
 <ToolList
-  toolCalls={agent.toolCalls}
+  tools={agent.tools}
   className="space-y-2"
   renderTool={(tool) => <CustomToolCard tool={tool} />}
 />;

@@ -47,6 +47,9 @@ export interface UseStickToBottomResult<T extends HTMLElement> {
  *
  * `contentKey` (e.g. `messages.length`) is still accepted as a fallback trigger
  * for environments without `ResizeObserver`.
+ *
+ * @deprecated Use {@link useChatScroll}, the canonical RFC 2980 name. This alias
+ * stays for backward compatibility and is not removed.
  */
 export function useStickToBottom<T extends HTMLElement>(
   contentKey: number,
@@ -142,4 +145,77 @@ export function useStickToBottom<T extends HTMLElement>(
   }, []);
 
   return { scrollRef, contentRef, isAtBottom, scrollToBottom };
+}
+
+/** Options for {@link useChatScroll}. */
+export type UseChatScrollOptions = UseStickToBottomOptions;
+
+/** Result of {@link useChatScroll}, a superset of {@link UseStickToBottomResult}. */
+export interface UseChatScrollResult<T extends HTMLElement> extends UseStickToBottomResult<T> {
+  /** Alias of `scrollRef`, the scroll viewport (RFC 2980 name). */
+  viewportRef: React.RefObject<T | null>;
+  /** Scroll the viewport to the top. */
+  scrollToStart: (behavior?: ScrollBehavior) => void;
+  /** Scroll the viewport to the bottom (alias of `scrollToBottom`). */
+  scrollToEnd: (behavior?: ScrollBehavior) => void;
+  /** Scroll a message (`[data-message-id="…"]`) into view within the viewport. */
+  scrollToMessage: (id: string, behavior?: ScrollBehavior) => void;
+  /** Props to spread on the scroll viewport element: `ref` + `data-at-bottom`. */
+  getViewportProps: () => {
+    ref: React.RefObject<T | null>;
+    "data-at-bottom"?: "" | undefined;
+  };
+}
+
+/**
+ * `useChatScroll` is the canonical chat scroll hook (RFC 2980). A superset of
+ * {@link useStickToBottom}: same `scrollRef`/`contentRef`/`isAtBottom`/
+ * `scrollToBottom`, plus `viewportRef`, `scrollToStart`/`scrollToEnd`,
+ * `scrollToMessage(id)`, and `getViewportProps()` for headless composition.
+ * Backward-compatible. Prefer this name in new code.
+ */
+export function useChatScroll<T extends HTMLElement>(
+  contentKey: number,
+  options?: UseChatScrollOptions,
+): UseChatScrollResult<T> {
+  const base = useStickToBottom<T>(contentKey, options);
+
+  const scrollToStart = React.useCallback((behavior: ScrollBehavior = "smooth") => {
+    base.scrollRef.current?.scrollTo?.({ top: 0, behavior });
+  }, [base.scrollRef]);
+
+  const scrollToMessage = React.useCallback(
+    (id: string, behavior: ScrollBehavior = "smooth") => {
+      const viewport = base.scrollRef.current;
+      if (!viewport) return;
+      // Compare attribute values instead of interpolating `id` into a CSS
+      // selector. Message ids are application data and may contain quotes or
+      // other selector syntax; enumeration avoids both invalid selectors and
+      // reliance on the optional global `CSS.escape` API.
+      const message = [...viewport.querySelectorAll<HTMLElement>("[data-message-id]")]
+        .find((candidate) => candidate.dataset.messageId === id);
+      if (!message) return;
+      const viewportTop = viewport.getBoundingClientRect().top + viewport.clientTop;
+      const messageTop = message.getBoundingClientRect().top;
+      viewport.scrollTo({
+        top: viewport.scrollTop + messageTop - viewportTop,
+        behavior,
+      });
+    },
+    [base.scrollRef],
+  );
+
+  const getViewportProps = React.useCallback(() => ({
+    ref: base.scrollRef,
+    "data-at-bottom": (base.isAtBottom ? "" : undefined) as "" | undefined,
+  }), [base.scrollRef, base.isAtBottom]);
+
+  return {
+    ...base,
+    viewportRef: base.scrollRef,
+    scrollToStart,
+    scrollToEnd: base.scrollToBottom,
+    scrollToMessage,
+    getViewportProps,
+  };
 }

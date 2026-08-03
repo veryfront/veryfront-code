@@ -103,6 +103,55 @@ const WEB_FETCH_OUTPUT_SCHEMA: JsonSchema = {
   additionalProperties: false,
 };
 
+const OPENAI_WEB_SEARCH_INPUT_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    type: {
+      type: "string",
+      enum: ["search", "open_page", "find_in_page"],
+    },
+    query: { type: "string" },
+    queries: {
+      type: "array",
+      items: { type: "string" },
+    },
+    url: {
+      anyOf: [
+        { type: "string" },
+        { type: "null" },
+      ],
+    },
+    pattern: { type: "string" },
+  },
+  required: ["type"],
+  additionalProperties: false,
+};
+
+const OPENAI_WEB_SEARCH_OUTPUT_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    status: {
+      type: "string",
+      enum: ["completed", "failed", "incomplete"],
+    },
+    sources: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          type: { type: "string", const: "url" },
+          url: { type: "string" },
+        },
+        required: ["type", "url"],
+        additionalProperties: false,
+      },
+    },
+    action: OPENAI_WEB_SEARCH_INPUT_SCHEMA,
+  },
+  required: ["status"],
+  additionalProperties: false,
+};
+
 export function createAnthropicWebSearchToolSet(): RuntimeToolSet {
   return {
     web_search: createRuntimeProviderTool({
@@ -125,6 +174,17 @@ export function createAnthropicWebFetchToolSet(): RuntimeToolSet {
       inputSchema: createLazyRuntimeJsonSchema(WEB_FETCH_INPUT_SCHEMA),
       outputSchema: createLazyRuntimeJsonSchema(WEB_FETCH_OUTPUT_SCHEMA),
       supportsDeferredResults: true,
+    }),
+  };
+}
+
+export function createOpenAIWebSearchToolSet(): RuntimeToolSet {
+  return {
+    web_search: createRuntimeProviderTool({
+      id: "openai.web_search",
+      args: {},
+      inputSchema: createLazyRuntimeJsonSchema(OPENAI_WEB_SEARCH_INPUT_SCHEMA),
+      outputSchema: createLazyRuntimeJsonSchema(OPENAI_WEB_SEARCH_OUTPUT_SCHEMA),
     }),
   };
 }

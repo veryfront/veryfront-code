@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listProjects } from "../../lib/linear-client.ts";
+import { listProjects } from "../lib/linear-client.ts";
 
 export default tool({
-  id: "list-projects",
+  id: "linear-list-projects",
   description:
     "List all projects in the Linear workspace. Returns project details including name, state, progress, and associated teams.",
   inputSchema: defineSchema((v) => v.object({

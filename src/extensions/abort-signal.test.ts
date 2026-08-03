@@ -36,7 +36,7 @@ Deno.test("composeAbortSignals works when AbortSignal.any is unavailable", () =>
   try {
     const controller = new AbortController();
     const signal = composeAbortSignals([controller.signal]);
-    const reason = new Error("Node 18 cancellation");
+    const reason = new Error("runtime-independent cancellation");
 
     controller.abort(reason);
 

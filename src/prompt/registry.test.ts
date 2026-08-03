@@ -3,15 +3,15 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertNotStrictEquals, assertThrows } from "#veryfront/testing/assert";
 import type { Prompt } from "./types.ts";
 import { prompt } from "./factory.ts";
-import { promptRegistry } from "./registry.ts";
+import { promptRegistry, promptRegistryInternal } from "./registry.ts";
 
 describe("prompt registry", () => {
   beforeEach(() => {
-    promptRegistry.clearAll();
+    promptRegistryInternal.clearAll();
   });
 
   afterEach(() => {
-    promptRegistry.clearAll();
+    promptRegistryInternal.clearAll();
   });
 
   describe("getContent()", () => {

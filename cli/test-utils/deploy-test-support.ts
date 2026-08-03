@@ -9,7 +9,12 @@
 
 import { assertEquals } from "veryfront/testing/assert";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import type { ReleaseAssetManifestResponse } from "veryfront/release-assets";
+import {
+  RELEASE_ASSET_BASE_PATH,
+  RELEASE_ASSET_CONTENT_TYPES,
+  RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
+  type ReleaseAssetManifestResponse,
+} from "veryfront/release-assets";
 import { computeSourceDigest, writePushReceipt } from "../shared/deployment-provenance.ts";
 import type {
   DeployControlPlane,
@@ -134,26 +139,26 @@ export function readyManifest(routes: Record<string, { modules: string[]; css: s
     state: "ready",
     manifest_version: 1,
     manifest: {
-      schemaVersion: 1,
+      schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
       projectId: PROJECT_ID,
       releaseId: "release-1",
       releaseVersion: 1,
       manifestVersion: 1,
       builderVersion: "test",
-      sourceContentHash: "sha256:test",
+      sourceContentHash: "a".repeat(64),
       createdAt: "2026-07-30T00:00:00.000Z",
-      assetBasePath: "/_vf/assets/release-1/",
+      assetBasePath: RELEASE_ASSET_BASE_PATH,
       modules: {
         "app/page.js": {
-          contentHash: "sha256:module",
+          contentHash: "b".repeat(64),
           size: 12,
-          contentType: "application/javascript",
+          contentType: RELEASE_ASSET_CONTENT_TYPES.js,
         },
       },
       css: [],
       routes,
+      dependencyMode: "immutable",
       dependencies: {},
-      fallback: { mode: "jit", gaps: [] },
     },
   };
 }

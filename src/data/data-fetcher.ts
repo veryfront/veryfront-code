@@ -15,6 +15,14 @@ export interface FetchDataOptions {
   modulePath?: string;
   /** Project directory for worker scoping */
   projectDir?: string;
+  /** Host-owned locality decision for development-only behavior. */
+  isLocalProject?: boolean;
+  /** Narrow host-owned capability for project-code execution. */
+  allowHostProjectCodeExecution?: boolean;
+  /** Stable host-owned tenant/project scope for reusable workers. */
+  workerScope?: string;
+  /** Immutable release or source-snapshot identity for reusable workers. */
+  sourceGeneration?: string;
 }
 
 export class DataFetcher {
@@ -47,7 +55,14 @@ export class DataFetcher {
       : "none";
 
     const isolationOptions: ServerDataFetchOptions | undefined = options
-      ? { modulePath: options.modulePath, projectDir: options.projectDir }
+      ? {
+        modulePath: options.modulePath,
+        projectDir: options.projectDir,
+        isLocalProject: options.isLocalProject,
+        allowHostProjectCodeExecution: options.allowHostProjectCodeExecution,
+        workerScope: options.workerScope,
+        sourceGeneration: options.sourceGeneration,
+      }
       : undefined;
 
     return withSpan(

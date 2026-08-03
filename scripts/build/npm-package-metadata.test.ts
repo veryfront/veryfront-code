@@ -25,6 +25,16 @@ Deno.test("exports agent skill helpers as a public package subpath", async () =>
   assertEquals(imports["veryfront/skill"], "./src/skill/index.ts");
 });
 
+Deno.test("exports the UI adapter contract as a public package subpath", async () => {
+  const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
+  const exports = denoConfig.exports as Record<string, string>;
+  const imports = denoConfig.imports as Record<string, string>;
+  const contract = "./src/react/components/ui/adapter/contract.ts";
+
+  assertEquals(exports["./ui/adapter"], contract);
+  assertEquals(imports["veryfront/ui/adapter"], contract);
+});
+
 Deno.test("exports CLI framework dependencies as public package subpaths", async () => {
   const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
   const exports = denoConfig.exports as Record<string, string>;
@@ -78,6 +88,7 @@ Deno.test("root npm CLI package declares auto-loaded first-party extensions afte
       "@veryfront/ext-content-mdx",
       "@veryfront/ext-css-tailwind",
       "@veryfront/ext-parser-babel",
+      "@veryfront/ext-yaml",
     ]
   ) {
     const dependencyAssignment =
@@ -89,6 +100,28 @@ Deno.test("root npm CLI package declares auto-loaded first-party extensions afte
       dependencyIndex > installIndex,
       true,
       `${packageName} dependency must be added after build-local npm install so prerelease builds do not require the extension to already be published`,
+    );
+  }
+});
+
+Deno.test("npm lifecycle probe installs auto-loaded extensions in a real consumer layout", async () => {
+  const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
+
+  assertStringIncludes(source, '"--install-links"');
+  assertStringIncludes(source, 'const agent = await import("veryfront/agent")');
+  assertStringIncludes(source, "agent.parseRuntimeSkillMetadata(");
+  for (
+    const extensionDirectory of [
+      "ext-bundler-esbuild",
+      "ext-content-mdx",
+      "ext-css-tailwind",
+      "ext-parser-babel",
+      "ext-yaml",
+    ]
+  ) {
+    assertStringIncludes(
+      source,
+      `Deno.realPath("./npm/extensions/${extensionDirectory}")`,
     );
   }
 });
@@ -111,6 +144,7 @@ Deno.test("npm publish version bump pins first-party extension dependencies to t
             "@veryfront/ext-content-mdx": "^0.1.1016",
             "@veryfront/ext-css-tailwind": "^0.1.1016",
             "@veryfront/ext-parser-babel": "^0.1.1016",
+            "@veryfront/ext-yaml": "^0.1.1016",
             "@veryfront/not-an-extension": "^0.1.1016",
             zod: "4.3.6",
           },
@@ -151,6 +185,7 @@ Deno.test("npm publish version bump pins first-party extension dependencies to t
       "@veryfront/ext-content-mdx": publishVersion,
       "@veryfront/ext-css-tailwind": publishVersion,
       "@veryfront/ext-parser-babel": publishVersion,
+      "@veryfront/ext-yaml": publishVersion,
       "@veryfront/not-an-extension": "^0.1.1016",
       zod: "4.3.6",
     });
@@ -564,6 +599,7 @@ describe("npm supply-chain policy", () => {
       "ext-content-mdx",
       "ext-css-tailwind",
       "ext-parser-babel",
+      "ext-yaml",
     ];
 
     for (const extensionName of autoLoadedExtensions) {
@@ -621,6 +657,7 @@ describe("npm supply-chain policy", () => {
       "ext-observability-opentelemetry",
       "ext-observability-sentry",
       "ext-parser-babel",
+      "ext-yaml",
       "ext-sandbox-shell-tools",
     ];
 

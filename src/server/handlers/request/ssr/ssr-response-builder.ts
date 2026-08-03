@@ -13,7 +13,7 @@ import { getContentType } from "../../utils/content-types.ts";
 import type { SSRRenderResult } from "../../../services/rendering/ssr.service.ts";
 import { ErrorPages } from "../../../utils/error-html.ts";
 import type { ResponseBuilder } from "#veryfront/security/http/response/builder.ts";
-import { addNonceToHtmlStream, addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
+import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 import { serverLogger } from "#veryfront/utils";
 
 const logger = serverLogger.component("ssr-response-builder");
@@ -52,7 +52,7 @@ export async function buildSSRResponse(
       .withCache(result.cacheStrategy)
       .withContentType(
         getContentType(".html"),
-        addNonceToHtmlStream(result.stream, builder.nonce),
+        result.stream,
         result.status,
       );
 
@@ -72,12 +72,20 @@ export async function buildSSRResponse(
   }
 
   // Buffered response path
-  const content = typeof result.html === "string"
+  const renderedContent = typeof result.html === "string"
     ? result.html
     : typeof result.stream === "string"
     ? result.stream
-    : ErrorPages.serverError();
-  const html = addNonceToHtmlTags(content, builder.nonce);
+    : undefined;
+  // Rendered application HTML already contains nonces on framework-owned
+  // tags. Never bless arbitrary application markup at the response boundary.
+  // The fallback error document is framework-owned, so its fixed inline tags
+  // can receive the response nonce safely.
+  const html = renderedContent === undefined
+    ? addNonceToHtmlTags(ErrorPages.serverError(), builder.nonce)
+    : result.htmlProvenance === "framework"
+    ? addNonceToHtmlTags(renderedContent, builder.nonce)
+    : renderedContent;
   const body = isHeadRequest ? null : html;
 
   let response = builder

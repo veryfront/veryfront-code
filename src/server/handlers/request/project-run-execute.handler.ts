@@ -123,6 +123,7 @@ export interface ProjectRunExecuteHandlerDeps {
       adapter: RuntimeAdapter;
       config?: VeryfrontConfig;
       debug?: boolean;
+      allowHostProjectCodeExecution?: boolean;
     },
   ): Promise<DiscoveredWorkflow | null>;
   findEvalById(
@@ -132,6 +133,7 @@ export interface ProjectRunExecuteHandlerDeps {
       adapter: RuntimeAdapter;
       config?: VeryfrontConfig;
       debug?: boolean;
+      allowHostProjectCodeExecution?: boolean;
     },
   ): Promise<DiscoveredEval | null>;
   createWorkflowClient(
@@ -147,6 +149,11 @@ export interface ProjectRunExecuteHandlerDeps {
     req: Request;
   }): Promise<ProjectRunExecuteResponse>;
   executeReleaseAssetBuild(input: {
+    request: ProjectRunExecuteRequest;
+    ctx: HandlerContext;
+    req: Request;
+  }): Promise<ProjectRunExecuteResponse>;
+  executeDependencyArtifactBuild(input: {
     request: ProjectRunExecuteRequest;
     ctx: HandlerContext;
     req: Request;
@@ -416,6 +423,7 @@ async function executeWorkflowRun(
     adapter: ctx.adapter,
     config: ctx.config,
     debug: ctx.debug,
+    allowHostProjectCodeExecution: ctx.allowHostProjectCodeExecution,
   });
 
   if (!workflow) {
@@ -1015,6 +1023,7 @@ async function executeEvalRun(
     adapter: ctx.adapter,
     config: ctx.config,
     debug: ctx.debug,
+    allowHostProjectCodeExecution: ctx.allowHostProjectCodeExecution,
   });
 
   if (!evalItem) {
@@ -1179,6 +1188,66 @@ async function executeReleaseAssetBuildRun(input: {
     };
   } finally {
     await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+  }
+}
+
+async function executeDependencyArtifactBuildRun(input: {
+  request: ProjectRunExecuteRequest;
+  ctx: HandlerContext;
+  req: Request;
+}): Promise<ProjectRunExecuteResponse> {
+  const startedAt = Date.now();
+  try {
+    const {
+      parseDependencyArtifactBuildTaskInput,
+      runDependencyArtifactBuild,
+    } = await import("#veryfront/release-assets/dependency-artifact-builder.ts");
+    const taskInput = parseDependencyArtifactBuildTaskInput(input.request.config);
+    const token = getRuntimeApiToken(input.req, input.ctx);
+    if (!token) {
+      throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
+    }
+
+    const { VeryfrontApiClient } = await import(
+      "#veryfront/platform/adapters/veryfront-api-client/client.ts"
+    );
+    const apiClient = new VeryfrontApiClient({
+      apiBaseUrl: getEnvironmentConfig().apiBaseUrl,
+      apiToken: token,
+      projectSlug: input.ctx.projectSlug,
+      projectId: input.ctx.projectId,
+    });
+    const result = await runDependencyArtifactBuild(taskInput, {
+      uploadAsset: ({ artifactId, attemptCount, contentHash, contentType, bytes }) =>
+        apiClient.uploadDependencyArtifactAsset(
+          artifactId,
+          attemptCount,
+          contentHash,
+          contentType,
+          bytes,
+        ),
+      reportResult: ({ artifactId, attemptCount, result }) =>
+        apiClient.reportDependencyArtifactBuildResult(
+          artifactId,
+          attemptCount,
+          result,
+        ),
+    });
+
+    return {
+      success: result.success,
+      result,
+      ...(result.success ? {} : { error: result.failureCode }),
+      logs: null,
+      duration_ms: Date.now() - startedAt,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: errorMessage(error),
+      logs: null,
+      duration_ms: Date.now() - startedAt,
+    };
   }
 }
 
@@ -1462,6 +1531,7 @@ const defaultDeps: ProjectRunExecuteHandlerDeps = {
   ensureProjectDiscovery,
   executeKnowledgeIngest: executeKnowledgeIngestRun,
   executeReleaseAssetBuild: executeReleaseAssetBuildRun,
+  executeDependencyArtifactBuild: executeDependencyArtifactBuildRun,
   executeStyleArtifactBuild: executeStyleArtifactBuildRun,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now: () => Date.now(),
@@ -1519,6 +1589,8 @@ export class ProjectRunExecuteHandler extends BaseHandler {
             ? await this.deps.executeKnowledgeIngest({ request, ctx, req })
             : request.kind === "task" && request.target === "task:release-asset-build"
             ? await this.deps.executeReleaseAssetBuild({ request, ctx, req })
+            : request.kind === "task" && request.target === "task:dependency-artifact-build"
+            ? await this.deps.executeDependencyArtifactBuild({ request, ctx, req })
             : request.kind === "task" && request.target === "task:style-artifact-build"
             ? await this.deps.executeStyleArtifactBuild({ request, ctx, req })
             : request.kind === "task"

@@ -1,6 +1,9 @@
 import type { Prompt } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
-import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
+import {
+  ScopedRegistryFacade,
+  ScopedRegistryView,
+} from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { normalizePromptDefinition } from "./validation.ts";
 
@@ -15,7 +18,7 @@ function createMissingPromptError(id: string): Error {
   );
 }
 
-class PromptRegistryClass extends ScopedRegistryFacade<Prompt> {
+class PromptRegistryInternal extends ScopedRegistryFacade<Prompt> {
   override register(id: string, prompt: Prompt): void {
     super.register(id, normalizePromptDefinition(id, prompt));
   }
@@ -35,5 +38,25 @@ class PromptRegistryClass extends ScopedRegistryFacade<Prompt> {
   }
 }
 
-/** Shared prompt registry value. */
-export const promptRegistry = new PromptRegistryClass(promptRegistryManager);
+/** Framework-only prompt registry with process-wide maintenance capabilities. */
+export const promptRegistryInternal = new PromptRegistryInternal(promptRegistryManager);
+
+class PromptRegistry extends ScopedRegistryView<Prompt> {
+  getContent(id: string, variables?: Record<string, unknown>): Promise<string> {
+    const registeredPrompt = this.get(id);
+    if (registeredPrompt) return registeredPrompt.getContent(variables);
+    throw createMissingPromptError(id);
+  }
+
+  list(): string[] {
+    return this.getAllIds();
+  }
+}
+
+/**
+ * Application-facing project-scoped prompt registry value.
+ *
+ * Process-wide maintenance methods remain for compatibility; framework
+ * composition roots should use `promptRegistryInternal` for that behavior.
+ */
+export const promptRegistry = new PromptRegistry(promptRegistryInternal);

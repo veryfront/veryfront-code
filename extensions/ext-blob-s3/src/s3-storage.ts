@@ -141,6 +141,10 @@ interface DefaultS3Resources {
   readonly streamUploader: S3BlobStorageStreamUploader;
 }
 
+interface BucketInitialization {
+  readonly promise: Promise<void>;
+}
+
 function linkAbortSignal(
   upstream: AbortSignal | undefined,
   controller: AbortController,
@@ -593,7 +597,7 @@ export class S3BlobStorage implements BlobStorage {
   readonly #streamUploader: S3BlobStorageStreamUploader | undefined;
   readonly #lifecycleController = new AbortController();
   readonly #detachConfigAbort: () => void;
-  #bucketReady: Promise<void> | undefined;
+  #bucketReady: BucketInitialization | undefined;
   #clientDestroyed = false;
   #closed = false;
 
@@ -702,17 +706,19 @@ export class S3BlobStorage implements BlobStorage {
   async #ensureBucket(): Promise<void> {
     if (!this.#config.autoCreateBucket) return;
     if (!this.#bucketReady) {
-      const pending = this.#initializeBucket();
-      this.#bucketReady = pending;
+      const initialization: BucketInitialization = {
+        promise: this.#initializeBucket(),
+      };
+      this.#bucketReady = initialization;
       try {
-        await pending;
+        await initialization.promise;
       } catch (error) {
-        if (this.#bucketReady === pending) this.#bucketReady = undefined;
+        if (this.#bucketReady === initialization) this.#bucketReady = undefined;
         throw error;
       }
       return;
     }
-    await this.#bucketReady;
+    await this.#bucketReady.promise;
   }
 
   async put(

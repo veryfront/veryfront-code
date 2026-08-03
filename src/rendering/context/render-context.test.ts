@@ -7,6 +7,7 @@ import {
   isSameTenant,
   type RenderContext,
 } from "./render-context.ts";
+import type { EnrichedContext } from "#veryfront/server/context/enriched-context.ts";
 
 function makeMockRenderContext(
   overrides: Partial<RenderContext> = {},
@@ -25,16 +26,18 @@ function makeMockRenderContext(
   };
 }
 
-function makeEnrichedContext(overrides: Record<string, unknown> = {}): Record<
-  string,
-  unknown
-> {
+function makeEnrichedContext(overrides: Partial<EnrichedContext> = {}): EnrichedContext {
   return {
     projectId: "p1",
     projectSlug: "slug",
     projectDir: "/dir",
-    config: {},
-    adapter: {},
+    token: "token",
+    branch: null,
+    isLocalProject: false,
+    parsedDomain: {} as EnrichedContext["parsedDomain"],
+    createdAt: 0,
+    config: {} as EnrichedContext["config"],
+    adapter: {} as EnrichedContext["adapter"],
     cachePrefix: "prefix",
     environment: "production",
     contentSourceId: "release-x",
@@ -93,7 +96,7 @@ describe("rendering/context/render-context", () => {
     it("should throw when enriched context is missing config", () => {
       const enriched = makeEnrichedContext({ config: undefined });
       assertThrows(
-        () => createRenderContextFromEnriched(enriched as any),
+        () => createRenderContextFromEnriched(enriched),
         Error,
         "missing required config",
       );
@@ -102,7 +105,7 @@ describe("rendering/context/render-context", () => {
     it("should throw when enriched context is missing adapter", () => {
       const enriched = makeEnrichedContext({ adapter: undefined });
       assertThrows(
-        () => createRenderContextFromEnriched(enriched as any),
+        () => createRenderContextFromEnriched(enriched),
         Error,
         "missing required adapter",
       );
@@ -111,7 +114,7 @@ describe("rendering/context/render-context", () => {
     it("should throw when enriched context is missing contentSourceId", () => {
       const enriched = makeEnrichedContext({ contentSourceId: undefined });
       assertThrows(
-        () => createRenderContextFromEnriched(enriched as any),
+        () => createRenderContextFromEnriched(enriched),
         Error,
         "missing required contentSourceId",
       );
@@ -120,15 +123,16 @@ describe("rendering/context/render-context", () => {
     it("should create render context from valid enriched context", () => {
       const enriched = makeEnrichedContext({
         config: { dev: { port: 3000 } },
-        adapter: { fs: {} },
+        adapter: { fs: {} } as EnrichedContext["adapter"],
         branch: "main",
         releaseId: "r1",
         token: "tok-123",
         moduleServerUrl: "http://modules.local",
         nonce: "abc",
+        allowHostProjectCodeExecution: true,
       });
 
-      const ctx = createRenderContextFromEnriched(enriched as any);
+      const ctx = createRenderContextFromEnriched(enriched);
       assertEquals(ctx.projectId, "p1");
       assertEquals(ctx.projectSlug, "slug");
       assertEquals(ctx.projectDir, "/dir");
@@ -138,12 +142,21 @@ describe("rendering/context/render-context", () => {
       assertEquals(ctx.releaseId, "r1");
       assertEquals(ctx.proxyToken, "tok-123");
       assertEquals(ctx.nonce, "abc");
+      assertEquals(ctx.allowHostProjectCodeExecution, true);
+    });
+
+    it("should not infer host execution from a non-local enriched context", () => {
+      const ctx = createRenderContextFromEnriched(
+        makeEnrichedContext({ isLocalProject: false }),
+      );
+
+      assertEquals(ctx.allowHostProjectCodeExecution, false);
     });
 
     it("should apply options overrides", () => {
       const enriched = makeEnrichedContext();
 
-      const ctx = createRenderContextFromEnriched(enriched as any, {
+      const ctx = createRenderContextFromEnriched(enriched, {
         port: 8080,
         moduleServerUrl: "http://custom:9090",
         nonce: "custom-nonce",

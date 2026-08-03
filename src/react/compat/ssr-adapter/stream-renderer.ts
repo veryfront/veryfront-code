@@ -1,7 +1,7 @@
 import * as React from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getReactVersionInfo } from "../version-detector/index.ts";
-import { getReactDOMServer } from "./server-loader.ts";
+import { getProjectReact, getReactDOMServer } from "./server-loader.ts";
 import { renderToStringAdapter } from "./string-renderer.ts";
 import type { SSROptions, SSRResult } from "./types.ts";
 import { createError, ensureError, toError } from "#veryfront/errors";
@@ -11,6 +11,7 @@ import {
   resetSSRAdapterTimeoutForTests,
   setSSRAdapterTimeoutForTests,
 } from "./timeout.ts";
+import { wrapWithServerRenderContext } from "../../server-render-context.ts";
 
 interface VeryfrontGlobal {
   __VERYFRONT_DEBUG__?: boolean;
@@ -370,23 +371,32 @@ export async function renderToStreamAdapter(
   options: SSROptions = {},
 ): Promise<SSRResult> {
   const debug = isDebugMode();
-  const server = await getReactDOMServer(options.reactVersion);
+  const [server, projectReact] = await Promise.all([
+    getReactDOMServer(options.reactVersion),
+    options.renderContext ? getProjectReact(options.reactVersion) : Promise.resolve(null),
+  ]);
+  const renderElement = projectReact
+    ? wrapWithServerRenderContext(element, options.renderContext, projectReact)
+    : element;
 
   if (server.renderToReadableStream) {
     if (debug) logger.info("SSR using renderToReadableStream");
-    return renderToReadableStreamImpl(element, options, server);
+    return renderToReadableStreamImpl(renderElement, options, server);
   }
 
   if (server.renderToPipeableStream) {
     if (debug) logger.info("SSR using renderToPipeableStream");
-    return renderToPipeableStreamImpl(element, options, server);
+    return renderToPipeableStreamImpl(renderElement, options, server);
   }
 
   const version = options.reactVersion ?? getReactVersionInfo().version;
   if (debug) logger.info("SSR using string rendering", { reactVersion: version });
 
   try {
-    const html = await renderToStringAdapter(element, options);
+    const html = await renderToStringAdapter(renderElement, {
+      ...options,
+      renderContext: undefined,
+    });
     return { html };
   } catch (error) {
     logger.error("SSR_ERROR string rendering failed", error);

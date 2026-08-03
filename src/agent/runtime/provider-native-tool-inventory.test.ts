@@ -32,8 +32,18 @@ describe("provider-native-tool-inventory", () => {
     );
   });
 
-  it("returns no provider-native tool names for non-anthropic models", () => {
-    assertEquals(getProviderNativeToolNames({ model: "openai/gpt-4o-mini" }), []);
+  it("returns OpenAI provider-native tool names for direct and hosted models", () => {
+    assertEquals(getProviderNativeToolNames({ model: "openai/gpt-4.1" }), [
+      "web_search",
+    ]);
+    assertEquals(
+      getProviderNativeToolNames({ model: "veryfront-cloud/openai/gpt-4.1" }),
+      ["web_search"],
+    );
+  });
+
+  it("returns no provider-native tool names for unsupported providers", () => {
+    assertEquals(getProviderNativeToolNames({ model: "google/gemini-3.5-flash" }), []);
   });
 
   it("preserves a fork/runtime allowlist without adding undeclared provider-native tools", () => {

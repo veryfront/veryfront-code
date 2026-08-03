@@ -5,10 +5,14 @@ import * as colorModeModule from "./color-mode.tsx";
 import * as cvaModule from "./cva.ts";
 
 // Exact runtime surface of `veryfront/ui`. Keep this list sorted and in sync
-// with the barrel — a new primitive (or a removed one) must be an intentional,
+// with the barrel: a new primitive (or a removed one) must be an intentional,
 // reviewed change to the public API, not an accidental widening. Type-only
 // exports (e.g. `ButtonProps`) do not appear at runtime and are omitted.
 const expectedRuntimeExports = [
+  "Accordion",
+  "AccordionContent",
+  "AccordionItem",
+  "AccordionTrigger",
   "Alert",
   "AlertAction",
   "AlertContent",
@@ -24,6 +28,7 @@ const expectedRuntimeExports = [
   "CheckboxField",
   "CheckboxGroup",
   "CodeBlock",
+  "CodeBlockRendererProvider",
   "Collapsible",
   "CollapsibleContent",
   "CollapsibleTrigger",
@@ -115,10 +120,24 @@ const expectedRuntimeExports = [
   "TagGroup",
   "TagLink",
   "Textarea",
+  "Toast",
+  "ToastClose",
+  "ToastDescription",
+  "ToastProvider",
+  "ToastTitle",
+  "ToastViewport",
+  "Toaster",
+  "ToggleGroup",
+  "ToggleGroupItem",
+  "Toolbar",
+  "ToolbarButton",
+  "ToolbarLink",
+  "ToolbarSeparator",
   "Tooltip",
   "TooltipContent",
   "TooltipProvider",
   "TooltipTrigger",
+  "UIAdapterProvider",
   "badgeVariants",
   "buttonVariants",
   "cva",
@@ -132,9 +151,12 @@ const expectedRuntimeExports = [
   "selectTriggerVariants",
   "switchTrackVariants",
   "textareaVariants",
+  "toolbarVariants",
+  "useAdapter",
   "useAppShell",
   "useColorMode",
   "useColorModeOptional",
+  "useToast",
 ];
 
 describe("react/components/ui/index.ts exports", () => {

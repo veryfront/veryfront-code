@@ -360,8 +360,9 @@ export default tool({
 });
 ```
 
-Production execution fails closed when the context has no authenticated user
-id. Development can set `VERYFRONT_DEV_USER_ID` for local testing.
+Execution fails closed when the context has no authenticated user id. Pass a
+real user id through `ToolExecutionContext` in development too. No environment
+variable supplies an ambient identity.
 
 ### Error Handling
 

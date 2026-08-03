@@ -9,6 +9,10 @@ import { getEnvValue } from "./helpers.ts";
 import { buildBatchResults } from "../batch-results.ts";
 import { REQUEST_ERROR } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  guardedOutboundFetch,
+  OutboundRequestBlockedError,
+} from "#veryfront/security/http/outbound-fetch.ts";
 import { getVerifiedCacheApiCredential } from "../verified-api-credential-context.ts";
 import {
   assertCacheReadMaximumBytes,
@@ -78,6 +82,9 @@ function getCurrentRequestContext(): CacheRequestContext | null {
 export class ApiCacheBackend implements CacheBackend {
   readonly type = "api" as const;
   private apiBaseUrl: string;
+  private readonly apiOrigin: string;
+  private readonly hasExplicitApiBaseUrl: boolean;
+  private readonly explicitApiToken?: string;
   private keyPrefix: string;
   private timeoutMs: number;
   private readonly maxResponseBytes: number;
@@ -86,16 +93,20 @@ export class ApiCacheBackend implements CacheBackend {
   constructor(
     options: {
       apiBaseUrl?: string;
+      /** Credential paired with a caller-selected apiBaseUrl. */
+      apiToken?: string;
       keyPrefix?: string;
       timeoutMs?: number;
       maxResponseBytes?: number;
       circuitBreakerName?: string;
     } = {},
   ) {
+    this.hasExplicitApiBaseUrl = options.apiBaseUrl !== undefined;
     this.apiBaseUrl = options.apiBaseUrl ??
       getHostEnv("VERYFRONT_API_BASE_URL") ??
-      getEnvValue("VERYFRONT_API_BASE_URL") ??
       "https://api.veryfront.com";
+    this.apiOrigin = new URL(this.apiBaseUrl).origin;
+    this.explicitApiToken = options.apiToken;
     this.keyPrefix = options.keyPrefix ?? "";
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
@@ -162,10 +173,19 @@ export class ApiCacheBackend implements CacheBackend {
     const envToken = getEnvValue("VERYFRONT_API_TOKEN");
     const verifiedCredential = getVerifiedCacheApiCredential();
     const verifiedRequestToken = verifiedCredential?.token;
+    if (this.hasExplicitApiBaseUrl && !this.explicitApiToken) {
+      logger.warn("Caller-selected cache API endpoint omitted its credential", {
+        apiOrigin: this.apiOrigin,
+      });
+      return null;
+    }
     // The private verified-request context cannot be changed through the
     // globally exposed filesystem request context.
-    const token = verifiedRequestToken || hostToken || reqCtx?.token || envToken || null;
-    const tokenSource = verifiedRequestToken
+    const token = this.explicitApiToken ?? verifiedRequestToken ?? hostToken ?? reqCtx?.token ??
+      envToken ?? null;
+    const tokenSource = this.explicitApiToken
+      ? "explicit-endpoint"
+      : verifiedRequestToken
       ? "verified-control-plane"
       : hostToken
       ? "host-env"
@@ -199,15 +219,28 @@ export class ApiCacheBackend implements CacheBackend {
           const response = await withSpan(
             SpanNames.HTTP_CLIENT_FETCH,
             () =>
-              fetch(url, {
-                method,
-                headers: {
-                  "Content-Type": "application/json",
-                  Authorization: `Bearer ${token}`,
+              guardedOutboundFetch(
+                url,
+                {
+                  method,
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${token}`,
+                  },
+                  body: body ? JSON.stringify(body) : undefined,
+                  signal: controller.signal,
+                  redirect: "error",
                 },
-                body: body ? JSON.stringify(body) : undefined,
-                signal: controller.signal,
-              }),
+                {
+                  authorizeUrl: (target) => {
+                    if (target.origin !== this.apiOrigin) {
+                      throw new OutboundRequestBlockedError(
+                        "Cache API request blocked: destination origin is not authorized",
+                      );
+                    }
+                  },
+                },
+              ),
             {
               "http.method": method,
               "http.url": spanUrl,

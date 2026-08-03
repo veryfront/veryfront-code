@@ -47,6 +47,13 @@ function extractImportMap(html: string): Record<string, string> {
   return (JSON.parse(match[1]) as { imports?: Record<string, string> }).imports ?? {};
 }
 
+function extractModulePreloadHrefs(html: string): string[] {
+  return Array.from(
+    html.matchAll(/<link rel="modulepreload" href="([^"]+)">/g),
+    (match) => match[1]!,
+  );
+}
+
 function manifest(): ReleaseAssetManifest {
   return {
     schemaVersion: 2,
@@ -79,7 +86,7 @@ describe("html shell release asset manifest consumption", () => {
     clearReleaseAssetManifestCache();
   });
 
-  it("is byte-identical with the flag off (no hashed URLs)", async () => {
+  it("keeps module URLs unhashed with the flag off", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "");
     registerManifestFetcherForRelease(
       "rel-1",
@@ -87,12 +94,12 @@ describe("html shell release asset manifest consumption", () => {
     );
 
     const withReleaseId = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
-    const withoutReleaseId = await generateHTMLShellParts(meta(), prodOptions());
-
-    // No asset rewriting; falls back to /_vf_modules/* exactly as today.
+    // The release id remains request metadata, but does not enable asset rewriting.
     assert(!withReleaseId.start.includes("/_vf/assets/"));
-    assertStringIncludes(withReleaseId.start, "/_vf_modules/pages/index.js");
-    assertEquals(withReleaseId.start, withoutReleaseId.start);
+    assertEquals(
+      extractModulePreloadHrefs(withReleaseId.start).includes("/_vf_modules/pages/index.js"),
+      true,
+    );
   });
 
   it("emits a hashed asset URL for a covered page when the flag is on", async () => {
@@ -330,6 +337,9 @@ describe("html shell release asset manifest consumption", () => {
       prodOptions({ releaseId: "rel-1", pagePath: "/proj/pages/uncovered.tsx" }),
     );
     assertStringIncludes(result.start, "/_vf_modules/pages/uncovered.js");
-    assert(!result.start.includes(`/_vf/assets/${PAGE_HASH}.js`));
+    assertEquals(
+      extractModulePreloadHrefs(result.start).includes(`/_vf/assets/${PAGE_HASH}.js`),
+      false,
+    );
   });
 });

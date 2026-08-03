@@ -57,7 +57,7 @@ export interface FileInfo {
 export interface FileIndexEntry {
   path: string;
   sha: string;
-  size: number;
+  size?: number;
   type: "blob" | "tree";
 }
 

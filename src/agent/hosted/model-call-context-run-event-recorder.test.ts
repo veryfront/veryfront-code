@@ -25,6 +25,26 @@ import { FakeTime } from "#std/testing/time";
 
 const encoder = new TextEncoder();
 const originalFetch = globalThis.fetch;
+const wallClockSetTimeout = globalThis.setTimeout.bind(globalThis);
+const wallClockClearTimeout = globalThis.clearTimeout.bind(globalThis);
+
+async function withWallClockTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = wallClockSetTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId !== undefined) {
+      wallClockClearTimeout(timeoutId);
+    }
+  }
+}
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
@@ -533,11 +553,14 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
   });
 
   it("aborts the active append at the deadline and makes disposal terminal", async () => {
+    using time = new FakeTime();
     let requestCount = 0;
     let appendWasAborted = false;
     let resolveLateAppend: ((response: Response) => void) | undefined;
+    const requestStarted = Promise.withResolvers<void>();
     globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
       requestCount += 1;
+      requestStarted.resolve();
       return new Promise<Response>((resolve) => {
         resolveLateAppend = resolve;
         init?.signal?.addEventListener("abort", () => {
@@ -553,12 +576,29 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
       metrics: metrics.result,
     });
 
-    await assertRejects(
-      () => Promise.resolve(recorder({ messages: [{ role: "system", content: "deadline" }] })),
+    const recording = Promise.resolve(
+      recorder({ messages: [{ role: "system", content: "deadline" }] }),
+    );
+    const recordingSettledBeforeRequest = recording.then(
+      () => {
+        throw new Error("model-call recording completed before its append request started");
+      },
+      (error) => {
+        throw error;
+      },
+    );
+    await withWallClockTimeout(
+      Promise.race([requestStarted.promise, recordingSettledBeforeRequest]),
+      10_000,
+      "model-call append request did not start",
+    );
+    const assertion = assertRejects(
+      () => recording,
       ModelCallContextPersistenceError,
       "timed out",
     );
-    await Promise.resolve();
+    await time.tickAsync(5);
+    await assertion;
     assertEquals(appendWasAborted, true);
     assertEquals(requestCount, 1);
     assertEquals(metrics.measurements[0]?.appendRequestCount, 1);
@@ -567,7 +607,7 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
     await target.appendEvents([{ type: "CUSTOM", value: "after disposal" }]);
     await target.flush();
     resolveLateAppend?.(appendResponse(1, 1));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await time.tickAsync(0);
     assertEquals(requestCount, 1);
     const finalSnapshot = target.getSnapshot();
     assertEquals(finalSnapshot.latestEventId, rejectedSnapshot.latestEventId);

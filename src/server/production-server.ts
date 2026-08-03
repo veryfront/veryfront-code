@@ -32,6 +32,7 @@ import {
 } from "#veryfront/rendering/ssr-globals.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { snapshotNodeWebSocketServerProvider } from "#veryfront/extensions/websocket";
+import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
 
 const serverLog = logger.component("server");
 const globalLog = logger.component("global");
@@ -249,6 +250,7 @@ export function startProductionServer(
                 baseDir: discoveryConfig.baseDir,
                 fsAdapter: discoveryConfig.fsAdapter,
                 verbose: discoveryConfig.verbose ?? false,
+                allowHostProjectCodeExecution: true,
               });
             }
           } catch (error) {
@@ -269,6 +271,8 @@ export function startProductionServer(
           defaultReleaseId,
           defaultEnvironment,
           localProjects,
+          allowHostProjectCodeExecution: bootstrap.config.fs?.veryfront?.proxyMode !== true &&
+            !isSharedProjectRuntime({ adapter }),
         });
 
         const coreHandler = baseHandler;

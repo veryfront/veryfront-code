@@ -102,11 +102,16 @@ async function buildExtensionPackage(
           await transpileDocumentExtractionWorker(options.rootDir, outDir);
         }
 
-        await removeUnusedBundledRootSource(outDir);
+        await removeUnusedBundledRootSource(outDir, pkg);
         await removeDntImportMapArtifacts(outDir, spec);
         await removeUnreferencedTopLevelDir(outDir, "react");
         await removeUnreferencedDntDeps(outDir);
 
+        await assertPackageEntryPointsExist({
+          outDir,
+          packageName: spec.packageName,
+          packageJson: pkg,
+        });
         await assertEmittedBareImportsAreDeclared({
           outDir,
           packageName: spec.packageName,
@@ -246,12 +251,89 @@ async function rewriteVeryfrontPeerTypeImports(input: {
   }
 }
 
-async function removeUnusedBundledRootSource(outDir: string): Promise<void> {
+async function removeUnusedBundledRootSource(
+  outDir: string,
+  packageJson: Record<string, unknown>,
+): Promise<void> {
   const rootSourceDir = `${outDir}/esm/src`;
   if (!await directoryExists(rootSourceDir)) return;
+  if (
+    extensionPackageEntryPointPaths(packageJson).some((target) =>
+      target === "./esm/src" || target.startsWith("./esm/src/")
+    )
+  ) {
+    return;
+  }
   if (await hasGeneratedRootSourceReferences(outDir)) return;
 
   await Deno.remove(rootSourceDir, { recursive: true });
+}
+
+/**
+ * Returns the local files exposed by generated package entry-point metadata.
+ * Conditional and nested export maps are traversed so artifact validation does
+ * not silently miss a target added by a future DNT release.
+ */
+export function extensionPackageEntryPointPaths(
+  packageJson: Record<string, unknown>,
+): string[] {
+  const paths = new Set<string>();
+  const addTarget = (target: unknown): void => {
+    if (typeof target === "string") {
+      paths.add(target);
+      return;
+    }
+    if (Array.isArray(target)) {
+      for (const candidate of target) addTarget(candidate);
+      return;
+    }
+    if (target === null || typeof target !== "object") return;
+    for (const candidate of Object.values(target)) addTarget(candidate);
+  };
+
+  addTarget(packageJson.main);
+  addTarget(packageJson.module);
+  addTarget(packageJson.types);
+  addTarget(packageJson.exports);
+  return [...paths].toSorted();
+}
+
+export async function assertPackageEntryPointsExist(input: {
+  outDir: string;
+  packageName: string;
+  packageJson: Record<string, unknown>;
+}): Promise<void> {
+  for (const target of extensionPackageEntryPointPaths(input.packageJson)) {
+    const segments = target.split("/");
+    if (
+      !target.startsWith("./") ||
+      target.includes("\\") ||
+      segments.includes("..") ||
+      target.includes("*")
+    ) {
+      throw new Error(
+        `${input.packageName} generated an unsupported package entry-point target: ${target}`,
+      );
+    }
+
+    const filePath = join(input.outDir, ...segments.slice(1));
+    try {
+      const stat = await Deno.stat(filePath);
+      if (!stat.isFile) {
+        throw new Error(
+          `${input.packageName} package entry point ${target} is not a file`,
+        );
+      }
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) {
+        throw new Error(
+          `${input.packageName} package entry point ${target} was not emitted`,
+          { cause: error },
+        );
+      }
+      throw error;
+    }
+  }
 }
 
 async function removeDntImportMapArtifacts(

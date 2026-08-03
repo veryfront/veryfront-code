@@ -13,11 +13,14 @@ import { serverLogger } from "#veryfront/utils";
 import { HTTP_OK } from "#veryfront/utils/constants/index.ts";
 import { compileMarkdownRuntime } from "#veryfront/transforms/md/compiler/md-compiler.ts";
 import { extract } from "#std/front-matter/yaml.ts";
-import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { tryNotFoundFallback } from "../request/ssr/not-found-fallback.ts";
 import { generateMarkdownHtml } from "./markdown-html-generator.ts";
-import { validatePathSync } from "#veryfront/security";
+import { validateLexicalPath, validatePath, ValidationPresets } from "#veryfront/security";
+import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
+import {
+  createErrorResponseFromDefinition,
+  PROJECT_EXECUTION_UNAVAILABLE,
+} from "#veryfront/errors";
 
 const logger = serverLogger.component("markdown-preview-handler");
 
@@ -45,9 +48,26 @@ export class MarkdownPreviewHandler extends BaseHandler {
       return this.continue();
     }
 
+    if (isSharedProjectRuntime(ctx)) {
+      const problem = createErrorResponseFromDefinition(
+        PROJECT_EXECUTION_UNAVAILABLE,
+        {
+          detail:
+            "Shared runtimes require a dedicated isolated project runtime for markdown rendering",
+          instance: pathname,
+        },
+      );
+      const response = this.createResponseBuilder(ctx)
+        .withSecurity(ctx.securityConfig ?? undefined, req)
+        .withCache("no-store")
+        .withHeaders(problem.headers)
+        .build(problem.body, problem.status);
+      return Promise.resolve(this.respond(response));
+    }
+
     const filePath = pathname.replace(/^\//, "");
 
-    const pathResult = validatePathSync(filePath, {
+    const pathResult = validateLexicalPath(filePath, {
       baseDir: ctx.projectDir,
     });
 
@@ -56,8 +76,6 @@ export class MarkdownPreviewHandler extends BaseHandler {
       return this.continue();
     }
 
-    const fsAdapter = ctx.adapter.fs;
-
     logger.debug("Attempting to serve", {
       pathname,
       filePath,
@@ -65,38 +83,11 @@ export class MarkdownPreviewHandler extends BaseHandler {
       projectSlug: ctx.projectSlug,
     });
 
-    const hasMultiProjectSupport = isExtendedFSAdapter(fsAdapter) && fsAdapter.isMultiProjectMode();
-
-    if (ctx.projectSlug && hasMultiProjectSupport) {
-      // Framework-owned token: bypass project env overlay so proxy mode works
-      // when a remote project overlay is active.
-      const effectiveToken = ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "";
-      const branch = ctx.parsedDomain?.branch ?? null;
-
-      return await fsAdapter.runWithContext(
-        ctx.projectSlug,
-        effectiveToken,
-        () => this.renderMarkdown(req, ctx, filePath, url),
-        ctx.projectId,
-        {
-          productionMode: false,
-          branch,
-          environmentName: ctx.environmentName,
-        },
-      );
-    }
-
-    if (isExtendedFSAdapter(fsAdapter) && fsAdapter.isContextualMode()) {
-      try {
-        if (ctx.proxyToken) fsAdapter.setRequestToken(ctx.proxyToken);
-        fsAdapter.setRequestBranch(ctx.parsedDomain?.branch ?? null);
-        fsAdapter.setProductionMode(false);
-      } catch (_) {
-        /* expected: some FS adapter operations may not be supported */
-      }
-    }
-
-    return await this.renderMarkdown(req, ctx, filePath, url);
+    return await this.withProxyContext(
+      ctx,
+      () => this.renderMarkdown(req, ctx, filePath, url),
+      { requireToken: true },
+    );
   }
 
   private async renderMarkdown(
@@ -106,16 +97,31 @@ export class MarkdownPreviewHandler extends BaseHandler {
     url: URL,
   ): Promise<HandlerResult> {
     try {
-      const resolveFile = ctx.adapter.fs.resolveFile;
-      const resolvedPath = resolveFile ? await resolveFile.call(ctx.adapter.fs, filePath) : null;
+      const fs = ctx.adapter.fs;
+      const stableAdapter = { fs } as typeof ctx.adapter;
+      const resolveFile = fs.resolveFile;
+      const resolvedPath = resolveFile ? await resolveFile.call(fs, filePath) : null;
 
       if (resolveFile) {
         logger.debug("resolveFile result", { filePath, resolvedPath });
       }
 
+      const admittedPath = resolvedPath ?? filePath;
+      const pathResult = await validatePath(admittedPath, {
+        ...ValidationPresets.internal(ctx.projectDir),
+        adapter: stableAdapter,
+      });
+      if (!pathResult.valid || !pathResult.canonicalPath) {
+        logger.warn("Physical path validation blocked markdown preview", {
+          filePath,
+          resolvedPath,
+        });
+        return this.continue();
+      }
+
       let content: string;
       try {
-        content = await ctx.adapter.fs.readFile(resolvedPath ?? filePath);
+        content = await fs.readFile(pathResult.canonicalPath);
       } catch (_) {
         /* expected: markdown file may not exist */
         logger.debug("File not found", { filePath, resolvedPath });

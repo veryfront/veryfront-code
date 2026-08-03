@@ -55,7 +55,10 @@ import { repairToolCall } from "./repair-tool-call.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
-import { isLocalModelRuntime } from "#veryfront/provider/runtime-inspection.ts";
+import {
+  isLocalModelRuntime,
+  supportsModelRuntimeToolCalling,
+} from "#veryfront/provider/runtime-inspection.ts";
 import { generateText, streamText } from "#veryfront/runtime/runtime-bridge.ts";
 import {
   captureStreamedToolCallInput,
@@ -71,18 +74,16 @@ import {
   shouldContinueAfterStreamStep,
 } from "./tool-result-continuation.ts";
 import {
+  applySkillActivationResult,
   enforceSkillPolicy,
-  extractSkillId,
-  extractSkillPolicy,
-  extractSkillToolAvailability,
   FORM_INPUT_TOOL_ID,
   hasSubmittedFormInputResult,
   hydrateActiveSkillStateFromMessages,
-  INACTIVE_SKILL_TOOL_AVAILABILITY,
   LOAD_SKILL_TOOL_ID,
   removeFormInputAfterSubmission,
   SUBMITTED_FORM_INPUT_CONTEXT_KEY,
 } from "./skill-policy-enforcement.ts";
+import { markRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
 import {
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
@@ -206,10 +207,7 @@ import { resolveRuntimeModel } from "./model-resolution.ts";
 import type { RuntimeGenerateTextResult, RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
 import { resolveTemperatureParameter } from "./model-capabilities.ts";
-import {
-  applySkillDelegationOverridesToToolInput,
-  extractSkillDelegationOverrides,
-} from "./skill-delegation-overrides.ts";
+import { applySkillDelegationOverridesToToolInput } from "./skill-delegation-overrides.ts";
 import { resolveAgentModelTransport, type ResolvedModelTransport } from "./model-transport.ts";
 import { buildRuntimeUsageTraceAttributes } from "./trace-usage.ts";
 import {
@@ -661,12 +659,10 @@ function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-function warnLocalToolSkipping(agentId: string, modelId: string): void {
+function warnUnsupportedToolCalling(agentId: string, modelId: string): void {
   logger.warn(
-    `Agent "${agentId}" has tools configured but is using local model "${modelId}". ` +
-      "Local models don't support tool calling. Tools will be skipped. " +
-      "Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG, or configure " +
-      "OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for full tool support.",
+    `Agent "${agentId}" has tools configured, but model "${modelId}" does not support ` +
+      "tool calling. Tools will be skipped.",
   );
 }
 
@@ -804,6 +800,7 @@ export class AgentRuntime {
     const transport = await this.resolveModelTransport(context, modelOverride, "generate");
     const requestedModel = transport.requestedModel;
     const resolvedModelString = transport.resolvedModelString;
+    const supportsToolCalling = supportsModelRuntimeToolCalling(transport.languageModel);
     debugRuntimeModelRemap(requestedModel, resolvedModelString);
 
     return withSpan("agent.generate", async (span) => {
@@ -837,6 +834,7 @@ export class AgentRuntime {
               projectId: tryGetCacheKeyContext()?.projectId,
             },
             context,
+            supportsToolCalling,
             resolvedModelString,
             transport.languageModel,
             transport.headers,
@@ -909,13 +907,14 @@ export class AgentRuntime {
 
     // Determine inference mode from the resolved model object, not the string.
     const isLocal = isLocalModelRuntime(languageModel);
+    const supportsToolCalling = supportsModelRuntimeToolCalling(languageModel);
 
     // Eagerly verify the model runtime is available. For local models this
     // checks that @huggingface/transformers can be imported. Must happen
     // BEFORE creating the ReadableStream so no_ai_available errors propagate
     // to the route handler, which returns a 503 instead of swallowing it as an
     // in-band SSE error in a 200 response.
-    await ensureModelReady(languageModel);
+    await ensureModelReady(languageModel, streamAbortSignal);
 
     const agentContext: AgentContext = {
       agentId: this.id,
@@ -963,6 +962,7 @@ export class AgentRuntime {
                 textPartId,
                 toolContext,
                 context,
+                supportsToolCalling,
                 resolvedModelString,
                 languageModel,
                 transport.headers,
@@ -1026,8 +1026,9 @@ export class AgentRuntime {
   private async executeAgentLoop(
     systemPrompt: string,
     messages: Message[],
-    toolContextBase?: ToolExecutionContext,
-    runtimeContext?: Record<string, unknown>,
+    toolContextBase: ToolExecutionContext | undefined,
+    runtimeContext: Record<string, unknown> | undefined,
+    supportsToolCalling: boolean,
     modelString?: string,
     resolvedModel?: ModelRuntime,
     headers?: HeadersInit,
@@ -1048,10 +1049,8 @@ export class AgentRuntime {
       const currentMessages = [...messages];
       const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-      // Local models can't reliably do function calling, so skip tools gracefully.
-      const isLocal = isLocalModelRuntime(languageModel);
-      if (isLocal && this.config.tools) {
-        warnLocalToolSkipping(this.id, effectiveModel);
+      if (!supportsToolCalling && this.config.tools) {
+        warnUnsupportedToolCalling(this.id, effectiveModel);
       }
 
       // Request-scoped skill policy (not class-level mutable state)
@@ -1060,6 +1059,18 @@ export class AgentRuntime {
       let activeSkillPolicy = hydratedSkillState.activeSkillPolicy;
       let activeSkillToolAvailability = hydratedSkillState.activeSkillToolAvailability;
       let activeSkillDelegationOverrides = hydratedSkillState.activeSkillDelegationOverrides;
+      const applySuccessfulSkillResult = (result: unknown): void => {
+        const next = applySkillActivationResult({
+          activeSkillId,
+          activeSkillPolicy,
+          activeSkillToolAvailability,
+          activeSkillDelegationOverrides,
+        }, result);
+        activeSkillId = next.activeSkillId;
+        activeSkillPolicy = next.activeSkillPolicy;
+        activeSkillToolAvailability = next.activeSkillToolAvailability;
+        activeSkillDelegationOverrides = next.activeSkillDelegationOverrides;
+      };
       let hasSubmittedFormInputInLoop = hasSubmittedFormInputResult(currentMessages) ||
         runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
       const hasToolReplacements = toolReplacements !== undefined;
@@ -1134,10 +1145,12 @@ export class AgentRuntime {
             : undefined,
           forwardedRemoteToolDefinitions,
           getAvailableTools,
-          isLocalModel: isLocal,
+          supportsToolCalling,
           messages: currentMessages,
           mode: "generate",
-          providerToolNames: agentWriteFinalResponseToolGuardEnabled ? [] : providerTools,
+          providerToolNames: supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
+            ? providerTools
+            : [],
           remoteToolSources,
           sourceIntegrationPolicy,
           resolveRuntimeState: this.resolveRuntimeState.bind(this),
@@ -1165,7 +1178,9 @@ export class AgentRuntime {
           "tool.catalog.deferred_count": preparedStep.toolExposurePlan.deferred.length,
           "tool.loading.path": "framework-fallback",
         });
-        const stepProviderTools = agentWriteFinalResponseToolGuardEnabled ? [] : providerTools;
+        const stepProviderTools = supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
+          ? providerTools
+          : [];
 
         const temperature = this.resolveTemperature(
           temperatureModelString ?? effectiveModel,
@@ -1469,8 +1484,10 @@ export class AgentRuntime {
               activeSkillPolicy,
               mustLoadSkillFirstForStep,
               {
+                activeSkillId,
                 hasSubmittedFormInput: hasSubmittedFormInputInLoop,
                 skillToolAvailability: activeSkillToolAvailability,
+                toolInput: tc.input,
               },
             );
             if (!policyCheck.allowed) {
@@ -1569,16 +1586,11 @@ export class AgentRuntime {
                 }
                 // Track skill policy from successful load_skill results
                 if (tc.toolName === LOAD_SKILL_TOOL_ID) {
-                  activeSkillId = extractSkillId(result);
-                  activeSkillPolicy = extractSkillPolicy(result);
-                  activeSkillToolAvailability = extractSkillToolAvailability(result) ??
-                    INACTIVE_SKILL_TOOL_AVAILABILITY;
-                  activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
+                  applySuccessfulSkillResult(result);
                 }
                 activeSkillPolicy = removeFormInputAfterSubmission(
                   tc.toolName,
                   result,
-                  activeSkillId,
                   activeSkillPolicy,
                 );
                 if (isSubmittedFormInputExecutionResult(tc.toolName, result)) {
@@ -1649,14 +1661,15 @@ export class AgentRuntime {
     messages: Message[],
     controller: ReadableStreamDefaultController,
     encoder: TextEncoder,
-    callbacks?: {
+    callbacks: {
       onToolCall?: (toolCall: ToolCall) => void;
       onChunk?: (chunk: string) => void;
       onFinish?: (response: AgentResponse) => void;
-    },
-    textPartId?: string,
-    toolContextBase?: Record<string, unknown>,
-    runtimeContext?: Record<string, unknown>,
+    } | undefined,
+    textPartId: string | undefined,
+    toolContextBase: Record<string, unknown> | undefined,
+    runtimeContext: Record<string, unknown> | undefined,
+    supportsToolCalling: boolean,
     modelString?: string,
     resolvedModel?: ModelRuntime,
     headers?: HeadersInit,
@@ -1675,10 +1688,8 @@ export class AgentRuntime {
     const currentMessages = [...messages];
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-    // Local models can't reliably do function calling, so skip tools gracefully.
-    const isLocalStreaming = isLocalModelRuntime(languageModel);
-    if (isLocalStreaming && this.config.tools) {
-      warnLocalToolSkipping(this.id, effectiveModel);
+    if (!supportsToolCalling && this.config.tools) {
+      warnUnsupportedToolCalling(this.id, effectiveModel);
     }
 
     // Request-scoped skill policy (not class-level mutable state)
@@ -1687,6 +1698,18 @@ export class AgentRuntime {
     let activeSkillPolicy = hydratedSkillState.activeSkillPolicy;
     let activeSkillToolAvailability = hydratedSkillState.activeSkillToolAvailability;
     let activeSkillDelegationOverrides = hydratedSkillState.activeSkillDelegationOverrides;
+    const applySuccessfulSkillResult = (result: unknown): void => {
+      const next = applySkillActivationResult({
+        activeSkillId,
+        activeSkillPolicy,
+        activeSkillToolAvailability,
+        activeSkillDelegationOverrides,
+      }, result);
+      activeSkillId = next.activeSkillId;
+      activeSkillPolicy = next.activeSkillPolicy;
+      activeSkillToolAvailability = next.activeSkillToolAvailability;
+      activeSkillDelegationOverrides = next.activeSkillDelegationOverrides;
+    };
     let hasSubmittedFormInputInLoop = hasSubmittedFormInputResult(currentMessages) ||
       runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
     let finalFinishReason: string | undefined;
@@ -1734,10 +1757,12 @@ export class AgentRuntime {
           : undefined,
         forwardedRemoteToolDefinitions,
         getAvailableTools,
-        isLocalModel: isLocalStreaming,
+        supportsToolCalling,
         messages: currentMessages,
         mode: "stream",
-        providerToolNames: agentWriteFinalResponseToolGuardEnabled ? [] : providerTools,
+        providerToolNames: supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
+          ? providerTools
+          : [],
         remoteToolSources,
         sourceIntegrationPolicy,
         resolveRuntimeState: this.resolveRuntimeState.bind(this),
@@ -1763,7 +1788,9 @@ export class AgentRuntime {
         "tool.catalog.deferred_count": preparedStep.toolExposurePlan.deferred.length,
         "tool.loading.path": "framework-fallback",
       });
-      const stepProviderTools = agentWriteFinalResponseToolGuardEnabled ? [] : providerTools;
+      const stepProviderTools = supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
+        ? providerTools
+        : [];
 
       const runtimeTools = convertToolsToRuntimeTools(tools, {
         model: effectiveModel,
@@ -1965,18 +1992,11 @@ export class AgentRuntime {
               agentWriteFinalResponseToolGuardEnabled = true;
             }
             if (tc.name === LOAD_SKILL_TOOL_ID) {
-              activeSkillId = extractSkillId(matchingResult.output);
-              activeSkillPolicy = extractSkillPolicy(matchingResult.output);
-              activeSkillToolAvailability = extractSkillToolAvailability(matchingResult.output) ??
-                INACTIVE_SKILL_TOOL_AVAILABILITY;
-              activeSkillDelegationOverrides = extractSkillDelegationOverrides(
-                matchingResult.output,
-              );
+              applySuccessfulSkillResult(matchingResult.output);
             }
             activeSkillPolicy = removeFormInputAfterSubmission(
               tc.name,
               matchingResult.output,
-              activeSkillId,
               activeSkillPolicy,
             );
             if (isSubmittedFormInputExecutionResult(tc.name, matchingResult.output)) {
@@ -1998,18 +2018,11 @@ export class AgentRuntime {
               agentWriteFinalResponseToolGuardEnabled = true;
             }
             if (tc.name === LOAD_SKILL_TOOL_ID) {
-              activeSkillId = extractSkillId(persistedResult.result);
-              activeSkillPolicy = extractSkillPolicy(persistedResult.result);
-              activeSkillToolAvailability = extractSkillToolAvailability(persistedResult.result) ??
-                INACTIVE_SKILL_TOOL_AVAILABILITY;
-              activeSkillDelegationOverrides = extractSkillDelegationOverrides(
-                persistedResult.result,
-              );
+              applySuccessfulSkillResult(persistedResult.result);
             }
             activeSkillPolicy = removeFormInputAfterSubmission(
               tc.name,
               persistedResult.result,
-              activeSkillId,
               activeSkillPolicy,
             );
             if (isSubmittedFormInputExecutionResult(tc.name, persistedResult.result)) {
@@ -2129,8 +2142,10 @@ export class AgentRuntime {
           activeSkillPolicy,
           mustLoadSkillFirstForStep,
           {
+            activeSkillId,
             hasSubmittedFormInput: hasSubmittedFormInputInLoop,
             skillToolAvailability: activeSkillToolAvailability,
+            toolInput: toolCall.args,
           },
         );
         if (!policyCheck.allowed) {
@@ -2195,16 +2210,11 @@ export class AgentRuntime {
           if (resultError === undefined) {
             // Track skill policy from successful load_skill results
             if (tc.name === LOAD_SKILL_TOOL_ID) {
-              activeSkillId = extractSkillId(result);
-              activeSkillPolicy = extractSkillPolicy(result);
-              activeSkillToolAvailability = extractSkillToolAvailability(result) ??
-                INACTIVE_SKILL_TOOL_AVAILABILITY;
-              activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
+              applySuccessfulSkillResult(result);
             }
             activeSkillPolicy = removeFormInputAfterSubmission(
               tc.name,
               result,
-              activeSkillId,
               activeSkillPolicy,
             );
             if (isSubmittedFormInputExecutionResult(tc.name, result)) {
@@ -2260,17 +2270,19 @@ export class AgentRuntime {
         const unavailableNames = [
           ...new Set(state.suppressedToolCalls.map((toolCall) => toolCall.name)),
         ];
-        currentMessages.push({
-          id: `runtime_note_${Date.now()}_${step}`,
-          role: "user",
-          parts: [{
-            type: "text",
-            text: `Runtime recovery: ignored unavailable tool call(s): ${
-              unavailableNames.join(", ")
-            }. Continue using only currently available tools: ${runtimeToolNames.join(", ")}.`,
-          }],
-          timestamp: Date.now(),
-        });
+        currentMessages.push(
+          markRuntimeGeneratedUserMessage({
+            id: `runtime_note_${Date.now()}_${step}`,
+            role: "user",
+            parts: [{
+              type: "text",
+              text: `Runtime recovery: ignored unavailable tool call(s): ${
+                unavailableNames.join(", ")
+              }. Continue using only currently available tools: ${runtimeToolNames.join(", ")}.`,
+            }],
+            timestamp: Date.now(),
+          }),
+        );
       }
 
       throwIfAborted(abortSignal);

@@ -14,6 +14,11 @@ import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ensureProjectDiscovery } from "./project-discovery.ts";
 import { PageResolver } from "#veryfront/rendering/page-resolution/page-resolver.ts";
+import {
+  createErrorResponseFromDefinition,
+  PROJECT_EXECUTION_UNAVAILABLE,
+} from "#veryfront/errors";
+import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
 
 type FsWrapper = {
   isMultiProjectMode?: () => boolean;
@@ -80,8 +85,10 @@ export class ApiHandlerWrapper extends BaseHandler {
       typeof fsWrapper.isMultiProjectMode === "function" &&
       fsWrapper.isMultiProjectMode();
 
+    const isSharedRuntime = isSharedProjectRuntime(ctx);
+
     if (!isMultiProject) {
-      return this.handleWithContext(req, ctx, pathname);
+      return this.handleWithContext(req, ctx, pathname, isSharedRuntime);
     }
 
     const isProduction = ctx.requestContext?.mode === "production";
@@ -100,7 +107,7 @@ export class ApiHandlerWrapper extends BaseHandler {
     return fsWrapper.runWithContext!(
       ctx.projectSlug!,
       ctx.proxyToken ?? "",
-      () => this.handleWithContext(req, ctx, pathname),
+      () => this.handleWithContext(req, ctx, pathname, true),
       ctx.projectId,
       {
         productionMode: isProduction,
@@ -116,11 +123,19 @@ export class ApiHandlerWrapper extends BaseHandler {
     req: Request,
     ctx: HandlerContext,
     pathname: string,
+    isSharedRuntime: boolean,
   ): Promise<HandlerResult> {
     return withSpan(
       "api.handleWithContext",
       async () => {
         try {
+          if (
+            isSharedRuntime &&
+            (pathname === "/api" || pathname.startsWith("/api/"))
+          ) {
+            return this.sharedRuntimeExecutionUnavailable(req, ctx, pathname);
+          }
+
           // WebSocket pokes update mutable previews immediately. This bounded,
           // coalesced check is the fallback for missed pokes and establishes
           // one source snapshot for route and primitive discovery.
@@ -137,6 +152,10 @@ export class ApiHandlerWrapper extends BaseHandler {
 
           if (isPageRequest) {
             return this.continue();
+          }
+
+          if (isSharedRuntime) {
+            return this.sharedRuntimeExecutionUnavailable(req, ctx, pathname);
           }
 
           // Lazy per-project primitive discovery (agents, tools) on first access.
@@ -192,6 +211,28 @@ export class ApiHandlerWrapper extends BaseHandler {
         "api.projectSlug": ctx.projectSlug ?? "unknown",
       },
     );
+  }
+
+  private sharedRuntimeExecutionUnavailable(
+    req: Request,
+    ctx: HandlerContext,
+    pathname: string,
+  ): HandlerResult {
+    const problem = createErrorResponseFromDefinition(
+      PROJECT_EXECUTION_UNAVAILABLE,
+      {
+        detail:
+          "Shared runtimes do not execute tenant API modules in the host process or same-process Workers",
+        instance: pathname,
+      },
+    );
+    const response = this.createResponseBuilder(ctx)
+      .withCORS(req, ctx.securityConfig?.cors)
+      .withSecurity(ctx.securityConfig ?? undefined, req)
+      .withCache("no-store")
+      .withHeaders(problem.headers)
+      .build(problem.body, problem.status);
+    return this.respond(response, { executionTopology: "dedicated-runtime-required" });
   }
 
   private async isPageRequest(pathname: string, ctx: HandlerContext): Promise<boolean> {

@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { EvalRecord } from "veryfront/eval";
 
@@ -463,9 +468,11 @@ describe("cli/templates", () => {
       if (
         !source.includes(expectedStoreImport) ||
         (!isCallbackRoute &&
-          !source.includes(
+          (!source.includes(
             'import { requireUserIdFromRequest } from "../../../../lib/user-id.ts";',
-          )) ||
+          ) ||
+            !source.includes("getUserId: requireUserIdFromRequest") ||
+            source.includes("function getUserId("))) ||
         source.includes("oauthMemoryTokenStore") ||
         source.includes("hybridTokenStore")
       ) {
@@ -491,8 +498,11 @@ describe("cli/templates", () => {
       "'current-user'",
       '"demo-user"',
       "'demo-user'",
+      '"dev-user"',
+      "'dev-user'",
       "DEFAULT_USER_ID",
       "CURRENT_USER_ID",
+      "VERYFRONT_DEV_USER_ID",
     ];
 
     for (const file of await collectTemplateTsFiles(integrationTemplates)) {
@@ -599,6 +609,105 @@ describe("cli/templates", () => {
       false,
       "base integration tools must use app-authenticated userId rather than legacy endUserId",
     );
+  });
+
+  it("keeps the shared identity boundary fail-closed and free of provider overrides", async () => {
+    const integrationTemplates = new URL("./integrations/", import.meta.url);
+    const userIdTemplates = (await collectTemplateTsFiles(integrationTemplates))
+      .filter((file) => file.pathname.endsWith("/files/lib/user-id.ts"))
+      .map((file) => file.pathname.replace(integrationTemplates.pathname, ""));
+
+    assertEquals(userIdTemplates, ["_base/files/lib/user-id.ts"]);
+
+    const sharedTemplate = await Deno.readTextFile(
+      new URL("./integrations/_base/files/lib/user-id.ts", import.meta.url),
+    );
+    assertEquals(sharedTemplate.includes("request.headers"), false);
+    assertEquals(
+      sharedTemplate.includes("Authenticated request identity is not configured"),
+      true,
+    );
+    assertEquals(sharedTemplate.includes("resolveAuthenticatedUserId"), true);
+    // The identity boundary must have no ambient fallback: an environment-gated
+    // default collapses every visitor onto one token owner.
+    for (
+      const ambient of [
+        "isDevelopmentRuntime",
+        "VERYFRONT_DEV_USER_ID",
+        '"dev-user"',
+        "'dev-user'",
+        "NODE_ENV",
+        "DENO_ENV",
+      ]
+    ) {
+      assertEquals(
+        sharedTemplate.includes(ambient),
+        false,
+        `shared identity template must not derive a user id from ${ambient}`,
+      );
+    }
+  });
+
+  it("keeps authenticated identity documentation within ASCII copy rules", async () => {
+    for (
+      const path of [
+        "./integrations/_base/files/SETUP.md",
+        "./integrations/sheets/README.md",
+      ]
+    ) {
+      const source = await Deno.readTextFile(new URL(path, import.meta.url));
+      assertEquals(
+        /[\u2013\u2014]/.test(source),
+        false,
+        `${path} must use ASCII punctuation`,
+      );
+    }
+  });
+
+  it("requires an implemented resolver and never trusts identity headers", async () => {
+    const { requireUserIdFromRequest } = await import(
+      "./integrations/_base/files/lib/user-id.ts"
+    );
+    const request = new Request("https://app.example.test/api/auth/example", {
+      headers: {
+        "x-veryfront-user-id": "client-controlled-user",
+        "x-user-id": "client-controlled-user",
+      },
+    });
+
+    // Fails closed until the application implements a verified resolver, in every
+    // runtime mode — there is no development escape hatch.
+    await assertRejects(
+      () => requireUserIdFromRequest(request),
+      Error,
+      "Authenticated request identity is not configured",
+    );
+  });
+
+  it("requires an authenticated tool context user id with no ambient default", async () => {
+    const { requireUserIdFromContext } = await import(
+      "./integrations/_base/files/lib/user-id.ts"
+    );
+
+    assertEquals(requireUserIdFromContext({ userId: "ctx-user" }), "ctx-user");
+    const maximumUserId = "u".repeat(1_024);
+    assertEquals(requireUserIdFromContext({ userId: maximumUserId }), maximumUserId);
+
+    for (
+      const context of [
+        undefined,
+        {},
+        { userId: "" },
+        { userId: " padded " },
+        { userId: "u".repeat(1_025) },
+      ]
+    ) {
+      assertThrows(
+        () => requireUserIdFromContext(context),
+        Error,
+        "Authenticated tool context userId is required",
+      );
+    }
   });
 
   it("keeps generated AI rules focused on current project primitives", async () => {

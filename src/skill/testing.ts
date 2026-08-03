@@ -16,6 +16,7 @@ import { FILE_NOT_FOUND } from "#veryfront/errors";
  */
 export function createSkillTestAdapter(files: Record<string, string>): FileSystemAdapter {
   const allPaths = Object.keys(files);
+  const encoder = new TextEncoder();
 
   function getEntries(
     path: string,
@@ -51,10 +52,18 @@ export function createSkillTestAdapter(files: Record<string, string>): FileSyste
   }
 
   return {
+    symlinkSemantics: "none",
     async readFile(path: string): Promise<string> {
       const content = files[path];
       if (content === undefined) throw FILE_NOT_FOUND.create({ detail: `File not found: ${path}` });
       return content;
+    },
+    async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+      const content = files[path];
+      if (content === undefined) throw FILE_NOT_FOUND.create({ detail: `File not found: ${path}` });
+      const bytes = encoder.encode(content);
+      if (bytes.byteLength > byteLimit) throw new RangeError("File exceeds byte limit");
+      return bytes;
     },
     async exists(path: string): Promise<boolean> {
       if (path in files) return true;

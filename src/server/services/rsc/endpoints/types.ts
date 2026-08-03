@@ -35,6 +35,8 @@ export interface RSCEndpointParams {
   adapter: RuntimeAdapter;
   config?: VeryfrontConfig;
   isLocalProject?: boolean;
+  /** Host-owned capability for server-side project module execution. */
+  allowHostProjectCodeExecution: boolean;
   mode?: "development" | "production";
   nonce?: string;
 }

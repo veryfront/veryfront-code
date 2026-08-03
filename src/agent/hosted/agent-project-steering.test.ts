@@ -1,10 +1,26 @@
 import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { afterEach } from "#veryfront/testing/bdd.ts";
 import { join, resolve } from "node:path";
-import { createHostedAgentProjectSteering } from "./agent-project-steering.ts";
-import { reset, tryResolve } from "../../extensions/contracts.ts";
+import {
+  createHostedAgentProjectSteering as createHostedAgentProjectSteeringPublic,
+  type HostedAgentProjectSteeringOptions,
+} from "./agent-project-steering.ts";
+import { createStdYamlSkillDocumentParserProvider } from "../../../extensions/ext-yaml/src/adapter.ts";
+import { register, reset, tryResolve } from "../../extensions/contracts.ts";
+import { SkillDocumentParserProviderName } from "../../extensions/parser/skill-document-parser.ts";
 import type { SchemaValidator } from "../../extensions/schema/index.ts";
 import type { RuntimeProjectFilesFetch } from "../runtime/project-files-client.ts";
+
+const skillDocumentParserProvider = createStdYamlSkillDocumentParserProvider();
+
+function createHostedAgentProjectSteering(
+  options: Omit<HostedAgentProjectSteeringOptions, "skillDocumentParserProvider">,
+) {
+  return createHostedAgentProjectSteeringPublic({
+    ...options,
+    skillDocumentParserProvider,
+  });
+}
 
 function withTempDir(fn: (rootDir: string) => void | Promise<void>): Promise<void> {
   const rootDir = Deno.makeTempDirSync();
@@ -51,13 +67,40 @@ Deno.test("createHostedAgentProjectSteering registers the built-in schema valida
     assertEquals(tryResolve<SchemaValidator>("SchemaValidator"), undefined);
 
     const baseDir = writeAgentDefinition({ rootDir, agentId: "writer" });
-    createHostedAgentProjectSteering({
+    const steering = createHostedAgentProjectSteeringPublic({
       baseDir,
       agentId: "writer",
       getApiUrl: () => "https://api.example.com",
     });
 
     assertEquals(typeof tryResolve<SchemaValidator>("SchemaValidator")?.object, "function");
+    assertEquals(steering.getAgentConfig().id, "writer");
+  });
+});
+
+Deno.test("createHostedAgentProjectSteering keeps the parser provider optional for existing callers", async () => {
+  await withTempDir((rootDir) => {
+    const baseDir = writeAgentDefinition({ rootDir, agentId: "writer" });
+    const skillsDir = join(rootDir, "skills");
+    Deno.mkdirSync(skillsDir, { recursive: true });
+    Deno.writeTextFileSync(
+      join(skillsDir, "plan.md"),
+      `---
+description: Plans
+---
+Plan carefully.`,
+    );
+    register(SkillDocumentParserProviderName, skillDocumentParserProvider);
+
+    const steering = createHostedAgentProjectSteeringPublic({
+      baseDir,
+      agentId: "writer",
+      skillsDir,
+      getApiUrl: () => "https://api.example.com",
+    });
+
+    assertEquals(steering.getAgentConfig().id, "writer");
+    assertEquals(steering.getProjectSteeringAdapter().listBuiltinSkillIds(), ["plan"]);
   });
 });
 

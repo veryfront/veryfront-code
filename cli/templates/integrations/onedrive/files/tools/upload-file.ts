@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { formatFileSize, uploadFile } from "../../lib/onedrive-client.ts";
+import { formatFileSize, uploadFile } from "../lib/onedrive-client.ts";
 
 export default tool({
-  id: "upload-file",
+  id: "onedrive-upload-file",
   description:
     "Upload or update a file in OneDrive. Can create new files or overwrite existing ones.",
   inputSchema: defineSchema((v) => v.object({

@@ -4,7 +4,13 @@
  * @module security/input-validation
  */
 
-export type { ParseFormOptions, ParseJsonOptions, RequestLimits, ValidatedData } from "./types.ts";
+export type {
+  ParseFormOptions,
+  ParseJsonOptions,
+  ParseQueryOptions,
+  RequestLimits,
+  ValidatedData,
+} from "./types.ts";
 export { DEFAULT_LIMITS } from "./types.ts";
 export { createValidationError, INPUT_VALIDATION_FAILED } from "./errors.ts";
 export {

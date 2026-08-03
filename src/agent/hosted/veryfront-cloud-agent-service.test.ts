@@ -1,3 +1,4 @@
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
@@ -22,6 +23,7 @@ import {
   createExecuteSkillScriptTool,
   createLoadSkillReferenceTool,
 } from "#veryfront/skill/tools.ts";
+import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { agentRegistry } from "../composition/index.ts";
 import {
   createNodeVeryfrontCloudAgentServiceRuntime,
@@ -159,7 +161,7 @@ async function withTempDir(
     await stopEsbuild();
     Deno.removeSync(dir, { recursive: true });
     agentRegistry.clearAll();
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
     unregister(SandboxShellToolsProviderName);
   }
 }
@@ -235,10 +237,11 @@ function getRuntimeAgent(
 }
 
 Deno.test("getDiscoveredHostTools excludes shared skill infrastructure tools", () => {
+  const originalSkillToolIds = [...SKILL_TOOL_IDS];
   try {
-    toolRegistry.registerShared("load_skill_reference", createLoadSkillReferenceTool());
-    toolRegistry.registerShared("execute_skill_script", createExecuteSkillScriptTool());
-    toolRegistry.registerShared(
+    toolRegistryInternal.registerShared("load_skill_reference", createLoadSkillReferenceTool());
+    toolRegistryInternal.registerShared("execute_skill_script", createExecuteSkillScriptTool());
+    toolRegistryInternal.registerShared(
       "shared_echo",
       tool({
         id: "shared_echo",
@@ -247,6 +250,8 @@ Deno.test("getDiscoveredHostTools excludes shared skill infrastructure tools", (
         execute: () => ({ ok: true }),
       }),
     );
+    SKILL_TOOL_IDS.delete("execute_skill_script");
+    SKILL_TOOL_IDS.add("shared_echo");
 
     const tools = getDiscoveredHostTools();
 
@@ -254,7 +259,9 @@ Deno.test("getDiscoveredHostTools excludes shared skill infrastructure tools", (
     assertEquals("load_skill_reference" in tools, false);
     assertEquals("execute_skill_script" in tools, false);
   } finally {
-    toolRegistry.clearAll();
+    SKILL_TOOL_IDS.clear();
+    for (const toolId of originalSkillToolIds) SKILL_TOOL_IDS.add(toolId);
+    toolRegistryInternal.clearAll();
   }
 });
 
@@ -696,6 +703,7 @@ Deno.test("hosted nested delegates inherit child scope and durable lineage", () 
   assertEquals(context.conversationId, "child-conversation");
   assertEquals(context.parentRunId, "child-run");
   assertEquals(context.parentMessageId, "child-message");
+  assertEquals("runEventAppendToken" in context, false);
 });
 
 Deno.test("hosted nested delegates clear inherited skill catalog state for empty child selectors", () => {
@@ -1379,7 +1387,7 @@ Deno.test("hosted child execution config resolves steering against the target pr
 Deno.test("hosted child execution config hides skill infrastructure for skills empty and false", async () => {
   for (const skills of [[], false] as const) {
     try {
-      toolRegistry.registerShared(
+      toolRegistryInternal.registerShared(
         "get_file",
         tool({
           id: "get_file",
@@ -1388,8 +1396,8 @@ Deno.test("hosted child execution config hides skill infrastructure for skills e
           execute: () => ({ ok: true }),
         }),
       );
-      toolRegistry.registerShared("load_skill_reference", createLoadSkillReferenceTool());
-      toolRegistry.registerShared("execute_skill_script", createExecuteSkillScriptTool());
+      toolRegistryInternal.registerShared("load_skill_reference", createLoadSkillReferenceTool());
+      toolRegistryInternal.registerShared("execute_skill_script", createExecuteSkillScriptTool());
 
       const childAgent = {
         id: "extraction-agent",
@@ -1471,14 +1479,14 @@ Deno.test("hosted child execution config hides skill infrastructure for skills e
       assertEquals("load_skill_reference" in hostTools, false);
       assertEquals("execute_skill_script" in hostTools, false);
     } finally {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
     }
   }
 });
 
 Deno.test("hosted child execution config keeps exact non-empty skill authorization", async () => {
   try {
-    toolRegistry.registerShared(
+    toolRegistryInternal.registerShared(
       "get_file",
       tool({
         id: "get_file",
@@ -1568,7 +1576,7 @@ Deno.test("hosted child execution config keeps exact non-empty skill authorizati
     assertEquals("get_file" in hostTools, true);
     assertEquals("load_skill" in hostTools, true);
   } finally {
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
   }
 });
 

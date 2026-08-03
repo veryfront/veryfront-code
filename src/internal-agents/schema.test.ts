@@ -95,6 +95,22 @@ describe("internal-agents/schema", () => {
     assertEquals(parsed.forwardedProps, forwardedProps);
   });
 
+  it("preserves environment targets on control-plane stream requests", () => {
+    const runtimeTargetEnvironmentId = "10000000-1000-4000-8000-100000000005";
+    const parsed = getInternalAgentStreamRequestSchema().parse({
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      agentSource: { type: "branch", branch: "main" },
+      messages: [],
+      runtimeTargetEnvironmentId,
+      runtimeTargetBranchId: null,
+    });
+
+    assertEquals(parsed.runtimeTargetEnvironmentId, runtimeTargetEnvironmentId);
+    assertEquals(parsed.runtimeTargetBranchId, null);
+  });
+
   it("rejects forwarded props above the 192 KB runtime budget", () => {
     assertThrows(
       () =>
@@ -581,35 +597,99 @@ describe("internal-agents/schema", () => {
     );
   });
 
-  it("rejects malformed streamed tool input instead of executing with empty arguments", () => {
-    const internalRequest = getInternalAgentStreamRequestSchema().parse({
-      agentId: "agent_1",
-      threadId: "10000000-1000-4000-8000-100000000001",
-      runId: "run_1",
-      agentSource: { type: "branch", branch: "main" },
-      messages: [
-        {
-          id: "assistant_1",
-          role: "assistant",
-          parts: [
-            {
-              type: "tool-call",
-              toolCallId: "tool_1",
-              toolName: "create_file",
-              args: {},
-              inputText: '{"path":"plans/report.md"',
-            },
-          ],
-        },
-      ],
-      context: [],
-    });
+  it("degrades malformed streamed tool input to empty arguments when replaying history", () => {
+    for (const inputText of ['{"path":"plans/report.md"', '"just a string"', "42"]) {
+      const internalRequest = getInternalAgentStreamRequestSchema().parse({
+        agentId: "agent_1",
+        threadId: "10000000-1000-4000-8000-100000000001",
+        runId: "run_1",
+        agentSource: { type: "branch", branch: "main" },
+        messages: [
+          {
+            id: "assistant_1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-call",
+                toolCallId: "tool_1",
+                toolName: "create_file",
+                args: {},
+                inputText,
+              },
+            ],
+          },
+        ],
+        context: [],
+      });
 
-    assertThrows(
-      () => toRuntimeRunAgentInput(internalRequest),
-      SyntaxError,
-      "Malformed streamed tool input for tool call",
-    );
+      assertEquals(
+        (toRuntimeRunAgentInput(internalRequest) as unknown as { messages: unknown }).messages,
+        [
+          {
+            id: "assistant_1",
+            role: "assistant",
+            toolCalls: [{
+              id: "tool_1",
+              type: "function",
+              function: {
+                name: "create_file",
+                arguments: "{}",
+              },
+            }],
+          },
+        ],
+      );
+    }
+  });
+
+  it("preserves well-formed streamed tool input when replaying history", () => {
+    for (
+      const [inputText, expected] of [
+        ["{}", {}],
+        ['{"path":"plans/report.md"}', { path: "plans/report.md" }],
+      ] as const
+    ) {
+      const internalRequest = getInternalAgentStreamRequestSchema().parse({
+        agentId: "agent_1",
+        threadId: "10000000-1000-4000-8000-100000000001",
+        runId: "run_1",
+        agentSource: { type: "branch", branch: "main" },
+        messages: [
+          {
+            id: "assistant_1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-call",
+                toolCallId: "tool_1",
+                toolName: "create_file",
+                args: {},
+                inputText,
+              },
+            ],
+          },
+        ],
+        context: [],
+      });
+
+      assertEquals(
+        (toRuntimeRunAgentInput(internalRequest) as unknown as { messages: unknown }).messages,
+        [
+          {
+            id: "assistant_1",
+            role: "assistant",
+            toolCalls: [{
+              id: "tool_1",
+              type: "function",
+              function: {
+                name: "create_file",
+                arguments: JSON.stringify(expected),
+              },
+            }],
+          },
+        ],
+      );
+    }
   });
 
   it("preserves canonical runtime messages on the compatibility route", () => {

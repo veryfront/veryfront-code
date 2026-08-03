@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ModuleHandler } from "./module.handler.ts";
+import { handleBatchModuleEndpoint } from "./batch-module-handler.ts";
 import type { HandlerContext } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
@@ -50,6 +51,7 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
     adapter: createMockAdapter(),
     securityConfig: null,
     cspUserHeader: null,
+    isLocalProject: true,
     ...overrides,
   };
 }
@@ -140,6 +142,136 @@ describe("server/handlers/request/module/module.handler", () => {
       const ctx = makeCtx();
       const result = await handler.handle(req, ctx);
       assertEquals(result.continue, true);
+    });
+
+    it("rejects unsupported methods for every owned namespace", async () => {
+      const handler = new ModuleHandler();
+      for (
+        const pathname of [
+          "/_vf_modules/page.js",
+          "/_veryfront/modules/runtime.js",
+          "/_veryfront/pages/page.js",
+          "/_veryfront/data/page.json",
+          "/_veryfront/page-data/page.json",
+        ]
+      ) {
+        const result = await handler.handle(
+          new Request(`http://localhost${pathname}`, { method: "POST" }),
+          makeCtx(),
+        );
+        assertEquals(result.continue, false);
+        assertEquals(result.response?.status, 405);
+        assertEquals(result.response?.headers.get("allow"), "GET, HEAD");
+      }
+    });
+  });
+
+  describe("removed batch endpoint", () => {
+    const respond = (response: Response) => ({
+      continue: false as const,
+      response,
+    });
+
+    it("returns an explicit non-cacheable 410 response", async () => {
+      const result = await handleBatchModuleEndpoint(
+        new Request("http://localhost/_vf_modules/_batch?paths=page.js"),
+        respond,
+      );
+
+      assertEquals(result.response?.status, 410);
+      assertEquals(result.response?.headers.get("cache-control"), "no-store");
+      assertEquals(
+        await result.response?.text(),
+        "Module batch endpoint has been removed",
+      );
+    });
+
+    it("does not include a response body for HEAD", async () => {
+      const result = await handleBatchModuleEndpoint(
+        new Request("http://localhost/_vf_modules/_batch", {
+          method: "HEAD",
+        }),
+        respond,
+      );
+
+      assertEquals(result.response?.status, 410);
+      assertEquals(await result.response?.text(), "");
+    });
+
+    it("rejects unsupported methods before returning the tombstone", async () => {
+      const result = await handleBatchModuleEndpoint(
+        new Request("http://localhost/_vf_modules/_batch", {
+          method: "POST",
+        }),
+        respond,
+      );
+
+      assertEquals(result.response?.status, 405);
+      assertEquals(result.response?.headers.get("allow"), "GET, HEAD");
+    });
+  });
+
+  describe("remote execution isolation", () => {
+    it("fails closed before resolving the host renderer", async () => {
+      let rendererCalls = 0;
+      setRendererInitializer({
+        initialize: () => {
+          rendererCalls++;
+          throw new Error("remote module endpoint reached the host renderer");
+        },
+        isInitialized: () => false,
+        get: () => {
+          throw new Error("remote module endpoint reached the host renderer");
+        },
+        destroy: () => Promise.resolve(),
+      });
+
+      const handler = new ModuleHandler();
+      for (
+        const pathname of [
+          "/_veryfront/modules/runtime.js",
+          "/_veryfront/pages/page.js",
+          "/_veryfront/data/page.json",
+          "/_veryfront/page-data/page.json",
+        ]
+      ) {
+        const result = await handler.handle(
+          new Request(`https://tenant.example${pathname}`),
+          makeCtx({
+            isLocalProject: false,
+            prepareHostedConfigContext: (() => {
+              throw new Error("shared module endpoint prepared host rendering context");
+            }) as HandlerContext["prepareHostedConfigContext"],
+          }),
+        );
+        assertEquals(result.continue, false);
+        assertEquals(result.response?.status, 503);
+        assertEquals(result.response?.headers.get("cache-control"), "no-store");
+        assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
+        assertEquals(
+          (await result.response?.json() as { type?: string }).type,
+          "https://veryfront.com/docs/errors/project-execution-unavailable",
+        );
+      }
+
+      assertEquals(rendererCalls, 0);
+    });
+
+    it("returns an empty fail-closed response for HEAD", async () => {
+      const result = await new ModuleHandler().handle(
+        new Request("https://tenant.example/_veryfront/page-data/page.json", {
+          method: "HEAD",
+        }),
+        makeCtx({
+          isLocalProject: false,
+          prepareHostedConfigContext: (() => {
+            throw new Error("shared module endpoint prepared host rendering context");
+          }) as HandlerContext["prepareHostedConfigContext"],
+        }),
+      );
+
+      assertEquals(result.response?.status, 503);
+      assertEquals(await result.response?.text(), "");
     });
   });
 

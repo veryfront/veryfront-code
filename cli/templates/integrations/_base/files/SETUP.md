@@ -665,18 +665,38 @@ configureTokenStore(oauthStore);
 `createApplicationOAuthTokenStore` is the factory exported by your selected
 storage extension. Veryfront core does not select or import the backend.
 
+### Authenticated OAuth routes
+
+Generated OAuth routes call `requireUserIdFromRequest` in `lib/user-id.ts`.
+The generated `resolveAuthenticatedUserId` seam deliberately throws in every
+runtime mode until you replace it with a resolver backed by your server-side
+session or verified JWT. The surrounding request boundary validates the
+returned id. There is no development escape hatch because an ambient default
+identity makes all visitors share one token owner.
+
+```ts
+// lib/user-id.ts
+export async function resolveAuthenticatedUserId(request: Request) {
+  const session = await verifySession(request); // your session/JWT check
+  return session?.userId ?? null; // null => anonymous => routes answer 401
+}
+```
+
+Raw request headers are not an authentication boundary. Never return a value
+copied from an untrusted header such as `x-user-id`.
+
 ### Authenticated tool context
 
 Generated integration tools resolve the token owner from `context.userId`.
 Pass the authenticated user through `ToolExecutionContext` whenever an agent or
-workflow invokes a tool. Production execution fails closed when the context has
-no authenticated user id. For local development, set
-`VERYFRONT_DEV_USER_ID` when you need a stable test identity.
+workflow invokes a tool. Execution fails closed when the context has no
+authenticated user id.
 
 ## Production Checklist
 
 - [ ] Update all redirect URIs to production domain
 - [ ] Configure an extension-owned `RefreshCapableTokenStore`
+- [ ] Implement `resolveAuthenticatedUserId` using a verified session or JWT
 - [ ] Verify token encryption and distributed refresh locking
 - [ ] Pass authenticated user ids through every tool execution context
 - [ ] Configure rate limiting

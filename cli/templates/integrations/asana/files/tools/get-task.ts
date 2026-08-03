@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getTask } from "../../lib/asana-client.ts";
+import { getTask } from "../lib/asana-client.ts";
 
 export default tool({
-  id: "get-task",
+  id: "asana-get-task",
   description: "Get details of a specific Asana task by its GID.",
   inputSchema: defineSchema((v) => v.object({
     taskGid: v.string().describe("The GID of the task to retrieve"),

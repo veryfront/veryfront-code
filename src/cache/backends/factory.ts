@@ -12,7 +12,6 @@ import { MemoryCacheBackend } from "./memory.ts";
 import { isRedisConfigured, RedisCacheBackend } from "./redis.ts";
 import { ApiCacheBackend } from "./api.ts";
 import { DiskCacheBackend } from "./disk.ts";
-import { getEnvValue } from "./helpers.ts";
 
 const logger = baseLogger.component("cache-backend");
 
@@ -32,7 +31,7 @@ export interface CacheBackendConfig {
 export function isApiCacheAvailable(): boolean {
   const proxyMode = getEnv("PROXY_MODE");
   const nodeEnv = getEnv("NODE_ENV");
-  const apiUrl = getHostEnv("VERYFRONT_API_BASE_URL") ?? getEnvValue("VERYFRONT_API_BASE_URL");
+  const apiUrl = getHostEnv("VERYFRONT_API_BASE_URL");
 
   const isProduction = proxyMode === "1" ||
     nodeEnv === "production" ||

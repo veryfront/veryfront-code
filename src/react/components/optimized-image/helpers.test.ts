@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateSrcSet, getImageExtension, getOptimizedPath } from "./helpers.ts";
 
@@ -30,12 +30,10 @@ describe("optimized-image helpers", () => {
   describe("generateSrcSet", () => {
     it("generates srcset string with multiple sizes", () => {
       const parts = generateSrcSet("/photo.png", "webp", [320, 640, 1024], 80).split(", ");
-      assertEquals(parts.length, 3);
-
-      parts.forEach((part) => assertExists(part));
-      assertEquals(parts[0].endsWith("320w"), true);
-      assertEquals(parts[1].endsWith("640w"), true);
-      assertEquals(parts[2].endsWith("1024w"), true);
+      assertEquals(
+        parts.map((part) => part.slice(part.lastIndexOf(" ") + 1)),
+        ["320w", "640w", "1024w"],
+      );
     });
 
     it("generates single-size srcset", () => {
