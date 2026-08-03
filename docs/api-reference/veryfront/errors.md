@@ -118,6 +118,8 @@ throw INVALID_WIDGET.create({ detail: "The widget id is malformed." });
 | `PROJECT_EXECUTION_UNAVAILABLE` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/server.ts#L51) |
 | `PROJECT_SOURCE_EMPTY` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L94) |
 | `PUSH_RECEIPT_MISSING` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/deploy.ts#L67) |
+| `RAG_STORE_CORRUPT` | Persisted RAG index is malformed or failed structural validation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/server.ts#L137) |
+| `RAG_STORE_UNAVAILABLE` | A persisted RAG index operation could not be completed safely. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/server.ts#L146) |
 | `RELEASE_BUILD_TIMEOUT` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/deploy.ts#L51) |
 | `RELEASE_MISSING_VERSION` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/deploy.ts#L43) |
 | `RELEASE_NOT_FOUND` | Production domain resolved but no active release found | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/server.ts#L119) |
