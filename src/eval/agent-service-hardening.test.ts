@@ -849,6 +849,41 @@ describe("eval/agent-service hardening", () => {
     assertEquals(lifecycle, ["sidecar:stop", "prepared:cleanup"]);
   });
 
+  it("cleans prepared resources when sidecar stop turns a successful run into a failure", async () => {
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const lifecycle: string[] = [];
+    const runner = createDurableRunCanaryRunner({
+      agentId: "veryfront",
+      apiUrl: "https://api.example.test",
+      authToken: "token",
+      keepSuccessfulEvidence: true,
+      projectId: null,
+      requestTimeoutMs: 1_000,
+    }, createCompletedDurableRunCanaryApiClient(conversationId));
+
+    const result = await runner.runCase({
+      id: "sidecar-stop-failure-cleanup",
+      label: "Sidecar stop failure cleanup",
+      prepare: async () => ({
+        cleanup: async () => {
+          lifecycle.push("prepared:cleanup");
+        },
+        conversationId,
+        prompt: "run",
+        title: "Sidecar stop failure cleanup",
+        startSidecar: async () => async () => {
+          lifecycle.push("sidecar:stop");
+          throw new Error("sidecar stop exploded");
+        },
+        validate: () => {},
+      }),
+    });
+
+    assertEquals(result.status, "fail");
+    assertStringIncludes(result.details, "Sidecar cleanup failed: sidecar stop exploded");
+    assertEquals(lifecycle, ["sidecar:stop", "prepared:cleanup"]);
+  });
+
   it("keeps successful durable evidence while still stopping the sidecar", async () => {
     const conversationId = "11111111-1111-4111-8111-111111111111";
     const lifecycle: string[] = [];
