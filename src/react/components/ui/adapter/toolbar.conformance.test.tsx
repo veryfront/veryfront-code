@@ -364,14 +364,19 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
         );
       }
       const { host, unmount } = render(<Probe />);
-      const bar = host.querySelector<HTMLElement>('[role="toolbar"]')!;
-      const [first, second] = Array.from(host.querySelectorAll<HTMLElement>("[data-toolbar-item]"));
-      first!.focus();
-      keydown(bar, "ArrowLeft");
-      assert(second === document.activeElement, "ArrowLeft moves forward in RTL");
-      click(second!);
-      assert(firstCleanups === 1, "old callback ref cleanup runs when the ref changes");
-      await unmount();
+      try {
+        const bar = host.querySelector<HTMLElement>('[role="toolbar"]')!;
+        const [first, second] = Array.from(
+          host.querySelectorAll<HTMLElement>("[data-toolbar-item]"),
+        );
+        first!.focus();
+        keydown(bar, "ArrowLeft");
+        assert(second === document.activeElement, "ArrowLeft moves forward in RTL");
+        click(second!);
+        assert(firstCleanups === 1, "old callback ref cleanup runs when the ref changes");
+      } finally {
+        await unmount();
+      }
       assert(secondCleanups === 1, "current callback ref cleanup runs on unmount");
     });
   });
