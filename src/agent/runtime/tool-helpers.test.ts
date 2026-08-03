@@ -494,7 +494,7 @@ describe("tool-helpers", () => {
     it("executes remote MCP tools from configured remote tool sources", async () => {
       const remoteSource = createRemoteMCPToolSource({
         id: "docs",
-        endpoint: "https://mcp.test",
+        endpoint: "https://93.184.216.34",
       });
 
       const requestMethods: string[] = [];
@@ -1011,7 +1011,7 @@ describe("tool-helpers", () => {
 
       const remoteSource = createRemoteMCPToolSource({
         id: "docs",
-        endpoint: (context) => `https://mcp.test/${context?.projectId ?? "default"}`,
+        endpoint: (context) => `https://93.184.216.34/${context?.projectId ?? "default"}`,
       });
 
       try {

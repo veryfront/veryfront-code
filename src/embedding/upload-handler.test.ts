@@ -273,7 +273,7 @@ describe("createUploadHandler", () => {
   it("stores uploaded source binaries in Veryfront Cloud when bootstrap is present", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_uploads");
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
-    setEnv("VERYFRONT_API_BASE_URL", "https://api.test");
+    setEnv("VERYFRONT_API_BASE_URL", "https://93.184.216.34");
 
     const calls: Array<{ method: string; url: string; body?: unknown }> = [];
     const store = createStubStore();
@@ -284,7 +284,7 @@ describe("createUploadHandler", () => {
       const url = request.url;
       const method = request.method;
 
-      if (method === "POST" && url === "https://api.test/projects/demo-project/uploads") {
+      if (method === "POST" && url === "https://93.184.216.34/projects/demo-project/uploads") {
         const body = await request.json();
         calls.push({ method, url, body });
 
@@ -319,7 +319,7 @@ describe("createUploadHandler", () => {
       assertEquals(response.status, 200);
       assertEquals(calls.length, 4);
       assertEquals(calls[0]?.method, "POST");
-      assertEquals(calls[0]?.url, "https://api.test/projects/demo-project/uploads");
+      assertEquals(calls[0]?.url, "https://93.184.216.34/projects/demo-project/uploads");
       assertEquals(calls[0]?.body, {
         file_path: ".veryfront/rag/uploads/doc-123.blob",
         content_type: "text/plain",
@@ -328,7 +328,7 @@ describe("createUploadHandler", () => {
       assertEquals(calls[1]?.method, "PUT");
       assertEquals(calls[1]?.url, "https://storage.test/upload/doc-123");
       assertEquals(calls[2]?.method, "POST");
-      assertEquals(calls[2]?.url, "https://api.test/projects/demo-project/uploads");
+      assertEquals(calls[2]?.url, "https://93.184.216.34/projects/demo-project/uploads");
       const metadataCreateBody = calls[2]?.body as Record<string, unknown>;
       assertEquals(metadataCreateBody.file_path, ".veryfront/rag/uploads/doc-123.meta.json");
       assertEquals(metadataCreateBody.content_type, "application/json");
@@ -341,7 +341,7 @@ describe("createUploadHandler", () => {
   it("rolls back the RAG document when cloud source persistence fails", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_uploads");
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
-    setEnv("VERYFRONT_API_BASE_URL", "https://api.test");
+    setEnv("VERYFRONT_API_BASE_URL", "https://93.184.216.34");
 
     const removed: string[] = [];
     const store = createStubStore({
@@ -356,7 +356,7 @@ describe("createUploadHandler", () => {
 
       if (
         request.method === "POST" &&
-        request.url === "https://api.test/projects/demo-project/uploads"
+        request.url === "https://93.184.216.34/projects/demo-project/uploads"
       ) {
         return Response.json({
           file_upload_url: "https://storage.test/upload/doc-123",
@@ -393,7 +393,7 @@ describe("createUploadHandler", () => {
   it("cleans up cloud source binaries on delete when bootstrap is present", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_uploads");
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
-    setEnv("VERYFRONT_API_BASE_URL", "https://api.test");
+    setEnv("VERYFRONT_API_BASE_URL", "https://93.184.216.34");
 
     const removed: string[] = [];
     const deleteCalls: string[] = [];
@@ -419,8 +419,8 @@ describe("createUploadHandler", () => {
       assertEquals(
         deleteCalls.toSorted(),
         [
-          "DELETE https://api.test/projects/demo-project/uploads/.veryfront%2Frag%2Fuploads%2Fdoc-123.meta.json",
-          "DELETE https://api.test/projects/demo-project/uploads/.veryfront%2Frag%2Fuploads%2Fdoc-123.blob",
+          "DELETE https://93.184.216.34/projects/demo-project/uploads/.veryfront%2Frag%2Fuploads%2Fdoc-123.meta.json",
+          "DELETE https://93.184.216.34/projects/demo-project/uploads/.veryfront%2Frag%2Fuploads%2Fdoc-123.blob",
         ].toSorted(),
       );
     });
@@ -429,7 +429,7 @@ describe("createUploadHandler", () => {
   it("lists cloud-backed uploads with signed source URLs", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_uploads");
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
-    setEnv("VERYFRONT_API_BASE_URL", "https://api.test");
+    setEnv("VERYFRONT_API_BASE_URL", "https://93.184.216.34");
 
     const store = createStubStore({
       async listDocuments() {
@@ -452,18 +452,17 @@ describe("createUploadHandler", () => {
       if (
         method === "GET" &&
         url ===
-          "https://api.test/projects/demo-project/uploads/.veryfront%2Frag%2Fuploads%2Fdoc-123.meta.json/url"
+          "https://93.184.216.34/projects/demo-project/uploads/.veryfront%2Frag%2Fuploads%2Fdoc-123.meta.json/url"
       ) {
         return Response.json({
-          signed_url:
-            "https://download.test/demo-project/.veryfront%2Frag%2Fuploads%2Fdoc-123.meta.json",
+          signed_url: "https://1.1.1.1/demo-project/.veryfront%2Frag%2Fuploads%2Fdoc-123.meta.json",
           expires_at: "2026-03-09T12:30:00.000Z",
         });
       }
 
       if (
         method === "GET" &&
-        url === "https://download.test/demo-project/.veryfront%2Frag%2Fuploads%2Fdoc-123.meta.json"
+        url === "https://1.1.1.1/demo-project/.veryfront%2Frag%2Fuploads%2Fdoc-123.meta.json"
       ) {
         return Response.json({
           version: 1,
@@ -478,11 +477,10 @@ describe("createUploadHandler", () => {
       if (
         method === "GET" &&
         url ===
-          "https://api.test/projects/demo-project/uploads/.veryfront%2Frag%2Fuploads%2Fdoc-123.blob/url"
+          "https://93.184.216.34/projects/demo-project/uploads/.veryfront%2Frag%2Fuploads%2Fdoc-123.blob/url"
       ) {
         return Response.json({
-          signed_url:
-            "https://download.test/demo-project/.veryfront%2Frag%2Fuploads%2Fdoc-123.blob",
+          signed_url: "https://1.1.1.1/demo-project/.veryfront%2Frag%2Fuploads%2Fdoc-123.blob",
           expires_at: "2026-03-09T12:30:00.000Z",
         });
       }
@@ -500,7 +498,7 @@ describe("createUploadHandler", () => {
       assertEquals(upload.mediaType, "text/plain");
       assertEquals(
         upload.url,
-        "https://download.test/demo-project/.veryfront%2Frag%2Fuploads%2Fdoc-123.blob",
+        "https://1.1.1.1/demo-project/.veryfront%2Frag%2Fuploads%2Fdoc-123.blob",
       );
     });
   });
@@ -508,7 +506,7 @@ describe("createUploadHandler", () => {
   it("removes the document even when blob cleanup fails", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_uploads");
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
-    setEnv("VERYFRONT_API_BASE_URL", "https://api.test");
+    setEnv("VERYFRONT_API_BASE_URL", "https://93.184.216.34");
 
     const removed: string[] = [];
     const store = createStubStore({
