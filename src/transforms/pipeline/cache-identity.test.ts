@@ -291,6 +291,15 @@ describe("transform pipeline cache identity", () => {
   it("does not consult inherited toJSON hooks while hashing", async () => {
     const customPlugins = [[0, "custom", TransformStage.FINALIZE, "custom@1"]] as const;
     const baseline = await computePipelineConfigIdentity(identityInput({ customPlugins }));
+    const importMapSnapshot = snapshotImportMap({
+      imports: { react: "https://esm.sh/react@19.1.0" },
+      scopes: { "/scope/": { dep: "https://example.com/dep.ts" } },
+    });
+    const fingerprintBaseline = await fingerprintPipelineImportMap(importMapSnapshot);
+    const distinctSnapshot = snapshotImportMap({
+      imports: { react: "https://esm.sh/react@18.3.1" },
+    });
+    const distinctFingerprintBaseline = await fingerprintPipelineImportMap(distinctSnapshot);
     const arrayToJson = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
     const objectToJson = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
     const stringToJson = Object.getOwnPropertyDescriptor(String.prototype, "toJSON");
@@ -325,6 +334,20 @@ describe("transform pipeline cache identity", () => {
       assertEquals(
         await computePipelineConfigIdentity(identityInput({ customPlugins })),
         baseline,
+      );
+      // Poisoned toJSON hooks must neither move nor collapse import-map
+      // fingerprints: distinct maps stay distinct under poisoning.
+      assertEquals(
+        await fingerprintPipelineImportMap(importMapSnapshot),
+        fingerprintBaseline,
+      );
+      assertEquals(
+        await fingerprintPipelineImportMap(distinctSnapshot),
+        distinctFingerprintBaseline,
+      );
+      assertNotEquals(
+        await fingerprintPipelineImportMap(importMapSnapshot),
+        await fingerprintPipelineImportMap(distinctSnapshot),
       );
     } finally {
       if (arrayToJson) {
