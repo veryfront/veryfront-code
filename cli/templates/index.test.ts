@@ -623,7 +623,11 @@ describe("cli/templates", () => {
       new URL("./integrations/_base/files/lib/user-id.ts", import.meta.url),
     );
     assertEquals(sharedTemplate.includes("request.headers"), false);
-    assertEquals(sharedTemplate.includes("installRequestIdentityResolver"), true);
+    assertEquals(
+      sharedTemplate.includes("Authenticated request identity is not configured"),
+      true,
+    );
+    assertEquals(sharedTemplate.includes("resolveAuthenticatedUserId"), true);
     // The identity boundary must have no ambient fallback: an environment-gated
     // default collapses every visitor onto one token owner.
     for (
@@ -660,8 +664,8 @@ describe("cli/templates", () => {
     }
   });
 
-  it("requires an installed resolver and never trusts identity headers", async () => {
-    const { installRequestIdentityResolver, requireUserIdFromRequest } = await import(
+  it("requires an implemented resolver and never trusts identity headers", async () => {
+    const { requireUserIdFromRequest } = await import(
       "./integrations/_base/files/lib/user-id.ts"
     );
     const request = new Request("https://app.example.test/api/auth/example", {
@@ -671,38 +675,12 @@ describe("cli/templates", () => {
       },
     });
 
-    // Fails closed until the application installs a verified resolver, in every
+    // Fails closed until the application implements a verified resolver, in every
     // runtime mode — there is no development escape hatch.
     await assertRejects(
       () => requireUserIdFromRequest(request),
       Error,
-      "Request identity resolver is not configured",
-    );
-
-    let seen: Request | undefined;
-    let verifiedIdentity: string | null = "session-user";
-    installRequestIdentityResolver((incoming) => {
-      seen = incoming;
-      return verifiedIdentity;
-    });
-
-    assertEquals(await requireUserIdFromRequest(request), "session-user");
-    assertEquals(seen, request);
-
-    // Anonymous requests resolve to null so callers can answer 401 rather than
-    // falling back to a shared identity.
-    verifiedIdentity = null;
-    assertEquals(await requireUserIdFromRequest(request), null);
-
-    // A resolver that leaks an untrusted header value is still rejected when it
-    // fails normalization, and re-installation is refused outright.
-    verifiedIdentity = "  padded-user  ";
-    assertEquals(await requireUserIdFromRequest(request), null);
-
-    assertThrows(
-      () => installRequestIdentityResolver(() => "other-user"),
-      Error,
-      "already been installed",
+      "Authenticated request identity is not configured",
     );
   });
 
@@ -712,8 +690,18 @@ describe("cli/templates", () => {
     );
 
     assertEquals(requireUserIdFromContext({ userId: "ctx-user" }), "ctx-user");
+    const maximumUserId = "u".repeat(1_024);
+    assertEquals(requireUserIdFromContext({ userId: maximumUserId }), maximumUserId);
 
-    for (const context of [undefined, {}, { userId: "" }, { userId: " padded " }]) {
+    for (
+      const context of [
+        undefined,
+        {},
+        { userId: "" },
+        { userId: " padded " },
+        { userId: "u".repeat(1_025) },
+      ]
+    ) {
       assertThrows(
         () => requireUserIdFromContext(context),
         Error,

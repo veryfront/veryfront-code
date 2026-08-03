@@ -668,20 +668,18 @@ storage extension. Veryfront core does not select or import the backend.
 ### Authenticated OAuth routes
 
 Generated OAuth routes call `requireUserIdFromRequest` in `lib/user-id.ts`.
-It resolves nothing on its own: during application startup you must call
-`installRequestIdentityResolver()` from the same module with a resolver backed
-by your server-side session or verified JWT. Until then every OAuth route
-throws in every runtime mode. There is no development escape hatch because an
-ambient default identity makes all visitors share one token owner.
+The generated `resolveAuthenticatedUserId` seam deliberately throws in every
+runtime mode until you replace it with a resolver backed by your server-side
+session or verified JWT. The surrounding request boundary validates the
+returned id. There is no development escape hatch because an ambient default
+identity makes all visitors share one token owner.
 
 ```ts
-// main.ts (or wherever your app boots)
-import { installRequestIdentityResolver } from "./lib/user-id.ts";
-
-installRequestIdentityResolver(async (request) => {
+// lib/user-id.ts
+export async function resolveAuthenticatedUserId(request: Request) {
   const session = await verifySession(request); // your session/JWT check
   return session?.userId ?? null; // null => anonymous => routes answer 401
-});
+}
 ```
 
 Raw request headers are not an authentication boundary. Never return a value
@@ -698,7 +696,7 @@ authenticated user id.
 
 - [ ] Update all redirect URIs to production domain
 - [ ] Configure an extension-owned `RefreshCapableTokenStore`
-- [ ] Install a verified session/JWT resolver via `installRequestIdentityResolver`
+- [ ] Implement `resolveAuthenticatedUserId` using a verified session or JWT
 - [ ] Verify token encryption and distributed refresh locking
 - [ ] Pass authenticated user ids through every tool execution context
 - [ ] Configure rate limiting
