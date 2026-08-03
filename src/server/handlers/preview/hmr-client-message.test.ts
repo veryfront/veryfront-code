@@ -74,14 +74,16 @@ describe("server/handlers/preview/hmr-client-message", () => {
     assertEquals(activityCount, 0);
   });
 
-  it("accepts a string whose UTF-8 wire size is exactly the limit", () => {
+  it("accepts a multibyte string whose UTF-8 wire size is exactly the limit", () => {
     const socket = new MockSocket();
     let checkedRateLimit = false;
     let activityCount = 0;
 
+    // "é" is one UTF-16 code unit but two UTF-8 bytes, so this payload sits
+    // exactly at the byte limit while its string length is only half of it.
     handleHmrClientMessage({
       socket,
-      data: "x".repeat(HMR_MAX_MESSAGE_SIZE_BYTES),
+      data: "é".repeat(HMR_MAX_MESSAGE_SIZE_BYTES / 2),
       rateLimiter: {
         check: () => {
           checkedRateLimit = true;
@@ -96,6 +98,35 @@ describe("server/handlers/preview/hmr-client-message", () => {
     assertEquals(socket.closed, []);
     assertEquals(checkedRateLimit, true);
     assertEquals(activityCount, 1);
+  });
+
+  it("closes a multibyte string whose UTF-8 wire size exceeds the limit", () => {
+    const socket = new MockSocket();
+    let checkedRateLimit = false;
+    let activityCount = 0;
+
+    // One code unit over the exact-limit payload: string length stays far
+    // below the limit, but the UTF-8 wire size exceeds it by two bytes.
+    handleHmrClientMessage({
+      socket,
+      data: "é".repeat(HMR_MAX_MESSAGE_SIZE_BYTES / 2 + 1),
+      rateLimiter: {
+        check: () => {
+          checkedRateLimit = true;
+          return true;
+        },
+      },
+      onActivity: () => {
+        activityCount += 1;
+      },
+    });
+
+    assertEquals(socket.sent, []);
+    assertEquals(socket.closed, [
+      { code: HMR_CLOSE_MESSAGE_TOO_LARGE, reason: "Message too large" },
+    ]);
+    assertEquals(checkedRateLimit, false);
+    assertEquals(activityCount, 0);
   });
 
   it("closes rate-limited messages before activity updates", () => {

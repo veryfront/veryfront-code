@@ -31,6 +31,22 @@ describe("cookie-utils", () => {
       assertEquals(parseCookies("name=hello%20world"), { name: "hello world" });
     });
 
+    it("should strip RFC 6265 double quotes around values", () => {
+      assertEquals(parseCookies('session="abc123"; plain=value'), {
+        session: "abc123",
+        plain: "value",
+      });
+      assertEquals(parseCookies('name="hello%20world"'), { name: "hello world" });
+      assertEquals(parseCookies('empty=""'), { empty: "" });
+    });
+
+    it("should keep unbalanced quotes literal", () => {
+      assertEquals(parseCookies('name="; other="unterminated'), {
+        name: '"',
+        other: '"unterminated',
+      });
+    });
+
     it("should omit malformed URL encoding without discarding valid siblings", () => {
       assertEquals(parseCookies("name=incomplete%2; other=valid"), {
         other: "valid",
