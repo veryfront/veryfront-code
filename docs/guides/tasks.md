@@ -83,9 +83,10 @@ interface TaskContext {
 - **`signal`**: optional cooperative cancellation signal
 
 Reserved control variables are never copied into `ctx.env`: every variable
-prefixed `TENANT_` and the framework's own `VERYFRONT_*` control names (API
+prefixed `TENANT_` and a fixed set of framework `VERYFRONT_` control keys (API
 token, API URLs, project identity, branch ref, and the injected-payload
-variable itself). Cloud project variables are carried through the
+variable itself). Other project-defined `VERYFRONT_` names are not filtered
+solely because of that prefix. Cloud project variables are carried through the
 `VERYFRONT_TASK_ENV_JSON` payload and merged over visible host variables. That
 payload must be a JSON object; if it is malformed, execution fails before the
 task function runs instead of continuing with missing configuration.
