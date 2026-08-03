@@ -7,6 +7,8 @@ import {
   createToolsFromRemoteDefinitions,
   type HostToolSet,
   isToolVisibleTo,
+  type RemoteMCPToolSourceConfig,
+  type RemoteToolSource,
   toolRegistry,
 } from "#veryfront/tool";
 import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
@@ -84,15 +86,24 @@ export type ChildRunContext =
  * with optional per-agent overrides.
  */
 export function resolveMcpServers(
-  options: { mcpServers?: readonly AgentServiceMcpServerConfig[] },
+  options: {
+    mcpServers?: readonly AgentServiceMcpServerConfig[];
+    createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
+  },
   agentConfig?: Pick<RuntimeAgentMarkdownDefinition, "mcpServers">,
 ): readonly AgentServiceMcpServerConfig[] {
-  if (options.mcpServers !== undefined) {
+  // A deployment-owned transport is a privileged capability. When present,
+  // the framework defaults become the service authority ceiling so tenant
+  // configuration cannot bind that transport to arbitrary endpoints.
+  const serviceMcpServers = options.mcpServers ??
+    (options.createRemoteToolSource === undefined ? undefined : defaultAgentServiceMcpServers());
+
+  if (serviceMcpServers !== undefined) {
     if (agentConfig?.mcpServers === undefined) {
-      return options.mcpServers;
+      return serviceMcpServers;
     }
     return agentConfig.mcpServers.flatMap((agentServer) => {
-      const hostServer = options.mcpServers?.find((server) =>
+      const hostServer = serviceMcpServers.find((server) =>
         server.kind === agentServer.kind && server.id === agentServer.id
       );
       if (!hostServer) {
