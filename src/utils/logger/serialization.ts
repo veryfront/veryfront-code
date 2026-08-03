@@ -4,10 +4,18 @@ import { REDACTED, redactForSerialization } from "./redact.ts";
 // Logging and telemetry serialization are safety boundaries and must not become
 // throwable or leak data when a tenant mutates Object/Array prototypes.
 const arrayIsArray = Array.isArray;
+const arrayPrototype = Array.prototype;
 const jsonStringify = JSON.stringify;
 const objectDefineProperty = Object.defineProperty;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectHasOwn = Object.hasOwn;
+const objectPrototype = Object.prototype;
 const objectValues = Object.values;
+
+function intrinsicSerializationHookPresent(): boolean {
+  return objectGetOwnPropertyDescriptor(objectPrototype, "toJSON") !== undefined ||
+    objectGetOwnPropertyDescriptor(arrayPrototype, "toJSON") !== undefined;
+}
 
 function blockInheritedSerializationHooks(value: unknown): void {
   if (value === null || typeof value !== "object") return;
@@ -49,7 +57,9 @@ export function stringifyRedactedJson(
 ): string {
   try {
     const snapshot = redactForSerialization(value);
-    blockInheritedSerializationHooks(snapshot);
+    if (intrinsicSerializationHookPresent()) {
+      blockInheritedSerializationHooks(snapshot);
+    }
     return jsonStringify(snapshot) ?? REDACTED;
   } catch {
     return stringifyFallback(fallbackValue);
@@ -63,7 +73,9 @@ export function stringifyRedactedAttributeValue(
   try {
     const snapshot = redactForSerialization(value);
     if (typeof snapshot === "string") return snapshot;
-    blockInheritedSerializationHooks(snapshot);
+    if (intrinsicSerializationHookPresent()) {
+      blockInheritedSerializationHooks(snapshot);
+    }
     return jsonStringify(snapshot) ?? REDACTED;
   } catch {
     return fallbackValue;
