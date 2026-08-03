@@ -188,12 +188,25 @@ describe("workflow worker shared helpers", () => {
   it("logs sanitized run ids for runs that never reached a durable final state", () => {
     const { logger, warnings } = createCapturingLogger();
     const exitCodes = { SUCCESS: 0, WORKFLOW_FAILED: 1 };
+    const runId = "run-\x1b[2Jtoken=secret";
+
+    assertEquals(getFinalRunExitCode(logger, exitCodes, runId, null, false), 1);
+    assertEquals(
+      getFinalRunExitCode(
+        logger,
+        exitCodes,
+        runId,
+        { status: "cancelled" } as never,
+        false,
+      ),
+      1,
+    );
 
     assertEquals(
       getFinalRunExitCode(
         logger,
         exitCodes,
-        "run-\x1b[2Jtoken=secret",
+        runId,
         { status: "pending" } as never,
         false,
       ),
@@ -203,16 +216,29 @@ describe("workflow worker shared helpers", () => {
       getFinalRunExitCode(
         logger,
         exitCodes,
-        "run-\x1b[2Jtoken=secret",
+        runId,
         { status: "running" } as never,
+        false,
+      ),
+      1,
+    );
+    assertEquals(
+      getFinalRunExitCode(
+        logger,
+        exitCodes,
+        runId,
+        { status: "unexpected" } as never,
         false,
       ),
       1,
     );
 
     assertEquals(warnings, [
+      "Workflow run was not found after execution: run-token=secret",
+      "Workflow was cancelled: run-token=secret",
       "Workflow did not reach a durable final state: pending (runId: run-token=secret)",
       "Workflow did not reach a durable final state: running (runId: run-token=secret)",
+      "Unexpected final status: unexpected (runId: run-token=secret)",
     ]);
   });
 

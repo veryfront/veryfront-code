@@ -100,6 +100,8 @@ export function getFinalRunExitCode(
   finalRun: WorkflowRun | null,
   debug = false,
 ): number {
+  const sanitizedRunId = sanitizeTerminalDiagnosticText(runId);
+
   switch (finalRun?.status) {
     case "completed":
       if (debug) {
@@ -118,23 +120,21 @@ export function getFinalRunExitCode(
       return exitCodes.SUCCESS;
 
     case "cancelled":
-      logger.warn(`Workflow was cancelled: ${runId}`);
+      logger.warn(`Workflow was cancelled: ${sanitizedRunId}`);
       return exitCodes.WORKFLOW_FAILED;
 
     case "pending":
     case "running":
       logger.warn(
-        `Workflow did not reach a durable final state: ${finalRun.status} (runId: ${
-          sanitizeTerminalDiagnosticText(runId)
-        })`,
+        `Workflow did not reach a durable final state: ${finalRun.status} (runId: ${sanitizedRunId})`,
       );
       return exitCodes.WORKFLOW_FAILED;
 
     default:
       logger.warn(
         finalRun
-          ? `Unexpected final status: ${finalRun.status}`
-          : `Workflow run was not found after execution: ${runId}`,
+          ? `Unexpected final status: ${finalRun.status} (runId: ${sanitizedRunId})`
+          : `Workflow run was not found after execution: ${sanitizedRunId}`,
       );
       return exitCodes.WORKFLOW_FAILED;
   }

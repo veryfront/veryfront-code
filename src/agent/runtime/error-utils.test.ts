@@ -144,6 +144,40 @@ describe("agent/runtime/error-utils", () => {
       assertEquals(calls, 0);
     });
 
+    it("shadows inherited array toJSON in best-effort diagnostics", () => {
+      const defineProperty = Object.defineProperty;
+      const deleteProperty = Reflect.deleteProperty;
+      const original = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+      let calls = 0;
+      let result: string | undefined;
+
+      try {
+        defineProperty(Array.prototype, "toJSON", {
+          configurable: true,
+          value() {
+            calls += 1;
+            return "mutated-array";
+          },
+          writable: true,
+        });
+
+        result = stringifyToolError({
+          code: "E_TOOL",
+          details: ["safe", 1],
+          skipped: undefined,
+        });
+      } finally {
+        if (original) {
+          defineProperty(Array.prototype, "toJSON", original);
+        } else {
+          deleteProperty(Array.prototype, "toJSON");
+        }
+      }
+
+      assertEquals(result, '{"code":"E_TOOL","details":["safe",1]}');
+      assertEquals(calls, 0);
+    });
+
     it("fails closed for revoked proxies", () => {
       const { proxy, revoke } = Proxy.revocable({}, {});
       revoke();

@@ -181,6 +181,15 @@ function defineDiagnosticProperty(
   });
 }
 
+function defineDiagnosticSerializationGuard(target: object): void {
+  objectDefineProperty(target, "toJSON", {
+    configurable: false,
+    enumerable: false,
+    value: undefined,
+    writable: false,
+  });
+}
+
 /**
  * Build a partial diagnostic after the strict JSON snapshot rejects one
  * branch. This path never evaluates accessors, coercion hooks, or Proxy traps:
@@ -255,6 +264,7 @@ function snapshotBestEffortDiagnostic(
           child === OMIT_DIAGNOSTIC_VALUE ? null : child,
         );
       }
+      defineDiagnosticSerializationGuard(result);
       return result;
     }
 
