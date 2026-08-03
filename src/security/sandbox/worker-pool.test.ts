@@ -30,7 +30,7 @@ import type {
 import { DEFAULT_WORKER_POOL_CONFIG, MAX_WORKER_BODY_BYTES } from "./worker-types.ts";
 import { WORKER_INTERNAL_EGRESS_OVERRIDE_ENV } from "./worker-egress-guard.ts";
 import { resolveWorkerGeneration, snapshotWorkerGenerationIdentity } from "./worker-generation.ts";
-import { fromFileUrl } from "#veryfront/compat/path";
+import { fromFileUrl, join } from "#veryfront/compat/path";
 
 // Worker isolation only works in Deno (requires Deno Worker permissions API)
 const testSuite = isDeno ? describe : describe.skip;
@@ -438,27 +438,36 @@ testSuite("WorkerPool", () => {
     const controlled = createControlledPool();
     await pool.shutdown();
     pool = controlled.pool;
+    const projectRoot = Deno.makeTempDirSync({
+      prefix: "worker-pool-ssr-permissions-",
+    });
 
-    const stream = pool.executeStream(
-      "ssr-permissions",
-      ["/tmp"],
-      makeSSRRequest("ssr-permissions-request"),
-    );
-    const worker = latestWorker(controlled.workers, "ssr-permissions");
-    const readPermissions = worker.permissions.read;
-    assert(Array.isArray(readPermissions));
-    assert(
-      TEST_ISOLATED_SSR_RENDERER_PROVIDER.readRootUrls.every((rootUrl) =>
-        readPermissions.includes(Deno.realPathSync(fromFileUrl(rootUrl)))
-      ),
-    );
-    assertEquals(
-      worker.isolatedSsrRendererModuleUrl,
-      TEST_ISOLATED_SSR_RENDERER_PROVIDER.moduleUrl,
-    );
+    try {
+      const stream = pool.executeStream(
+        "ssr-permissions",
+        [projectRoot],
+        makeSSRRequest("ssr-permissions-request", {
+          pageModulePath: join(projectRoot, "page.tsx"),
+        }),
+      );
+      const worker = latestWorker(controlled.workers, "ssr-permissions");
+      const readPermissions = worker.permissions.read;
+      assert(Array.isArray(readPermissions));
+      assert(
+        TEST_ISOLATED_SSR_RENDERER_PROVIDER.readRootUrls.every((rootUrl) =>
+          readPermissions.includes(Deno.realPathSync(fromFileUrl(rootUrl)))
+        ),
+      );
+      assertEquals(
+        worker.isolatedSsrRendererModuleUrl,
+        TEST_ISOLATED_SSR_RENDERER_PROVIDER.moduleUrl,
+      );
 
-    worker.completeStream("ssr-permissions-request");
-    await new Response(stream).arrayBuffer();
+      worker.completeStream("ssr-permissions-request");
+      await new Response(stream).arrayBuffer();
+    } finally {
+      Deno.removeSync(projectRoot, { recursive: true });
+    }
   });
 
   it("returns the same worker for the same project", () => {
