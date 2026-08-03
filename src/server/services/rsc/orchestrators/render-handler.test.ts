@@ -285,10 +285,23 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
         loadModuleESM: typeof mdxRenderer.loadModuleESM;
       };
       let observedIsLocalProject: unknown;
-      mutableRenderer.loadModuleESM = ((...args: unknown[]) => {
-        observedIsLocalProject = args[11];
+      mutableRenderer.loadModuleESM = (
+        _compiledProgramCode,
+        _adapter,
+        _projectId,
+        _projectDir,
+        _projectSlug,
+        _contentSourceId,
+        _reactVersion,
+        _dependencyPinningCacheKey,
+        _dependencyPinningDependencies,
+        _dependencyPinningSource,
+        _moduleServerOrigin,
+        isLocalProject,
+      ) => {
+        observedIsLocalProject = isLocalProject;
         return Promise.resolve({ default: () => null });
-      }) as typeof mdxRenderer.loadModuleESM;
+      };
 
       try {
         const snapshot = await getDependencyPinningSnapshot(projectDir);
