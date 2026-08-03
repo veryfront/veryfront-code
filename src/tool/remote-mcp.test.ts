@@ -93,7 +93,7 @@ describe("tool/remote-mcp", () => {
         transportCalls++;
         return Promise.resolve(Response.json({}));
       },
-      Object.freeze({}),
+      {},
     );
 
     await assertRejects(
@@ -103,6 +103,32 @@ describe("tool/remote-mcp", () => {
     );
     assertEquals(transportCalls, 0);
   });
+
+  for (const hostilePrimordial of ["object-freeze", "promise-then"] as const) {
+    it(`rejects forged authority with hostile ${hostilePrimordial}`, async () => {
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "run",
+          "--quiet",
+          new URL("./remote-mcp-hostile-primordial.fixture.ts", import.meta.url).pathname,
+          hostilePrimordial,
+        ],
+        cwd: Deno.cwd(),
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+
+      const stderr = new TextDecoder().decode(output.stderr);
+      assertEquals(output.success, true, stderr);
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(output.stdout)),
+        {
+          error: "Remote MCP host transport authority required",
+          transportCalls: 0,
+        },
+      );
+    });
+  }
 
   it("normalizes non-Error caller abort reasons", async () => {
     const controller = new AbortController();

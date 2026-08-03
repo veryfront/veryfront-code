@@ -822,12 +822,16 @@ function createCapabilityGuardedFetch(
   transportAuthority: unknown,
 ): typeof fetch {
   let authorization: Promise<void> | undefined;
+  async function authorizeTransport(): Promise<void> {
+    // Native await does not dispatch through mutable Promise.prototype.then.
+    const module = await import("./internal/remote-mcp-transport.ts");
+    if (!module.isRemoteMCPHostTransportAuthority(transportAuthority)) {
+      throw new TypeError("Remote MCP host transport authority required");
+    }
+  }
+
   return async (input, init) => {
-    authorization ??= import("./internal/remote-mcp-transport.ts").then((module) => {
-      if (!module.isRemoteMCPHostTransportAuthority(transportAuthority)) {
-        throw new TypeError("Remote MCP host transport authority required");
-      }
-    });
+    authorization ??= authorizeTransport();
     await authorization;
     return requestFetch(input, init);
   };

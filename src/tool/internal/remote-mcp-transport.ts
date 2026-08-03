@@ -5,7 +5,9 @@ import {
 } from "../remote-mcp.ts";
 import type { RemoteToolSource } from "../types.ts";
 
-const REMOTE_MCP_HOST_TRANSPORT_AUTHORITY = Object.freeze({});
+// Identity is the authority. Do not construct this through a mutable global:
+// tenant code can replace primordials before this lazily imported module loads.
+const REMOTE_MCP_HOST_TRANSPORT_AUTHORITY = {};
 
 /** Validate the module-private authority without exposing it to public callers. */
 export function isRemoteMCPHostTransportAuthority(value: unknown): boolean {
