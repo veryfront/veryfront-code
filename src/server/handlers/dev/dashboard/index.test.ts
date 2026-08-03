@@ -186,17 +186,26 @@ describe("DevDashboardHandler admission", () => {
     );
     assertEquals(await response.text(), "");
 
+    let cancelled = false;
+    const cancellationNeverSettles = new Promise<void>(() => {});
     const rejectedMethod = (await handler.handle(
       requestFromPeer(
         new Request(`http://veryfront.me:3002${DASHBOARD_SESSION_PATH}`, {
           method: "POST",
           headers: { host: "veryfront.me:3002" },
+          body: new ReadableStream<Uint8Array>({
+            cancel() {
+              cancelled = true;
+              return cancellationNeverSettles;
+            },
+          }),
         }),
       ),
       localContext(),
     )).response!;
     assertEquals(rejectedMethod.status, 405);
     assertEquals(rejectedMethod.headers.get("allow"), "GET, HEAD");
+    assertEquals(cancelled, true);
   });
 
   it("enforces the dashboard mutation session on POST API routes", async () => {
@@ -262,17 +271,26 @@ describe("DevDashboardHandler admission", () => {
     assertEquals(headResponse.status, 200);
     assertEquals(await headResponse.text(), "");
 
+    let cancelled = false;
+    const cancellationNeverSettles = new Promise<void>(() => {});
     const methodResponse = (await handler.handle(
       requestFromPeer(
         new Request("http://localhost/_dev/ui/index.js", {
           method: "POST",
           headers: { host: "localhost" },
+          body: new ReadableStream<Uint8Array>({
+            cancel() {
+              cancelled = true;
+              return cancellationNeverSettles;
+            },
+          }),
         }),
       ),
       localContext(),
     )).response!;
     assertEquals(methodResponse.status, 405);
     assertEquals(methodResponse.headers.get("allow"), "GET, HEAD");
+    assertEquals(cancelled, true);
 
     const missingAsset = (await handler.handle(
       dashboardRequest("http://localhost/_dev/ui/components/App.js"),

@@ -68,6 +68,7 @@ export class DevDashboardHandler extends BaseHandler {
 
     if (pathname === DASHBOARD_SESSION_PATH) {
       if (req.method !== "GET" && req.method !== "HEAD") {
+        cancelRejectedLocalControlRequestBody(req, "Dashboard session method rejected");
         return this.respond(
           new Response("Method not allowed", {
             status: 405,

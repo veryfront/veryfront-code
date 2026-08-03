@@ -1,3 +1,5 @@
+import { cancelRejectedLocalControlRequestBody } from "#veryfront/security/http/local-control-request.ts";
+
 const JAVASCRIPT_HEADERS = Object.freeze({
   "Cache-Control": "no-store",
   "Content-Type": "application/javascript; charset=utf-8",
@@ -33,6 +35,7 @@ export function serveDevUiBundle(
   if (new URL(req.url).pathname !== expectedPathname) return null;
 
   if (req.method !== "GET" && req.method !== "HEAD") {
+    cancelRejectedLocalControlRequestBody(req, "Dev UI bundle method rejected");
     return new Response("Method not allowed", {
       status: 405,
       headers: { ...UNAVAILABLE_HEADERS, Allow: "GET, HEAD" },
