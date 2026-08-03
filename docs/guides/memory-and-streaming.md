@@ -91,11 +91,12 @@ summary while keeping recent messages intact.
 
 Agent configuration currently supports `conversation`, `buffer`, and
 `summary` memory. These stores belong to one agent runtime instance. Do not use
-`memory: { type: "redis" }`: the agent schema rejects it because the runtime
-cannot yet construct a Redis store with an authenticated client. For
-multi-instance deployments, keep a conversation on one runtime instance or
-persist and restore the conversation outside the agent until a distributed
-memory extension is configured explicitly.
+`memory: { type: "redis" }`: the agent configuration schema does not wire that
+type into `agent()` memory construction, so it is rejected at validation. The
+`RedisMemory` class and `createRedisMemory()` remain available from
+`veryfront/agent` for programmatic use. For multi-instance deployments, keep a
+conversation on one runtime instance, construct a Redis-backed memory manually,
+or persist and restore the conversation outside the agent.
 
 ## Memory operations
 

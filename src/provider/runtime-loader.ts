@@ -166,7 +166,9 @@ export function stringifyToolArguments(value: unknown): string {
 
 /** Preserve text tool results while serializing structured tool results. */
 export function stringifyToolResultValue(value: unknown): string {
-  return typeof value === "string" ? value : stringifyJsonValue(value);
+  // Same serialization contract as tool arguments — delegate so the two
+  // cannot drift.
+  return stringifyToolArguments(value);
 }
 
 /** Read text content parts from provider messages. */
