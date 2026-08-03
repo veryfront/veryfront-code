@@ -149,10 +149,10 @@ function buildDisableFilters(
 
 function isDeferredBuiltinPackageHit(
   hit: PackageLoadCandidate,
-  deferredBuiltinExtensionNames: ReadonlySet<string>,
+  ordinaryBuiltinExtensionNames: ReadonlySet<string>,
 ): boolean {
   const extensionName = FIRST_PARTY_BUILTIN_PACKAGE_TO_EXTENSION.get(hit.packageName);
-  return extensionName !== undefined && deferredBuiltinExtensionNames.has(extensionName);
+  return extensionName !== undefined && !ordinaryBuiltinExtensionNames.has(extensionName);
 }
 
 /**
@@ -212,9 +212,12 @@ async function orchestrateExtensionGeneration(
   // fails to import or invoke would otherwise take down bootstrap even
   // though the user asked for it to be disabled.
   const disabled = buildDisableFilters(disables);
-  const deferredBuiltinExtensionNames = new Set(
+  // First-party deferred packages stay lazy even when a reduced caller omits
+  // their candidate. Ordinary builtins are exempt so package discovery keeps
+  // its documented priority over direct builtin entries with the same name.
+  const ordinaryBuiltinExtensionNames = new Set(
     (options.builtinExtensions ?? [])
-      .filter((entry) => getDeferredExtensionState(entry) !== undefined)
+      .filter((entry) => getDeferredExtensionState(entry) === undefined)
       .map((entry) => entry.extension.name),
   );
 
@@ -263,7 +266,7 @@ async function orchestrateExtensionGeneration(
     .filter((hit) =>
       !disabled.packageNames.has(hit.packageName) &&
       !disabled.extensionNames.has(hit.packageName) &&
-      !isDeferredBuiltinPackageHit(hit, deferredBuiltinExtensionNames)
+      !isDeferredBuiltinPackageHit(hit, ordinaryBuiltinExtensionNames)
     )
     .map((hit) => hit.target);
 

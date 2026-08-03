@@ -13,7 +13,11 @@ import { reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
 import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
 import type { LLMProvider, LLMProviderRegistry } from "./llm/index.ts";
 import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.ts";
-import { createBuiltinExtensions, createOptionalBuiltinExtension } from "./builtin-extensions.ts";
+import {
+  createBuiltinExtensions,
+  createEvalCliBuiltinExtensions,
+  createOptionalBuiltinExtension,
+} from "./builtin-extensions.ts";
 import { join } from "@std/path";
 
 const noopLogger = {
@@ -727,6 +731,43 @@ describe("orchestrateExtensions()", () => {
     });
 
     assertEquals(tryResolve("SelectedExtensionSource"), { from: "package" });
+    await loader.teardownAll();
+  });
+
+  it("keeps deferred packages lazy for the reduced eval CLI builtin set", async () => {
+    const loadCalls: string[] = [];
+    const loader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {},
+      logger: noopLogger,
+      primeContracts: {
+        [LLMProviderRegistryName]: createLLMProviderRegistry(),
+      },
+      discovery: {
+        ...emptyDiscovery(),
+        discoverPackageExtensions: () =>
+          Promise.resolve([{
+            packageName: "@veryfront/ext-css-tailwind",
+            importTarget: "/canonical/ext-css-tailwind.js",
+            metadata: {
+              isExtension: true as const,
+              activation: "auto" as const,
+              capabilities: [],
+            },
+          }]),
+      },
+      builtinExtensions: createEvalCliBuiltinExtensions([]),
+      loadFactory: (path: string, source: ExtensionSource) => {
+        loadCalls.push(path);
+        return Promise.resolve<ResolvedExtension>({
+          extension: stubExt("ext-css-tailwind"),
+          source,
+          origin: path,
+        });
+      },
+    });
+
+    assertEquals(loadCalls, []);
     await loader.teardownAll();
   });
 
