@@ -2588,15 +2588,32 @@ describe("import-lockfile", () => {
     });
 
     it("should degrade to a cache miss when the lockfile is unreadable", async () => {
+      const originalWarn = console.warn;
+      const warnings: string[] = [];
       const truncated = '{"version":1,"imports":{';
       const fs = createMockFS({ "/project/veryfront.lock": truncated });
       const mgr = createLockfileManager("/project", fs);
 
-      // Truncated or malformed JSON must not fail the build hot path; the
-      // file itself stays untouched for inspection or `veryfront lock --clear`.
-      assertEquals(await getLockfileEntryForBuild(mgr, "https://cdn.com/mod.ts"), null);
-      assertEquals(await getLockfileEntryForBuild(mgr, "https://cdn.com/other.ts"), null);
-      assertEquals(await fs.readFile("/project/veryfront.lock"), truncated);
+      try {
+        console.warn = ((...args: unknown[]) => {
+          warnings.push(args.map(String).join(" "));
+        }) as typeof console.warn;
+
+        // Truncated or malformed JSON must not fail the build hot path; the
+        // file itself stays untouched for inspection or `veryfront lock --clear`.
+        assertEquals(await getLockfileEntryForBuild(mgr, "https://cdn.com/mod.ts"), null);
+        assertEquals(await getLockfileEntryForBuild(mgr, "https://cdn.com/other.ts"), null);
+        assertEquals(await fs.readFile("/project/veryfront.lock"), truncated);
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(warnings.length, 1);
+      const warning = warnings[0];
+      assertExists(warning);
+      assertStringIncludes(warning, "Lockfile veryfront.lock could not be read");
+      assertStringIncludes(warning, "veryfront lock --clear");
+      assertEquals(warning.includes("/project/veryfront.lock"), false);
     });
 
     it("should keep failing loudly for a newer-format lockfile", async () => {

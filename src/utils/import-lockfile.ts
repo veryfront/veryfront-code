@@ -1391,13 +1391,8 @@ function absorbUnreadableLockfileError(
 
   if (!lockfileReadWarningIssued.has(lockfile)) {
     lockfileReadWarningIssued.add(lockfile);
-    const context = isRecord(snapshot.context) ? snapshot.context : undefined;
-    const lockfilePath = context === undefined
-      ? undefined
-      : getOwnDataProperty(context, "lockfilePath")?.value;
-    const fileLabel = typeof lockfilePath === "string" ? lockfilePath : LOCKFILE_NAME;
     logger.warn(
-      `Lockfile ${fileLabel} could not be read (${snapshot.message}); ` +
+      `Lockfile ${LOCKFILE_NAME} could not be read (${snapshot.message}); ` +
         "continuing this build without lockfile entries. " +
         "Run `veryfront lock --clear` to reset the corrupted lockfile.",
     );
