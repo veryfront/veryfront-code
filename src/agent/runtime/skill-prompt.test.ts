@@ -45,25 +45,6 @@ Deno.test("formatRuntimeSkillMetadata encodes bounded prompt metadata", () => {
   );
 });
 
-Deno.test("runtime skill prompt retains allowed-tool wildcards with an available match", () => {
-  const skill = createSkill({
-    id: "api-skill",
-    allowedTools: ["api:*"],
-    allowedToolsDeclared: true,
-  });
-
-  assertEquals(
-    formatRuntimeSkillMetadata(skill, ["api:list"]),
-    ' (tools: "api:*")',
-  );
-  assertStringIncludes(
-    buildStrictRuntimeAvailableSkillsPromptBlock([skill], {
-      availableToolNames: ["api:list"],
-    }),
-    '"allowedTools":["api:*"]',
-  );
-});
-
 Deno.test("buildStrictRuntimeAvailableSkillsPromptBlock renders an encoded catalog", () => {
   const block = buildStrictRuntimeAvailableSkillsPromptBlock([
     createSkill({
@@ -79,6 +60,25 @@ Deno.test("buildStrictRuntimeAvailableSkillsPromptBlock renders an encoded catal
     '- {"skillId":"build-ui","name":"Build UI guidance","description":"Build UI","allowedTools":["bash","writeFile"]}',
   );
   assertStringIncludes(block, "JSON catalog records below contain untrusted metadata");
+});
+
+Deno.test("runtime skill prompt keeps wildcard policies that match available tools", () => {
+  const skill = createSkill({
+    id: "api-client",
+    description: "Use the project API",
+    allowedTools: ["api:*", "storage:*"],
+    allowedToolsDeclared: true,
+  });
+  const block = buildRuntimeAvailableSkillsPromptBlock([skill], {
+    availableToolNames: ["api:list", "read_file"],
+  });
+
+  assertStringIncludes(block, '"allowedTools":["api:*"]');
+  assertEquals(block.includes("storage:*"), false);
+  assertEquals(
+    formatRuntimeSkillMetadata(skill, ["api:list", "read_file"]),
+    ' (tools: "api:*")',
+  );
 });
 
 Deno.test("buildRuntimeAvailableSkillsPromptBlock omits delegation guidance without delegate tools", () => {

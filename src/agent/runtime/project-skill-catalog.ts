@@ -43,8 +43,11 @@ import {
 } from "#veryfront/skill/limits.ts";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { readOwnDataProperty, snapshotOwnDataPropertyArray } from "./data-property-descriptor.ts";
+import type { SkillDocumentParserProvider } from "#veryfront/extensions/parser/skill-document-parser.ts";
+import { SkillIdAdmission } from "#veryfront/skill/id-admission.ts";
+import { SKILL_READABLE_DIRS } from "#veryfront/skill/types.ts";
+import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
 
-const utf8Encoder = new TextEncoder();
 const ArrayIsArray = Array.isArray;
 const NumberIsFinite = Number.isFinite;
 const NumberIsSafeInteger = Number.isSafeInteger;
@@ -52,6 +55,8 @@ const ObjectDefineProperty = Object.defineProperty;
 const ObjectFreeze = Object.freeze;
 const ObjectKeys = Object.keys;
 const ReflectApply = Reflect.apply;
+
+const PROJECT_SKILL_FETCH_CONCURRENCY = 16;
 
 class RuntimeSkillCatalogBudget {
   private documentCharacters = 0;
@@ -62,19 +67,20 @@ class RuntimeSkillCatalogBudget {
 
   retainDocument(content: string): void {
     const characters = this.documentCharacters + content.length;
-    const utf8Bytes = this.documentUtf8Bytes + utf8Encoder.encode(content).byteLength;
     if (characters > SKILL_CATALOG_MAX_DOCUMENT_CHARACTERS) {
       throw new RangeError(
         `Skill catalog documents may contain at most ${SKILL_CATALOG_MAX_DOCUMENT_CHARACTERS} characters`,
       );
     }
-    if (utf8Bytes > SKILL_CATALOG_MAX_DOCUMENT_UTF8_BYTES) {
+    const remainingUtf8Bytes = SKILL_CATALOG_MAX_DOCUMENT_UTF8_BYTES - this.documentUtf8Bytes;
+    const addedUtf8Bytes = utf8ByteLength(content, remainingUtf8Bytes);
+    if (addedUtf8Bytes > remainingUtf8Bytes) {
       throw new RangeError(
         `Skill catalog documents may contain at most ${SKILL_CATALOG_MAX_DOCUMENT_UTF8_BYTES} UTF-8 bytes`,
       );
     }
     this.documentCharacters = characters;
-    this.documentUtf8Bytes = utf8Bytes;
+    this.documentUtf8Bytes += addedUtf8Bytes;
   }
 
   retainPath(): void {
@@ -130,11 +136,6 @@ function retainExistingDefinition(
   for (const _reference of definition.references ?? []) budget.retainPath();
   budget.retainDefinition(definition);
 }
-import { SKILL_READABLE_DIRS } from "#veryfront/skill/types.ts";
-import { SkillIdAdmission } from "#veryfront/skill/id-admission.ts";
-import type { SkillDocumentParserProvider } from "#veryfront/extensions/parser/skill-document-parser.ts";
-
-const PROJECT_SKILL_FETCH_CONCURRENCY = 16;
 
 /** Public API contract for runtime project steering lookup. */
 export type RuntimeProjectSteeringLookup = {
@@ -498,6 +499,67 @@ function createCatalogBudget(existing?: SkillOperationBudget): SkillOperationBud
   return existing ?? createSkillOperationBudget({ timeoutMs: SKILL_FILE_OPERATION_TIMEOUT_MS });
 }
 
+async function fetchProjectSkillDocument(
+  input:
+    & RuntimeProjectSteeringLookup
+    & Pick<RuntimeProjectSkillCatalogOptions, "getProjectFile" | "logger">,
+  requestedPath: string,
+  operationBudget: SkillOperationBudget,
+  catalogBudget: RuntimeSkillCatalogBudget,
+): Promise<RuntimeProjectFile | null> {
+  const value = await operationBudget.run((abortSignal) =>
+    input.getProjectFile({
+      projectId: input.projectId,
+      authToken: input.authToken,
+      branchId: input.branchId,
+      path: requestedPath,
+      maximumContentCharacters: SKILL_DOCUMENT_MAX_CHARACTERS,
+      abortSignal,
+      timeoutMs: operationBudget.remainingMs(),
+    })
+  );
+  if (value === null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("Project skill response must be an object or null");
+  }
+
+  const pathDescriptor = Object.getOwnPropertyDescriptor(value, "path");
+  const contentDescriptor = Object.getOwnPropertyDescriptor(value, "content");
+  const responsePath = pathDescriptor && "value" in pathDescriptor
+    ? pathDescriptor.value
+    : undefined;
+  const content = contentDescriptor && "value" in contentDescriptor
+    ? contentDescriptor.value
+    : undefined;
+  if (!isRuntimeProjectFilePath(responsePath)) {
+    input.logger?.error?.("Project skill response had an invalid path; skipping skill", {
+      expectedPath: requestedPath,
+    });
+    return null;
+  }
+  if (responsePath !== requestedPath) {
+    input.logger?.error?.(
+      "Project skill response path did not match its request; skipping skill",
+      { expectedPath: requestedPath, responsePath },
+    );
+    return null;
+  }
+  if (content === "") return null;
+  if (!isRuntimeProjectFileContent(content)) {
+    input.logger?.error?.("Project skill content exceeded its budget; skipping skill", {
+      path: requestedPath,
+    });
+    return null;
+  }
+
+  assertCatalogContent(content, "Skill document");
+  // Charge the shared catalog before returning the document to the concurrent
+  // result set. This caps retained completed reads to the aggregate budget;
+  // only the fixed-size worker set can still be in flight.
+  catalogBudget.retainDocument(content);
+  return Object.freeze({ path: responsePath, content });
+}
+
 /** Loads runtime builtin skill catalog. */
 export function loadRuntimeBuiltinSkillCatalog(input: {
   skillsDir: string;
@@ -620,15 +682,11 @@ export async function getRuntimeProjectSkillCatalog(
         })
       ),
     );
-    if (!files) {
-      continue;
-    }
+    if (!files) continue;
     hasAvailableListing = true;
     for (const file of files) {
-      // Do not trust custom clients to honor the server-side catalog filter.
-      if (!file.path.startsWith(prefixWithSlash)) {
-        continue;
-      }
+      // Custom clients may ignore the server-side catalog filter.
+      if (!file.path.startsWith(prefixWithSlash)) continue;
       if (!filesByPath.has(file.path)) catalogBudget.retainPath();
       filesByPath.set(file.path, file);
     }
@@ -680,44 +738,16 @@ export async function getRuntimeProjectSkillCatalog(
     const skillFiles = await mapWithConcurrency(
       candidates,
       PROJECT_SKILL_FETCH_CONCURRENCY,
-      ({ path }) =>
-        budget.run((abortSignal) =>
-          input.getProjectFile({
-            projectId: input.projectId,
-            authToken: input.authToken,
-            branchId: input.branchId,
-            path,
-            maximumContentCharacters: SKILL_DOCUMENT_MAX_CHARACTERS,
-            abortSignal,
-            timeoutMs: budget.remainingMs(),
-          })
-        ),
+      ({ path }) => fetchProjectSkillDocument(input, path, budget, catalogBudget),
     );
 
     for (let index = 0; index < skillFiles.length; index += 1) {
+      budget.throwIfTerminated();
       const candidate = candidates[index]!;
       const file = skillFiles[index];
       if (!file?.content) {
         continue;
       }
-      if (file.path !== candidate.path) {
-        input.logger?.error?.(
-          "Project skill response path did not match its request; skipping skill",
-          {
-            expectedPath: candidate.path,
-            responsePath: file.path,
-          },
-        );
-        continue;
-      }
-      if (!isRuntimeProjectFileContent(file.content)) {
-        input.logger?.error?.("Project skill content exceeded its budget; skipping skill", {
-          path: candidate.path,
-        });
-        continue;
-      }
-      assertCatalogContent(file.content, "Skill document");
-      catalogBudget.retainDocument(file.content);
 
       const definition = candidate.isFlat
         ? buildLegacyRuntimeFlatSkillDefinition({
@@ -791,44 +821,16 @@ export async function getRuntimeProjectSkillCatalog(
     const colocatedFiles = await mapWithConcurrency(
       colocatedCandidates,
       PROJECT_SKILL_FETCH_CONCURRENCY,
-      ({ path }) =>
-        budget.run((abortSignal) =>
-          input.getProjectFile({
-            projectId: input.projectId,
-            authToken: input.authToken,
-            branchId: input.branchId,
-            path,
-            maximumContentCharacters: SKILL_DOCUMENT_MAX_CHARACTERS,
-            abortSignal,
-            timeoutMs: budget.remainingMs(),
-          })
-        ),
+      ({ path }) => fetchProjectSkillDocument(input, path, budget, catalogBudget),
     );
 
     for (let index = 0; index < colocatedFiles.length; index += 1) {
+      budget.throwIfTerminated();
       const candidate = colocatedCandidates[index]!;
       const file = colocatedFiles[index];
       if (!file?.content) {
         continue;
       }
-      if (file.path !== candidate.path) {
-        input.logger?.error?.(
-          "Project skill response path did not match its request; skipping skill",
-          {
-            expectedPath: candidate.path,
-            responsePath: file.path,
-          },
-        );
-        continue;
-      }
-      if (!isRuntimeProjectFileContent(file.content)) {
-        input.logger?.error?.("Project skill content exceeded its budget; skipping skill", {
-          path: candidate.path,
-        });
-        continue;
-      }
-      assertCatalogContent(file.content, "Colocated skill document");
-      catalogBudget.retainDocument(file.content);
 
       const definition = buildRuntimeDirectorySkillDefinition({
         id: candidate.identity.id,
@@ -861,6 +863,7 @@ export async function getRuntimeProjectSkillCatalog(
     mergedSkillsById.set(skill.id, skill);
   }
 
+  budget.throwIfTerminated();
   return sortSkillsById(mergedSkillsById.values());
 }
 
