@@ -87,6 +87,7 @@ import {
   BrowserModuleBundleError,
   type BrowserModuleBundleLimitOverrides,
   BrowserModuleDependencySnapshotError,
+  BrowserModuleEntryRejectedError,
   bundleBrowserModuleWithMetadata,
 } from "#veryfront/server/shared/browser-module-bundler.ts";
 import { ensureDefaultParserContracts } from "#veryfront/extensions/parser/defaults.ts";
@@ -94,7 +95,6 @@ import {
   classifyBrowserModuleAbsoluteSourcePath,
   isProtectedBrowserModulePath,
 } from "./browser-module-admission.ts";
-import { hasUseClientDirective } from "#veryfront/rendering/rsc/page-island.ts";
 import { isRSCEnabled } from "#veryfront/utils/feature-flags.ts";
 import { isCanonicalDependencyPinningCacheKey } from "#veryfront/cache/keys/dependency-pinning.ts";
 
@@ -261,11 +261,7 @@ function isScriptModuleSource(path: string): boolean {
 async function inspectBrowserSourceBoundary(
   source: string,
   sourceFile: string,
-  requiresClientBoundary = false,
 ): Promise<string | null> {
-  if (requiresClientBoundary && !hasUseClientDirective(source, sourceFile)) {
-    return "RSC app module does not declare a client boundary";
-  }
   await ensureDefaultParserContracts();
   const violation = await inspectBrowserModuleBoundary(source, sourceFile);
   return violation ? describeBrowserModuleBoundaryViolation(violation) : null;
@@ -1024,33 +1020,13 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         let bundledClientBoundary: BrowserModuleBundle | undefined;
 
         if (!isSSR && !isFrameworkFile && isScriptModuleSource(sourceFile)) {
-          inspectedBrowserSource = await readSourceFileForVersion(secureFs, findResult);
-          const boundaryReason = await inspectBrowserSourceBoundary(
-            inspectedBrowserSource,
-            sourceFile,
-            sourcePolicy?.requiresClientBoundary === true,
-          );
-          if (boundaryReason) {
-            logger.warn("Rejected server-only source from browser module endpoint", {
-              modulePath,
-              reason: boundaryReason,
-            });
-            return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
-              "Content-Type": "text/plain; charset=utf-8",
-              "Cache-Control": "no-store",
-            });
-          }
-
           // `use client` marks a graph boundary, not every file in that graph.
           // Bundle the boundary so ordinary transitive helpers never become
           // independently addressable browser entrypoints. The bundler applies
-          // server-only checks to every dependency; the post-build pass below
-          // additionally enforces project path policy and release membership.
-          if (
-            sourcePolicy?.requiresClientBoundary === true &&
-            hasUseClientDirective(inspectedBrowserSource, sourceFile)
-          ) {
-            const inspectedBrowserSourceKey = await sha256Short(inspectedBrowserSource);
+          // admission before reading the entry, then applies server-only checks
+          // to every dependency. The post-build pass below additionally enforces
+          // project path policy and release membership.
+          if (sourcePolicy?.requiresClientBoundary === true) {
             const dependencyPinningOptions = dependencyState
               ? {
                 dependencyPinningCacheKey: dependencyState.dependencyPinningCacheKey,
@@ -1062,6 +1038,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             if (!dependencyPinningOptions) {
               return unknownDependencySnapshotModuleResponse(method);
             }
+            await ensureDefaultParserContracts();
             bundledClientBoundary = await bundleBrowserModuleWithMetadata(sourceFile, {
               adapter,
               projectDir,
@@ -1072,17 +1049,19 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               ...dependencyPinningOptions,
               dependencyPinningSource: dependencySource,
               signal: req.signal,
-              entrySource: inspectedBrowserSource,
-              entrySourceKey: inspectedBrowserSourceKey,
+              requireClientBoundary: true,
               limits: options.browserModuleBundleLimits,
-              singleflightKey: [
-                effectiveProjectId,
-                options.contentSourceId ?? options.releaseId ?? branch ?? "working-tree",
-                dependencyState?.dependencyPinningCacheKey ?? requestedPinKey,
-                url.origin,
-                sourceFile,
-                inspectedBrowserSourceKey,
-              ].join("\0"),
+              ...(requiresProductionManifestAdmission && options.releaseId
+                ? {
+                  singleflightKey: [
+                    effectiveProjectId,
+                    options.releaseId,
+                    dependencyState?.dependencyPinningCacheKey ?? requestedPinKey,
+                    url.origin,
+                    sourceFile,
+                  ].join("\0"),
+                }
+                : {}),
             });
             if (!dependencyState) {
               const resolvedCacheKey = bundledClientBoundary.dependencyPinningCacheKey;
@@ -1114,6 +1093,22 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
                 modulePath,
                 dependencyPath: dependencyAdmission.path,
                 reason: dependencyAdmission.reason,
+              });
+              return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
+                "Content-Type": "text/plain; charset=utf-8",
+                "Cache-Control": "no-store",
+              });
+            }
+          } else {
+            inspectedBrowserSource = await readSourceFileForVersion(secureFs, findResult);
+            const boundaryReason = await inspectBrowserSourceBoundary(
+              inspectedBrowserSource,
+              sourceFile,
+            );
+            if (boundaryReason) {
+              logger.warn("Rejected server-only source from browser module endpoint", {
+                modulePath,
+                reason: boundaryReason,
               });
               return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
                 "Content-Type": "text/plain; charset=utf-8",
@@ -1281,6 +1276,12 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       } catch (error) {
         if (error instanceof BrowserModuleDependencySnapshotError) {
           return unknownDependencySnapshotModuleResponse(method);
+        }
+        if (error instanceof BrowserModuleEntryRejectedError) {
+          return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
+            "Content-Type": "text/plain; charset=utf-8",
+            "Cache-Control": "no-store",
+          });
         }
         const errorMsg = getErrorMessage(error);
         logger.error("Module transform error", { modulePath, error: errorMsg });

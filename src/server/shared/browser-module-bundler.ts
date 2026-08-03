@@ -850,7 +850,11 @@ export function bundleBrowserModuleWithMetadata(
         }
         const boundaryViolation = await inspectBrowserModuleBoundary(src, absPath);
         if (boundaryViolation) {
-          throw new Error(describeBrowserModuleBoundaryViolation(boundaryViolation));
+          const cause = new Error(describeBrowserModuleBoundaryViolation(boundaryViolation));
+          if (options.requireClientBoundary) {
+            throw new BrowserModuleEntryRejectedError(cause);
+          }
+          throw cause;
         }
         const importMapJson = options.importMapJson === undefined
           ? await buildTrackedImportMapJson(

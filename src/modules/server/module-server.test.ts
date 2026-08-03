@@ -457,6 +457,13 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
           `export const marker = secret;`,
         ].join("\n"),
       );
+      await Deno.writeTextFile(
+        `${projectDir}/app/action-client.tsx`,
+        [
+          `"use client";`,
+          `export async function save() { "use server"; return "entry-server-action"; }`,
+        ].join("\n"),
+      );
       const { serveModule } = await import("./module-server.ts");
       const options = {
         projectId: "test",
@@ -500,6 +507,13 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
           options,
         );
         assertEquals(helperEntry.status, 404, `${prefix} helper entry`);
+
+        const actionEntry = await serveModule(
+          new Request(`http://localhost:3000${prefix}/app/action-client.js`),
+          options,
+        );
+        assertEquals(actionEntry.status, 404, `${prefix} server-directed client entry`);
+        assertEquals((await actionEntry.text()).includes("entry-server-action"), false);
 
         const leakyBoundary = await serveModule(
           new Request(`http://localhost:3000${prefix}/app/leaky-client.js`),
@@ -682,6 +696,133 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     } finally {
       release.resolve();
       clearReactVersionCache();
+      if (previous) register("Bundler", previous);
+      else unregister("Bundler");
+    }
+  });
+
+  it({
+    name: "admits RSC entry reads before starting project filesystem work",
+    timeout: 5_000,
+  }, async () => {
+    const projectDir = "/module-server-entry-admission";
+    const projectId = "module-server-entry-admission";
+    const adapter = createMockAdapter();
+    const entryPaths = Array.from(
+      { length: 11 },
+      (_, index) => `${projectDir}/app/client-${index}.tsx`,
+    );
+    const entryPathSet = new Set(entryPaths);
+    for (const [index, path] of entryPaths.entries()) {
+      adapter.fs.files.set(
+        path,
+        `"use client"; export default function Client${index}() { return null; }`,
+      );
+    }
+
+    const exactRead = adapter.fs.readFileBytesWithinLimit!;
+    const snapshotRead = adapter.fs.readFileSnapshotWithinLimit!;
+    const bypassDetected = Promise.withResolvers<void>();
+    const twoSnapshotReadsStarted = Promise.withResolvers<void>();
+    const releaseSnapshotReads = Promise.withResolvers<void>();
+    let exactEntryReads = 0;
+    let activeSnapshotReads = 0;
+    let maximumActiveSnapshotReads = 0;
+    let snapshotEntryReads = 0;
+    adapter.fs.readFileBytesWithinLimit = (path, limit) => {
+      if (entryPathSet.has(path)) {
+        exactEntryReads += 1;
+        bypassDetected.resolve();
+      }
+      return exactRead(path, limit);
+    };
+    adapter.fs.readFileSnapshotWithinLimit = async (path, root, limit) => {
+      if (entryPathSet.has(path)) {
+        snapshotEntryReads += 1;
+        activeSnapshotReads += 1;
+        maximumActiveSnapshotReads = Math.max(
+          maximumActiveSnapshotReads,
+          activeSnapshotReads,
+        );
+        if (snapshotEntryReads === 2) twoSnapshotReadsStarted.resolve();
+        try {
+          await releaseSnapshotReads.promise;
+        } finally {
+          activeSnapshotReads -= 1;
+        }
+      }
+      return await snapshotRead(path, root, limit);
+    };
+
+    const previous = tryResolve<Bundler>("Bundler");
+    register<Bundler>("Bundler", {
+      bundle: (options) =>
+        Promise.resolve({
+          outputFiles: [{
+            path: "out.js",
+            contents: new TextEncoder().encode(options.stdin?.contents ?? ""),
+            text: options.stdin?.contents ?? "",
+          }],
+          warnings: [],
+          errors: [],
+        }),
+      transform: () => Promise.resolve({ code: "", warnings: [] }),
+    });
+
+    try {
+      const { serveModule } = await import("./module-server.ts");
+      const serveEntry = (index: number, signal?: AbortSignal) =>
+        serveModule(
+          new Request(`http://localhost:3000/_vf_modules/app/client-${index}.js`, { signal }),
+          {
+            projectId,
+            projectDir,
+            adapter,
+            dev: false,
+            isLocalProject: false,
+            isProxyMode: true,
+            mode: "preview",
+            config: { experimental: { rsc: true } },
+          },
+        );
+      const controller = new AbortController();
+      const cancelled = serveEntry(0, controller.signal);
+      const admitted = entryPaths.slice(1, 10).map((_, index) => serveEntry(index + 1));
+      admitted.forEach((response) => void response.catch(() => undefined));
+
+      const firstEntryRead = await Promise.race([
+        twoSnapshotReadsStarted.promise.then(() => "admitted" as const),
+        bypassDetected.promise.then(() => "bypassed" as const),
+      ]);
+      assertEquals(firstEntryRead, "admitted");
+      assertEquals(exactEntryReads, 0);
+      assertEquals(snapshotEntryReads, 2);
+      assertEquals(maximumActiveSnapshotReads, 2);
+
+      controller.abort(new DOMException("request cancelled", "AbortError"));
+      const abortTimeout = Promise.withResolvers<"timeout">();
+      const abortTimeoutId = setTimeout(() => abortTimeout.resolve("timeout"), 500);
+      const cancelledResult = await Promise.race([
+        cancelled,
+        abortTimeout.promise,
+      ]);
+      clearTimeout(abortTimeoutId);
+      if (cancelledResult === "timeout") {
+        throw new Error("Cancelled entry request did not return promptly");
+      }
+      assertEquals(cancelledResult.status, 500);
+      assertEquals(activeSnapshotReads, 2);
+
+      const overflow = await serveEntry(10);
+      assertEquals(overflow.status, 503);
+      assertEquals(snapshotEntryReads, 2);
+
+      releaseSnapshotReads.resolve();
+      const responses = await Promise.all(admitted);
+      assertEquals(responses.every((response) => response.status === 200), true);
+      assertEquals(maximumActiveSnapshotReads, 2);
+    } finally {
+      releaseSnapshotReads.resolve();
       if (previous) register("Bundler", previous);
       else unregister("Bundler");
     }
