@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { EvalRecord } from "veryfront/eval";
 
@@ -493,8 +498,11 @@ describe("cli/templates", () => {
       "'current-user'",
       '"demo-user"',
       "'demo-user'",
+      '"dev-user"',
+      "'dev-user'",
       "DEFAULT_USER_ID",
       "CURRENT_USER_ID",
+      "VERYFRONT_DEV_USER_ID",
     ];
 
     for (const file of await collectTemplateTsFiles(integrationTemplates)) {
@@ -615,58 +623,90 @@ describe("cli/templates", () => {
       new URL("./integrations/_base/files/lib/user-id.ts", import.meta.url),
     );
     assertEquals(sharedTemplate.includes("request.headers"), false);
-    assertEquals(sharedTemplate.includes("isDevelopmentRuntime()"), true);
     assertEquals(
-      sharedTemplate.includes("Implement requireUserIdFromRequest"),
+      sharedTemplate.includes("Authenticated request identity is not configured"),
       true,
     );
+    assertEquals(sharedTemplate.includes("resolveAuthenticatedUserId"), true);
+    // The identity boundary must have no ambient fallback: an environment-gated
+    // default collapses every visitor onto one token owner.
+    for (
+      const ambient of [
+        "isDevelopmentRuntime",
+        "VERYFRONT_DEV_USER_ID",
+        '"dev-user"',
+        "'dev-user'",
+        "NODE_ENV",
+        "DENO_ENV",
+      ]
+    ) {
+      assertEquals(
+        sharedTemplate.includes(ambient),
+        false,
+        `shared identity template must not derive a user id from ${ambient}`,
+      );
+    }
   });
 
-  it("rejects client-controlled identity outside explicit development modes", async () => {
-    const originalNodeEnv = Deno.env.get("NODE_ENV");
-    const originalDenoEnv = Deno.env.get("DENO_ENV");
-    const originalDevUserId = Deno.env.get("VERYFRONT_DEV_USER_ID");
+  it("keeps authenticated identity documentation within ASCII copy rules", async () => {
+    for (
+      const path of [
+        "./integrations/_base/files/SETUP.md",
+        "./integrations/sheets/README.md",
+      ]
+    ) {
+      const source = await Deno.readTextFile(new URL(path, import.meta.url));
+      assertEquals(
+        /[\u2013\u2014]/.test(source),
+        false,
+        `${path} must use ASCII punctuation`,
+      );
+    }
+  });
+
+  it("requires an implemented resolver and never trusts identity headers", async () => {
     const { requireUserIdFromRequest } = await import(
       "./integrations/_base/files/lib/user-id.ts"
     );
+    const request = new Request("https://app.example.test/api/auth/example", {
+      headers: {
+        "x-veryfront-user-id": "client-controlled-user",
+        "x-user-id": "client-controlled-user",
+      },
+    });
 
-    try {
-      Deno.env.set("NODE_ENV", "production");
-      Deno.env.set("VERYFRONT_DEV_USER_ID", "local-test-user");
-      const request = new Request("https://app.example.test/api/auth/example", {
-        headers: { "x-veryfront-user-id": "client-controlled-user" },
-      });
+    // Fails closed until the application implements a verified resolver, in every
+    // runtime mode — there is no development escape hatch.
+    await assertRejects(
+      () => requireUserIdFromRequest(request),
+      Error,
+      "Authenticated request identity is not configured",
+    );
+  });
 
+  it("requires an authenticated tool context user id with no ambient default", async () => {
+    const { requireUserIdFromContext } = await import(
+      "./integrations/_base/files/lib/user-id.ts"
+    );
+
+    assertEquals(requireUserIdFromContext({ userId: "ctx-user" }), "ctx-user");
+    const maximumUserId = "u".repeat(1_024);
+    assertEquals(requireUserIdFromContext({ userId: maximumUserId }), maximumUserId);
+
+    for (
+      const context of [
+        undefined,
+        {},
+        { userId: "" },
+        { userId: " padded " },
+        { userId: "u".repeat(1_025) },
+      ]
+    ) {
       assertThrows(
-        () => requireUserIdFromRequest(request),
+        () => requireUserIdFromContext(context),
         Error,
-        "Authenticated request identity is not configured",
+        "Authenticated tool context userId is required",
       );
-
-      for (const mode of [undefined, "staging"] as const) {
-        if (mode === undefined) Deno.env.delete("NODE_ENV");
-        else Deno.env.set("NODE_ENV", mode);
-        Deno.env.delete("DENO_ENV");
-        assertThrows(
-          () => requireUserIdFromRequest(request),
-          Error,
-          "Authenticated request identity is not configured",
-        );
-      }
-
-      Deno.env.set("NODE_ENV", "development");
-      assertEquals(requireUserIdFromRequest(request), "local-test-user");
-
-      Deno.env.delete("NODE_ENV");
-      Deno.env.set("DENO_ENV", "test");
-      assertEquals(requireUserIdFromRequest(request), "local-test-user");
-    } finally {
-      if (originalNodeEnv === undefined) Deno.env.delete("NODE_ENV");
-      else Deno.env.set("NODE_ENV", originalNodeEnv);
-      if (originalDenoEnv === undefined) Deno.env.delete("DENO_ENV");
-      else Deno.env.set("DENO_ENV", originalDenoEnv);
-      if (originalDevUserId === undefined) Deno.env.delete("VERYFRONT_DEV_USER_ID");
-      else Deno.env.set("VERYFRONT_DEV_USER_ID", originalDevUserId);
     }
   });
 

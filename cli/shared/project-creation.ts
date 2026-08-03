@@ -156,7 +156,10 @@ ${integrationEntries}
 ];
 
 export async function GET(req: Request): Promise<Response> {
-  const userId = requireUserIdFromRequest(req);
+  const userId = await requireUserIdFromRequest(req);
+  if (!userId) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
   const statuses = await Promise.all(
     INTEGRATIONS.map(async (integration) => {

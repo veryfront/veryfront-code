@@ -1,40 +1,39 @@
 import type { ToolExecutionContext } from "veryfront/tool";
 
-function isDevelopmentRuntime(): boolean {
-  const mode = Deno.env.get("NODE_ENV") ?? Deno.env.get("DENO_ENV");
-  return mode === "development" || mode === "test";
+function normalizeUserId(value: unknown): string | null {
+  if (typeof value !== "string" || value.length === 0 || value.length > 1_024) {
+    return null;
+  }
+  return value.trim() === value ? value : null;
 }
 
-function devUserId(): string {
-  return Deno.env.get("VERYFRONT_DEV_USER_ID") ?? "dev-user";
-}
-
-function requireUserId(value: string | null | undefined): string {
-  if (typeof value === "string" && value.length > 0) {
-    return value;
-  }
-
-  if (isDevelopmentRuntime()) {
-    return devUserId();
-  }
-
+/**
+ * Application-owned session/JWT lookup.
+ *
+ * Replace this implementation with a server-side session lookup or verified
+ * JWT check. There is deliberately no environment-gated default, because an
+ * ambient identity collapses every visitor onto a single OAuth token owner.
+ */
+export async function resolveAuthenticatedUserId(
+  _request: Request,
+): Promise<string | null> {
   throw new Error(
-    "Authenticated user id is required outside explicit development and test modes. " +
-      "Pass the authenticated user's id from your session, JWT, or auth provider.",
+    "Authenticated request identity is not configured. Implement " +
+      "resolveAuthenticatedUserId in lib/user-id.ts using a verified session or JWT.",
   );
 }
 
-export function requireUserIdFromRequest(_request: Request): string {
-  if (isDevelopmentRuntime()) {
-    return devUserId();
-  }
-
-  throw new Error(
-    "Authenticated request identity is not configured. " +
-      "Implement requireUserIdFromRequest in lib/user-id.ts using your verified session, JWT, or auth provider.",
-  );
+/** Resolve and validate the authenticated user for an OAuth request. */
+export async function requireUserIdFromRequest(
+  request: Request,
+): Promise<string | null> {
+  return normalizeUserId(await resolveAuthenticatedUserId(request));
 }
 
-export function requireUserIdFromContext(context?: ToolExecutionContext): string {
-  return requireUserId(context?.userId);
+export function requireUserIdFromContext(
+  context?: ToolExecutionContext,
+): string {
+  const userId = normalizeUserId(context?.userId);
+  if (userId) return userId;
+  throw new Error("Authenticated tool context userId is required");
 }
