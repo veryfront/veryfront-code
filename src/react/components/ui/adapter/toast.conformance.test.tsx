@@ -94,8 +94,9 @@ export function runToastConformance(
     return {
       dom,
       text: () => document.body.textContent ?? "",
-      cleanup: () => {
-        root.unmount();
+      cleanup: async () => {
+        flushSync(() => root.unmount());
+        await new Promise((resolve) => setTimeout(resolve, 0));
         restore();
         api = null;
       },
@@ -112,7 +113,7 @@ export function runToastConformance(
         flushSync(() => api!.dismiss(id));
         await waitFor(() => !h.text().includes("Saved"));
       } finally {
-        h.cleanup();
+        await h.cleanup();
       }
     });
 
@@ -125,7 +126,7 @@ export function runToastConformance(
         assert(item.textContent?.includes("0") === true, "renders a numeric zero title");
         assert(item.querySelector("p"), "retains an empty-string description node");
       } finally {
-        h.cleanup();
+        await h.cleanup();
       }
     });
 
@@ -148,7 +149,7 @@ export function runToastConformance(
         assert(ran, "action onClick fired");
         await waitFor(() => !h.text().includes("Undo"));
       } finally {
-        h.cleanup();
+        await h.cleanup();
       }
     });
 
@@ -159,7 +160,7 @@ export function runToastConformance(
         await waitFor(() => h.text().includes("custom "));
         assert(h.text().includes("custom "), "custom node rendered");
       } finally {
-        h.cleanup();
+        await h.cleanup();
       }
     });
 
@@ -175,7 +176,7 @@ export function runToastConformance(
         assert(!h.text().includes("First"), "oldest toast was evicted");
         assert(h.text().includes("Second") && h.text().includes("Third"), "newest toasts remain");
       } finally {
-        h.cleanup();
+        await h.cleanup();
       }
     });
 
@@ -199,7 +200,7 @@ export function runToastConformance(
         assert(h.text().includes("Persistent override"), "per-toast duration overrides provider");
         flushSync(() => api!.dismiss(persistentId));
       } finally {
-        h.cleanup();
+        await h.cleanup();
       }
     });
 
@@ -213,11 +214,11 @@ export function runToastConformance(
           "active adapter realizes the manual viewport",
         );
       } finally {
-        h.cleanup();
+        await h.cleanup();
       }
     });
 
-    it("shares public provider and per-call validation across adapters", () => {
+    it("shares public provider and per-call validation across adapters", async () => {
       assertThrows(
         () =>
           renderToString(
@@ -238,7 +239,7 @@ export function runToastConformance(
           "2147483647",
         );
       } finally {
-        h.cleanup();
+        await h.cleanup();
       }
     });
   });
@@ -275,7 +276,7 @@ describe("Toast presentational parts", () => {
 });
 
 describe("Builtin Toast viewport and timer lifecycle", () => {
-  it("renders zero and empty-string structured content", () => {
+  it("renders zero and empty-string structured content", async () => {
     const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
     const restore = installDomGlobals(dom);
     const root = createRoot(document.getElementById("root")!);
@@ -304,6 +305,7 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
       assert(body.children[1]!.textContent === "", "renders an empty-string description");
     } finally {
       flushSync(() => root.unmount());
+      await new Promise((resolve) => setTimeout(resolve, 0));
       restore();
     }
   });
@@ -744,7 +746,7 @@ const altToastWithAdditionalState: ToastParts = {
 };
 
 describe("Toast adapter switching", () => {
-  it("remounts the adapter hook bridge when hook implementations differ", () => {
+  it("remounts the adapter hook bridge when hook implementations differ", async () => {
     const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
     const restore = installDomGlobals(dom);
     const root = createRoot(document.getElementById("root")!);
@@ -781,6 +783,7 @@ describe("Toast adapter switching", () => {
       assert(api, "replacement adapter state is available");
     } finally {
       flushSync(() => root.unmount());
+      await new Promise((resolve) => setTimeout(resolve, 0));
       restore();
     }
   });

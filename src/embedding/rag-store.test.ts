@@ -824,6 +824,86 @@ describe("ragStore", () => {
     });
   });
 
+  it("does not report stored-chunk embedding provider failures as storage failures", async () => {
+    await withTempDir(async (tempDir) => {
+      registerEmbeddingProvider("failing-doc-embed", () =>
+        ({
+          specificationVersion: "v2",
+          provider: "failing-doc-embed",
+          modelId: "test",
+          maxEmbeddingsPerCall: undefined,
+          supportsParallelCalls: true,
+          async doEmbed() {
+            throw new Error("embedding provider timed out");
+          },
+        }) as never);
+
+      const store = ragStore({
+        model: "failing-doc-embed/test",
+        storagePath: join(tempDir, "data", "index.json"),
+      });
+      await store.ingest("Doc", "searchable content");
+
+      const error = await assertRejects(
+        () => store.search("query"),
+        Error,
+        "embedding provider timed out",
+      );
+      assert(error instanceof Error);
+      assertEquals(
+        error instanceof VeryfrontError && error.slug === "rag-store-unavailable",
+        false,
+      );
+      assertEquals(error.message.includes("Check storage and retry"), false);
+    });
+  });
+
+  it("does not report query embedding provider failures as storage failures", async () => {
+    await withTempDir(async (tempDir) => {
+      registerEmbeddingProvider("failing-query-embed", () =>
+        ({
+          specificationVersion: "v2",
+          provider: "failing-query-embed",
+          modelId: "test",
+          maxEmbeddingsPerCall: undefined,
+          supportsParallelCalls: true,
+          async doEmbed({ values }: { values: string[] }) {
+            if (values.length === 1 && values[0] === "query") {
+              throw new Error("embedding provider rate limited");
+            }
+            return {
+              embeddings: values.map((value) => {
+                const vector = new Array<number>(1536).fill(0);
+                vector[0] = value.length;
+                return vector;
+              }),
+              usage: { tokens: 0 },
+              rawResponse: undefined,
+              warnings: [],
+            };
+          },
+        }) as never);
+
+      const store = ragStore({
+        model: "failing-query-embed/test",
+        storagePath: join(tempDir, "data", "index.json"),
+      });
+      await store.ingest("Doc", "searchable content");
+
+      const error = await assertRejects(
+        () => store.search("query"),
+        Error,
+        "embedding provider rate limited",
+      );
+      assert(error instanceof Error);
+      assertEquals(
+        error instanceof VeryfrontError && error.slug === "rag-store-unavailable",
+        false,
+      );
+      assertEquals(error.message.includes("Check storage and retry"), false);
+    });
+  });
+
   it("reuses parsed local store data across searches until storage changes", async () => {
     registerTestEmbeddingProvider();
 

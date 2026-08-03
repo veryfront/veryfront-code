@@ -595,15 +595,6 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
     return true;
   }
 
-  async function withStoreProviderFailure<T>(operation: () => Promise<T>): Promise<T> {
-    try {
-      return await operation();
-    } catch (error) {
-      if (isVeryfrontError(error)) throw error;
-      throw unavailableStoreError(error);
-    }
-  }
-
   function sameStoreSource(
     expected: Uint8Array | null,
     actual: Uint8Array | null,
@@ -617,9 +608,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
     for (let attempt = 0; attempt < MAX_EMBEDDING_PERSIST_ATTEMPTS; attempt++) {
       if (loaded.data.chunks.length === 0) return null;
 
-      const updated = await withStoreProviderFailure(async () =>
-        await ensureEmbeddings(loaded.data)
-      );
+      const updated = await ensureEmbeddings(loaded.data);
       if (!updated) return loaded.data;
 
       const embeddedData = loaded.data;
@@ -752,34 +741,32 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
       if (!query.trim()) return [];
       const data = await loadSearchDataWithEmbeddings();
       if (data === null) return [];
-      return await withStoreProviderFailure(async () => {
-        const embedder = createEmbedder();
-        const queryEmbedding = await embedder.embed(query);
-        const topK = options?.topK ?? DEFAULT_TOP_K;
-        const threshold = options?.threshold;
+      const embedder = createEmbedder();
+      const queryEmbedding = await embedder.embed(query);
+      const topK = options?.topK ?? DEFAULT_TOP_K;
+      const threshold = options?.threshold;
 
-        const docMap = new Map(data.documents.map((d) => [d.id, d]));
+      const docMap = new Map(data.documents.map((d) => [d.id, d]));
 
-        const scored = data.chunks.map((c) => {
-          const doc = docMap.get(c.documentId);
-          return {
-            text: c.text,
-            score: cosineSimilarity(queryEmbedding, c.embedding),
-            documentId: c.documentId,
-            title: doc?.title ?? "Unknown",
-            source: doc?.source ?? "",
-            type: doc?.type ?? "",
-          };
-        });
-
-        scored.sort((a, b) => b.score - a.score);
-
-        let results = scored.slice(0, topK);
-        if (threshold !== undefined) {
-          results = results.filter((r) => r.score >= threshold);
-        }
-        return results;
+      const scored = data.chunks.map((c) => {
+        const doc = docMap.get(c.documentId);
+        return {
+          text: c.text,
+          score: cosineSimilarity(queryEmbedding, c.embedding),
+          documentId: c.documentId,
+          title: doc?.title ?? "Unknown",
+          source: doc?.source ?? "",
+          type: doc?.type ?? "",
+        };
       });
+
+      scored.sort((a, b) => b.score - a.score);
+
+      let results = scored.slice(0, topK);
+      if (threshold !== undefined) {
+        results = results.filter((r) => r.score >= threshold);
+      }
+      return results;
     },
 
     async listDocuments(): Promise<RagDocumentMeta[]> {
