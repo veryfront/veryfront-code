@@ -57,7 +57,7 @@ function canonicalizeHttpSpecifier(
   moduleServerOrigin?: string,
 ): string {
   if (/^https?:\/\//i.test(specifier)) return new URL(specifier).toString();
-  if (!specifier.startsWith("//")) return specifier;
+  if (!stringStartsWith(specifier, "//")) return specifier;
 
   const resolutionBase = parseHttpBase(baseUrl) ?? parseHttpBase(moduleServerOrigin);
   if (!resolutionBase) {
