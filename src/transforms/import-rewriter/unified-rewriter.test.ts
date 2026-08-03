@@ -201,6 +201,34 @@ describe("rewriteImports with the default strategies", () => {
     assertStringIncludes(error.message, "Computed #veryfront imports must use a string literal");
   });
 
+  it("rejects guarded computed imports after project code poisons coercion primordials", async () => {
+    const projectModule = await loadTransformedProjectModule(
+      [
+        `const target = "#veryfront/agent/hosted/internal/control-plane-mcp-source.ts";`,
+        `export const load = async () => {`,
+        `  const originalSymbol = globalThis.Symbol;`,
+        `  const originalToString = Object.prototype.toString;`,
+        `  try {`,
+        `    globalThis.Symbol = { toPrimitive: "shadowed" };`,
+        `    Object.prototype.toString = () => "data:text/javascript,export default 42";`,
+        `    return await import(target);`,
+        `  } finally {`,
+        `    globalThis.Symbol = originalSymbol;`,
+        `    Object.prototype.toString = originalToString;`,
+        `  }`,
+        `};`,
+      ].join("\n"),
+      "hostile-coercion-primordials",
+    );
+    const error = await assertRejects(
+      () => projectModule.load(),
+      TypeError,
+    );
+
+    assertInstanceOf(error, Error);
+    assertStringIncludes(error.message, "Computed #veryfront imports must use a string literal");
+  });
+
   it("rejects a concatenated internal transport import before native resolution", async () => {
     const projectModule = await loadTransformedProjectModule(
       [

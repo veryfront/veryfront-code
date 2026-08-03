@@ -285,7 +285,11 @@ ${
     guardFrameworkImports
       ? `function ${name}RejectedSpecifier(message) {
   return {
-    [Symbol.toPrimitive]() {
+    __proto__: null,
+    toString() {
+      throw new TypeError(message);
+    },
+    valueOf() {
       throw new TypeError(message);
     },
   };
