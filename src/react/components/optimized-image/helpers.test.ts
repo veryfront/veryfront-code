@@ -226,6 +226,10 @@ describe("optimized-image helpers", () => {
         getOptimizedImageFallback("/images/photo.jpg", "webp", widths, 80, 640),
         "/.veryfront/optimized-images/images/photo-640w.webp",
       );
+    });
+
+    it("falls back to the largest width when the preferred width exceeds every variant", () => {
+      const widths = [320, 640, 1024];
       assertEquals(
         getOptimizedImageFallback("/images/photo.jpg", "webp", widths, 80, 1200),
         "/.veryfront/optimized-images/images/photo-1024w.webp",
