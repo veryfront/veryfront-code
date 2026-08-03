@@ -16,7 +16,15 @@ import {
 } from "#veryfront/observability/application-errors.ts";
 import { register, unregister } from "#veryfront/extensions/contracts.ts";
 import { SandboxShellToolsProviderName } from "#veryfront/extensions/sandbox/index.ts";
-import { createRemoteMCPToolSource, tool, toolRegistry } from "#veryfront/tool";
+import {
+  createRemoteMCPToolSource,
+  type RemoteMCPToolSourceConfig,
+  type RemoteToolSource,
+  tool,
+  type ToolDefinition,
+  type ToolExecutionContext,
+  toolRegistry,
+} from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { __resetLogRecordEmitterForTests, agentLogger } from "#veryfront/utils/logger/index.ts";
 import {
@@ -39,11 +47,47 @@ import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
 import { initializeNodeAgentServiceSentryApplicationErrors } from "../service/node-sentry.ts";
 import { getRemoteToolSourceFactory } from "./cloud-agent-config.ts";
+import { prepareHostedChatRuntimeToolAssembly } from "./chat-runtime-tool-assembly.ts";
+import { prepareDefaultHostedChildForkToolSources } from "./child-fork-tool-sources.ts";
 
 type CaptureRecord = {
   error: unknown;
   context: ApplicationErrorContext;
 };
+
+function remoteMcpTool(name: string): ToolDefinition {
+  return {
+    name,
+    description: `${name} description`,
+    parameters: { type: "object", properties: {} },
+  };
+}
+
+function visibleAccessProfile(action: string) {
+  return {
+    version: 1,
+    freshness: {
+      resolved_at: "2999-01-01T00:00:00.000Z",
+      valid_for_ms: 60_000,
+      fail_closed_on_expiry: true,
+    },
+    families: [
+      {
+        family: "runtime",
+        default_decision: {
+          visibility: "hidden",
+          reason_code: "billing_plan_restriction",
+        },
+        action_overrides: [
+          {
+            action,
+            decision: { visibility: "visible", reason_code: "allowed" },
+          },
+        ],
+      },
+    ],
+  };
+}
 
 Deno.test("public agent service options do not expose the internal eager rollback", () => {
   type HasOperationalToolLoadingOverride = "operationalToolLoadingOverride" extends
@@ -76,6 +120,78 @@ Deno.test("root and child runtimes share the deployment-owned remote MCP factory
     getRemoteToolSourceFactory({ options: {} } as never),
     createRemoteMCPToolSource,
   );
+});
+
+Deno.test("service context factory drives root and delegated child remote MCP sources", async () => {
+  const createdConfigs: Array<Pick<RemoteMCPToolSourceConfig, "id" | "endpoint">> = [];
+  const createRemoteToolSource = (config: RemoteMCPToolSourceConfig): RemoteToolSource => {
+    createdConfigs.push({ id: config.id, endpoint: config.endpoint });
+    const sourceId = config.id ?? "source";
+    return {
+      id: sourceId,
+      listTools: () =>
+        Promise.resolve(
+          sourceId === "studio-mcp" || sourceId === "studio-mcp-live-tools"
+            ? [remoteMcpTool("studio_open_project")]
+            : [remoteMcpTool("update_file")],
+        ),
+      executeTool: (toolName: string, _args: unknown, _context?: ToolExecutionContext) =>
+        Promise.resolve(
+          toolName === "get_tool_access_profile"
+            ? visibleAccessProfile("update_file")
+            : { ok: true },
+        ),
+    };
+  };
+  const factory = getRemoteToolSourceFactory({
+    options: { createRemoteToolSource },
+  } as never);
+
+  await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+    taskContext: {
+      authToken: "token-1",
+      projectId: "project-1",
+      model: "openai/gpt-5.5",
+      clientProfile: {
+        id: "veryfront-studio",
+        type: "web",
+        trusted: true,
+        capabilities: ["ui_panels"],
+      },
+    },
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    studioMcpUrl: "https://studio.example.com/mcp",
+    mcpServers: [veryfrontApiMcpServer(), veryfrontStudioMcpServer()],
+    allowedToolNames: null,
+    createRemoteToolSource: factory,
+    preloadLatestConversationUserText: false,
+  });
+
+  await prepareDefaultHostedChildForkToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example.com/mcp",
+    studioMcpUrl: "https://studio.example.com/mcp",
+    mcpServers: [veryfrontApiMcpServer(), veryfrontStudioMcpServer()],
+    clientProfile: {
+      id: "veryfront-studio",
+      type: "web",
+      trusted: true,
+      capabilities: ["ui_panels"],
+    },
+    getProjectId: () => "project-1",
+    createRemoteToolSource: factory,
+  });
+
+  assertEquals(createdConfigs, [
+    { id: "veryfront-mcp", endpoint: "https://api.example.com/mcp" },
+    { id: "studio-mcp", endpoint: "https://studio.example.com/mcp" },
+    { id: "veryfront-mcp-fork", endpoint: "https://api.example.com/mcp" },
+    { id: "studio-mcp-live-tools", endpoint: "https://studio.example.com/mcp" },
+  ]);
 });
 
 type TestDenoRuntime = {
