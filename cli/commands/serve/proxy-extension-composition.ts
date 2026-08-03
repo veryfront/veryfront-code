@@ -53,7 +53,9 @@ const REDIS_EXTENSION_PACKAGE_NAME = "@veryfront/ext-redis";
 async function activateStandaloneProxyExtensionsInternal(): Promise<ExtensionLoader | null> {
   const cacheType = getEnv("CACHE_TYPE") || "memory";
   if (cacheType !== "memory" && cacheType !== "extension" && cacheType !== "redis") {
-    throw new NativeTypeError("CACHE_TYPE must be memory, extension, or redis");
+    throw new NativeTypeError(
+      `CACHE_TYPE must be memory, extension, or redis (received "${cacheType}")`,
+    );
   }
 
   const selected: Array<{
@@ -97,7 +99,11 @@ async function activateStandaloneProxyExtensionsInternal(): Promise<ExtensionLoa
     await loader.setupAll(extensions, {});
     // Keep the chart compatible with older universal binaries during rollout.
     // This shared boundary translates the legacy value only after the
-    // extension-backed store is registered.
+    // extension-backed store is registered. The downstream cache validators
+    // (src/proxy/cache/index.ts, src/proxy/cache/extension-store.ts) accept
+    // only "memory" and "extension", so this translation must complete before
+    // the proxy runtime is imported. TODO(#3214): remove this rollout shim
+    // once the hosted charts stop passing CACHE_TYPE=redis.
     if (cacheType === "redis") setEnv("CACHE_TYPE", "extension");
     return loader;
   } catch (error) {
