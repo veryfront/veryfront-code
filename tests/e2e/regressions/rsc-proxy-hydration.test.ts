@@ -385,12 +385,12 @@ async function assertPreviewChatStyling(
   page: import("npm:playwright").Page,
 ): Promise<void> {
   await page.waitForSelector("#preview-chat-page [data-vf-chat]");
-  await page.locator('link#vf-tailwind-css[href*="/_vf_styles/styles.css"]').waitFor({
+  await page.locator('link#vf-project-css[href*="/_vf_styles/styles.css"]').waitFor({
     state: "attached",
   });
   await page.waitForSelector('svg path[d^="M17.3041"]');
   await page.waitForFunction(() => {
-    const stylesheet = document.querySelector("link#vf-tailwind-css") as HTMLLinkElement | null;
+    const stylesheet = document.querySelector("link#vf-project-css") as HTMLLinkElement | null;
     const avatarPath = document.querySelector('svg path[d^="M17.3041"]');
     const avatarSvg = avatarPath?.closest("svg");
     const avatarBox = avatarSvg?.getBoundingClientRect();
@@ -406,7 +406,7 @@ async function assertPreviewChatStyling(
   });
 
   const previewState = await page.evaluate(() => {
-    const stylesheet = document.querySelector("link#vf-tailwind-css") as HTMLLinkElement | null;
+    const stylesheet = document.querySelector("link#vf-project-css") as HTMLLinkElement | null;
     const avatarPath = document.querySelector('svg path[d^="M17.3041"]');
     const avatarSvg = avatarPath?.closest("svg");
     const avatarBox = avatarSvg?.getBoundingClientRect();

@@ -14,6 +14,10 @@ import {
   getMemorySnapshot,
 } from "#veryfront/utils/memory/index.ts";
 import { rendererLogger } from "#veryfront/utils";
+import {
+  createLocalControlAccessDeniedResponse,
+  isTrustedLocalControlRequest,
+} from "#veryfront/security/http/local-control-request.ts";
 
 const logger = rendererLogger.component("memory-debug-handler");
 
@@ -37,6 +41,11 @@ export class MemoryDebugHandler extends BaseHandler {
 
     if (!pathname.startsWith("/_debug/memory")) {
       return this.continue();
+    }
+    if (!isTrustedLocalControlRequest(req)) {
+      return this.respond(
+        createLocalControlAccessDeniedResponse(req, "Memory debug request rejected"),
+      );
     }
 
     try {
