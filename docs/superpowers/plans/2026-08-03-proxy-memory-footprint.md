@@ -92,7 +92,7 @@ Expected: failure because only the x64 proxy asset exists.
   - inspect `.State.OOMKilled` before removal;
   - stop cleanly and remove its exact container through a trap.
 
-- [ ] Wire the script after provider smoke in the PR job and the x64 main release leg. Do not execute ARM64 on x64.
+- [ ] Wire the script after provider smoke in the PR job and the x64 main release leg with explicit `PROXY_MEMORY_LIMIT=1536m` and `PROXY_MEMORY_ATTEMPTS=3` values. Do not execute ARM64 on x64.
 - [ ] Run static GREEN:
 
 ```bash
@@ -110,7 +110,7 @@ git diff --exit-code -- scripts/build/proxy-deno.lock
 proxy_artifact_dir="$(mktemp -d)"
 deno run -A scripts/build/compile-binary.ts --profile proxy --target x86_64-unknown-linux-gnu --output "${proxy_artifact_dir}/veryfront-proxy-linux-x64"
 bash scripts/build/smoke-proxy-binary.sh "${proxy_artifact_dir}/veryfront-proxy-linux-x64"
-bash scripts/build/smoke-proxy-memory.sh "${proxy_artifact_dir}/veryfront-proxy-linux-x64"
+PROXY_MEMORY_LIMIT=1536m PROXY_MEMORY_ATTEMPTS=3 bash scripts/build/smoke-proxy-memory.sh "${proxy_artifact_dir}/veryfront-proxy-linux-x64"
 deno run -A scripts/build/compile-binary.ts --profile proxy --target aarch64-unknown-linux-gnu --output "${proxy_artifact_dir}/veryfront-proxy-linux-arm64"
 ```
 
