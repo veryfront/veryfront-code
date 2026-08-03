@@ -31,28 +31,205 @@ export interface LockfileData {
 const LOCKFILE_NAME = "veryfront.lock";
 const LOCKFILE_VERSION = 1;
 const LOCKFILE_CANONICALIZATION_TIMEOUT_MS = 1_000;
+// Canonicalization failures are exceptional and must not create an unbounded
+// process-wide journal. The limit applies only while a shared backing store
+// cannot establish stable identities; healthy paths reconcile and release
+// records as normal.
+const MAX_UNRESOLVED_LOCKFILE_RECORDS = 1_024;
+// Historical aliases are opportunistic. Never let an old or deleted project
+// hold the shared filesystem queue for the normal one-second path timeout.
+const HISTORICAL_LOCKFILE_CANONICALIZATION_TIMEOUT_MS = 25;
+const MAX_HISTORICAL_RECONCILIATIONS_PER_ACCESS = 8;
+const MAX_HISTORICAL_CANONICALIZATION_ATTEMPTS = 8;
+const HISTORICAL_CANONICALIZATION_RETRY_BASE_MS = 250;
+const HISTORICAL_CANONICALIZATION_RETRY_MAX_MS = 30_000;
+const apply = Reflect.apply;
+const NativeFinalizationRegistry = FinalizationRegistry;
+const NativeMap = Map;
+const NativePromise = Promise;
+const NativeWeakMap = WeakMap;
+const NativeWeakRef = WeakRef;
+const arrayIsArray = Array.isArray;
+const arraySort = Array.prototype.sort;
+const finalizationRegistryRegister = FinalizationRegistry.prototype.register;
+const finalizationRegistryUnregister = FinalizationRegistry.prototype.unregister;
+const mapClear = Map.prototype.clear;
+const mapDelete = Map.prototype.delete;
+const mapEntries = Map.prototype.entries;
+const mapGet = Map.prototype.get;
+const mapSet = Map.prototype.set;
 const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
 const objectEntries = Object.entries;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetPrototypeOf = Object.getPrototypeOf;
 const objectHasOwn = Object.hasOwn;
+const objectKeys = Object.keys;
+const mapIteratorNext = objectGetPrototypeOf(new NativeMap().entries()).next;
+const mapSizeGetter = objectGetOwnPropertyDescriptor(Map.prototype, "size")!.get!;
+const promiseResolve = Promise.resolve;
+const promiseReject = Promise.reject;
+const promiseThen = Promise.prototype.then;
+const weakMapGet = WeakMap.prototype.get;
+const weakMapSet = WeakMap.prototype.set;
+const weakRefDeref = WeakRef.prototype.deref;
+const dateNow = Date.now;
+
+function cloneStringArray(values: readonly string[]): string[] {
+  const clone: string[] = [];
+  clone.length = values.length;
+  for (let index = 0; index < values.length; index++) clone[index] = values[index]!;
+  return clone;
+}
+
+function getMapValue<K, V>(map: Map<K, V>, key: K): V | undefined {
+  return apply(mapGet, map, [key]) as V | undefined;
+}
+
+function setMapValue<K, V>(map: Map<K, V>, key: K, value: V): void {
+  apply(mapSet, map, [key, value]);
+}
+
+function deleteMapValue<K, V>(map: Map<K, V>, key: K): boolean {
+  return apply(mapDelete, map, [key]) as boolean;
+}
+
+function clearMap<K, V>(map: Map<K, V>): void {
+  apply(mapClear, map, []);
+}
+
+function getMapSize<K, V>(map: Map<K, V>): number {
+  return apply(mapSizeGetter, map, []) as number;
+}
+
+function getWeakMapValue<K extends WeakKey, V>(map: WeakMap<K, V>, key: K): V | undefined {
+  return apply(weakMapGet, map, [key]) as V | undefined;
+}
+
+function setWeakMapValue<K extends WeakKey, V>(map: WeakMap<K, V>, key: K, value: V): void {
+  apply(weakMapSet, map, [key, value]);
+}
+
+function dereference<T extends WeakKey>(reference: WeakRef<T>): T | undefined {
+  return apply(weakRefDeref, reference, []) as T | undefined;
+}
+
+function registerFinalizer<T>(
+  registry: FinalizationRegistry<T>,
+  target: object,
+  heldValue: T,
+  unregisterToken: object,
+): void {
+  apply(finalizationRegistryRegister, registry, [target, heldValue, unregisterToken]);
+}
+
+function unregisterFinalizer<T>(
+  registry: FinalizationRegistry<T>,
+  unregisterToken: object,
+): boolean {
+  return apply(finalizationRegistryUnregister, registry, [unregisterToken]) as boolean;
+}
+
+function resolveVoidPromise(): Promise<void> {
+  return apply(promiseResolve, NativePromise, []) as Promise<void>;
+}
+
+function rejectPromise<T = never>(reason: unknown): Promise<T> {
+  return apply(promiseReject, NativePromise, [reason]) as Promise<T>;
+}
+
+function thenPromise<T, TResult1 = T, TResult2 = never>(
+  promise: Promise<T>,
+  onFulfilled?: ((value: T) => TResult1) | null,
+  onRejected?: ((reason: unknown) => TResult2) | null,
+): Promise<TResult1 | TResult2> {
+  return apply(promiseThen, promise, [onFulfilled, onRejected]) as Promise<
+    TResult1 | TResult2
+  >;
+}
+
+function chainPromise<T, TResult>(
+  promise: Promise<T>,
+  onFulfilled: (value: T) => Promise<TResult>,
+): Promise<TResult> {
+  return new NativePromise<TResult>((resolve, reject) => {
+    thenPromise(
+      promise,
+      (value) => {
+        let next: Promise<TResult>;
+        try {
+          next = onFulfilled(value);
+        } catch (error) {
+          reject(error);
+          return;
+        }
+        // Do not return `next` from this handler. Native promise adoption reads
+        // the live `.then` property, which tenant code can replace after this
+        // module loads. Apply the captured intrinsic explicitly instead.
+        thenPromise(next, resolve, reject);
+      },
+      reject,
+    );
+  });
+}
+
+function allPromises<T>(promises: readonly Promise<T>[]): Promise<T[]> {
+  return new NativePromise<T[]>((resolve, reject) => {
+    const results: T[] = [];
+    results.length = promises.length;
+    let remaining = promises.length;
+    if (remaining === 0) {
+      resolve(results);
+      return;
+    }
+    for (let index = 0; index < promises.length; index++) {
+      thenPromise(
+        promises[index]!,
+        (value) => {
+          results[index] = value;
+          remaining--;
+          if (remaining === 0) resolve(results);
+        },
+        reject,
+      );
+    }
+  });
+}
+
+function racePromiseWithTimeout<T, TTimeout>(
+  promise: Promise<T>,
+  timeoutValue: TTimeout,
+  timeoutMs: number,
+): { promise: Promise<T | TTimeout>; cancelTimeout: () => void } {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const raced = new NativePromise<T | TTimeout>((resolve, reject) => {
+    thenPromise(promise, resolve, reject);
+    timeoutId = setTimeout(() => resolve(timeoutValue), timeoutMs);
+  });
+  return {
+    promise: raced,
+    cancelTimeout: () => {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    },
+  };
+}
+
+function forEachMapEntry<K, V>(
+  map: Map<K, V>,
+  callback: (key: K, value: V) => void | boolean,
+): void {
+  const iterator = apply(mapEntries, map, []) as MapIterator<[K, V]>;
+  while (true) {
+    const next = apply(mapIteratorNext, iterator, []) as IteratorResult<[K, V]>;
+    if (next.done) return;
+    if (callback(next.value[0], next.value[1]) === false) return;
+  }
+}
 
 function cloneLockfileEntry(entry: LockfileEntry): LockfileEntry {
-  const resolved = getOwnDataProperty(entry, "resolved")?.value;
-  const integrity = getOwnDataProperty(entry, "integrity")?.value;
-  if (typeof resolved !== "string" || typeof integrity !== "string") {
-    throw lockfileInputError("invalid-structure");
-  }
-  const dependencies = getOwnDataProperty(entry, "dependencies")?.value as
-    | string[]
-    | undefined;
-  const fetchedAt = getOwnDataProperty(entry, "fetchedAt")?.value as string | undefined;
-  return {
-    resolved,
-    integrity,
-    ...(dependencies === undefined ? {} : { dependencies: [...dependencies] }),
-    ...(fetchedAt === undefined ? {} : { fetchedAt }),
-  };
+  const sanitized = sanitizeLockfileEntry(entry);
+  if (sanitized === null) throw lockfileInputError("invalid-structure");
+  return sanitized;
 }
 
 function defineImportEntry(
@@ -60,22 +237,28 @@ function defineImportEntry(
   url: string,
   entry: LockfileEntry,
 ): void {
-  objectDefineProperty(imports, url, {
-    value: entry,
-    enumerable: true,
-    configurable: true,
-    writable: true,
-  });
+  // A null-prototype descriptor is required here. Tenant code can mutate
+  // Object.prototype in a shared runtime; inherited accessor/value fields can
+  // otherwise turn an ordinary data descriptor into an invalid descriptor.
+  const descriptor = objectCreate(null) as PropertyDescriptor;
+  descriptor.value = entry;
+  descriptor.enumerable = true;
+  descriptor.configurable = true;
+  descriptor.writable = true;
+  objectDefineProperty(imports, url, descriptor);
 }
 
 function createImportDictionary(
-  entries: Iterable<readonly [string, LockfileEntry]> = [],
+  entries: readonly (readonly [string, LockfileEntry])[] = [],
   prototype: "internal" | "public" = "internal",
 ): Record<string, LockfileEntry> {
   const imports = prototype === "internal"
     ? objectCreate(null) as Record<string, LockfileEntry>
     : {};
-  for (const [url, entry] of entries) defineImportEntry(imports, url, entry);
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index]!;
+    defineImportEntry(imports, entry[0], entry[1]);
+  }
   return imports;
 }
 
@@ -83,12 +266,16 @@ function cloneLockfileData(
   data: LockfileData,
   prototype: "internal" | "public" = "internal",
 ): LockfileData {
+  const sourceEntries = objectEntries(data.imports);
+  const entries: Array<[string, LockfileEntry]> = [];
+  entries.length = sourceEntries.length;
+  for (let index = 0; index < sourceEntries.length; index++) {
+    const sourceEntry = sourceEntries[index]!;
+    entries[index] = [sourceEntry[0], cloneLockfileEntry(sourceEntry[1])];
+  }
   return {
     version: LOCKFILE_VERSION,
-    imports: createImportDictionary(
-      objectEntries(data.imports).map(([url, entry]) => [url, cloneLockfileEntry(entry)]),
-      prototype,
-    ),
+    imports: createImportDictionary(entries, prototype),
   };
 }
 
@@ -97,7 +284,7 @@ function createInternalLockfile(): LockfileData {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !arrayIsArray(value);
 }
 
 function getOwnDataProperty(
@@ -119,8 +306,7 @@ function sanitizeLockfileEntry(value: unknown): LockfileEntry | null {
   const dependencies = getOwnDataProperty(value, "dependencies")?.value;
   if (
     dependencies !== undefined &&
-    (!Array.isArray(dependencies) ||
-      dependencies.some((dependency) => typeof dependency !== "string"))
+    (!arrayIsArray(dependencies) || !hasOnlyStringValues(dependencies))
   ) {
     return null;
   }
@@ -131,9 +317,16 @@ function sanitizeLockfileEntry(value: unknown): LockfileEntry | null {
   return {
     resolved,
     integrity,
-    ...(dependencies === undefined ? {} : { dependencies: [...dependencies] }),
+    ...(dependencies === undefined ? {} : { dependencies: cloneStringArray(dependencies) }),
     ...(fetchedAt === undefined ? {} : { fetchedAt }),
   };
+}
+
+function hasOnlyStringValues(values: readonly unknown[]): values is readonly string[] {
+  for (let index = 0; index < values.length; index++) {
+    if (typeof values[index] !== "string") return false;
+  }
+  return true;
 }
 
 function lockfileReadError(
@@ -194,12 +387,14 @@ function sanitizeLockfileData(value: unknown, lockfilePath: string): LockfileDat
   }
 
   const imports: Array<[string, LockfileEntry]> = [];
-  for (const [url, entry] of objectEntries(parsedImports)) {
-    const sanitizedEntry = sanitizeLockfileEntry(entry);
+  const parsedEntries = objectEntries(parsedImports);
+  for (let index = 0; index < parsedEntries.length; index++) {
+    const parsedEntry = parsedEntries[index]!;
+    const sanitizedEntry = sanitizeLockfileEntry(parsedEntry[1]);
     if (sanitizedEntry === null) {
       throw lockfileReadError(lockfilePath, "invalid-structure");
     }
-    imports.push([url, sanitizedEntry]);
+    imports[imports.length] = [parsedEntry[0], sanitizedEntry];
   }
   return { version: LOCKFILE_VERSION, imports: createImportDictionary(imports) };
 }
@@ -277,17 +472,17 @@ export type FSAdapter = {
 };
 
 const PLATFORM_FS_COORDINATION_KEY = "veryfront-platform-filesystem";
-const adapterIdentityByInstance = new WeakMap<FSAdapter, number>();
-const lockfileAccessTails = new Map<string, Promise<void>>();
+const adapterIdentityByInstance = new NativeWeakMap<FSAdapter, bigint>();
+const lockfileAccessTails = new NativeMap<string, Promise<void>>();
 interface LockfileSharedState {
   parent?: LockfileSharedState;
-  revision: number;
-  lastClearSequence: number;
+  revision: bigint;
+  lastClearSequence: bigint;
 }
 
 interface PendingLockfileEntry {
   entry: LockfileEntry;
-  sequence: number;
+  sequence: bigint;
 }
 
 interface LockfileCoordinationRecord {
@@ -296,6 +491,9 @@ interface LockfileCoordinationRecord {
   logicalStateKey: string;
   state?: WeakRef<LockfileSharedState>;
   retainedState?: LockfileSharedState;
+  historicalAttempts?: number;
+  historicalRetryAfter?: number;
+  historicalCanonicalization?: Promise<string | undefined>;
 }
 
 interface LockfileCoordinationDomain {
@@ -303,43 +501,65 @@ interface LockfileCoordinationDomain {
 }
 
 interface LockfileCoordinationDomainReference {
-  generation: number;
   reference: WeakRef<LockfileCoordinationDomain>;
+  unregisterToken: object;
+}
+
+interface LockfileCanonicalizationState {
+  inFlight?: Promise<string>;
+  completed?: {
+    promise: Promise<string>;
+    canonicalPath: string;
+  };
 }
 
 interface LockfileSharedStateReference {
-  generation: number;
   reference: WeakRef<LockfileSharedState>;
+  unregisterToken: object;
 }
 
-const lockfileSharedStateReferences = new Map<string, LockfileSharedStateReference>();
-const lockfileCoordinationDomainByAdapter = new WeakMap<FSAdapter, LockfileCoordinationDomain>();
-const sharedLockfileCoordinationDomains = new Map<
+const lockfileSharedStateReferences = new NativeMap<string, LockfileSharedStateReference>();
+const lockfileCoordinationDomainByAdapter = new NativeWeakMap<
+  FSAdapter,
+  LockfileCoordinationDomain
+>();
+const sharedLockfileCoordinationDomains = new NativeMap<
   string,
   LockfileCoordinationDomainReference
 >();
-let nextLockfileCoordinationDomainGeneration = 1;
-const sharedLockfileCoordinationRegistry = new FinalizationRegistry<{
+const sharedLockfileCoordinationRegistry = new NativeFinalizationRegistry<{
   accessKey: string;
-  generation: number;
-}>(({ accessKey, generation }) => {
-  const current = sharedLockfileCoordinationDomains.get(accessKey);
-  if (current?.generation === generation && current.reference.deref() === undefined) {
-    sharedLockfileCoordinationDomains.delete(accessKey);
+  unregisterToken: object;
+}>(({ accessKey, unregisterToken }) => {
+  const current = getMapValue(sharedLockfileCoordinationDomains, accessKey);
+  if (
+    current?.unregisterToken === unregisterToken &&
+    dereference(current.reference) === undefined
+  ) {
+    deleteMapValue(sharedLockfileCoordinationDomains, accessKey);
   }
 });
-let nextLockfileSharedStateGeneration = 1;
-let nextLockfileMutationSequence = 1;
-const lockfileSharedStateRegistry = new FinalizationRegistry<{
+let nextLockfileMutationSequence = 1n;
+const lockfileSharedStateRegistry = new NativeFinalizationRegistry<{
   stateKey: string;
-  generation: number;
-}>(({ stateKey, generation }) => {
-  const current = lockfileSharedStateReferences.get(stateKey);
-  if (current?.generation === generation && current.reference.deref() === undefined) {
-    lockfileSharedStateReferences.delete(stateKey);
+  unregisterToken: object;
+}>(({ stateKey, unregisterToken }) => {
+  const current = getMapValue(lockfileSharedStateReferences, stateKey);
+  if (
+    current?.unregisterToken === unregisterToken &&
+    dereference(current.reference) === undefined
+  ) {
+    deleteMapValue(lockfileSharedStateReferences, stateKey);
   }
 });
-let nextAdapterIdentity = 1;
+let nextAdapterIdentity = 1n;
+
+function createLockfileSharedState(): LockfileSharedState {
+  const state = objectCreate(null) as LockfileSharedState;
+  state.revision = 0n;
+  state.lastClearSequence = 0n;
+  return state;
+}
 
 function resolveLockfileSharedState(state: LockfileSharedState): LockfileSharedState {
   let root = state;
@@ -357,41 +577,77 @@ function registerLockfileSharedState(
   stateKey: string,
   state: LockfileSharedState,
 ): void {
-  const generation = nextLockfileSharedStateGeneration++;
-  lockfileSharedStateReferences.set(stateKey, {
-    generation,
-    reference: new WeakRef(state),
+  const root = resolveLockfileSharedState(state);
+  const current = getMapValue(lockfileSharedStateReferences, stateKey);
+  if (current && dereference(current.reference) === root) return;
+  if (current) unregisterFinalizer(lockfileSharedStateRegistry, current.unregisterToken);
+
+  const unregisterToken = objectCreate(null) as object;
+  setMapValue(lockfileSharedStateReferences, stateKey, {
+    reference: new NativeWeakRef(root),
+    unregisterToken,
   });
-  lockfileSharedStateRegistry.register(state, { stateKey, generation });
+  registerFinalizer(
+    lockfileSharedStateRegistry,
+    root,
+    { stateKey, unregisterToken },
+    unregisterToken,
+  );
 }
 
 function getLockfileSharedState(stateKeys: readonly string[]): LockfileSharedState {
-  const roots: LockfileSharedState[] = [];
-  for (const stateKey of stateKeys) {
-    const referenced = lockfileSharedStateReferences.get(stateKey)?.reference.deref();
-    if (!referenced) continue;
-    const root = resolveLockfileSharedState(referenced);
-    if (!roots.includes(root)) roots.push(root);
+  const uniqueStateKeys: string[] = [];
+  for (let stateKeyIndex = 0; stateKeyIndex < stateKeys.length; stateKeyIndex++) {
+    const stateKey = stateKeys[stateKeyIndex]!;
+    let duplicate = false;
+    for (let knownKeyIndex = 0; knownKeyIndex < uniqueStateKeys.length; knownKeyIndex++) {
+      const knownKey = uniqueStateKeys[knownKeyIndex]!;
+      if (knownKey === stateKey) {
+        duplicate = true;
+        break;
+      }
+    }
+    if (!duplicate) uniqueStateKeys[uniqueStateKeys.length] = stateKey;
   }
 
-  const state = roots.shift() ?? { revision: 0, lastClearSequence: 0 };
-  for (const other of roots) {
-    other.parent = state;
-    state.revision = Math.max(state.revision, other.revision) + 1;
-    state.lastClearSequence = Math.max(
-      state.lastClearSequence,
-      other.lastClearSequence,
-    );
+  const roots: LockfileSharedState[] = [];
+  for (let stateKeyIndex = 0; stateKeyIndex < uniqueStateKeys.length; stateKeyIndex++) {
+    const stateKey = uniqueStateKeys[stateKeyIndex]!;
+    const reference = getMapValue(lockfileSharedStateReferences, stateKey)?.reference;
+    const referenced = reference ? dereference(reference) : undefined;
+    if (!referenced) continue;
+    const root = resolveLockfileSharedState(referenced);
+    let duplicate = false;
+    for (let rootIndex = 0; rootIndex < roots.length; rootIndex++) {
+      const knownRoot = roots[rootIndex]!;
+      if (knownRoot === root) {
+        duplicate = true;
+        break;
+      }
+    }
+    if (!duplicate) roots[roots.length] = root;
   }
-  for (const stateKey of stateKeys) registerLockfileSharedState(stateKey, state);
+
+  const state = roots[0] ?? createLockfileSharedState();
+  for (let index = 1; index < roots.length; index++) {
+    const other = roots[index]!;
+    other.parent = state;
+    state.revision = (state.revision > other.revision ? state.revision : other.revision) + 1n;
+    state.lastClearSequence = state.lastClearSequence > other.lastClearSequence
+      ? state.lastClearSequence
+      : other.lastClearSequence;
+  }
+  for (let stateKeyIndex = 0; stateKeyIndex < uniqueStateKeys.length; stateKeyIndex++) {
+    registerLockfileSharedState(uniqueStateKeys[stateKeyIndex]!, state);
+  }
   return state;
 }
 
 function getAdapterInstanceIdentity(fs: FSAdapter): string {
-  let identity = adapterIdentityByInstance.get(fs);
+  let identity = getWeakMapValue(adapterIdentityByInstance, fs);
   if (identity === undefined) {
     identity = nextAdapterIdentity++;
-    adapterIdentityByInstance.set(fs, identity);
+    setWeakMapValue(adapterIdentityByInstance, fs, identity);
   }
   return `instance:${identity}`;
 }
@@ -404,26 +660,34 @@ function getLockfileCoordinationDomain(
 ): LockfileCoordinationDomain {
   if (hasSharedCoordinationKey) {
     if (managerDomain) return managerDomain;
-    let domain = sharedLockfileCoordinationDomains.get(accessKey)?.reference.deref();
+    const current = getMapValue(sharedLockfileCoordinationDomains, accessKey);
+    let domain = current ? dereference(current.reference) : undefined;
     if (!domain) {
-      domain = { records: new Map() };
-      const generation = nextLockfileCoordinationDomainGeneration++;
-      sharedLockfileCoordinationDomains.set(accessKey, {
-        generation,
-        reference: new WeakRef(domain),
+      if (current) {
+        unregisterFinalizer(sharedLockfileCoordinationRegistry, current.unregisterToken);
+      }
+      domain = objectCreate(null) as LockfileCoordinationDomain;
+      domain.records = new NativeMap();
+      const unregisterToken = objectCreate(null) as object;
+      setMapValue(sharedLockfileCoordinationDomains, accessKey, {
+        reference: new NativeWeakRef(domain),
+        unregisterToken,
       });
-      sharedLockfileCoordinationRegistry.register(domain, {
-        accessKey,
-        generation,
-      });
+      registerFinalizer(
+        sharedLockfileCoordinationRegistry,
+        domain,
+        { accessKey, unregisterToken },
+        unregisterToken,
+      );
     }
     return domain;
   }
 
-  let domain = lockfileCoordinationDomainByAdapter.get(fs);
+  let domain = getWeakMapValue(lockfileCoordinationDomainByAdapter, fs);
   if (!domain) {
-    domain = { records: new Map() };
-    lockfileCoordinationDomainByAdapter.set(fs, domain);
+    domain = objectCreate(null) as LockfileCoordinationDomain;
+    domain.records = new NativeMap();
+    setWeakMapValue(lockfileCoordinationDomainByAdapter, fs, domain);
   }
   return domain;
 }
@@ -431,27 +695,186 @@ function getLockfileCoordinationDomain(
 async function resolveCanonicalLockfilePath(
   fs: FSAdapter,
   projectDir: string,
+  timeoutMs = LOCKFILE_CANONICALIZATION_TIMEOUT_MS,
+  state?: LockfileCanonicalizationState,
 ): Promise<string | undefined> {
   if (!fs.realPath) return undefined;
+  if (state?.completed) {
+    const canonicalPath = state.completed.canonicalPath;
+    state.completed = undefined;
+    return canonicalPath;
+  }
+
+  let resolution = state?.inFlight;
+  if (!resolution) {
+    resolution = thenPromise(
+      chainPromise(resolveVoidPromise(), () => fs.realPath!(projectDir)),
+      (canonicalProjectDir) => normalize(`${normalize(canonicalProjectDir)}/${LOCKFILE_NAME}`),
+    );
+    if (state) {
+      state.inFlight = resolution;
+      void thenPromise(
+        resolution,
+        (canonicalPath) => {
+          if (state.inFlight !== resolution) return;
+          state.inFlight = undefined;
+          state.completed = { promise: resolution!, canonicalPath };
+        },
+        () => {
+          if (state.inFlight === resolution) state.inFlight = undefined;
+        },
+      );
+    }
+  }
+
   const timedOut = Symbol("lockfile canonicalization timed out");
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const race = racePromiseWithTimeout(resolution, timedOut, timeoutMs);
   try {
-    const canonicalProjectDirResult = await Promise.race([
-      Promise.resolve().then(() => fs.realPath!(projectDir)),
-      new Promise<typeof timedOut>((resolve) => {
-        timeoutId = setTimeout(
-          () => resolve(timedOut),
-          LOCKFILE_CANONICALIZATION_TIMEOUT_MS,
-        );
-      }),
-    ]);
+    const canonicalProjectDirResult = await race.promise;
     if (canonicalProjectDirResult === timedOut) return undefined;
-    const canonicalProjectDir = normalize(canonicalProjectDirResult);
-    return normalize(`${canonicalProjectDir}/${LOCKFILE_NAME}`);
+    if (state?.completed?.promise === resolution) state.completed = undefined;
+    return canonicalProjectDirResult;
   } catch {
     return undefined;
   } finally {
-    if (timeoutId !== undefined) clearTimeout(timeoutId);
+    race.cancelTimeout();
+  }
+}
+
+function pruneCollectedCoordinationRecords(domain: LockfileCoordinationDomain): void {
+  forEachMapEntry(domain.records, (recordKey, record) => {
+    const liveState = record.state ? dereference(record.state) : undefined;
+    if (!record.retainedState && liveState === undefined) {
+      deleteMapValue(domain.records, recordKey);
+    }
+  });
+}
+
+function getUnresolvedCoordinationRecord(
+  domain: LockfileCoordinationDomain,
+  projectDir: string,
+  lockfilePath: string,
+  logicalStateKey: string,
+): LockfileCoordinationRecord {
+  const existing = getMapValue(domain.records, logicalStateKey);
+  if (existing) return existing;
+
+  if (getMapSize(domain.records) >= MAX_UNRESOLVED_LOCKFILE_RECORDS) {
+    pruneCollectedCoordinationRecords(domain);
+  }
+  if (getMapSize(domain.records) >= MAX_UNRESOLVED_LOCKFILE_RECORDS) {
+    throw lockfileReadError(
+      lockfilePath,
+      "access-failed",
+      new Error(
+        `The shared lockfile coordinator reached its limit of ` +
+          `${MAX_UNRESOLVED_LOCKFILE_RECORDS} unresolved project paths`,
+      ),
+    );
+  }
+
+  const record = objectCreate(null) as LockfileCoordinationRecord;
+  record.recordKey = logicalStateKey;
+  record.projectDir = projectDir;
+  record.logicalStateKey = logicalStateKey;
+  return record;
+}
+
+async function reconcileHistoricalCoordinationRecords(
+  fs: FSAdapter,
+  domain: LockfileCoordinationDomain,
+  currentRecordKey: string,
+  accessKey: string,
+): Promise<void> {
+  const candidates: Array<{
+    recordKey: string;
+    record: LockfileCoordinationRecord;
+    state: LockfileSharedState;
+    canonicalization?: Promise<string | undefined>;
+    ownsCanonicalization?: boolean;
+  }> = [];
+  const now = dateNow();
+
+  // Durable mutations take precedence over warmed-reader hints. A second pass
+  // fills the remaining bounded batch with live weak records.
+  for (let durablePass = 0; durablePass < 2; durablePass++) {
+    const durableOnly = durablePass === 0;
+    forEachMapEntry(domain.records, (knownRecordKey, knownRecord) => {
+      if (knownRecordKey === currentRecordKey) return;
+      if (candidates.length >= MAX_HISTORICAL_RECONCILIATIONS_PER_ACCESS) return false;
+      if (durableOnly !== (knownRecord.retainedState !== undefined)) return;
+      if (
+        (knownRecord.historicalAttempts ?? 0) >=
+          MAX_HISTORICAL_CANONICALIZATION_ATTEMPTS ||
+        (knownRecord.historicalRetryAfter ?? 0) > now
+      ) {
+        return;
+      }
+      const knownState = knownRecord.retainedState ??
+        (knownRecord.state ? dereference(knownRecord.state) : undefined);
+      if (!knownState) {
+        deleteMapValue(domain.records, knownRecordKey);
+        return;
+      }
+      candidates[candidates.length] = {
+        recordKey: knownRecordKey,
+        record: knownRecord,
+        state: knownState,
+      };
+    });
+  }
+
+  // Resolve one bounded batch concurrently, so N stale paths cost at most the
+  // historical timeout once rather than N times while the shared queue waits.
+  const canonicalizationPromises: Array<Promise<string | undefined>> = [];
+  for (let index = 0; index < candidates.length; index++) {
+    const candidate = candidates[index]!;
+    let canonicalization = candidate.record.historicalCanonicalization;
+    if (!canonicalization) {
+      canonicalization = resolveCanonicalLockfilePath(
+        fs,
+        candidate.record.projectDir,
+        HISTORICAL_LOCKFILE_CANONICALIZATION_TIMEOUT_MS,
+      );
+      candidate.record.historicalCanonicalization = canonicalization;
+      candidate.ownsCanonicalization = true;
+    }
+    candidate.canonicalization = canonicalization;
+    canonicalizationPromises[index] = canonicalization;
+  }
+  const canonicalPaths = await allPromises(canonicalizationPromises);
+  for (let index = 0; index < candidates.length; index++) {
+    const candidate = candidates[index]!;
+    // Concurrent healthy projects share the same bounded historical lookup.
+    // Only its owner mutates retry/state bookkeeping once it settles.
+    if (!candidate.ownsCanonicalization) continue;
+    if (candidate.record.historicalCanonicalization === candidate.canonicalization) {
+      candidate.record.historicalCanonicalization = undefined;
+    }
+    const knownCanonicalPath = canonicalPaths[index];
+    if (knownCanonicalPath === undefined) {
+      const attempts = (candidate.record.historicalAttempts ?? 0) + 1;
+      candidate.record.historicalAttempts = attempts;
+      const retryDelay = HISTORICAL_CANONICALIZATION_RETRY_BASE_MS *
+        2 ** (attempts - 1);
+      candidate.record.historicalRetryAfter = now +
+        (retryDelay < HISTORICAL_CANONICALIZATION_RETRY_MAX_MS
+          ? retryDelay
+          : HISTORICAL_CANONICALIZATION_RETRY_MAX_MS);
+      // Keep failures retryable without letting a permanently missing project
+      // starve records inserted later in the bounded journal. Attempts are
+      // finite here; the record's own manager can still retry its canonical
+      // identity on every operation and reconcile it without this path.
+      deleteMapValue(domain.records, candidate.recordKey);
+      setMapValue(domain.records, candidate.recordKey, candidate.record);
+      continue;
+    }
+
+    deleteMapValue(domain.records, candidate.recordKey);
+    getLockfileSharedState([
+      candidate.record.logicalStateKey,
+      JSON.stringify([accessKey, knownCanonicalPath]),
+    ]);
   }
 }
 
@@ -459,9 +882,9 @@ async function resolveLockfileCoordinationIdentity(
   fs: FSAdapter,
   projectDir: string,
   lockfilePath: string,
-  adapterIdentity: string,
   accessKey: string,
   hasSharedCoordinationKey: boolean,
+  canonicalizationState: LockfileCanonicalizationState,
   managerDomain?: LockfileCoordinationDomain,
 ): Promise<{
   coordinationDomain: LockfileCoordinationDomain;
@@ -483,83 +906,48 @@ async function resolveLockfileCoordinationIdentity(
     if (!hasSharedCoordinationKey) {
       return { coordinationDomain: domain, stateKeys: [logicalStateKey] };
     }
-    const recordKey = JSON.stringify([adapterIdentity, lockfilePath]);
-    const unresolvedRecord = domain.records.get(recordKey) ?? {
-      recordKey,
+    const unresolvedRecord = getUnresolvedCoordinationRecord(
+      domain,
       projectDir,
+      lockfilePath,
       logicalStateKey,
-    };
-    return {
-      coordinationDomain: domain,
-      stateKeys: [logicalStateKey],
-      unresolvedRecord,
-    };
-  }
-
-  const recordKey = JSON.stringify([adapterIdentity, lockfilePath]);
-  const canonicalLockfilePath = await resolveCanonicalLockfilePath(fs, projectDir);
-  if (canonicalLockfilePath === undefined) {
-    const unresolvedRecord = domain.records.get(recordKey) ?? {
-      recordKey,
-      projectDir,
-      logicalStateKey,
-    };
-    return {
-      coordinationDomain: domain,
-      stateKeys: [logicalStateKey],
-      unresolvedRecord,
-    };
-  }
-  // A successful resolution can also attach mutation-bearing logical states
-  // whose earlier canonicalization attempts failed. Resolve their paths
-  // through the current adapter: a shared coordination key promises one
-  // backing filesystem, and retaining or calling a discarded peer adapter
-  // would let one failed implementation poison the whole shared queue.
-  const resolvedRecords: Array<{
-    canonicalPath: string;
-    record: LockfileCoordinationRecord;
-    recordKey: string;
-    state: LockfileSharedState;
-  }> = [];
-  for (const [knownRecordKey, knownRecord] of domain.records) {
-    // Keep the current record, including any strongly retained completed
-    // mutation history, until the caller has attached its logical state to the
-    // canonical state. A failed historical lookup must leave it retryable.
-    if (knownRecordKey === recordKey) continue;
-    const knownState = knownRecord.retainedState ?? knownRecord.state?.deref();
-    if (!knownState) {
-      domain.records.delete(knownRecordKey);
-      continue;
-    }
-    const knownCanonicalPath = await resolveCanonicalLockfilePath(
-      fs,
-      knownRecord.projectDir,
     );
-    if (knownCanonicalPath === undefined) {
-      throw lockfileReadError(
-        normalize(`${knownRecord.projectDir}/${LOCKFILE_NAME}`),
-        "access-failed",
-        new Error("Canonical lockfile identity could not be resolved"),
-      );
-    }
-    resolvedRecords.push({
-      canonicalPath: knownCanonicalPath,
-      record: knownRecord,
-      recordKey: knownRecordKey,
-      state: knownState,
-    });
+    return {
+      coordinationDomain: domain,
+      stateKeys: [logicalStateKey],
+      unresolvedRecord,
+    };
   }
 
-  // Commit historical reconciliations only after every live record resolves.
-  // Retaining the states here prevents completed clear or write history from
-  // disappearing between resolution and canonical attachment.
-  for (const resolved of resolvedRecords) {
-    domain.records.delete(resolved.recordKey);
-    getLockfileSharedState([
-      resolved.record.logicalStateKey,
-      JSON.stringify([accessKey, resolved.canonicalPath]),
-    ]);
+  const recordKey = logicalStateKey;
+  const canonicalLockfilePath = await resolveCanonicalLockfilePath(
+    fs,
+    projectDir,
+    LOCKFILE_CANONICALIZATION_TIMEOUT_MS,
+    canonicalizationState,
+  );
+  if (canonicalLockfilePath === undefined) {
+    const unresolvedRecord = getUnresolvedCoordinationRecord(
+      domain,
+      projectDir,
+      lockfilePath,
+      logicalStateKey,
+    );
+    return {
+      coordinationDomain: domain,
+      stateKeys: [logicalStateKey],
+      unresolvedRecord,
+    };
   }
+  // Historical aliases are reconciled incrementally. A stale or deleted
+  // project remains retryable but cannot fail an unrelated healthy project or
+  // monopolize the shared backing-store queue.
+  await reconcileHistoricalCoordinationRecords(
+    fs,
+    domain,
+    recordKey,
+    accessKey,
+  );
 
   return {
     coordinationDomain: domain,
@@ -579,24 +967,36 @@ function serializeLockfileAccess<T>(
   accessKey: string,
   operation: () => Promise<T>,
 ): Promise<T> {
-  const predecessor = lockfileAccessTails.get(accessKey) ?? Promise.resolve();
-  const result = predecessor.then(operation);
-  const tail = result.then(
+  const predecessor = getMapValue(lockfileAccessTails, accessKey) ?? resolveVoidPromise();
+  const result = chainPromise(predecessor, operation);
+  const tail = thenPromise(
+    result,
     () => undefined,
     () => undefined,
   );
-  lockfileAccessTails.set(accessKey, tail);
+  setMapValue(lockfileAccessTails, accessKey, tail);
 
-  return result.finally(() => {
-    if (lockfileAccessTails.get(accessKey) === tail) {
-      lockfileAccessTails.delete(accessKey);
+  const release = () => {
+    if (getMapValue(lockfileAccessTails, accessKey) === tail) {
+      deleteMapValue(lockfileAccessTails, accessKey);
     }
-  });
+  };
+  return thenPromise(
+    result,
+    (value) => {
+      release();
+      return value;
+    },
+    (error) => {
+      release();
+      throw error;
+    },
+  );
 }
 
 function createPlatformFSAdapter(): FSAdapter {
   const fs = createFileSystem();
-  const renameFile = fs.rename?.bind(fs);
+  const renameFile = fs.rename;
 
   return {
     coordinationKey: PLATFORM_FS_COORDINATION_KEY,
@@ -608,7 +1008,7 @@ function createPlatformFSAdapter(): FSAdapter {
     },
     ...(renameFile === undefined ? {} : {
       rename(from: string, to: string): Promise<void> {
-        return renameFile(from, to);
+        return apply(renameFile, fs, [from, to]) as Promise<void>;
       },
     }),
     exists(path: string): Promise<boolean> {
@@ -635,16 +1035,18 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     ? JSON.stringify([`shared:${coordinationKey}`])
     : JSON.stringify([adapterIdentity]);
   let cache: LockfileData | null = null;
-  let cacheRevision = -1;
-  let managerOperationTail: Promise<void> = Promise.resolve();
+  let cacheRevision = -1n;
+  let managerOperationTail: Promise<void> = resolveVoidPromise();
   let managerCoordinationDomain: LockfileCoordinationDomain | undefined;
   let managerUnresolvedRecord: LockfileCoordinationRecord | undefined;
   let managerSharedState: LockfileSharedState | undefined;
-  const pendingEntries = new Map<string, PendingLockfileEntry>();
+  const canonicalizationState = objectCreate(null) as LockfileCanonicalizationState;
+  const pendingEntries = new NativeMap<string, PendingLockfileEntry>();
 
   function serializeManagerOperation<T>(operation: () => Promise<T>): Promise<T> {
-    const result = managerOperationTail.then(operation);
-    managerOperationTail = result.then(
+    const result = chainPromise(managerOperationTail, operation);
+    managerOperationTail = thenPromise(
+      result,
       () => undefined,
       () => undefined,
     );
@@ -663,9 +1065,9 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
         fs,
         normalizedProjectDir,
         lockfilePath,
-        adapterIdentity,
         accessKey,
         hasSharedCoordinationKey,
+        canonicalizationState,
         managerCoordinationDomain,
       );
     managerCoordinationDomain = coordinationDomain;
@@ -674,15 +1076,15 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     // without coupling separate projects.
     managerSharedState = getLockfileSharedState(stateKeys);
     if (resolvedRecordKey !== undefined) {
-      coordinationDomain.records.delete(resolvedRecordKey);
+      deleteMapValue(coordinationDomain.records, resolvedRecordKey);
     }
     managerUnresolvedRecord = unresolvedRecord;
     if (unresolvedRecord) {
       // A live warmed reader must be discoverable by a healthy alias so a
       // later clear can invalidate its cache. Keep only the state weakly: dead
       // readers and their adapters remain collectible.
-      unresolvedRecord.state = new WeakRef(managerSharedState);
-      coordinationDomain.records.set(unresolvedRecord.recordKey, unresolvedRecord);
+      unresolvedRecord.state = new NativeWeakRef(managerSharedState);
+      setMapValue(coordinationDomain.records, unresolvedRecord.recordKey, unresolvedRecord);
     }
     return {
       state: resolveLockfileSharedState(managerSharedState),
@@ -695,9 +1097,10 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     durable: boolean,
   ): void {
     if (!managerCoordinationDomain || !managerUnresolvedRecord) return;
-    managerUnresolvedRecord.state = new WeakRef(state);
+    managerUnresolvedRecord.state = new NativeWeakRef(state);
     if (durable) managerUnresolvedRecord.retainedState = state;
-    managerCoordinationDomain.records.set(
+    setMapValue(
+      managerCoordinationDomain.records,
       managerUnresolvedRecord.recordKey,
       managerUnresolvedRecord,
     );
@@ -709,11 +1112,17 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     const logicalQueueKey = hasSharedCoordinationKey
       ? JSON.stringify([accessKey, lockfilePath])
       : accessKey;
-    return serializeLockfileAccess(logicalQueueKey, async () => {
-      const { state, accessQueueKey } = await resolveStateUnderAccess();
-      if (accessQueueKey === logicalQueueKey) return await operation(state);
-      return await serializeLockfileAccess(accessQueueKey, () => operation(state));
-    });
+    return serializeLockfileAccess(
+      logicalQueueKey,
+      () =>
+        chainPromise(
+          resolveStateUnderAccess(),
+          ({ state, accessQueueKey }) =>
+            accessQueueKey === logicalQueueKey
+              ? operation(state)
+              : serializeLockfileAccess(accessQueueKey, () => operation(state)),
+        ),
+    );
   }
 
   async function lockfileExists(): Promise<boolean> {
@@ -740,25 +1149,26 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   async function readCurrentUnderAccess(
     state: LockfileSharedState,
   ): Promise<LockfileData | null> {
-    for (const [url, pending] of pendingEntries) {
-      if (pending.sequence < state.lastClearSequence) pendingEntries.delete(url);
-    }
+    forEachMapEntry(pendingEntries, (url, pending) => {
+      if (pending.sequence < state.lastClearSequence) deleteMapValue(pendingEntries, url);
+    });
     if (cacheRevision === state.revision) return cache;
 
     const data = await readFromDisk();
-    if (pendingEntries.size === 0) {
+    if (getMapSize(pendingEntries) === 0) {
       cache = data;
     } else {
-      cache = data ?? createInternalLockfile();
-      for (const [url, pending] of pendingEntries) {
-        defineImportEntry(cache.imports, url, cloneLockfileEntry(pending.entry));
-      }
+      const resolvedCache = data ?? createInternalLockfile();
+      cache = resolvedCache;
+      forEachMapEntry(pendingEntries, (url, pending) => {
+        defineImportEntry(resolvedCache.imports, url, cloneLockfileEntry(pending.entry));
+      });
     }
     cacheRevision = state.revision;
     return cache;
   }
 
-  async function readCurrent(): Promise<LockfileData | null> {
+  function readCurrent(): Promise<LockfileData | null> {
     // Cold and invalidated reads share the same access turn as write/remove
     // operations, so peer managers cannot observe a partially replaced file.
     return withLockfileAccess((state) => readCurrentUnderAccess(state));
@@ -795,25 +1205,35 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   }
 
   async function writeToDisk(data: LockfileData): Promise<void> {
+    const sourceEntries = objectEntries(data.imports);
+    apply(arraySort, sourceEntries, [
+      (left: [string, LockfileEntry], right: [string, LockfileEntry]) =>
+        compareLockfileImportKeys(left[0], right[0]),
+    ]);
+    const sortedEntries: Array<[string, LockfileEntry]> = [];
+    sortedEntries.length = sourceEntries.length;
+    for (let index = 0; index < sourceEntries.length; index++) {
+      const sourceEntry = sourceEntries[index]!;
+      sortedEntries[index] = [sourceEntry[0], cloneLockfileEntry(sourceEntry[1])];
+    }
     const sorted: LockfileData = {
       version: LOCKFILE_VERSION,
-      imports: createImportDictionary(
-        objectEntries(data.imports)
-          .sort(([a], [b]) => compareLockfileImportKeys(a, b))
-          .map(([url, entry]) => [url, cloneLockfileEntry(entry)]),
-      ),
+      imports: createImportDictionary(sortedEntries),
     };
     const serialized = `${JSON.stringify(sorted, null, 2)}\n`;
 
-    const rename = fs.rename?.bind(fs);
-    if (rename) {
-      await replaceLockfileAtomically(rename, serialized);
+    const renameFile = fs.rename;
+    if (renameFile) {
+      await replaceLockfileAtomically(
+        (from, to) => apply(renameFile, fs, [from, to]) as Promise<void>,
+        serialized,
+      );
     } else {
       // Adapters without rename cannot replace the file atomically; fall back
       // to an in-place write and accept the torn-write risk for them.
       await fs.writeFile(lockfilePath, serialized);
     }
-    logger.debug(`Written ${Object.keys(data.imports).length} entries`);
+    logger.debug(`Written ${objectKeys(data.imports).length} entries`);
   }
 
   function write(data: LockfileData): Promise<void> {
@@ -825,7 +1245,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
         await readFromDisk();
         await writeToDisk(snapshot);
         cache = snapshot;
-        pendingEntries.clear();
+        clearMap(pendingEntries);
         cacheRevision = ++state.revision;
         retainUnresolvedMutation(state, true);
       });
@@ -844,14 +1264,14 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     try {
       snapshot = cloneLockfileEntry(entry);
     } catch (error) {
-      return Promise.reject(error);
+      return rejectPromise(error);
     }
     return serializeManagerOperation(() =>
       withLockfileAccess(async (state) => {
         const data = (await readCurrentUnderAccess(state)) ?? createInternalLockfile();
         defineImportEntry(data.imports, url, snapshot);
         cache = data;
-        pendingEntries.set(url, {
+        setMapValue(pendingEntries, url, {
           entry: snapshot,
           sequence: nextLockfileMutationSequence++,
         });
@@ -886,7 +1306,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
         // or fallback write have succeeded, so a failed clear leaves memory and
         // disk untouched.
         cache = cleared;
-        pendingEntries.clear();
+        clearMap(pendingEntries);
         state.lastClearSequence = nextLockfileMutationSequence++;
         cacheRevision = ++state.revision;
         retainUnresolvedMutation(state, true);
@@ -896,13 +1316,15 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
 
   function flush(): Promise<void> {
     return serializeManagerOperation(async () => {
-      if (pendingEntries.size === 0) return;
+      if (getMapSize(pendingEntries) === 0) return;
 
       await withLockfileAccess(async (state) => {
-        for (const [url, pending] of pendingEntries) {
-          if (pending.sequence < state.lastClearSequence) pendingEntries.delete(url);
-        }
-        if (pendingEntries.size === 0) {
+        forEachMapEntry(pendingEntries, (url, pending) => {
+          if (pending.sequence < state.lastClearSequence) {
+            deleteMapValue(pendingEntries, url);
+          }
+        });
+        if (getMapSize(pendingEntries) === 0) {
           cache = await readFromDisk();
           cacheRevision = state.revision;
           return;
@@ -912,19 +1334,24 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
         // state while holding the canonical backing-store access turn. This
         // makes the whole read-merge-write sequence atomic relative to other
         // in-process managers, including managers using path aliases.
-        const snapshot = new Map(pendingEntries);
+        const snapshot = new NativeMap<string, PendingLockfileEntry>();
+        forEachMapEntry(pendingEntries, (url, pending) => {
+          setMapValue(snapshot, url, pending);
+        });
         const merged = (await readFromDisk()) ?? createInternalLockfile();
-        for (const [url, pending] of snapshot) {
+        forEachMapEntry(snapshot, (url, pending) => {
           defineImportEntry(merged.imports, url, cloneLockfileEntry(pending.entry));
-        }
+        });
 
         await writeToDisk(merged);
-        for (const [url, pending] of snapshot) {
-          if (pendingEntries.get(url) === pending) pendingEntries.delete(url);
-        }
-        for (const [url, pending] of pendingEntries) {
+        forEachMapEntry(snapshot, (url, pending) => {
+          if (getMapValue(pendingEntries, url) === pending) {
+            deleteMapValue(pendingEntries, url);
+          }
+        });
+        forEachMapEntry(pendingEntries, (url, pending) => {
           defineImportEntry(merged.imports, url, cloneLockfileEntry(pending.entry));
-        }
+        });
         cache = merged;
         cacheRevision = ++state.revision;
         retainUnresolvedMutation(state, true);
