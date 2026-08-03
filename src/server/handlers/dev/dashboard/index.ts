@@ -8,12 +8,37 @@ import { BaseHandler } from "../../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerResult } from "../../types.ts";
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import type { HandlerPriority } from "#veryfront/types";
-import { DASHBOARD_SHELL_HTML } from "./html-shell.ts";
+import { createDashboardShellHtml } from "./html-shell.ts";
 import { handleDashboardAPI } from "./api.ts";
 import { handleDashboardUI } from "./ui-handler.ts";
 import { createDevNotFoundResponse } from "../shared/not-found-response.ts";
+import { errorResponse } from "../http-helpers.ts";
+import { DEV_UI_ASSET_PROVIDER_MISSING_MESSAGE } from "../shared/dev-ui-bundle-response.ts";
+import {
+  createDashboardSessionCookie,
+  DASHBOARD_ACCESS_DENIED_MESSAGE,
+  getDashboardSessionToken,
+  isTrustedDashboardRequest,
+} from "./access-policy.ts";
+import { type DevUiAssetProvider, snapshotDevUiAssetProvider } from "#veryfront/extensions/dev-ui";
+import { DASHBOARD_SESSION_PATH } from "#veryfront/extensions/dev-ui/protocol";
+import { cancelRejectedLocalControlRequestBody } from "#veryfront/security/http/local-control-request.ts";
+
+const HEADLESS_SESSION_HEADERS = Object.freeze({
+  "Cache-Control": "no-store",
+  "Content-Type": "text/plain; charset=utf-8",
+});
 
 export class DevDashboardHandler extends BaseHandler {
+  private readonly browserBundle?: string;
+
+  constructor(provider?: Readonly<DevUiAssetProvider>) {
+    super();
+    this.browserBundle = provider === undefined
+      ? undefined
+      : snapshotDevUiAssetProvider(provider).browserBundle;
+  }
+
   metadata: HandlerMetadata = {
     name: "DevDashboardHandler",
     priority: PRIORITY_HIGH_DEV as HandlerPriority,
@@ -29,21 +54,53 @@ export class DevDashboardHandler extends BaseHandler {
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (!this.shouldHandle(req, ctx)) return this.continue();
     if (!ctx.isLocalProject) return this.continue();
+    if (!isTrustedDashboardRequest(req)) {
+      cancelRejectedLocalControlRequestBody(req, "Dashboard request rejected");
+      const response = errorResponse(DASHBOARD_ACCESS_DENIED_MESSAGE, 403);
+      response.headers.set("Cache-Control", "no-store");
+      return this.respond(response);
+    }
 
     const { pathname } = new URL(req.url);
 
-    if (pathname === "/_dev" || pathname === "/_dev/") {
+    if (pathname === DASHBOARD_SESSION_PATH) {
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        return this.respond(
+          new Response("Method not allowed", {
+            status: 405,
+            headers: { ...HEADLESS_SESSION_HEADERS, Allow: "GET, HEAD" },
+          }),
+        );
+      }
       return this.respond(
-        this.createResponseBuilder(ctx).withCache("no-cache").withContentType(
-          "text/html; charset=utf-8",
-          DASHBOARD_SHELL_HTML,
-          HTTP_OK,
-        ),
+        new Response(null, {
+          status: 204,
+          headers: {
+            ...HEADLESS_SESSION_HEADERS,
+            "Set-Cookie": createDashboardSessionCookie(req),
+          },
+        }),
+      );
+    }
+
+    if (pathname === "/_dev" || pathname === "/_dev/") {
+      if (this.browserBundle === undefined) {
+        return this.respond(errorResponse(DEV_UI_ASSET_PROVIDER_MISSING_MESSAGE, 503));
+      }
+      return this.respond(
+        this.createResponseBuilder(ctx)
+          .withCache("no-store")
+          .withHeaders({ "Set-Cookie": createDashboardSessionCookie(req) })
+          .withContentType(
+            "text/html; charset=utf-8",
+            createDashboardShellHtml(getDashboardSessionToken()),
+            HTTP_OK,
+          ),
       );
     }
 
     if (pathname.startsWith("/_dev/ui/")) {
-      const response = await handleDashboardUI(req);
+      const response = handleDashboardUI(req, this.browserBundle);
       if (response) return this.respond(response);
       return this.respond(createDevNotFoundResponse());
     }

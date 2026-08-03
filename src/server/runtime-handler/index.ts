@@ -67,6 +67,12 @@ import { ProjectRunExecuteHandler } from "../handlers/request/project-run-execut
 import { ChannelInvokeHandler } from "../handlers/request/channel-invoke.handler.ts";
 import { DevDashboardHandler } from "../handlers/dev/dashboard/index.ts";
 import { ProjectsHandler } from "../handlers/dev/projects/index.ts";
+import { tryResolve } from "veryfront/extensions";
+import {
+  type DevUiAssetProvider,
+  DevUiAssetProviderName,
+  snapshotDevUiAssetProvider,
+} from "veryfront/extensions/dev-ui";
 
 // Extracted modules
 import {
@@ -183,6 +189,16 @@ export interface HandlerDependencies {
   debug?: boolean;
 }
 
+/**
+ * Resolve the registered development UI asset provider, if an extension
+ * provided one during bootstrap. Handlers degrade gracefully (fail closed)
+ * when no provider is registered, e.g. in tests without extension setup.
+ */
+function resolveDevUiAssetProvider(): Readonly<DevUiAssetProvider> | undefined {
+  const provider = tryResolve<unknown>(DevUiAssetProviderName);
+  return provider === undefined ? undefined : snapshotDevUiAssetProvider(provider);
+}
+
 /** Factory for each handler. Only called when no override is provided (lazy instantiation). */
 const handlerFactories: Record<
   HandlerName,
@@ -209,8 +225,8 @@ const handlerFactories: Record<
   AgentRunCancelHandler: () => new AgentRunCancelHandler(),
   ProjectRunExecuteHandler: () => new ProjectRunExecuteHandler(),
   ChannelInvokeHandler: () => new ChannelInvokeHandler(),
-  DevDashboardHandler: () => new DevDashboardHandler(),
-  ProjectsHandler: () => new ProjectsHandler(),
+  DevDashboardHandler: () => new DevDashboardHandler(resolveDevUiAssetProvider()),
+  ProjectsHandler: () => new ProjectsHandler(resolveDevUiAssetProvider()),
   StudioBridgeModulesHandler: () => new StudioBridgeModulesHandler(),
   ProdHydrationModuleHandler: () => new ProdHydrationModuleHandler(),
   CSSHandler: () => new CSSHandler(),

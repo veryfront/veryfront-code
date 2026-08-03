@@ -39,18 +39,18 @@ function getUpdateJSFunction(logPrefix: string): string {
       }
     }
 
-    // Fall back to Tailwind CSS link refresh
-    const tailwind = document.getElementById('vf-tailwind-css');
-    if (tailwind) {
-      tailwind.href = '/_vf_styles/styles.css?t=' + Date.now();
-      dlog('${logPrefix} Tailwind CSS refreshed');
+    // Fall back to the generated project stylesheet.
+    const projectStylesheet = document.getElementById('vf-project-css');
+    if (projectStylesheet) {
+      projectStylesheet.href = '/_vf_styles/styles.css?t=' + Date.now();
+      dlog('${logPrefix} Project stylesheet refreshed');
       return true;
     }
     return false;
   }
 
-  async function swapTailwindStylesheet(nextHref) {
-    const current = document.getElementById('vf-tailwind-css');
+  async function swapProjectStylesheet(nextHref) {
+    const current = document.getElementById('vf-project-css');
     if (!(current instanceof HTMLLinkElement) || !nextHref || !current.parentNode) {
       return false;
     }
@@ -68,7 +68,7 @@ function getUpdateJSFunction(logPrefix: string): string {
     }
 
     pending.removeAttribute('id');
-    pending.setAttribute('data-vf-tailwind-pending', 'true');
+    pending.setAttribute('data-vf-stylesheet-pending', 'true');
     pending.href = nextHref;
 
     await new Promise((resolve, reject) => {
@@ -91,8 +91,8 @@ function getUpdateJSFunction(logPrefix: string): string {
           return;
         }
 
-        pending.removeAttribute('data-vf-tailwind-pending');
-        pending.id = 'vf-tailwind-css';
+        pending.removeAttribute('data-vf-stylesheet-pending');
+        pending.id = 'vf-project-css';
         current.remove();
         resolve(true);
       }
@@ -116,7 +116,7 @@ function getUpdateJSFunction(logPrefix: string): string {
   async function applyStyleUpdate(changedPath, styleHref) {
     if (styleHref) {
       try {
-        const swapped = await swapTailwindStylesheet(styleHref);
+        const swapped = await swapProjectStylesheet(styleHref);
         if (swapped) {
           dlog('${logPrefix} Swapped stylesheet:', styleHref);
           return true;
@@ -150,7 +150,7 @@ function getUpdateJSFunction(logPrefix: string): string {
         window.__veryfrontClearComponentCache();
       }
 
-      // Refresh Tailwind CSS (new classes may be needed from JS changes)
+      // Refresh generated project CSS (source changes may introduce new candidates).
       await applyStyleUpdate(path, styleHref);
 
       // Re-render the page with fresh modules
