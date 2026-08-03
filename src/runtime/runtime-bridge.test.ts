@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type AgentRunEvent, runWithRunEventSink } from "../agent/index.ts";
 import { runWithMandatoryRunEventSink } from "./run-event-sink-context.ts";
@@ -9,8 +9,74 @@ import {
   createGenerateModel,
   createStreamModel,
 } from "./runtime-bridge.test-helpers.ts";
+import { VeryfrontError } from "#veryfront/errors";
 
 describe("runtime-bridge", () => {
+  it("rejects non-cloneable model context with a stable registered error", async () => {
+    for (
+      const testCase of [
+        {
+          name: "message input",
+          messages: [{
+            role: "assistant" as const,
+            content: [{
+              type: "tool-call" as const,
+              toolCallId: "call-1",
+              toolName: "unsafe",
+              input: { secret: Symbol("not-cloneable") },
+            }],
+          }, { role: "user" as const, content: "Continue" }],
+          tools: undefined,
+        },
+        {
+          name: "tool schema",
+          messages: [{ role: "user" as const, content: "Call the tool" }],
+          tools: {
+            unsafe: {
+              inputSchema: {
+                jsonSchema: { type: "object", validate: () => true },
+              },
+            },
+          },
+        },
+      ]
+    ) {
+      let sinkCalls = 0;
+      let dispatches = 0;
+      const model = createGenerateModel("test", `test/${testCase.name}`, async () => {
+        dispatches += 1;
+        return {
+          content: [{ type: "text", text: "must not dispatch" }],
+          finishReason: "stop",
+          usage: {},
+        };
+      });
+
+      const error = await assertRejects(async () =>
+        await runWithRunEventSink(
+          () => {
+            sinkCalls += 1;
+          },
+          () =>
+            generateText({
+              model,
+              messages: testCase.messages,
+              tools: testCase.tools as never,
+            }),
+        )
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "durable-run-event-persistence-failed");
+      assertEquals(
+        error.message,
+        "Model call context contains data that cannot be persisted safely",
+      );
+      assertEquals(sinkCalls, 0);
+      assertEquals(dispatches, 0);
+    }
+  });
+
   it("emits one exact run event with normalized messages and resolved tools before direct generate", async () => {
     const order: string[] = [];
     let recorded: unknown;

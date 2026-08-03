@@ -25,6 +25,9 @@ import type {
   ModelCallTool,
 } from "./model-call-context.ts";
 import { getActiveRunEventSinks } from "./run-event-sink-context.ts";
+import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
+
+const cloneStructuredValue = globalThis.structuredClone;
 
 type GenerateTextOptions = {
   model: ModelRuntime;
@@ -489,11 +492,22 @@ async function emitModelCallContextEvent(directOptions: DirectModelOptions): Pro
     messages: directOptions.prompt,
     ...(directOptions.tools ? { tools: directOptions.tools } : {}),
   };
+
+  const cloneEvent = (): AgentRunModelCallContextEvent => {
+    try {
+      return cloneStructuredValue(event);
+    } catch (cause) {
+      throw DURABLE_RUN_EVENT_PERSISTENCE_FAILED.create({
+        detail: "Model call context contains data that cannot be persisted safely",
+        cause,
+      });
+    }
+  };
   if (sinks.mandatory) {
-    await sinks.mandatory(structuredClone(event));
+    await sinks.mandatory(cloneEvent());
   }
   if (sinks.public && sinks.public !== sinks.mandatory) {
-    await sinks.public(structuredClone(event));
+    await sinks.public(cloneEvent());
   }
 }
 
