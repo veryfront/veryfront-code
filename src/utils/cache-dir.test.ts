@@ -21,6 +21,7 @@ import { isNode } from "#veryfront/platform/compat/runtime.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  __cacheDirInternals,
   ensureCacheNodeModules,
   getCacheBaseDir,
   getCacheDirFromContext,
@@ -81,6 +82,27 @@ describe("cache-dir", () => {
   describe("getCacheDirFromContext", () => {
     it("should return undefined when not in a context", () => {
       assertEquals(getCacheDirFromContext(), undefined);
+    });
+  });
+
+  describe("resolved React module paths", () => {
+    it("should locate node_modules on POSIX and Windows", () => {
+      assertEquals(
+        __cacheDirInternals.getReactNodeModulesDir(
+          "/repo/node_modules/react/index.js",
+        ),
+        "/repo/node_modules",
+      );
+      assertEquals(
+        __cacheDirInternals.getReactNodeModulesDir(
+          "C:\\repo\\node_modules\\react\\index.js",
+        ),
+        "C:\\repo\\node_modules",
+      );
+      assertEquals(
+        __cacheDirInternals.getReactNodeModulesDir("/repo/vendor/react.js"),
+        undefined,
+      );
     });
   });
 

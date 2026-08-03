@@ -438,6 +438,71 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     }
   });
 
+  it("preserves an operational cache error when MDX invalidation also fails", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-invalidation-failure-" });
+    const filePath = join(projectDir, "InvalidationFailure.tsx");
+    const projectId = "project-invalidation-failure-test";
+    const contentSourceId = "preview-main";
+    const source = "export default function InvalidationFailure() { return null; }";
+    const contentHash = hashAsLoader(source, filePath, projectDir);
+    const configHash = computeConfigHashSync({ dev: true });
+    const reactVersion = "default";
+    const filePathCacheKey = buildSSRModuleCacheKey(
+      RUNTIME_VERSION,
+      projectId,
+      `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+    );
+    const contentCacheKey = buildSSRModuleCacheKey(
+      RUNTIME_VERSION,
+      projectId,
+      `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+    );
+    const staleEntry = {
+      tempPath: join(projectDir, "unreadable-cache-output.mjs"),
+      contentHash,
+    };
+    globalModuleCache.set(contentCacheKey, staleEntry);
+    globalModuleCache.set(filePathCacheKey, staleEntry);
+    verifiedHttpBundlePaths.set(`${staleEntry.tempPath}:${contentHash}`, true);
+
+    const loader = new SSRModuleLoader({
+      projectDir,
+      projectId,
+      contentSourceId,
+      adapter: denoAdapter,
+      dev: true,
+    });
+    const mutableLoader = loader as unknown as {
+      cache: { fs: FileSystem; getFs(): FileSystem };
+      invalidateMdxEsmCacheEntry(
+        filePath: string,
+        cacheEntry: ModuleCacheEntry,
+      ): Promise<void>;
+    };
+    const originalFs = mutableLoader.cache.getFs();
+    mutableLoader.cache.fs = {
+      stat: () => Promise.reject(Object.assign(new Error("permission denied"), { code: "EACCES" })),
+    } as unknown as FileSystem;
+    mutableLoader.invalidateMdxEsmCacheEntry = () =>
+      Promise.reject(new Error("invalidation failed"));
+
+    try {
+      await assertRejects(
+        () => loader.loadModule(filePath, source),
+        Error,
+        "permission denied",
+      );
+      assertEquals(globalModuleCache.get(filePathCacheKey), undefined);
+      assertEquals(globalModuleCache.get(contentCacheKey), undefined);
+      assertEquals(verifiedHttpBundlePaths.get(`${staleEntry.tempPath}:${contentHash}`), undefined);
+    } finally {
+      mutableLoader.cache.fs = originalFs;
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
   it("clears verified MDX-ESM path cache before retrying stale local dependencies", async () => {
     clearSSRModuleCache();
     clearModulePathCache();

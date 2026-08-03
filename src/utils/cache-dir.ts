@@ -6,6 +6,17 @@ import { isNode } from "#veryfront/platform/compat/runtime.ts";
 const cacheStorage = new AsyncLocalStorage<string>();
 const nodeModulesLinkOperations = new Map<string, Promise<void>>();
 
+function getReactNodeModulesDir(reactEntry: string): string | undefined {
+  const normalizedReactEntry = reactEntry.replaceAll("\\", "/");
+  const marker = "/node_modules/react";
+  const markerIndex = normalizedReactEntry.lastIndexOf(marker);
+  if (markerIndex === -1) return undefined;
+  return reactEntry.slice(0, markerIndex + "/node_modules".length);
+}
+
+/** Internal test seam for platform-specific resolved module paths. */
+export const __cacheDirInternals = { getReactNodeModulesDir };
+
 export function runWithCacheDir<T>(cacheDir: string, fn: () => T): T {
   return cacheStorage.run(cacheDir, fn);
 }
@@ -95,12 +106,8 @@ async function linkCacheNodeModules(cacheBase: string): Promise<void> {
 
     const require = createRequire(import.meta.url);
     const reactEntry = require.resolve("react");
-
-    const marker = "/node_modules/react";
-    const idx = reactEntry.lastIndexOf(marker);
-    if (idx === -1) return;
-
-    const nodeModulesDir = reactEntry.substring(0, idx + "/node_modules".length);
+    const nodeModulesDir = getReactNodeModulesDir(reactEntry);
+    if (!nodeModulesDir) return;
 
     try {
       const existing = lstatSync(targetLink);

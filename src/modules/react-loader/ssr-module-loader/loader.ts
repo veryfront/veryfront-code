@@ -262,8 +262,22 @@ export class SSRModuleLoader {
       // An unreadable cache entry cannot be trusted on a later attempt. Keep
       // the original operational error, but remove both indexes so a repaired
       // filesystem does not keep routing requests back to stale metadata.
-      await this.invalidateMdxEsmCacheEntry(filePath, cacheEntry);
-      this.cache.invalidateFilePathCacheEntry(filePath, cacheEntry);
+      try {
+        await this.invalidateMdxEsmCacheEntry(filePath, cacheEntry);
+      } catch (invalidationError) {
+        logger.warn("Failed to invalidate unreadable MDX cache entry", {
+          file: filePath.slice(-40),
+          error: invalidationError,
+        });
+      }
+      try {
+        this.cache.invalidateFilePathCacheEntry(filePath, cacheEntry);
+      } catch (invalidationError) {
+        logger.warn("Failed to invalidate unreadable file-path cache entry", {
+          file: filePath.slice(-40),
+          error: invalidationError,
+        });
+      }
       throw error;
     }
     if (!fileExists) {
