@@ -17,6 +17,14 @@ import type {
 import type { RuntimeRemoteToolConfig } from "./mcp-server-tool-sources.ts";
 import type { TextGenerationRuntimeMessage } from "./text-generation-runtime-message-types.ts";
 import { flattenSystemInstructions, withRuntimeToolInventory } from "./tool-inventory.ts";
+import { getRuntimeProjectSkillCatalog } from "./project-skill-catalog.ts";
+import {
+  createRuntimeProjectSkillLoader,
+  type RuntimeProjectSkillContext,
+} from "./project-skill-loader.ts";
+import { hasSubmittedFormInputResult } from "./skill-policy-enforcement.ts";
+import { isRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
+import { normalizeInput } from "./input-utils.ts";
 
 function eagerAgent(config: Parameters<typeof agent>[0]): ReturnType<typeof agent> {
   return agent({ ...config, __vfToolLoadingMode: "eager" } as Parameters<typeof agent>[0]);
@@ -87,6 +95,37 @@ function supplierInvoiceEvidenceMessages(): Message[] {
         },
       }],
       timestamp: 3,
+    },
+  ];
+}
+
+function submittedFormWithActiveSkillMessages(): Message[] {
+  return [
+    {
+      id: "skill-result",
+      role: "tool",
+      parts: [{
+        type: "tool-result",
+        toolCallId: "load-plan",
+        toolName: "load_skill",
+        result: {
+          skillId: "plan",
+          instructions: "# Plan",
+          allowedTools: ["load_skill"],
+          references: ["references/guide.md"],
+          scripts: [],
+        },
+      }],
+    },
+    {
+      id: "form-result",
+      role: "tool",
+      parts: [{
+        type: "tool-result",
+        toolCallId: "collect-plan-input",
+        toolName: "form_input",
+        result: { submitted: true, values: { topic: "Runtime policy" } },
+      }],
     },
   ];
 }
@@ -188,6 +227,7 @@ describe("agent runtime refresh hooks", () => {
   it("continues suppressed unavailable tool calls with a user recovery turn after assistant text", async () => {
     const observedPrompts: Array<Array<{ role?: string; content?: unknown }>> = [];
     let callCount = 0;
+    let finishedResponse: AgentResponse | undefined;
     const model: ModelRuntime = {
       provider: "hosted",
       modelId: "hosted/suppressed-tool-recovery",
@@ -238,7 +278,12 @@ describe("agent runtime refresh hooks", () => {
       resolveModelTransport: async () => ({ model }),
     });
 
-    await (await assistant.stream({ input: "Build an agent" })).toDataStreamResponse().text();
+    await (await assistant.stream({
+      messages: submittedFormWithActiveSkillMessages(),
+      onFinish: (response) => {
+        finishedResponse = response;
+      },
+    })).toDataStreamResponse().text();
 
     assertEquals(callCount, 2);
     const retryPrompt = observedPrompts[1] ?? [];
@@ -249,6 +294,15 @@ describe("agent runtime refresh hooks", () => {
       ),
       true,
     );
+    const completedResponse = finishedResponse as AgentResponse | undefined;
+    assertExists(completedResponse);
+    const recoveryMessage = completedResponse.messages.find((message) =>
+      message.id.startsWith("runtime_note_")
+    );
+    assertExists(recoveryMessage);
+    assertEquals(isRuntimeGeneratedUserMessage(recoveryMessage), true);
+    assertEquals(hasSubmittedFormInputResult(completedResponse.messages), true);
+    assertEquals(hasSubmittedFormInputResult(normalizeInput(completedResponse.messages)), true);
   });
 
   it("keeps valid parallel tool results before suppressed-tool recovery guidance", async () => {
@@ -1632,7 +1686,7 @@ describe("agent runtime refresh hooks", () => {
       id: "load_skill",
       description: "Load a skill",
       inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
-      execute: () => ({ skillId: "build", maxSteps: 160 }),
+      execute: () => ({ skillId: "build", instructions: "# Build", maxSteps: 160 }),
     });
     const invokeAgent = tool({
       id: "invoke_agent",
@@ -1733,7 +1787,7 @@ describe("agent runtime refresh hooks", () => {
       id: "load_skill",
       description: "Load a skill",
       inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
-      execute: () => ({ skillId: "build", maxSteps: 160 }),
+      execute: () => ({ skillId: "build", instructions: "# Build", maxSteps: 160 }),
     });
     const invokeAgent = tool({
       id: "invoke_agent",
@@ -1862,7 +1916,10 @@ describe("agent runtime refresh hooks", () => {
           toolName: "load_skill",
           result: {
             skillId: "supplier-invoice-processing",
+            instructions: "# Supplier invoice processing",
             allowedTools: ["invoke_agent"],
+            references: [],
+            scripts: [],
             maxSteps: 160,
           },
         }],
@@ -2251,5 +2308,208 @@ describe("agent runtime refresh hooks", () => {
       "Refreshed streaming system prompt",
     ]);
     assertEquals(body.includes("stream done"), true);
+  });
+
+  it("generate and stream permit an advertised active-skill reference after form submission", async () => {
+    let generateCalls = 0;
+    let streamCalls = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/post-form-skill-reference",
+      async doGenerate() {
+        generateCalls++;
+        if (generateCalls === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "read-plan-guide-generate",
+              toolName: "load_skill",
+              input: JSON.stringify({ skillId: "plan", file: "references/guide.md" }),
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+        return {
+          content: [{ type: "text", text: "generate done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        streamCalls++;
+        if (streamCalls === 1) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "read-plan-guide-stream",
+                toolName: "load_skill",
+                input: JSON.stringify({ skillId: "plan", file: "references/guide.md" }),
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "stream done" },
+            {
+              type: "finish",
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
+          ]),
+        };
+      },
+    };
+    const loadSkill = tool({
+      id: "load_skill",
+      description: "Load a skill",
+      inputSchema: defineSchema((v) =>
+        v.object({
+          skillId: v.string(),
+          file: v.string().optional(),
+        })
+      )(),
+      execute: ({ skillId, file }) => ({
+        skillId,
+        file,
+        content: "Guide",
+      }),
+    });
+    const assistant = eagerAgent({
+      id: "post-form-skill-reference-agent",
+      model: "hosted/post-form-skill-reference",
+      system: "Plan assistant",
+      skills: true,
+      tools: { load_skill: loadSkill },
+      maxSteps: 2,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const generated = await assistant.generate({
+      input: submittedFormWithActiveSkillMessages(),
+    });
+    const streamed = await (await assistant.stream({
+      messages: submittedFormWithActiveSkillMessages(),
+    })).toDataStreamResponse().text();
+
+    assertEquals(generated.toolCalls[0]?.error, undefined);
+    assertEquals(generated.toolCalls[0]?.status, "completed");
+    assertEquals(generated.toolCalls[0]?.result, {
+      skillId: "plan",
+      file: "references/guide.md",
+      content: "Guide",
+    });
+    assertEquals(streamed.includes("stream done"), true);
+    assertEquals(streamed.includes("Guide"), true);
+  });
+
+  it("generate and stream load advertised provider-safe root-owned project skills", async () => {
+    const contentsByPath: Record<string, string> = {
+      "agents/foo_bar/AGENT.md": "---\nname: foo_bar\ndescription: Owner\n---\nOwner",
+      "agents/foo_bar/SKILL.md":
+        "---\nname: foo_bar\ndescription: Root underscore skill\n---\nUse foo_bar.",
+      "agents/ReleaseNotes/AGENT.md": "---\nname: ReleaseNotes\ndescription: Owner\n---\nOwner",
+      "agents/ReleaseNotes/SKILL.md":
+        "---\nname: ReleaseNotes\ndescription: Root uppercase skill\n---\nUse ReleaseNotes.",
+    };
+    const paths = Object.keys(contentsByPath);
+    const getProjectFile = ({ path }: { path: string }) =>
+      Promise.resolve(
+        Object.hasOwn(contentsByPath, path) ? { path, content: contentsByPath[path]! } : null,
+      );
+    const getProjectFiles = () => Promise.resolve(paths.map((path) => ({ path })));
+    const catalog = await getRuntimeProjectSkillCatalog({
+      projectId: "project-1",
+      authToken: "token",
+      builtinSkills: [],
+      getProjectFile,
+      getProjectFiles,
+    });
+    const skillSourcePaths = Object.fromEntries(
+      catalog.flatMap((skill) => skill.sourcePath ? [[skill.id, skill.sourcePath]] : []),
+    );
+    const loader = createRuntimeProjectSkillLoader({ getProjectFile, getProjectFiles });
+    const projectSkillContext: RuntimeProjectSkillContext = {
+      projectId: "project-1",
+      authToken: "token",
+      skillSourcePaths,
+    };
+    const loadedIds: string[] = [];
+    const loadSkill = tool({
+      id: "load_root_owned_skill",
+      description: "Load one advertised project skill",
+      inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+      execute: async ({ skillId }) => {
+        const loaded = await loader.loadProjectSkill(projectSkillContext, skillId);
+        if (loaded) loadedIds.push(skillId);
+        return loaded;
+      },
+    });
+    let generateCalls = 0;
+    let streamCalls = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/provider-safe-root-skills",
+      async doGenerate() {
+        generateCalls++;
+        return {
+          content: [{
+            type: "tool-call",
+            toolCallId: `root-skill-generate-${generateCalls}`,
+            toolName: "load_root_owned_skill",
+            input: JSON.stringify({ skillId: "foo_bar" }),
+          }],
+          finishReason: "tool-calls",
+        };
+      },
+      async doStream() {
+        streamCalls++;
+        return {
+          stream: createRuntimeStream([
+            {
+              type: "tool-call",
+              toolCallId: `root-skill-stream-${streamCalls}`,
+              toolName: "load_root_owned_skill",
+              input: JSON.stringify({ skillId: "ReleaseNotes" }),
+            },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      },
+    };
+    const assistant = eagerAgent({
+      id: "provider-safe-root-skill-agent",
+      model: "hosted/provider-safe-root-skills",
+      system: "Load the advertised skill.",
+      skills: true,
+      tools: { load_root_owned_skill: loadSkill },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      resolveRuntimeState: () => ({
+        systemPrompt: "Load the advertised skill.",
+        context: {
+          projectId: "project-1",
+          authToken: "token",
+          availableSkillIds: catalog.map((skill) => skill.id),
+          skillSourcePaths,
+        },
+      }),
+    });
+
+    const generated = await assistant.generate({ input: "Load foo_bar" });
+    const streamed = await (await assistant.stream({ input: "Load ReleaseNotes" }))
+      .toDataStreamResponse().text();
+
+    assertEquals(catalog.map((skill) => skill.id), ["foo_bar", "ReleaseNotes"]);
+    assertEquals(generated.toolCalls[0]?.status, "completed");
+    assertEquals(streamed.includes("Use ReleaseNotes."), true);
+    assertEquals(loadedIds, ["foo_bar", "ReleaseNotes"]);
   });
 });

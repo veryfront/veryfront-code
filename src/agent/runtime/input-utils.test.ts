@@ -2,6 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
+import {
+  isRuntimeGeneratedUserMessage,
+  markRuntimeGeneratedUserMessage,
+} from "./runtime-message-origin.ts";
 
 describe("input-utils", () => {
   describe("normalizeInput", () => {
@@ -36,6 +40,19 @@ describe("input-utils", () => {
       assertExists(message);
       assertEquals(message.id, "msg_1");
       assertEquals(message.timestamp, 1000);
+    });
+
+    it("preserves in-process runtime continuation origin while normalizing", () => {
+      const runtimeMessage = markRuntimeGeneratedUserMessage({
+        id: "runtime-note",
+        role: "user" as const,
+        parts: [{ type: "text" as const, text: "Continue with available tools." }],
+      });
+
+      const [normalized] = normalizeInput([runtimeMessage]);
+
+      assertEquals(isRuntimeGeneratedUserMessage(normalized!), true);
+      assertEquals(normalized === runtimeMessage, false);
     });
 
     it("assigns generated ids when message has no id", () => {

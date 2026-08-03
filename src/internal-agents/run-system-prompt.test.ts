@@ -194,7 +194,11 @@ describe("internal-agents/run-system-prompt", () => {
       assertStringIncludes(prompt, "<available_skills>");
       assertStringIncludes(
         prompt,
-        "- support-triage: Triage incoming support requests",
+        '- {"skillId":"support-triage","description":"Triage incoming support requests"}',
+      );
+      assertEquals(
+        prompt.includes("- support-triage: Triage incoming support requests"),
+        false,
       );
     });
 

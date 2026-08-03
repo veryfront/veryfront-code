@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects } from "@std/assert";
 import type { HostToolSet } from "#veryfront/tool";
 import {
   DEFAULT_HOSTED_CHILD_FORK_STREAM_ACTIVE_TOOL_TIMEOUT_MS,
@@ -11,6 +11,7 @@ import {
 } from "./child-fork-execution-runner.ts";
 import { createHostedDurableChildForkRunContext } from "./child-fork-run-context.ts";
 import type { AgentResponse } from "../schemas/index.ts";
+import { UNCONFIRMED_AGENT_PROJECT_IDENTITY_MESSAGE } from "../project/context.ts";
 import { getActiveModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
 
 function createRuntimeEventStream(
@@ -437,6 +438,49 @@ Deno.test("executeHostedChildForkToolInput resolves runtime config and prepares 
   if (result.success) {
     assertEquals(result.summary.text, "Resolved.");
   }
+});
+
+Deno.test("executeHostedChildForkToolInput rejects unconfirmed project identities before setup", async () => {
+  const callbacks: string[] = [];
+
+  await assertRejects(
+    () =>
+      executeHostedChildForkToolInput({
+        authToken: "token",
+        apiUrl: "https://api.example.com",
+        kind: "invoke_agent",
+        toolCallId: "tool-call-unconfirmed-project",
+        forkInput: {
+          description: "Review checkout",
+          prompt: "Review the checkout flow.",
+          context: {},
+          project_reference: "project-two",
+        },
+        defaultModel: "haiku",
+        defaultMaxSteps: 80,
+        resolveProjectReference: () => Promise.resolve({ projectId: "project-three" }),
+        onRequestedProjectId: () => {
+          callbacks.push("project");
+        },
+        resolveModelId: (modelId) => {
+          callbacks.push("model");
+          return modelId;
+        },
+        resolveProvider: () => "anthropic",
+        prepareToolAssembly: () => {
+          callbacks.push("tools");
+          return { ok: true, forkTools: {}, availableToolNames: [] };
+        },
+        startRuntime: () => {
+          callbacks.push("runtime");
+          throw new Error("unexpected runtime start");
+        },
+      }),
+    TypeError,
+    UNCONFIRMED_AGENT_PROJECT_IDENTITY_MESSAGE,
+  );
+
+  assertEquals(callbacks, []);
 });
 
 Deno.test("executeHostedChildForkToolInput honors full result mode", async () => {

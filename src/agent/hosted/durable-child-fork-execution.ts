@@ -34,6 +34,7 @@ import {
 import { isChildRunAbortError, throwIfChildRunAborted } from "../child-run/execution-support.ts";
 import {
   type HostedProjectReferenceResolver,
+  requireConfirmedHostedProjectReference,
   resolveHostedProjectReference,
 } from "./project-reference-resolver.ts";
 
@@ -446,7 +447,7 @@ export type ExecuteHostedDurableChildForkInput<
   defaultModel: string;
   resolveModelId: (model: string) => string;
   resolveProvider: (modelId: string) => string;
-  onRequestedProjectId?: (projectId: string) => Promise<void> | void;
+  onRequestedProjectId?: (projectId: string, projectSlug?: string) => Promise<void> | void;
   publishParentRunEvents?: (events: InvokeAgentChildRunProgressEvent[]) => Promise<void> | void;
   contextUnavailableMessage: string;
   setupFailedCode: string;
@@ -515,13 +516,20 @@ async function prepareHostedDurableChildBootstrapContext<
   const requestedProjectReference = getRequestedProjectReference(input.forkInput);
   if (requestedProjectReference) {
     const resolver = input.resolveProjectReference ?? resolveHostedProjectReference;
-    const resolvedProject = await resolver({
+    const resolution = await resolver({
       projectReference: requestedProjectReference,
       authToken: input.authToken,
       apiUrl: input.apiUrl,
       abortSignal: input.executionOptions.abortSignal,
     });
-    await input.onRequestedProjectId?.(resolvedProject.projectId);
+    const resolvedProject = requireConfirmedHostedProjectReference(
+      resolution,
+      requestedProjectReference,
+    );
+    await input.onRequestedProjectId?.(
+      resolvedProject.projectId,
+      resolvedProject.projectSlug,
+    );
   }
 
   const targets = resolveConversationRunTargets({

@@ -342,23 +342,80 @@ await buildExtensionPackages({
 await verifyNpmRootImportLifecycle();
 
 async function verifyNpmRootImportLifecycle(): Promise<void> {
+	const consumerDirectory = await Deno.makeTempDir({
+		prefix: "veryfront-npm-lifecycle-",
+	});
+	try {
+		await installBuiltNpmLifecycleConsumer(consumerDirectory);
+		await runNpmRootImportLifecycleProbe(consumerDirectory);
+	} finally {
+		await Deno.remove(consumerDirectory, { recursive: true }).catch(() => undefined);
+	}
+}
+
+async function installBuiltNpmLifecycleConsumer(consumerDirectory: string): Promise<void> {
+	const localPackageDirectories = await Promise.all([
+		Deno.realPath("./npm"),
+		Deno.realPath("./npm/extensions/ext-bundler-esbuild"),
+		Deno.realPath("./npm/extensions/ext-content-mdx"),
+		Deno.realPath("./npm/extensions/ext-css-tailwind"),
+		Deno.realPath("./npm/extensions/ext-parser-babel"),
+		Deno.realPath("./npm/extensions/ext-yaml"),
+	]);
+	await Deno.writeTextFile(
+		`${consumerDirectory}/package.json`,
+		JSON.stringify({ private: true, type: "module" }),
+	);
+	const install = await new Deno.Command("npm", {
+		args: [
+			"install",
+			"--ignore-scripts",
+			"--legacy-peer-deps",
+			"--no-audit",
+			"--no-fund",
+			"--no-package-lock",
+			"--install-links",
+			...localPackageDirectories,
+		],
+		cwd: consumerDirectory,
+		stdout: "piped",
+		stderr: "piped",
+	}).output();
+	if (!install.success) {
+		const stderr = new TextDecoder().decode(install.stderr).trim();
+		throw new Error(
+			`Built npm lifecycle consumer install failed with exit code ${install.code}.` +
+				(stderr ? `\n${stderr}` : ""),
+		);
+	}
+}
+
+async function runNpmRootImportLifecycleProbe(consumerDirectory: string): Promise<void> {
 	const timeoutMs = 10_000;
 	const probeSource = `
-const root = await import("./esm/src/index.js");
+const root = await import("veryfront");
 if (typeof root.defineConfig !== "function") {
   throw new Error("defineConfig export missing");
 }
 
+const agent = await import("veryfront/agent");
+const metadata = agent.parseRuntimeSkillMetadata(
+  "---\\nname: public-api\\ndescription: Public API\\n---\\nBody",
+);
+if (metadata?.name !== "public-api") {
+  throw new Error("public runtime Skill parser default unavailable");
+}
+
 const { createEvalCliBuiltinExtensions } = await import(
-  "./esm/src/extensions/builtin-extensions.js"
+  "./node_modules/veryfront/esm/src/extensions/builtin-extensions.js"
 );
 const { getDeferredExtensionState } = await import(
-  "./esm/src/extensions/deferred-extension.js"
+  "./node_modules/veryfront/esm/src/extensions/deferred-extension.js"
 );
 const {
   createEvalReportExporterRegistry,
   EvalReportExporterRegistryName,
-} = await import("./esm/src/extensions/eval/index.js");
+} = await import("./node_modules/veryfront/esm/src/extensions/eval/index.js");
 
 const registry = createEvalReportExporterRegistry();
 const resolved = createEvalCliBuiltinExtensions(["mlflow"]).find(
@@ -407,7 +464,7 @@ if (registry.has("mlflow")) {
 			"--eval",
 			probeSource,
 		],
-		cwd: "./npm",
+		cwd: consumerDirectory,
 		env: {
 			MLFLOW_TRACKING_URI: "http://127.0.0.1:5000",
 			VF_DISABLE_LRU_INTERVAL: "0",

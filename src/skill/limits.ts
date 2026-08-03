@@ -24,6 +24,11 @@ export const SKILL_SELECTOR_MAX_ENTRIES = SKILL_SUBDIR_MAX_ENTRIES;
 // load_skill merges references/, resources/, and assets/ into one read-only
 // capability list, so its aggregate budget is three bounded subdirectories.
 export const SKILL_LOADABLE_REFERENCE_MAX_ENTRIES = SKILL_SUBDIR_MAX_ENTRIES * 3;
+// A directory listing also contains its SKILL.md definition. Keep the
+// transport/list snapshot large enough for the complete readable-file
+// capability set without counting that definition as a readable file.
+export const SKILL_LOADABLE_REFERENCE_LISTING_MAX_ENTRIES = SKILL_LOADABLE_REFERENCE_MAX_ENTRIES +
+  1;
 export const SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES = SKILL_SUBDIR_MAX_ENTRIES;
 export const SKILL_RUNTIME_LOADED_REFERENCE_CACHE_MAX_ENTRIES =
   SKILL_LOADABLE_REFERENCE_MAX_ENTRIES;
@@ -36,7 +41,10 @@ export const SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES = 1_000;
 export const SKILL_CATALOG_MAX_SKILLS = 128;
 export const SKILL_CATALOG_MAX_DOCUMENT_CHARACTERS = 8 * 1_048_576;
 export const SKILL_CATALOG_MAX_DOCUMENT_UTF8_BYTES = 16 * 1_048_576;
-export const SKILL_CATALOG_MAX_PATH_ENTRIES = 1_000;
+// One catalog can retain a maximally populated Skill plus one source path for
+// every admitted definition. Other combinations share this same bounded total.
+export const SKILL_CATALOG_MAX_PATH_ENTRIES = SKILL_LOADABLE_REFERENCE_MAX_ENTRIES +
+  SKILL_CATALOG_MAX_SKILLS;
 export const SKILL_CATALOG_MAX_METADATA_CHARACTERS = 1_048_576;
 /** One outer deadline for skill discovery/read operations. */
 export const SKILL_FILE_OPERATION_TIMEOUT_MS = 30_000;

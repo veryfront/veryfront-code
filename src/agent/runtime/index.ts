@@ -71,18 +71,16 @@ import {
   shouldContinueAfterStreamStep,
 } from "./tool-result-continuation.ts";
 import {
+  applySkillActivationResult,
   enforceSkillPolicy,
-  extractSkillId,
-  extractSkillPolicy,
-  extractSkillToolAvailability,
   FORM_INPUT_TOOL_ID,
   hasSubmittedFormInputResult,
   hydrateActiveSkillStateFromMessages,
-  INACTIVE_SKILL_TOOL_AVAILABILITY,
   LOAD_SKILL_TOOL_ID,
   removeFormInputAfterSubmission,
   SUBMITTED_FORM_INPUT_CONTEXT_KEY,
 } from "./skill-policy-enforcement.ts";
+import { markRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
 import {
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
@@ -206,10 +204,7 @@ import { resolveRuntimeModel } from "./model-resolution.ts";
 import type { RuntimeGenerateTextResult, RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
 import { resolveTemperatureParameter } from "./model-capabilities.ts";
-import {
-  applySkillDelegationOverridesToToolInput,
-  extractSkillDelegationOverrides,
-} from "./skill-delegation-overrides.ts";
+import { applySkillDelegationOverridesToToolInput } from "./skill-delegation-overrides.ts";
 import { resolveAgentModelTransport, type ResolvedModelTransport } from "./model-transport.ts";
 import { buildRuntimeUsageTraceAttributes } from "./trace-usage.ts";
 import {
@@ -1060,6 +1055,18 @@ export class AgentRuntime {
       let activeSkillPolicy = hydratedSkillState.activeSkillPolicy;
       let activeSkillToolAvailability = hydratedSkillState.activeSkillToolAvailability;
       let activeSkillDelegationOverrides = hydratedSkillState.activeSkillDelegationOverrides;
+      const applySuccessfulSkillResult = (result: unknown): void => {
+        const next = applySkillActivationResult({
+          activeSkillId,
+          activeSkillPolicy,
+          activeSkillToolAvailability,
+          activeSkillDelegationOverrides,
+        }, result);
+        activeSkillId = next.activeSkillId;
+        activeSkillPolicy = next.activeSkillPolicy;
+        activeSkillToolAvailability = next.activeSkillToolAvailability;
+        activeSkillDelegationOverrides = next.activeSkillDelegationOverrides;
+      };
       let hasSubmittedFormInputInLoop = hasSubmittedFormInputResult(currentMessages) ||
         runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
       const hasToolReplacements = toolReplacements !== undefined;
@@ -1469,8 +1476,10 @@ export class AgentRuntime {
               activeSkillPolicy,
               mustLoadSkillFirstForStep,
               {
+                activeSkillId,
                 hasSubmittedFormInput: hasSubmittedFormInputInLoop,
                 skillToolAvailability: activeSkillToolAvailability,
+                toolInput: tc.input,
               },
             );
             if (!policyCheck.allowed) {
@@ -1569,16 +1578,11 @@ export class AgentRuntime {
                 }
                 // Track skill policy from successful load_skill results
                 if (tc.toolName === LOAD_SKILL_TOOL_ID) {
-                  activeSkillId = extractSkillId(result);
-                  activeSkillPolicy = extractSkillPolicy(result);
-                  activeSkillToolAvailability = extractSkillToolAvailability(result) ??
-                    INACTIVE_SKILL_TOOL_AVAILABILITY;
-                  activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
+                  applySuccessfulSkillResult(result);
                 }
                 activeSkillPolicy = removeFormInputAfterSubmission(
                   tc.toolName,
                   result,
-                  activeSkillId,
                   activeSkillPolicy,
                 );
                 if (isSubmittedFormInputExecutionResult(tc.toolName, result)) {
@@ -1687,6 +1691,18 @@ export class AgentRuntime {
     let activeSkillPolicy = hydratedSkillState.activeSkillPolicy;
     let activeSkillToolAvailability = hydratedSkillState.activeSkillToolAvailability;
     let activeSkillDelegationOverrides = hydratedSkillState.activeSkillDelegationOverrides;
+    const applySuccessfulSkillResult = (result: unknown): void => {
+      const next = applySkillActivationResult({
+        activeSkillId,
+        activeSkillPolicy,
+        activeSkillToolAvailability,
+        activeSkillDelegationOverrides,
+      }, result);
+      activeSkillId = next.activeSkillId;
+      activeSkillPolicy = next.activeSkillPolicy;
+      activeSkillToolAvailability = next.activeSkillToolAvailability;
+      activeSkillDelegationOverrides = next.activeSkillDelegationOverrides;
+    };
     let hasSubmittedFormInputInLoop = hasSubmittedFormInputResult(currentMessages) ||
       runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
     let finalFinishReason: string | undefined;
@@ -1965,18 +1981,11 @@ export class AgentRuntime {
               agentWriteFinalResponseToolGuardEnabled = true;
             }
             if (tc.name === LOAD_SKILL_TOOL_ID) {
-              activeSkillId = extractSkillId(matchingResult.output);
-              activeSkillPolicy = extractSkillPolicy(matchingResult.output);
-              activeSkillToolAvailability = extractSkillToolAvailability(matchingResult.output) ??
-                INACTIVE_SKILL_TOOL_AVAILABILITY;
-              activeSkillDelegationOverrides = extractSkillDelegationOverrides(
-                matchingResult.output,
-              );
+              applySuccessfulSkillResult(matchingResult.output);
             }
             activeSkillPolicy = removeFormInputAfterSubmission(
               tc.name,
               matchingResult.output,
-              activeSkillId,
               activeSkillPolicy,
             );
             if (isSubmittedFormInputExecutionResult(tc.name, matchingResult.output)) {
@@ -1998,18 +2007,11 @@ export class AgentRuntime {
               agentWriteFinalResponseToolGuardEnabled = true;
             }
             if (tc.name === LOAD_SKILL_TOOL_ID) {
-              activeSkillId = extractSkillId(persistedResult.result);
-              activeSkillPolicy = extractSkillPolicy(persistedResult.result);
-              activeSkillToolAvailability = extractSkillToolAvailability(persistedResult.result) ??
-                INACTIVE_SKILL_TOOL_AVAILABILITY;
-              activeSkillDelegationOverrides = extractSkillDelegationOverrides(
-                persistedResult.result,
-              );
+              applySuccessfulSkillResult(persistedResult.result);
             }
             activeSkillPolicy = removeFormInputAfterSubmission(
               tc.name,
               persistedResult.result,
-              activeSkillId,
               activeSkillPolicy,
             );
             if (isSubmittedFormInputExecutionResult(tc.name, persistedResult.result)) {
@@ -2129,8 +2131,10 @@ export class AgentRuntime {
           activeSkillPolicy,
           mustLoadSkillFirstForStep,
           {
+            activeSkillId,
             hasSubmittedFormInput: hasSubmittedFormInputInLoop,
             skillToolAvailability: activeSkillToolAvailability,
+            toolInput: toolCall.args,
           },
         );
         if (!policyCheck.allowed) {
@@ -2195,16 +2199,11 @@ export class AgentRuntime {
           if (resultError === undefined) {
             // Track skill policy from successful load_skill results
             if (tc.name === LOAD_SKILL_TOOL_ID) {
-              activeSkillId = extractSkillId(result);
-              activeSkillPolicy = extractSkillPolicy(result);
-              activeSkillToolAvailability = extractSkillToolAvailability(result) ??
-                INACTIVE_SKILL_TOOL_AVAILABILITY;
-              activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
+              applySuccessfulSkillResult(result);
             }
             activeSkillPolicy = removeFormInputAfterSubmission(
               tc.name,
               result,
-              activeSkillId,
               activeSkillPolicy,
             );
             if (isSubmittedFormInputExecutionResult(tc.name, result)) {
@@ -2260,7 +2259,7 @@ export class AgentRuntime {
         const unavailableNames = [
           ...new Set(state.suppressedToolCalls.map((toolCall) => toolCall.name)),
         ];
-        currentMessages.push({
+        currentMessages.push(markRuntimeGeneratedUserMessage({
           id: `runtime_note_${Date.now()}_${step}`,
           role: "user",
           parts: [{
@@ -2270,7 +2269,7 @@ export class AgentRuntime {
             }. Continue using only currently available tools: ${runtimeToolNames.join(", ")}.`,
           }],
           timestamp: Date.now(),
-        });
+        }));
       }
 
       throwIfAborted(abortSignal);

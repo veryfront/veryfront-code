@@ -104,6 +104,28 @@ Deno.test("root npm CLI package declares auto-loaded first-party extensions afte
   }
 });
 
+Deno.test("npm lifecycle probe installs auto-loaded extensions in a real consumer layout", async () => {
+  const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
+
+  assertStringIncludes(source, '"--install-links"');
+  assertStringIncludes(source, 'const agent = await import("veryfront/agent")');
+  assertStringIncludes(source, "agent.parseRuntimeSkillMetadata(");
+  for (
+    const extensionDirectory of [
+      "ext-bundler-esbuild",
+      "ext-content-mdx",
+      "ext-css-tailwind",
+      "ext-parser-babel",
+      "ext-yaml",
+    ]
+  ) {
+    assertStringIncludes(
+      source,
+      `Deno.realPath("./npm/extensions/${extensionDirectory}")`,
+    );
+  }
+});
+
 Deno.test("npm publish version bump pins first-party extension dependencies to the publish version", async () => {
   const packageDir = await Deno.makeTempDir();
   const packagePath = `${packageDir}/package.json`;

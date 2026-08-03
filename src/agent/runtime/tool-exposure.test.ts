@@ -36,6 +36,23 @@ const catalog = [
   definition("load_skill", "Load a configured skill"),
 ];
 
+function withPollutedDescriptorPrototypeValue<T>(value: unknown, fn: () => T): T {
+  const original = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+  Object.defineProperty(Object.prototype, "value", {
+    configurable: true,
+    value,
+  });
+  try {
+    return fn();
+  } finally {
+    if (original) {
+      Object.defineProperty(Object.prototype, "value", original);
+    } else {
+      delete (Object.prototype as Record<string, unknown>).value;
+    }
+  }
+}
+
 it("tool exposure plans eager and deferred visibility deterministically", () => {
   const eager = createToolExposurePlan({
     authorized: catalog,
@@ -341,6 +358,50 @@ it("tool search never invokes schema accessors and contains throwing proxy refle
   assertEquals(result.matches.map((match) => match.name), ["healthy"]);
   assertEquals(getterReads, 0);
   assertEquals(proxyReads, 1);
+});
+
+it("tool search rejects accessors and revoked proxies despite inherited descriptor values", () => {
+  let toolNameReads = 0;
+  let schemaDescriptionReads = 0;
+  const accessorTool = {
+    description: "Unrelated",
+    parameters: {},
+  } as ToolDefinition;
+  Object.defineProperty(accessorTool, "name", {
+    enumerable: true,
+    get() {
+      toolNameReads += 1;
+      return "accessor_tool";
+    },
+  });
+  const accessorSchema = Object.defineProperty({}, "description", {
+    enumerable: true,
+    get() {
+      schemaDescriptionReads += 1;
+      return "polluted capability";
+    },
+  });
+  const revokedTool = Proxy.revocable(definition("revoked", "Polluted capability"), {});
+  revokedTool.revoke();
+
+  const result = withPollutedDescriptorPrototypeValue(
+    "polluted capability",
+    () =>
+      searchToolExposure({
+        query: "polluted capability",
+        authorized: [
+          accessorTool,
+          { name: "schema_accessor", description: "Unrelated", parameters: accessorSchema },
+          revokedTool.proxy as ToolDefinition,
+        ],
+        state: createToolExposureState(),
+      }),
+  );
+
+  assertEquals(result.matches, []);
+  assertEquals(result.miss, true);
+  assertEquals(toolNameReads, 0);
+  assertEquals(schemaDescriptionReads, 0);
 });
 
 it("tool search bounds catalog traversal and returned description bytes", () => {

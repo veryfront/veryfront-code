@@ -1,5 +1,6 @@
 import type { ToolDefinition } from "#veryfront/tool";
 import type { RuntimeToolLoadingMode } from "./runtime-tool-config.ts";
+import { isOwnDataPropertyDescriptor } from "./data-property-descriptor.ts";
 
 /** Framework-owned model-facing tool used to load authorized schemas. */
 export const TOOL_SEARCH_TOOL_NAME = "tool_search";
@@ -16,6 +17,11 @@ const TOOL_SEARCH_SCHEMA_MAX_BYTES = 65_536;
 const TOOL_SEARCH_TOTAL_SCHEMA_NODES = 65_536;
 const TOOL_SEARCH_TOTAL_SCHEMA_BYTES = 524_288;
 const UTF8_ENCODER = new TextEncoder();
+const ArrayIsArray = Array.isArray;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ReflectApply = Reflect.apply;
+const ReflectOwnKeys = Reflect.ownKeys;
 
 /** Run-local mutable exposure state. Create a new state for every child run. */
 export type ToolExposureState = {
@@ -147,18 +153,21 @@ function snapshotSchemaDescriptions(
       if (seen.has(current.value)) return null;
       seen.add(current.value);
 
-      const isArray = Array.isArray(current.value);
-      const prototype = Object.getPrototypeOf(current.value);
+      const isArray = ArrayIsArray(current.value);
+      const prototype = ReflectApply(ObjectGetPrototypeOf, undefined, [current.value]);
       if (prototype !== null && prototype !== (isArray ? Array.prototype : Object.prototype)) {
         return null;
       }
-      const keys = Reflect.ownKeys(current.value);
+      const keys = ReflectOwnKeys(current.value);
       if (keys.length > TOOL_SEARCH_SCHEMA_MAX_NODES - nodes) return null;
 
       let arrayLength: number | null = null;
       if (isArray) {
-        const lengthDescriptor = Object.getOwnPropertyDescriptor(current.value, "length");
-        if (!lengthDescriptor || !("value" in lengthDescriptor)) return null;
+        const lengthDescriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+          current.value,
+          "length",
+        ]) as PropertyDescriptor | undefined;
+        if (!isOwnDataPropertyDescriptor(lengthDescriptor)) return null;
         const length = lengthDescriptor.value;
         if (!Number.isSafeInteger(length) || length < 0 || keys.length !== length + 1) return null;
         arrayLength = length;
@@ -174,8 +183,11 @@ function snapshotSchemaDescriptions(
             String(index) !== key
           ) return null;
         }
-        const descriptor = Object.getOwnPropertyDescriptor(current.value, key);
-        if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) return null;
+        const descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+          current.value,
+          key,
+        ]) as PropertyDescriptor | undefined;
+        if (!isOwnDataPropertyDescriptor(descriptor) || !descriptor.enumerable) return null;
         if (key === "description" && typeof descriptor.value === "string") {
           descriptions.push(normalizeSearchText(descriptor.value));
         }
@@ -195,16 +207,26 @@ function snapshotSearchableTool(
   budget: SchemaSearchBudget,
 ): SearchableTool | null {
   try {
-    if (!tool || typeof tool !== "object" || Array.isArray(tool)) return null;
-    const name = Object.getOwnPropertyDescriptor(tool, "name");
-    const description = Object.getOwnPropertyDescriptor(tool, "description");
-    const parameters = Object.getOwnPropertyDescriptor(tool, "parameters");
+    if (!tool || typeof tool !== "object" || ArrayIsArray(tool)) return null;
+    const name = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      tool,
+      "name",
+    ]) as PropertyDescriptor | undefined;
+    const description = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      tool,
+      "description",
+    ]) as PropertyDescriptor | undefined;
+    const parameters = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      tool,
+      "parameters",
+    ]) as PropertyDescriptor | undefined;
     if (
-      !name || !("value" in name) || typeof name.value !== "string" || name.value.length === 0 ||
+      !isOwnDataPropertyDescriptor(name) || typeof name.value !== "string" ||
+      name.value.length === 0 ||
       !isUtf8LengthWithin(name.value, TOOL_SEARCH_NAME_MAX_BYTES) ||
-      !description || !("value" in description) || typeof description.value !== "string" ||
+      !isOwnDataPropertyDescriptor(description) || typeof description.value !== "string" ||
       !isUtf8LengthWithin(description.value, TOOL_SEARCH_DESCRIPTION_MAX_BYTES) ||
-      (parameters && !("value" in parameters))
+      (parameters && !isOwnDataPropertyDescriptor(parameters))
     ) return null;
     return {
       name: name.value,
@@ -472,7 +494,7 @@ export function restoreToolExposureState(
 ): ToolExposureState {
   if (
     !isSupportedToolExposureCheckpointVersion(checkpoint?.version) ||
-    !Array.isArray(checkpoint.loadedToolNames) ||
+    !ArrayIsArray(checkpoint.loadedToolNames) ||
     !checkpoint.loadedToolNames.every(isValidToolExposureCheckpointName)
   ) {
     return createToolExposureState();

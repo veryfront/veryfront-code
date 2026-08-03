@@ -120,6 +120,7 @@ export type DefaultHostedChatRuntimeSteeringMutationInput = {
 /** Input payload for default hosted chat runtime project switch. */
 export type DefaultHostedChatRuntimeProjectSwitchInput = {
   projectId: string;
+  projectSlug?: string;
   taskContext: DefaultHostedChatRuntimeTaskContext;
 };
 
@@ -236,9 +237,12 @@ async function buildToolAssembly(
         incrementSteeringRevision(input.taskContext);
       }
     },
-    onStudioProjectSwitch: async (projectId) => {
+    onStudioProjectSwitch: async (projectId, confirmedProject) => {
       const changed = await input.onStudioProjectSwitch?.({
         projectId,
+        ...(confirmedProject?.projectSlug === undefined
+          ? {}
+          : { projectSlug: confirmedProject.projectSlug }),
         taskContext: input.taskContext,
       });
       if (changed) {
