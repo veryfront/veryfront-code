@@ -30,6 +30,7 @@ import { useDropZone } from "../hooks/use-drop-zone.ts";
 import { downloadMarkdown } from "../utils/export.ts";
 import { ChatInputContextProvider, useChatInputContext } from "../contexts/composer-context.tsx";
 import { useChatInputAttachmentPicker } from "./chat-input-attachment-picker.tsx";
+import { ChatInputForm } from "./chat-input-form.tsx";
 import {
   ChatInputSend,
   ChatInputStop,
@@ -328,9 +329,7 @@ function ChatInputBase(
                 ))}
               </div>
             )}
-            <form
-              onSubmit={contextValue.onSubmit}
-            >
+            <ChatInputForm onSubmit={contextValue.onSubmit}>
               <div
                 onDragEnter={onDragEnter}
                 onDragLeave={onDragLeave}
@@ -367,7 +366,7 @@ function ChatInputBase(
                   </div>
                 </div>
               </div>
-            </form>
+            </ChatInputForm>
           </div>
         </div>
       </ChatInputContextProvider>

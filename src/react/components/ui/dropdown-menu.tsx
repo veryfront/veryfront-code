@@ -177,16 +177,25 @@ export function DropdownMenuGroup(
   );
 }
 
-/** Native-button props accepted by `<DropdownMenuItem>`. */
-interface DropdownMenuNativeItemProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+/**
+ * Backward-compatible props accepted by `<DropdownMenuItem>`.
+ *
+ * Keep this as an interface with a broad boolean `asChild` so existing wrapper
+ * interfaces, conditional `asChild` values, and prop spreads remain valid.
+ * The component overload below adds the element-specific contract for callers
+ * that opt into a literal `asChild` value.
+ */
+export interface DropdownMenuItemProps
+  extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "onSelect"> {
   /** Called when the item is chosen (also closes the menu). */
   onSelect?: (event: React.MouseEvent<HTMLButtonElement>) => void;
-  asChild?: false;
+  /** `asChild` merges item styling and behavior onto one child element. */
+  asChild?: boolean;
   ref?: React.Ref<HTMLButtonElement>;
 }
 
 /** Slotted-element props accepted by `<DropdownMenuItem>`. */
-type DropdownMenuSlottedItemProps<T extends HTMLElement = HTMLElement> =
+export type DropdownMenuSlottedItemProps<T extends HTMLElement = HTMLElement> =
   & Omit<PolymorphicButtonAttributes<T>, "children" | "ref" | "type">
   & {
     /** Called when the item is chosen (also closes the menu). */
@@ -201,11 +210,6 @@ type DropdownMenuSlottedItemProps<T extends HTMLElement = HTMLElement> =
     ref?: React.Ref<T>;
   };
 
-/** Props accepted by `<DropdownMenuItem>`. */
-export type DropdownMenuItemProps<T extends HTMLElement = HTMLElement> =
-  | DropdownMenuNativeItemProps
-  | DropdownMenuSlottedItemProps<T>;
-
 function ownsKeyboardActivation(element: HTMLElement, key: "Enter" | " "): boolean {
   const tagName = element.tagName;
   if (tagName === "BUTTON") return true;
@@ -213,6 +217,10 @@ function ownsKeyboardActivation(element: HTMLElement, key: "Enter" | " "): boole
 }
 
 /** A selectable menu item. Icons render at `size-3.5` (14px). */
+export function DropdownMenuItem<T extends HTMLElement = HTMLElement>(
+  props: DropdownMenuSlottedItemProps<T>,
+): React.ReactElement;
+export function DropdownMenuItem(props: DropdownMenuItemProps): React.ReactElement;
 export function DropdownMenuItem<T extends HTMLElement = HTMLElement>({
   children,
   className,
@@ -224,7 +232,7 @@ export function DropdownMenuItem<T extends HTMLElement = HTMLElement>({
   ref,
   type,
   ...props
-}: DropdownMenuItemProps<T>): React.ReactElement {
+}: DropdownMenuItemProps | DropdownMenuSlottedItemProps<T>): React.ReactElement {
   const ctx = React.useContext(_ctx);
   if (!ctx) {
     throw new Error("DropdownMenuItem must be used within <DropdownMenu>");

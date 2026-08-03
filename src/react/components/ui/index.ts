@@ -118,6 +118,7 @@ export {
   DropdownMenuLabel,
   type DropdownMenuProps,
   DropdownMenuSeparator,
+  type DropdownMenuSlottedItemProps,
   DropdownMenuTrigger,
 } from "./dropdown-menu.tsx";
 export {

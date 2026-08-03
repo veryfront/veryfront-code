@@ -4,10 +4,12 @@
  * RED until the chat surface is complete. Mirrors the ui gate's docs-in-component
  * model: each component must be exported, have a Storybook story with a `DocsPage`
  * (its docs live there, NOT the root guide), have every `*Props` field documented
- * with JSDoc, and have a test. Each hook must be exported, carry a JSDoc doc-comment
- * on its declaration (its docs live on the hook), and have a behaviour test. Every
- * cva variant is demonstrated in a story + a test; a guardrail keeps the root guides
- * from becoming per-variant catalogs.
+ * with JSDoc, and be assigned to a test suite. Each hook must be exported, carry a
+ * JSDoc doc-comment on its declaration (its docs live on the hook), and be assigned
+ * to a test suite. This manifest checks inventory only; the referenced suites own
+ * behavioral assertions. Every cva variant must appear as a literal selection in a
+ * story and test source; a guardrail keeps the root guides from becoming per-variant
+ * catalogs.
  *
  * Composability / one-node / ref / asChild are enforced per-compound in
  * `chat/composability.contract.test.tsx` and each component's `*.test.tsx`; this
@@ -378,11 +380,11 @@ describe("veryfront/chat variant coverage matching", () => {
   });
 });
 
-// Every cva variant across the chat surface must be exercised in a story, in the
-// docs, AND in a test — "covered somehow". Compounds span files, so this is a
-// module-level gate (dedup by group=value) rather than per-component. RED until
-// each variant is demonstrated everywhere.
-describe("veryfront/chat: every cva variant is covered (story · docs · test)", () => {
+// Every cva variant across the chat surface must be represented by a literal
+// selection in a story and a test source. This is an inventory check, not proof
+// that an assertion exercises the variant. Compounds span files, so the gate is
+// module-level (dedup by group=value) rather than per-component.
+describe("veryfront/chat: cva variant inventory", () => {
   const seen = new Set<string>();
   const variants = extractAllVariants(CHAT_SRC).filter((v) => {
     const k = `${v.group}=${v.value}`;
@@ -390,7 +392,7 @@ describe("veryfront/chat: every cva variant is covered (story · docs · test)",
   });
   const storySelections = collectLiteralVariantSelections(CHAT_STORY_SOURCES);
   const testSelections = collectLiteralVariantSelections(CHAT_TEST_SOURCES);
-  it(`covers all ${variants.length} chat cva variants in story · test`, () => {
+  it(`represents all ${variants.length} chat cva variants in story and test source`, () => {
     const misses: string[] = [];
     for (const { group, value } of variants) {
       const where: string[] = [];
@@ -438,11 +440,11 @@ describe("veryfront/chat coverage — components", () => {
           `every public prop needs a /** … */ (feeds DocsPropsTable + IDE hovers)`,
       );
     });
-    it(`${name}: has a test`, () => {
+    it(`${name}: is assigned to a test suite`, () => {
       assert(
         new RegExp(`\\b${name}\\b`).test(CHAT_TEST_SRC),
         `${name} is not referenced by any chat *.test.tsx — needs its own component ` +
-          `test (or coverage in a shared contract/characterization suite)`,
+          `test (or assignment in a shared contract/characterization suite)`,
       );
     });
   }
@@ -474,10 +476,10 @@ describe("veryfront/chat coverage — hooks", () => {
           `hook (a /** … */ with an @example), not the root guide`,
       );
     });
-    it(`${name}: has a test`, () => {
+    it(`${name}: is assigned to a test suite`, () => {
       assert(
         new RegExp(`\\b${name}\\b`).test(CHAT_TEST_SRC),
-        `${name} is not referenced by any chat *.test.tsx — needs a behaviour test`,
+        `${name} is not referenced by any chat *.test.tsx — assign it to a behavior suite`,
       );
     });
   }

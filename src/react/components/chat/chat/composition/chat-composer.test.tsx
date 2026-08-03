@@ -149,6 +149,52 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     }
   });
 
+  it("prevents native submission from the default controlled composer form", () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDomGlobals(dom);
+    let submits = 0;
+    let observedDefaultPrevented: boolean | undefined;
+    let root: ReturnType<typeof createRoot> | undefined;
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "Expected root element to exist");
+      const createdRoot = createRoot(rootElement);
+      root = createdRoot;
+      flushSync(() => {
+        createdRoot.render(
+          <ChatInput
+            input="ready"
+            onChange={() => {}}
+            onSubmit={(event) => {
+              submits += 1;
+              observedDefaultPrevented = event?.defaultPrevented;
+            }}
+          />,
+        );
+      });
+
+      const form = document.querySelector<HTMLFormElement>("form");
+      assert(form, "Expected the default ChatInput form to render");
+      const submitEvent = new dom.window.Event("submit", {
+        bubbles: true,
+        cancelable: true,
+      });
+      const dispatchResult = form.dispatchEvent(submitEvent);
+
+      assertEquals(submits, 1);
+      assertEquals(observedDefaultPrevented, true);
+      assertEquals(submitEvent.defaultPrevented, true);
+      assertEquals(dispatchResult, false, "cancelled native submission must report false");
+    } finally {
+      root?.unmount();
+      restore();
+    }
+  });
+
   it("preserves legacy mixed submit props and gives sendMessage precedence", () => {
     let submit: ((e?: FormEvent) => void) | undefined;
     let explicitSubmits = 0;

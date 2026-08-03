@@ -37,6 +37,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "veryfront/ui";
+import type { DropdownMenuItemProps } from "veryfront/ui";
 import type {
   AgentPickerActionProps,
   AgentPickerSearchProps,
@@ -117,6 +118,24 @@ const anchorActionRef = React.createRef<HTMLAnchorElement>();
 const anchorMenuItemRef = React.createRef<HTMLAnchorElement>();
 const anchorTriggerRef = React.createRef<HTMLAnchorElement>();
 
+interface ConsumerMenuItemProps extends DropdownMenuItemProps {
+  analyticsId?: string;
+}
+
+const dynamicAsChild: boolean = messages.length > 0;
+const compatibleMenuItemProps: DropdownMenuItemProps = {
+  asChild: dynamicAsChild,
+  onSelect: () => undefined,
+};
+
+/** Existing wrappers can extend and spread the broad public menu-item contract. */
+export function ConsumerMenuItem({
+  analyticsId,
+  ...props
+}: ConsumerMenuItemProps): React.ReactElement {
+  return <DropdownMenuItem {...props} data-analytics-id={analyticsId} />;
+}
+
 /** Slotted action refs describe the element that actually renders. */
 export function PolymorphicChatInputActionDemo(): React.ReactElement {
   return (
@@ -137,6 +156,9 @@ export function PolymorphicMenuDemo(): React.ReactElement {
           <a href="#menu">Menu</a>
         </DropdownMenuTrigger>
         <DropdownMenuContent>
+          <ConsumerMenuItem {...compatibleMenuItemProps}>
+            <button type="button">Conditional slot</button>
+          </ConsumerMenuItem>
           <DropdownMenuItem onSelect={() => undefined}>
             No-argument handler
           </DropdownMenuItem>
