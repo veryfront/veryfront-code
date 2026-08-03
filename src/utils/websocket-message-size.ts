@@ -1,5 +1,16 @@
 import { utf8ByteLength } from "./utf8-byte-length.ts";
 
+const numberIsSafeInteger = Number.isSafeInteger;
+const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
+const NativeRangeError = RangeError;
+const POSITIVE_INFINITY = Number.POSITIVE_INFINITY;
+
+export interface WebSocketMessageAdmission {
+  readonly accepted: boolean;
+  /** Exact size when accepted, or `maximumBytes + 1` when a string is rejected early. */
+  readonly sizeBytes: number;
+}
+
 /**
  * Return the wire-size boundary used for browser WebSocket message payloads.
  *
@@ -13,4 +24,31 @@ export function getWebSocketMessageSizeBytes(data: unknown): number {
   if (ArrayBuffer.isView(data)) return data.byteLength;
   if (typeof Blob !== "undefined" && data instanceof Blob) return data.size;
   return 0;
+}
+
+/**
+ * Check a WebSocket payload against a byte limit without scanning beyond the
+ * admission boundary. Exact-at-limit payloads remain accepted.
+ */
+export function getWebSocketMessageAdmission(
+  data: unknown,
+  maximumBytes: number,
+): WebSocketMessageAdmission {
+  if (!numberIsSafeInteger(maximumBytes) || maximumBytes < 0) {
+    throw new NativeRangeError(
+      "WebSocket message maximumBytes must be a non-negative safe integer",
+    );
+  }
+
+  if (typeof data === "string") {
+    const rejectedSize = maximumBytes === MAX_SAFE_INTEGER ? POSITIVE_INFINITY : maximumBytes + 1;
+    if (data.length > maximumBytes) {
+      return { accepted: false, sizeBytes: rejectedSize };
+    }
+    const sizeBytes = utf8ByteLength(data, maximumBytes);
+    return { accepted: sizeBytes <= maximumBytes, sizeBytes };
+  }
+
+  const sizeBytes = getWebSocketMessageSizeBytes(data);
+  return { accepted: sizeBytes <= maximumBytes, sizeBytes };
 }

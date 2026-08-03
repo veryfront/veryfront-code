@@ -74,6 +74,30 @@ describe("server/handlers/preview/hmr-client-message", () => {
     assertEquals(activityCount, 0);
   });
 
+  it("accepts a string whose UTF-8 wire size is exactly the limit", () => {
+    const socket = new MockSocket();
+    let checkedRateLimit = false;
+    let activityCount = 0;
+
+    handleHmrClientMessage({
+      socket,
+      data: "x".repeat(HMR_MAX_MESSAGE_SIZE_BYTES),
+      rateLimiter: {
+        check: () => {
+          checkedRateLimit = true;
+          return true;
+        },
+      },
+      onActivity: () => {
+        activityCount += 1;
+      },
+    });
+
+    assertEquals(socket.closed, []);
+    assertEquals(checkedRateLimit, true);
+    assertEquals(activityCount, 1);
+  });
+
   it("closes rate-limited messages before activity updates", () => {
     const socket = new MockSocket();
     let activityCount = 0;

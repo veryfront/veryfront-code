@@ -1,11 +1,15 @@
 import React from "react";
-import { IMAGE_OPTIMIZATION } from "#veryfront/utils/constants/build.ts";
-import { RESPONSIVE_IMAGE_WIDTH_LG } from "#veryfront/utils/constants/network.ts";
-import { generateSrcSet, getImageExtension, getOptimizedPath } from "./helpers.ts";
+import {
+  generateSrcSet,
+  getImageExtension,
+  getOptimizedImageFallback,
+  getOptimizedImageVariantWidths,
+} from "./helpers.ts";
 
 export interface OptimizedImageProps {
   src: string;
   alt: string;
+  /** Intrinsic source width. Optimized variants are used only when this is known. */
   width?: number;
   height?: number;
   sizes?: string;
@@ -22,9 +26,6 @@ export interface OptimizedImageProps {
   onError?: (event: React.SyntheticEvent<HTMLImageElement>) => void;
 }
 
-// Must match the widths the build pipeline actually emits (IMAGE_OPTIMIZATION.DEFAULT_SIZES),
-// otherwise srcset entries point at files that do not exist on disk.
-const DEFAULT_SIZES = IMAGE_OPTIMIZATION.DEFAULT_SIZES;
 const DEFAULT_FORMATS: ("avif" | "webp" | "jpeg")[] = ["avif", "webp", "jpeg"];
 
 export function OptimizedImage({
@@ -47,6 +48,7 @@ export function OptimizedImage({
 }: OptimizedImageProps): React.JSX.Element {
   const loadingStrategy = priority ? "eager" : (loading ?? "lazy");
   const originalFormat = getImageExtension(src);
+  const variantWidths = getOptimizedImageVariantWidths(width);
 
   const imgStyle: React.CSSProperties = {
     ...style,
@@ -57,17 +59,17 @@ export function OptimizedImage({
 
   return (
     <picture>
-      {formats.map((format) => (
+      {variantWidths.length > 0 && formats.map((format) => (
         <source
           key={format}
           type={`image/${format}`}
-          srcSet={generateSrcSet(src, format, DEFAULT_SIZES, quality)}
+          srcSet={generateSrcSet(src, format, variantWidths, quality)}
           sizes={sizes}
         />
       ))}
 
       <img
-        src={getOptimizedPath(src, originalFormat, width ?? RESPONSIVE_IMAGE_WIDTH_LG, quality)}
+        src={getOptimizedImageFallback(src, originalFormat, variantWidths, quality)}
         alt={alt}
         width={width}
         height={height}

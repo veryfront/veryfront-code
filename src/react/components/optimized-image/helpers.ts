@@ -1,4 +1,5 @@
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
+import { resolveImageVariantWidths } from "#veryfront/utils/image-variant-widths.ts";
 
 export function getOptimizedPath(
   src: string,
@@ -19,6 +20,24 @@ export function generateSrcSet(
   return sizes
     .map((size) => `${getOptimizedPath(src, format, size, quality)} ${size}w`)
     .join(", ");
+}
+
+/** Resolve build-emitted widths when the source's intrinsic width is known. */
+export function getOptimizedImageVariantWidths(
+  sourceWidth: number | undefined,
+): readonly number[] {
+  return sourceWidth === undefined ? [] : resolveImageVariantWidths(sourceWidth);
+}
+
+/** Use the original asset unless a corresponding optimized variant is known. */
+export function getOptimizedImageFallback(
+  src: string,
+  format: string,
+  widths: readonly number[],
+  quality: number,
+): string {
+  const width = widths[widths.length - 1];
+  return width === undefined ? src : getOptimizedPath(src, format, width, quality);
 }
 
 /**

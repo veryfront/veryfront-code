@@ -66,23 +66,50 @@ describe("base64url", () => {
       assertEquals(base64urlEncodeBytes(bytes), base64urlEncodeBytes(bytes));
     });
 
-    it("should preserve byte-exact output across performance chunks", () => {
-      // Exercise both full 24 KiB chunks and a partial tail chunk.
-      const bytes = new Uint8Array(300_001);
-      for (let index = 0; index < bytes.length; index++) {
-        bytes[index] = index % 256;
-      }
+    it("should preserve byte-exact btoa fallback output at chunk and tail boundaries", () => {
+      const globalWithBuffer = globalThis as { Buffer?: unknown };
+      const bufferDescriptor = Object.getOwnPropertyDescriptor(globalWithBuffer, "Buffer");
 
-      const encoded = base64urlEncodeBytes(bytes);
-      assertEquals(encoded.includes("="), false);
+      try {
+        Object.defineProperty(globalWithBuffer, "Buffer", {
+          configurable: true,
+          value: undefined,
+          writable: true,
+        });
 
-      const base64 = encoded.replaceAll("-", "+").replaceAll("_", "/") +
-        "=".repeat((4 - (encoded.length % 4)) % 4);
-      const decoded = atob(base64);
-      assertEquals(decoded.length, bytes.length);
-      for (let index = 0; index < bytes.length; index++) {
-        if (decoded.charCodeAt(index) !== bytes[index]) {
-          throw new Error(`Round-trip mismatch at byte ${index}`);
+        const chunkSize = 24 * 1024;
+        for (
+          const length of [
+            chunkSize - 1,
+            chunkSize,
+            chunkSize + 1,
+            chunkSize + 2,
+            300_001,
+          ]
+        ) {
+          const bytes = new Uint8Array(length);
+          for (let index = 0; index < bytes.length; index++) {
+            bytes[index] = index % 256;
+          }
+
+          const encoded = base64urlEncodeBytes(bytes);
+          assertEquals(encoded.includes("="), false);
+
+          const base64 = encoded.replaceAll("-", "+").replaceAll("_", "/") +
+            "=".repeat((4 - (encoded.length % 4)) % 4);
+          const decoded = atob(base64);
+          assertEquals(decoded.length, bytes.length);
+          for (let index = 0; index < bytes.length; index++) {
+            if (decoded.charCodeAt(index) !== bytes[index]) {
+              throw new Error(`Round-trip mismatch at byte ${index} for length ${length}`);
+            }
+          }
+        }
+      } finally {
+        if (bufferDescriptor) {
+          Object.defineProperty(globalWithBuffer, "Buffer", bufferDescriptor);
+        } else {
+          delete globalWithBuffer.Buffer;
         }
       }
     });

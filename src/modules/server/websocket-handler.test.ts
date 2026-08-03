@@ -94,6 +94,18 @@ describe("modules/server/websocket-handler", () => {
     assertEquals(cleanups.length, 1);
   });
 
+  it("accepts a string whose UTF-8 wire size is exactly the limit", () => {
+    const { context, checks } = createContext(8);
+    const socket = new StallingWebSocket();
+    setupWebSocketHandlers(socket as unknown as WebSocket, context);
+
+    socket.emitMessage("éééé");
+
+    assertEquals(socket.closed, []);
+    assertEquals(checks, [socket as unknown as WebSocket]);
+    assertEquals(context.clients.size, 1);
+  });
+
   it("deregisters a rate-limited client without awaiting the handshake", () => {
     const { context, cleanups } = createContext(1024, false);
     const socket = new StallingWebSocket();

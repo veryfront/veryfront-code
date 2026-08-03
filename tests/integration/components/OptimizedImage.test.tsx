@@ -1,11 +1,13 @@
-import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import {
   generateBlurDataURL,
   getAspectRatioPadding,
   OptimizedBackgroundImage,
   OptimizedImage,
+  type OptimizedImageProps,
   ResponsiveImageContainer,
   SimpleOptimizedImage,
   useOptimizedImage,
@@ -34,10 +36,10 @@ describe("OptimizedImage", () => {
 
   describe("custom formats", () => {
     it("should accept custom formats and quality", () => {
-      const props = {
+      const props: OptimizedImageProps = {
         src: "/images/photo.jpg",
         alt: "Photo",
-        formats: ["avif", "webp", "jpeg"] as const,
+        formats: ["avif", "webp", "jpeg"],
         quality: 85,
       };
 
@@ -132,6 +134,45 @@ describe("OptimizedImage", () => {
       assertExists(element);
       assertEquals(element.props.sizes, "(max-width: 768px) 100vw, 50vw");
     });
+
+    it("only references variants emitted for a narrow jpg source", () => {
+      const picture = renderToStaticMarkup(
+        React.createElement(OptimizedImage, {
+          src: "/images/narrow.jpg",
+          alt: "Narrow",
+          width: 320,
+          height: 180,
+          formats: ["webp", "jpeg"],
+        }),
+      );
+      const simple = renderToStaticMarkup(
+        React.createElement(SimpleOptimizedImage, {
+          src: "/images/narrow.jpg",
+          alt: "Narrow",
+          width: 320,
+          height: 180,
+          format: "webp",
+        }),
+      );
+      const hooked = useOptimizedImage("/images/narrow.jpg", {
+        formats: ["webp", "jpeg"],
+        width: 320,
+      });
+
+      assertStringIncludes(picture, "/images/narrow-320w.webp 320w");
+      assertStringIncludes(picture, "/images/narrow-320w.jpeg");
+      assertEquals(picture.includes("-640w."), false);
+      assertStringIncludes(simple, "/images/narrow-320w.webp 320w");
+      assertEquals(simple.includes("-640w."), false);
+      assertEquals(hooked.sources.map(({ srcSet }) => srcSet), [
+        "/.veryfront/optimized-images/images/narrow-320w.webp 320w",
+        "/.veryfront/optimized-images/images/narrow-320w.jpeg 320w",
+      ]);
+      assertEquals(
+        hooked.fallback,
+        "/.veryfront/optimized-images/images/narrow-320w.jpeg",
+      );
+    });
   });
 
   describe("styling", () => {
@@ -194,16 +235,15 @@ describe("useOptimizedImage", () => {
   it("should return sources and fallback", () => {
     const { sources, fallback } = useOptimizedImage("/images/test.jpg");
 
-    assertExists(sources);
-    assertExists(fallback);
-    assertEquals(Array.isArray(sources), true);
-    assertEquals(typeof fallback, "string");
+    assertEquals(sources, []);
+    assertEquals(fallback, "/images/test.jpg");
   });
 
   it("should accept custom options", () => {
     const { sources } = useOptimizedImage("/images/test.jpg", {
       formats: ["webp", "jpeg"],
       quality: 90,
+      width: 1920,
     });
 
     assertExists(sources);

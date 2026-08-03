@@ -1,7 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
-import { assertEquals } from "#veryfront/testing/assert";
-import { getWebSocketMessageSizeBytes } from "./websocket-message-size.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert";
+import {
+  getWebSocketMessageAdmission,
+  getWebSocketMessageSizeBytes,
+} from "./websocket-message-size.ts";
 
 describe("websocket-message-size", () => {
   describe("getWebSocketMessageSizeBytes", () => {
@@ -29,6 +32,45 @@ describe("websocket-message-size", () => {
       assertEquals(getWebSocketMessageSizeBytes(null), 0);
       assertEquals(getWebSocketMessageSizeBytes(undefined), 0);
       assertEquals(getWebSocketMessageSizeBytes(123), 0);
+    });
+  });
+
+  describe("getWebSocketMessageAdmission", () => {
+    it("accepts exact UTF-8 boundaries and rejects one byte beyond them", () => {
+      assertEquals(getWebSocketMessageAdmission("éé", 4), {
+        accepted: true,
+        sizeBytes: 4,
+      });
+      assertEquals(getWebSocketMessageAdmission("ééa", 4), {
+        accepted: false,
+        sizeBytes: 5,
+      });
+    });
+
+    it("rejects obviously oversized strings without exact full-string sizing", () => {
+      assertEquals(getWebSocketMessageAdmission("x".repeat(1_000_000), 8), {
+        accepted: false,
+        sizeBytes: 9,
+      });
+    });
+
+    it("admits fixed-size payloads without materializing their contents", () => {
+      assertEquals(getWebSocketMessageAdmission(new Blob([new Uint8Array(8)]), 8), {
+        accepted: true,
+        sizeBytes: 8,
+      });
+      assertEquals(getWebSocketMessageAdmission(new Uint8Array(9), 8), {
+        accepted: false,
+        sizeBytes: 9,
+      });
+    });
+
+    it("validates the admission boundary", () => {
+      assertThrows(
+        () => getWebSocketMessageAdmission("value", -1),
+        RangeError,
+        "maximumBytes",
+      );
     });
   });
 });
