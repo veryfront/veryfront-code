@@ -72,7 +72,7 @@ describe("local control request admission", () => {
 
   it("admits direct and same-origin fetches but rejects sibling or cross-site browser work", () => {
     for (const fetchSite of [undefined, "none", "same-origin"] as const) {
-      const headers = fetchSite === undefined ? {} : { "sec-fetch-site": fetchSite };
+      const headers: HeadersInit = fetchSite === undefined ? {} : { "sec-fetch-site": fetchSite };
       assertEquals(
         isTrustedLocalControlRequest(requestFromPeer("127.0.0.1", headers), {
           proxyTopologyTrusted: false,
