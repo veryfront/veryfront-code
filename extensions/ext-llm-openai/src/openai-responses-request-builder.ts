@@ -1,7 +1,6 @@
 import {
   jsonValuesEqual,
   readProviderOptions,
-  stringifyJsonValue,
   stringifyToolArguments,
   stringifyToolResultValue,
   unwrapToolInputSchema,
