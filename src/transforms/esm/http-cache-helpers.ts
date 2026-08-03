@@ -127,12 +127,6 @@ function stringStartsWith(value: string, search: string): boolean {
   return ReflectApply(StringStartsWith, value, [search]);
 }
 
-function stripLeadingSlashes(value: string): string {
-  let index = 0;
-  while (value[index] === "/") index++;
-  return index === 0 ? value : stringSlice(value, index);
-}
-
 function decodeEncodedCommas(value: string): string {
   let decoded = "";
   let index = 0;
@@ -350,7 +344,7 @@ export function ensureAbsoluteDir(path: string): string {
 }
 
 export function isHttpUrl(specifier: string): boolean {
-  return specifier.startsWith("https://") || specifier.startsWith("http://");
+  return stringStartsWith(specifier, "https://") || stringStartsWith(specifier, "http://");
 }
 
 interface CanonicalReactEsmPackage {
@@ -436,15 +430,16 @@ export function isCanonicalReactEsmUrl(rawUrl: string): boolean {
 }
 
 export function isExternalScheme(specifier: string): boolean {
-  return specifier.startsWith("node:") ||
-    specifier.startsWith("data:") ||
-    specifier.startsWith("file:") ||
-    specifier.startsWith("bun:") ||
-    specifier.startsWith("jsr:");
+  return stringStartsWith(specifier, "node:") ||
+    stringStartsWith(specifier, "data:") ||
+    stringStartsWith(specifier, "file:") ||
+    stringStartsWith(specifier, "bun:") ||
+    stringStartsWith(specifier, "jsr:");
 }
 
 export function isRelative(specifier: string): boolean {
-  return specifier.startsWith("./") || specifier.startsWith("../") || specifier.startsWith("/");
+  return stringStartsWith(specifier, "./") || stringStartsWith(specifier, "../") ||
+    stringStartsWith(specifier, "/");
 }
 
 /**
@@ -456,13 +451,13 @@ export function isParentHttpModule(baseUrl: string | undefined): boolean {
 }
 
 export function isInternalBare(specifier: string): boolean {
-  return specifier.startsWith("veryfront/") ||
-    specifier.startsWith("#") ||
-    specifier.startsWith("@std/") ||
-    specifier.startsWith("_vf_modules/") ||
-    specifier.startsWith("/_vf_modules/") ||
-    specifier.startsWith("_veryfront/") ||
-    specifier.startsWith("/_veryfront/");
+  return stringStartsWith(specifier, "veryfront/") ||
+    stringStartsWith(specifier, "#") ||
+    stringStartsWith(specifier, "@std/") ||
+    stringStartsWith(specifier, "_vf_modules/") ||
+    stringStartsWith(specifier, "/_vf_modules/") ||
+    stringStartsWith(specifier, "_veryfront/") ||
+    stringStartsWith(specifier, "/_veryfront/");
 }
 
 export function normalizeEsmShUrl(url: URL): void {
@@ -478,8 +473,9 @@ export function normalizeEsmShUrl(url: URL): void {
     setURLSearchParam(searchParams, "target", "es2022");
   }
 
-  const pathname = stripLeadingSlashes(getURLPathname(url));
-  const isBaseReact = testRegExp(/^react@[\d.]+(?:\?|$)/, pathname);
+  const canonicalReact = parseCanonicalReactEsmPackage(stringifyURL(url));
+  const isBaseReact = canonicalReact?.packageName === "react" &&
+    canonicalReact.pathSegments.length === canonicalReact.packageIndex + 1;
   if (isBaseReact) return;
 
   const existing = getURLSearchParam(searchParams, "external");
@@ -530,13 +526,13 @@ export function resolveBareSpecifier(
   const reactMapped = reactMap[specifier];
   if (reactMapped) return reactMapped;
 
-  if (specifier.startsWith("react/")) {
-    const subpath = specifier.slice("react/".length);
+  if (stringStartsWith(specifier, "react/")) {
+    const subpath = stringSlice(specifier, "react/".length);
     return `https://esm.sh/react@${reactVersion}/${subpath}?external=react&target=es2022`;
   }
 
-  if (specifier.startsWith("react-dom/")) {
-    const subpath = specifier.slice("react-dom/".length);
+  if (stringStartsWith(specifier, "react-dom/")) {
+    const subpath = stringSlice(specifier, "react-dom/".length);
     return `https://esm.sh/react-dom@${reactVersion}/${subpath}?external=react&target=es2022`;
   }
 

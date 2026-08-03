@@ -42,7 +42,9 @@ import {
   validateDependencyResolutionObservations,
 } from "../import-rewriter/dependency-resolution.ts";
 import { getDependencyResolutionObservations } from "./stages/resolve-imports.ts";
-import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
+import { loadImportMap, preloadImportMap } from "#veryfront/modules/import-map/index.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   computePipelineConfigIdentity,
   fingerprintPipelineImportMap,
@@ -222,7 +224,7 @@ export function runPipeline(
 
       let importMapFingerprint: string | undefined;
       if (effectiveOptions.ssr) {
-        const importMap = await loadImportMap(projectDir);
+        const importMap = await resolvePipelineImportMap(projectDir, effectiveOptions);
         importMapFingerprint = await fingerprintPipelineImportMap(importMap);
         ctx.metadata.set("importMap", importMap);
         ctx.metadata.set("importMapFingerprint", importMapFingerprint);
@@ -440,12 +442,32 @@ export async function transformToESM(
 ): Promise<string> {
   if (filePath.endsWith(".css") || filePath.endsWith(".json")) return source;
 
-  const enrichedOptions: TransformOptions = options.readFile
-    ? options
-    : { ...options, readFile: buildReadFile(adapter, projectDir) };
+  const importMapAdapter = options.importMapAdapter ??
+    (adapter ? adapter as RuntimeAdapter : undefined);
+  const enrichedOptions: TransformOptions = {
+    ...options,
+    ...(options.readFile ? {} : { readFile: buildReadFile(adapter, projectDir) }),
+    ...(importMapAdapter ? { importMapAdapter } : {}),
+  };
 
   const { code } = await runPipeline(source, filePath, projectDir, enrichedOptions);
   return code;
+}
+
+async function resolvePipelineImportMap(
+  projectDir: string,
+  options: TransformOptions,
+): Promise<ImportMapConfig> {
+  if (options.preloadedImportMap) return options.preloadedImportMap;
+  if (options.importMapAdapter) {
+    return await preloadImportMap(
+      projectDir,
+      options.importMapAdapter,
+      options.projectId,
+      options.importMapPreloadContext,
+    );
+  }
+  return await loadImportMap(projectDir);
 }
 
 /** Extract readFile from adapter if available, for dependency hash computation. */

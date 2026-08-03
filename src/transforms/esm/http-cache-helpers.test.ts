@@ -417,6 +417,21 @@ describe("transforms/esm/http-cache-helpers", () => {
         }),
       );
     });
+
+    it("does not externalize prefixed base React package URLs", () => {
+      assertEquals(
+        normalizeHttpUrl("https://esm.sh/stable/react@18.3.1"),
+        "https://esm.sh/stable/react@18.3.1?target=es2022",
+      );
+      assertEquals(
+        normalizeHttpUrl("https://esm.sh/v135/react@18.3.1"),
+        "https://esm.sh/v135/react@18.3.1?target=es2022",
+      );
+      assertEquals(
+        normalizeHttpUrl("https://esm.sh/v135/react-dom@18.3.1/server.js"),
+        "https://esm.sh/v135/react-dom@18.3.1/server.js?external=react&target=es2022",
+      );
+    });
   });
 
   describe("isHttpUrl", () => {
@@ -698,6 +713,38 @@ describe("transforms/esm/http-cache-helpers", () => {
     it("resolves react-dom subpaths", () => {
       const result = resolveBareSpecifier("react-dom/client", emptyImportMap);
       assertEquals(result.includes("react-dom"), true);
+    });
+
+    it("uses captured string intrinsics after prototype poisoning", () => {
+      const stringPrototypeDescriptors = Object.getOwnPropertyDescriptors(String.prototype);
+
+      try {
+        Object.defineProperty(String.prototype, "startsWith", {
+          configurable: true,
+          value() {
+            return false;
+          },
+          writable: true,
+        });
+        Object.defineProperty(String.prototype, "slice", {
+          configurable: true,
+          value() {
+            return "poisoned";
+          },
+          writable: true,
+        });
+
+        assertEquals(isHttpUrl("https://esm.sh/react@19"), true);
+        assertEquals(isExternalScheme("file:///tmp/module.js"), true);
+        assertEquals(isRelative("./local.js"), true);
+        assertEquals(isInternalBare("veryfront/runtime"), true);
+        assertEquals(
+          resolveBareSpecifier("react-dom/client", emptyImportMap, "19.1.0"),
+          "https://esm.sh/react-dom@19.1.0/client?external=react&target=es2022&deps=csstype@3.2.3",
+        );
+      } finally {
+        Object.defineProperties(String.prototype, stringPrototypeDescriptors);
+      }
     });
   });
 });

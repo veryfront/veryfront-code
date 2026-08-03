@@ -172,6 +172,53 @@ export default function App() { return dep; }`;
       }
     });
 
+    it("uses one preloaded SSR import-map snapshot for cache identity and stages", async () => {
+      const projectDir = await makeTempDir({ prefix: "vf-pipeline-preloaded-map-" });
+      const mainFile = join(projectDir, "main.ts");
+      const denoJsonPath = join(projectDir, "deno.json");
+      const source = `import value from "project-alias"; export default value;`;
+      const options = {
+        projectId: "preloaded-import-map-cache-project",
+        dev: false,
+        ssr: true,
+        preloadedImportMap: {
+          imports: { "project-alias": "/preloaded-v1.js" },
+          scopes: {},
+        },
+      };
+
+      try {
+        destroyTransformCache();
+        await writeTextFile(mainFile, source);
+        await writeTextFile(
+          denoJsonPath,
+          JSON.stringify({ imports: { "project-alias": "/disk-v2.js" } }),
+        );
+
+        const first = await runPipeline(source, mainFile, projectDir, options);
+        const second = await runPipeline(source, mainFile, projectDir, options);
+        const changed = await runPipeline(source, mainFile, projectDir, {
+          ...options,
+          preloadedImportMap: {
+            imports: { "project-alias": "/preloaded-v2.js" },
+            scopes: {},
+          },
+        });
+
+        assertEquals(first.cached, false);
+        assertEquals(first.code.includes("/preloaded-v1.js"), true);
+        assertEquals(first.code.includes("/disk-v2.js"), false);
+        assertEquals(second.cached, true);
+        assertEquals(second.code.includes("/preloaded-v1.js"), true);
+        assertEquals(changed.cached, false);
+        assertEquals(changed.code.includes("/preloaded-v2.js"), true);
+        assertEquals(changed.code.includes("/preloaded-v1.js"), false);
+      } finally {
+        destroyTransformCache();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
     it("isolates identified custom plugin output and disables caching without an identity", async () => {
       const projectDir = await makeTempDir({ prefix: "vf-pipeline-custom-plugin-" });
       const mainFile = join(projectDir, "main.ts");
