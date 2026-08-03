@@ -10,6 +10,13 @@ import {
   isUtf8WithinByteLimit,
   isWellFormedUtf16,
 } from "#veryfront/skill/string-safety.ts";
+import {
+  addAbortSignalListenerOnce,
+  getAbortSignalReason,
+  isAbortSignalAborted,
+  isAbortSignalWithoutHooks,
+  removeAbortSignalListener,
+} from "#veryfront/platform/compat/abort-signal.ts";
 
 const DEFAULT_PROJECT_FILES_TIMEOUT_MS = 15_000;
 const DEFAULT_PROJECT_FILES_PAGE_LIMIT = 100;
@@ -552,13 +559,13 @@ export async function getStrictRuntimeProjectFile(
     & StrictRuntimeProjectFilesRequestContext,
 ): Promise<RuntimeProjectFile | null> {
   validateRuntimeProjectFilesClientOptions(options, false);
-  validateStrictRuntimeProjectFilesRequestContext(options);
   validateRuntimeProjectFilesApiOptions(options);
   validateProjectFileRequestPath(options.path);
+  const callerScope = createStrictProjectFilesCallerSignalScope(options);
 
-  return runStrictProjectFilesRequest(
+  const request = runStrictProjectFilesRequest(
     options,
-    options.signal,
+    callerScope.signal,
     (requestScope) =>
       traceStrictProjectFilesRequest(options, "runtimeProjectFiles.getProjectFile", async () => {
         const url = createStrictRuntimeProjectFileUrl({
@@ -620,6 +627,7 @@ export async function getStrictRuntimeProjectFile(
         );
       }),
   );
+  return request.finally(callerScope.dispose);
 }
 
 /** Whether a runtime project file content value fits the shared Skill budget. */
@@ -746,8 +754,8 @@ export async function getStrictRuntimeProjectFiles(
     & StrictRuntimeProjectFilesRequestContext,
 ): Promise<RuntimeProjectFileListItem[]> {
   validateRuntimeProjectFilesClientOptions(options);
-  validateStrictRuntimeProjectFilesRequestContext(options);
   validateRuntimeProjectFilesApiOptions(options);
+  const callerScope = createStrictProjectFilesCallerSignalScope(options);
   const pageLimit = resolveProjectFilesPageLimit(options.pageLimit);
   const maximumEntries = Math.min(
     options.maximumEntries ?? MAX_RUNTIME_PROJECT_FILES_TOTAL_ITEMS,
@@ -757,7 +765,7 @@ export async function getStrictRuntimeProjectFiles(
   const operationDeadline = performance.now() +
     resolveProjectFilesOperationTimeoutMs(options.operationTimeoutMs);
   const operationScope = createStrictProjectFilesOperationScope(
-    options.signal,
+    callerScope.signal,
     operationDeadline,
   );
 
@@ -898,6 +906,7 @@ export async function getStrictRuntimeProjectFiles(
     throw error;
   } finally {
     operationScope.dispose();
+    callerScope.dispose();
   }
 }
 
@@ -1253,6 +1262,11 @@ type StrictProjectFilesAbortScope = {
   dispose: () => void;
 };
 
+type StrictProjectFilesCallerSignalScope = {
+  signal: AbortSignal | undefined;
+  dispose: () => void;
+};
+
 type StrictProjectFilesRequestScope = StrictProjectFilesAbortScope & {
   deadline: number;
 };
@@ -1272,6 +1286,64 @@ function getStrictProjectFilesAbortReason(signal: AbortSignal): unknown {
   return signal.reason === undefined
     ? new DOMException("Project files request was aborted", "AbortError")
     : signal.reason;
+}
+
+function createStrictProjectFilesCallerSignalScope(
+  options: RuntimeProjectFilesApiOptions & StrictRuntimeProjectFilesRequestContext,
+): StrictProjectFilesCallerSignalScope {
+  validateStrictRuntimeProjectFilesRequestContext(options);
+  const publicSignal = options.abortSignal;
+  const internalSignal = options.signal;
+  if (publicSignal === undefined || publicSignal === internalSignal) {
+    return {
+      signal: internalSignal ?? publicSignal,
+      dispose: () => undefined,
+    };
+  }
+  if (internalSignal === undefined) {
+    return {
+      signal: publicSignal,
+      dispose: () => undefined,
+    };
+  }
+
+  const controller = new AbortController();
+  const listeners: Array<{ signal: AbortSignal; listener: () => void }> = [];
+  let disposed = false;
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    for (const entry of listeners) {
+      removeAbortSignalListener(entry.signal, entry.listener);
+    }
+    listeners.length = 0;
+  };
+  const attach = (source: AbortSignal) => {
+    if (isAbortSignalAborted(source)) {
+      if (!controller.signal.aborted) {
+        controller.abort(getAbortSignalReason(source));
+      }
+      dispose();
+      return;
+    }
+    const listener = () => {
+      if (!controller.signal.aborted) {
+        controller.abort(getAbortSignalReason(source));
+      }
+      dispose();
+    };
+    addAbortSignalListenerOnce(source, listener);
+    listeners.push({ signal: source, listener });
+    if (isAbortSignalAborted(source)) {
+      listener();
+    }
+  };
+
+  attach(publicSignal);
+  if (!controller.signal.aborted) {
+    attach(internalSignal);
+  }
+  return { signal: controller.signal, dispose };
 }
 
 function createStrictProjectFilesAbortScope(
@@ -1555,9 +1627,12 @@ function waitForStrictProjectFilesAbort<TResult>(
 }
 
 function validateStrictRuntimeProjectFilesRequestContext(
-  options: StrictRuntimeProjectFilesRequestContext,
+  options: RuntimeProjectFilesApiOptions & StrictRuntimeProjectFilesRequestContext,
 ): void {
-  if (options.signal !== undefined && !(options.signal instanceof AbortSignal)) {
+  if (options.abortSignal !== undefined && !isAbortSignalWithoutHooks(options.abortSignal)) {
+    throw new TypeError("abortSignal must be an AbortSignal");
+  }
+  if (options.signal !== undefined && !isAbortSignalWithoutHooks(options.signal)) {
     throw new TypeError("signal must be an AbortSignal");
   }
 }

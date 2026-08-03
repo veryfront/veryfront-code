@@ -519,18 +519,12 @@ async function fetchProjectSkillDocument(
     })
   );
   if (value === null) return null;
-  if (typeof value !== "object" || Array.isArray(value)) {
+  if (typeof value !== "object" || ArrayIsArray(value)) {
     throw new TypeError("Project skill response must be an object or null");
   }
 
-  const pathDescriptor = Object.getOwnPropertyDescriptor(value, "path");
-  const contentDescriptor = Object.getOwnPropertyDescriptor(value, "content");
-  const responsePath = pathDescriptor && "value" in pathDescriptor
-    ? pathDescriptor.value
-    : undefined;
-  const content = contentDescriptor && "value" in contentDescriptor
-    ? contentDescriptor.value
-    : undefined;
+  const responsePath = readOwnDataProperty(value, "path", "Project skill response");
+  const content = readOwnDataProperty(value, "content", "Project skill response");
   if (!isRuntimeProjectFilePath(responsePath)) {
     input.logger?.error?.("Project skill response had an invalid path; skipping skill", {
       expectedPath: requestedPath,

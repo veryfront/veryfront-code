@@ -1467,6 +1467,100 @@ Deno.test("strict project file requests propagate in-flight caller cancellation 
   assertEquals(observedSignals[0]?.reason, cancellation);
 });
 
+Deno.test("strict project files client composes public and internal caller cancellation", async () => {
+  const publicController = new AbortController();
+  const internalController = new AbortController();
+  const cancellation = new DOMException("public caller stopped in flight", "AbortError");
+  const fetchStarted = createDeferred<void>();
+  let fetchSignal: AbortSignal | undefined;
+  const client = createStrictRuntimeProjectFilesClient({
+    apiUrl: baseOptions.apiUrl,
+    operationTimeoutMs: 1_000,
+    timeoutMs: 1_000,
+    fetch: (_url, init) => {
+      fetchSignal = init.signal as AbortSignal;
+      fetchStarted.resolve();
+      return new Promise(() => undefined);
+    },
+  });
+
+  const request = client.getProjectFiles({
+    projectId: baseOptions.projectId,
+    authToken: baseOptions.authToken,
+    abortSignal: publicController.signal,
+    signal: internalController.signal,
+  });
+  await fetchStarted.promise;
+  assertEquals(fetchSignal === publicController.signal, false);
+  assertEquals(fetchSignal === internalController.signal, false);
+
+  publicController.abort(cancellation);
+  const error = await assertRejects(() => request);
+
+  assertEquals(error, cancellation);
+  assertEquals(fetchSignal?.aborted, true);
+  assertEquals(fetchSignal?.reason, cancellation);
+});
+
+Deno.test("strict project files client preserves pre-aborted internal cancellation when composed", async () => {
+  const publicController = new AbortController();
+  const internalController = new AbortController();
+  const cancellation = { kind: "internal-runtime-cancelled" };
+  internalController.abort(cancellation);
+  let fetchCalls = 0;
+  const client = createStrictRuntimeProjectFilesClient({
+    apiUrl: baseOptions.apiUrl,
+    fetch: () => {
+      fetchCalls += 1;
+      return Promise.reject(new Error("fetch must not run"));
+    },
+  });
+
+  const error = await assertRejects(() =>
+    client.getProjectFile({
+      projectId: baseOptions.projectId,
+      authToken: baseOptions.authToken,
+      abortSignal: publicController.signal,
+      signal: internalController.signal,
+      path: "src/index.ts",
+    })
+  );
+
+  assertEquals(error, cancellation);
+  assertEquals(fetchCalls, 0);
+});
+
+Deno.test("strict project files client aborts a stalled file body from public cancellation", async () => {
+  const controller = new AbortController();
+  const cancellation = { kind: "skill-operation-cancelled" };
+  const bodyReadStarted = createDeferred<void>();
+  const response = new Response(
+    new ReadableStream<Uint8Array>({
+      pull() {
+        bodyReadStarted.resolve();
+      },
+    }),
+  );
+  const client = createStrictRuntimeProjectFilesClient({
+    apiUrl: baseOptions.apiUrl,
+    timeoutMs: 1_000,
+    fetch: () => Promise.resolve(response),
+  });
+  const request = client.getProjectFile({
+    projectId: baseOptions.projectId,
+    authToken: baseOptions.authToken,
+    abortSignal: controller.signal,
+    path: "src/index.ts",
+  });
+
+  await bodyReadStarted.promise;
+  controller.abort(cancellation);
+  const error = await assertRejects(() => request);
+
+  assertEquals(error, cancellation);
+  assertEquals(response.body?.locked, false);
+});
+
 Deno.test("strict project error-body reads preserve arbitrary caller cancellation reasons", async () => {
   const controller = new AbortController();
   const cancellation = { kind: "caller-disconnected" };
