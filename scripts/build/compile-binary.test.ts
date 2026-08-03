@@ -200,6 +200,28 @@ it("proxy release verifies lock freshness and publishes an exact SBOM", async ()
     false,
     "proxy lock refresh must use Deno's default mutable lock mode",
   );
+
+  for (
+    const { artifact, target } of [
+      {
+        artifact: "veryfront-proxy-linux-x64",
+        target: "x86_64-unknown-linux-gnu",
+      },
+      {
+        artifact: "veryfront-proxy-linux-arm64",
+        target: "aarch64-unknown-linux-gnu",
+      },
+    ]
+  ) {
+    assertEquals(
+      new RegExp(
+        String
+          .raw`target: ${target}[\s\S]*?name: ${artifact}[\s\S]*?entrypoint: cli/proxy-main\.ts[\s\S]*?profile: proxy`,
+      ).test(workflow),
+      true,
+      `release matrix must publish ${artifact} from the proxy profile`,
+    );
+  }
 });
 
 it("compiled proxy smoke covers cache and observability providers", async () => {
@@ -248,7 +270,7 @@ it("compiled proxy smoke covers cache and observability providers", async () => 
     "compiled proxy smoke must enforce a defensible artifact size ceiling",
   );
   assertEquals(
-    smoke.includes('${TMPDIR:-/tmp}/veryfront-proxy-smoke.XXXXXX'),
+    smoke.includes("${TMPDIR:-/tmp}/veryfront-proxy-smoke.XXXXXX"),
     true,
     "smoke temp directory must use a portable mktemp template",
   );

@@ -461,6 +461,11 @@ jobs:
             name: veryfront-proxy-linux-x64
             entrypoint: cli/proxy-main.ts
             profile: proxy
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            name: veryfront-proxy-linux-arm64
+            entrypoint: cli/proxy-main.ts
+            profile: proxy
           - os: windows-2022
             target: x86_64-pc-windows-msvc
             name: veryfront-windows-x64.exe
