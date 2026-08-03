@@ -207,9 +207,11 @@ function isLegacyStoredChunk(value: unknown): value is LegacyStoredChunk {
  * The `local-json` backend requires a writable native filesystem with atomic
  * same-filesystem rename and verified file-snapshot reads. Its index must be a
  * regular, non-symlink UTF-8 JSON file no larger than 64 MiB. Cooperating
- * processes serialize writes through an adjacent `.veryfront-rag.lock`
- * directory; applications must not modify the index or lock directory while a
- * store operation is active. Node.js supports these guarantees on Windows.
+ * processes serialize writes through a lock directory named by appending
+ * `.veryfront-rag.lock` to the storage path, for example
+ * `data/index.json.veryfront-rag.lock`; applications must not modify the index
+ * or lock directory while a store operation is active. Node.js supports these
+ * guarantees on Windows.
  * Deno and Bun do not currently support this backend on Windows; use Node.js
  * there or configure `veryfront-cloud`.
  *
