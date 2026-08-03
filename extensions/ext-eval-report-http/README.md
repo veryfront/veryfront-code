@@ -18,9 +18,23 @@ scores, redaction policy, and optional trace correlation. Do not use OTLP
 runtime telemetry env vars to route eval reports; `OTEL_*` settings only control
 runtime trace and metric export.
 
-## Installation
+## Activation
 
-Add the extension to your project's `veryfront.config.ts`:
+Source and compiled Veryfront runtimes select the extension automatically, but
+it remains dormant until an HTTP exporter URL is configured and an eval run
+selects its exporter id. npm services that need HTTP eval export install
+`@veryfront/ext-eval-report-http`; package discovery then selects it
+automatically. The standard `veryfront` npm package does not install this
+network-export integration for every application.
+
+Set `VERYFRONT_EVAL_HTTP_EXPORTER_URL` for the default `http` exporter, then run:
+
+```bash
+veryfront eval deep-research --export http
+```
+
+Register the factory explicitly only when configuration must define multiple
+exporters, inject a fetch implementation, or avoid environment configuration:
 
 ```ts
 import extEvalReportHttp from "@veryfront/ext-eval-report-http";

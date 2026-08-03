@@ -125,6 +125,6 @@ Deno.test("Node WebSocket provider helper and missing-contract diagnostic are ac
   );
   assertStringIncludes(
     NODE_WEBSOCKET_SERVER_PROVIDER_MISSING_MESSAGE,
-    "explicitly enabled",
+    "install it or remove the extension disable directive",
   );
 });
