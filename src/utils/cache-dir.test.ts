@@ -1,8 +1,24 @@
 import "#veryfront/schemas/_test-setup.ts";
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { isNode } from "#veryfront/platform/compat/runtime.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  ensureCacheNodeModules,
   getCacheBaseDir,
   getCacheDirFromContext,
   getHttpBundleCacheDir,
@@ -23,6 +39,23 @@ const originalEnv = new Map<string, string | undefined>(
   MANAGED_ENV_KEYS.map((key) => [key, getEnv(key)]),
 );
 
+const nodeCacheRoots = new Set<string>();
+
+function makeNodeCacheRoot(): string {
+  const root = mkdtempSync(join(tmpdir(), "veryfront-cache-node-modules-"));
+  nodeCacheRoots.add(root);
+  return root;
+}
+
+function assertFrameworkNodeModulesLink(cacheRoot: string): void {
+  const link = join(cacheRoot, "node_modules");
+  const require = createRequire(import.meta.url);
+  const expectedReactDir = realpathSync(dirname(require.resolve("react")));
+
+  assert(lstatSync(link).isSymbolicLink());
+  assertEquals(realpathSync(join(link, "react")), expectedReactDir);
+}
+
 function restoreManagedEnv(): void {
   for (const [key, value] of originalEnv) {
     if (value === undefined) {
@@ -36,6 +69,10 @@ function restoreManagedEnv(): void {
 describe("cache-dir", () => {
   afterEach(() => {
     restoreManagedEnv();
+    for (const root of nodeCacheRoots) {
+      rmSync(root, { recursive: true, force: true });
+    }
+    nodeCacheRoots.clear();
   });
 
   describe("getCacheDirFromContext", () => {
@@ -156,6 +193,78 @@ describe("cache-dir", () => {
       const result = runWithCacheDir("/tmp/test", getHttpBundleCacheDir);
       assert(result.startsWith("/tmp/test"));
       assert(result.endsWith("veryfront-http-bundle"));
+    });
+  });
+
+  describe({ name: "ensureCacheNodeModules on Node", ignore: !isNode }, () => {
+    it("should link distinct cache roots independently", async () => {
+      const firstRoot = makeNodeCacheRoot();
+      const secondRoot = makeNodeCacheRoot();
+
+      await Promise.all([
+        runWithCacheDir(firstRoot, ensureCacheNodeModules),
+        runWithCacheDir(secondRoot, ensureCacheNodeModules),
+      ]);
+
+      assertFrameworkNodeModulesLink(firstRoot);
+      assertFrameworkNodeModulesLink(secondRoot);
+    });
+
+    it("should deduplicate concurrent callers and release completed operations", async () => {
+      const cacheRoot = makeNodeCacheRoot();
+
+      await runWithCacheDir(
+        cacheRoot,
+        () => Promise.all(Array.from({ length: 20 }, () => ensureCacheNodeModules())),
+      );
+      assertFrameworkNodeModulesLink(cacheRoot);
+
+      unlinkSync(join(cacheRoot, "node_modules"));
+      await runWithCacheDir(cacheRoot, ensureCacheNodeModules);
+
+      assertFrameworkNodeModulesLink(cacheRoot);
+    });
+
+    it("should replace wrong and dangling symlinks", async () => {
+      const cacheRoot = makeNodeCacheRoot();
+      const wrongTarget = join(cacheRoot, "wrong-node-modules");
+      const link = join(cacheRoot, "node_modules");
+      mkdirSync(wrongTarget);
+      symlinkSync(wrongTarget, link, "dir");
+
+      await runWithCacheDir(cacheRoot, ensureCacheNodeModules);
+      assertFrameworkNodeModulesLink(cacheRoot);
+
+      unlinkSync(link);
+      symlinkSync(join(cacheRoot, "missing-node-modules"), link, "dir");
+
+      await runWithCacheDir(cacheRoot, ensureCacheNodeModules);
+      assertFrameworkNodeModulesLink(cacheRoot);
+    });
+
+    it("should preserve a real node_modules directory", async () => {
+      const cacheRoot = makeNodeCacheRoot();
+      const nodeModulesDir = join(cacheRoot, "node_modules");
+      const marker = join(nodeModulesDir, "keep.txt");
+      mkdirSync(nodeModulesDir);
+      writeFileSync(marker, "keep");
+
+      await runWithCacheDir(cacheRoot, ensureCacheNodeModules);
+
+      assert(lstatSync(nodeModulesDir).isDirectory());
+      assertEquals(lstatSync(nodeModulesDir).isSymbolicLink(), false);
+      assertEquals(readFileSync(marker, "utf8"), "keep");
+    });
+
+    it("should preserve a non-directory node_modules entry", async () => {
+      const cacheRoot = makeNodeCacheRoot();
+      const nodeModulesEntry = join(cacheRoot, "node_modules");
+      writeFileSync(nodeModulesEntry, "keep");
+
+      await runWithCacheDir(cacheRoot, ensureCacheNodeModules);
+
+      assert(lstatSync(nodeModulesEntry).isFile());
+      assertEquals(readFileSync(nodeModulesEntry, "utf8"), "keep");
     });
   });
 });
