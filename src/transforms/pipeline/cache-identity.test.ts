@@ -179,6 +179,17 @@ describe("transform pipeline cache identity", () => {
     assertThrows(() => getCustomPluginCacheIdentity([plugin]), TypeError, "invalid name");
   });
 
+  it("rejects fractional custom plugin stages", () => {
+    const plugin: TransformPlugin = {
+      name: "custom",
+      stage: TransformStage.FINALIZE + 0.5,
+      cacheIdentity: "custom@1",
+      transform,
+    };
+
+    assertThrows(() => getCustomPluginCacheIdentity([plugin]), TypeError, "invalid stage");
+  });
+
   it("rejects oversized base identity fields before hashing", async () => {
     await assertRejects(
       () =>
@@ -205,6 +216,19 @@ describe("transform pipeline cache identity", () => {
     assertNotEquals(moduleServer, baseline);
     assertNotEquals(api, baseline);
     assertNotEquals(plugins, baseline);
+  });
+
+  it("rejects fractional stages in precomputed custom plugin identities", async () => {
+    await assertRejects(
+      () =>
+        computePipelineConfigIdentity(
+          identityInput({
+            customPlugins: [[0, "custom", TransformStage.FINALIZE + 0.5, "custom@1"]],
+          }),
+        ),
+      TypeError,
+      "invalid stage",
+    );
   });
 
   it("changes identity when moduleServerOrigin changes", async () => {

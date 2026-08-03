@@ -267,7 +267,10 @@ export function getCustomPluginCacheIdentity(
     ) {
       throw new IntrinsicTypeError(`Transform plugin at index ${index} has an invalid name`);
     }
-    if (typeof stage !== "number" || !NumberIsFinite(stage) || MathAbs(stage) > 1_000_000) {
+    if (
+      typeof stage !== "number" || !NumberIsFinite(stage) ||
+      !NumberIsSafeInteger(stage) || MathAbs(stage) > 1_000_000
+    ) {
       throw new IntrinsicTypeError(`Transform plugin ${name} has an invalid stage`);
     }
     if (condition !== undefined && typeof condition !== "function") {
@@ -394,7 +397,10 @@ function encodeCustomPluginIdentities(
     ) {
       throw new IntrinsicTypeError(`Custom plugin identity ${index} has an invalid name`);
     }
-    if (typeof stage !== "number" || !NumberIsFinite(stage) || MathAbs(stage) > 1_000_000) {
+    if (
+      typeof stage !== "number" || !NumberIsFinite(stage) ||
+      !NumberIsSafeInteger(stage) || MathAbs(stage) > 1_000_000
+    ) {
       throw new IntrinsicTypeError(`Custom plugin identity ${index} has an invalid stage`);
     }
     if (
