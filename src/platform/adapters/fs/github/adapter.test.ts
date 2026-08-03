@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { FSAdapterWrapper } from "../wrapper.ts";
@@ -163,7 +164,7 @@ describe("GitHubFSAdapter", () => {
         }
 
         if (urlStr.includes("/git/blobs/sha1")) {
-          const accept = new Headers(init?.headers).get("Accept");
+          const accept = new Headers(observeFetchRequestInit(init).headers).get("Accept");
           if (accept === "application/vnd.github.raw+json") {
             return Promise.resolve(new Response("hello world", { status: 200 }));
           }
@@ -279,7 +280,7 @@ describe("GitHubFSAdapter", () => {
             new Response(JSON.stringify(mockTreeResponse), { status: 200 }),
           );
         }
-        const accept = new Headers(init?.headers).get("Accept");
+        const accept = new Headers(observeFetchRequestInit(init).headers).get("Accept");
         assertEquals(accept, "application/vnd.github.raw+json");
         return Promise.resolve(new Response("hello worl", { status: 200 }));
       };

@@ -211,16 +211,43 @@ void compatiblePopoverTriggerProps;
 export function PolymorphicChatInputActionDemo(): React.ReactElement {
   return (
     <ChatInputRoot input="ready" onChange={() => {}} onSubmit={() => {}}>
-      <ChatInputSend asChild ref={anchorActionRef}>
+      <ChatInputSend
+        asChild
+        ref={anchorActionRef}
+        onClick={(event, next) => {
+          event.currentTarget.href;
+          next();
+        }}
+      >
         <a href="#send">Send</a>
       </ChatInputSend>
-      <ChatInputStop asChild ref={anchorActionRef}>
+      <ChatInputStop
+        asChild
+        ref={anchorActionRef}
+        onClick={(event, next) => {
+          event.currentTarget.href;
+          next();
+        }}
+      >
         <a href="#stop">Stop</a>
       </ChatInputStop>
-      <ChatInputVoice asChild ref={anchorActionRef}>
+      <ChatInputVoice<HTMLAnchorElement>
+        asChild
+        onClick={(event, next) => {
+          event.currentTarget.href;
+          next();
+        }}
+      >
         <a href="#voice">Voice</a>
       </ChatInputVoice>
-      <ChatInputSubmit asChild ref={anchorActionRef}>
+      <ChatInputSubmit
+        asChild
+        ref={anchorActionRef}
+        onClick={(event, next) => {
+          event.currentTarget.href;
+          next();
+        }}
+      >
         <a href="#submit">Submit</a>
       </ChatInputSubmit>
     </ChatInputRoot>

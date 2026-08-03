@@ -6,7 +6,11 @@
 import * as React from "react";
 import { useChatInputContext } from "../contexts/composer-context.tsx";
 import { ChatInputSend, ChatInputStop } from "./chat-input-actions.tsx";
-import type { ChatInputSlottedSubmitProps, ChatInputSubmitProps } from "./chat-composer.types.ts";
+import type {
+  ChatInputSlottedActionProps,
+  ChatInputSlottedSubmitProps,
+  ChatInputSubmitProps,
+} from "./chat-composer.types.ts";
 
 function isSlottedSubmit<T extends HTMLElement>(
   props: ChatInputSubmitProps | ChatInputSlottedSubmitProps<T>,
@@ -25,17 +29,15 @@ export function ChatInputSubmit<T extends HTMLElement = HTMLElement>(
   const c = useChatInputContext();
   if (isSlottedSubmit(props)) {
     const { children, icon, stopIcon, ...actionProps } = props;
+    // Rest destructuring cannot preserve a generic conditional mapped type;
+    // the type guard above establishes this exact slotted contract.
+    const slottedAction = {
+      ...actionProps,
+      children,
+    } as ChatInputSlottedActionProps<T>;
     return c.isLoading
-      ? (
-        <ChatInputStop {...actionProps} icon={stopIcon}>
-          {children}
-        </ChatInputStop>
-      )
-      : (
-        <ChatInputSend {...actionProps} icon={icon}>
-          {children}
-        </ChatInputSend>
-      );
+      ? <ChatInputStop<T> {...slottedAction} icon={stopIcon} />
+      : <ChatInputSend<T> {...slottedAction} icon={icon} />;
   }
   const { children, icon, stopIcon, ...actionProps } = props;
   return c.isLoading

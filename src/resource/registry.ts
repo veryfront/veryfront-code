@@ -11,14 +11,20 @@ import type { Resource } from "./types.ts";
 import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 
-const resourceRegistryManager = new ProjectScopedRegistryManager<Resource>("resource");
+// A resource registry is intentionally heterogeneous: each entry retains its
+// own schema-backed parameter and result types at creation time, while lookup
+// erases those generics before runtime schema validation.
+// deno-lint-ignore no-explicit-any
+type RegisteredResource = Resource<any, any>;
+
+const resourceRegistryManager = new ProjectScopedRegistryManager<RegisteredResource>("resource");
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-class ResourceRegistry extends ScopedRegistryFacade<Resource> {
-  findByPattern(uri: string): Resource | undefined {
+class ResourceRegistry extends ScopedRegistryFacade<RegisteredResource> {
+  findByPattern(uri: string): RegisteredResource | undefined {
     for (const resource of this.getAll().values()) {
       if (this.matchPattern(uri, resource.pattern)) return resource;
     }

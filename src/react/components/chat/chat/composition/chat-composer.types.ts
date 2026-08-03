@@ -9,7 +9,10 @@ import type { ChatMessage } from "#veryfront/agent/react";
 import type { ComposerStateProps } from "./use-composer-value.ts";
 
 /** Wrap-signature onClick shared by the interactive `ChatInput` sub-parts. */
-export type WrapClick = (event: React.MouseEvent<HTMLElement>, next: () => void) => void;
+export type WrapClick<T extends HTMLElement = HTMLElement> = (
+  event: React.MouseEvent<T>,
+  next: () => void,
+) => void;
 
 /** Props accepted by `<ChatInput.Field>`. */
 export interface ChatInputFieldProps extends
@@ -65,7 +68,7 @@ export type ChatInputSlottedActionProps<T extends HTMLElement = HTMLElement> =
     /** @deprecated Pass `children` instead. Kept working for backward compatibility. */
     icon?: React.ReactNode;
     className?: string;
-    onClick?: WrapClick;
+    onClick?: WrapClick<T>;
     /** React 19: ref targets the element rendered by the custom child. */
     ref?: React.Ref<T>;
   };

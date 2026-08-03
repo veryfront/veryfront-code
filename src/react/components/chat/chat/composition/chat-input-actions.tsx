@@ -8,7 +8,7 @@ import { ArrowUpIcon, StopIcon } from "../../../ui/icons/index.ts";
 import { Button } from "../../../ui/button.tsx";
 import { cn } from "../../theme.ts";
 import { useChatInputContext } from "../contexts/composer-context.tsx";
-import { getChatInputActionType } from "./chat-input-action-semantics.ts";
+import { getChatInputActionType, invokeChatInputClick } from "./chat-input-action-semantics.ts";
 import type {
   ChatInputActionProps,
   ChatInputSendProps,
@@ -67,7 +67,7 @@ export function ChatInputSend<T extends HTMLElement = HTMLElement>({
       size="icon-lg"
       aria-label={ariaLabel ?? "Send"}
       disabled={disabled || !c.canSubmit}
-      onClick={(event: React.MouseEvent<HTMLElement>) => onClick ? onClick(event, run) : run()}
+      onClick={(event: React.MouseEvent<HTMLElement>) => invokeChatInputClick(onClick, event, run)}
       className={cn("shrink-0", className)}
     >
       {children ?? icon ?? <ArrowUpIcon />}
@@ -105,7 +105,7 @@ export function ChatInputStop<T extends HTMLElement = HTMLElement>({
       size="icon-lg"
       aria-label={ariaLabel ?? "Stop"}
       disabled={disabled}
-      onClick={(event: React.MouseEvent<HTMLElement>) => onClick ? onClick(event, run) : run()}
+      onClick={(event: React.MouseEvent<HTMLElement>) => invokeChatInputClick(onClick, event, run)}
       className={cn("shrink-0", className)}
     >
       {children ?? icon ?? <StopIcon />}
@@ -145,7 +145,7 @@ export function ChatInputVoice<T extends HTMLElement = HTMLElement>({
       aria-label={ariaLabel ?? "Voice input"}
       aria-pressed={c.isListening}
       disabled={disabled}
-      onClick={(event: React.MouseEvent<HTMLElement>) => onClick ? onClick(event, run) : run()}
+      onClick={(event: React.MouseEvent<HTMLElement>) => invokeChatInputClick(onClick, event, run)}
       className={cn(
         "shrink-0",
         c.isListening && "bg-[var(--primary)] text-[var(--secondary)]",
