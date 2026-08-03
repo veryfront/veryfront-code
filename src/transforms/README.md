@@ -41,7 +41,7 @@ const result = await transformToESM(code, {
 });
 
 // Render MDX (for runtime usage)
-const module = await mdxRenderer.loadModuleESM(compiledCode, undefined, undefined, projectDir);
+const module = await mdxRenderer.loadModuleESM(compiledCode, { projectDir });
 // Use module.default or module exports
 ```
 
