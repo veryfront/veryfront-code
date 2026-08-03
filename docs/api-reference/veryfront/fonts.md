@@ -29,7 +29,7 @@ import { GoogleFonts } from "veryfront/fonts";
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `GoogleFonts` | Render Google fonts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts#L88) |
+| `GoogleFonts` | Render Google fonts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts#L251) |
 
 ### Types
 

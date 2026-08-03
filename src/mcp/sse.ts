@@ -15,7 +15,7 @@ export function formatSSERetry(ms: number): string {
   return `retry: ${ms}\n\n`;
 }
 
-/** Event emitted for format ssepriming. */
+/** Format an SSE priming event. */
 export function formatSSEPrimingEvent(id: string): string {
   return `id: ${id}\ndata: \n\n`;
 }
