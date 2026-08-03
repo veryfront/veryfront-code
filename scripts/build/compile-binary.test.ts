@@ -331,7 +331,7 @@ it("compiled proxy smoke covers cache and observability providers", async () => 
 it("proxy release enforces the cold-start cgroup budget", async () => {
   const workflow = await Deno.readTextFile(".github/workflows/cicd.yml");
   const invocation =
-    "bash scripts/build/smoke-proxy-memory.sh ./veryfront-proxy-linux-x64";
+    "PROXY_MEMORY_LIMIT=1536m PROXY_MEMORY_ATTEMPTS=3 bash scripts/build/smoke-proxy-memory.sh ./veryfront-proxy-linux-x64";
 
   assertEquals(
     workflow.split(invocation).length - 1,
