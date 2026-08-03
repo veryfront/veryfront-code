@@ -121,6 +121,9 @@ describe("agent/runtime/model-resolution", () => {
         "toLocaleString",
         "__proto__",
         "__defineGetter__",
+        "__defineSetter__",
+        "__lookupGetter__",
+        "__lookupSetter__",
       ]
     ) {
       assertEquals(resolveConfiguredAgentModel(inherited), inherited);

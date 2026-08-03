@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { canIdentifyProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { MAX_OPAQUE_ID_CODE_UNITS } from "#veryfront/utils/project-identity.ts";
 import { resolveHostedProjectReference } from "./project-reference-resolver.ts";
 
@@ -132,6 +133,54 @@ Deno.test("resolveHostedProjectReference ignores accessors and inherited descrip
   );
   assertEquals(payloadAccessorCalls, 0);
   assertEquals(inheritedValueCalls, 0);
+});
+
+Deno.test("resolveHostedProjectReference rejects active response proxies without invoking traps", async () => {
+  assertEquals(canIdentifyProxyWithoutHooks, true);
+  let trapCalls = 0;
+  const payload = new Proxy({ id: "target-project", slug: "target-project" }, {
+    getOwnPropertyDescriptor() {
+      trapCalls += 1;
+      throw new Error("private descriptor failure");
+    },
+  });
+
+  await withMockFetch(
+    () =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(payload),
+      } as unknown as Response),
+    async () => {
+      await assertRejects(
+        () => resolveHostedProjectReference(LOOKUP_INPUT),
+        Error,
+        "Project lookup response did not confirm the requested project identity",
+      );
+    },
+  );
+
+  assertEquals(trapCalls, 0);
+});
+
+Deno.test("resolveHostedProjectReference rejects revoked response proxies without leaking revocation errors", async () => {
+  const revocable = Proxy.revocable({ id: "target-project", slug: "target-project" }, {});
+  revocable.revoke();
+
+  await withMockFetch(
+    () =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(revocable.proxy),
+      } as unknown as Response),
+    async () => {
+      await assertRejects(
+        () => resolveHostedProjectReference(LOOKUP_INPUT),
+        Error,
+        "Project lookup response did not confirm the requested project identity",
+      );
+    },
+  );
 });
 
 Deno.test("resolveHostedProjectReference rejects unsafe references before fetch", async () => {

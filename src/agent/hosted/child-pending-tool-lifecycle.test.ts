@@ -154,6 +154,7 @@ Deno.test("createHostedChildPendingToolLifecycleLogger writes host context for p
       context: {
         conversationId: "conv-1",
         runId: "run-1",
+        parentRunId: "run-1",
         description: "Summarize docs",
         reason: "error",
         toolCallIds: ["tool-1", "tool-2"],
@@ -165,6 +166,7 @@ Deno.test("createHostedChildPendingToolLifecycleLogger writes host context for p
       context: {
         conversationId: "conv-1",
         runId: "run-1",
+        parentRunId: "run-1",
         description: "Summarize docs",
         toolCallId: "tool-1",
         phase: "input_streaming",

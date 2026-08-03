@@ -2,6 +2,7 @@ import { defineSchema, getJsonValueSchema, lazySchema } from "#veryfront/schemas
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { withDefaultResearchArtifactPath } from "../artifacts/default-research-artifact-policy.ts";
 import type { ChildRunResultMode } from "../child-run/result-summary.ts";
+import { INVALID_AGENT_PROJECT_REFERENCE_MESSAGE } from "../project/context.ts";
 import type { RuntimeAgentThinkingConfig } from "../runtime/agent-definition.ts";
 import {
   isCanonicalOpaqueProjectIdentifier,
@@ -25,11 +26,10 @@ export const getHostedChildForkToolInputSchema = defineSchema((v) =>
     ),
     project_reference: v
       .string()
-      .min(1)
       .max(MAX_OPAQUE_ID_CODE_UNITS)
       .refine(
         isCanonicalOpaqueProjectIdentifier,
-        "project_reference must be trimmed and contain no control characters",
+        INVALID_AGENT_PROJECT_REFERENCE_MESSAGE,
       )
       .optional()
       .describe(

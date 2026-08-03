@@ -6,27 +6,28 @@ import {
   normalizeAgentProjectReference,
   UNCONFIRMED_AGENT_PROJECT_IDENTITY_MESSAGE,
 } from "../project/context.ts";
+import { readOwnDataProperty as readRuntimeOwnDataProperty } from "../runtime/data-property-descriptor.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
 const ArrayIsArray = Array.isArray;
-const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
-const ReflectApply = Reflect.apply;
-
-function hasOwn(object: object, key: PropertyKey): boolean {
-  return ReflectApply(ObjectPrototypeHasOwnProperty, object, [key]) as boolean;
-}
 
 /**
  * Read an own data property from untrusted JSON without invoking accessors or
  * walking the prototype chain.
  */
 function readOwnDataProperty(source: unknown, key: string): unknown {
-  if (typeof source !== "object" || source === null || ArrayIsArray(source)) {
+  if (typeof source !== "object" || source === null || isProxyWithoutHooks(source)) {
     return undefined;
   }
 
-  const descriptor = ObjectGetOwnPropertyDescriptor(source, key);
-  return descriptor && hasOwn(descriptor, "value") ? descriptor.value : undefined;
+  try {
+    if (ArrayIsArray(source)) {
+      return undefined;
+    }
+    return readRuntimeOwnDataProperty(source, key, "project lookup response", false);
+  } catch {
+    return undefined;
+  }
 }
 
 function cancelResponseBodyWithoutWaiting(response: Response): void {
@@ -86,7 +87,12 @@ export async function resolveHostedProjectReference(input: {
     throw new Error(`Project lookup failed (${response.status})`);
   }
 
-  const data: unknown = await response.json();
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error("Project lookup response did not confirm the requested project identity");
+  }
   const identity = getConfirmedAgentProjectIdentity({
     projectId: readOwnDataProperty(data, "id"),
     projectSlug: readOwnDataProperty(data, "slug"),

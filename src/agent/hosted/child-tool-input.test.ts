@@ -8,6 +8,7 @@ import {
   resolveHostedChildForkThinkingOverride,
   withHostedChildInvocationContext,
 } from "./child-tool-input.ts";
+import { INVALID_AGENT_PROJECT_REFERENCE_MESSAGE } from "../project/context.ts";
 import { MAX_OPAQUE_ID_CODE_UNITS } from "#veryfront/utils/project-identity.ts";
 
 Deno.test("hostedChildForkToolInputSchema accepts the hosted child fork fields", () => {
@@ -161,6 +162,16 @@ Deno.test("hostedChildForkToolInputSchema rejects unsafe project references", ()
     });
 
     assertEquals(result.success, false);
+    if (result.success) {
+      throw new Error("Expected invalid hosted child fork input");
+    }
+    const error = result.error as { issues?: Array<{ message?: string }> };
+    assertEquals(
+      error.issues?.[0]?.message,
+      projectReference.length > MAX_OPAQUE_ID_CODE_UNITS
+        ? `Too big: expected string to have <=${MAX_OPAQUE_ID_CODE_UNITS} characters`
+        : INVALID_AGENT_PROJECT_REFERENCE_MESSAGE,
+    );
   }
 });
 
