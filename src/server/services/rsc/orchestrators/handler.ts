@@ -105,6 +105,7 @@ export class RSCDevServerHandler {
         projectSlug: options.projectSlug,
         contentSourceId: moduleContentSourceId,
         dependencyPinningSource: this.dependencyPinningSource,
+        isLocalProject,
         reactVersion: (snapshot) => this.getReactVersionForSnapshot(snapshot),
       },
     );

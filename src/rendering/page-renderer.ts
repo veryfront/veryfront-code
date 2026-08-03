@@ -58,6 +58,7 @@ export class PageRenderer {
     filePath?: string,
   ) => Promise<PageBundle>;
   private readonly moduleServerUrl?: string;
+  private readonly isLocalProject: boolean;
   private reactVersionPromise: Promise<string> | null = null;
 
   constructor(options: {
@@ -72,6 +73,8 @@ export class PageRenderer {
       filePath?: string,
     ) => Promise<PageBundle>;
     moduleServerUrl?: string;
+    /** Server-trusted local-project identity. */
+    isLocalProject?: boolean;
   }) {
     this.projectDir = options.projectDir;
     this.mode = options.mode;
@@ -80,6 +83,7 @@ export class PageRenderer {
     this.componentRegistry = options.componentRegistry;
     this.compileMDX = options.compileMDX;
     this.moduleServerUrl = options.moduleServerUrl;
+    this.isLocalProject = options.isLocalProject === true;
   }
 
   private async getMergedComponents(
@@ -266,6 +270,7 @@ export class PageRenderer {
                 dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
                 dependencyPinningDependencies: options?.dependencyPinningDependencies,
                 dependencyPinningSource: options?.dependencyPinningSource,
+                isLocalProject: this.isLocalProject,
               },
             ),
           { "render.mdx_path": pageInfo.entity.path },

@@ -24,7 +24,7 @@ import { buildMdxJsxCacheFileName } from "./cache-format.ts";
 import { rewriteDntImports } from "./module-fetcher/index.ts";
 import { ensureCachedJsxModulePatched } from "./jsx-cache.ts";
 import type { ESMLoaderContext } from "./types.ts";
-import { appendSameOriginSSRDependencyPinningKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import { appendSameOriginSSRDependencyPinningPathKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import {
   bareStrategy,
   UnifiedImportRewriter,
@@ -165,7 +165,7 @@ export async function pinSameOriginSSRModuleImports(
   if (!dependencyPinningCacheKey?.startsWith("on:") || !moduleServerOrigin) return code;
 
   return await replaceSpecifiers(code, (specifier) => {
-    const pinned = appendSameOriginSSRDependencyPinningKey(
+    const pinned = appendSameOriginSSRDependencyPinningPathKey(
       specifier,
       dependencyPinningCacheKey,
       moduleServerOrigin,

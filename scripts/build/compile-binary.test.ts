@@ -128,12 +128,22 @@ it("proxy binary embeds only the runtime-resolved proxy entrypoint", async () =>
 
   const entrypoint = await Deno.readTextFile("cli/proxy-main.ts");
   const runtimeImportIndex = entrypoint.indexOf(
-    'import "./commands/serve/proxy-runtime.ts";',
+    'import { runStandaloneProxyRuntime } from "./commands/serve/proxy-runtime.ts";',
   );
   assertEquals(
     runtimeImportIndex >= 0,
     true,
-    "proxy entrypoint must evaluate proxy-runtime before extension anchors",
+    "proxy entrypoint must statically import its runtime before extension anchors",
+  );
+  assertEquals(
+    entrypoint.match(/\.\/commands\/serve\/proxy-runtime\.ts/g)?.length,
+    1,
+    "proxy entrypoint must import its runtime exactly once",
+  );
+  assertEquals(
+    entrypoint.includes('await import("./commands/serve/proxy-runtime.ts")'),
+    false,
+    "proxy entrypoint must not dynamically re-import its runtime",
   );
   for (
     const extension of [
@@ -224,6 +234,29 @@ it("proxy release verifies lock freshness and publishes an exact SBOM", async ()
   }
 });
 
+it("local build matrix includes both Linux proxy architectures", async () => {
+  const buildScript = await Deno.readTextFile("scripts/build/build-all.js");
+
+  for (
+    const { name, target, output } of [
+      {
+        name: "Linux proxy (x64)",
+        target: "x86_64-unknown-linux-gnu",
+        output: "veryfront-proxy-linux-x64",
+      },
+      {
+        name: "Linux proxy (ARM64)",
+        target: "aarch64-unknown-linux-gnu",
+        output: "veryfront-proxy-linux-arm64",
+      },
+    ]
+  ) {
+    assertEquals(buildScript.includes(`name: "${name}"`), true);
+    assertEquals(buildScript.includes(`target: "${target}"`), true);
+    assertEquals(buildScript.includes(`output: "${output}"`), true);
+  }
+});
+
 it("proxy profile defaults to the dedicated proxy entrypoint", () => {
   const args = createCompileArgs({
     extraIncludes: [],
@@ -236,6 +269,12 @@ it("proxy profile defaults to the dedicated proxy entrypoint", () => {
 
 it("compiled proxy smoke covers cache and observability providers", async () => {
   const smoke = await Deno.readTextFile("scripts/build/smoke-proxy-binary.sh");
+
+  assertEquals(
+    smoke.includes("usage: smoke-proxy-binary.sh <binary> [base_port]"),
+    true,
+    "the optional smoke port must be documented as the base for all probes",
+  );
 
   for (
     const contract of [
@@ -300,6 +339,16 @@ it("proxy release enforces the cold-start cgroup budget", async () => {
     "pull-request and main-release jobs must both enforce proxy memory",
   );
   assertEquals(
+    workflow.split("PROXY_MEMORY_LIMIT: 1536m").length - 1,
+    2,
+    "both proxy memory jobs must pin the 1536 MiB release gate",
+  );
+  assertEquals(
+    workflow.split('PROXY_MEMORY_ATTEMPTS: "3"').length - 1,
+    2,
+    "both proxy memory jobs must pin three cold-start attempts",
+  );
+  assertEquals(
     workflow.split("if: matrix.name == 'veryfront-proxy-linux-x64'").length -
       1,
     2,
@@ -329,12 +378,20 @@ it("proxy release enforces the cold-start cgroup budget", async () => {
 
 it("proxy binary smoke runs only for same-repository pull requests", async () => {
   const workflow = await Deno.readTextFile(".github/workflows/cicd.yml");
+  const jobStart = workflow.indexOf("  tests-proxy-binary:");
+  const jobEnd = workflow.indexOf("\n  build-binaries:", jobStart);
+  const job = workflow.slice(jobStart, jobEnd);
 
   assertEquals(
     workflow.includes(
       "if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.event_name == 'pull_request' }}",
     ),
     true,
+  );
+  assertEquals(
+    job.includes("persist-credentials: false"),
+    true,
+    "the pull-request proxy job must not retain checkout credentials",
   );
 });
 

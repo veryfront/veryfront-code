@@ -8,6 +8,7 @@
  *
  * Usage: deno task docs
  *        deno task docs -- --output ../../docs/docs/code/api-reference
+ *        deno task docs:api-reference:check  (regenerate to a temp dir and diff against the committed tree)
  */
 
 import { parseArgs } from "#std/flags";
@@ -22,6 +23,7 @@ const ROOT = Deno.cwd();
 // ---------------------------------------------------------------------------
 
 const args = parseArgs(Deno.args, {
+  boolean: ["check"],
   string: ["output", "source-base-url"],
   default: {
     output: "docs/api-reference",
@@ -29,9 +31,14 @@ const args = parseArgs(Deno.args, {
   },
 });
 
-const OUTPUT_DIR = args.output.startsWith("/")
+/** In --check mode, regenerate into a temp dir and diff against this tree. */
+const COMMITTED_DIR = args.output.startsWith("/")
   ? args.output
   : `${ROOT}/${args.output}`;
+const CHECK_MODE = args.check === true;
+const OUTPUT_DIR = CHECK_MODE
+  ? await Deno.makeTempDir({ prefix: "veryfront-api-reference-check-" })
+  : COMMITTED_DIR;
 const VERYFRONT_DIR = `${OUTPUT_DIR}/veryfront`;
 const SOURCE_BASE_URL = String(args["source-base-url"]).replace(/\/+$/, "");
 
@@ -1704,6 +1711,7 @@ const API_DOCS: Record<string, APIDocs> = {
     expandTypes: [
       "CorsOptions",
       "RateLimitOptions",
+      "MemoryRateLimitStoreOptions",
       "LoggerOptions",
       "TimeoutOptions",
     ],
@@ -2760,6 +2768,7 @@ async function main() {
     documented: 0,
     missing: 0,
   };
+  const generatedPaths: string[] = [];
 
   for (const [idx, group] of groups.entries()) {
     const entry = group.parent;
@@ -2823,6 +2832,7 @@ async function main() {
     );
     const outPath = `${VERYFRONT_DIR}/${entry.slug}.md`;
     await Deno.writeTextFile(outPath, md);
+    generatedPaths.push(outPath);
     console.log(`  Wrote ${outPath}`);
   }
 
@@ -2830,6 +2840,7 @@ async function main() {
   const indexMD = normalizeGeneratedMarkdown(generateReadmeMD(indexData));
   const indexPath = `${OUTPUT_DIR}/index.md`;
   await Deno.writeTextFile(indexPath, indexMD);
+  generatedPaths.push(indexPath);
   try {
     await Deno.remove(`${OUTPUT_DIR}/overview.md`);
   } catch (err) {
@@ -2840,6 +2851,7 @@ async function main() {
   } catch (err) {
     if (!(err instanceof Deno.errors.NotFound)) throw err;
   }
+  await formatGeneratedMarkdown(generatedPaths);
   console.log(`\nWrote ${indexPath}`);
   console.log(`Generated ${groups.length} MD files in ${VERYFRONT_DIR}`);
   console.log(
@@ -2847,8 +2859,95 @@ async function main() {
   );
 }
 
-main();
+let referenceIsCurrent = true;
+try {
+  await main();
+  if (CHECK_MODE) referenceIsCurrent = await checkCommittedReference();
+} finally {
+  // The check output is disposable even when generation or comparison fails.
+  // Keeping cleanup around the complete operation avoids leaking a large
+  // generated tree after a failed `deno doc` or formatter subprocess.
+  if (CHECK_MODE) await Deno.remove(OUTPUT_DIR, { recursive: true });
+}
+if (!referenceIsCurrent) Deno.exit(1);
 
 function normalizeGeneratedMarkdown(markdown: string): string {
   return markdown.replace(/[\u2013\u2014]/g, "-");
+}
+
+/** List generated reference files (relative paths) under a reference root. */
+async function listReferenceFiles(dir: string): Promise<string[]> {
+  const paths: string[] = [];
+  try {
+    await Deno.stat(`${dir}/index.md`);
+    paths.push("index.md");
+  } catch (err) {
+    if (!(err instanceof Deno.errors.NotFound)) throw err;
+  }
+  try {
+    for await (const entry of Deno.readDir(`${dir}/veryfront`)) {
+      if (entry.isFile && entry.name.endsWith(".md")) {
+        paths.push(`veryfront/${entry.name}`);
+      }
+    }
+  } catch (err) {
+    if (!(err instanceof Deno.errors.NotFound)) throw err;
+  }
+  paths.sort();
+  return paths;
+}
+
+/**
+ * Compare the freshly generated reference (in the temp OUTPUT_DIR) against the
+ * committed tree. Returns true when the committed tree is current; otherwise
+ * prints the drifted files and returns false so the caller can exit non-zero
+ * after cleaning up the temp directory.
+ */
+async function checkCommittedReference(): Promise<boolean> {
+  const generated = await listReferenceFiles(OUTPUT_DIR);
+  const committed = await listReferenceFiles(COMMITTED_DIR);
+
+  const missing = generated.filter((path) => !committed.includes(path));
+  const stale = committed.filter((path) => !generated.includes(path));
+  const changed: string[] = [];
+  for (const path of generated) {
+    if (!committed.includes(path)) continue;
+    const [expected, actual] = await Promise.all([
+      Deno.readTextFile(`${OUTPUT_DIR}/${path}`),
+      Deno.readTextFile(`${COMMITTED_DIR}/${path}`),
+    ]);
+    if (expected !== actual) changed.push(path);
+  }
+
+  if (missing.length === 0 && stale.length === 0 && changed.length === 0) {
+    console.log(
+      `\n${COMMITTED_DIR} is current (${generated.length} files).`,
+    );
+    return true;
+  }
+
+  console.error(`\n${COMMITTED_DIR} is stale:`);
+  for (const path of missing) console.error(`  missing:  ${path}`);
+  for (const path of stale) console.error(`  stale:    ${path}`);
+  for (const path of changed) console.error(`  outdated: ${path}`);
+  console.error(
+    "Run `deno task docs` and commit the result to update the generated API reference.",
+  );
+  return false;
+}
+
+async function formatGeneratedMarkdown(paths: string[]): Promise<void> {
+  const result = await new Deno.Command(Deno.execPath(), {
+    args: ["fmt", `--config=${ROOT}/deno.json`, ...paths],
+    stdout: "null",
+    stderr: "piped",
+  }).output();
+  if (result.code === 0) return;
+
+  const stderr = new TextDecoder().decode(result.stderr).trim();
+  throw new Error(
+    `Failed to format generated API reference Markdown (exit ${result.code})${
+      stderr ? `: ${stderr}` : ""
+    }`,
+  );
 }

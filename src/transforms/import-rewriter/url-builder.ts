@@ -173,12 +173,41 @@ const DEPENDENCY_PINNING_PATH_MARKER = "_pins/";
 const MODULE_SERVER_PATH_PREFIXES = ["/_vf_modules/"] as const;
 const DEPENDENCY_PINNING_PATH_KEY_PATTERN = /^on:[A-Za-z0-9._-]+$/;
 
+interface UrlComponents {
+  path: string;
+  params: URLSearchParams;
+  hash: string;
+}
+
+function splitUrlComponents(url: string): UrlComponents {
+  const hashIndex = url.indexOf("#");
+  const hash = hashIndex === -1 ? "" : url.slice(hashIndex);
+  const urlWithoutHash = hashIndex === -1 ? url : url.slice(0, hashIndex);
+  const queryIndex = urlWithoutHash.indexOf("?");
+  return {
+    path: queryIndex === -1 ? urlWithoutHash : urlWithoutHash.slice(0, queryIndex),
+    params: new URLSearchParams(
+      queryIndex === -1 ? "" : urlWithoutHash.slice(queryIndex + 1),
+    ),
+    hash,
+  };
+}
+
 function decodeDependencyPinningPathKey(encodedKey: string): string | undefined {
   try {
     const cacheKey = decodeURIComponent(encodedKey);
     return DEPENDENCY_PINNING_PATH_KEY_PATTERN.test(cacheKey) ? cacheKey : undefined;
   } catch {
     return undefined;
+  }
+}
+
+function hasMalformedPercentEncoding(value: string): boolean {
+  try {
+    decodeURIComponent(value);
+    return false;
+  } catch {
+    return true;
   }
 }
 
@@ -194,14 +223,7 @@ export function appendDependencyPinningPathKey(
 ): string {
   if (!dependencyPinningCacheKey?.startsWith("on:")) return url;
 
-  const hashIndex = url.indexOf("#");
-  const hash = hashIndex === -1 ? "" : url.slice(hashIndex);
-  const urlWithoutHash = hashIndex === -1 ? url : url.slice(0, hashIndex);
-  const queryIndex = urlWithoutHash.indexOf("?");
-  const path = queryIndex === -1 ? urlWithoutHash : urlWithoutHash.slice(0, queryIndex);
-  const params = new URLSearchParams(
-    queryIndex === -1 ? "" : urlWithoutHash.slice(queryIndex + 1),
-  );
+  const { path, params, hash } = splitUrlComponents(url);
 
   for (const prefix of MODULE_SERVER_PATH_PREFIXES) {
     const prefixIndex = path.indexOf(prefix);
@@ -304,8 +326,51 @@ export function appendSameOriginSSRDependencyPinningKey(
       return url;
     }
 
-    target.searchParams.set("ssr", "true");
-    return appendDependencyPinningKey(target.href, dependencyPinningCacheKey);
+    const params = target.searchParams;
+    params.set("pins", dependencyPinningCacheKey);
+    params.set("ssr", "true");
+    return target.toString();
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Bind a same-origin absolute module URL to an SSR dependency snapshot using
+ * the module-server path transport. Use this only when the consumer resolves
+ * `/_vf_modules/` paths through the module server instead of generic fetch.
+ */
+export function appendSameOriginSSRDependencyPinningPathKey(
+  url: string,
+  dependencyPinningCacheKey?: string,
+  moduleServerOrigin?: string,
+): string {
+  if (
+    !dependencyPinningCacheKey?.startsWith("on:") ||
+    !moduleServerOrigin ||
+    (!/^https?:\/\//i.test(url) && !url.startsWith("//"))
+  ) {
+    return url;
+  }
+
+  try {
+    const requestOrigin = new URL(moduleServerOrigin);
+    const target = new URL(url, requestOrigin);
+    if (
+      target.origin !== requestOrigin.origin ||
+      !target.pathname.startsWith("/_vf_modules/")
+    ) {
+      return url;
+    }
+
+    const moduleUrl = appendDependencyPinningPathKey(
+      `${target.pathname}${target.search}${target.hash}`,
+      dependencyPinningCacheKey,
+    );
+    const { path, params, hash } = splitUrlComponents(moduleUrl);
+
+    params.set("ssr", "true");
+    return `${path}?${params.toString()}${hash}`;
   } catch {
     return url;
   }
@@ -335,6 +400,9 @@ export function extractDependencyPinningPathKey(
     const encodedKey = separatorIndex === -1
       ? encodedKeyAndPath
       : encodedKeyAndPath.slice(0, separatorIndex);
+    if (hasMalformedPercentEncoding(encodedKey)) {
+      return { pathname, found: true, malformed: true };
+    }
     const cacheKey = decodeDependencyPinningPathKey(encodedKey);
     if (!cacheKey) {
       return { pathname, found: false, malformed: false };
@@ -345,19 +413,7 @@ export function extractDependencyPinningPathKey(
 
     const modulePath = encodedKeyAndPath.slice(separatorIndex + 1);
     if (modulePath.startsWith(DEPENDENCY_PINNING_PATH_MARKER)) {
-      const nestedKeyEnd = modulePath.indexOf(
-        "/",
-        DEPENDENCY_PINNING_PATH_MARKER.length,
-      );
-      const nestedEncodedKey = nestedKeyEnd === -1
-        ? modulePath.slice(DEPENDENCY_PINNING_PATH_MARKER.length)
-        : modulePath.slice(
-          DEPENDENCY_PINNING_PATH_MARKER.length,
-          nestedKeyEnd,
-        );
-      if (decodeDependencyPinningPathKey(nestedEncodedKey)) {
-        return { pathname, found: true, malformed: true };
-      }
+      return { pathname, found: true, malformed: true };
     }
 
     return {

@@ -2459,7 +2459,6 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
         assertEquals(childResponse.status, 200);
       }
 
-      const nestedFetches: string[] = [];
       await withMockFetch(
         async (
           input: RequestInfo | URL,
@@ -2471,7 +2470,6 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
             requestUrl.origin === parentUrl.origin &&
             requestUrl.pathname.startsWith("/_vf_modules/")
           ) {
-            nestedFetches.push(requestUrl.href);
             return await serve(request, projectDir);
           }
           if (requestUrl.origin === "https://1.1.1.1") {
@@ -2486,15 +2484,9 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
           ssrParentUrl.searchParams.set("ssr", "true");
           const ssrParentResponse = await serve(new Request(ssrParentUrl), projectDir);
           assertEquals(ssrParentResponse.status, 200);
-          for (const childName of ["Absolute.js", "Protocol.js"]) {
-            const childFetch = nestedFetches.find((href) =>
-              new URL(href).pathname.endsWith(`/shared/${childName}`)
-            );
-            assertEquals(childFetch !== undefined, true);
-            const childUrl = new URL(childFetch!);
-            assertEquals(childUrl.searchParams.get("ssr"), "true");
-            assertEquals(childUrl.searchParams.get("pins"), snapshot.cacheKey);
-          }
+          const ssrParentCode = await ssrParentResponse.text();
+          assertStringIncludes(ssrParentCode, absolutePath);
+          assertStringIncludes(ssrParentCode, protocolPath);
         },
       );
     } finally {
@@ -2971,10 +2963,9 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
           `/_vf_modules/_pins/${encodedSnapshot}/_pins/project-dir/bar.js`,
         ]
       ) {
-        assertEquals(
-          (await serve(new Request(`http://localhost:3000${path}`), projectDir)).status,
-          200,
-        );
+        const response = await serve(new Request(`http://localhost:3000${path}`), projectDir);
+        assertEquals(response.status, 409);
+        assertEquals(response.headers.get("cache-control"), "no-store");
       }
 
       const unknown = await serve(

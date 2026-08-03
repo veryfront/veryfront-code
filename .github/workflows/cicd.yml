@@ -45,7 +45,7 @@ jobs:
         run: |
           case "${{ matrix.check }}" in
             format) deno fmt --check ;;
-            lint) deno task lint && deno task lint:core-deps && deno task lint:dependency-boundaries && deno task lint:module-boundaries && deno task lint:extension-contracts && deno task lint:extension-capabilities && deno task lint:ban-test-only && deno task lint:sanitizer-baseline && deno task lint:skipped-tests && deno task lint:chat-ratchets && deno task lint:esm-sh-codemod && deno task lint:test-typecheck && deno task storybook:check && deno test --frozen --config=scripts/test.deno.json --no-check --allow-read --allow-write scripts/ci/setup-deno-workflow.test.ts ;;
+            lint) deno task lint && deno task lint:core-deps && deno task lint:dependency-boundaries && deno task lint:module-boundaries && deno task lint:extension-contracts && deno task lint:extension-capabilities && deno task lint:ban-test-only && deno task lint:sanitizer-baseline && deno task lint:skipped-tests && deno task lint:chat-ratchets && deno task lint:esm-sh-codemod && deno task lint:test-typecheck && deno task storybook:check && deno task docs:api-reference:check && deno test --frozen --config=scripts/test.deno.json --no-check --allow-read --allow-write scripts/ci/setup-deno-workflow.test.ts ;;
             typecheck) deno task typecheck ;;
           esac
 
@@ -476,6 +476,9 @@ jobs:
       - name: Smoke test proxy binary
         run: bash scripts/build/smoke-proxy-binary.sh ./veryfront-proxy-linux-x64
       - name: Enforce proxy memory limit
+        env:
+          PROXY_MEMORY_LIMIT: 1536m
+          PROXY_MEMORY_ATTEMPTS: "3"
         run: bash scripts/build/smoke-proxy-memory.sh ./veryfront-proxy-linux-x64
 
   build-binaries:
@@ -554,6 +557,9 @@ jobs:
       - name: Enforce proxy memory limit
         if: matrix.name == 'veryfront-proxy-linux-x64'
         shell: bash
+        env:
+          PROXY_MEMORY_LIMIT: 1536m
+          PROXY_MEMORY_ATTEMPTS: "3"
         run: bash scripts/build/smoke-proxy-memory.sh ./veryfront-proxy-linux-x64
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

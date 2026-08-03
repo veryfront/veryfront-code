@@ -2,32 +2,127 @@ import { assertEquals, assertMatch, assertStringIncludes } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import { compile } from "npm:@mdx-js/mdx@3.1.1";
 
+const CHECK_TEMP_PREFIX = "veryfront-api-reference-check-";
+
+async function listCheckTempDirectories(tempRoot: string): Promise<string[]> {
+  const paths: string[] = [];
+  for await (const entry of Deno.readDir(tempRoot)) {
+    if (entry.isDirectory && entry.name.startsWith(CHECK_TEMP_PREFIX)) {
+      paths.push(entry.name);
+    }
+  }
+  return paths.sort();
+}
+
+async function runGenerator(outputDir: string): Promise<string> {
+  const result = await new Deno.Command(Deno.execPath(), {
+    args: [
+      "run",
+      "--allow-read",
+      "--allow-write",
+      "--allow-run",
+      "--allow-env",
+      "scripts/docs/generate-api-reference.ts",
+      "--output",
+      outputDir,
+    ],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  assertEquals(
+    result.code,
+    0,
+    new TextDecoder().decode(result.stderr),
+  );
+  return new TextDecoder().decode(result.stdout);
+}
+
+async function readGeneratedReferenceSnapshot(
+  outputDir: string,
+): Promise<Array<{ path: string; contents: string }>> {
+  const paths = ["index.md"];
+  for await (const entry of Deno.readDir(`${outputDir}/veryfront`)) {
+    if (entry.isFile && entry.name.endsWith(".md")) {
+      paths.push(`veryfront/${entry.name}`);
+    }
+  }
+  paths.sort();
+
+  return await Promise.all(
+    paths.map(async (path) => ({
+      path,
+      contents: await Deno.readTextFile(`${outputDir}/${path}`),
+    })),
+  );
+}
+
+async function assertGeneratedReferenceIsFormatted(
+  outputDir: string,
+): Promise<void> {
+  const result = await new Deno.Command(Deno.execPath(), {
+    args: [
+      "fmt",
+      "--check",
+      `--config=${Deno.cwd()}/deno.json`,
+      `${outputDir}/index.md`,
+      `${outputDir}/veryfront`,
+    ],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  assertEquals(
+    result.code,
+    0,
+    new TextDecoder().decode(result.stderr),
+  );
+}
+
 describe("generate-api-reference", () => {
+  it("removes check output when generation fails", async () => {
+    const sandboxRoot = await Deno.makeTempDir();
+    const emptyRoot = `${sandboxRoot}/cwd`;
+    const tempRoot = `${sandboxRoot}/tmp`;
+    await Deno.mkdir(emptyRoot);
+    await Deno.mkdir(tempRoot);
+    const before = await listCheckTempDirectories(tempRoot);
+    try {
+      const result = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "run",
+          "--allow-all",
+          `--config=${Deno.cwd()}/deno.json`,
+          `${Deno.cwd()}/scripts/docs/generate-api-reference.ts`,
+          "--check",
+        ],
+        cwd: emptyRoot,
+        env: { TMPDIR: tempRoot },
+        stdout: "null",
+        stderr: "piped",
+      }).output();
+
+      assertEquals(
+        result.code === 0,
+        false,
+        "generation should fail without deno.json",
+      );
+      assertStringIncludes(
+        new TextDecoder().decode(result.stderr),
+        "deno.json",
+      );
+      assertEquals(
+        await listCheckTempDirectories(tempRoot),
+        before,
+        "failed check generation must not leak its temporary output",
+      );
+    } finally {
+      await Deno.remove(sandboxRoot, { recursive: true });
+    }
+  });
+
   it("documents alias re-exports from Deno doc reference declarations", async () => {
     const outputDir = await Deno.makeTempDir();
     try {
-      const command = new Deno.Command("deno", {
-        args: [
-          "run",
-          "--allow-read",
-          "--allow-write",
-          "--allow-run",
-          "--allow-env",
-          "scripts/docs/generate-api-reference.ts",
-          "--output",
-          outputDir,
-        ],
-        stdout: "piped",
-        stderr: "piped",
-      });
-
-      const result = await command.output();
-      assertEquals(
-        result.code,
-        0,
-        new TextDecoder().decode(result.stderr),
-      );
-      const stdout = new TextDecoder().decode(result.stdout);
+      const stdout = await runGenerator(outputDir);
       assertStringIncludes(stdout, "Source JSDoc coverage:");
       // The generator reports "(N missing)." — assert the line is present and
       // parses, without pinning the count (current main has 9 known gaps).
@@ -37,6 +132,14 @@ describe("generate-api-reference", () => {
         true,
         "missing-count line should be present",
       );
+      const firstSnapshot = await readGeneratedReferenceSnapshot(outputDir);
+      await runGenerator(outputDir);
+      assertEquals(
+        await readGeneratedReferenceSnapshot(outputDir),
+        firstSnapshot,
+        "two consecutive generations must produce byte-identical references",
+      );
+      await assertGeneratedReferenceIsFormatted(outputDir);
 
       const routerReference = await Deno.readTextFile(
         `${outputDir}/veryfront/router.md`,
@@ -75,13 +178,13 @@ describe("generate-api-reference", () => {
         false,
         "generated client reference must not expose internal import specifiers",
       );
-      assertStringIncludes(
+      assertMatch(
         uiReference,
-        "| `AppShellProps` | Props accepted by `AppShell`. |",
+        /^\|\s*`AppShellProps`\s*\|\s*Props accepted by `AppShell`\.\s*\|/m,
       );
-      assertStringIncludes(
+      assertMatch(
         uiReference,
-        'import type { DisclosureParts, DisclosureProps, MultipleToggleGroupRootProps } from "veryfront/ui/adapter";',
+        /import type \{\s*DisclosureParts,\s*DisclosureProps,\s*MultipleToggleGroupRootProps,?\s*\} from "veryfront\/ui\/adapter";/m,
         "type-only deep exports must use a copyable type import",
       );
       for (
@@ -93,35 +196,35 @@ describe("generate-api-reference", () => {
       ) {
         assertEquals(
           chatReference.match(
-            new RegExp("^\\| `" + exportName + "` \\|", "gm"),
+            new RegExp("^\\|\\s*`" + exportName + "`\\s*\\|", "gm"),
           )?.length,
           1,
           `${exportName} must appear once in the exports table`,
         );
       }
       assertEquals(
-        agentReference.match(/^\| `createAgUiHandler` \|/gm)?.length,
+        agentReference.match(/^\|\s*`createAgUiHandler`\s*\|/gm)?.length,
         1,
         "createAgUiHandler must appear once in the exports table",
       );
       assertEquals(
         uiReference.match(
-          /^\| `ToggleGroupParts` \|[^\n]*data-state="on"\\\|"off"[^\n]*\|/gm,
+          /^\|\s*`ToggleGroupParts`\s*\|[^\n]*data-state="on"\\\|"off"[^\n]*\|/gm,
         )?.length,
         2,
         "ToggleGroupParts descriptions must escape table delimiters",
       );
-      assertStringIncludes(
+      assertMatch(
         mcpReference,
-        "| `formatSSEPrimingEvent` | Format an SSE priming event. |",
+        /^\|\s*`formatSSEPrimingEvent`\s*\|\s*Format an SSE priming event\.\s*\|/m,
       );
-      assertStringIncludes(
+      assertMatch(
         routerReference,
-        "| Name | Description | Source |",
+        /^\|\s*Name\s*\|\s*Description\s*\|\s*Source\s*\|$/m,
       );
-      assertStringIncludes(
+      assertMatch(
         providerReference,
-        "| `RuntimeMetadata` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L1) |",
+        /^\|\s*`RuntimeMetadata`\s*\|\s*\|\s*\[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/provider\/types\.ts#L1\)\s*\|$/m,
         "first-line declarations must keep a source anchor",
       );
       const generateResultIndex = providerTypes.split("\n").findIndex((line) =>
@@ -132,11 +235,14 @@ describe("generate-api-reference", () => {
         true,
         "test declaration must exist",
       );
-      assertStringIncludes(
+      assertMatch(
         providerReference,
-        `| \`ModelRuntimeGenerateResult\` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L${
-          generateResultIndex + 1
-        }) |`,
+        new RegExp(
+          `^\\|\\s*\`ModelRuntimeGenerateResult\`\\s*\\|\\s*\\|\\s*\\[source\\]\\(https:\\/\\/github\\.com\\/veryfront\\/veryfront-code\\/blob\\/main\\/src\\/provider\\/types\\.ts#L${
+            generateResultIndex + 1
+          }\\)\\s*\\|$`,
+          "m",
+        ),
         "Deno's one-based locations must stay one-based in GitHub anchors",
       );
       // Alias re-exports must resolve to their target's JSDoc description and a
@@ -144,19 +250,19 @@ describe("generate-api-reference", () => {
       // the full prose, which evolves with the JSDoc.
       assertMatch(
         routerReference,
-        /\| `RouterProvider` \| Provides the router context[^|]*\| \[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/react\/runtime\/core\.ts#L\d+\)/,
-      );
-      assertStringIncludes(
-        routerReference,
-        "| `RouterProvider` | Provides the router context. `pathname`/`query` track the live URL through the shared navigation store's `useSyncExternalStore` surface;",
+        /^\|\s*`RouterProvider`\s*\|\s*Provides the router context[^|]*\|\s*\[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/react\/runtime\/core\.ts#L\d+\)/m,
       );
       assertMatch(
         routerReference,
-        /\| `useRouter` \| Reads the router context[^|]*\| \[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/react\/runtime\/core\.ts#L\d+\)/,
+        /^\|\s*`RouterProvider`\s*\|\s*Provides the router context\. `pathname`\/`query` track the live URL through the shared navigation store's `useSyncExternalStore` surface;/m,
       );
-      assertStringIncludes(
+      assertMatch(
         routerReference,
-        "| `useRouter` | Reads the router context: `pathname`, `query`, `params`, and the navigation actions.",
+        /^\|\s*`useRouter`\s*\|\s*Reads the router context[^|]*\|\s*\[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/react\/runtime\/core\.ts#L\d+\)/m,
+      );
+      assertMatch(
+        routerReference,
+        /^\|\s*`useRouter`\s*\|\s*Reads the router context: `pathname`, `query`, `params`, and the navigation actions\./m,
       );
 
       const localHomePrefix = "/" + "Users/";
@@ -190,6 +296,32 @@ describe("generate-api-reference", () => {
         middlewareReference,
         "Drain and discard all registered teardown callbacks. Unlike the per-request cleanup run by `execute()` / `handle()`, this clears callbacks so they never run again.",
       );
+      assertStringIncludes(
+        middlewareReference,
+        "### `MemoryRateLimitStoreOptions`",
+        "generated middleware reference must retain the public memory-store options table",
+      );
+      const memoryStoreSectionStart = middlewareReference.indexOf(
+        "### `MemoryRateLimitStoreOptions`",
+      );
+      const memoryStoreSectionEnd = middlewareReference.indexOf(
+        "\n### ",
+        memoryStoreSectionStart + 1,
+      );
+      const memoryStoreSection = middlewareReference.slice(
+        memoryStoreSectionStart,
+        memoryStoreSectionEnd === -1 ? undefined : memoryStoreSectionEnd,
+      );
+      assertStringIncludes(
+        memoryStoreSection,
+        "`maxEntries?`",
+        "generated memory-store capacity documentation must retain the maxEntries option row",
+      );
+      assertMatch(
+        memoryStoreSection,
+        /\[source\]\([^\n)]*src\/middleware\/builtin\/security\/rate-limit\.ts#L\d+\)/,
+        "generated memory-store capacity documentation must retain its source link",
+      );
       assertEquals(
         middlewareReference.includes("after the response is sent"),
         false,
@@ -218,13 +350,13 @@ describe("generate-api-reference", () => {
         cliReference,
         "## Commands",
       );
-      assertStringIncludes(
+      assertMatch(
         cliReference,
-        "| `veryfront dev` |",
+        /^\|\s*`veryfront dev`\s*\|/m,
       );
-      assertStringIncludes(
+      assertMatch(
         cliReference,
-        "| `veryfront mcp` |",
+        /^\|\s*`veryfront mcp`\s*\|/m,
       );
       assertStringIncludes(
         cliReference,

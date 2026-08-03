@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import "#veryfront/transforms/mdx/compiler/__tests__/content-processor-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RenderHandler } from "./render-handler.ts";
@@ -11,6 +12,8 @@ import {
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
+import { type MDXLoadModuleOptions, mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
+import { denoAdapter } from "#veryfront/platform/adapters/deno.ts";
 
 describe("server/services/rsc/orchestrators/render-handler", () => {
   describe("handle", () => {
@@ -269,6 +272,55 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
         setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
         clearReactVersionCache();
         await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("threads trusted local-project identity into RSC MDX loading", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-rsc-local-mdx-" });
+      await Deno.mkdir(`${projectDir}/app`, { recursive: true });
+      await Deno.writeTextFile(`${projectDir}/app/page.mdx`, "# Local RSC page");
+
+      const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+      const mutableRenderer = mdxRenderer as unknown as {
+        loadModuleESM: typeof mdxRenderer.loadModuleESM;
+      };
+      let observedIsLocalProject: unknown;
+      mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
+        const loadOptions = options as MDXLoadModuleOptions | undefined;
+        observedIsLocalProject = loadOptions?.isLocalProject;
+        return Promise.resolve({ default: () => null });
+      };
+
+      try {
+        const snapshot = await getDependencyPinningSnapshot(projectDir);
+        const handler = new RenderHandler(
+          projectDir,
+          () => null,
+          "development",
+          "app",
+          {
+            adapter: denoAdapter,
+            projectId: "local-project",
+            projectSlug: "local-project",
+            contentSourceId: "local-main",
+            isLocalProject: true,
+          },
+        );
+        await (handler as unknown as {
+          loadComponent: (
+            pathname: string,
+            dependencySnapshot: typeof snapshot,
+            reactVersion?: string,
+            moduleServerOrigin?: string,
+          ) => Promise<unknown>;
+        }).loadComponent("/", snapshot, "19.1.1", "http://localhost");
+
+        assertEquals(observedIsLocalProject, true);
+      } finally {
+        mutableRenderer.loadModuleESM = originalLoadModuleESM;
+        await Deno.remove(projectDir, { recursive: true });
+        const esbuild = await import("veryfront/extensions/bundler");
+        await esbuild.stop();
       }
     });
   });

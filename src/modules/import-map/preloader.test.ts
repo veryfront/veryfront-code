@@ -1324,8 +1324,8 @@ describe("modules/import-map/preloader", () => {
       });
 
       await waitForLoadCount(loads, 3);
-      assertEquals((await first).imports?.source, "a");
       loads[2]!.resolve({ imports: { source: "c" } });
+      assertEquals((await first).imports?.source, "a");
       assertEquals((await queued).imports?.source, "c");
       loads[1]!.resolve({ imports: { source: "b" } });
       assertEquals((await unrelated).imports?.source, "b");

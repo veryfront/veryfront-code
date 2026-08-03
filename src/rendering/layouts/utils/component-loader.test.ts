@@ -10,7 +10,7 @@ import {
   shouldUnwrapAppRouterDocumentLayout,
   unwrapAppRouterDocumentLayout,
 } from "./component-loader.ts";
-import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
+import { type MDXLoadModuleOptions, mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import type { MdxBundle } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
@@ -495,12 +495,13 @@ describe("rendering/layouts/utils/component-loader", () => {
     let moduleReactVersion: unknown;
     let modulePinKey: unknown;
     let moduleDependencies: unknown;
-    mutableRenderer.loadModuleESM = ((...args: unknown[]) => {
-      moduleReactVersion = args[6];
-      modulePinKey = args[7];
-      moduleDependencies = args[8];
+    mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
+      const loadOptions = options as MDXLoadModuleOptions | undefined;
+      moduleReactVersion = loadOptions?.reactVersion;
+      modulePinKey = loadOptions?.dependencyPinningCacheKey;
+      moduleDependencies = loadOptions?.dependencyPinningDependencies;
       return Promise.resolve({ default: () => null });
-    }) as typeof mdxRenderer.loadModuleESM;
+    };
 
     try {
       await loadMDXLayout(

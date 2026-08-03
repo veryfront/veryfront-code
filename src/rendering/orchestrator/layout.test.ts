@@ -1,9 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { LayoutOrchestrator } from "./layout.ts";
-import { createLayoutComponentCache } from "../layouts/utils/component-loader.ts";
-import type { LayoutCollector, LayoutCompiler } from "../layouts/index.ts";
+import { createLayoutComponentCache } from "#veryfront/rendering/layouts/utils/component-loader.ts";
+import type { LayoutCollector, LayoutCompiler } from "#veryfront/rendering/layouts/index.ts";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { validateVeryfrontConfig } from "#veryfront/config";
 import {
@@ -98,6 +99,51 @@ describe("rendering/orchestrator/layout", () => {
         config,
       });
       assertEquals(otherContentSource, undefined);
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+      clearImportMapCache();
+    }
+  });
+
+  it("threads the trusted local-project identity through MDX layout preloading", async () => {
+    clearImportMapCache();
+    const projectDir = "/<PROJECT_DIR>";
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+    let observedIsLocalProject: unknown;
+    mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
+      observedIsLocalProject = (options as { isLocalProject?: unknown } | undefined)
+        ?.isLocalProject;
+      return Promise.resolve({ default: () => null });
+    };
+
+    const orchestrator = new LayoutOrchestrator({
+      projectDir,
+      projectId: "local-project",
+      projectSlug: "local-project",
+      contentSourceId: "local-main",
+      adapter: createMockAdapter(),
+      config: validateVeryfrontConfig({ react: { version: "19.1.1" } }),
+      mode: "development",
+      layoutCollector: {} as LayoutCollector,
+      layoutCompiler: {} as LayoutCompiler,
+      layoutCache: createLayoutComponentCache(),
+      componentRegistry: {},
+      isLocalProject: true,
+    });
+    const layouts = [{
+      kind: "mdx",
+      path: `${projectDir}/layout.mdx`,
+      bundle: { compiledCode: "export default function Layout() { return null; }" },
+    }] as LayoutItem[];
+
+    try {
+      const result = await orchestrator.preloadLayoutModules(layouts);
+
+      assertEquals(result.mdxSuccess, 1);
+      assertEquals(observedIsLocalProject, true);
     } finally {
       mutableRenderer.loadModuleESM = originalLoadModuleESM;
       clearImportMapCache();

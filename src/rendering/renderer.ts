@@ -1172,6 +1172,7 @@ export class Renderer {
       layoutCompiler,
       layoutCache: this.layoutComponentCache,
       componentRegistry,
+      isLocalProject: ctx.isLocalProject === true,
     });
 
     const htmlGenerator = new HTMLGenerator({
