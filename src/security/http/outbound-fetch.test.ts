@@ -227,6 +227,58 @@ describe("guardedOutboundFetch", () => {
     assertEquals(requests[0]?.redirect, "error");
   });
 
+  it("brand-checks trusted URL inputs without mutable instance or Request getters", async () => {
+    let transportedInput: RequestInfo | URL | undefined;
+    const controlPlaneFetch = createTestBoundary((input) => {
+      transportedInput = input;
+      return Promise.resolve(Response.json({ ok: true }));
+    }).createTrustedEndpointFetch("http://veryfront-api/mcp");
+    const request = new Request("http://169.254.169.254/latest/meta-data");
+    const originalUrlHasInstance = Object.getOwnPropertyDescriptor(URL, Symbol.hasInstance);
+    const originalRequestUrl = Object.getOwnPropertyDescriptor(Request.prototype, "url");
+    let hasInstanceCalls = 0;
+    let requestUrlReads = 0;
+
+    Object.defineProperty(URL, Symbol.hasInstance, {
+      configurable: true,
+      value() {
+        hasInstanceCalls++;
+        throw new Error("poisoned URL Symbol.hasInstance");
+      },
+    });
+    Object.defineProperty(Request.prototype, "url", {
+      configurable: true,
+      get() {
+        requestUrlReads++;
+        return "http://veryfront-api/mcp";
+      },
+    });
+
+    try {
+      const response = await controlPlaneFetch(new URL("http://veryfront-api/mcp"));
+      assertEquals(response.status, 200);
+      assertEquals(transportedInput, "http://veryfront-api/mcp");
+
+      await assertRejects(
+        () => controlPlaneFetch(request),
+        OutboundRequestBlockedError,
+        "trusted endpoint",
+      );
+    } finally {
+      if (originalUrlHasInstance) {
+        Object.defineProperty(URL, Symbol.hasInstance, originalUrlHasInstance);
+      } else {
+        delete (URL as typeof URL & { [Symbol.hasInstance]?: unknown })[Symbol.hasInstance];
+      }
+      if (originalRequestUrl) {
+        Object.defineProperty(Request.prototype, "url", originalRequestUrl);
+      }
+    }
+
+    assertEquals(hasInstanceCalls, 0);
+    assertEquals(requestUrlReads, 0);
+  });
+
   it("rejects unsafe trusted endpoint configuration", async () => {
     const boundary = createTestBoundary(() => Promise.resolve(Response.json({ ok: true })));
 
