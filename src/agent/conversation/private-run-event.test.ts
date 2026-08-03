@@ -30,6 +30,7 @@ describe("agent/conversation/private-run-event", () => {
         { type: "AGENT_RUN_MODEL_CALL_CONTEXT" },
         { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: {} },
         { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [], tools: {} },
+        { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [], contextId: "legacy" },
         { type: "TEXT_MESSAGE_CONTENT", messages: [] },
       ]
     ) {

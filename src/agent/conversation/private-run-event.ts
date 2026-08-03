@@ -11,7 +11,8 @@ export function isPrivateConversationRunEvent(value: unknown): boolean {
   if (ownDataValue(value, "type") !== "AGENT_RUN_MODEL_CALL_CONTEXT") return false;
   if (!Array.isArray(ownDataValue(value, "messages"))) return false;
   const tools = ownDataValue(value, "tools");
-  return tools === undefined || Array.isArray(tools);
+  if (tools !== undefined && !Array.isArray(tools)) return false;
+  return Object.keys(value).every((key) => key === "type" || key === "messages" || key === "tools");
 }
 
 /** Failure to persist a required run event before its associated operation. */
