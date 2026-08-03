@@ -481,7 +481,7 @@ describe("Veryfront API transport authority and response boundaries", () => {
     }
   });
 
-  it("rejects redirects by default while preserving an explicit redirect policy", async () => {
+  it("rejects redirects by default for credentialed API requests", async () => {
     const originalFetch = globalThis.fetch;
     const redirectPolicies: Array<RequestRedirect | undefined> = [];
 
@@ -495,11 +495,32 @@ describe("Veryfront API transport authority and response boundaries", () => {
         retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
       });
 
-      await transport.request("/default-policy");
+      await transport.request("/files");
+
+      assertEquals(redirectPolicies, ["error"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("uses explicit redirect policies when callers opt in", async () => {
+    const originalFetch = globalThis.fetch;
+    const redirectPolicies: Array<RequestRedirect | undefined> = [];
+
+    try {
+      globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+        redirectPolicies.push(init?.redirect);
+        return Promise.resolve(Response.json({ ok: true }));
+      }) as typeof fetch;
+      const transport = createVeryfrontApiTransport({
+        ...baseConfig,
+        retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+      });
+
       await transport.request("/explicit-follow", { redirect: "follow" });
       await transport.request("/explicit-manual", { redirect: "manual" });
 
-      assertEquals(redirectPolicies, ["error", "follow", "manual"]);
+      assertEquals(redirectPolicies, ["follow", "manual"]);
     } finally {
       globalThis.fetch = originalFetch;
     }
