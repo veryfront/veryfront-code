@@ -61,7 +61,8 @@ export const DURABLE_RUN_EVENT_PERSISTENCE_FAILED = defineError({
   category: "AGENT",
   status: 500,
   title: "Durable run event persistence failed",
-  suggestion: "Retry the run after the durable event mirror is available",
+  suggestion:
+    "Correct invalid or oversized event data, or retry after durable event storage recovers",
 });
 
 /** Registry fragment for AGENT errors (slug → definition). */

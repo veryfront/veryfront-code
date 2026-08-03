@@ -76,6 +76,7 @@ throw INVALID_WIDGET.create({ detail: "The widget id is malformed." });
 | `DEPLOYMENT_VERIFICATION_TIMEOUT` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/deploy.ts#L59) |
 | `DEV_ERROR_CATALOG` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/catalog/dev-errors.ts#L4) |
 | `DEV_SERVER_ERROR` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/dev.ts#L11) |
+| `DURABLE_RUN_EVENT_PERSISTENCE_FAILED` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/agent.ts#L59) |
 | `DYNAMIC_ROUTE_ERROR` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/route.ts#L27) |
 | `ENV_VAR_MISSING` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/deploy.ts#L19) |
 | `ENVIRONMENT_NOT_FOUND` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/deploy.ts#L35) |
