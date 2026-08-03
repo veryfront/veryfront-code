@@ -52,5 +52,16 @@ describe("modules/import-map/merger", () => {
       const result = mergeImportMaps({ imports: { a: "b" } });
       assertEquals(result.imports?.a, "b");
     });
+
+    it("should preserve compatibility with enumerable metadata fields", () => {
+      const map = {
+        imports: { a: "b" },
+        metadata: { source: "project" },
+      } as { imports: Record<string, string>; metadata: { source: string } };
+
+      const result = mergeImportMaps(map);
+
+      assertEquals(result.imports?.a, "b");
+    });
   });
 });

@@ -5,6 +5,7 @@
 import { join } from "#veryfront/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
@@ -73,11 +74,15 @@ export function buildFrameworkTransformCacheKey(
   reactVersion: string,
   projectDir: string,
   sourceContent: string,
+  importMapFingerprint?: string,
 ): string {
   const contentFingerprint = `${sourceContent.length}:${hashCodeHex(sourceContent)}:${
     fnv1aHash(sourceContent)
   }`;
-  return JSON.stringify([projectDir, reactVersion, identifier, contentFingerprint]);
+  const identity = importMapFingerprint === undefined
+    ? [projectDir, reactVersion, identifier, contentFingerprint]
+    : [projectDir, reactVersion, importMapFingerprint, identifier, contentFingerprint];
+  return JSON.stringify(identity);
 }
 
 // Maximum entries for the per-process framework transform caches.
@@ -114,6 +119,8 @@ export interface TransformContext {
   reactVersion: string;
   projectDir: string;
   fs: ReturnType<typeof createFileSystem>;
+  importMap?: ImportMapConfig;
+  importMapFingerprint?: string;
   onProgress?: TransformProgressListener;
   /** Transform keys already visited by the current recursive traversal. */
   transformAncestry?: ReadonlySet<string>;

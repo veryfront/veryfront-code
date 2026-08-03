@@ -840,21 +840,34 @@ export class ImportMapPreloader {
     if (contextProjectDir !== undefined && typeof contextProjectDir !== "string") {
       throw new IntrinsicTypeError("Import-map projectDir must be a string");
     }
-    const exactContext = snapshotPreloadContext(
-      contextProjectDir ?? cacheKey,
-      context,
-    );
-    const canonicalIdentity = buildVariantCanonicalIdentity(exactContext);
     const projectState = mapGet(this.projects, cacheKey);
     if (!projectState) return undefined;
     const globalGeneration = this.globalGeneration;
     const projectGeneration = projectState.generation;
     let variantKey: string;
-    try {
-      variantKey = await computeHash(canonicalIdentity);
-    } catch (error) {
-      this.removeEmptyProject(cacheKey, projectState);
-      throw error;
+
+    // Before variants existed, callers could retrieve a projectId-keyed entry
+    // without also retaining its project directory. Preserve that contract
+    // only while the lookup is unambiguous.
+    if (context === undefined && mapSize(projectState.variants) === 1) {
+      let onlyVariantKey: string | undefined;
+      mapForEach(projectState.variants, (_entry, key) => {
+        onlyVariantKey = key;
+      });
+      if (onlyVariantKey === undefined) return undefined;
+      variantKey = onlyVariantKey;
+    } else {
+      const exactContext = snapshotPreloadContext(
+        contextProjectDir ?? cacheKey,
+        context,
+      );
+      const canonicalIdentity = buildVariantCanonicalIdentity(exactContext);
+      try {
+        variantKey = await computeHash(canonicalIdentity);
+      } catch (error) {
+        this.removeEmptyProject(cacheKey, projectState);
+        throw error;
+      }
     }
     if (
       !this.isCurrentGeneration(

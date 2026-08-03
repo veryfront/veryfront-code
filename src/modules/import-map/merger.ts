@@ -7,6 +7,20 @@ import type { ImportMapConfig } from "./types.ts";
 const ObjectCreate = Object.create;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ReflectOwnKeys = Reflect.ownKeys;
+const IntrinsicTypeError = TypeError;
+
+function snapshotMergeInput(map: ImportMapConfig): ImportMapConfig {
+  const input = ObjectCreate(null) as ImportMapConfig;
+  for (const key of ["imports", "scopes"] as const) {
+    const descriptor = ObjectGetOwnPropertyDescriptor(map, key);
+    if (!descriptor) continue;
+    if (!("value" in descriptor)) {
+      throw new IntrinsicTypeError(`Import map ${key} cannot contain accessor properties`);
+    }
+    input[key] = descriptor.value;
+  }
+  return snapshotImportMap(input);
+}
 
 function copyStringRecord(
   target: Record<string, string>,
@@ -28,7 +42,7 @@ export function mergeImportMaps(...maps: ImportMapConfig[]): ImportMapConfig {
   const scopes = ObjectCreate(null) as Record<string, Record<string, string>>;
 
   for (let index = 0; index < maps.length; index++) {
-    const map = snapshotImportMap(maps[index]);
+    const map = snapshotMergeInput(maps[index]!);
     copyStringRecord(imports, map.imports ?? ObjectCreate(null));
 
     const mapScopes = map.scopes ?? ObjectCreate(null);

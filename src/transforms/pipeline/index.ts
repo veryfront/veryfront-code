@@ -12,7 +12,6 @@ import {
 import { rendererLogger } from "#veryfront/utils";
 import { createTransformContext, formatTimingLog, recordStageTiming } from "./context.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { computeConfigHash } from "#veryfront/cache/config-hash.ts";
 import { computeDepsHash } from "#veryfront/cache/dependency-graph.ts";
 import type {
   PipelineConfig,
@@ -43,6 +42,12 @@ import {
   validateDependencyResolutionObservations,
 } from "../import-rewriter/dependency-resolution.ts";
 import { getDependencyResolutionObservations } from "./stages/resolve-imports.ts";
+import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
+import {
+  computePipelineConfigIdentity,
+  fingerprintPipelineImportMap,
+  getCustomPluginCacheIdentity,
+} from "./cache-identity.ts";
 
 const SSR_PIPELINE: TransformPlugin[] = [
   parsePlugin,
@@ -188,6 +193,9 @@ export function runPipeline(
     "transform.pipeline",
     async () => {
       const transformStart = performance.now();
+      // Snapshot executable custom-plugin fields before the first await. The
+      // same immutable view must supply both cache identity and execution.
+      const pluginCacheIdentity = getCustomPluginCacheIdentity(config?.plugins);
 
       const dependencySnapshot = await resolveDependencyPinningSnapshot(
         options.dependencyPinningSource ?? projectDir,
@@ -208,35 +216,50 @@ export function runPipeline(
       ctx.debug = config?.debug ?? false;
       ctx.onProgress?.({ phase: "pipeline:context", filePath });
 
-      const configHash = await computeConfigHash({
-        reactVersion: ctx.reactVersion,
-        jsxImportSource: ctx.jsxImportSource,
-        moduleServerUrl: ctx.moduleServerUrl,
-        moduleServerOrigin: ctx.moduleServerOrigin,
-        vendorBundleHash: ctx.vendorBundleHash,
-        apiBaseUrl: ctx.apiBaseUrl,
-        studioEmbed: ctx.studioEmbed,
-        dev: ctx.dev,
-        dependencyPinningCacheKey,
-      });
+      let importMapFingerprint: string | undefined;
+      if (effectiveOptions.ssr) {
+        const importMap = await loadImportMap(projectDir);
+        importMapFingerprint = await fingerprintPipelineImportMap(importMap);
+        ctx.metadata.set("importMap", importMap);
+        ctx.metadata.set("importMapFingerprint", importMapFingerprint);
+      }
 
-      const depsHash = await computeDepsHashSafe(
-        filePath,
-        projectDir,
-        effectiveOptions.readFile,
-        effectiveOptions.dependencyHashCache,
-      );
+      let cacheKey: string | undefined;
+      if (pluginCacheIdentity.cacheable) {
+        const [configHash, depsHash] = await Promise.all([
+          computePipelineConfigIdentity({
+            reactVersion: ctx.reactVersion,
+            jsxImportSource: ctx.jsxImportSource,
+            moduleServerUrl: ctx.moduleServerUrl,
+            moduleServerOrigin: ctx.moduleServerOrigin,
+            vendorBundleHash: ctx.vendorBundleHash,
+            apiBaseUrl: ctx.apiBaseUrl,
+            studioEmbed: ctx.studioEmbed ?? false,
+            dev: ctx.dev,
+            ssr: effectiveOptions.ssr ?? false,
+            projectDir,
+            importMapFingerprint,
+            dependencyPinningCacheKey,
+            customPlugins: pluginCacheIdentity.identity,
+          }),
+          computeDepsHashSafe(
+            filePath,
+            projectDir,
+            effectiveOptions.readFile,
+            effectiveOptions.dependencyHashCache,
+          ),
+        ]);
+        cacheKey = generateCacheKey(
+          filePath,
+          ctx.contentHash,
+          effectiveOptions.ssr ?? false,
+          effectiveOptions.studioEmbed ?? false,
+          { depsHash, configHash, projectId: effectiveOptions.projectId },
+        );
+      }
 
-      const cacheKey = generateCacheKey(
-        filePath,
-        ctx.contentHash,
-        effectiveOptions.ssr ?? false,
-        effectiveOptions.studioEmbed ?? false,
-        { depsHash, configHash, projectId: effectiveOptions.projectId },
-      );
-
-      const cached = await getCachedTransformAsync(cacheKey);
-      if (cached) {
+      const cached = cacheKey ? await getCachedTransformAsync(cacheKey) : undefined;
+      if (cached && cacheKey) {
         const dependencyResolutionObservations = validateCachedDependencyResolutionObservations(
           cached,
           ctx,
@@ -302,8 +325,8 @@ export function runPipeline(
       }
 
       const basePipeline = effectiveOptions.ssr ? SSR_PIPELINE : BROWSER_PIPELINE;
-      const pipeline = config?.plugins
-        ? [...basePipeline, ...config.plugins].sort((a, b) => a.stage - b.stage)
+      const pipeline = pluginCacheIdentity.plugins.length > 0
+        ? [...basePipeline, ...pluginCacheIdentity.plugins].sort((a, b) => a.stage - b.stage)
         : basePipeline;
 
       for (const plugin of pipeline) {
@@ -333,19 +356,21 @@ export function runPipeline(
       // Store the bundleManifestId from ssrHttpCachePlugin for future cache validation
       const bundleManifestId = ctx.metadata.get("bundleManifestId") as string | undefined;
       const dependencyResolutionObservations = getDependencyResolutionObservations(ctx);
-      setCachedTransformAsync(
-        cacheKey,
-        ctx.code,
-        ctx.contentHash,
-        undefined,
-        bundleManifestId,
-        dependencyResolutionObservations,
-      )
-        .catch(
-          (error) => {
-            logger.debug("Failed to cache transform", { error });
-          },
-        );
+      if (cacheKey) {
+        setCachedTransformAsync(
+          cacheKey,
+          ctx.code,
+          ctx.contentHash,
+          undefined,
+          bundleManifestId,
+          dependencyResolutionObservations,
+        )
+          .catch(
+            (error) => {
+              logger.debug("Failed to cache transform", { error });
+            },
+          );
+      }
 
       const totalMs = performance.now() - transformStart;
 

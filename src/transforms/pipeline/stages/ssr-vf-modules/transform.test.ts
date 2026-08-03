@@ -129,8 +129,24 @@ describe("transformFrameworkCode depth-limit fallback", {
     const keyA = buildFrameworkTransformCacheKey(sourcePath, "19.2.4", projectA, source);
     const keyB = buildFrameworkTransformCacheKey(sourcePath, "19.2.4", projectB, source);
 
+    const importMapKeyA = buildFrameworkTransformCacheKey(
+      sourcePath,
+      "19.2.4",
+      projectA,
+      source,
+      "import-map-v1",
+    );
+    const importMapKeyB = buildFrameworkTransformCacheKey(
+      sourcePath,
+      "19.2.4",
+      projectA,
+      source,
+      "import-map-v2",
+    );
+
     try {
       assertEquals(keyA === keyB, false);
+      assertEquals(importMapKeyA === importMapKeyB, false);
 
       await transformFrameworkCode(
         source,

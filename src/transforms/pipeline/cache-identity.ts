@@ -208,22 +208,34 @@ export function fingerprintPipelineImportMap(importMap: ImportMapConfig): Promis
 }
 
 export type CustomPluginCacheIdentity =
-  | { cacheable: true; identity: ReadonlyArray<readonly [number, string, number, string]> }
-  | { cacheable: false; reason: string };
+  | {
+    cacheable: true;
+    identity: ReadonlyArray<readonly [number, string, number, string]>;
+    plugins: ReadonlyArray<TransformPlugin>;
+  }
+  | { cacheable: false; reason: string; plugins: ReadonlyArray<TransformPlugin> };
 
 /** Require explicit versioned identities for caller-supplied executable code. */
 export function getCustomPluginCacheIdentity(
   plugins: readonly TransformPlugin[] | undefined,
 ): CustomPluginCacheIdentity {
   if (plugins === undefined) {
-    return { cacheable: true, identity: ObjectFreeze([]) };
+    return {
+      cacheable: true,
+      identity: ObjectFreeze([]),
+      plugins: ObjectFreeze([]),
+    };
   }
   if (!ArrayIsArray(plugins)) {
     throw new IntrinsicTypeError("Transform pipeline plugins must be an array");
   }
   const pluginCount = readArrayLength(plugins, "Transform pipeline plugins");
   if (pluginCount === 0) {
-    return { cacheable: true, identity: ObjectFreeze([]) };
+    return {
+      cacheable: true,
+      identity: ObjectFreeze([]),
+      plugins: ObjectFreeze([]),
+    };
   }
   if (pluginCount > MAX_CUSTOM_PLUGINS) {
     throw new IntrinsicRangeError(
@@ -232,6 +244,8 @@ export function getCustomPluginCacheIdentity(
   }
 
   const identity: Array<readonly [number, string, number, string]> = [];
+  const pluginSnapshot: TransformPlugin[] = [];
+  let uncacheableReason: string | undefined;
   for (let index = 0; index < pluginCount; index++) {
     const plugin = readArrayElement(plugins, index, "Transform pipeline plugins");
     if (plugin === null || typeof plugin !== "object") {
@@ -244,6 +258,8 @@ export function getCustomPluginCacheIdentity(
       "cacheIdentity",
       `Transform plugin ${index}`,
     );
+    const condition = readOwnDataProperty(plugin, "condition", `Transform plugin ${index}`);
+    const transform = readOwnDataProperty(plugin, "transform", `Transform plugin ${index}`);
     if (
       typeof name !== "string" || name.length === 0 || name.length > 256 ||
       (ReflectApply(StringPrototypeTrim, name, []) as string) !== name ||
@@ -254,11 +270,24 @@ export function getCustomPluginCacheIdentity(
     if (typeof stage !== "number" || !NumberIsFinite(stage) || MathAbs(stage) > 1_000_000) {
       throw new IntrinsicTypeError(`Transform plugin ${name} has an invalid stage`);
     }
+    if (condition !== undefined && typeof condition !== "function") {
+      throw new IntrinsicTypeError(`Transform plugin ${name} has an invalid condition`);
+    }
+    if (typeof transform !== "function") {
+      throw new IntrinsicTypeError(`Transform plugin ${name} has an invalid transform`);
+    }
+
+    const exactPlugin = ObjectCreate(null) as TransformPlugin;
+    exactPlugin.name = name;
+    exactPlugin.stage = stage;
+    if (cacheIdentity !== undefined) exactPlugin.cacheIdentity = cacheIdentity as string;
+    if (condition !== undefined) exactPlugin.condition = condition as TransformPlugin["condition"];
+    exactPlugin.transform = transform as TransformPlugin["transform"];
+    ReflectApply(ArrayPrototypePush, pluginSnapshot, [ObjectFreeze(exactPlugin)]);
+
     if (cacheIdentity === undefined) {
-      return {
-        cacheable: false,
-        reason: `custom transform plugin ${name} has no cacheIdentity`,
-      };
+      uncacheableReason ??= `custom transform plugin ${name} has no cacheIdentity`;
+      continue;
     }
     if (
       typeof cacheIdentity !== "string" || cacheIdentity.length === 0 ||
@@ -272,7 +301,15 @@ export function getCustomPluginCacheIdentity(
       [ObjectFreeze([index, name, stage, cacheIdentity] as const)],
     );
   }
-  return { cacheable: true, identity: ObjectFreeze(identity) };
+  const exactPlugins = ObjectFreeze(pluginSnapshot);
+  if (uncacheableReason !== undefined) {
+    return { cacheable: false, reason: uncacheableReason, plugins: exactPlugins };
+  }
+  return {
+    cacheable: true,
+    identity: ObjectFreeze(identity),
+    plugins: exactPlugins,
+  };
 }
 
 function boundedOption(value: unknown, label: string): string | null {

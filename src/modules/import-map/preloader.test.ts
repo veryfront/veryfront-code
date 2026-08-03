@@ -478,6 +478,35 @@ describe("modules/import-map/preloader", () => {
       assertEquals(typeof cached, "object");
       assertEquals(cached !== undefined, true);
     });
+
+    it("preserves project-id lookup compatibility only for one unambiguous variant", async () => {
+      const preloader = new ImportMapPreloader({
+        loadImportMap: () =>
+          Promise.resolve({
+            imports: { package: "https://example.com/package.ts" },
+          }),
+      });
+      const adapter = createMinimalAdapter();
+
+      await preloader.preload("/release/project", adapter, "project-id", {
+        contentSourceId: "release-1",
+      });
+
+      const cached = await preloader.getCached("project-id");
+      assertEquals(cached?.imports?.package, "https://example.com/package.ts");
+
+      await preloader.preload("/branch/project", adapter, "project-id", {
+        contentSourceId: "branch-1",
+      });
+      assertEquals(await preloader.getCached("project-id"), undefined);
+      assertEquals(
+        (await preloader.getCached("project-id", {
+          projectDir: "/release/project",
+          contentSourceId: "release-1",
+        }))?.imports?.package,
+        "https://example.com/package.ts",
+      );
+    });
   });
 
   describe("bounded cache lifecycle", () => {

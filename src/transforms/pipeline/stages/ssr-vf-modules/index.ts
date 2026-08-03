@@ -1,4 +1,5 @@
 import { CIRCULAR_DEPENDENCY } from "#veryfront/errors";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 
 /**
  * SSR VF Modules Stage - resolves /_vf_modules/_veryfront/ paths to framework source.
@@ -146,11 +147,16 @@ export const ssrVfModulesPlugin: TransformPlugin = {
         });
 
         const reactVersion = ctx.reactVersion ?? REACT_DEFAULT_VERSION;
+        const importMap = ctx.metadata.get("importMap") as ImportMapConfig | undefined;
+        const importMapFingerprint = ctx.metadata.get("importMapFingerprint") as
+          | string
+          | undefined;
         const transformKey = buildFrameworkTransformCacheKey(
           resolved.sourcePath,
           reactVersion,
           ctx.projectDir,
           resolved.content,
+          importMapFingerprint,
         );
         const cachePath = await frameworkTransformFlight.do(transformKey, async () => {
           const transformed = await transformFrameworkSource(
@@ -160,6 +166,8 @@ export const ssrVfModulesPlugin: TransformPlugin = {
             ctx.projectDir,
             fs,
             ctx.onProgress,
+            importMap,
+            importMapFingerprint,
           );
 
           // Skip cycle placeholders - don't cache or use them
