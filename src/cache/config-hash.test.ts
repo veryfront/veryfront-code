@@ -8,6 +8,30 @@ const CHANGED_CANONICAL_PIN_KEY = "on:z7bg3qnfgtcc";
 
 describe("cache/config-hash", () => {
   describe("computeConfigHash", () => {
+    it("matches the golden hash for the default transform config", async () => {
+      assertEquals(
+        await computeConfigHash({}),
+        "4b96519f8a12a74bbef6f1a0f92f1825e5e267c6202240b2d32825dab6f6ac6c",
+      );
+    });
+
+    it("matches the golden hash for a fully scoped transform config", async () => {
+      assertEquals(
+        await computeConfigHash({
+          reactVersion: "18.3.1",
+          jsxImportSource: "preact",
+          moduleServerUrl: "https://modules.example.test/_vf_modules",
+          moduleServerOrigin: "https://preview.example.test",
+          vendorBundleHash: "vendor-a",
+          apiBaseUrl: "https://api.example.test",
+          studioEmbed: true,
+          dev: true,
+          dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+        }),
+        "a868c7f22dc1518f90f638c07d7d03971d6ff4510b7e706eccf631c2b0269998",
+      );
+    });
+
     it("should return a 64-char hex hash", async () => {
       const hash = await computeConfigHash({});
       assertEquals(hash.length, 64);
@@ -115,6 +139,27 @@ describe("cache/config-hash", () => {
   });
 
   describe("computeConfigHashSync", () => {
+    it("matches the golden identity for the default transform config", () => {
+      assertEquals(computeConfigHashSync({}), "v0.1.1186:19.2.4:react");
+    });
+
+    it("matches the golden identity for a fully scoped transform config", () => {
+      assertEquals(
+        computeConfigHashSync({
+          reactVersion: "18.3.1",
+          jsxImportSource: "preact",
+          moduleServerUrl: "https://modules.example.test/_vf_modules",
+          moduleServerOrigin: "https://preview.example.test",
+          vendorBundleHash: "vendor-a",
+          apiBaseUrl: "https://api.example.test",
+          studioEmbed: true,
+          dev: true,
+          dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+        }),
+        "v0.1.1186:18.3.1:preact:modules:40:https://modules.example.test/_vf_modules:vendor:8:vendor-a:api:24:https://api.example.test:studio:dev:pins:on:z7bg3qnfgtcb:origin:aHR0cHM6Ly9wcmV2aWV3LmV4YW1wbGUudGVzdA",
+      );
+    });
+
     it("should return a string", () => {
       const hash = computeConfigHashSync({});
       assertEquals(typeof hash, "string");

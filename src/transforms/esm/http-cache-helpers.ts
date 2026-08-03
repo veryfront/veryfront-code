@@ -106,9 +106,21 @@ export function fingerprintImportMap(importMap: ImportMapConfig): Promise<string
     ]],
   );
 
-  return computeHash(
-    `${HTTP_IMPORT_MAP_FINGERPRINT_NAMESPACE}\0${JSONStringify({ imports, scopes })}`,
-  );
+  let canonical = HTTP_IMPORT_MAP_FINGERPRINT_NAMESPACE;
+  for (let index = 0; index < imports.length; index++) {
+    const [specifier, target] = imports[index]!;
+    canonical += `\0import:${JSONStringify(specifier)}:${JSONStringify(target)}`;
+  }
+  for (let scopeIndex = 0; scopeIndex < scopes.length; scopeIndex++) {
+    const [scope, scopedImports] = scopes[scopeIndex]!;
+    canonical += `\0scope:${JSONStringify(scope)}`;
+    for (let importIndex = 0; importIndex < scopedImports.length; importIndex++) {
+      const [specifier, target] = scopedImports[importIndex]!;
+      canonical += `\0mapping:${JSONStringify(specifier)}:${JSONStringify(target)}`;
+    }
+  }
+
+  return computeHash(canonical);
 }
 
 function attachHttpCacheRequestIdentityContext<T extends HttpCacheIdentityOptions>(

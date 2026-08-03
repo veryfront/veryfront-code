@@ -184,5 +184,60 @@ describe("modules/import-map/loader", () => {
       assert(!("relative" in appScope), "relative path in scope should be filtered");
       assert("absolute" in appScope, "absolute path in scope should be kept");
     });
+
+    it("uses captured JSON and collection primordials while loading deno.json maps", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/poisoned-deno-json/deno.json",
+        JSON.stringify({
+          imports: {
+            "pkg": "https://esm.sh/pkg@1",
+            "relative": "./local.ts",
+          },
+          scopes: {
+            "/app/": {
+              "scoped": "https://esm.sh/scoped@1",
+            },
+          },
+        }),
+      );
+      const original = {
+        jsonParse: JSON.parse,
+        objectEntries: Object.entries,
+        objectFromEntries: Object.fromEntries,
+        arrayFilter: Array.prototype.filter,
+        arrayMap: Array.prototype.map,
+      };
+
+      try {
+        JSON.parse = (() => {
+          throw new Error("poisoned JSON.parse");
+        }) as typeof JSON.parse;
+        Object.entries = (() => {
+          throw new Error("poisoned Object.entries");
+        }) as typeof Object.entries;
+        Object.fromEntries = (() => {
+          throw new Error("poisoned Object.fromEntries");
+        }) as typeof Object.fromEntries;
+        Array.prototype.filter = function () {
+          throw new Error("poisoned Array.prototype.filter");
+        };
+        Array.prototype.map = function () {
+          throw new Error("poisoned Array.prototype.map");
+        };
+
+        const { imports, scopes } = await loadImportMap("/poisoned-deno-json", adapter);
+
+        assertEquals(imports?.pkg, "https://esm.sh/pkg@1");
+        assertEquals(imports?.relative, undefined);
+        assertEquals(scopes?.["/app/"]?.scoped, "https://esm.sh/scoped@1");
+      } finally {
+        JSON.parse = original.jsonParse;
+        Object.entries = original.objectEntries;
+        Object.fromEntries = original.objectFromEntries;
+        Array.prototype.filter = original.arrayFilter;
+        Array.prototype.map = original.arrayMap;
+      }
+    });
   });
 });

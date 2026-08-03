@@ -6,6 +6,7 @@ import {
 } from "#veryfront/utils";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import type { LayoutItem, MdxBundle, MDXComponents, MDXModule } from "#veryfront/types";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { createError, toError } from "#veryfront/errors";
@@ -346,6 +347,7 @@ export function loadMDXLayout(
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
+  config?: VeryfrontConfig,
 ): Promise<BundledReact.ComponentType<{ components?: MDXComponents }> | undefined> {
   return withSpan(
     SpanNames.LAYOUT_LOAD_MDX,
@@ -355,7 +357,11 @@ export function loadMDXLayout(
         hasPreloadedImportMap: !!preloadedImportMap,
       });
 
-      const map = preloadedImportMap ?? (await preloadImportMap(projectDir, adapter, projectId));
+      const map = preloadedImportMap ?? (await preloadImportMap(projectDir, adapter, projectId, {
+        projectDir,
+        contentSourceId,
+        config,
+      }));
       if (preloadedImportMap) {
         loadMdxLayoutLog.debug("Using preloaded import map", { projectSlug });
       }
@@ -408,6 +414,7 @@ export async function preloadMDXLayoutModule(
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
+  config?: VeryfrontConfig,
 ): Promise<void> {
   await loadMDXLayout(
     bundle,
@@ -422,6 +429,7 @@ export async function preloadMDXLayoutModule(
     dependencyPinningDependencies,
     dependencyPinningSource,
     moduleServerOrigin,
+    config,
   );
 }
 
@@ -508,6 +516,7 @@ export async function applyMDXLayout(
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
+  config?: VeryfrontConfig,
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact(reactVersion);
   const LayoutFn = await loadMDXLayout(
@@ -523,6 +532,7 @@ export async function applyMDXLayout(
     dependencyPinningDependencies,
     dependencyPinningSource,
     moduleServerOrigin,
+    config,
   );
 
   if (!LayoutFn) {

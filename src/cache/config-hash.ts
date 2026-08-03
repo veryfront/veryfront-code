@@ -14,15 +14,7 @@ import {
 } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { buildDependencyPinningCacheVariant } from "./keys/dependency-pinning.ts";
 
-const IntrinsicTypeError = TypeError;
 const JSONStringify = JSON.stringify;
-const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
-const ReflectApply = Reflect.apply;
-
-function hasOwn(object: object, key: PropertyKey): boolean {
-  return ReflectApply(ObjectPrototypeHasOwnProperty, object, [key]) as boolean;
-}
 
 /**
  * Configuration that affects transform output.
@@ -48,95 +40,73 @@ interface TransformConfig {
   dependencyPinningCacheKey?: string;
 }
 
-function readOwnConfigField(
-  config: TransformConfig,
-  key: keyof TransformConfig,
-): unknown {
-  if (config === null || typeof config !== "object") {
-    throw new IntrinsicTypeError("Transform config must be an object");
-  }
-  const descriptor = ObjectGetOwnPropertyDescriptor(config, key);
-  if (!descriptor) return undefined;
-  if (!hasOwn(descriptor, "value")) {
-    throw new IntrinsicTypeError(`Transform config ${key} must be an own data property`);
-  }
-  return descriptor.value;
+function encodeJsonStringProperty(key: string, value: string): string {
+  return `${JSONStringify(key)}:${JSONStringify(value)}`;
 }
 
-function readOptionalConfigString(
-  config: TransformConfig,
-  key: keyof TransformConfig,
-): string | undefined {
-  const value = readOwnConfigField(config, key);
-  if (value === undefined) return undefined;
-  if (typeof value !== "string") {
-    throw new IntrinsicTypeError(`Transform config ${key} must be a string`);
-  }
-  return value;
+function encodeJsonNullableStringProperty(key: string, value: string | null): string {
+  return `${JSONStringify(key)}:${JSONStringify(value)}`;
 }
 
-function readOptionalConfigBoolean(
-  config: TransformConfig,
-  key: "studioEmbed" | "dev",
-): boolean | undefined {
-  const value = readOwnConfigField(config, key);
-  if (value === undefined) return undefined;
-  if (typeof value !== "boolean") {
-    throw new IntrinsicTypeError(`Transform config ${key} must be a boolean`);
-  }
-  return value;
+function encodeJsonBooleanProperty(key: string, value: boolean): string {
+  return `${JSONStringify(key)}:${value ? "true" : "false"}`;
 }
 
-function encodeNullableConfigString(value: string | null): string {
-  return JSONStringify(value) as string;
-}
-
-function buildConfigIdentity(config: TransformConfig): string {
-  const dependencyPinningCacheKey = readOptionalConfigString(
-    config,
-    "dependencyPinningCacheKey",
-  );
-  const moduleServerOrigin = readOptionalConfigString(config, "moduleServerOrigin");
+function buildAsyncConfigIdentity(config: TransformConfig): string {
   const dependencyPinningCacheVariant = buildDependencyPinningCacheVariant(
-    dependencyPinningCacheKey,
-    moduleServerOrigin,
+    config.dependencyPinningCacheKey,
+    config.moduleServerOrigin,
   );
-  let identity = `v${VERSION}`;
-  identity += `|react=${
-    encodeNullableConfigString(
-      readOptionalConfigString(config, "reactVersion") ?? DEFAULT_REACT_VERSION,
-    )
-  }`;
-  identity += `|jsx=${
-    encodeNullableConfigString(
-      readOptionalConfigString(config, "jsxImportSource") ?? "react",
-    )
-  }`;
-  identity += `|modules=${
-    encodeNullableConfigString(
-      readOptionalConfigString(config, "moduleServerUrl") ?? null,
-    )
-  }`;
-  identity += `|vendor=${
-    encodeNullableConfigString(
-      readOptionalConfigString(config, "vendorBundleHash") ?? null,
-    )
-  }`;
-  identity += `|api=${
-    encodeNullableConfigString(
-      readOptionalConfigString(config, "apiBaseUrl") ?? null,
-    )
-  }`;
-  identity += `|studio=${readOptionalConfigBoolean(config, "studioEmbed") ?? false ? "1;" : "0;"}`;
-  identity += `|dev=${readOptionalConfigBoolean(config, "dev") ?? false ? "1;" : "0;"}`;
-  identity += `|pins=${
-    encodeNullableConfigString(
-      dependencyPinningCacheVariant ?? null,
-    )
-  }`;
-  identity += `|csstype=${encodeNullableConfigString(CSSTYPE_VERSION)}`;
-  identity += `|tailwind=${encodeNullableConfigString(TAILWIND_VERSION)}`;
-  return identity;
+  const fields = [
+    encodeJsonStringProperty("transformVersion", VERSION),
+    encodeJsonStringProperty("reactVersion", config.reactVersion ?? DEFAULT_REACT_VERSION),
+    encodeJsonStringProperty("jsxImportSource", config.jsxImportSource ?? "react"),
+    encodeJsonNullableStringProperty("moduleServerUrl", config.moduleServerUrl ?? null),
+    encodeJsonNullableStringProperty("vendorBundleHash", config.vendorBundleHash ?? null),
+    encodeJsonNullableStringProperty("apiBaseUrl", config.apiBaseUrl ?? null),
+    encodeJsonBooleanProperty("studioEmbed", config.studioEmbed ?? false),
+    encodeJsonBooleanProperty("dev", config.dev ?? false),
+  ];
+  if (dependencyPinningCacheVariant) {
+    fields.push(
+      encodeJsonStringProperty("dependencyPinningCacheVariant", dependencyPinningCacheVariant),
+    );
+  }
+  fields.push(
+    encodeJsonStringProperty("csstype", CSSTYPE_VERSION),
+    encodeJsonStringProperty("tailwind", TAILWIND_VERSION),
+  );
+  return `{${fields.join(",")}}`;
+}
+
+function encodeConfigPart(label: string, value: string | undefined): string {
+  if (!value) return "";
+  return `${label}:${value.length}:${value}`;
+}
+
+function buildSyncConfigIdentity(config: TransformConfig): string {
+  const parts = [
+    `v${VERSION}`,
+    config.reactVersion ?? DEFAULT_REACT_VERSION,
+    config.jsxImportSource ?? "react",
+  ];
+  const moduleServerUrlPart = encodeConfigPart("modules", config.moduleServerUrl);
+  if (moduleServerUrlPart) parts.push(moduleServerUrlPart);
+  const vendorBundleHashPart = encodeConfigPart("vendor", config.vendorBundleHash);
+  if (vendorBundleHashPart) parts.push(vendorBundleHashPart);
+  const apiBaseUrlPart = encodeConfigPart("api", config.apiBaseUrl);
+  if (apiBaseUrlPart) parts.push(apiBaseUrlPart);
+  if (config.studioEmbed) parts.push("studio");
+  if (config.dev) parts.push("dev");
+  const dependencyPinningCacheVariant = buildDependencyPinningCacheVariant(
+    config.dependencyPinningCacheKey,
+    config.moduleServerOrigin,
+  );
+  if (dependencyPinningCacheVariant) {
+    parts.push(`pins:${dependencyPinningCacheVariant}`);
+  }
+
+  return parts.join(":");
 }
 
 /**
@@ -145,7 +115,7 @@ function buildConfigIdentity(config: TransformConfig): string {
  * Changes to these values should invalidate cached transforms.
  */
 export function computeConfigHash(config: TransformConfig): Promise<string> {
-  return computeHash(buildConfigIdentity(config));
+  return computeHash(buildAsyncConfigIdentity(config));
 }
 
 /**
@@ -154,5 +124,5 @@ export function computeConfigHash(config: TransformConfig): Promise<string> {
  * Use this when you need a config hash but can't afford async overhead.
  */
 export function computeConfigHashSync(config: TransformConfig): string {
-  return buildConfigIdentity(config);
+  return buildSyncConfigIdentity(config);
 }
