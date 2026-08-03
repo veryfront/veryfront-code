@@ -141,3 +141,52 @@ Deno.test("npm release rerun skips a package already published for the commit", 
     await Deno.remove(stateDir, { recursive: true });
   }
 });
+
+Deno.test("npm release preflight rejects an unbootstrapped package name", async () => {
+  const stateDir = await Deno.makeTempDir();
+  const npmLog = `${stateDir}/npm.log`;
+  await Deno.writeTextFile(npmLog, "");
+
+  try {
+    const output = await runBash(
+      [
+        "set -euo pipefail",
+        'source "$SCRIPT_PATH"',
+        "package_names_from_workspace() {",
+        '  printf "%s\\n" "@veryfront/ext-existing" "@veryfront/ext-new"',
+        "}",
+        "npm() {",
+        '  printf "%s\\n" "$*" >> "$NPM_LOG"',
+        '  if [ "$1" = "view" ] && [ "$2" = "@veryfront/ext-existing" ] && [ "$3" = "name" ]; then',
+        '    printf "%s\\n" "@veryfront/ext-existing"',
+        "    return 0",
+        "  fi",
+        "  return 1",
+        "}",
+        "run_preflight",
+      ].join("\n"),
+      {
+        GITHUB_SHA: "expected-commit",
+        NPM_LOG: npmLog,
+        VERSION: "0.1.1189",
+      },
+    );
+
+    assertEquals(output.code, 1);
+    assertStringIncludes(
+      decoder.decode(output.stderr),
+      "@veryfront/ext-new is not registered on npm",
+    );
+    assertStringIncludes(
+      decoder.decode(output.stderr),
+      "bootstrap the package and configure trusted publishing",
+    );
+    const calls = (await Deno.readTextFile(npmLog)).trim().split("\n");
+    assertEquals(calls, [
+      "view @veryfront/ext-existing name",
+      "view @veryfront/ext-new name",
+    ]);
+  } finally {
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});

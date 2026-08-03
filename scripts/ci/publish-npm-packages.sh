@@ -160,8 +160,25 @@ run_rc_publish() {
   done
 }
 
+ensure_package_names_registered() {
+  MISSING_PACKAGE_NAMES=0
+
+  for PACKAGE_NAME in $(package_names_from_workspace); do
+    if ! npm view "${PACKAGE_NAME}" name >/dev/null 2>&1; then
+      echo "::error::${PACKAGE_NAME} is not registered on npm." >&2
+      MISSING_PACKAGE_NAMES=1
+    fi
+  done
+
+  if [ "${MISSING_PACKAGE_NAMES}" -ne 0 ]; then
+    echo "::error::Before releasing, bootstrap the package and configure trusted publishing. Use a prerelease version and a non-latest dist-tag so the stable release version remains available to CI." >&2
+    return 1
+  fi
+}
+
 run_preflight() {
   require_env VERSION GITHUB_SHA
+  ensure_package_names_registered
 
   for PACKAGE_NAME in $(package_names_from_workspace); do
     if npm view "${PACKAGE_NAME}@${VERSION}" version 2>/dev/null; then
