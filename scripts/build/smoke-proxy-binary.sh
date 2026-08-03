@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-binary="${1:?usage: smoke-proxy-binary.sh <binary> [port]}"
+binary="${1:?usage: smoke-proxy-binary.sh <binary> [base_port]}"
 base_port="${2:-18080}"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/veryfront-proxy-smoke.XXXXXX")"
 proxy_pid=""
