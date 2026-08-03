@@ -278,7 +278,7 @@ import { createAgent, createClaudeCodeTool, createEventPublisher } from "veryfro
 | `MemoryEventPublisher` | In-memory EventTarget publisher for testing or single-process deployments. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/event-publisher.ts#L50) |
 | `MultiEventPublisher` | Publishes events to multiple publishers | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/event-publisher.ts#L250) |
 | `RedisEventPublisher` | Redis-backed publisher whose implementation is supplied by the Redis extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/event-publisher.ts#L87) |
-| `SSEEventPublisher` | Server-Sent Events publisher that writes events to a ReadableStream controller. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/event-publisher.ts#L151) |
+| `SSEEventPublisher` | Server-Sent Events publisher that writes events directly to a ReadableStream controller. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/event-publisher.ts#L151) |
 | `WebSocketPublisher` | WebSocket-based bidirectional publisher | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L187) |
 | `WorkspaceSync` | Workspace manager for Claude Code execution | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L158) |
 

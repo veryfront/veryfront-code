@@ -91,6 +91,10 @@ class OversizedStoreSnapshotError extends Error {
   override readonly name = "OversizedStoreSnapshotError";
 }
 
+function isStoreSizeLimitError(error: unknown): error is RangeError {
+  return error instanceof RangeError && error.message.startsWith("File exceeds byte limit");
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -430,7 +434,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
       bytes = await readSnapshot(storagePath, dirname(storagePath), MAX_STORED_BYTES);
     } catch (error) {
       if (isCanonicalNotFoundError(error)) return null;
-      if (error instanceof RangeError) {
+      if (isStoreSizeLimitError(error)) {
         throw new OversizedStoreSnapshotError("RAG store snapshot exceeds its byte limit", {
           cause: error,
         });

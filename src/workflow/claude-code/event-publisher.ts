@@ -147,7 +147,7 @@ export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCode
 // SSE Publisher (for HTTP streaming)
 // =============================================================================
 
-/** Server-Sent Events publisher that writes events to a ReadableStream controller. */
+/** Server-Sent Events publisher that writes events directly to a ReadableStream controller. */
 export class SSEEventPublisher implements ClaudeCodeEventPublisher {
   private encoder = new TextEncoder();
   private controller: ReadableStreamDefaultController<Uint8Array> | null = null;

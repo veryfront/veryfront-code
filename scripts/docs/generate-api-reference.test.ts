@@ -62,6 +62,9 @@ describe("generate-api-reference", () => {
       const providerReference = await Deno.readTextFile(
         `${outputDir}/veryfront/provider.md`,
       );
+      const releaseAssetsReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/release-assets.md`,
+      );
       const providerTypes = await Deno.readTextFile("src/provider/types.ts");
       assertEquals(
         rootReference.includes(
@@ -144,6 +147,11 @@ describe("generate-api-reference", () => {
           `${constantName} must be classified as a constant`,
         );
       }
+      assertStringIncludes(
+        markdownSection(releaseAssetsReference, "Constants"),
+        "`RELEASE_ASSET_BASE_PATH`",
+        "release asset variables must be classified as constants",
+      );
       const generateResultIndex = providerTypes.split("\n").findIndex((line) =>
         line.startsWith("export interface ModelRuntimeGenerateResult")
       );

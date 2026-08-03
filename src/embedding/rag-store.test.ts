@@ -185,21 +185,40 @@ describe("ragStore", () => {
 
   it("defers orphaned temp cleanup until the next publication", async () => {
     await withTempDir(async (tempDir) => {
-      const storagePath = join(tempDir, "data", "index.json");
-      await Deno.mkdir(join(tempDir, "data"), { recursive: true });
+      const storageDirectory = join(tempDir, "data");
+      const storagePath = join(storageDirectory, "index.json");
+      await Deno.mkdir(storageDirectory, { recursive: true });
       const original = JSON.stringify({ documents: [], chunks: [] });
       const orphanPath = `${storagePath}.tmp.${crypto.randomUUID()}`;
       await Deno.writeTextFile(storagePath, original);
       await Deno.writeTextFile(orphanPath, "partial");
 
-      const store = ragStore({ model: "local/test-model", storagePath });
-      assertEquals(await store.listDocuments(), []);
-      assertEquals(await store.search("read only"), []);
-      assertEquals(await readTextFile(storagePath), original);
-      assertEquals(await exists(orphanPath), true);
+      const readDirDescriptor = Object.getOwnPropertyDescriptor(Deno, "readDir");
+      assert(readDirDescriptor !== undefined);
+      const originalReadDir = Deno.readDir.bind(Deno);
+      let storageDirectoryScans = 0;
+      Object.defineProperty(Deno, "readDir", {
+        ...readDirDescriptor,
+        value: (path: string | URL) => {
+          if (String(path) === storageDirectory) storageDirectoryScans++;
+          return originalReadDir(path);
+        },
+      });
 
-      await store.ingest("Published", "new content");
-      assertEquals(await exists(orphanPath), false);
+      try {
+        const store = ragStore({ model: "local/test-model", storagePath });
+        assertEquals(await store.listDocuments(), []);
+        assertEquals(await store.search("read only"), []);
+        assertEquals(storageDirectoryScans, 0);
+        assertEquals(await readTextFile(storagePath), original);
+        assertEquals(await exists(orphanPath), true);
+
+        await store.ingest("Published", "new content");
+        assertEquals(storageDirectoryScans, 1);
+        assertEquals(await exists(orphanPath), false);
+      } finally {
+        Object.defineProperty(Deno, "readDir", readDirDescriptor);
+      }
     });
   });
 
