@@ -188,7 +188,6 @@ function getAdapterInstanceIdentity(fs: FSAdapter): string {
 async function resolveLockfileAccessKey(
   fs: FSAdapter,
   projectDir: string,
-  lockfilePath: string,
 ): Promise<string> {
   // A declared coordination key is the complete shared lock domain. Including
   // a canonical path here would split adapters that share a backing store when
@@ -201,19 +200,15 @@ async function resolveLockfileAccessKey(
   if (!fs.realPath) return JSON.stringify([adapterIdentity]);
 
   try {
-    return JSON.stringify([adapterIdentity, normalize(await fs.realPath(lockfilePath))]);
+    const canonicalProjectDir = normalize(await fs.realPath(projectDir));
+    return JSON.stringify([
+      adapterIdentity,
+      normalize(`${canonicalProjectDir}/${LOCKFILE_NAME}`),
+    ]);
   } catch {
-    try {
-      const canonicalProjectDir = normalize(await fs.realPath(projectDir));
-      return JSON.stringify([
-        adapterIdentity,
-        normalize(`${canonicalProjectDir}/${LOCKFILE_NAME}`),
-      ]);
-    } catch {
-      // Without a trustworthy canonical path, serialize conservatively across
-      // the whole backing adapter so symlink and case aliases cannot race.
-      return JSON.stringify([adapterIdentity]);
-    }
+    // Without a trustworthy canonical path, serialize conservatively across
+    // the whole backing adapter so symlink and case aliases cannot race.
+    return JSON.stringify([adapterIdentity]);
   }
 }
 
@@ -279,7 +274,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   }
 
   function withLockfileAccess<T>(operation: () => Promise<T>): Promise<T> {
-    accessKeyPromise ??= resolveLockfileAccessKey(fs, normalizedProjectDir, lockfilePath);
+    accessKeyPromise ??= resolveLockfileAccessKey(fs, normalizedProjectDir);
     return accessKeyPromise.then((accessKey) => serializeLockfileAccess(accessKey, operation));
   }
 

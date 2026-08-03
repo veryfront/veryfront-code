@@ -88,11 +88,18 @@ function exposePartialNextWrite(fs: FSAdapter): {
   return { started: started.promise, release: release.resolve };
 }
 
-function resolvesWithin(promise: Promise<unknown>, milliseconds = 50): Promise<boolean> {
-  return Promise.race([
-    promise.then(() => true),
-    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), milliseconds)),
-  ]);
+async function resolvesWithin(promise: Promise<unknown>, milliseconds = 50): Promise<boolean> {
+  let timeout: number | undefined;
+  try {
+    return await Promise.race([
+      promise.then(() => true),
+      new Promise<boolean>((resolve) => {
+        timeout = setTimeout(() => resolve(false), milliseconds);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 describe("import-lockfile", () => {
@@ -336,24 +343,21 @@ describe("import-lockfile", () => {
     });
 
     it("should preserve a newer-format lockfile on disk after a format mismatch", async () => {
+      const fs = createMockFS();
+      const mgr = createLockfileManager("/project", fs);
+      await mgr.set("https://cdn.com/mod.ts", {
+        resolved: "https://cdn.com/mod.ts",
+        integrity: "sha256-abc",
+      });
+
       const newerContent = JSON.stringify({
         version: 99,
         imports: { "https://cdn.com/newer.ts": { resolved: "x", integrity: "y" } },
       });
-      const fs = createMockFS({ "/project/veryfront.lock": newerContent });
-      const mgr = createLockfileManager("/project", fs);
+      await fs.writeFile("/project/veryfront.lock", newerContent);
 
-      await assertRejects(() => mgr.read(), VeryfrontError);
-
-      // A flush after the failed read must not overwrite the newer-format file.
-      await assertRejects(
-        () =>
-          mgr.set("https://cdn.com/mod.ts", {
-            resolved: "https://cdn.com/mod.ts",
-            integrity: "sha256-abc",
-          }).then(() => mgr.flush()),
-        VeryfrontError,
-      );
+      // A flush with pending data must validate and preserve the newer-format file.
+      await assertRejects(() => mgr.flush(), VeryfrontError);
 
       assertEquals(await fs.readFile("/project/veryfront.lock"), newerContent);
     });
@@ -845,6 +849,79 @@ describe("import-lockfile", () => {
         imports: Record<string, unknown>;
       };
       assertEquals(Object.keys(onDisk.imports).sort(), [aUrl, bUrl]);
+    });
+
+    it("should keep a stable access key when the lockfile becomes a symlink target", async () => {
+      const projectDir = "/project";
+      const lockfilePath = `${projectDir}/veryfront.lock`;
+      const canonicalProjectDir = "/backing/project";
+      const targetPath = "/backing/renamed.lock";
+      const aUrl = "https://cdn.com/a.ts";
+      const bUrl = "https://cdn.com/b.ts";
+      const cUrl = "https://cdn.com/c.ts";
+      const store = new Map<string, string>();
+      const firstWriteStarted = Promise.withResolvers<void>();
+      const releaseFirstWrite = Promise.withResolvers<void>();
+      const secondAccess = Promise.withResolvers<void>();
+      let blockFirstWrite = false;
+      let blocked = false;
+      let observeSecondAccess = false;
+
+      const fs: FSAdapter = {
+        exists(path: string): Promise<boolean> {
+          if (observeSecondAccess && path === lockfilePath) secondAccess.resolve();
+          return Promise.resolve(store.has(path === lockfilePath ? targetPath : path));
+        },
+        readFile(path: string): Promise<string> {
+          if (observeSecondAccess && path === lockfilePath) secondAccess.resolve();
+          const content = store.get(path === lockfilePath ? targetPath : path);
+          return content === undefined
+            ? Promise.reject(new Error("ENOENT"))
+            : Promise.resolve(content);
+        },
+        async writeFile(path: string, content: string): Promise<void> {
+          if (blockFirstWrite && !blocked && path === lockfilePath) {
+            blocked = true;
+            firstWriteStarted.resolve();
+            await releaseFirstWrite.promise;
+          }
+          store.set(path === lockfilePath ? targetPath : path, content);
+        },
+        remove(path: string): Promise<void> {
+          store.delete(path === lockfilePath ? targetPath : path);
+          return Promise.resolve();
+        },
+        realPath(path: string): Promise<string> {
+          if (path === projectDir) return Promise.resolve(canonicalProjectDir);
+          if (path === lockfilePath && store.has(targetPath)) return Promise.resolve(targetPath);
+          return Promise.reject(new Error("ENOENT"));
+        },
+      };
+      const managerA = createLockfileManager(projectDir, fs);
+      await managerA.set(aUrl, { resolved: aUrl, integrity: "sha256-a" });
+      await managerA.flush();
+
+      // Manager A cached its access key before the lockfile existed. Manager B
+      // resolves its key after the logical lockfile points at a differently
+      // named target; both must still share the project-scoped queue.
+      const managerB = createLockfileManager(projectDir, fs);
+      await managerB.set(bUrl, { resolved: bUrl, integrity: "sha256-b" });
+      await managerA.set(cUrl, { resolved: cUrl, integrity: "sha256-c" });
+
+      blockFirstWrite = true;
+      const flushA = managerA.flush();
+      await firstWriteStarted.promise;
+      observeSecondAccess = true;
+      const flushB = managerB.flush();
+      const secondAccessBeforeRelease = await resolvesWithin(secondAccess.promise);
+      releaseFirstWrite.resolve();
+      await Promise.all([flushA, flushB]);
+
+      assertEquals(secondAccessBeforeRelease, false);
+      const onDisk = JSON.parse(store.get(targetPath)!) as {
+        imports: Record<string, unknown>;
+      };
+      assertEquals(Object.keys(onDisk.imports).sort(), [aUrl, bUrl, cUrl]);
     });
 
     it("should preserve a set queued during an in-flight flush and snapshot its input", async () => {
