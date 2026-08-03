@@ -237,6 +237,27 @@ describe("logger", () => {
     assertEquals(entry.message, "captured lowercase conversion");
   });
 
+  it("omits empty component names in emergency JSON entries", () => {
+    const { getOutput, restore } = captureConsoleLog();
+    const originalKeys = Object.keys;
+
+    try {
+      withJsonLogFormat(() => {
+        Object.keys = () => {
+          throw new Error("project code replaced Object.keys");
+        };
+        getBaseLogger("SERVER").component("").info("emergency component");
+      });
+    } finally {
+      Object.keys = originalKeys;
+      restore();
+    }
+
+    const entry = JSON.parse(getOutput()) as LogEntry;
+    assertEquals(entry.message, "[REDACTED]");
+    assertEquals(entry.component, undefined);
+  });
+
   describe("getDefaultLevel", () => {
     // Note: Pass explicit values to avoid reading process env in parallel tests.
 

@@ -477,7 +477,7 @@ class ConsoleLogger implements Logger {
       message: REDACTED,
       context: { unserializable_context: REDACTED },
     };
-    if (this.componentName !== undefined) entry.component = this.componentName;
+    if (this.componentName) entry.component = this.componentName;
     return entry;
   }
 
