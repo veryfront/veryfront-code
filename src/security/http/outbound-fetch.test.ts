@@ -212,6 +212,21 @@ describe("guardedOutboundFetch", () => {
     assertEquals(requests.length, 1);
   });
 
+  it("accepts a URL object for the exact trusted control-plane endpoint", async () => {
+    const requests: Request[] = [];
+    const controlPlaneFetch = createTestBoundary(async (input, init) => {
+      requests.push(new Request(input, init));
+      return Response.json({ ok: true });
+    }).createTrustedEndpointFetch("http://veryfront-api:80/mcp");
+
+    const response = await controlPlaneFetch(new URL("http://veryfront-api/mcp"));
+
+    assertEquals(response.status, 200);
+    assertEquals(requests.length, 1);
+    assertEquals(requests[0]?.url, "http://veryfront-api/mcp");
+    assertEquals(requests[0]?.redirect, "error");
+  });
+
   it("rejects unsafe trusted endpoint configuration", async () => {
     const boundary = createTestBoundary(() => Promise.resolve(Response.json({ ok: true })));
 

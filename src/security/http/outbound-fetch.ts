@@ -234,7 +234,12 @@ function createTrustedEndpointFetchWithTransport(
   const trustedHref = normalizeTrustedEndpoint(endpointValue);
 
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    if (typeof input !== "string" || input !== trustedHref) {
+    const inputHref = typeof input === "string"
+      ? input
+      : input instanceof IntrinsicURL
+      ? getUrlHref(input)
+      : undefined;
+    if (inputHref !== trustedHref) {
       throw new OutboundRequestBlockedError(
         "Control-plane request blocked: destination does not match the trusted endpoint",
       );
