@@ -5,6 +5,10 @@
  * callbacks and token refresh to work across production workers. Configure a
  * durable, extension-owned RefreshCapableTokenStore before the first OAuth
  * request in production. The built-in memory store is development-only.
+ *
+ * To build that durable store on top of a plain key-value service with
+ * AES-256-GCM encryption at rest, see `encrypted-token-store.ts` (reference
+ * backends live in `token-store-examples.ts`).
  */
 
 import {
