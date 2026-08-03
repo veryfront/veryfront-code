@@ -107,7 +107,10 @@ async function activateStandaloneProxyCacheExtensionInternal(): Promise<Extensio
     try {
       await loader.teardownAll();
     } catch (cleanupError) {
-      cliLogger.error("Failed to clean up standalone proxy cache extension", cleanupError);
+      cliLogger.error(
+        "Failed to clean up standalone proxy infrastructure extensions",
+        cleanupError,
+      );
     }
     throw error;
   }
