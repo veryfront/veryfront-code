@@ -16,6 +16,7 @@ import {
 } from "./core.ts";
 import {
   REDACTED,
+  redactForSerialization,
   redactSensitive,
   sanitizeSerializedError,
   sanitizeUrlCredentials,
@@ -252,6 +253,25 @@ function resolveLoggerConfig(): LoggerConfig {
   return loggerConfig;
 }
 
+function sanitizeLogString(value: unknown, fallback: string): string {
+  try {
+    return sanitizeUrlCredentials(typeof value === "string" ? value : String(value));
+  } catch {
+    return fallback;
+  }
+}
+
+function snapshotLogContext(context: unknown): Record<string, unknown> {
+  try {
+    const snapshot = redactForSerialization(context);
+    return typeof snapshot === "object" && snapshot !== null && !arrayIsArray(snapshot)
+      ? snapshot as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Extract context from variadic args.
  * First object argument becomes context, errors are handled specially.
@@ -263,21 +283,26 @@ function extractContext(
   let error: LogEntry["error"] | undefined;
 
   for (const arg of args) {
-    if (arg instanceof Error) {
-      error = serializeError(arg);
-      continue;
-    }
-    if (typeof arg === "object" && arg !== null && !arrayIsArray(arg)) {
-      const contextArg = arg as Record<string, unknown>;
-      if (contextArg.error instanceof Error) {
-        const { error: contextError, ...rest } = contextArg;
-        error = serializeError(contextError);
-        if (Object.keys(rest).length > 0) {
-          context = { ...context, ...rest };
-        }
+    try {
+      if (arg instanceof Error) {
+        error = serializeError(arg);
         continue;
       }
-      context = { ...context, ...contextArg };
+      if (typeof arg === "object" && arg !== null && !arrayIsArray(arg)) {
+        const contextArg = arg as Record<string, unknown>;
+        if (contextArg.error instanceof Error) {
+          const { error: contextError, ...rest } = contextArg;
+          error = serializeError(contextError);
+          if (Object.keys(rest).length > 0) {
+            context = { ...context, ...rest };
+          }
+          continue;
+        }
+        context = { ...context, ...contextArg };
+      }
+    } catch {
+      // Logging accepts application-owned objects. Ignore an unreadable value
+      // rather than allowing proxy traps or getters to break the caller.
     }
   }
 
@@ -385,14 +410,17 @@ class ConsoleLogger implements Logger {
     componentName?: string,
     private readonly options: ConsoleLoggerOptions = {},
   ) {
-    this.boundContext = boundContext ?? {};
-    this.componentName = componentName;
+    this.boundContext = snapshotLogContext(boundContext ?? {});
+    this.componentName = componentName === undefined
+      ? undefined
+      : sanitizeLogString(componentName, REDACTED);
   }
 
   child(context: Record<string, unknown>): Logger {
+    const childContext = snapshotLogContext(context);
     return new ConsoleLogger(
       this.prefix,
-      { ...this.boundContext, ...context },
+      { ...this.boundContext, ...childContext },
       this.componentName,
       this.options,
     );
@@ -402,9 +430,22 @@ class ConsoleLogger implements Logger {
     return new ConsoleLogger(
       this.prefix,
       { ...this.boundContext },
-      sanitizeUrlCredentials(name),
+      sanitizeLogString(name, REDACTED),
       this.options,
     );
+  }
+
+  private createEmergencyEntry(level: LogEntry["level"]): LogEntry {
+    const entry: LogEntry = {
+      timestamp: new Date().toISOString(),
+      level,
+      service: sanitizeLogString(this.prefix, "veryfront").toLowerCase(),
+      veryfrontVersion: RUNTIME_VERSION,
+      message: REDACTED,
+      context: { unserializable_context: REDACTED },
+    };
+    if (this.componentName !== undefined) entry.component = this.componentName;
+    return entry;
   }
 
   private createEntry(level: LogEntry["level"], message: string, args: unknown[]): LogEntry {
@@ -419,7 +460,7 @@ class ConsoleLogger implements Logger {
       // The message string bypasses the key-based context redactor, so scrub
       // credential-shaped text (URL userinfo, ?access_token=, header dumps)
       // embedded directly in the message before emission (#1989).
-      message: sanitizeUrlCredentials(message),
+      message: sanitizeLogString(message, REDACTED),
     };
 
     if (this.componentName) entry.component = this.componentName;
@@ -545,7 +586,7 @@ class ConsoleLogger implements Logger {
     const enableColor = shouldUseColor();
     // Mirror the JSON path: the message string bypasses the key-based context
     // redactor, so scrub credential-shaped text before rendering (#1989).
-    const safeMessage = sanitizeUrlCredentials(message);
+    const safeMessage = sanitizeLogString(message, REDACTED);
 
     const contextText = formatContextText(
       redactSensitive(mergedContext),
@@ -579,15 +620,23 @@ class ConsoleLogger implements Logger {
     const { level: resolvedLevel, format: resolvedFormat } = resolveLoggerConfig();
     if (resolvedLevel > logLevel) return;
 
-    let entry: LogEntry | undefined;
-    const line = resolvedFormat === "json"
-      ? (() => {
-        entry = this.createEntry(level, message, args);
-        return stringifyLogEntry(entry);
-      })()
-      : this.formatTextLine(level, message, args);
+    let emittedEntry: LogEntry;
+    let line: string;
+    try {
+      if (resolvedFormat === "json") {
+        emittedEntry = this.createEntry(level, message, args);
+        line = stringifyLogEntry(emittedEntry);
+      } else {
+        line = this.formatTextLine(level, message, args);
+        emittedEntry = this.createEntry(level, message, args);
+      }
+    } catch {
+      emittedEntry = this.createEmergencyEntry(level);
+      line = resolvedFormat === "json"
+        ? stringifyLogEntry(emittedEntry)
+        : `${level.toUpperCase()}: ${REDACTED}`;
+    }
 
-    const emittedEntry = entry ?? this.createEntry(level, message, args);
     if (legacyLogRecordEmitter) {
       try {
         legacyLogRecordEmitter(emittedEntry);
@@ -604,7 +653,11 @@ class ConsoleLogger implements Logger {
       }
     }
 
-    consoleFn(line);
+    try {
+      consoleFn(line);
+    } catch (_) {
+      /* logging sink failures must not affect application control flow */
+    }
   }
 
   debug(message: string, ...args: unknown[]): void {

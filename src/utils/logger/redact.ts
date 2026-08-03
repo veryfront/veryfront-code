@@ -283,6 +283,10 @@ const MAX_DEPTH = 16;
 const MAX_CONTAINER_ENTRIES = 1_024;
 /** Bound aggregate work across an entire redaction call, not per branch. */
 const MAX_TRAVERSAL_NODES = 4_096;
+/** Bound hostile or cyclic prototype walks while looking for serializers. */
+const MAX_SERIALIZATION_HOOK_PROTOTYPES = 64;
+/** Bound the quadratic identifier-token scan used for free-text assignments. */
+const MAX_ASSIGNMENT_KEY_LENGTH = 256;
 
 /**
  * Whether a context key names a credential and should have its value masked.
@@ -353,8 +357,18 @@ function classifyArray(value: object): boolean | null {
  */
 function readSerializationHook(value: object): unknown {
   let owner: object | null = value;
+  const seenOwners = new Set<object>();
+  let prototypesVisited = 0;
   while (owner !== null) {
     if (owner === objectPrototype || owner === arrayPrototype) return undefined;
+    if (
+      prototypesVisited >= MAX_SERIALIZATION_HOOK_PROTOTYPES ||
+      apply(setHas, seenOwners, [owner])
+    ) {
+      throw new TypeError("serialization hook prototype chain is cyclic or too deep");
+    }
+    prototypesVisited++;
+    apply(setAdd, seenOwners, [owner]);
     const descriptor = objectGetOwnPropertyDescriptor(owner, "toJSON");
     if (descriptor !== undefined) {
       if (!objectHasOwn(descriptor, "value")) {
@@ -802,6 +816,10 @@ function redactCredentialAssignments(
  * words such as `mapping` and `considered` stay intact.
  */
 function isSensitiveAssignmentKey(key: string): boolean {
+  // The token-range classifier below is quadratic in the number of identifier
+  // tokens. Oversized attacker-controlled keys fail closed before that work.
+  if (key.length > MAX_ASSIGNMENT_KEY_LENGTH) return true;
+
   const withAcronymBoundaries = replaceWithCapturedExec(
     key,
     ACRONYM_BOUNDARY_PATTERN,

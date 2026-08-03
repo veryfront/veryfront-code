@@ -196,6 +196,16 @@ describe("logger/redact", () => {
       });
     });
 
+    it("fails closed on a cyclic serializer prototype chain", () => {
+      const cyclicPrototype: object = new Proxy({}, {
+        getPrototypeOf: () => cyclicPrototype,
+      });
+
+      assertEquals(redactSensitive({ wrap: cyclicPrototype }) as Record<string, unknown>, {
+        wrap: REDACTED,
+      });
+    });
+
     it("fails closed past the max traversal depth", () => {
       // Build a structure deeper than MAX_DEPTH (16) with a secret at the bottom.
       let node: Record<string, unknown> = { token: "deep-secret" };
@@ -313,6 +323,14 @@ describe("logger/redact", () => {
       ) {
         assertEquals(sanitizeUrlCredentials(message), message);
       }
+    });
+
+    it("bounds oversized assignment-key classification and fails closed", () => {
+      const oversizedKey = `benign_${"segment_".repeat(10_000)}`;
+      assertEquals(
+        sanitizeUrlCredentials(`${oversizedKey}=synthetic-opaque-value`),
+        `${oversizedKey}=${REDACTED}`,
+      );
     });
 
     it("keeps assignment redaction fail-closed after prototype methods are replaced", () => {

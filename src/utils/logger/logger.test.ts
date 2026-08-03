@@ -552,6 +552,35 @@ describe("logger", () => {
       }
     });
 
+    it("contains hostile child context, component, and message values", () => {
+      const { getOutput, restore } = captureConsoleLog();
+      const hostileValue = new Proxy({}, {
+        get() {
+          throw new Error("hostile value read");
+        },
+        ownKeys() {
+          throw new Error("hostile keys read");
+        },
+      });
+
+      try {
+        withJsonLogFormat(() => {
+          const hostileContext = hostileValue as Record<string, unknown>;
+          const hostileString = hostileValue as unknown as string;
+          getBaseLogger("SERVER")
+            .child(hostileContext)
+            .component(hostileString)
+            .info(hostileString, hostileContext);
+        });
+
+        const entry = JSON.parse(getOutput()) as LogEntry;
+        assertEquals(entry.message, "[REDACTED]");
+        assertEquals(entry.component, "[REDACTED]");
+      } finally {
+        restore();
+      }
+    });
+
     it("ignores inherited serialization hooks and preserves component fields", () => {
       const { getOutput, restore } = captureConsoleLog();
       const objectToJson = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
