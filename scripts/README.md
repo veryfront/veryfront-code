@@ -30,7 +30,6 @@ the task against an application checkout.
 | Script                           | Task        | Purpose                                             |
 | -------------------------------- | ----------- | --------------------------------------------------- |
 | `generate-templates-manifest.ts` | `build`     | Generates template manifest for CLI scaffolding     |
-| `generate-dev-ui-manifest.ts`    | `build`     | Generates dev UI asset manifest                     |
 | `prepare-framework-sources.ts`   | `build`     | Prepares framework `.src` files for SSR transforms  |
 | `build-all.js`                   | n/a         | Cross-compiles CLI binary for all platforms         |
 | `build-npm-dnt.ts`               | `build:npm` | Builds the root npm package via dnt and emits generated extension packages |
@@ -44,6 +43,11 @@ extension manifest. An extension manifest can also declare runtime-specific
 leaf packages with narrower dependency sets and without a `veryfront` peer.
 Use `veryfront.npm.stagedSources` when a leaf package must bundle a canonical
 repository source file without adding the root framework as a dependency.
+
+The React development UI owns its generator under
+`extensions/ext-dev-ui-react/scripts/`. Its checked-in browser bundle embeds
+the generated stylesheet so JavaScript and CSS are always shipped as one
+immutable artifact.
 
 ## lint/
 

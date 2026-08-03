@@ -33,10 +33,20 @@ describe("EvictionManager", () => {
       assertEquals(em.isExpired({ size: 1, expiry: 3000 }, undefined, 2000), false);
     });
 
+    it("should expire an entry exactly at its expiry timestamp", () => {
+      const em = new EvictionManager();
+      assertEquals(em.isExpired({ size: 1, expiry: 2000 }, undefined, 2000), true);
+    });
+
     it("should use timestamp + ttl when no expiry", () => {
       const em = new EvictionManager();
       assertEquals(em.isExpired({ size: 1, timestamp: 1000 }, 500, 2000), true);
       assertEquals(em.isExpired({ size: 1, timestamp: 1000 }, 5000, 2000), false);
+    });
+
+    it("should expire a timestamp-based entry exactly at its ttl boundary", () => {
+      const em = new EvictionManager();
+      assertEquals(em.isExpired({ size: 1, timestamp: 1000 }, 1000, 2000), true);
     });
 
     it("should return false when no expiry info available", () => {

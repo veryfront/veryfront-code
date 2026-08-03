@@ -2,21 +2,22 @@
  * Standalone proxy extension composition.
  *
  * This CLI/deployment boundary activates provider implementations before the
- * provider-neutral proxy runtime is imported. Core consumes only the
- * `TokenCacheStore` contract published by the extension loader.
+ * provider-neutral proxy runtime is imported. Core consumes the
+ * `TokenCacheStore` contract and the Redis runtime provider published by the
+ * extension loader.
  */
 
-import { cliLogger } from "#cli/utils";
+import { cliLogger } from "veryfront/utils/logger";
 import { type ExtensionFactory, ExtensionLoader } from "veryfront/extensions";
 import { importFirstPartyExtensionModule } from "veryfront/extensions/first-party-import";
-import { getEnv } from "veryfront/platform";
+import { getEnv, setEnv } from "veryfront/platform/env";
 import {
   createProxyShutdownAggregateError,
   type RegisterProxyShutdownHook,
   registerProxyShutdownHook,
 } from "veryfront/proxy/shutdown-hooks";
 
-type CacheExtensionModule = Readonly<{ default: ExtensionFactory }>;
+type ProxyExtensionModule = Readonly<{ default: ExtensionFactory }>;
 
 // This module is evaluated before extension activation. Pin promises created
 // by the later teardown path so extension code cannot replace Promise species
@@ -42,54 +43,96 @@ const resolvedBeforeExtensionActivation = pinCompositionPromise(
 
 const CACHE_EXTENSION_SOURCE_DIRECTORY = "ext-cache-redis";
 const CACHE_EXTENSION_PACKAGE_NAME = "@veryfront/ext-cache-redis";
+const REDIS_EXTENSION_SOURCE_DIRECTORY = "ext-redis";
+const REDIS_EXTENSION_PACKAGE_NAME = "@veryfront/ext-redis";
 
-/**
- * Activate the standalone proxy's explicitly selected cache extension.
- * Memory mode performs no extension import. The returned loader owns provider
- * teardown; the proxy borrows its registered `TokenCacheStore`.
- */
-async function activateStandaloneProxyCacheExtensionInternal(): Promise<ExtensionLoader | null> {
-  const cacheType = getEnv("CACHE_TYPE") || "memory";
-  if (cacheType !== "memory" && cacheType !== "extension") {
-    throw new NativeTypeError("CACHE_TYPE must be memory or extension");
-  }
-  if (cacheType === "memory") return null;
-
-  const module = await importFirstPartyExtensionModule<CacheExtensionModule>(
-    CACHE_EXTENSION_SOURCE_DIRECTORY,
-    CACHE_EXTENSION_PACKAGE_NAME,
+async function loadFirstPartyExtension(
+  sourceDirectory: string,
+  packageName: string,
+): Promise<ExtensionFactory> {
+  const module = await importFirstPartyExtensionModule<ProxyExtensionModule>(
+    sourceDirectory,
+    packageName,
   );
   if (typeof module.default !== "function") {
-    throw new NativeTypeError(`${CACHE_EXTENSION_PACKAGE_NAME} must export an ExtensionFactory`);
+    throw new NativeTypeError(`${packageName} must export an ExtensionFactory`);
   }
+  return module.default;
+}
+
+/**
+ * Activate the standalone proxy's explicitly selected infrastructure extensions.
+ * The returned loader owns provider teardown; the proxy borrows the registered
+ * Redis runtime and optional `TokenCacheStore` providers.
+ */
+async function activateStandaloneProxyExtensionsInternal(): Promise<ExtensionLoader | null> {
+  const cacheType = getEnv("CACHE_TYPE") || "memory";
+  if (cacheType !== "memory" && cacheType !== "extension" && cacheType !== "redis") {
+    throw new NativeTypeError(
+      `CACHE_TYPE must be memory, extension, or redis (received "${cacheType}")`,
+    );
+  }
+
+  const extensions: Array<{
+    extension: ReturnType<ExtensionFactory>;
+    origin: string;
+    source: "config";
+  }> = [];
+  if (getEnv("REDIS_URL")) {
+    const redisExtension = await loadFirstPartyExtension(
+      REDIS_EXTENSION_SOURCE_DIRECTORY,
+      REDIS_EXTENSION_PACKAGE_NAME,
+    );
+    extensions.push({
+      extension: redisExtension(),
+      source: "config",
+      origin: "standalone proxy Redis runtime",
+    });
+  }
+  if (cacheType === "extension" || cacheType === "redis") {
+    const cacheExtension = await loadFirstPartyExtension(
+      CACHE_EXTENSION_SOURCE_DIRECTORY,
+      CACHE_EXTENSION_PACKAGE_NAME,
+    );
+    extensions.push({
+      extension: cacheExtension(),
+      source: "config",
+      origin: "standalone proxy cache selection",
+    });
+  }
+  if (extensions.length === 0) return null;
 
   const loader = new ExtensionLoader(cliLogger);
   try {
-    await loader.setupAll(
-      [{
-        extension: module.default(),
-        source: "config",
-        origin: "standalone proxy cache selection",
-      }],
-      {},
-    );
+    await loader.setupAll(extensions, {});
+    // Keep the chart compatible with older universal binaries during rollout.
+    // This shared boundary translates the legacy value only after the
+    // extension-backed store is registered. The downstream cache validators
+    // (src/proxy/cache/index.ts, src/proxy/cache/extension-store.ts) accept
+    // only "memory" and "extension", so this translation must complete before
+    // the proxy runtime is imported. TODO: remove this rollout shim once the
+    // hosted charts stop passing CACHE_TYPE=redis.
+    if (cacheType === "redis") setEnv("CACHE_TYPE", "extension");
     return loader;
   } catch (error) {
     try {
       await loader.teardownAll();
     } catch (cleanupError) {
-      cliLogger.error("Failed to clean up standalone proxy cache extension", cleanupError);
+      cliLogger.error(
+        "Failed to clean up standalone proxy infrastructure extensions",
+        cleanupError,
+      );
     }
     throw error;
   }
 }
 
-/** Start explicit standalone cache composition with a pinned lifecycle promise. */
-export function activateStandaloneProxyCacheExtension(): Promise<ExtensionLoader | null> {
-  return pinCompositionPromise(activateStandaloneProxyCacheExtensionInternal());
+/** Start explicit standalone proxy extension composition. */
+export function activateStandaloneProxyExtensions(): Promise<ExtensionLoader | null> {
+  return pinCompositionPromise(activateStandaloneProxyExtensionsInternal());
 }
 
-async function registerStandaloneProxyCacheExtensionTeardownInternal(
+async function registerStandaloneProxyExtensionTeardownInternal(
   loader: ExtensionLoader | null,
   registerHook: RegisterProxyShutdownHook,
 ): Promise<() => Promise<void>> {
@@ -114,7 +157,7 @@ async function registerStandaloneProxyCacheExtensionTeardownInternal(
     } catch (cleanupError) {
       throw createProxyShutdownAggregateError(
         [error, cleanupError],
-        "Failed to register and clean up standalone proxy cache extension teardown",
+        "Failed to register and clean up standalone proxy infrastructure extension teardown",
       );
     }
     throw error;
@@ -137,7 +180,7 @@ async function registerStandaloneProxyCacheExtensionTeardownInternal(
         if (disposalFailed) {
           throw createProxyShutdownAggregateError(
             [disposalError, teardownError],
-            "Failed to unregister and tear down standalone proxy cache extension",
+            "Failed to unregister and tear down standalone proxy infrastructure extensions",
           );
         }
         throw teardownError;
@@ -147,11 +190,11 @@ async function registerStandaloneProxyCacheExtensionTeardownInternal(
 }
 
 /** Register exactly-once provider teardown with the proxy's shutdown owner. */
-export function registerStandaloneProxyCacheExtensionTeardown(
+export function registerStandaloneProxyExtensionTeardown(
   loader: ExtensionLoader | null,
   registerHook: RegisterProxyShutdownHook = registerProxyShutdownHook,
 ): Promise<() => Promise<void>> {
   return pinCompositionPromise(
-    registerStandaloneProxyCacheExtensionTeardownInternal(loader, registerHook),
+    registerStandaloneProxyExtensionTeardownInternal(loader, registerHook),
   );
 }

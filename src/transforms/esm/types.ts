@@ -1,5 +1,7 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { DependencyHashCache } from "#veryfront/cache/dependency-graph.ts";
+import type { PreloadImportMapContext } from "#veryfront/modules/import-map/preloader.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
 import type { DependencyPinningSourceInput } from "./package-registry.ts";
 import type { DependencyResolutionObservation } from "../import-rewriter/dependency-resolution.ts";
@@ -17,6 +19,12 @@ export interface TransformOptions {
   studioEmbed?: boolean;
   /** React version for transforms (from project config, defaults to DEFAULT_REACT_VERSION) */
   reactVersion?: string;
+  /** Immutable import-map snapshot already selected for this render. */
+  preloadedImportMap?: ImportMapConfig;
+  /** Adapter used to load and cache the project import map before SSR cache identity. */
+  importMapAdapter?: RuntimeAdapter;
+  /** Content-source/config identity for the import-map preloader. */
+  importMapPreloadContext?: PreloadImportMapContext;
   /** Internal per-render dependency hash cache. */
   dependencyHashCache?: DependencyHashCache;
   /** Internal stable flag + package dependency-map key for cache isolation. */

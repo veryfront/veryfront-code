@@ -69,6 +69,25 @@ Ambiguous environment configuration fails closed. Unauthorized responses are
 non-cacheable and receive the resolved CORS and security policy. Credential
 verification uses constant-time comparison.
 
+### Local development control surfaces
+
+The `/_dev` dashboard, development file bundling, debug context, process
+metrics, memory controls, and client-log ingestion form privileged local-only
+surfaces. A request is admitted only from a transport-authenticated loopback
+peer with no forwarding headers and an untrusted proxy topology, addressed by
+literal loopback or a canonical local-development hostname (see
+[`http/local-control-request.ts`](./http/local-control-request.ts)). Dashboard
+mutations additionally require a port-scoped double-submit session issued to
+the trusted shell.
+
+When Fetch Metadata is present, only `sec-fetch-site: none` (address bar or
+bookmark navigation) and `same-origin` requests pass. A link from a rendered
+project site such as `project.lvh.me:3000` to `lvh.me:3000/_dev` is same-site
+but cross-origin and is rejected with `403` by design: sibling local origins
+execute untrusted project code and must not be able to drive any privileged
+local control. Open the dashboard directly instead; this is intended behavior,
+not a lockout bug.
+
 ### Shared proxy identity and project environments
 
 Production shared-proxy mode requires an operator-owned, private edge and
@@ -96,6 +115,46 @@ project-scoped management endpoint. A missing, redirected, or failed internal
 endpoint is an error; there is no compatibility fallback to masked management
 values. Leave both internal credential variables unset when that endpoint is
 not deployed.
+
+#### Trust boundary and residual risk
+
+With `VERYFRONT_TRUST_FORWARDED_HEADERS=1` set, identity headers are trusted
+purely on network topology: any peer that can reach the runtime origin can
+assert project, environment, and branch identity on routes outside the signed
+control-plane path. There is no per-request cryptographic binding on the
+proxy-to-runtime hop, so the design has no defence in depth if pod network
+privacy fails. Operators must keep the runtime origin unreachable except from
+the proxy (private service plus network policy). Planned follow-up: an
+authenticated proxy-to-runtime hop (mTLS or a per-hop shared secret) so
+identity headers are honoured only on an authenticated channel. Agent-run
+dispatch is already independent of this hop; its branch and environment
+binding comes from the signed control-plane request body.
+
+#### Rollout ordering for hosted identity changes
+
+The hosted runtime fails closed at boot without
+`VERYFRONT_TRUST_FORWARDED_HEADERS=1`, and hosted agent runs fail closed
+without the branch identity that only the current proxy derives from the
+signed control-plane body. Upgrading an existing deployment is safe in this
+order:
+
+1. Set `VERYFRONT_TRUST_FORWARDED_HEADERS=1` (and ensure
+   `CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY` is set) on the runtime environment
+   while it still runs the previous version. Earlier runtimes already accept
+   the variable as an explicit operator trust opt-in, so this step is
+   behaviour-preserving inside the required private topology.
+2. Deploy the proxy tier. Earlier runtimes ignore the added
+   `x-default-branch-name` header, and the `vf-utf8:` branch-name encoding is
+   applied only to values an earlier proxy could not forward at all.
+3. Deploy the runtime tier. A new runtime booted without step 1 crash-loops
+   intentionally; a new runtime behind an old proxy rejects hosted
+   preview-branch and non-default-branch agent runs with `PERMISSION_DENIED`
+   because branch identity must come from the verified control-plane binding.
+
+Roll back in the reverse order (runtime first, then proxy). The trust variable
+can remain set during rollback. There is deliberately no warn-only
+compatibility mode for a missing trust declaration or missing branch binding:
+either one would let unbound identity select tenant data.
 
 ### Input validation
 

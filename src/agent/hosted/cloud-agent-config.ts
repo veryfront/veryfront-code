@@ -22,6 +22,11 @@ import type { ResolvedNodeVeryfrontCloudAgentServiceOptions } from "./cloud-agen
 import type { SkillDocumentParserProvider } from "#veryfront/extensions/parser/skill-document-parser.ts";
 import { getDefaultSkillDocumentParserProvider } from "#veryfront/extensions/parser/skill-defaults.ts";
 import {
+  createRemoteMCPToolSource,
+  type RemoteMCPToolSourceConfig,
+  type RemoteToolSource,
+} from "#veryfront/tool";
+import {
   resolveBaseDir,
   resolveDefaultProcessTarget,
   resolveEnvironment,
@@ -35,6 +40,13 @@ import {
 export type NodeVeryfrontCloudAgentServiceContext = ReturnType<
   typeof createNodeVeryfrontCloudAgentServiceContext
 >;
+
+/** Resolve the deployment-owned remote source factory, preserving guarded egress by default. */
+export function getRemoteToolSourceFactory(
+  context: Pick<NodeVeryfrontCloudAgentServiceContext, "options">,
+): (config: RemoteMCPToolSourceConfig) => RemoteToolSource {
+  return context.options.createRemoteToolSource ?? createRemoteMCPToolSource;
+}
 
 /** Creates the shared runtime context for a cloud agent service instance. */
 export function createNodeVeryfrontCloudAgentServiceContext(

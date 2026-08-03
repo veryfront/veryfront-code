@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.1190",
+  "version": "0.1.1191",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "minimumDependencyAge": {
@@ -347,6 +347,8 @@
     "#veryfront/trigger/": "./src/trigger/",
     "#veryfront/server": "./src/server/index.ts",
     "#veryfront/server/project-env": "./src/server/project-env/index.ts",
+    "#veryfront/extensions/dev-ui": "./src/extensions/dev-ui/index.ts",
+    "#veryfront/extensions/dev-ui/protocol": "./src/extensions/dev-ui/protocol.ts",
     "#veryfront/extensions/websocket": "./src/extensions/websocket/index.ts",
     "#veryfront/testing": "./src/testing/index.ts",
     "#veryfront/testing/assert": "./src/testing/assert.ts",
@@ -448,8 +450,10 @@
   },
   "tasks": {
     "setup": "deno run --allow-all scripts/setup.ts",
-    "generate": "deno run -A scripts/build/generate-templates-manifest.ts && deno run -A scripts/build/generate-dev-ui-manifest.ts && deno run -A scripts/build/prebundle-client-scripts.ts && deno run -A scripts/build/prebundle-bridge.ts && deno run -A scripts/build/prebundle-rsc-scripts.ts && deno run -A scripts/build/prebundle-hydration-runtime.ts",
-    "generate:manifests:check": "deno run -A scripts/build/generate-templates-manifest.ts --check && deno run -A scripts/build/generate-dev-ui-manifest.ts --check && deno run -A scripts/build/prebundle-hydration-runtime.ts --check && deno run -A scripts/build/prebundle-client-scripts.ts --check",
+    "generate": "deno run -A scripts/build/generate-templates-manifest.ts && deno task generate:dev-ui && deno run -A scripts/build/prebundle-client-scripts.ts && deno run -A scripts/build/prebundle-bridge.ts && deno run -A scripts/build/prebundle-rsc-scripts.ts && deno run -A scripts/build/prebundle-hydration-runtime.ts",
+    "generate:dev-ui": "deno run -A extensions/ext-dev-ui-react/scripts/generate-styles.ts && deno run -A extensions/ext-dev-ui-react/scripts/prebundle.ts",
+    "generate:dev-ui:check": "deno run -A extensions/ext-dev-ui-react/scripts/generate-styles.ts --check && deno run -A extensions/ext-dev-ui-react/scripts/prebundle.ts --check",
+    "generate:manifests:check": "deno run -A scripts/build/generate-templates-manifest.ts --check && deno task generate:dev-ui:check && deno run -A scripts/build/prebundle-hydration-runtime.ts --check && deno run -A scripts/build/prebundle-client-scripts.ts --check",
     "start": "deno task generate && deno run --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys --unstable-worker-options --unstable-net cli/main.ts",
     "start:headless": "deno task generate && deno run --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys --unstable-worker-options --unstable-net cli/main.ts --headless",
     "proxy": "deno task generate && deno run --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys --unstable-worker-options --unstable-net cli/main.ts serve --mode=proxy",
@@ -457,6 +461,7 @@
     "production": "deno task generate && deno run --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys --unstable-worker-options --unstable-net cli/main.ts serve --mode=production",
     "build:prepare": "deno run -A scripts/build/generate-integrations-module.ts && deno task generate && deno run -A scripts/build/prepare-framework-sources.ts",
     "build": "deno task build:prepare && deno run -A scripts/build/compile-binary.ts --output ./bin/veryfront",
+    "build:proxy-lock": "deno cache --node-modules-dir=none --lock scripts/build/proxy-deno.lock cli/proxy-main.ts",
     "build:npm": "deno run -A scripts/build/generate-integrations-module.ts && deno task generate && deno run --config=scripts/test.deno.json --frozen -A scripts/build/build-npm-dnt.ts",
     "release": "deno run -A scripts/release.ts",
     "test": "deno task generate && DENO_TESTING=1 VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --preload=src/schemas/_test-setup.ts --no-check --parallel --allow-all '--ignore=tests/e2e,tests/integration/compiled-binary-e2e.test.ts' --unstable-worker-options --unstable-net",
@@ -520,7 +525,7 @@
     "lint:ban-test-only": "deno run --allow-read scripts/lint/ban-test-only.ts",
     "lint:sanitizer-baseline": "deno run --allow-read scripts/lint/check-sanitizer-baseline.ts",
     "lint:skipped-tests": "deno run --allow-read scripts/lint/check-skipped-tests-baseline.ts",
-    "test:scripts": "deno test --config=scripts/test.deno.json --no-check --allow-read --allow-write --allow-run scripts/ci/publish-npm-packages.test.ts scripts/build/dnt-polyfill.test.ts scripts/build/generate-sbom.test.ts scripts/build/npm-dependency-sources.test.ts scripts/build/npm-extension-package-metadata.test.ts scripts/build/npm-package-metadata.test.ts scripts/build/npm-react-shims.test.ts scripts/build/prepare-framework-sources.test.ts scripts/docs/docs-coverage.test.ts scripts/docs/generate-api-reference.test.ts scripts/docs/guide-validation.test.ts scripts/lint/audit-core-deps.test.ts scripts/lint/audit-dependency-boundaries.test.ts scripts/lint/audit-extension-capabilities.test.ts scripts/lint/audit-extension-contracts.test.ts scripts/lint/audit-deps.test.ts scripts/lint/check-module-boundaries.test.ts scripts/lint/lint-config.test.ts scripts/lint/ban-test-only.test.ts scripts/lint/check-sanitizer-baseline.test.ts scripts/lint/check-skipped-tests-baseline.test.ts scripts/lint/check-test-typecheck-baseline.test.ts scripts/lint/check-coverage.test.ts scripts/security/audit-npm.test.ts scripts/security/submit-dependency-snapshot.test.ts && deno task test:tool-search-live",
+    "test:scripts": "deno test --config=scripts/test.deno.json --no-check --allow-read --allow-write --allow-run scripts/ci/publish-npm-packages.test.ts scripts/build/compile-binary.test.ts scripts/build/dnt-polyfill.test.ts scripts/build/generate-sbom.test.ts scripts/build/npm-dependency-sources.test.ts scripts/build/npm-extension-package-metadata.test.ts scripts/build/npm-package-metadata.test.ts scripts/build/npm-react-shims.test.ts scripts/build/prepare-framework-sources.test.ts scripts/docs/docs-coverage.test.ts scripts/docs/generate-api-reference.test.ts scripts/docs/guide-validation.test.ts scripts/lint/audit-core-deps.test.ts scripts/lint/audit-dependency-boundaries.test.ts scripts/lint/audit-extension-capabilities.test.ts scripts/lint/audit-extension-contracts.test.ts scripts/lint/audit-deps.test.ts scripts/lint/check-module-boundaries.test.ts scripts/lint/lint-config.test.ts scripts/lint/ban-test-only.test.ts scripts/lint/check-sanitizer-baseline.test.ts scripts/lint/check-skipped-tests-baseline.test.ts scripts/lint/check-test-typecheck-baseline.test.ts scripts/lint/check-coverage.test.ts scripts/security/audit-npm.test.ts scripts/security/submit-dependency-snapshot.test.ts && deno task test:tool-search-live",
     "test:sentry-runtime-packages": "deno test --config=scripts/test.deno.json --no-check --no-lock --allow-read --allow-write --allow-run --allow-env=DENO_DIR,HOME,XDG_CACHE_HOME,LOCALAPPDATA,USERPROFILE scripts/build/sentry-runtime-packages.test.ts",
     "test:tool-search-live": "VF_DISABLE_LRU_INTERVAL=1 deno test --no-check -A tests/agent/verify-tool-search-live.test.ts",
     "test:cross-runtime": "deno run --allow-all src/platform/compat/cross-runtime.test.ts",
@@ -541,7 +546,7 @@
     "sbom": "deno run --allow-read --allow-write scripts/build/generate-sbom.ts",
     "sbom:all": "deno run --allow-read --allow-write scripts/build/generate-sbom.ts --all-manifests",
     "submit-deps": "deno run --allow-read --allow-env --allow-net=api.github.com scripts/security/submit-dependency-snapshot.ts",
-    "audit": "deno run --allow-read --allow-run --allow-write scripts/security/audit-npm.ts"
+    "audit": "deno run --allow-read --allow-run --allow-write scripts/security/audit-npm.ts && npm --prefix storybook audit --package-lock-only --audit-level=high"
   },
   "lint": {
     "include": [

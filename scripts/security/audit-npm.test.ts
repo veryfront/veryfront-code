@@ -1,5 +1,6 @@
-import { assertEquals } from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
+import { parse } from "#std/yaml/parse";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { buildAuditPackageJson, collectNpmDependencies } from "./audit-npm.ts";
 
 describe("collectNpmDependencies", () => {
@@ -66,5 +67,29 @@ describe("buildAuditPackageJson", () => {
     });
     assertEquals(pkg.peerDependencies, undefined);
     assertEquals(pkg.peerDependenciesMeta, undefined);
+  });
+});
+
+describe("audit task", () => {
+  it("audits the independent Storybook package lock", async () => {
+    const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
+    const workflow = await Deno.readTextFile(
+      ".github/workflows/security-audit.yml",
+    );
+    const pullRequestPaths = (parse(workflow) as {
+      on: { pull_request: { paths: string[] } };
+    }).on.pull_request.paths;
+
+    assertEquals(
+      denoConfig.tasks.audit.includes(
+        "npm --prefix storybook audit --package-lock-only --audit-level=high",
+      ),
+      true,
+    );
+    assertEquals(pullRequestPaths.includes("storybook/package.json"), true);
+    assertEquals(
+      pullRequestPaths.includes("storybook/package-lock.json"),
+      true,
+    );
   });
 });
