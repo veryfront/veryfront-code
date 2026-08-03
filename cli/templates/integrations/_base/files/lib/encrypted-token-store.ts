@@ -81,6 +81,23 @@ export interface EncryptedKvBackend {
   withLock<T>(key: string, operation: () => Promise<T>): Promise<T>;
 }
 
+export interface EncryptedKvRotationScanBackend extends EncryptedKvBackend {
+  /**
+   * Iterate stored rows whose key starts with `prefix`. Use a backend-native
+   * bounded cursor or paginated scan; do not load an unbounded keyspace into
+   * memory before yielding.
+   */
+  scan(prefix: string): AsyncIterable<{ key: string; value: string }>;
+}
+
+export interface EncryptedTokenStoreRotationReport {
+  scannedRows: number;
+  currentKeyRows: number;
+  previousKeyRows: number;
+  unreadableRows: number;
+  complete: boolean;
+}
+
 const ENCRYPTION_KEY_ENV_VAR = "TOKEN_ENCRYPTION_KEY";
 const PREVIOUS_ENCRYPTION_KEY_ENV_VAR = "TOKEN_ENCRYPTION_KEY_PREVIOUS";
 const ENVELOPE_PREFIX = "vf-aes-gcm.v2:";
@@ -710,6 +727,44 @@ class EnvelopeCipher {
     );
   }
 
+  async classifyKeyUse(storageKey: string, stored: string): Promise<"current" | "previous"> {
+    if (typeof stored !== "string" || stored.length > MAX_ENCODED_LENGTH) {
+      throw new TypeError("Stored OAuth value must be a bounded string");
+    }
+    const keys = await this.#keys;
+    if (stored.startsWith(ENVELOPE_PREFIX)) {
+      const body = stored.slice(ENVELOPE_PREFIX.length);
+      const keyId = body.slice(0, KEY_ID_HEX_LENGTH);
+      if (!KEY_ID_PATTERN.test(keyId) || body[KEY_ID_HEX_LENGTH] !== ":") {
+        throw new TypeError("Encrypted OAuth value has a malformed key id");
+      }
+      const keyIndex = keys.findIndex((entry) => entry.keyId === keyId);
+      if (keyIndex < 0) {
+        throw new Error("Encrypted OAuth value was sealed with an unknown encryption key");
+      }
+      await this.#decrypt(
+        storageKey,
+        base64ToBytes(body.slice(KEY_ID_HEX_LENGTH + 1)),
+        keys[keyIndex]!.key,
+      );
+      return keyIndex === 0 ? "current" : "previous";
+    }
+    if (stored.startsWith(LEGACY_ENVELOPE_PREFIX)) {
+      const combined = base64ToBytes(stored.slice(LEGACY_ENVELOPE_PREFIX.length));
+      let lastFailure: unknown;
+      for (let index = 0; index < keys.length; index++) {
+        try {
+          await this.#decrypt(storageKey, combined, keys[index]!.key);
+          return index === 0 ? "current" : "previous";
+        } catch (failure) {
+          lastFailure = failure;
+        }
+      }
+      throw lastFailure;
+    }
+    throw new Error("Stored OAuth value is not in a vf-aes-gcm envelope format");
+  }
+
   async #decrypt(
     storageKey: string,
     combined: Uint8Array<ArrayBuffer>,
@@ -744,6 +799,68 @@ function unreadableTokenRowReason(failure: unknown): string {
   if (failure.message.includes("unknown encryption key")) return "unknown encryption key";
   if (failure.message.includes("failed authentication")) return "failed authentication";
   return "malformed encrypted row";
+}
+
+function unreadableStateRowReason(failure: unknown): string {
+  if (!(failure instanceof Error)) return "malformed encrypted state row";
+  if (failure.message.includes("unknown encryption key")) return "unknown encryption key";
+  if (failure.message.includes("failed authentication")) return "failed authentication";
+  return "malformed encrypted state row";
+}
+
+function assertRotationScanBackend(
+  backend: EncryptedKvRotationScanBackend,
+): asserts backend is EncryptedKvRotationScanBackend {
+  assertBackend(backend);
+  if (typeof backend.scan !== "function") {
+    throw new TypeError("Encrypted token store rotation checks require backend.scan()");
+  }
+}
+
+/**
+ * Count token and OAuth state rows that still require
+ * `TOKEN_ENCRYPTION_KEY_PREVIOUS`.
+ *
+ * Run this after rotating keys and after normal reconnect/refresh traffic has
+ * had a chance to rewrite rows. When `complete` is true, the scanned rows no
+ * longer require the previous key. Unreadable rows are counted separately and
+ * should be cleared or replaced before removing the previous key.
+ */
+export async function checkEncryptedTokenStoreRotation(
+  backend: EncryptedKvRotationScanBackend,
+): Promise<EncryptedTokenStoreRotationReport> {
+  assertRotationScanBackend(backend);
+  const cipher = new EnvelopeCipher(resolveEncryptionKeyRing());
+  const report: EncryptedTokenStoreRotationReport = {
+    scannedRows: 0,
+    currentKeyRows: 0,
+    previousKeyRows: 0,
+    unreadableRows: 0,
+    complete: false,
+  };
+
+  for (const prefix of [TOKENS_KEY_PREFIX, STATE_KEY_PREFIX]) {
+    for await (const row of backend.scan(prefix)) {
+      report.scannedRows++;
+      if (
+        !row || typeof row !== "object" || typeof row.key !== "string" ||
+        typeof row.value !== "string" || !row.key.startsWith(prefix)
+      ) {
+        report.unreadableRows++;
+        continue;
+      }
+      try {
+        const keyUse = await cipher.classifyKeyUse(row.key, row.value);
+        if (keyUse === "current") report.currentKeyRows++;
+        else report.previousKeyRows++;
+      } catch {
+        report.unreadableRows++;
+      }
+    }
+  }
+
+  report.complete = report.previousKeyRows === 0 && report.unreadableRows === 0;
+  return report;
 }
 
 /**
@@ -879,7 +996,12 @@ export function createEncryptedTokenStore(
       try {
         const row = requireStateRow(await cipher.open(key, raw));
         return isFreshState(row.createdAt, Date.now()) ? row : null;
-      } catch {
+      } catch (failure) {
+        console.warn(
+          "[Encrypted Token Store] Ignoring unreadable OAuth state row " +
+            `(${unreadableStateRowReason(failure)}). ` +
+            "The OAuth callback state is rejected.",
+        );
         return null;
       }
     },

@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import type { StoredOAuthState } from "veryfront/oauth";
 import {
+  checkEncryptedTokenStoreRotation,
   createEncryptedTokenStore,
   type EncryptedKvBackend,
   generateEncryptionKey,
@@ -122,6 +123,20 @@ function inspectableBackend(): EncryptedKvBackend & { rows: Map<string, string> 
     },
     withLock(key, operation) {
       return backend.withLock(key, operation);
+    },
+  };
+}
+
+function scanCapableBackend(): ReturnType<typeof inspectableBackend> & {
+  scan(prefix: string): AsyncIterable<{ key: string; value: string }>;
+} {
+  const backend = inspectableBackend();
+  return {
+    ...backend,
+    async *scan(prefix: string) {
+      for (const [key, value] of backend.rows) {
+        if (key.startsWith(prefix)) yield { key, value };
+      }
     },
   };
 }
@@ -464,6 +479,38 @@ describe("generated encrypted OAuth token store", () => {
     });
   });
 
+  it("reports idle rows that still require the previous key during rotation", async () => {
+    const backend = scanCapableBackend();
+    const retiringKey = Deno.env.get("TOKEN_ENCRYPTION_KEY");
+    if (!retiringKey) throw new Error("Expected a configured encryption key");
+    const store = createEncryptedTokenStore(backend);
+    await store.setTokens("github", "alice", { accessToken: "sealed-with-old-key" });
+
+    Deno.env.set("TOKEN_ENCRYPTION_KEY", generateEncryptionKey());
+    Deno.env.set("TOKEN_ENCRYPTION_KEY_PREVIOUS", retiringKey);
+    const rotated = createEncryptedTokenStore(backend);
+
+    assertEquals(await rotated.getTokens("github", "alice"), {
+      accessToken: "sealed-with-old-key",
+    });
+    assertEquals(await checkEncryptedTokenStoreRotation(backend), {
+      scannedRows: 1,
+      currentKeyRows: 0,
+      previousKeyRows: 1,
+      unreadableRows: 0,
+      complete: false,
+    });
+
+    await rotated.setTokens("github", "alice", { accessToken: "resealed" });
+    assertEquals(await checkEncryptedTokenStoreRotation(backend), {
+      scannedRows: 1,
+      currentKeyRows: 1,
+      previousKeyRows: 0,
+      unreadableRows: 0,
+      complete: true,
+    });
+  });
+
   it("keeps reading legacy v1 envelopes with any configured key", async () => {
     const backend = createMemoryKvBackend();
     const legacyKey = Deno.env.get("TOKEN_ENCRYPTION_KEY");
@@ -739,24 +786,65 @@ describe("generated encrypted OAuth token store", () => {
     assertEquals(await store.consumeState("state-without-hooks"), state);
   });
 
-  it("treats corrupted one-shot OAuth state as invalid", async () => {
+  it("warns with a sanitized category for malformed consumed OAuth state rows", async () => {
+    const backend = inspectableBackend();
+    const keyHex = Deno.env.get("TOKEN_ENCRYPTION_KEY");
+    if (!keyHex) throw new Error("Expected a configured encryption key");
+    const storageKey = 'veryfront:oauth:v1:state:["malformed-state"]';
+    const secret = "SENSITIVE_STATE_PAYLOAD_MUST_NOT_BE_LOGGED";
+    await backend.set(
+      storageKey,
+      await sealLegacyV1Plaintext(keyHex, storageKey, secret),
+    );
+    const store = createEncryptedTokenStore(backend);
+
+    using captured = captureWarnings();
+    assertEquals(await store.consumeState("malformed-state"), null);
+    assertEquals(captured.warnings.length, 1);
+    assertEquals(captured.warnings[0]?.includes("malformed encrypted state row"), true);
+    assertEquals(captured.warnings[0]?.includes(secret), false);
+    assertEquals(captured.warnings[0]?.includes("malformed-state"), false);
+  });
+
+  it("warns with sanitized categories for tampered or wrong-key consumed OAuth state rows", async () => {
     const backend = inspectableBackend();
     const store = createEncryptedTokenStore(backend);
-    await store.setState("corrupted-state", oauthState("alice"));
+    await store.setState("corrupted-state", {
+      ...oauthState("alice"),
+      metadata: { tenantId: "sensitive-tenant" },
+    });
+    await store.setState("wrong-key-state", oauthState("bob"));
 
-    const entry = [...backend.rows.entries()][0];
-    if (!entry) throw new Error("Expected a stored state row");
-    const [key, stored] = entry;
+    const corruptedKey = 'veryfront:oauth:v1:state:["corrupted-state"]';
+    const stored = backend.rows.get(corruptedKey);
+    if (!stored) throw new Error("Expected a stored state row");
     const { header, body } = splitEnvelope(stored);
     const index = 20;
     const replacement = body[index] === "A" ? "B" : "A";
     await backend.set(
-      key,
+      corruptedKey,
       header + body.slice(0, index) + replacement + body.slice(index + 1),
     );
 
+    const wrongKeyStore = createEncryptedTokenStore(backend);
+    Deno.env.set("TOKEN_ENCRYPTION_KEY", generateEncryptionKey());
+    const rotatedWithoutPrevious = createEncryptedTokenStore(backend);
+
+    using captured = captureWarnings();
+    assertEquals(await wrongKeyStore.consumeState("corrupted-state"), null);
+    assertEquals(await rotatedWithoutPrevious.consumeState("wrong-key-state"), null);
     assertEquals(await store.consumeState("corrupted-state"), null);
-    assertEquals(await store.consumeState("corrupted-state"), null);
+    assertEquals(captured.warnings.length, 2);
+    assertEquals(captured.warnings[0]?.includes("failed authentication"), true);
+    assertEquals(captured.warnings[1]?.includes("unknown encryption key"), true);
+    for (const warning of captured.warnings) {
+      assertEquals(warning.includes("corrupted-state"), false);
+      assertEquals(warning.includes("wrong-key-state"), false);
+      assertEquals(warning.includes("alice"), false);
+      assertEquals(warning.includes("bob"), false);
+      assertEquals(warning.includes("sensitive-tenant"), false);
+      assertEquals(warning.includes("https://app.example.com"), false);
+    }
   });
 
   it("rejects state rows outside the acceptance window", async () => {
