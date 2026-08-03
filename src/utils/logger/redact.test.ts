@@ -34,6 +34,8 @@ describe("logger/redact", () => {
           "privateKey",
           "credential",
           "auth",
+          "authHeader",
+          "auth.header",
           "authorization",
           "Authorization",
           "Cookie",
@@ -573,6 +575,14 @@ describe("logger/redact", () => {
       assertEquals(
         sanitizeUrlCredentials("auth='synthetic-secret' warning remains visible"),
         `auth='${REDACTED}' warning remains visible`,
+      );
+      assertEquals(
+        sanitizeUrlCredentials("authHeader='synthetic-secret' warning remains visible"),
+        `authHeader='${REDACTED}' warning remains visible`,
+      );
+      assertEquals(
+        sanitizeUrlCredentials("auth.header='synthetic-secret' warning remains visible"),
+        `auth.header='${REDACTED}' warning remains visible`,
       );
     });
 

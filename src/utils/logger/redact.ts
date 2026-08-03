@@ -273,6 +273,7 @@ const SENSITIVE_KEY_PATTERNS = [
   "accesskey",
   "privatekey",
   "credential",
+  "authheader",
   "authorization",
   "cookie",
   "bearer",

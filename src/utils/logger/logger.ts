@@ -24,8 +24,11 @@ import {
 import { stringifyRedactedJson } from "./serialization.ts";
 
 const apply = Reflect.apply;
+const arrayPush = Array.prototype.push;
 const arrayIsArray = Array.isArray;
 const NativeConsole = console;
+const NativeDate = Date;
+const dateToISOString = Date.prototype.toISOString;
 const NativePerformance = performance;
 const performanceNow = Performance.prototype.now;
 const numberRound = Math.round;
@@ -283,6 +286,10 @@ function sanitizeLogString(value: unknown, fallback: string): string {
   }
 }
 
+function currentIsoTimestamp(): string {
+  return apply(dateToISOString, new NativeDate(), []) as string;
+}
+
 function snapshotLogContext(context: unknown): Record<string, unknown> {
   try {
     const snapshot = redactForSerialization(context);
@@ -459,7 +466,7 @@ class ConsoleLogger implements Logger {
 
   private createEmergencyEntry(level: LogEntry["level"]): LogEntry {
     const entry: LogEntry = {
-      timestamp: new Date().toISOString(),
+      timestamp: currentIsoTimestamp(),
       level,
       service: apply(
         stringToLowerCase,
@@ -479,7 +486,7 @@ class ConsoleLogger implements Logger {
     const mergedContext: Record<string, unknown> = { ...this.boundContext, ...context };
 
     const entry: LogEntry = {
-      timestamp: new Date().toISOString(),
+      timestamp: currentIsoTimestamp(),
       level,
       service: apply(stringToLowerCase, this.prefix, []) as string,
       veryfrontVersion: RUNTIME_VERSION,
@@ -676,11 +683,18 @@ class ConsoleLogger implements Logger {
         }
       }
 
+      // Snapshot before invoking callbacks. Native Set iterators observe values
+      // deleted and reinserted during iteration, which can otherwise invoke one
+      // subscriber repeatedly (or keep a single log call alive indefinitely).
+      const subscribers: LogRecordEmitter[] = [];
       const iterator = apply(setValues, logRecordSubscribers, []) as SetIterator<LogRecordEmitter>;
       while (true) {
         const next = apply(setIteratorNext, iterator, []) as IteratorResult<LogRecordEmitter>;
         if (next.done) break;
-        const subscriber = next.value;
+        apply(arrayPush, subscribers, [next.value]);
+      }
+      for (let index = 0; index < subscribers.length; index++) {
+        const subscriber = subscribers[index]!;
         if (subscriber === legacyLogRecordEmitter) continue;
         try {
           subscriber(emittedEntry);

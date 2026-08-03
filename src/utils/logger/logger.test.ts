@@ -162,6 +162,53 @@ describe("logger", () => {
     assertEquals(messages, ["captured subscriber iteration"]);
   });
 
+  it("delivers one record once when a subscriber reinserts itself", () => {
+    const originalLog = console.log;
+    let calls = 0;
+    let unsubscribe = () => {};
+    const subscriber = () => {
+      calls++;
+      unsubscribe();
+      unsubscribe = __subscribeLogRecordEmitter(subscriber);
+    };
+
+    console.log = () => {};
+    unsubscribe = __subscribeLogRecordEmitter(subscriber);
+    try {
+      getBaseLogger("SERVER").info("single delivery");
+    } finally {
+      unsubscribe();
+      console.log = originalLog;
+    }
+
+    assertEquals(calls, 1);
+  });
+
+  it("keeps emitting after the Date constructor and prototype method change", () => {
+    const { getOutput, restore } = captureConsoleLog();
+    const OriginalDate = globalThis.Date;
+    const originalToISOString = OriginalDate.prototype.toISOString;
+
+    try {
+      withJsonLogFormat(() => {
+        globalThis.Date = function ReplacementDate() {
+          throw new Error("project code replaced Date");
+        } as unknown as DateConstructor;
+        OriginalDate.prototype.toISOString = () => {
+          throw new Error("project code replaced Date serialization");
+        };
+        getBaseLogger("SERVER").info("captured timestamp intrinsics");
+      });
+    } finally {
+      globalThis.Date = OriginalDate;
+      OriginalDate.prototype.toISOString = originalToISOString;
+      restore();
+    }
+
+    const entry = JSON.parse(getOutput()) as LogEntry;
+    assertEquals(entry.message, "captured timestamp intrinsics");
+  });
+
   it("uses captured case conversion in normal and emergency logging", () => {
     const { getOutput, restore } = captureConsoleLog();
     const originalToLowerCase = String.prototype.toLowerCase;
