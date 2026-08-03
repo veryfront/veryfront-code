@@ -37,12 +37,15 @@ jobs:
         check: [format, lint, typecheck]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
       - name: Run ${{ matrix.check }}
         run: |
           case "${{ matrix.check }}" in
             format) deno fmt --check ;;
-            lint) deno task lint && deno task lint:core-deps && deno task lint:dependency-boundaries && deno task lint:module-boundaries && deno task lint:extension-contracts && deno task lint:extension-capabilities && deno task lint:ban-test-only && deno task lint:sanitizer-baseline && deno task lint:skipped-tests && deno task lint:chat-ratchets && deno task lint:esm-sh-codemod && deno task lint:test-typecheck && deno task storybook:check && deno task docs:api-reference:check ;;
+            lint) deno task lint && deno task lint:core-deps && deno task lint:dependency-boundaries && deno task lint:module-boundaries && deno task lint:extension-contracts && deno task lint:extension-capabilities && deno task lint:ban-test-only && deno task lint:sanitizer-baseline && deno task lint:skipped-tests && deno task lint:chat-ratchets && deno task lint:esm-sh-codemod && deno task lint:test-typecheck && deno task storybook:check && deno task docs:api-reference:check && deno test --frozen --config=scripts/test.deno.json --no-check --allow-read --allow-write scripts/ci/setup-deno-workflow.test.ts ;;
             typecheck) deno task typecheck ;;
           esac
 
@@ -57,7 +60,10 @@ jobs:
     name: tests (integration)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 10
         with:
           warm-cache: "true"
           warm-redis-cache: "true"
@@ -85,10 +91,10 @@ jobs:
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup-deno
         with:
-          warm-cache: "true"
-          warm-redis-cache: "true"
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
       - name: Run unit coverage shard
         id: coverage
         run: |
@@ -123,7 +129,7 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     name: coverage gate
     needs: [coverage-shards]
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
@@ -137,7 +143,10 @@ jobs:
             exit 1
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
       - name: Download unit coverage lcov files
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -159,9 +168,10 @@ jobs:
     name: tests (rsc browser e2e)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup-deno
         with:
-          warm-cache: "true"
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
       - name: Configure apt retries and mirrors
         run: |
           sudo sed -i \
@@ -175,30 +185,39 @@ jobs:
             echo 'Acquire::https::Timeout "30";'
           } | sudo tee /etc/apt/apt.conf.d/99veryfront-ci-retries
       - name: Install Chromium
+        timeout-minutes: 15
         run: |
+          readonly install_attempts=2
+          readonly install_timeout_minutes=5
+          readonly install_kill_grace_seconds=15
+          readonly apt_lock_attempts=12
+          readonly apt_lock_sleep_seconds=5
+          readonly retry_backoff_seconds=20
+
           wait_for_apt_locks() {
-            for _ in $(seq 1 60); do
+            for _ in $(seq 1 "${apt_lock_attempts}"); do
               if ! sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; then
                 return 0
               fi
-              sleep 5
+              sleep "${apt_lock_sleep_seconds}"
             done
             return 1
           }
 
-          for attempt in 1 2 3; do
-            wait_for_apt_locks
-            timeout 10m deno run -A npm:playwright install --with-deps chromium && exit 0
+          for attempt in $(seq 1 "${install_attempts}"); do
+            if ! wait_for_apt_locks; then
+              echo "::error::Timed out waiting for apt/dpkg locks"
+              exit 1
+            fi
+            timeout --signal=TERM --kill-after="${install_kill_grace_seconds}s" "${install_timeout_minutes}m" \
+              deno run -A npm:playwright install --with-deps chromium && exit 0
             status=$?
 
-            if [ "$attempt" -eq 3 ]; then
+            if [ "$attempt" -eq "${install_attempts}" ]; then
               exit "$status"
             fi
 
-            wait_for_apt_locks || true
-            sudo apt-get clean || true
-            sudo rm -rf /var/lib/apt/lists/* || true
-            sleep $((attempt * 20))
+            sleep "${retry_backoff_seconds}"
           done
       - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
         with:
@@ -218,9 +237,10 @@ jobs:
     name: tests (binary e2e)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup-deno
         with:
-          warm-cache: "true"
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
       - name: Configure apt retries and mirrors
         run: |
           sudo sed -i \
@@ -234,30 +254,39 @@ jobs:
             echo 'Acquire::https::Timeout "30";'
           } | sudo tee /etc/apt/apt.conf.d/99veryfront-ci-retries
       - name: Install Chromium
+        timeout-minutes: 15
         run: |
+          readonly install_attempts=2
+          readonly install_timeout_minutes=5
+          readonly install_kill_grace_seconds=15
+          readonly apt_lock_attempts=12
+          readonly apt_lock_sleep_seconds=5
+          readonly retry_backoff_seconds=20
+
           wait_for_apt_locks() {
-            for _ in $(seq 1 60); do
+            for _ in $(seq 1 "${apt_lock_attempts}"); do
               if ! sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; then
                 return 0
               fi
-              sleep 5
+              sleep "${apt_lock_sleep_seconds}"
             done
             return 1
           }
 
-          for attempt in 1 2 3; do
-            wait_for_apt_locks
-            timeout 10m deno run -A npm:playwright install --with-deps chromium && exit 0
+          for attempt in $(seq 1 "${install_attempts}"); do
+            if ! wait_for_apt_locks; then
+              echo "::error::Timed out waiting for apt/dpkg locks"
+              exit 1
+            fi
+            timeout --signal=TERM --kill-after="${install_kill_grace_seconds}s" "${install_timeout_minutes}m" \
+              deno run -A npm:playwright install --with-deps chromium && exit 0
             status=$?
 
-            if [ "$attempt" -eq 3 ]; then
+            if [ "$attempt" -eq "${install_attempts}" ]; then
               exit "$status"
             fi
 
-            wait_for_apt_locks || true
-            sudo apt-get clean || true
-            sudo rm -rf /var/lib/apt/lists/* || true
-            sleep $((attempt * 20))
+            sleep "${retry_backoff_seconds}"
           done
       - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
         with:
@@ -281,7 +310,10 @@ jobs:
     name: tests (npm install smoke)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
         with:
           warm-cache: "true"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
@@ -302,7 +334,10 @@ jobs:
     name: tests (sentry runtime packages)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
         with:
           warm-cache: "true"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
@@ -319,12 +354,15 @@ jobs:
   tests-split-mode:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.RUN_SPLIT_MODE_TEST == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     name: tests (split mode)
     continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
 
       - name: Compile binary
         run: deno task build
@@ -383,6 +421,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Detect release type
         id: check
@@ -421,6 +460,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
       - run: deno task build:prepare
       - name: Verify proxy dependency lock is current
         run: |
@@ -486,7 +526,10 @@ jobs:
             profile: full
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
 
       - run: deno task build:prepare
 
@@ -550,8 +593,11 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
@@ -680,6 +726,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Read version
         id: version
@@ -723,6 +771,7 @@ jobs:
           fi
 
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
@@ -751,10 +800,12 @@ jobs:
       - name: Create git tag
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="v${VERSION}"
           git tag "${TAG}"
-          git push origin "${TAG}"
+          # Checkout does not persist credentials; authenticate only this push.
+          git push "https://x-access-token:${SOURCE_REPO_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "${TAG}"
           echo "Created tag ${TAG}"
 
       - name: Create GitHub releases
@@ -842,6 +893,8 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Create Homebrew tap GitHub App token
         id: homebrew-app-token
