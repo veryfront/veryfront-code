@@ -15,37 +15,6 @@ import {
   type WorkerEgressPinnedFetch,
 } from "#veryfront/security/sandbox/worker-egress-guard.ts";
 
-const IntrinsicURL = URL;
-const ObjectFreeze = Object.freeze;
-const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-const ReflectApply = Reflect.apply;
-const RegExpPrototypeTest = RegExp.prototype.test;
-const StringPrototypeEndsWith = String.prototype.endsWith;
-const StringPrototypeIncludes = String.prototype.includes;
-const StringPrototypeSlice = String.prototype.slice;
-const StringPrototypeStartsWith = String.prototype.startsWith;
-const StringPrototypeToLowerCase = String.prototype.toLowerCase;
-
-function getUrlStringGetter(property: string): (value: URL) => string {
-  const descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, Object, [
-    IntrinsicURL.prototype,
-    property,
-  ]) as PropertyDescriptor | undefined;
-  if (typeof descriptor?.get !== "function") {
-    throw new TypeError(`URL.prototype.${property} getter is unavailable`);
-  }
-  const getter = descriptor.get;
-  return (value) => ReflectApply(getter, value, []) as string;
-}
-
-const getUrlHash = getUrlStringGetter("hash");
-const getUrlHostname = getUrlStringGetter("hostname");
-const getUrlHref = getUrlStringGetter("href");
-const getUrlPassword = getUrlStringGetter("password");
-const getUrlProtocol = getUrlStringGetter("protocol");
-const getUrlSearch = getUrlStringGetter("search");
-const getUrlUsername = getUrlStringGetter("username");
-
 export const HOST_INTERNAL_EGRESS_OVERRIDE_ENV = "VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS";
 
 export class OutboundRequestBlockedError extends Error {
@@ -71,7 +40,6 @@ export interface OutboundFetchBoundary {
     options?: GuardedOutboundFetchOptions,
   ): Promise<Response>;
   createOriginBoundFetch(baseUrl: string): typeof fetch;
-  createTrustedEndpointFetch(endpoint: string): typeof fetch;
 }
 
 // Capture the host transport before tenant code can replace globalThis.fetch.
@@ -83,10 +51,20 @@ function getTrustedHostTransport(): OutboundFetchTransport {
     return outboundFetchTransportForTests;
   }
 
-  // Omitting pinnedFetch is deliberate: Node and Bun then use the native
-  // address-pinned transport, while Deno uses its pinned SOCKS client. Tests
-  // must opt into a deterministic replacement through the explicit seam.
-  return { fetch: capturedHostFetch };
+  if (getHostEnv("DENO_TESTING") !== "1") {
+    // Omitting pinnedFetch is deliberate: Node and Bun then use the native
+    // address-pinned transport, while Deno uses its pinned SOCKS client.
+    return { fetch: capturedHostFetch };
+  }
+
+  // Tests explicitly opt into their current deterministic fetch replacement.
+  // The pinned seam receives only addresses that the egress guard validated,
+  // and production never selects this transport.
+  const fetchImpl = globalThis.fetch.bind(globalThis);
+  return {
+    fetch: fetchImpl,
+    pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
+  };
 }
 
 async function fetchWithHostTransport(
@@ -128,7 +106,7 @@ function snapshotOutboundFetchTransport(
   if (transport.pinnedFetch !== undefined && typeof transport.pinnedFetch !== "function") {
     throw new TypeError("Outbound pinned transport must be a function");
   }
-  return ObjectFreeze({
+  return Object.freeze({
     fetch: transport.fetch,
     pinnedFetch: transport.pinnedFetch,
   });
@@ -188,83 +166,6 @@ function createOriginBoundFetchWithTransport(
   };
 }
 
-/** Normalize and validate an operator-owned trusted endpoint to a primitive href. */
-export function normalizeTrustedEndpoint(value: string): string {
-  if (typeof value !== "string") {
-    throw new TypeError("Trusted endpoint must be a string");
-  }
-  const endpoint = new IntrinsicURL(value);
-  const protocol = getUrlProtocol(endpoint);
-  if (protocol !== "http:" && protocol !== "https:") {
-    throw new TypeError("Trusted endpoint must use http: or https:");
-  }
-  if (getUrlUsername(endpoint) || getUrlPassword(endpoint)) {
-    throw new TypeError("Trusted endpoint must not include credentials");
-  }
-  if (getUrlSearch(endpoint) || getUrlHash(endpoint)) {
-    throw new TypeError("Trusted endpoint must not include a query or fragment");
-  }
-
-  let rawHostname = getUrlHostname(endpoint);
-  if (
-    ReflectApply(StringPrototypeStartsWith, rawHostname, ["["]) &&
-    ReflectApply(StringPrototypeEndsWith, rawHostname, ["]"])
-  ) {
-    rawHostname = ReflectApply(StringPrototypeSlice, rawHostname, [1, -1]) as string;
-  }
-  rawHostname = ReflectApply(StringPrototypeToLowerCase, rawHostname, []) as string;
-  const hostname = ReflectApply(StringPrototypeEndsWith, rawHostname, ["."])
-    ? ReflectApply(StringPrototypeSlice, rawHostname, [0, -1]) as string
-    : rawHostname;
-  if (
-    hostname === "localhost" ||
-    ReflectApply(StringPrototypeEndsWith, hostname, [".localhost"]) ||
-    ReflectApply(RegExpPrototypeTest, /^[0-9.]+$/u, [hostname]) ||
-    ReflectApply(StringPrototypeIncludes, hostname, [":"])
-  ) {
-    throw new TypeError("Trusted endpoint must use a non-local hostname");
-  }
-  return getUrlHref(endpoint);
-}
-
-function createTrustedEndpointFetchWithTransport(
-  endpointValue: string,
-  transport: OutboundFetchTransport,
-): typeof fetch {
-  const trustedHref = normalizeTrustedEndpoint(endpointValue);
-
-  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    let inputHref: string | undefined;
-    if (typeof input === "string") {
-      inputHref = input;
-    } else {
-      try {
-        inputHref = getUrlHref(input as URL);
-      } catch {
-        // The intrinsic URL getter performs a no-hook brand check. Request
-        // objects and forged URL-like values remain rejected without reading
-        // caller-controlled properties or mutable Symbol.hasInstance hooks.
-      }
-    }
-    if (inputHref !== trustedHref) {
-      throw new OutboundRequestBlockedError(
-        "Control-plane request blocked: destination does not match the trusted endpoint",
-      );
-    }
-
-    const response = await transport.fetch(trustedHref, {
-      ...init,
-      redirect: "error",
-    });
-    if (response.status >= 300 && response.status < 400) {
-      throw new OutboundRequestBlockedError(
-        "Control-plane request blocked: unexpected redirect",
-      );
-    }
-    return response;
-  };
-}
-
 /**
  * Create an outbound boundary from explicit host-owned transport primitives.
  *
@@ -275,7 +176,7 @@ export function createOutboundFetchBoundary(
   transport: OutboundFetchTransport,
 ): OutboundFetchBoundary {
   const captured = snapshotOutboundFetchTransport(transport);
-  return ObjectFreeze({
+  return Object.freeze({
     guardedFetch(
       input: RequestInfo | URL,
       init?: RequestInit,
@@ -285,9 +186,6 @@ export function createOutboundFetchBoundary(
     },
     createOriginBoundFetch(baseUrl: string): typeof fetch {
       return createOriginBoundFetchWithTransport(baseUrl, captured);
-    },
-    createTrustedEndpointFetch(endpoint: string): typeof fetch {
-      return createTrustedEndpointFetchWithTransport(endpoint, captured);
     },
   });
 }

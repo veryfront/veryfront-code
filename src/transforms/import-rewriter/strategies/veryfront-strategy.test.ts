@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../../release-assets/constants.ts";
@@ -15,7 +15,6 @@ import {
 } from "#veryfront/transforms/esm/package-registry.ts";
 import type { ImportSpecifierInfo, RewriteContext } from "../types.ts";
 import { VeryfrontStrategy } from "./veryfront-strategy.ts";
-import { VeryfrontError } from "#veryfront/errors";
 
 function makeCtx(overrides: Partial<RewriteContext> = {}): RewriteContext {
   return {
@@ -193,37 +192,6 @@ describe("VeryfrontStrategy", () => {
   });
 
   describe("internal import-map resolution", () => {
-    it("rejects project imports of private host capability modules", () => {
-      for (
-        const specifier of [
-          "#veryfront/agent/hosted/internal/control-plane-mcp-source.ts",
-          "#veryfront/agent/hosted/x/../internal/control-plane-mcp-source.ts",
-          "#veryfront/agent/hosted/%2e%2e/hosted/internal/control-plane-mcp-source.ts",
-          "#veryfront/agent/hosted%2Finternal%2Fcontrol-plane-mcp-source.ts",
-          "#veryfront/agent\\hosted\\internal\\control-plane-mcp-source.ts",
-          "#veryfront/agent/hosted/Internal/control-plane-mcp-source.ts",
-          "#veryfront/agent/hosted/internal./control-plane-mcp-source.ts",
-          "#veryfront/agent/hosted/x/..%20/internal/control-plane-mcp-source.ts",
-          "#veryfront/agent/hosted/.%20/internal/control-plane-mcp-source.ts",
-          "#veryfront/tool/internal/remote-mcp-transport.ts",
-          "#veryfront/tool/x/../internal/remote-mcp-transport.ts",
-          "#veryfront/tool/Internal/remote-mcp-transport.ts",
-        ]
-      ) {
-        let thrown: unknown;
-        try {
-          strategy.rewrite(makeInfo(specifier), makeCtx({ target: "ssr" }));
-        } catch (error) {
-          thrown = error;
-        }
-        assertInstanceOf(thrown, VeryfrontError);
-        assertEquals(thrown.slug, "security-violation");
-        assert(
-          thrown.message.includes("Private Veryfront host module cannot be imported"),
-        );
-      }
-    });
-
     it("should rewrite #deno-config to the framework-scoped browser stub", () => {
       const result = strategy.rewrite(
         makeInfo("#deno-config"),

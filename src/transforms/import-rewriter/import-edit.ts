@@ -128,126 +128,15 @@ function restoreMaskedUrls(result: string, urlMap: Map<string, string>): string 
   return result;
 }
 
-function buildComputedDynamicImportHelper(
-  name: string,
-  isSSR: boolean,
-  guardFrameworkImports: boolean,
-  guardFilesystemImports: boolean,
-): string {
-  const frameworkImportGuard = guardFrameworkImports
-    ? `
-  const specifier = typeof value === "string" ? value : \`\${value}\`;
-  const frameworkPrefix = "#veryfront";
-  let isFrameworkImport = specifier.length >= frameworkPrefix.length;
-  for (let index = 0; isFrameworkImport && index < frameworkPrefix.length; index++) {
-    if (specifier[index] !== frameworkPrefix[index]) isFrameworkImport = false;
-  }
-  if (isFrameworkImport) {
-    const separator = specifier[frameworkPrefix.length];
-    isFrameworkImport = separator === undefined || separator === "/" || separator === "\\\\" || separator === "%";
-  }
-  if (isFrameworkImport) {
-    return ${name}RejectedSpecifier("Computed #veryfront imports must use a string literal");
-  }
-  if (${guardFilesystemImports} && ${name}IsFilesystemSpecifier(specifier)) {
-    return ${name}RejectedSpecifier("Computed filesystem imports must use a string literal");
-  }`
-    : `
-  const specifier = value;
-  if (typeof specifier !== "string") return specifier;`;
+function buildComputedDynamicImportHelper(name: string, isSSR: boolean): string {
   return `
-function ${name}HasPrefixAt(value, prefix, offset) {
-  if (value.length - offset < prefix.length) return false;
-  for (let index = 0; index < prefix.length; index++) {
-    if (value[offset + index] !== prefix[index]) return false;
-  }
-  return true;
-}
-function ${name}TrimLeadingSpecifierControls(value) {
-  let start = 0;
-  while (start < value.length && value.charCodeAt(start) <= 0x20) start++;
-  return start === 0 ? value : value.slice(start);
-}
-function ${name}IsUnsafePathSegment(value, start, end) {
-  const segmentLength = end - start;
-  return (segmentLength === 1 && value[start] === ".") ||
-    (segmentLength === 2 && value[start] === "." && value[start + 1] === ".");
-}
-function ${name}IsSafeModulePath(value, offset) {
-  const modulePrefix = "/_vf_modules/";
-  if (!${name}HasPrefixAt(value, modulePrefix, offset)) return false;
-
-  let segmentStart = offset + 1;
-  for (let index = offset; index < value.length; index++) {
-    const character = value[index];
-    if (character === "\\\\") return false;
-    if (character === "%") {
-      const high = value[index + 1];
-      const low = value[index + 2];
-      const encodedDotOrSlash = high === "2" &&
-        (low === "e" || low === "E" || low === "f" || low === "F");
-      const encodedBackslash = high === "5" && (low === "c" || low === "C");
-      if (encodedDotOrSlash || encodedBackslash) return false;
-    }
-    if (character === "?" || character === "#" || character === "/") {
-      if (${name}IsUnsafePathSegment(value, segmentStart, index)) return false;
-      if (character === "?" || character === "#") break;
-      segmentStart = index + 1;
-    }
-  }
-  return !${name}IsUnsafePathSegment(value, segmentStart, value.length);
-}
-function ${name}IsFilesystemSpecifier(value) {
-  value = ${name}TrimLeadingSpecifierControls(value);
-  const isFileUrl = value.length >= 5 &&
-    (value[0] === "f" || value[0] === "F") &&
-    (value[1] === "i" || value[1] === "I") &&
-    (value[2] === "l" || value[2] === "L") &&
-    (value[3] === "e" || value[3] === "E") &&
-    value[4] === ":";
-  if (isFileUrl || value[0] === "\\\\") return true;
-  if (value[0] === "/") {
-    if (value[1] !== "/") return !${name}IsSafeModulePath(value, 0);
-    if (
-      value[2] !== undefined && value[2] !== "/" && value[2] !== "\\\\" &&
-      value[2] !== "?" && value[2] !== "#"
-    ) return false;
-    let pathStart = 2;
-    while (
-      pathStart < value.length && value[pathStart] !== "/" &&
-      value[pathStart] !== "\\\\" && value[pathStart] !== "?" && value[pathStart] !== "#"
-    ) pathStart++;
-    return !${name}IsSafeModulePath(value, pathStart);
-  }
-
-  const first = value[0];
-  const isDriveLetter = first !== undefined &&
-    ((first >= "a" && first <= "z") || (first >= "A" && first <= "Z"));
-  return isDriveLetter && value[1] === ":" &&
-    (value[2] === "/" || value[2] === "\\\\");
-}
-${
-    guardFrameworkImports
-      ? `function ${name}RejectedSpecifier(message) {
-  return {
-    __proto__: null,
-    toString() {
-      throw new TypeError(message);
-    },
-    valueOf() {
-      throw new TypeError(message);
-    },
-  };
-}`
-      : ""
-  }
 function ${name}(value, parentUrl, modulePath) {
-  ${frameworkImportGuard}
-  const isRelative = specifier.startsWith("./") || specifier.startsWith("../");
-  const isProjectAlias = specifier.startsWith("@/");
-  const isRootModule = specifier.startsWith("/_vf_modules/");
-  const isAbsoluteUrl = /^https?:\\/\\//i.test(specifier) || specifier.startsWith("//");
-  if (!isRelative && !isProjectAlias && !isRootModule && !isAbsoluteUrl) return specifier;
+  if (typeof value !== "string") return value;
+  const isRelative = value.startsWith("./") || value.startsWith("../");
+  const isProjectAlias = value.startsWith("@/");
+  const isRootModule = value.startsWith("/_vf_modules/");
+  const isAbsoluteUrl = /^https?:\\/\\//i.test(value) || value.startsWith("//");
+  if (!isRelative && !isProjectAlias && !isRootModule && !isAbsoluteUrl) return value;
 
   try {
     const parent = new URL(parentUrl);
@@ -259,7 +148,7 @@ function ${name}(value, parentUrl, modulePath) {
       : queryPins.length === 1
       ? queryPins[0]
       : undefined;
-    if (!cacheKey || !/^on:[A-Za-z0-9._-]+$/.test(cacheKey)) return specifier;
+    if (!cacheKey || !/^on:[A-Za-z0-9._-]+$/.test(cacheKey)) return value;
 
     const modulePrefix = "/_vf_modules/";
     const anchor = modulePrefix + "_pins/" + encodeURIComponent(cacheKey) + "/";
@@ -270,17 +159,17 @@ function ${name}(value, parentUrl, modulePath) {
       ? anchor + crossProjectMatch[1]
       : undefined;
     if (isProjectAlias) {
-      if (!crossProjectRoot) return specifier;
-      const target = new URL(crossProjectRoot + specifier.slice(2), parent.origin);
+      if (!crossProjectRoot) return value;
+      const target = new URL(crossProjectRoot + value.slice(2), parent.origin);
       ${isSSR ? 'target.searchParams.set("ssr", "true");' : ""}
       return target.pathname.startsWith(crossProjectRoot)
         ? target.pathname + target.search + target.hash
         : modulePrefix + "_pins/invalid";
     }
 
-    const target = new URL(specifier, isRelative ? base : parent);
-    if (target.origin !== parent.origin) return specifier;
-    if (!target.pathname.startsWith(modulePrefix)) return specifier;
+    const target = new URL(value, isRelative ? base : parent);
+    if (target.origin !== parent.origin) return value;
+    if (!target.pathname.startsWith(modulePrefix)) return value;
 
     if (isRelative) {
       const requiredRoot = crossProjectRoot ?? anchor;
@@ -312,33 +201,24 @@ function ${name}(value, parentUrl, modulePath) {
     ${isSSR ? 'target.searchParams.set("ssr", "true");' : ""}
     return target.pathname + target.search + target.hash;
   } catch {
-    return specifier;
+    return value;
   }
 }`.trim();
 }
 
 /**
- * Guard computed framework imports and apply dependency pinning when enabled.
+ * Wrap computed browser imports without changing native import options.
  *
  * es-module-lexer 2.3 exposes `s..e` as the first-argument expression even
- * when a second import-options argument exists. Values are coerced exactly once
- * so a caller-controlled coercion cannot present a public value to the guard and
- * a private value to the native import operation.
+ * when a second import-options argument exists. Non-string values are returned
+ * untouched so the native import operation retains responsibility for coercion.
  */
 export function applyComputedDynamicImportPinning(
   parsed: ParsedImportEdits,
   modulePath?: string,
-  options: {
-    ssr?: boolean;
-    guardFrameworkImports?: boolean;
-    guardFilesystemImports?: boolean;
-  } = {},
+  options: { ssr?: boolean } = {},
 ): string {
-  // A project can write the marker itself, so it is not proof that the
-  // security guard came from this transformer. Re-wrap guarded imports on
-  // every pass; nested guards are safe and keep forged markers fail-closed.
   const pending = parsed.computedDynamicImports.filter((imp) =>
-    options.guardFrameworkImports === true ||
     !parsed.maskedCode
       .slice(imp.dynamicImportStart, imp.start)
       .includes(COMPUTED_DYNAMIC_IMPORT_MARKER)
@@ -356,14 +236,7 @@ export function applyComputedDynamicImportPinning(
     result = result.slice(0, imported.start) + replacement + result.slice(imported.end);
   }
 
-  result += `\n${
-    buildComputedDynamicImportHelper(
-      helperName,
-      options.ssr === true,
-      options.guardFrameworkImports === true,
-      options.guardFilesystemImports === true,
-    )
-  }\n`;
+  result += `\n${buildComputedDynamicImportHelper(helperName, options.ssr === true)}\n`;
   return restoreMaskedUrls(result, parsed.urlMap);
 }
 

@@ -666,7 +666,6 @@ async function postJsonRpc(
   endpoint: string,
   headers: Headers,
   body: Record<string, unknown>,
-  requestFetch: typeof fetch,
   callerSignal: AbortSignal | undefined,
   maxResponseBytes: number,
 ): Promise<unknown> {
@@ -678,7 +677,7 @@ async function postJsonRpc(
   const requestScope = createRequestSignalScope(callerSignal);
 
   try {
-    const response = await requestFetch(endpoint, {
+    const response = await guardedOutboundFetch(endpoint, {
       method: "POST",
       headers,
       body: serializedBody,
@@ -817,45 +816,9 @@ function buildRunContextMeta(
   return Object.keys(meta).length > 0 ? meta : undefined;
 }
 
-function createCapabilityGuardedFetch(
-  requestFetch: typeof fetch,
-  transportAuthority: unknown,
-): typeof fetch {
-  let authorization: Promise<void> | undefined;
-  async function authorizeTransport(): Promise<void> {
-    // Native await does not dispatch through mutable Promise.prototype.then.
-    const module = await import("./internal/remote-mcp-transport.ts");
-    if (!module.isRemoteMCPHostTransportAuthority(transportAuthority)) {
-      throw new TypeError("Remote MCP host transport authority required");
-    }
-  }
-
-  return async (input, init) => {
-    authorization ??= authorizeTransport();
-    await authorization;
-    return requestFetch(input, init);
-  };
-}
-
-/**
- * @internal Capability-gated implementation used by the denied host transport
- * module. A caller-controlled fetch is never invoked without its unforgeable
- * host authority.
- */
-export function createRemoteMCPToolSourceWithTransportCapability(
+/** Create remote MCP tool source. */
+export function createRemoteMCPToolSource(
   config: RemoteMCPToolSourceConfig,
-  requestFetch: typeof fetch,
-  transportAuthority: unknown,
-): RemoteToolSource {
-  return createRemoteMCPToolSourceWithFetch(
-    config,
-    createCapabilityGuardedFetch(requestFetch, transportAuthority),
-  );
-}
-
-function createRemoteMCPToolSourceWithFetch(
-  config: RemoteMCPToolSourceConfig,
-  requestFetch: typeof fetch,
 ): RemoteToolSource {
   const id = config.id ?? "remote-mcp";
   const listMethod = config.listMethod ?? "tools/list";
@@ -882,7 +845,6 @@ function createRemoteMCPToolSourceWithFetch(
             method: listMethod,
             ...(cursor !== undefined ? { params: { cursor } } : {}),
           },
-          requestFetch,
           context?.abortSignal,
           MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
         );
@@ -950,7 +912,6 @@ function createRemoteMCPToolSourceWithFetch(
               ...(meta ? { _meta: meta } : {}),
             },
           },
-          requestFetch,
           context?.abortSignal,
           MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
         );
@@ -976,11 +937,4 @@ function createRemoteMCPToolSourceWithFetch(
       }
     },
   };
-}
-
-/** Create a remote MCP source for a tenant-configurable endpoint. */
-export function createRemoteMCPToolSource(
-  config: RemoteMCPToolSourceConfig,
-): RemoteToolSource {
-  return createRemoteMCPToolSourceWithFetch(config, guardedOutboundFetch);
 }

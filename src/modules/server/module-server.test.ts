@@ -1527,64 +1527,6 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(response.status, 200);
   });
 
-  it("does not serve private host capability modules through direct or encoded paths", async () => {
-    for (
-      const path of [
-        "/_vf_modules/_veryfront/agent/hosted/internal/control-plane-mcp-source.js",
-        "/_vf_modules/_veryfront/agent/hosted/x/%2e%2e/internal/control-plane-mcp-source.js",
-        "/_vf_modules/_veryfront/agent/hosted%252Finternal%252Fcontrol-plane-mcp-source.js",
-        "/_vf_modules/_veryfront//agent//hosted//internal//control-plane-mcp-source.js",
-        "/_vf_modules/_veryfront/agent/hosted/Internal/control-plane-mcp-source.js",
-        "/_vf_modules/_veryfront/agent/hosted/internal./control-plane-mcp-source.js",
-        "/_vf_modules/_veryfront/agent/hosted/x/..%20/internal/control-plane-mcp-source.js",
-        "/_vf_modules/_veryfront/agent/hosted/.%20/internal/control-plane-mcp-source.js",
-        "/_vf_modules/_veryfront/tool/internal/remote-mcp-transport.js",
-        "/_vf_modules/_veryfront/tool/x/%2e%2e/internal/remote-mcp-transport.js",
-        "/_vf_modules/_veryfront/tool/Internal/remote-mcp-transport.js",
-      ]
-    ) {
-      const response = await serve(new Request(`http://localhost:3000${path}`));
-      assertEquals(response.status, 404, path);
-      assertEquals(response.headers.get("cache-control"), "no-store", path);
-      assertEquals(response.headers.get("content-type"), "text/plain; charset=utf-8", path);
-    }
-  });
-
-  it("keeps the guarded remote MCP module public while its transport seam stays private", async () => {
-    const response = await serve(
-      new Request("http://localhost:3000/_vf_modules/_veryfront/tool/remote-mcp.js"),
-    );
-
-    assertEquals(response.status, 200);
-  });
-
-  it("serves project modules whose paths resemble private framework subtrees", async () => {
-    const { serveModule } = await import("./module-server.ts");
-    const projectDir = "/project-private-path-regression";
-    const adapter = createMockAdapter();
-    adapter.fs.files.set(
-      `${projectDir}/tool/internal/helper.ts`,
-      "export const projectToolHelper = true;",
-    );
-    adapter.fs.files.set(
-      `${projectDir}/agent/hosted/internal/helper.ts`,
-      "export const projectAgentHelper = true;",
-    );
-
-    for (
-      const path of [
-        "tool/internal/helper.js",
-        "agent/hosted/internal/helper.js",
-      ]
-    ) {
-      const response = await serveModule(
-        new Request(`http://localhost:3000/_vf_modules/@/${path}`),
-        { projectId: "project-private-path-regression", projectDir, adapter },
-      );
-      assertEquals(response.status, 200, path);
-    }
-  });
-
   it("should serve browser-safe framework version modules without #deno-config", async () => {
     const response = await serve(
       new Request("http://localhost:3000/_vf_modules/_veryfront/utils/version.js"),
@@ -2718,11 +2660,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
         flagOffCode,
         "http://localhost:3000/components/Child.js",
       );
-      assertStringIncludes(flagOffCode, "__veryfrontPinDynamicImport(childPath");
-      assertStringIncludes(
-        flagOffCode,
-        "Computed #veryfront imports must use a string literal",
-      );
+      assertStringIncludes(flagOffCode, "import(childPath)");
       assertEquals(flagOffCode.includes("/_pins/"), false);
     } finally {
       globalThis.fetch = originalFetch;
@@ -2938,7 +2876,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
-  it("keeps flag-off prefix graphs query-free while guarding computed framework imports", async () => {
+  it("keeps flag-off prefix graphs byte-compatible and query-free", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-module-prefix-off-" });
     try {
       setEnv(DEPENDENCY_PINNING_ENV_FLAG, "0");
@@ -2980,11 +2918,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(parentResponse.status, 200);
       const parentCode = await parentResponse.text();
       assertStringIncludes(parentCode, `"./Static.js"`);
-      assertStringIncludes(parentCode, "__veryfrontPinDynamicImport(path");
-      assertStringIncludes(
-        parentCode,
-        "Computed #veryfront imports must use a string literal",
-      );
+      assertStringIncludes(parentCode, "import(path)");
       assertEquals(parentCode.includes("/_vf_modules/components/Static.js"), false);
 
       const childUrl = new URL("./Lazy.js", parentUrl);

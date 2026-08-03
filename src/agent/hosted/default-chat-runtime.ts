@@ -1,4 +1,8 @@
-import { type HostToolSet } from "#veryfront/tool";
+import {
+  type HostToolSet,
+  type RemoteMCPToolSourceConfig,
+  type RemoteToolSource,
+} from "#veryfront/tool";
 import { runWithRequestContextAsync, serverLogger } from "#veryfront/utils";
 import { runWithRequestContext as runWithProjectRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import {
@@ -34,10 +38,7 @@ import {
   prepareHostedChatRuntimeToolAssembly,
   type PrepareHostedChatRuntimeToolAssemblyInput,
 } from "./chat-runtime-tool-assembly.ts";
-import type {
-  AgentServiceMcpServerConfig,
-  AgentServiceRemoteMcpSourceFactory,
-} from "../service/mcp-server-config.ts";
+import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
 import {
   createHostedRuntimeStateResolver,
@@ -152,7 +153,7 @@ export type CreateDefaultHostedChatRuntimeOptions = {
   ) => Promise<boolean> | boolean;
   projectScopedRemoteToolOptions?:
     PrepareHostedChatRuntimeToolAssemblyInput["projectScopedRemoteToolOptions"];
-  createRemoteToolSource?: AgentServiceRemoteMcpSourceFactory;
+  createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
   traceLocalTools?: PrepareHostedChatRuntimeToolAssemblyInput["traceLocalTools"];
   preloadLatestConversationUserText?: boolean;
   logger?: DefaultHostedChatRuntimeLogger;

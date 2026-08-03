@@ -4,12 +4,12 @@
  */
 import { createAgentServiceSandboxTools } from "#veryfront/sandbox";
 import {
+  createRemoteMCPToolSource,
   createToolsFromRemoteDefinitions,
   type HostToolSet,
   isToolVisibleTo,
   toolRegistry,
 } from "#veryfront/tool";
-import { createHostedControlPlaneMCPToolSourceFactory } from "./internal/control-plane-mcp-source.ts";
 import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import {
@@ -380,15 +380,9 @@ export function createInvokeAgentTool(
   childContext: ChildRunContext,
   options?: { requireDurable?: boolean },
 ) {
-  // Snapshot host-owned endpoints once, before tenant execution. The child assembly
-  // forwards this same factory to both API and live Studio MCP source creation.
-  const config = getInvokeAgentConfig(context);
-  const createRemoteToolSource = createHostedControlPlaneMCPToolSourceFactory(config, {
-    logger: context.infrastructure.logger,
-  });
   return createDefaultHostedInvokeAgentTool({
     context: childContext,
-    getConfig: () => config,
+    getConfig: () => getInvokeAgentConfig(context),
     logger: context.infrastructure.logger,
     trace: context.trace,
     setTraceAttributes: context.infrastructure.setActiveSpanAttributes,
@@ -418,7 +412,7 @@ export function createInvokeAgentTool(
       refreshProjectSkillIds(context, projectSkillContext),
     createAgentServiceSandboxTools,
     createLiveStudioTools: createLiveStudioMcpTools,
-    createRemoteToolSource,
+    createRemoteToolSource: createRemoteMCPToolSource,
     createToolsFromRemoteDefinitions,
     requireDurableInvokeAgent: options?.requireDurable,
   });

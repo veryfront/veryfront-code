@@ -18,7 +18,6 @@ import {
   type Tracer,
 } from "#veryfront/observability/tracing/api-shim.ts";
 import type { RedisClient } from "#veryfront/utils/redis-client.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { verifyControlPlaneRequest } from "#veryfront/internal-agents/control-plane-auth.ts";
 import {
   createControlPlaneSignature,
@@ -467,13 +466,14 @@ Deno.test("ApiCacheBackend enforces exact bounded decoded values", async () => {
   const { ApiCacheBackend, CacheValueTooLargeError } = await importBackend();
   const globals = globalThis as Record<string, unknown>;
   const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
   globals.__vf_multi_project_adapter = {
     getCurrentRequestContext: () => ({
       token: "request-token",
       projectSlug: "project-slug",
     }),
   };
-  const mockFetch = (() => Promise.resolve(Response.json({ value: "é" }))) as typeof fetch;
+  globalThis.fetch = (() => Promise.resolve(Response.json({ value: "é" }))) as typeof fetch;
 
   try {
     const cache = new ApiCacheBackend({
@@ -481,15 +481,16 @@ Deno.test("ApiCacheBackend enforces exact bounded decoded values", async () => {
       apiToken: "test-explicit-token",
       circuitBreakerName: "api-cache-bounded-value-test",
     });
-    assertEquals(await withMockFetch(mockFetch, () => cache.getWithinLimit("key", 2)), "é");
+    assertEquals(await cache.getWithinLimit("key", 2), "é");
     await assertRejects(
-      () => withMockFetch(mockFetch, () => cache.getWithinLimit("key", 1)),
+      () => cache.getWithinLimit("key", 1),
       CacheValueTooLargeError,
       "1 UTF-8 bytes",
     );
   } finally {
     if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
     else globals.__vf_multi_project_adapter = originalAdapter;
+    globalThis.fetch = originalFetch;
   }
 });
 
@@ -497,6 +498,7 @@ Deno.test("ApiCacheBackend reserves JSON escape bytes outside its response polic
   const { ApiCacheBackend } = await importBackend();
   const globals = globalThis as Record<string, unknown>;
   const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
   const body = '{"value":"\\u0000\\u0000"}';
   assertEquals(new TextEncoder().encode(body).byteLength, 24);
   globals.__vf_multi_project_adapter = {
@@ -505,7 +507,7 @@ Deno.test("ApiCacheBackend reserves JSON escape bytes outside its response polic
       projectSlug: "project-slug",
     }),
   };
-  const mockFetch = (() => Promise.resolve(new Response(body))) as typeof fetch;
+  globalThis.fetch = (() => Promise.resolve(new Response(body))) as typeof fetch;
 
   try {
     const cache = new ApiCacheBackend({
@@ -516,10 +518,11 @@ Deno.test("ApiCacheBackend reserves JSON escape bytes outside its response polic
       maxResponseBytes: 12,
       circuitBreakerName: "api-cache-bounded-wire-headroom-test",
     });
-    assertEquals(await withMockFetch(mockFetch, () => cache.getWithinLimit("key", 2)), "\0\0");
+    assertEquals(await cache.getWithinLimit("key", 2), "\0\0");
   } finally {
     if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
     else globals.__vf_multi_project_adapter = originalAdapter;
+    globalThis.fetch = originalFetch;
   }
 });
 
@@ -527,6 +530,7 @@ Deno.test("ApiCacheBackend keeps unused string headroom outside its response pol
   const { ApiCacheBackend } = await importBackend();
   const globals = globalThis as Record<string, unknown>;
   const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
   const body = '{"value":"","x":0}';
   let fetchCalls = 0;
   assertEquals(new TextEncoder().encode(body).byteLength, 18);
@@ -536,7 +540,7 @@ Deno.test("ApiCacheBackend keeps unused string headroom outside its response pol
       projectSlug: "project-slug",
     }),
   };
-  const mockFetch = (() => {
+  globalThis.fetch = (() => {
     fetchCalls++;
     return Promise.resolve(new Response(body));
   }) as typeof fetch;
@@ -550,11 +554,12 @@ Deno.test("ApiCacheBackend keeps unused string headroom outside its response pol
       maxResponseBytes: 12,
       circuitBreakerName: "api-cache-independent-non-value-budget-test",
     });
-    assertEquals(await withMockFetch(mockFetch, () => cache.getWithinLimit("key", 2)), null);
+    assertEquals(await cache.getWithinLimit("key", 2), null);
     assertEquals(fetchCalls, 1);
   } finally {
     if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
     else globals.__vf_multi_project_adapter = originalAdapter;
+    globalThis.fetch = originalFetch;
   }
 });
 
@@ -562,6 +567,7 @@ Deno.test("ApiCacheBackend rejects unsafe combined response limits before fetchi
   const { ApiCacheBackend } = await importBackend();
   const globals = globalThis as Record<string, unknown>;
   const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
   globals.__vf_multi_project_adapter = {
     getCurrentRequestContext: () => ({
@@ -569,7 +575,7 @@ Deno.test("ApiCacheBackend rejects unsafe combined response limits before fetchi
       projectSlug: "project-slug",
     }),
   };
-  const mockFetch = (() => {
+  globalThis.fetch = (() => {
     fetchCalls++;
     return Promise.resolve(Response.json({ value: "small" }));
   }) as typeof fetch;
@@ -582,7 +588,7 @@ Deno.test("ApiCacheBackend rejects unsafe combined response limits before fetchi
       circuitBreakerName: "api-cache-unsafe-combined-limit-test",
     });
     await assertRejects(
-      () => withMockFetch(mockFetch, () => cache.getWithinLimit("key", Number.MAX_SAFE_INTEGER)),
+      () => cache.getWithinLimit("key", Number.MAX_SAFE_INTEGER),
       RangeError,
       "safe integer range",
     );
@@ -590,6 +596,7 @@ Deno.test("ApiCacheBackend rejects unsafe combined response limits before fetchi
   } finally {
     if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
     else globals.__vf_multi_project_adapter = originalAdapter;
+    globalThis.fetch = originalFetch;
   }
 });
 
@@ -597,6 +604,7 @@ Deno.test("ApiCacheBackend rejects oversized escaped values before JSON.parse", 
   const { ApiCacheBackend, CacheValueTooLargeError } = await importBackend();
   const globals = globalThis as Record<string, unknown>;
   const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
   const originalJsonParse = JSON.parse;
   let parseCalls = 0;
   globals.__vf_multi_project_adapter = {
@@ -605,7 +613,7 @@ Deno.test("ApiCacheBackend rejects oversized escaped values before JSON.parse", 
       projectSlug: "project-slug",
     }),
   };
-  const mockFetch = (() =>
+  globalThis.fetch = (() =>
     Promise.resolve(
       new Response(JSON.stringify({ value: "\0".repeat(1_000) })),
     )) as typeof fetch;
@@ -621,7 +629,7 @@ Deno.test("ApiCacheBackend rejects oversized escaped values before JSON.parse", 
       circuitBreakerName: "api-cache-bounded-envelope-test",
     });
     await assertRejects(
-      () => withMockFetch(mockFetch, () => cache.getWithinLimit("key", 1)),
+      () => cache.getWithinLimit("key", 1),
       CacheValueTooLargeError,
       "1 UTF-8 bytes",
     );
@@ -630,6 +638,7 @@ Deno.test("ApiCacheBackend rejects oversized escaped values before JSON.parse", 
     JSON.parse = originalJsonParse;
     if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
     else globals.__vf_multi_project_adapter = originalAdapter;
+    globalThis.fetch = originalFetch;
   }
 });
 
@@ -637,6 +646,7 @@ Deno.test("ApiCacheBackend bounded overflows do not open the dependency circuit"
   const { ApiCacheBackend, CacheValueTooLargeError } = await importBackend();
   const globals = globalThis as Record<string, unknown>;
   const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
   globals.__vf_multi_project_adapter = {
     getCurrentRequestContext: () => ({
@@ -644,7 +654,7 @@ Deno.test("ApiCacheBackend bounded overflows do not open the dependency circuit"
       projectSlug: "project-slug",
     }),
   };
-  const mockFetch = (() => {
+  globalThis.fetch = (() => {
     fetchCalls++;
     return Promise.resolve(new Response(JSON.stringify({ value: "xx" })));
   }) as typeof fetch;
@@ -657,7 +667,7 @@ Deno.test("ApiCacheBackend bounded overflows do not open the dependency circuit"
     });
     for (let attempt = 0; attempt < 12; attempt++) {
       await assertRejects(
-        () => withMockFetch(mockFetch, () => cache.getWithinLimit("key", 1)),
+        () => cache.getWithinLimit("key", 1),
         CacheValueTooLargeError,
       );
     }
@@ -665,6 +675,7 @@ Deno.test("ApiCacheBackend bounded overflows do not open the dependency circuit"
   } finally {
     if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
     else globals.__vf_multi_project_adapter = originalAdapter;
+    globalThis.fetch = originalFetch;
   }
 });
 
@@ -693,13 +704,14 @@ Deno.test("ApiCacheBackend propagates attempted delete failures", async () => {
   const { ApiCacheBackend } = await importBackend();
   const globals = globalThis as Record<string, unknown>;
   const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
   const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
 
   Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
   globals.__vf_multi_project_adapter = {
     getCurrentRequestContext: () => ({ projectSlug: "project-slug" }),
   };
-  const mockFetch = (() =>
+  globalThis.fetch = (() =>
     Promise.resolve(
       new Response("cache unavailable", { status: 503 }),
     )) as typeof fetch;
@@ -711,14 +723,15 @@ Deno.test("ApiCacheBackend propagates attempted delete failures", async () => {
       circuitBreakerName: "api-cache-delete-failure-test",
     });
 
-    await assertRejects(() => withMockFetch(mockFetch, () => cache.del("key")));
-    await assertRejects(() => withMockFetch(mockFetch, () => cache.delByPattern("prefix:*")));
+    await assertRejects(() => cache.del("key"));
+    await assertRejects(() => cache.delByPattern("prefix:*"));
   } finally {
     if (originalAdapter === undefined) {
       delete globals.__vf_multi_project_adapter;
     } else {
       globals.__vf_multi_project_adapter = originalAdapter;
     }
+    globalThis.fetch = originalFetch;
     if (originalToken === undefined) {
       Deno.env.delete("VERYFRONT_API_TOKEN");
     } else {
@@ -771,6 +784,7 @@ Deno.test("ApiCacheBackend safely maps query-aware keys without logging key-deri
   const { ApiCacheBackend } = await importBackend();
   const globals = globalThis as Record<string, unknown>;
   const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
   const originalWarn = console.warn;
   const requests: Array<{ url: string; body: Record<string, unknown> | null }> = [];
   const warnings: string[] = [];
@@ -784,7 +798,7 @@ Deno.test("ApiCacheBackend safely maps query-aware keys without logging key-deri
   console.warn = (...args: unknown[]) => {
     warnings.push(args.map(String).join(" "));
   };
-  const mockFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     requests.push({
       url,
@@ -819,11 +833,11 @@ Deno.test("ApiCacheBackend safely maps query-aware keys without logging key-deri
     );
     assertEquals(rawKey.includes("*"), true);
 
-    await withMockFetch(mockFetch, () => cache.get(rawKey));
-    await withMockFetch(mockFetch, () => cache.getBatch([rawKey]));
-    await withMockFetch(mockFetch, () => cache.set(rawKey, "value"));
-    await withMockFetch(mockFetch, () => cache.setBatch([{ key: rawKey, value: "value" }]));
-    await withMockFetch(mockFetch, () => cache.del(rawKey));
+    await cache.get(rawKey);
+    await cache.getBatch([rawKey]);
+    await cache.set(rawKey, "value");
+    await cache.setBatch([{ key: rawKey, value: "value" }]);
+    await cache.del(rawKey);
 
     const [getRequest, getBatchRequest, setRequest, setBatchRequest, delRequest] = requests;
     assertExists(getRequest);
@@ -864,6 +878,7 @@ Deno.test("ApiCacheBackend safely maps query-aware keys without logging key-deri
     } else {
       globals.__vf_multi_project_adapter = originalAdapter;
     }
+    globalThis.fetch = originalFetch;
     console.warn = originalWarn;
   }
 });
@@ -872,6 +887,7 @@ Deno.test("ApiCacheBackend bounds long keys and refuses malformed delete pattern
   const { ApiCacheBackend } = await importBackend();
   const globals = globalThis as Record<string, unknown>;
   const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
   const requests: Array<{ url: string; body: Record<string, unknown> | null }> = [];
 
   globals.__vf_multi_project_adapter = {
@@ -880,7 +896,7 @@ Deno.test("ApiCacheBackend bounds long keys and refuses malformed delete pattern
       projectSlug: "project-slug",
     }),
   };
-  const mockFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     requests.push({
       url: String(input),
       body: init?.body ? JSON.parse(String(init.body)) : null,
@@ -902,7 +918,7 @@ Deno.test("ApiCacheBackend bounds long keys and refuses malformed delete pattern
     });
 
     const overlongKey = `secret-path-token-${"a".repeat(API_CACHE_KEY_MAX_LENGTH)}`;
-    await withMockFetch(mockFetch, () => cache.set(overlongKey, "value"));
+    await cache.set(overlongKey, "value");
     assertEquals(requests.length, 1);
     const setRequest = requests[0];
     assertExists(setRequest);
@@ -912,15 +928,12 @@ Deno.test("ApiCacheBackend bounds long keys and refuses malformed delete pattern
     assertEquals(outboundKey.length <= API_CACHE_KEY_MAX_LENGTH, true);
     assertEquals(outboundKey.includes("secret-path-token"), false);
 
-    const deleted = await withMockFetch(
-      mockFetch,
-      () => cache.delByPattern("render:bad pattern:*"),
-    );
+    const deleted = await cache.delByPattern("render:bad pattern:*");
     assertEquals(deleted, 0);
     assertEquals(requests.length, 1);
 
     const overlongPattern = `render:${"*".repeat(API_CACHE_KEY_MAX_LENGTH)}`;
-    assertEquals(await withMockFetch(mockFetch, () => cache.delByPattern(overlongPattern)), 0);
+    assertEquals(await cache.delByPattern(overlongPattern), 0);
     assertEquals(requests.length, 1);
   } finally {
     if (originalAdapter === undefined) {
@@ -928,6 +941,7 @@ Deno.test("ApiCacheBackend bounds long keys and refuses malformed delete pattern
     } else {
       globals.__vf_multi_project_adapter = originalAdapter;
     }
+    globalThis.fetch = originalFetch;
   }
 });
 
@@ -935,6 +949,7 @@ Deno.test("ApiCacheBackend URL-encodes project refs and omits cache keys from sp
   const { ApiCacheBackend } = await importBackend();
   const globals = globalThis as Record<string, unknown>;
   const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
   const records: RecordedSpan[] = [];
   const projectRef = "team/../../demo?token=raw";
   let capturedUrl = "";
@@ -946,7 +961,7 @@ Deno.test("ApiCacheBackend URL-encodes project refs and omits cache keys from sp
       projectSlug: projectRef,
     }),
   };
-  const mockFetch = ((input: RequestInfo | URL) => {
+  globalThis.fetch = ((input: RequestInfo | URL) => {
     capturedUrl = String(input);
     return Promise.resolve(
       new Response(JSON.stringify({ value: null }), {
@@ -969,11 +984,10 @@ Deno.test("ApiCacheBackend URL-encodes project refs and omits cache keys from sp
       projectId: projectRef,
       projectSlug: "project-slug",
     });
-    await withMockFetch(mockFetch, () =>
-      runWithVerifiedCacheApiCredential(
-        verifiedClaims,
-        () => cache.get("secret-cache-key"),
-      ));
+    await runWithVerifiedCacheApiCredential(
+      verifiedClaims,
+      () => cache.get("secret-cache-key"),
+    );
 
     const encodedProjectRef = encodeURIComponent(projectRef);
     assertEquals(
@@ -996,6 +1010,7 @@ Deno.test("ApiCacheBackend URL-encodes project refs and omits cache keys from sp
     } else {
       globals.__vf_multi_project_adapter = originalAdapter;
     }
+    globalThis.fetch = originalFetch;
     _resetShimForTests();
   }
 });
@@ -1004,6 +1019,7 @@ Deno.test("ApiCacheBackend uses the credential paired with an explicit endpoint"
   const { ApiCacheBackend } = await importBackend();
   const globals = globalThis as Record<string, unknown>;
   const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
   const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
   const capturedAuthorizations: string[] = [];
   const capturedUrls: string[] = [];
@@ -1017,7 +1033,7 @@ Deno.test("ApiCacheBackend uses the credential paired with an explicit endpoint"
       projectSlug: "forged-project-slug",
     }),
   };
-  const mockFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     capturedUrls.push(String(input));
     capturedAuthorizations.push(new Headers(init?.headers).get("authorization") ?? "");
     return Promise.resolve(
@@ -1039,13 +1055,9 @@ Deno.test("ApiCacheBackend uses the credential paired with an explicit endpoint"
       projectId: "project-123",
       projectSlug: "project-slug",
     });
-    const requestScopedDeleted = await withMockFetch(
-      mockFetch,
-      () =>
-        runWithVerifiedCacheApiCredential(
-          verifiedClaims,
-          () => cache.delByPattern("agent:*"),
-        ),
+    const requestScopedDeleted = await runWithVerifiedCacheApiCredential(
+      verifiedClaims,
+      () => cache.delByPattern("agent:*"),
     );
 
     assertEquals(requestScopedDeleted, 3);
@@ -1054,7 +1066,7 @@ Deno.test("ApiCacheBackend uses the credential paired with an explicit endpoint"
       "https://93.184.216.34/projects/project-123/cache/del-pattern",
     );
 
-    const forgedTrustDeleted = await withMockFetch(mockFetch, () => cache.delByPattern("agent:*"));
+    const forgedTrustDeleted = await cache.delByPattern("agent:*");
 
     assertEquals(forgedTrustDeleted, 3);
 
@@ -1065,18 +1077,12 @@ Deno.test("ApiCacheBackend uses the credential paired with an explicit endpoint"
         projectSlug: "project-slug",
       }),
     };
-    const unverifiedRequestDeleted = await withMockFetch(
-      mockFetch,
-      () => cache.delByPattern("agent:*"),
-    );
+    const unverifiedRequestDeleted = await cache.delByPattern("agent:*");
 
     assertEquals(unverifiedRequestDeleted, 3);
 
     Deno.env.delete("VERYFRONT_API_TOKEN");
-    const requestFallbackDeleted = await withMockFetch(
-      mockFetch,
-      () => cache.delByPattern("agent:*"),
-    );
+    const requestFallbackDeleted = await cache.delByPattern("agent:*");
 
     assertEquals(requestFallbackDeleted, 3);
 
@@ -1088,7 +1094,7 @@ Deno.test("ApiCacheBackend uses the credential paired with an explicit endpoint"
         projectSlug: "project-slug",
       }),
     };
-    const hostFallbackDeleted = await withMockFetch(mockFetch, () => cache.delByPattern("agent:*"));
+    const hostFallbackDeleted = await cache.delByPattern("agent:*");
 
     assertEquals(hostFallbackDeleted, 3);
     assertEquals(capturedAuthorizations, [
@@ -1104,6 +1110,7 @@ Deno.test("ApiCacheBackend uses the credential paired with an explicit endpoint"
     } else {
       globals.__vf_multi_project_adapter = originalAdapter;
     }
+    globalThis.fetch = originalFetch;
     if (originalToken === undefined) {
       Deno.env.delete("VERYFRONT_API_TOKEN");
     } else {
@@ -1651,6 +1658,7 @@ Deno.test({
     const originalAdapter = globals.__vf_multi_project_adapter;
     const originalProjectEnvGetter = globals.__vfProjectEnvGetter;
     const originalProjectEnvActiveChecker = globals.__vfProjectEnvActiveChecker;
+    const originalFetch = globalThis.fetch;
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
     const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
     const capturedUrls: string[] = [];
@@ -1663,7 +1671,7 @@ Deno.test({
     globals.__vf_multi_project_adapter = {
       getCurrentRequestContext: () => ({ projectId: "project-123" }),
     };
-    const mockFetch = ((input: RequestInfo | URL) => {
+    globalThis.fetch = ((input: RequestInfo | URL) => {
       capturedUrls.push(String(input));
       return Promise.resolve(
         Response.json({ deleted: 1 }),
@@ -1674,7 +1682,7 @@ Deno.test({
       const cache = new ApiCacheBackend({
         circuitBreakerName: "api-cache-tenant-endpoint-isolation-test",
       });
-      assertEquals(await withMockFetch(mockFetch, () => cache.delByPattern("agent:*")), 1);
+      assertEquals(await cache.delByPattern("agent:*"), 1);
       assertEquals(
         capturedUrls,
         ["https://93.184.216.34/projects/project-123/cache/del-pattern"],
@@ -1689,6 +1697,7 @@ Deno.test({
       } else {
         globals.__vfProjectEnvActiveChecker = originalProjectEnvActiveChecker;
       }
+      globalThis.fetch = originalFetch;
       if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
       else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
       if (originalApiToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");

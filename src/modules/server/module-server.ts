@@ -62,7 +62,6 @@ import {
 import { findFirstExistingFile } from "./fs-probe.ts";
 import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/filename-default-export.ts";
 import { classifyModuleRequest, DEV_MODULE_PREFIX } from "./classify.ts";
-import { isPrivateFrameworkModulePath } from "../private-framework-module-policy.ts";
 import { transformModuleToServable } from "./module-transform.ts";
 import {
   createDependencyPinningSource,
@@ -790,16 +789,6 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       }
       if (modulePath.startsWith("@/")) modulePath = modulePath.slice(2);
 
-      if (
-        modulePath.startsWith("_veryfront/") &&
-        isPrivateFrameworkModulePath(modulePath)
-      ) {
-        return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Cache-Control": "no-store",
-        });
-      }
-
       const filePathWithoutExt = modulePath.replace(/\.(?:mjs|js)$/i, "");
 
       let projectSlug = options.projectSlug ?? url.searchParams.get("project");
@@ -1481,8 +1470,6 @@ async function findSourceFile(
   }
 
   const isFrameworkPath = basePathWithoutExt.startsWith("_veryfront/");
-  if (isFrameworkPath && isPrivateFrameworkModulePath(basePathWithoutExt)) return null;
-
   const isFrameworkPackageAssetPath = basePathWithoutExt.startsWith("react/") ||
     basePathWithoutExt.startsWith("deps/");
   const missCacheKey = buildSourceMissCacheKey({

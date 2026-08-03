@@ -2,13 +2,14 @@ import {
   createRemoteMCPToolSource,
   createToolsFromRemoteDefinitions,
   type HostToolSet,
+  type RemoteMCPToolSourceConfig,
+  type RemoteToolSource,
 } from "#veryfront/tool";
 import { AGENT_ERROR } from "#veryfront/errors";
 import {
   type AgentServiceMcpServerConfig,
-  type AgentServiceRemoteMcpSourceFactory,
+  createAgentServiceRemoteMcpConfig,
   defaultAgentServiceMcpServers,
-  resolveAgentServiceRemoteMcpConfig,
 } from "../service/mcp-server-config.ts";
 import {
   type AgentServiceSandboxToolsOptions,
@@ -49,7 +50,7 @@ export type PrepareDefaultHostedChildForkToolSourcesInput = {
   globalTools?: HostToolSet;
   abortSignal?: AbortSignal;
   onConfirmedStudioProjectSwitch?: HostedChildProjectSwitchHandler;
-  createRemoteToolSource?: AgentServiceRemoteMcpSourceFactory;
+  createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
   createToolsFromRemoteDefinitions?: typeof createToolsFromRemoteDefinitions;
   createLiveStudioTools?: (input: LiveStudioMcpToolsOptions) => Promise<{
     tools: HostToolSet;
@@ -99,18 +100,7 @@ export async function prepareDefaultHostedChildForkToolSources(
   try {
     const mcpServers = input.mcpServers ?? defaultAgentServiceMcpServers();
     for (const server of mcpServers) {
-      const { config: remoteConfig, trustedKind } = resolveAgentServiceRemoteMcpConfig({
-        server,
-        authToken: input.authToken,
-        apiMcpUrl: input.apiMcpUrl,
-        studioMcpUrl: input.studioMcpUrl,
-        clientProfile: input.clientProfile,
-        getProjectId: input.getProjectId,
-        conversationId: input.conversationId,
-        defaultSourceId: "veryfront-mcp-fork",
-      });
-
-      if (trustedKind === "veryfront-studio") {
+      if (server.kind === "veryfront-studio") {
         const studioTools = await createLiveStudioTools({
           authToken: input.authToken,
           clientProfile: input.clientProfile,
@@ -136,13 +126,19 @@ export async function prepareDefaultHostedChildForkToolSources(
         continue;
       }
 
+      const remoteConfig = createAgentServiceRemoteMcpConfig({
+        server,
+        authToken: input.authToken,
+        apiMcpUrl: input.apiMcpUrl,
+        defaultSourceId: "veryfront-mcp-fork",
+      });
       if (!remoteConfig) {
         continue;
       }
-      const rawSource = createRemoteToolSource(remoteConfig, trustedKind);
+      const rawSource = createRemoteToolSource(remoteConfig);
       const policySource = createHostedMcpToolPolicySource(rawSource, server.toolPolicy);
       const rawDefinitions = await rawSource.listTools();
-      const accessFilteredDefinitions = trustedKind === "veryfront-api"
+      const accessFilteredDefinitions = server.kind === "veryfront-api"
         ? await filterVeryfrontApiToolDefinitionsWithAccessProfile({
           source: rawSource,
           toolDefinitions: rawDefinitions,

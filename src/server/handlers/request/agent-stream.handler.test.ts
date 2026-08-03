@@ -5,7 +5,7 @@ import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-serve
 import { getRuntimeSourceIntegrationPolicy } from "#veryfront/agent/runtime/runtime-tool-config.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { getVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
@@ -45,15 +45,6 @@ function createTestAgentStreamHandler(deps: AgentStreamHandlerDeps): AgentStream
     loadAgentSourceEnvironment: () => Promise.resolve({}),
     ...deps,
   });
-}
-
-function handleWithMockFetch(
-  mockFetch: typeof fetch,
-  handler: AgentStreamHandler,
-  request: Request,
-  context: HandlerContext,
-) {
-  return withMockFetch(mockFetch, () => handler.handle(request, context));
 }
 
 function createRuntimeAgentRunInvocationBody() {
@@ -760,12 +751,13 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let capturedTools: unknown;
     let capturedAllowedRemoteTools: string[] | undefined;
     let platformMcpFetchCalls = 0;
+    const originalFetch = globalThis.fetch;
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
 
     Deno.env.set("VERYFRONT_API_URL", TEST_PUBLIC_API_ORIGIN);
     Deno.env.delete("VERYFRONT_API_BASE_URL");
-    const mockFetch = ((url, init) => {
+    globalThis.fetch = ((url, init) => {
       if (String(url) === `${TEST_PUBLIC_API_ORIGIN}/mcp`) {
         platformMcpFetchCalls += 1;
         assertEquals(
@@ -862,9 +854,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         requestId: "run_1",
       });
 
-      const result = await handleWithMockFetch(
-        mockFetch,
-        handler,
+      const result = await handler.handle(
         new Request("https://example.com/api/control-plane/runs/run_1/stream", {
           method: "POST",
           headers: {
@@ -888,6 +878,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals(capturedAllowedRemoteTools, ["get_file", "search_knowledge"]);
       assertEquals(platformMcpFetchCalls, 1);
     } finally {
+      globalThis.fetch = originalFetch;
       if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
       else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
       if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
@@ -1238,10 +1229,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("auto-exposes Studio MCP tools for trusted Studio project-agent requests", async () => {
     let capturedAllowedRemoteTools: string[] | undefined;
     let capturedRemoteToolNames: string[] = [];
+    const originalFetch = globalThis.fetch;
     const originalStudioMcpUrl = Deno.env.get("VERYFRONT_STUDIO_MCP_URL");
 
     Deno.env.set("VERYFRONT_STUDIO_MCP_URL", TEST_PUBLIC_STUDIO_MCP_URL);
-    const mockFetch = ((url, init) => {
+    globalThis.fetch = ((url, init) => {
       assertEquals(String(url), TEST_PUBLIC_STUDIO_MCP_URL);
       const headers = new Headers(observeFetchRequestInit(init).headers);
       assertEquals(headers.get("authorization"), "Bearer request-scoped-user-token");
@@ -1327,9 +1319,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       });
       const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
 
-      const result = await handleWithMockFetch(
-        mockFetch,
-        handler,
+      const result = await handler.handle(
         new Request("https://example.com/api/control-plane/runs/run_1/stream", {
           method: "POST",
           headers: {
@@ -1346,6 +1336,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals(capturedAllowedRemoteTools, ["studio_todo_write"]);
       assertEquals(capturedRemoteToolNames, ["studio_todo_write", "studio_panel_control"]);
     } finally {
+      globalThis.fetch = originalFetch;
       if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
       else Deno.env.set("VERYFRONT_STUDIO_MCP_URL", originalStudioMcpUrl);
     }
@@ -1355,10 +1346,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let studioMcpFetchCalls = 0;
     let capturedAllowedRemoteTools: string[] | undefined;
     let capturedRemoteSourceCount = -1;
+    const originalFetch = globalThis.fetch;
     const originalStudioMcpUrl = Deno.env.get("VERYFRONT_STUDIO_MCP_URL");
 
     Deno.env.set("VERYFRONT_STUDIO_MCP_URL", TEST_PUBLIC_STUDIO_MCP_URL);
-    const mockFetch = ((url) => {
+    globalThis.fetch = ((url) => {
       if (String(url) === TEST_PUBLIC_STUDIO_MCP_URL) {
         studioMcpFetchCalls += 1;
       }
@@ -1427,9 +1419,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         requestId: "run_1",
       });
 
-      const result = await handleWithMockFetch(
-        mockFetch,
-        handler,
+      const result = await handler.handle(
         new Request("https://example.com/api/control-plane/runs/run_1/stream", {
           method: "POST",
           headers: {
@@ -1447,6 +1437,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals(capturedAllowedRemoteTools, ["studio_todo_write"]);
       assertEquals(capturedRemoteSourceCount, 0);
     } finally {
+      globalThis.fetch = originalFetch;
       if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
       else Deno.env.set("VERYFRONT_STUDIO_MCP_URL", originalStudioMcpUrl);
     }
@@ -1516,7 +1507,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("does not probe platform MCP for boolean tools already supplied by the run", async () => {
     let fetchCalls = 0;
-    const mockFetch = async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => {
       fetchCalls += 1;
       return new Response(JSON.stringify({ tools: [] }), {
         status: 200,
@@ -1524,144 +1516,47 @@ describe("server/handlers/request/agent-stream.handler", () => {
       });
     };
 
-    const handler = createTestAgentStreamHandler({
-      ensureProjectDiscovery: async () => {},
-      getAgent: (id) =>
-        id === "assistant-1"
-          ? createAgentWithConfig("assistant-1", {
-            tools: { studio_focus_component: true },
-          })
-          : undefined,
-      getAllAgentIds: () => ["assistant-1"],
-      sessionManager: new AgentRunSessionManager(),
-      createRuntime: () => ({
-        stream: async (_messages, _context, callbacks) => {
-          callbacks?.onFinish?.({
-            text: "ok",
-            messages: [],
-            toolCalls: [],
-            status: "completed",
-            usage: {
-              promptTokens: 1,
-              completionTokens: 1,
-              totalTokens: 2,
-            },
-          });
-
-          return new ReadableStream<Uint8Array>({
-            start(controller) {
-              controller.close();
-            },
-          });
-        },
-      }),
-    });
-
-    const body = createAgentStreamRequestBody();
-    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
-      requestId: "run_1",
-    });
-
-    const result = await handleWithMockFetch(
-      mockFetch,
-      handler,
-      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-veryfront-control-plane-jws": jws,
-        },
-        body,
-      }),
-      createCtx(publicKeyPem),
-    );
-
-    assertExists(result.response);
-    assertEquals(result.response.status, 200);
-    assertEquals(fetchCalls, 0);
-  });
-
-  it("fails closed when platform MCP is opted out or discovery fails", async () => {
-    for (
-      const testCase of [
-        {
-          id: "explicit-opt-out",
-          name: "explicit opt-out",
-          mcpServers: [] as const,
-          expectedFetchCalls: 0,
-        },
-        {
-          id: "failed-discovery",
-          name: "failed discovery",
-          mcpServers: undefined,
-          expectedFetchCalls: 1,
-        },
-      ]
-    ) {
-      let mcpFetchCalls = 0;
-      let capturedAllowedRemoteTools: string[] | undefined;
-      let capturedRemoteSourceCount = -1;
-      const mockFetch = ((url) => {
-        if (String(url).endsWith("/mcp")) {
-          mcpFetchCalls += 1;
-          return Promise.reject(new Error(`${testCase.name} discovery unavailable`));
-        }
-        return Promise.resolve(new Response(null, { status: 503 }));
-      }) as typeof fetch;
-
+    try {
       const handler = createTestAgentStreamHandler({
         ensureProjectDiscovery: async () => {},
         getAgent: (id) =>
           id === "assistant-1"
             ? createAgentWithConfig("assistant-1", {
-              tools: { get_file: true },
-              ...(testCase.mcpServers === undefined
-                ? {}
-                : { mcpServers: [...testCase.mcpServers] }),
+              tools: { studio_focus_component: true },
             })
             : undefined,
         getAllAgentIds: () => ["assistant-1"],
         sessionManager: new AgentRunSessionManager(),
-        createRuntime: (runtimeAgent) => {
-          const runtimeConfig = runtimeAgent.config as
-            & typeof runtimeAgent.config
-            & RuntimeRemoteToolConfig;
-          capturedAllowedRemoteTools = runtimeConfig.__vfAllowedRemoteTools;
-          capturedRemoteSourceCount = runtimeConfig.__vfRemoteToolSources?.length ?? 0;
-          return {
-            stream: async (_messages, _context, callbacks) => {
-              callbacks?.onFinish?.({
-                text: "ok",
-                messages: [],
-                toolCalls: [],
-                status: "completed",
-                usage: {
-                  promptTokens: 1,
-                  completionTokens: 1,
-                  totalTokens: 2,
-                },
-              });
-              return new ReadableStream<Uint8Array>({
-                start(controller) {
-                  controller.close();
-                },
-              });
-            },
-          };
-        },
+        createRuntime: () => ({
+          stream: async (_messages, _context, callbacks) => {
+            callbacks?.onFinish?.({
+              text: "ok",
+              messages: [],
+              toolCalls: [],
+              status: "completed",
+              usage: {
+                promptTokens: 1,
+                completionTokens: 1,
+                totalTokens: 2,
+              },
+            });
+
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            });
+          },
+        }),
       });
-      const body = createAgentStreamRequestBody({
-        runId: `run-${testCase.id}`,
-        credentials: { authToken: "request-scoped-user-token" },
-      });
+
+      const body = createAgentStreamRequestBody();
       const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
-        audience: "support-agent-fork",
-        requestId: `run-${testCase.id}`,
+        requestId: "run_1",
       });
-      const result = await handleWithMockFetch(
-        mockFetch,
-        handler,
-        new Request(`https://example.com/api/control-plane/runs/run-${testCase.id}/stream`, {
+
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
           method: "POST",
           headers: {
             "content-type": "application/json",
@@ -1669,18 +1564,121 @@ describe("server/handlers/request/agent-stream.handler", () => {
           },
           body,
         }),
-        {
-          ...createCtx(publicKeyPem),
-          proxyToken: "run-scoped-token",
-          projectSlug: "support-agent-fork",
-        },
+        createCtx(publicKeyPem),
       );
 
       assertExists(result.response);
       assertEquals(result.response.status, 200);
-      assertEquals(mcpFetchCalls, testCase.expectedFetchCalls);
-      assertEquals(capturedAllowedRemoteTools, undefined);
-      assertEquals(capturedRemoteSourceCount, 0);
+      assertEquals(fetchCalls, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("fails closed when platform MCP is opted out or discovery fails", async () => {
+    const originalFetch = globalThis.fetch;
+
+    try {
+      for (
+        const testCase of [
+          {
+            id: "explicit-opt-out",
+            name: "explicit opt-out",
+            mcpServers: [] as const,
+            expectedFetchCalls: 0,
+          },
+          {
+            id: "failed-discovery",
+            name: "failed discovery",
+            mcpServers: undefined,
+            expectedFetchCalls: 1,
+          },
+        ]
+      ) {
+        let mcpFetchCalls = 0;
+        let capturedAllowedRemoteTools: string[] | undefined;
+        let capturedRemoteSourceCount = -1;
+        globalThis.fetch = ((url) => {
+          if (String(url).endsWith("/mcp")) {
+            mcpFetchCalls += 1;
+            return Promise.reject(new Error(`${testCase.name} discovery unavailable`));
+          }
+          return Promise.resolve(new Response(null, { status: 503 }));
+        }) as typeof fetch;
+
+        const handler = createTestAgentStreamHandler({
+          ensureProjectDiscovery: async () => {},
+          getAgent: (id) =>
+            id === "assistant-1"
+              ? createAgentWithConfig("assistant-1", {
+                tools: { get_file: true },
+                ...(testCase.mcpServers === undefined
+                  ? {}
+                  : { mcpServers: [...testCase.mcpServers] }),
+              })
+              : undefined,
+          getAllAgentIds: () => ["assistant-1"],
+          sessionManager: new AgentRunSessionManager(),
+          createRuntime: (runtimeAgent) => {
+            const runtimeConfig = runtimeAgent.config as
+              & typeof runtimeAgent.config
+              & RuntimeRemoteToolConfig;
+            capturedAllowedRemoteTools = runtimeConfig.__vfAllowedRemoteTools;
+            capturedRemoteSourceCount = runtimeConfig.__vfRemoteToolSources?.length ?? 0;
+            return {
+              stream: async (_messages, _context, callbacks) => {
+                callbacks?.onFinish?.({
+                  text: "ok",
+                  messages: [],
+                  toolCalls: [],
+                  status: "completed",
+                  usage: {
+                    promptTokens: 1,
+                    completionTokens: 1,
+                    totalTokens: 2,
+                  },
+                });
+                return new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.close();
+                  },
+                });
+              },
+            };
+          },
+        });
+        const body = createAgentStreamRequestBody({
+          runId: `run-${testCase.id}`,
+          credentials: { authToken: "request-scoped-user-token" },
+        });
+        const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+          audience: "support-agent-fork",
+          requestId: `run-${testCase.id}`,
+        });
+        const result = await handler.handle(
+          new Request(`https://example.com/api/control-plane/runs/run-${testCase.id}/stream`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-veryfront-control-plane-jws": jws,
+            },
+            body,
+          }),
+          {
+            ...createCtx(publicKeyPem),
+            proxyToken: "run-scoped-token",
+            projectSlug: "support-agent-fork",
+          },
+        );
+
+        assertExists(result.response);
+        assertEquals(result.response.status, 200);
+        assertEquals(mcpFetchCalls, testCase.expectedFetchCalls);
+        assertEquals(capturedAllowedRemoteTools, undefined);
+        assertEquals(capturedRemoteSourceCount, 0);
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
     }
   });
 
@@ -1688,12 +1686,13 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let capturedAllowedRemoteTools: string[] | undefined;
     let capturedRemoteToolNames: string[] = [];
     let capturedToolArguments: Record<string, unknown> | undefined;
+    const originalFetch = globalThis.fetch;
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
 
     Deno.env.set("VERYFRONT_API_URL", TEST_PUBLIC_API_ORIGIN);
     Deno.env.delete("VERYFRONT_API_BASE_URL");
-    const mockFetch = ((url, init) => {
+    globalThis.fetch = ((url, init) => {
       assertEquals(String(url), `${TEST_PUBLIC_API_ORIGIN}/mcp`);
       assertEquals(
         new Headers(observeFetchRequestInit(init).headers).get("authorization"),
@@ -1806,9 +1805,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         requestId: "run_1",
       });
 
-      const result = await handleWithMockFetch(
-        mockFetch,
-        handler,
+      const result = await handler.handle(
         new Request("https://example.com/api/control-plane/runs/run_1/stream", {
           method: "POST",
           headers: {
@@ -1833,6 +1830,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         limit: 10,
       });
     } finally {
+      globalThis.fetch = originalFetch;
       if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
       else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
       if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
@@ -1919,12 +1917,13 @@ describe("server/handlers/request/agent-stream.handler", () => {
       proxyToken: "run-scoped-token",
       projectSlug: "support-agent-fork",
     };
+    const originalFetch = globalThis.fetch;
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
     const fetchUrls: string[] = [];
     Deno.env.set("VERYFRONT_API_URL", TEST_PUBLIC_API_ORIGIN);
     Deno.env.delete("VERYFRONT_API_BASE_URL");
-    const mockFetch = ((url, init) => {
+    globalThis.fetch = ((url, init) => {
       fetchUrls.push(String(url));
       assertEquals(
         new Headers(observeFetchRequestInit(init).headers).get("authorization"),
@@ -2012,9 +2011,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     let result;
     try {
-      result = await handleWithMockFetch(
-        mockFetch,
-        handler,
+      result = await handler.handle(
         new Request("https://example.com/api/control-plane/runs/run_1/stream", {
           method: "POST",
           headers: {
@@ -2026,6 +2023,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         ctx,
       );
     } finally {
+      globalThis.fetch = originalFetch;
       if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
       else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
       if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
@@ -2063,12 +2061,13 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const targetEnvironmentId = "10000000-1000-4000-8000-100000000088";
     let capturedProjectEnv: string | undefined;
     const fetchUrls: string[] = [];
+    const originalFetch = globalThis.fetch;
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
 
     Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
     Deno.env.delete("VERYFRONT_API_BASE_URL");
-    const mockFetch = ((url, init) => {
+    globalThis.fetch = ((url, init) => {
       const urlString = String(url);
       fetchUrls.push(urlString);
       assertEquals(
@@ -2143,9 +2142,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     let result;
     try {
-      result = await handleWithMockFetch(
-        mockFetch,
-        handler,
+      result = await handler.handle(
         new Request("https://example.com/api/control-plane/runs/run_1/stream", {
           method: "POST",
           headers: {
@@ -2160,6 +2157,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         },
       );
     } finally {
+      globalThis.fetch = originalFetch;
       if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
       else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
       if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
@@ -2244,12 +2242,13 @@ describe("server/handlers/request/agent-stream.handler", () => {
       proxyToken: "run-scoped-token",
       projectSlug: "base-url-agent-fork",
     };
+    const originalFetch = globalThis.fetch;
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
     const fetchUrls: string[] = [];
     Deno.env.set("VERYFRONT_API_URL", "https://1.1.1.1/unused-fallback");
     Deno.env.set("VERYFRONT_API_BASE_URL", apiBaseUrl);
-    const mockFetch = ((url, init) => {
+    globalThis.fetch = ((url, init) => {
       fetchUrls.push(String(url));
       assertEquals(
         new Headers(observeFetchRequestInit(init).headers).get("authorization"),
@@ -2319,9 +2318,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     let result;
     try {
-      result = await handleWithMockFetch(
-        mockFetch,
-        handler,
+      result = await handler.handle(
         new Request("https://example.com/api/control-plane/runs/run_1/stream", {
           method: "POST",
           headers: {
@@ -2333,6 +2330,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         ctx,
       );
     } finally {
+      globalThis.fetch = originalFetch;
       if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
       else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
       if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
@@ -2884,9 +2882,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
   });
 
   it("fails closed with typed authorization semantics when named env lookup is denied", async () => {
+    const originalFetch = globalThis.fetch;
     let discoveryCalls = 0;
     let redirect: RequestRedirect | undefined;
-    const mockFetch = ((_input, init) => {
+    globalThis.fetch = ((_input, init) => {
       redirect = init?.redirect;
       return Promise.resolve(new Response(null, { status: 403 }));
     }) as typeof fetch;
@@ -2914,35 +2913,38 @@ describe("server/handlers/request/agent-stream.handler", () => {
       requestId: "run_1",
     });
 
-    const result = await handleWithMockFetch(
-      mockFetch,
-      handler,
-      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-veryfront-control-plane-jws": jws,
-        },
-        body,
-      }),
-      createCtx(publicKeyPem),
-    );
+    try {
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
 
-    assertExists(result.response);
-    assertEquals(result.response.status, 403);
-    assertEquals(result.response.headers.get("content-type"), "application/problem+json");
-    assertEquals(
-      (await result.response.json()).type,
-      "https://veryfront.com/docs/errors/permission-denied",
-    );
-    assertEquals(discoveryCalls, 0);
-    assertEquals(redirect, "error");
+      assertExists(result.response);
+      assertEquals(result.response.status, 403);
+      assertEquals(result.response.headers.get("content-type"), "application/problem+json");
+      assertEquals(
+        (await result.response.json()).type,
+        "https://veryfront.com/docs/errors/permission-denied",
+      );
+      assertEquals(discoveryCalls, 0);
+      assertEquals(redirect, "error");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("rejects a stale named environment source before loading project secrets", async () => {
+    const originalFetch = globalThis.fetch;
     let discoveryCalls = 0;
     let environmentVariableCalls = 0;
-    const mockFetch = ((input) => {
+    globalThis.fetch = ((input) => {
       const url = String(input);
       if (url.endsWith("/projects/support-agent-fork/environments")) {
         return Promise.resolve(Response.json({
@@ -2983,30 +2985,33 @@ describe("server/handlers/request/agent-stream.handler", () => {
       requestId: "run_1",
     });
 
-    const result = await handleWithMockFetch(
-      mockFetch,
-      handler,
-      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-veryfront-control-plane-jws": jws,
-        },
-        body,
-      }),
-      { ...createCtx(publicKeyPem), projectSlug: "support-agent-fork" },
-    );
+    try {
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        { ...createCtx(publicKeyPem), projectSlug: "support-agent-fork" },
+      );
 
-    assertExists(result.response);
-    assertEquals(result.response.status, 403);
-    assertEquals(result.response.headers.get("content-type"), "application/problem+json");
-    assertEquals(environmentVariableCalls, 0);
-    assertEquals(discoveryCalls, 0);
+      assertExists(result.response);
+      assertEquals(result.response.status, 403);
+      assertEquals(result.response.headers.get("content-type"), "application/problem+json");
+      assertEquals(environmentVariableCalls, 0);
+      assertEquals(discoveryCalls, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("does not discover or inject production secrets for a branch source", async () => {
+    const originalFetch = globalThis.fetch;
     let fetchCalls = 0;
-    const mockFetch = (() => {
+    globalThis.fetch = (() => {
       fetchCalls += 1;
       return Promise.reject(new Error("branch source must not fetch an environment"));
     }) as typeof fetch;
@@ -3023,23 +3028,25 @@ describe("server/handlers/request/agent-stream.handler", () => {
       requestId: "run_1",
     });
 
-    const result = await handleWithMockFetch(
-      mockFetch,
-      handler,
-      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-veryfront-control-plane-jws": jws,
-        },
-        body,
-      }),
-      createCtx(publicKeyPem),
-    );
+    try {
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
 
-    assertExists(result.response);
-    assertEquals(result.response.status, 404);
-    assertEquals(fetchCalls, 0);
+      assertExists(result.response);
+      assertEquals(result.response.status, 404);
+      assertEquals(fetchCalls, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("emits a cancellation error instead of finishing after an abort during a pending read", async () => {

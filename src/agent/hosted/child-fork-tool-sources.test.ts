@@ -15,17 +15,11 @@ import type {
 } from "#veryfront/tool";
 import { dynamicTool } from "#veryfront/tool";
 import { defineSchema } from "../../schemas/define.ts";
-import type {
-  AgentServiceFirstPartyMcpServerKind,
-  AgentServiceMcpServerConfig,
-} from "../service/mcp-server-config.ts";
 import {
   prepareDefaultHostedChildForkSandboxToolSources,
   prepareDefaultHostedChildForkToolSources,
 } from "./child-fork-tool-sources.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
-import { createHostedControlPlaneMCPToolSourceFactory } from "./internal/control-plane-mcp-source.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 const trustedStudioProfile: RuntimeClientProfile = {
   id: "veryfront-studio",
@@ -52,7 +46,6 @@ function toToolInputRecord(input: unknown): Record<string, unknown> {
 
 function createRemoteSourceFixtures() {
   const createdConfigs: RemoteMCPToolSourceConfig[] = [];
-  const serverKinds: Array<string | undefined> = [];
   const executeCalls: Array<{
     sourceId: string;
     toolName: string;
@@ -60,12 +53,8 @@ function createRemoteSourceFixtures() {
     context?: ToolExecutionContext;
   }> = [];
 
-  const createRemoteToolSource = (
-    config: RemoteMCPToolSourceConfig,
-    trustedKind?: AgentServiceFirstPartyMcpServerKind,
-  ): RemoteToolSource => {
+  const createRemoteToolSource = (config: RemoteMCPToolSourceConfig): RemoteToolSource => {
     createdConfigs.push(config);
-    serverKinds.push(trustedKind);
     const sourceId = config.id ?? "source";
 
     return {
@@ -87,45 +76,7 @@ function createRemoteSourceFixtures() {
     };
   };
 
-  return { createdConfigs, serverKinds, executeCalls, createRemoteToolSource };
-}
-
-async function assertChildServerUsesGuardedGenericEgress(
-  server: AgentServiceMcpServerConfig,
-): Promise<void> {
-  const studioMcpUrl = "http://127.0.0.1/studio-mcp";
-  let liveStudioCalls = 0;
-  let transportCalls = 0;
-
-  await withMockFetch(() => {
-    transportCalls++;
-    return Promise.resolve(Response.json({}));
-  }, async () => {
-    const result = await prepareDefaultHostedChildForkToolSources({
-      authToken: "token-1",
-      apiMcpUrl: "http://127.0.0.1/api-mcp",
-      mcpServers: [server],
-      studioMcpUrl,
-      clientProfile: trustedStudioProfile,
-      getProjectId: () => "project-1",
-      createRemoteToolSource: createHostedControlPlaneMCPToolSourceFactory({
-        apiMcpUrl: "http://127.0.0.1/api-mcp",
-        studioMcpUrl,
-      }),
-      createLiveStudioTools: () => {
-        liveStudioCalls++;
-        return Promise.resolve({ tools: {}, close: () => Promise.resolve() });
-      },
-    });
-
-    assertEquals(result.ok, false);
-    if (!result.ok) {
-      assertEquals(result.errorMessage.includes("Outbound network egress blocked"), true);
-    }
-  });
-
-  assertEquals(liveStudioCalls, 0);
-  assertEquals(transportCalls, 0);
+  return { createdConfigs, executeCalls, createRemoteToolSource };
 }
 
 function commandPayload(status: BackgroundCommand["status"]): BackgroundCommand {
@@ -218,7 +169,6 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
       ["studio-mcp-live-tools", "https://studio.example/mcp"],
     ],
   );
-  assertEquals(fixtures.serverKinds, ["veryfront-api", "veryfront-studio"]);
 
   await result.forkTools.studio_open_project?.execute?.({ project_reference: "project-two" });
 
@@ -240,28 +190,6 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
   ]);
 
   await result.closeStudioMcpTools?.();
-});
-
-Deno.test("prepareDefaultHostedChildForkToolSources forwards the host source factory to live Studio", async () => {
-  const createRemoteToolSource = createRemoteSourceFixtures().createRemoteToolSource;
-  let forwardedFactory: unknown;
-
-  const result = await prepareDefaultHostedChildForkToolSources({
-    authToken: "token-1",
-    apiMcpUrl: "http://veryfront-api:80/mcp",
-    mcpServers: [{ kind: "veryfront-studio" }],
-    studioMcpUrl: "http://veryfront-studio:80/mcp",
-    clientProfile: trustedStudioProfile,
-    getProjectId: () => "project-1",
-    createRemoteToolSource,
-    createLiveStudioTools: (input) => {
-      forwardedFactory = input.createRemoteToolSource;
-      return Promise.resolve({ tools: {}, close: () => Promise.resolve() });
-    },
-  });
-
-  assertEquals(result.ok, true);
-  assertEquals(forwardedFactory, createRemoteToolSource);
 });
 
 Deno.test("prepareDefaultHostedChildForkToolSources filters API MCP tools with the tool access profile", async () => {
@@ -517,34 +445,6 @@ Deno.test("prepareDefaultHostedChildForkToolSources preserves explicit MCP opt-o
   }
 
   assertEquals(result.forkTools, {});
-});
-
-Deno.test("child assembly keeps inherited Studio kinds on guarded generic egress", async () => {
-  const studioMcpUrl = "http://127.0.0.1/studio-mcp";
-  const server = Object.assign(
-    Object.create({ kind: "veryfront-studio" }) as Record<string, unknown>,
-    { endpoint: studioMcpUrl },
-  ) as AgentServiceMcpServerConfig;
-
-  await assertChildServerUsesGuardedGenericEgress(server);
-});
-
-Deno.test("child assembly ignores accessor-backed Studio kinds without invoking them", async () => {
-  const studioMcpUrl = "http://127.0.0.1/studio-mcp";
-  const server = { endpoint: studioMcpUrl } as Record<string, unknown>;
-  let kindReads = 0;
-  Object.defineProperty(server, "kind", {
-    configurable: true,
-    enumerable: true,
-    get() {
-      kindReads++;
-      return "veryfront-studio";
-    },
-  });
-
-  await assertChildServerUsesGuardedGenericEgress(server as AgentServiceMcpServerConfig);
-
-  assertEquals(kindReads, 0);
 });
 
 Deno.test("prepareDefaultHostedChildForkToolSources reports Studio setup failures", async () => {

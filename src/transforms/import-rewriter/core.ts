@@ -3,8 +3,6 @@ import {
   applyImportEdits,
   parseImportEdits,
 } from "./import-edit.ts";
-import { SECURITY_VIOLATION } from "#veryfront/errors";
-import { isPrivateFrameworkFileSpecifier } from "#veryfront/modules/private-framework-module-policy.ts";
 import { relativeToProjectDir } from "./project-paths.ts";
 import {
   appendDependencyPinningPathKey,
@@ -24,8 +22,6 @@ export interface TransformCoreInput {
   context: RewriteContext;
   strategies: ImportRewriteStrategy[];
 }
-
-const FRAMEWORK_SOURCE_URL = new URL("../../", import.meta.url).href;
 
 function pinSameOriginModuleUrl(
   specifier: string,
@@ -58,18 +54,9 @@ export async function rewriteWithImportRewriteCore(input: TransformCoreInput): P
   }
 
   const rewrites = new Map<number, { specifier?: string | null; statement?: string }>();
-  const guardFrameworkImports = input.strategies.some((strategy) => strategy.name === "veryfront");
 
   for (let i = 0; i < parsed.imports.length; i++) {
     const imp = parsed.imports[i]!;
-    if (
-      guardFrameworkImports && input.context.target === "ssr" &&
-      isPrivateFrameworkFileSpecifier(imp.specifier, FRAMEWORK_SOURCE_URL)
-    ) {
-      throw SECURITY_VIOLATION.create({
-        detail: "Private Veryfront host module cannot be imported",
-      });
-    }
     const result = rewriteOne(imp.specifier, imp, input.context, input.strategies);
 
     if (result.specifier !== null || result.statement !== undefined) {
@@ -83,7 +70,7 @@ export async function rewriteWithImportRewriteCore(input: TransformCoreInput): P
   const isCrossProjectSSRPinning = input.context.target === "ssr" &&
     pinningEnabled &&
     input.context.moduleServerUrl?.includes("/_vf_modules/_cross/") === true;
-  if (!isBrowserPinning && !isCrossProjectSSRPinning && !guardFrameworkImports) {
+  if (!isBrowserPinning && !isCrossProjectSSRPinning) {
     return rewritten;
   }
 
@@ -101,16 +88,12 @@ export async function rewriteWithImportRewriteCore(input: TransformCoreInput): P
         !input.context.filePath.startsWith("/")
       ? input.context.filePath
       : null);
-  const modulePath = !pinningEnabled || relativeFilePath === null
-    ? undefined
-    : appendDependencyPinningPathKey(
-      `${moduleServerBase}/${normalizeExtension(relativeFilePath)}`,
-      input.context.dependencyPinningCacheKey,
-    );
+  const modulePath = relativeFilePath === null ? undefined : appendDependencyPinningPathKey(
+    `${moduleServerBase}/${normalizeExtension(relativeFilePath)}`,
+    input.context.dependencyPinningCacheKey,
+  );
   return applyComputedDynamicImportPinning(computedParsed, modulePath, {
     ssr: isCrossProjectSSRPinning,
-    guardFrameworkImports,
-    guardFilesystemImports: guardFrameworkImports && input.context.target === "ssr",
   });
 }
 

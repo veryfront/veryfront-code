@@ -21,11 +21,6 @@ import {
   resolveInternalModuleUrl,
   resolveVeryfrontModuleUrl,
 } from "../../veryfront-module-urls.ts";
-import {
-  canonicalizeFrameworkModulePath,
-  isPrivateFrameworkModulePath,
-} from "#veryfront/modules/private-framework-module-policy.ts";
-import { SECURITY_VIOLATION } from "#veryfront/errors";
 
 /**
  * Module overrides for framework barrels that are too broad for a target.
@@ -91,13 +86,7 @@ export class VeryfrontStrategy implements ImportRewriteStrategy {
 
     // Handle #veryfront/* (internal framework imports)
     if (specifier.startsWith("#veryfront/")) {
-      if (isPrivateFrameworkModulePath(specifier)) {
-        throw SECURITY_VIOLATION.create({
-          detail: `Private Veryfront host module cannot be imported: ${specifier}`,
-        });
-      }
-      const path = canonicalizeFrameworkModulePath(specifier);
-      const canonicalSpecifier = `#veryfront/${path}`;
+      const path = specifier.slice("#veryfront/".length);
       // Try resolving via deno.json mappings first (for example,
       // veryfront/head → react/runtime/core.js).
       const mapped = resolveVeryfrontModuleUrl(`veryfront/${path}`);
@@ -107,7 +96,7 @@ export class VeryfrontStrategy implements ImportRewriteStrategy {
       // Try resolving via #veryfront/* import map (handles paths where the
       // filesystem layout differs from the specifier, e.g. #veryfront/compat/console
       // maps to src/platform/compat/console/index.ts, not src/compat/console.ts)
-      const internalMapped = resolveInternalModuleUrl(canonicalSpecifier);
+      const internalMapped = resolveInternalModuleUrl(specifier);
       if (internalMapped) {
         return { specifier: finalizeInternalModuleUrl(internalMapped, ctx) };
       }

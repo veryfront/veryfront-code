@@ -1,6 +1,5 @@
 /** Chat execution preparation and runtime wiring for the cloud agent service. */
-import { type HostToolSet, sleepTool } from "#veryfront/tool";
-import { createHostedControlPlaneMCPToolSourceFactory } from "./internal/control-plane-mcp-source.ts";
+import { createRemoteMCPToolSource, type HostToolSet, sleepTool } from "#veryfront/tool";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import {
   buildAgentRunTraceAttributes,
@@ -141,12 +140,6 @@ export function createAgentRuntime(
   const config = context.infrastructure.getConfig();
   const projectRuntime = getProjectAgentRuntime(context);
   const refreshSystem = createProjectSteeringRefresh(context);
-  const createRemoteToolSource = createHostedControlPlaneMCPToolSourceFactory({
-    apiMcpUrl: config.VERYFRONT_MCP_URL,
-    studioMcpUrl: config.VERYFRONT_STUDIO_MCP_URL,
-  }, {
-    logger: context.infrastructure.logger,
-  });
   const localToolRuntime = createHostedRootLocalToolRuntime({
     allowedToolNames: options.allowedTools,
     apiUrl: config.VERYFRONT_API_URL,
@@ -189,7 +182,7 @@ export function createAgentRuntime(
     projectScopedRemoteToolOptions: {
       projectNavigationToolNames: DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES,
     },
-    createRemoteToolSource,
+    createRemoteToolSource: createRemoteMCPToolSource,
     traceLocalTools: {
       trace: (spanName, operation) => context.infrastructure.tracer.trace(spanName, operation),
       buildAttributes: ({ toolName, toolCallId }) =>

@@ -1,14 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import { embedding } from "./embedding.ts";
 import { clearEmbeddingProviders, registerEmbeddingProvider } from "./resolve.ts";
 
 describe("embedding", () => {
+  const originalFetch = globalThis.fetch;
+
   afterEach(() => {
+    globalThis.fetch = originalFetch;
     deleteEnv("GOOGLE_API_KEY");
     deleteEnv("GOOGLE_GENERATIVE_AI_API_KEY");
     clearEmbeddingProviders();
@@ -76,7 +78,7 @@ describe("embedding", () => {
     let guardedCalls = 0;
     let replacedGlobalCalls = 0;
     let requestedApiKey: string | null = null;
-    const guardedFetch = (async (input: URL | Request | string, init?: RequestInit) => {
+    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
       guardedCalls++;
       const request = new Request(input, init);
       requestedApiKey = request.headers.get("x-goog-api-key");
@@ -86,17 +88,15 @@ describe("embedding", () => {
       });
     }) as typeof fetch;
 
-    await withMockFetch(guardedFetch, async () => {
-      const embedder = embedding({ model: "google/gemini-embedding-001" });
-      globalThis.fetch = (() => {
-        replacedGlobalCalls++;
-        return Promise.resolve(new Response("unexpected", { status: 500 }));
-      }) as typeof fetch;
+    const embedder = embedding({ model: "google/gemini-embedding-001" });
+    globalThis.fetch = (() => {
+      replacedGlobalCalls++;
+      return Promise.resolve(new Response("unexpected", { status: 500 }));
+    }) as typeof fetch;
 
-      assertEquals(await embedder.embed("hello"), [0.25, 0.75]);
-      assertEquals(guardedCalls, 1);
-      assertEquals(replacedGlobalCalls, 0);
-      assertEquals(requestedApiKey, "google-test-key");
-    });
+    assertEquals(await embedder.embed("hello"), [0.25, 0.75]);
+    assertEquals(guardedCalls, 1);
+    assertEquals(replacedGlobalCalls, 0);
+    assertEquals(requestedApiKey, "google-test-key");
   });
 });

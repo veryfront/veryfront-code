@@ -6,6 +6,7 @@ import {
   type HostToolTraceAttributes,
   listProjectScopedRemoteToolNames,
   type ProjectScopedRemoteToolOptions,
+  type RemoteMCPToolSourceConfig,
   type RemoteToolSource,
   type ToolSet,
   traceHostTools,
@@ -16,10 +17,7 @@ import {
   fetchLatestConversationUserText,
   updateDefaultResearchArtifacts,
 } from "../artifacts/default-research-artifact-support.ts";
-import type {
-  AgentServiceMcpServerConfig,
-  AgentServiceRemoteMcpSourceFactory,
-} from "../service/mcp-server-config.ts";
+import { type AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
 import {
   createHostedProjectRemoteToolSources,
   type HostedProjectRemoteToolSourceMutationHandler,
@@ -106,7 +104,7 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   includeRuntimeEssentialToolsWhenEmpty?: boolean;
   sourceProviderToolNames?: readonly string[];
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
-  createRemoteToolSource?: AgentServiceRemoteMcpSourceFactory;
+  createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
   traceLocalTools?: TraceHostToolsOptions<TTraceAttributes>;
   getProjectId?: () => string | null | undefined;
   getActiveBranchId?: () => string | null | undefined;
