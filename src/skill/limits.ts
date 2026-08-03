@@ -41,8 +41,9 @@ export const SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES = 1_000;
 export const SKILL_CATALOG_MAX_SKILLS = 128;
 export const SKILL_CATALOG_MAX_DOCUMENT_CHARACTERS = 8 * 1_048_576;
 export const SKILL_CATALOG_MAX_DOCUMENT_UTF8_BYTES = 16 * 1_048_576;
-// One catalog can retain a maximally populated Skill plus one source path for
-// every admitted definition. Other combinations share this same bounded total.
+// One skill may legitimately advertise the full three-directory readable-file
+// budget. Keep enough aggregate space for that catalog member plus one source
+// path for every retained definition, while still bounding total path memory.
 export const SKILL_CATALOG_MAX_PATH_ENTRIES = SKILL_LOADABLE_REFERENCE_MAX_ENTRIES +
   SKILL_CATALOG_MAX_SKILLS;
 export const SKILL_CATALOG_MAX_METADATA_CHARACTERS = 1_048_576;

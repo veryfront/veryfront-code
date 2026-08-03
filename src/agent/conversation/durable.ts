@@ -74,6 +74,7 @@ export type {
 } from "./durable-contracts.ts";
 
 const AGENT_RUN_API_TIMEOUT_MS = 15_000;
+type ConversationRunApiFetch = typeof globalThis.fetch;
 
 function createTimedAbortSignal(timeoutMs: number, abortSignal?: AbortSignal) {
   const controller = new AbortController();
@@ -148,6 +149,8 @@ export async function resyncConversationRunAppendCursor(input: {
   runId: string;
   previousLatestExternalEventSequence: number;
   abortSignal?: AbortSignal;
+  /** Host-owned transport used by trusted capability-backed callers. */
+  fetch?: ConversationRunApiFetch;
 }): Promise<{
   result: ConversationRunAppendCursorResyncResult;
   run: ConversationRunProjection;
@@ -158,6 +161,7 @@ export async function resyncConversationRunAppendCursor(input: {
     conversationId: input.conversationId,
     runId: input.runId,
     abortSignal: input.abortSignal,
+    fetch: input.fetch,
   });
 
   if (!isAppendableConversationRunProjection(run)) {
@@ -193,6 +197,8 @@ export async function recoverConversationRunCursorMismatch(input: {
   maxCursorResyncsPerFlush: number;
   cursorMode?: "external_sequence" | "durable_event_id";
   abortSignal?: AbortSignal;
+  /** Host-owned transport used by trusted capability-backed callers. */
+  fetch?: ConversationRunApiFetch;
 }): Promise<{
   outcome: ConversationRunAppendRecoveryOutcome;
   latestEventId: number;
@@ -237,6 +243,7 @@ export async function recoverConversationRunCursorMismatch(input: {
     runId: input.runId,
     previousLatestExternalEventSequence: input.latestExternalEventSequence,
     abortSignal: input.abortSignal,
+    fetch: input.fetch,
   });
 
   if (resynced.result === "advanced") {
@@ -279,6 +286,8 @@ export async function recoverConversationRunAppendFailure(input: {
   maxCursorResyncsPerFlush: number;
   cursorMode?: "external_sequence" | "durable_event_id";
   abortSignal?: AbortSignal;
+  /** Host-owned transport used by trusted capability-backed callers. */
+  fetch?: ConversationRunApiFetch;
 }): Promise<{
   outcome: ConversationRunAppendFailureOutcome;
   latestEventId: number;
@@ -306,6 +315,7 @@ export async function recoverConversationRunAppendFailure(input: {
     maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush,
     cursorMode: input.cursorMode,
     abortSignal: input.abortSignal,
+    fetch: input.fetch,
   });
 
   if (cursorRecovery.outcome === "resumed") {
@@ -387,6 +397,8 @@ export async function recoverConversationRunAppendExecution(input: {
   maxCursorResyncsPerFlush: number;
   cursorMode?: "external_sequence" | "durable_event_id";
   abortSignal?: AbortSignal;
+  /** Host-owned transport used by trusted capability-backed callers. */
+  fetch?: ConversationRunApiFetch;
 }): Promise<
   | {
     outcome: "resumed";
@@ -429,6 +441,7 @@ export async function recoverConversationRunAppendExecution(input: {
     maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush,
     cursorMode: input.cursorMode,
     abortSignal: input.abortSignal,
+    fetch: input.fetch,
   });
 
   if (recovered.outcome === "resumed") {
@@ -517,6 +530,8 @@ export async function flushConversationRunEventBatches(input: {
   maxCursorResyncsPerFlush: number;
   abortSignal?: AbortSignal;
   onAppendRequest?: () => void;
+  /** Host-owned transport used by trusted capability-backed callers. */
+  fetch?: ConversationRunApiFetch;
 }): Promise<
   | {
     outcome: "flushed";
@@ -574,6 +589,7 @@ export async function flushConversationRunEventBatches(input: {
         expectedPreviousExternalEventSequence: latestExternalEventSequence,
         events: batch,
         abortSignal: input.abortSignal,
+        fetch: input.fetch,
       });
       latestEventId = response.latestEventId;
       latestExternalEventSequence = response.latestExternalEventSequence;
@@ -594,6 +610,7 @@ export async function flushConversationRunEventBatches(input: {
         maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush,
         cursorMode,
         abortSignal: input.abortSignal,
+        fetch: input.fetch,
       });
 
       if (recovered.outcome === "stopped") {
@@ -643,6 +660,8 @@ export async function flushConversationRunEventQueue(input: {
   consecutiveFailures?: number;
   abortSignal?: AbortSignal;
   onAppendRequest?: () => void;
+  /** Host-owned transport used by trusted capability-backed callers. */
+  fetch?: ConversationRunApiFetch;
 }): Promise<
   | {
     outcome: "flushed";
@@ -697,6 +716,7 @@ export async function flushConversationRunEventQueue(input: {
       maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush,
       abortSignal: input.abortSignal,
       onAppendRequest: input.onAppendRequest,
+      fetch: input.fetch,
     });
 
     latestEventId = flushed.latestEventId;
@@ -752,6 +772,8 @@ export function createConversationRunEventQueueController(input: {
   maxEventsPerBatch: number;
   maxBatchPayloadBytes?: number;
   maxCursorResyncsPerFlush?: number;
+  /** Host-owned transport used by trusted capability-backed callers. */
+  fetch?: ConversationRunApiFetch;
 }): ConversationRunEventQueueController {
   let latestEventId = input.latestEventId;
   let latestExternalEventSequence = input.latestExternalEventSequence;
@@ -807,6 +829,7 @@ export function createConversationRunEventQueueController(input: {
         maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush ?? 3,
         consecutiveFailures,
         abortSignal,
+        fetch: input.fetch,
         onAppendRequest: () => {
           appendRequestCount += 1;
         },
@@ -950,6 +973,7 @@ async function controlPlaneJson<T>(input: {
   responseSchema: Schema<T>;
   operation: string;
   abortSignal?: AbortSignal;
+  fetch?: ConversationRunApiFetch;
 }): Promise<T> {
   if (input.abortSignal?.aborted) {
     throw new DOMException("This operation was aborted", "AbortError");
@@ -960,7 +984,7 @@ async function controlPlaneJson<T>(input: {
   // The timed abort must stay armed while the body is read: a server that
   // stalls mid-body would otherwise hang past the timeout.
   try {
-    const response = await fetch(input.url, {
+    const response = await (input.fetch ?? globalThis.fetch)(input.url, {
       method: input.method ?? "GET",
       headers: {
         Authorization: `Bearer ${input.authToken}`,
@@ -1000,6 +1024,8 @@ export async function getConversationRun(input: {
   conversationId: string;
   runId: string;
   abortSignal?: AbortSignal;
+  /** Host-owned transport used by trusted capability-backed callers. */
+  fetch?: ConversationRunApiFetch;
 }): Promise<ConversationRunProjection> {
   return controlPlaneJson({
     authToken: input.authToken,
@@ -1007,6 +1033,7 @@ export async function getConversationRun(input: {
     responseSchema: ConversationRunProjectionSchema,
     operation: "Read conversation durable run projection",
     abortSignal: input.abortSignal,
+    fetch: input.fetch,
   });
 }
 
@@ -1079,6 +1106,8 @@ export async function appendConversationRunEvents(input: {
   expectedPreviousExternalEventSequence?: number;
   events: unknown[];
   abortSignal?: AbortSignal;
+  /** Host-owned transport used by trusted capability-backed callers. */
+  fetch?: ConversationRunApiFetch;
 }): Promise<AppendConversationRunEventsResponse> {
   if (input.abortSignal?.aborted) {
     throw new DOMException("This operation was aborted", "AbortError");
@@ -1101,7 +1130,7 @@ export async function appendConversationRunEvents(input: {
   // The timed abort must stay armed while the body is read: a server that
   // stalls mid-body would otherwise hang past the timeout.
   try {
-    const response = await fetch(
+    const response = await (input.fetch ?? globalThis.fetch)(
       `${input.apiUrl}/conversations/${input.conversationId}/runs/${input.runId}/events`,
       {
         method: "POST",

@@ -348,11 +348,12 @@ export async function prepareChatExecutionWithinProjectRuntime(
       preparationSignal,
     ),
     createRuntime: (creationOptions) =>
-      context.trace("chat.createRuntime", () =>
-        createAgentRuntime(context, {
+      context.trace("chat.createRuntime", () => {
+        return createAgentRuntime(context, {
           ...creationOptions,
           userId: req.userId,
-        })),
+        });
+      }),
   });
 
   setPrepareChatExecutionResultAttributes(context, {

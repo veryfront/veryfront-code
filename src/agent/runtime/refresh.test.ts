@@ -54,6 +54,21 @@ function extractSystemPrompt(options: unknown): string {
     .join("\n");
 }
 
+function extractRuntimeToolNames(options: unknown): string[] {
+  const tools = (options as { tools?: unknown }).tools;
+  if (Array.isArray(tools)) {
+    return tools.map((entry) => {
+      const toolEntry = entry as { name?: unknown; id?: unknown };
+      return typeof toolEntry.name === "string"
+        ? toolEntry.name
+        : typeof toolEntry.id === "string"
+        ? toolEntry.id
+        : "";
+    }).sort();
+  }
+  return Object.keys((tools as Record<string, unknown> | undefined) ?? {}).sort();
+}
+
 function supplierInvoiceEvidenceMessages(): Message[] {
   return [
     {
@@ -1699,7 +1714,14 @@ describe("agent runtime refresh hooks", () => {
       id: "load_skill",
       description: "Load a skill",
       inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
-      execute: () => ({ skillId: "build", instructions: "# Build", maxSteps: 160 }),
+      execute: () => ({
+        skillId: "build",
+        instructions: "# Build",
+        allowedTools: ["invoke_agent"],
+        references: [],
+        scripts: [],
+        maxSteps: 160,
+      }),
     });
     const invokeAgent = tool({
       id: "invoke_agent",
@@ -1800,7 +1822,14 @@ describe("agent runtime refresh hooks", () => {
       id: "load_skill",
       description: "Load a skill",
       inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
-      execute: () => ({ skillId: "build", instructions: "# Build", maxSteps: 160 }),
+      execute: () => ({
+        skillId: "build",
+        instructions: "# Build",
+        allowedTools: ["invoke_agent"],
+        references: [],
+        scripts: [],
+        maxSteps: 160,
+      }),
     });
     const invokeAgent = tool({
       id: "invoke_agent",
@@ -2326,10 +2355,13 @@ describe("agent runtime refresh hooks", () => {
   it("generate and stream permit an advertised active-skill reference after form submission", async () => {
     let generateCalls = 0;
     let streamCalls = 0;
+    const generateToolNames: string[][] = [];
+    const streamToolNames: string[][] = [];
     const model: ModelRuntime = {
       provider: "hosted",
       modelId: "hosted/post-form-skill-reference",
-      async doGenerate() {
+      async doGenerate(options: unknown) {
+        generateToolNames.push(extractRuntimeToolNames(options));
         generateCalls++;
         if (generateCalls === 1) {
           return {
@@ -2349,7 +2381,8 @@ describe("agent runtime refresh hooks", () => {
           usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
         };
       },
-      async doStream() {
+      async doStream(options: unknown) {
+        streamToolNames.push(extractRuntimeToolNames(options));
         streamCalls++;
         if (streamCalls === 1) {
           return {
@@ -2400,7 +2433,15 @@ describe("agent runtime refresh hooks", () => {
       model: "hosted/post-form-skill-reference",
       system: "Plan assistant",
       skills: true,
-      tools: { load_skill: loadSkill },
+      tools: {
+        load_skill: loadSkill,
+        read_secret: tool({
+          id: "read_secret",
+          description: "Read a secret outside the active skill policy",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({ secret: true }),
+        }),
+      },
       maxSteps: 2,
       resolveModelTransport: async () => ({ model }),
     });
@@ -2421,6 +2462,8 @@ describe("agent runtime refresh hooks", () => {
     });
     assertEquals(streamed.includes("stream done"), true);
     assertEquals(streamed.includes("Guide"), true);
+    assertEquals(generateToolNames, [["load_skill"], ["load_skill"]]);
+    assertEquals(streamToolNames, [["load_skill"], ["load_skill"]]);
   });
 
   it("generate and stream load advertised provider-safe root-owned project skills", async () => {

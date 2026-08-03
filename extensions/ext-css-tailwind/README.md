@@ -1,25 +1,19 @@
 # @veryfront/ext-css-tailwind
 
-> **Category:** Build | **Contract:** `CSSProcessor` | **Explicit**
+> **Category:** Build | **Contract:** `CSSProcessor` | **Default**
 
 Provides Tailwind CSS v4 compilation for Veryfront. The extension owns the
 pinned compiler, local base stylesheet, plugin policy, plugin module loading,
 and every third-party import; framework core sees only `CSSProcessor`.
 
-## Registration
+## Activation
 
-Install and compose the extension explicitly:
+The standard `veryfront` npm/CLI distribution installs and auto-activates this
+extension. Source and custom service distributions must make the package
+available alongside `veryfront`; the builtin composition then activates it.
+Projects do not need a Tailwind entry in `veryfront.config.ts`.
 
-```ts
-import extTailwind from "@veryfront/ext-css-tailwind";
-
-export default defineConfig({
-  extensions: [extTailwind()],
-});
-```
-
-Core never discovers or auto-registers this provider. Production pipelines
-that request CSS minification must also explicitly compose a
+Production pipelines that request CSS minification must still explicitly compose a
 `CSSOptimizationEngine` provider such as `@veryfront/ext-css-lightning`.
 If either requested provider is absent, compilation fails instead of returning
 empty or regex-rewritten CSS.

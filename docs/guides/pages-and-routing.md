@@ -150,6 +150,32 @@ function PageTitle() {
 }
 ```
 
+### Override rendered MDX elements
+
+Wrap an MDX page or layout with `MDXProvider` to replace generated elements:
+
+```tsx
+import type React from "react";
+import { MDXProvider } from "veryfront/mdx";
+
+const docsComponents = {
+  h1: (props: React.ComponentProps<"h1">) => <h1 className="docs-title" {...props} />,
+  a: (props: React.ComponentProps<"a">) => <a {...props} rel="noreferrer" />,
+};
+
+export default function DocsLayout({ children }: { children: React.ReactNode }) {
+  return <MDXProvider components={docsComponents}>{children}</MDXProvider>;
+}
+```
+
+Nested providers inherit entries from outer providers. A nearer provider wins
+for duplicate keys. Call `useMDXComponents(localOverrides)` when a component
+needs the effective map; local entries take final precedence.
+
+`MDXProvider` supplies application-owned React components to already compiled
+MDX. It does not compile or sanitize arbitrary strings. Render runtime Markdown
+strings with `veryfront/markdown`.
+
 ### Reading server data from a layout or nested component
 
 A page's [`getServerData`](./data-fetching.md) props are passed to the page

@@ -25,6 +25,8 @@ export const HANDLER_CACHE_MAX_ENTRIES = 256;
 export const MAX_CACHE_KEY_CHARACTERS = 16_384;
 
 export const MAX_PATH_LENGTH_CHARS = 4096;
+/** Maximum number of path segments admitted by framework route resolvers. */
+export const MAX_ROUTE_SEGMENTS = 64;
 export const MAX_PORT_NUMBER = 65535;
 export const MIN_PORT_NUMBER = 1;
 export const MAX_URL_LENGTH_FOR_VALIDATION = 2048;

@@ -67,13 +67,14 @@ Deno.test("createHostedAgentProjectSteering registers the built-in schema valida
     assertEquals(tryResolve<SchemaValidator>("SchemaValidator"), undefined);
 
     const baseDir = writeAgentDefinition({ rootDir, agentId: "writer" });
-    createHostedAgentProjectSteering({
+    const steering = createHostedAgentProjectSteeringPublic({
       baseDir,
       agentId: "writer",
       getApiUrl: () => "https://api.example.com",
     });
 
     assertEquals(typeof tryResolve<SchemaValidator>("SchemaValidator")?.object, "function");
+    assertEquals(steering.getAgentConfig().id, "writer");
   });
 });
 

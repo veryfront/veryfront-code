@@ -4,9 +4,11 @@ import { defineSchema } from "veryfront/schemas";
 export default tool({
   id: "search",
   description: "Search your knowledge base",
-  inputSchema: defineSchema((v) => v.object({
-    query: v.string().describe("Search query"),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      query: v.string().describe("Search query"),
+    })
+  )(),
   execute: async ({ query }) => {
     // Replace with your domain-specific search logic
     return {

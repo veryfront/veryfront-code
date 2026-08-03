@@ -410,6 +410,58 @@ Deno.test("createHostedProjectRemoteToolSource fails closed on claimed but uncon
   assertEquals(switchCount, 0);
 });
 
+Deno.test("createHostedProjectRemoteToolSource rejects unconfirmed claimed navigation success", async () => {
+  let switchCount = 0;
+  const source = createHostedProjectRemoteToolSource({
+    source: createRemoteSource({
+      tools: [navigationTool("studio_open_project")],
+      execute: () => ({
+        structuredContent: {
+          success: true,
+          project_id: "different-project",
+          slug: "different-project",
+        },
+      }),
+    }),
+    projectScopedRemoteToolOptions: {
+      projectNavigationToolNames: ["studio_open_project"],
+    },
+    onProjectSwitch: () => {
+      switchCount += 1;
+    },
+  });
+
+  const result = await source.executeTool("studio_open_project", {
+    project_reference: "requested-project",
+  });
+
+  assertEquals(result, createUnconfirmedProjectContextSwitchResult());
+  assertEquals(switchCount, 0);
+});
+
+Deno.test("createHostedProjectRemoteToolSource preserves upstream navigation failure", async () => {
+  const failure = { structuredContent: { success: false, message: "not found" } };
+  const source = createHostedProjectRemoteToolSource({
+    source: createRemoteSource({
+      tools: [navigationTool("studio_open_project")],
+      execute: () => failure,
+    }),
+    projectScopedRemoteToolOptions: {
+      projectNavigationToolNames: ["studio_open_project"],
+    },
+    onProjectSwitch: () => {
+      throw new Error("unexpected project switch");
+    },
+  });
+
+  assertEquals(
+    await source.executeTool("studio_open_project", {
+      project_reference: "missing-project",
+    }),
+    failure,
+  );
+});
+
 Deno.test("createHostedProjectRemoteToolSource skips mutation callbacks for failed results", async () => {
   let mutationCount = 0;
   const source = createHostedProjectRemoteToolSource({

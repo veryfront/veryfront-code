@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertInstanceOf,
+  assertRejects,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createFSAdapterFromConfig,
@@ -8,6 +13,7 @@ import {
   isFSAdapterConfigured,
 } from "./integration.ts";
 import { denoAdapter } from "../deno.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 
 describe("integration.ts", () => {
   it("should export enhanceAdapterWithFS function", () => {
@@ -94,6 +100,22 @@ describe("integration.ts", () => {
   });
 
   describe("enhanceAdapterWithFS error fallback", () => {
+    it("should preserve invalid retry configuration instead of changing filesystems", async () => {
+      let rejection: unknown;
+      try {
+        await enhanceAdapterWithFS(denoAdapter, {
+          fs: {
+            type: "veryfront-api",
+            veryfront: { retry: { maxRetries: Number.MAX_SAFE_INTEGER } },
+          },
+        });
+      } catch (error) {
+        rejection = error;
+      }
+      assertInstanceOf(rejection, VeryfrontError);
+      assertEquals(rejection.slug, "config-validation-failed");
+    });
+
     it("should fall back to original adapter for unsupported type", async () => {
       const adapter = await enhanceAdapterWithFS(denoAdapter, {
         fs: { type: "unsupported-type" as any },
