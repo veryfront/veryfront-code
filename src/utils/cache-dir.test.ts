@@ -236,7 +236,7 @@ describe("cache-dir", () => {
       assertFrameworkNodeModulesLink(secondRoot);
     });
 
-    it("should deduplicate concurrent callers and memoize verified roots", async () => {
+    it("should deduplicate concurrent callers and revalidate verified roots", async () => {
       const cacheRoot = makeNodeCacheRoot();
 
       const results = await runWithCacheDir(
@@ -246,13 +246,9 @@ describe("cache-dir", () => {
       assertEquals(results, Array.from({ length: 20 }, () => true));
       assertFrameworkNodeModulesLink(cacheRoot);
 
-      // A verified root is memoized: later callers succeed without re-running
-      // the sync link inspection, even if the link is racily removed.
+      // A remembered root must still be checked: another process can clear a
+      // cache directory after the first successful call.
       unlinkSync(join(cacheRoot, "node_modules"));
-      assertEquals(await runWithCacheDir(cacheRoot, ensureCacheNodeModules), true);
-
-      // Resetting the memo restores self-healing for the same root.
-      __cacheDirInternals.resetNodeModulesLinkState();
       assertEquals(await runWithCacheDir(cacheRoot, ensureCacheNodeModules), true);
       assertFrameworkNodeModulesLink(cacheRoot);
     });

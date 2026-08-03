@@ -7,14 +7,14 @@ import { serverLogger } from "./logger/index.ts";
 const logger = serverLogger.component("cache-dir");
 
 const cacheStorage = new AsyncLocalStorage<string>();
-const nodeModulesLinkOperations = new Map<string, Promise<boolean>>();
+const nodeModulesLinkOperations = new Map<string, Promise<string | undefined>>();
 
-// Bounded memo of cache roots whose node_modules link has been verified, so
-// post-settle callers pay an O(1) lookup instead of repeated sync syscalls
-// (require.resolve + lstat + realpath) on every render. Bounded so many
-// distinct tenant cache dirs cannot pin process memory forever.
+// Bounded memo of cache roots and their expected framework dependency root.
+// A cache hit still validates the target entry: cache directories can be
+// cleared or replaced by another process, so remembered success must never
+// turn a missing or wrong link into a false-positive `true` result.
 const MAX_SETTLED_CACHE_ROOTS = 128;
-const verifiedCacheRoots = new Set<string>();
+const verifiedCacheRoots = new Map<string, string>();
 // Roots whose link creation failed, kept only to log the failure once.
 const warnedLinkFailureRoots = new Set<string>();
 
@@ -24,6 +24,14 @@ function rememberBounded(set: Set<string>, value: string): void {
     if (oldest !== undefined) set.delete(oldest);
   }
   set.add(value);
+}
+
+function rememberVerifiedRoot(cacheBase: string, nodeModulesDir: string): void {
+  if (!verifiedCacheRoots.has(cacheBase) && verifiedCacheRoots.size >= MAX_SETTLED_CACHE_ROOTS) {
+    const oldest = verifiedCacheRoots.keys().next().value;
+    if (oldest !== undefined) verifiedCacheRoots.delete(oldest);
+  }
+  verifiedCacheRoots.set(cacheBase, nodeModulesDir);
 }
 
 function getReactNodeModulesDir(reactEntry: string): string | undefined {
@@ -100,7 +108,8 @@ export function getHttpBundleCacheDir(): string {
  * real directory), and `false` when it could not be ensured — so callers can
  * distinguish total link failure from success. Failures are logged once per
  * cache dir and are retried on later calls (self-healing); only verified
- * roots are memoized.
+ * roots retain their expected framework dependency root for a cheaper
+ * revalidation on later calls.
  */
 export async function ensureCacheNodeModules(): Promise<boolean> {
   if (!isNode) return true;
@@ -113,7 +122,11 @@ export async function ensureCacheNodeModules(): Promise<boolean> {
   // Storing the in-flight promise also makes concurrent callers wait for the
   // link to actually exist instead of returning before the async work is done.
   const cacheBase = getCacheBaseDir();
-  if (verifiedCacheRoots.has(cacheBase)) return true;
+  const verifiedRoot = verifiedCacheRoots.get(cacheBase);
+  if (verifiedRoot !== undefined) {
+    if (await isCacheNodeModulesUsable(cacheBase, verifiedRoot)) return true;
+    verifiedCacheRoots.delete(cacheBase);
+  }
 
   let operation = nodeModulesLinkOperations.get(cacheBase);
   if (!operation) {
@@ -121,21 +134,40 @@ export async function ensureCacheNodeModules(): Promise<boolean> {
     nodeModulesLinkOperations.set(cacheBase, operation);
   }
   try {
-    const linked = await operation;
-    if (linked) rememberBounded(verifiedCacheRoots, cacheBase);
-    return linked;
+    const nodeModulesDir = await operation;
+    if (nodeModulesDir === undefined) return false;
+    rememberVerifiedRoot(cacheBase, nodeModulesDir);
+    warnedLinkFailureRoots.delete(cacheBase);
+    return true;
   } finally {
-    // The in-flight map deduplicates only concurrent work; settled successes
-    // live in the bounded verified-roots memo and settled failures are
-    // retried. The identity check prevents an older waiter from deleting a
-    // replacement operation.
+    // The in-flight map deduplicates only concurrent work. The identity check
+    // prevents an older waiter from deleting a replacement operation.
     if (nodeModulesLinkOperations.get(cacheBase) === operation) {
       nodeModulesLinkOperations.delete(cacheBase);
     }
   }
 }
 
-async function linkCacheNodeModules(cacheBase: string): Promise<boolean> {
+async function isCacheNodeModulesUsable(
+  cacheBase: string,
+  nodeModulesDir: string,
+): Promise<boolean> {
+  try {
+    const { lstatSync, realpathSync } = await import("node:fs");
+    const targetLink = join(cacheBase, "node_modules");
+    const existing = lstatSync(targetLink);
+    if (existing.isSymbolicLink()) {
+      return realpathSync(targetLink) === realpathSync(nodeModulesDir);
+    }
+    if (!existing.isDirectory()) return false;
+    return realpathSync(join(targetLink, "react")) ===
+      realpathSync(join(nodeModulesDir, "react"));
+  } catch {
+    return false;
+  }
+}
+
+async function linkCacheNodeModules(cacheBase: string): Promise<string | undefined> {
   try {
     const { createRequire } = await import("node:module");
     const { lstatSync, mkdirSync, realpathSync, symlinkSync, unlinkSync } = await import("node:fs");
@@ -151,7 +183,7 @@ async function linkCacheNodeModules(cacheBase: string): Promise<boolean> {
       const existing = lstatSync(targetLink);
       if (existing.isSymbolicLink()) {
         try {
-          if (realpathSync(targetLink) === realpathSync(nodeModulesDir)) return true;
+          if (realpathSync(targetLink) === realpathSync(nodeModulesDir)) return nodeModulesDir;
         } catch {
           // A dangling link is safe to replace without touching its target.
         }
@@ -163,7 +195,7 @@ async function linkCacheNodeModules(cacheBase: string): Promise<boolean> {
           if (
             realpathSync(join(targetLink, "react")) ===
               realpathSync(join(nodeModulesDir, "react"))
-          ) return true;
+          ) return nodeModulesDir;
         } catch {
           // The existing directory is not a usable framework dependency root.
         }
@@ -178,7 +210,7 @@ async function linkCacheNodeModules(cacheBase: string): Promise<boolean> {
 
     mkdirSync(cacheBase, { recursive: true });
     symlinkSync(nodeModulesDir, targetLink, "dir");
-    return true;
+    return nodeModulesDir;
   } catch (error) {
     // Best-effort: symlink creation may fail due to permissions or platform,
     // but total failure must stay observable instead of looking like success.
@@ -189,10 +221,10 @@ async function linkCacheNodeModules(cacheBase: string): Promise<boolean> {
   }
 }
 
-function warnLinkFailure(cacheBase: string, reason: string): false {
+function warnLinkFailure(cacheBase: string, reason: string): undefined {
   if (!warnedLinkFailureRoots.has(cacheBase)) {
     rememberBounded(warnedLinkFailureRoots, cacheBase);
     logger.warn("Cache node_modules link not established", { cacheBase, reason });
   }
-  return false;
+  return undefined;
 }
