@@ -177,6 +177,50 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(fetchedUrl.searchParams.get("pins"), snapshotKey);
   });
 
+  for (
+    const [name, specifier] of [
+      ["protocol-relative", "//93.184.216.34:3000/_vf_modules/shared/Protocol.js"],
+      ["uppercase HTTP", "HTTP://93.184.216.34:3000/_vf_modules/shared/Uppercase.js"],
+    ] as const
+  ) {
+    it(`pins ${name} same-origin module-server imports before fetching`, async () => {
+      const origin = "http://93.184.216.34:3000";
+      const snapshotKey = "on:snapshot-a";
+      const fetchedUrls: string[] = [];
+
+      await withIsolatedHttpCache(
+        `vf-esm-${name.replaceAll(" ", "-")}-pins-`,
+        ((input) => {
+          fetchedUrls.push(String(input));
+          return Promise.resolve(
+            new Response(`export const value = "pinned";`, {
+              headers: { "content-type": "application/javascript" },
+            }),
+          );
+        }) as typeof fetch,
+        async (tempDir) => {
+          const result = await cacheHttpImportsToLocal(
+            `export { value } from "${specifier}";`,
+            {
+              cacheDir: tempDir,
+              importMap: { imports: {}, scopes: {} },
+              moduleServerOrigin: origin,
+              dependencyPinningCacheKey: snapshotKey,
+            },
+          );
+
+          assertEquals(result.code.includes("file://"), true);
+        },
+      );
+
+      assertEquals(fetchedUrls.length, 1);
+      const fetchedUrl = new URL(fetchedUrls[0]!);
+      assertEquals(fetchedUrl.origin, origin);
+      assertEquals(fetchedUrl.searchParams.get("ssr"), "true");
+      assertEquals(fetchedUrl.searchParams.get("pins"), snapshotKey);
+    });
+  }
+
   it("does not retry permanent HTTP module failures", async () => {
     let fetchCount = 0;
     let bodyCancelled = false;

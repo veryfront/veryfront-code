@@ -29,6 +29,22 @@ import {
 /** Function signature for caching an HTTP module and returning its local path. */
 export type CacheHttpModuleFn = (url: string, options: CacheOptions) => Promise<string | null>;
 
+function canonicalizeHttpSpecifier(
+  specifier: string,
+  baseUrl?: string,
+  moduleServerOrigin?: string,
+): string {
+  if (/^https?:\/\//i.test(specifier)) return new URL(specifier).toString();
+  if (!specifier.startsWith("//")) return specifier;
+
+  const resolutionBase = moduleServerOrigin ??
+    (baseUrl && /^https?:\/\//i.test(baseUrl) ? baseUrl : undefined);
+  if (!resolutionBase) {
+    throw new Error(`Cannot resolve protocol-relative HTTP module ${specifier}`);
+  }
+  return new URL(specifier, resolutionBase).toString();
+}
+
 function toCacheableHttpSpecifier(specifier: string, moduleServerOrigin?: string): string {
   if (!specifier.startsWith("/") || !moduleServerOrigin) return specifier;
   return new URL(specifier, moduleServerOrigin).toString();
@@ -52,6 +68,11 @@ async function resolveSpecifier(
   options: CacheOptions,
   cacheHttpModule: CacheHttpModuleFn,
 ): Promise<string | null> {
+  specifier = canonicalizeHttpSpecifier(
+    specifier,
+    baseUrl,
+    options.moduleServerOrigin,
+  );
   if (isExternalScheme(specifier)) return null;
 
   // Server-only packages (`redis`, `pg`, …), including their explicit `npm:`
