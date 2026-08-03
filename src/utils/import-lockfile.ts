@@ -8,6 +8,7 @@ import {
 import { normalize } from "#veryfront/compat/path/resolution.ts";
 import {
   CACHE_ERROR,
+  INVALID_ARGUMENT,
   LOCKFILE_FORMAT_MISMATCH,
   LOCKFILE_READ_ERROR,
   NETWORK_ERROR,
@@ -370,7 +371,7 @@ function lockfileInputError(
   reason: "invalid-structure",
   cause?: unknown,
 ) {
-  return LOCKFILE_READ_ERROR.create({
+  return INVALID_ARGUMENT.create({
     detail: "The provided lockfile data has an invalid structure. The file was left untouched.",
     cause,
     context: { reason },
@@ -390,19 +391,23 @@ function lockfileFormatMismatch(lockfilePath: string, version: number) {
   });
 }
 
-function sanitizeLockfileData(value: unknown, lockfilePath: string): LockfileData {
-  if (!isRecord(value)) throw lockfileReadError(lockfilePath, "invalid-structure");
+function sanitizeLockfileData(
+  value: unknown,
+  lockfilePath: string,
+  invalidStructureError: () => Error = () => lockfileReadError(lockfilePath, "invalid-structure"),
+): LockfileData {
+  if (!isRecord(value)) throw invalidStructureError();
 
   const version = getOwnDataProperty(value, "version")?.value;
   if (typeof version !== "number" || !numberIsSafeInteger(version)) {
-    throw lockfileReadError(lockfilePath, "invalid-structure");
+    throw invalidStructureError();
   }
   if (version !== LOCKFILE_VERSION) {
     throw lockfileFormatMismatch(lockfilePath, version);
   }
   const parsedImports = getOwnDataProperty(value, "imports")?.value;
   if (!isRecord(parsedImports)) {
-    throw lockfileReadError(lockfilePath, "invalid-structure");
+    throw invalidStructureError();
   }
 
   const imports: Array<[string, LockfileEntry]> = [];
@@ -412,7 +417,7 @@ function sanitizeLockfileData(value: unknown, lockfilePath: string): LockfileDat
     const entry = getOwnDataProperty(parsedImports, url)?.value;
     const sanitizedEntry = sanitizeLockfileEntry(entry);
     if (sanitizedEntry === null) {
-      throw lockfileReadError(lockfilePath, "invalid-structure");
+      throw invalidStructureError();
     }
     imports[imports.length] = [url, sanitizedEntry];
   }
@@ -1275,7 +1280,11 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
 
   function write(data: LockfileData): Promise<void> {
     return serializeManagerOperation(() => {
-      const snapshot = sanitizeLockfileData(data, lockfilePath);
+      const snapshot = sanitizeLockfileData(
+        data,
+        lockfilePath,
+        () => lockfileInputError("invalid-structure"),
+      );
       return withLockfileAccess(async (state) => {
         // Revalidate the existing file before replacing it. Unsupported,
         // unreadable, and malformed files are always preserved.

@@ -1938,7 +1938,7 @@ describe("import-lockfile", () => {
         VeryfrontError,
       );
       if (!(structureError instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
-      assertEquals(structureError.slug, "lockfile-read-error");
+      assertEquals(structureError.slug, "invalid-argument");
       assertEquals(
         (structureError.context as { reason?: string }).reason,
         "invalid-structure",
@@ -1963,7 +1963,7 @@ describe("import-lockfile", () => {
         VeryfrontError,
       );
       if (!(accessorError instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
-      assertEquals(accessorError.slug, "lockfile-read-error");
+      assertEquals(accessorError.slug, "invalid-argument");
       assertEquals(importGetterCalls, 0);
       assertEquals(await fs.readFile("/project/veryfront.lock"), existingLockfile);
     });
@@ -2021,7 +2021,7 @@ describe("import-lockfile", () => {
           VeryfrontError,
         );
         if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
-        assertEquals(error.slug, "lockfile-read-error");
+        assertEquals(error.slug, "invalid-argument");
         assertEquals((error.context as { reason?: string }).reason, "invalid-structure");
       }
       assertEquals(dependencyGetterCalls, 0);
