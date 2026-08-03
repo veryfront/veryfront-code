@@ -61,8 +61,7 @@ describe("GitHubApiClient", () => {
           ["repo", "r".repeat(257)],
         ] as const
       ) {
-        // A CONFIG-category error keeps enhanceAdapterWithFS failing closed;
-        // a bare TypeError would silently fall back to the local filesystem.
+        // Repository identity failures retain stable CONFIG error semantics.
         const error = assertThrows(
           () => new GitHubApiClient({ ...mockConfig, [field]: value }),
           VeryfrontError,

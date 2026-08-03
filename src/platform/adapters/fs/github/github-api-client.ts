@@ -106,10 +106,7 @@ export class GitHubApiClient {
   private rateLimitInfo: RateLimitInfo | null = null;
 
   constructor(private readonly config: ResolvedGitHubConfig) {
-    // Invalid repository identity is a configuration error: it must fail
-    // closed (surface as a CONFIG-category VeryfrontError) instead of a bare
-    // TypeError that enhanceAdapterWithFS would swallow before silently
-    // falling back to the host-local filesystem adapter.
+    // Invalid repository identity remains a CONFIG-category boundary error.
     try {
       const owner = encodeRepositorySegment(config.owner, "owner");
       const repo = encodeRepositorySegment(config.repo, "repository");
