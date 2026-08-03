@@ -132,7 +132,9 @@ export interface MemoryRateLimitStoreOptions {
   /**
    * Maximum number of active identities retained by the store.
    * Defaults to 10,000. At capacity, increments for identities without an
-   * active entry fail; active entries remain until expiration or reset.
+   * active entry fail; active entries remain until expiration or reset so
+   * identity floods cannot evict active quotas and reset them. Capacity
+   * failures are logged with `failureKind`, `stage`, and `capacity` fields.
    */
   maxEntries?: number;
 }
@@ -145,7 +147,10 @@ export interface RateLimitOptions {
   /**
    * Maximum active identities retained by the default in-memory store.
    * Defaults to 10,000. At capacity, requests for identities without an active
-   * entry receive HTTP 503. Incompatible with a caller-provided `store`.
+   * entry receive HTTP 503. Active entries are not evicted because doing so
+   * would let identity floods reset quotas. Capacity failures are logged with
+   * `failureKind`, `stage`, and `capacity` fields. Incompatible with a
+   * caller-provided `store`.
    */
   maxEntries?: number;
   keyGenerator?: (req: Request) => string;
@@ -162,7 +167,10 @@ export interface RateLimitOptions {
 export interface AuthRateLimitOptions {
   /** Storage backend. Existing callers can also pass the store directly. */
   store?: RateLimitStore;
-  /** Maximum active identities retained by the preset's default in-memory store. */
+  /**
+   * Maximum active identities retained by the preset's default in-memory store.
+   * See `RateLimitOptions.maxEntries` for capacity behavior and defaults.
+   */
   maxEntries?: number;
   /** Function to derive a stable client key from the request. */
   keyGenerator?: (req: Request) => string;

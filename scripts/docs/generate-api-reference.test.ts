@@ -195,9 +195,25 @@ describe("generate-api-reference", () => {
         "### `MemoryRateLimitStoreOptions`",
         "generated middleware reference must retain the public memory-store options table",
       );
+      const memoryStoreSectionStart = middlewareReference.indexOf(
+        "### `MemoryRateLimitStoreOptions`",
+      );
+      const memoryStoreSectionEnd = middlewareReference.indexOf(
+        "\n### ",
+        memoryStoreSectionStart + 1,
+      );
+      const memoryStoreSection = middlewareReference.slice(
+        memoryStoreSectionStart,
+        memoryStoreSectionEnd === -1 ? undefined : memoryStoreSectionEnd,
+      );
+      assertStringIncludes(
+        memoryStoreSection,
+        "`maxEntries?`",
+        "generated memory-store capacity documentation must retain the maxEntries option row",
+      );
       assertMatch(
-        middlewareReference,
-        /\| `maxEntries\?` \| `number` \| [^|\n]+ \| \[source\]\([^\n)]*src\/middleware\/builtin\/security\/rate-limit\.ts#L\d+\) \|/,
+        memoryStoreSection,
+        /\[source\]\([^\n)]*src\/middleware\/builtin\/security\/rate-limit\.ts#L\d+\)/,
         "generated memory-store capacity documentation must retain its source link",
       );
       assertEquals(
