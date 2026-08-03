@@ -415,8 +415,36 @@ function getMemoryThreshold(envVar: string, fallback: number): number {
   }
 }
 
-const PROFILER_WARNING_THRESHOLD = getMemoryThreshold("MEMORY_WARNING_THRESHOLD", 65);
-const PROFILER_CRITICAL_THRESHOLD = getMemoryThreshold("MEMORY_CRITICAL_THRESHOLD", 80);
+export const DEFAULT_PROFILER_WARNING_THRESHOLD = 65;
+export const DEFAULT_PROFILER_CRITICAL_THRESHOLD = 80;
+
+const PROFILER_WARNING_THRESHOLD = getMemoryThreshold(
+  "MEMORY_WARNING_THRESHOLD",
+  DEFAULT_PROFILER_WARNING_THRESHOLD,
+);
+const PROFILER_CRITICAL_THRESHOLD = getMemoryThreshold(
+  "MEMORY_CRITICAL_THRESHOLD",
+  DEFAULT_PROFILER_CRITICAL_THRESHOLD,
+);
+
+export interface MemoryPressureThresholds {
+  warning: number;
+  critical: number;
+}
+
+export function evaluateMemoryPressure(
+  heapUsedPercent: number,
+  thresholds: MemoryPressureThresholds = {
+    warning: DEFAULT_PROFILER_WARNING_THRESHOLD,
+    critical: DEFAULT_PROFILER_CRITICAL_THRESHOLD,
+  },
+): { critical: boolean; warning: boolean } {
+  const critical = heapUsedPercent >= thresholds.critical;
+  return {
+    critical,
+    warning: critical || heapUsedPercent >= thresholds.warning,
+  };
+}
 
 export function checkMemoryPressure(): {
   critical: boolean;
@@ -425,11 +453,10 @@ export function checkMemoryPressure(): {
 } {
   const heap = getHeapStats();
   const heapUsedPercent = heap.heapUsedPercent;
-
-  const critical = heapUsedPercent >= PROFILER_CRITICAL_THRESHOLD;
-  // Critical pressure always implies warning, even if a misconfigured
-  // MEMORY_WARNING_THRESHOLD is set above MEMORY_CRITICAL_THRESHOLD.
-  const warning = critical || heapUsedPercent >= PROFILER_WARNING_THRESHOLD;
+  const { critical, warning } = evaluateMemoryPressure(heapUsedPercent, {
+    warning: PROFILER_WARNING_THRESHOLD,
+    critical: PROFILER_CRITICAL_THRESHOLD,
+  });
 
   if (critical) {
     logger.error("CRITICAL MEMORY PRESSURE", {

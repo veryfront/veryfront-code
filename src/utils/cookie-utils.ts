@@ -1,6 +1,6 @@
 /** Parse a cookie header string into key-value pairs */
 export function parseCookies(cookieHeader: string): Record<string, string> {
-  const cookies: Record<string, string> = {};
+  const cookies = Object.create(null) as Record<string, string>;
   if (!cookieHeader) return cookies;
 
   for (const part of cookieHeader.split(";")) {
@@ -21,12 +21,7 @@ export function parseCookies(cookieHeader: string): Record<string, string> {
       continue;
     }
 
-    Object.defineProperty(cookies, name, {
-      configurable: true,
-      enumerable: true,
-      value,
-      writable: true,
-    });
+    cookies[name] = value;
   }
 
   return cookies;

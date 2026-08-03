@@ -37,13 +37,18 @@ describe("cookie-utils", () => {
       });
     });
 
-    it("should safely parse cookie names inherited from Object.prototype", () => {
-      const cookies = parseCookies("__proto__=safe; constructor=value");
+    it("should return a null-prototype map and preserve prototype-named cookies", () => {
+      const cookies = parseCookies(
+        "__proto__=safe; constructor=value; toString=string-value",
+      );
 
+      assertEquals(Object.getPrototypeOf(cookies), null);
       assertEquals(Object.hasOwn(cookies, "__proto__"), true);
       assertEquals(cookies["__proto__"], "safe");
       assertEquals(Object.hasOwn(cookies, "constructor"), true);
       assertEquals(cookies["constructor"], "value");
+      assertEquals(Object.hasOwn(cookies, "toString"), true);
+      assertEquals(cookies["toString"], "string-value");
     });
 
     it("should handle empty cookies", () => {

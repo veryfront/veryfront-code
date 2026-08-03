@@ -66,9 +66,8 @@ describe("base64url", () => {
       assertEquals(base64urlEncodeBytes(bytes), base64urlEncodeBytes(bytes));
     });
 
-    it("should encode large inputs without throwing and round-trip them", () => {
-      // Larger than the internal 24 KiB btoa chunk and not a multiple of it,
-      // so both full chunks and a partial tail chunk are exercised.
+    it("should preserve byte-exact output across performance chunks", () => {
+      // Exercise both full 24 KiB chunks and a partial tail chunk.
       const bytes = new Uint8Array(300_001);
       for (let index = 0; index < bytes.length; index++) {
         bytes[index] = index % 256;
