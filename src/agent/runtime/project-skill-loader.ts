@@ -176,21 +176,6 @@ function isAccessDeniedError(
   return options.isAccessDeniedError?.(error) ?? false;
 }
 
-function assertRuntimeSkillContent(content: string, label: string): void {
-  if (content.length > SKILL_DOCUMENT_MAX_CHARACTERS) {
-    throw new RangeError(
-      `${label} may contain at most ${SKILL_DOCUMENT_MAX_CHARACTERS} characters`,
-    );
-  }
-}
-
-async function readProjectSkillValue<T>(
-  budget: SkillOperationBudget,
-  read: () => Promise<T>,
-): Promise<T> {
-  return await budget.run(() => read());
-}
-
 function getProjectSkillCancellationOptions(
   budget: SkillOperationBudget,
 ): Pick<RuntimeProjectFilesApiOptions, "abortSignal" | "timeoutMs"> & {
@@ -251,13 +236,11 @@ async function getExpectedProjectFile(
   request: RuntimeGetProjectFileOptions & RuntimeProjectSkillReadContext,
 ): Promise<RuntimeProjectFile | null> {
   const { budget, ...fileRequest } = request;
-  const file = await readProjectSkillValue(
-    budget,
-    () =>
-      options.getProjectFile({
-        ...fileRequest,
-        ...getBoundedProjectSkillFileOptions(budget),
-      }),
+  const file = await budget.run(() =>
+    options.getProjectFile({
+      ...fileRequest,
+      ...getBoundedProjectSkillFileOptions(budget),
+    })
   );
   if (
     file !== null &&
@@ -444,7 +427,7 @@ async function listProjectSkillReferences(
   }
 
   const allFiles = snapshotProjectFileList(
-    await readProjectSkillValue(input.budget, () =>
+    await input.budget.run(() =>
       input.options.getProjectFiles({
         projectId,
         authToken: input.context.authToken,
@@ -452,7 +435,8 @@ async function listProjectSkillReferences(
         pathPrefix: skillDir,
         maximumEntries: SKILL_LOADABLE_REFERENCE_LISTING_MAX_ENTRIES,
         ...getProjectSkillCancellationOptions(input.budget),
-      })),
+      })
+    ),
   );
 
   return collectProjectSkillReferences({
@@ -532,7 +516,6 @@ async function loadProjectSkill(
           content: catalogSkill.content,
         })
       ) {
-        assertRuntimeSkillContent(catalogSkill.content, "Skill document");
         return { instructions: catalogSkill.content, references: [] };
       }
       return null;
@@ -554,7 +537,6 @@ async function loadProjectSkill(
           content: catalogSkill.content,
         })
       ) {
-        assertRuntimeSkillContent(catalogSkill.content, "Skill document");
         return {
           instructions: catalogSkill.content,
           references: await listProjectSkillReferences(input),
@@ -584,7 +566,6 @@ async function loadProjectSkill(
         ) {
           return null;
         }
-        assertRuntimeSkillContent(directorySkill.content, "Skill document");
         return {
           instructions: directorySkill.content,
           references: await listProjectSkillReferences({ ...input, skillsPath }),
@@ -611,7 +592,6 @@ async function loadProjectSkill(
         ) {
           return null;
         }
-        assertRuntimeSkillContent(flatSkill.content, "Skill document");
         return {
           instructions: flatSkill.content,
           references: [],
@@ -676,7 +656,6 @@ async function loadProjectSkillReference(
       budget: input.budget,
     });
     if (projectFile !== null) {
-      assertRuntimeSkillContent(projectFile.content, "Skill reference");
       return projectFile.content;
     }
   } catch (error) {
