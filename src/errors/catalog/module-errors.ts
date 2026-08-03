@@ -83,4 +83,15 @@ resolve: {
       "Update dependencies to compatible versions",
     ],
   ),
+
+  "lockfile-format-mismatch": createSimpleError(
+    "lockfile-format-mismatch",
+    "Lockfile format is not supported",
+    "This Veryfront version cannot safely read or modify the lockfile format.",
+    [
+      "Upgrade Veryfront to a version that supports this lockfile",
+      "Migrate the lockfile with a compatible Veryfront version",
+      "Do not delete or overwrite the lockfile unless its contents are no longer needed",
+    ],
+  ),
 });

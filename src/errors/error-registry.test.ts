@@ -318,7 +318,7 @@ describe("error-registry", () => {
       BUILD: 8,
       RUNTIME: 10,
       ROUTE: 6,
-      MODULE: 6,
+      MODULE: 7,
       SERVER: 18,
       BOUNDARY: 7,
       DEV: 5,

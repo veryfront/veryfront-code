@@ -233,7 +233,7 @@ describe("import-lockfile", () => {
       assertEquals(await fs.exists("/project/veryfront.lock"), false);
     });
 
-    it("should fail explicitly on version mismatch instead of substituting an empty lockfile", async () => {
+    it("should fail explicitly on a format mismatch instead of substituting an empty lockfile", async () => {
       const data = { version: 99, imports: { x: { resolved: "x", integrity: "y" } } };
       const fs = createMockFS({ "/project/veryfront.lock": JSON.stringify(data) });
       const mgr = createLockfileManager("/project", fs);
@@ -241,12 +241,17 @@ describe("import-lockfile", () => {
       const error = await assertRejects(() => mgr.read(), VeryfrontError);
       assertExists(error);
       if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
-      assertEquals(error.slug, "version-mismatch");
+      assertEquals(error.slug, "lockfile-format-mismatch");
+      assertEquals(error.title, "Lockfile format is not supported");
+      assertEquals(
+        error.suggestion,
+        "Upgrade Veryfront or migrate the lockfile before modifying it",
+      );
       const context = error.context as { actualVersion?: number };
       assertEquals(context.actualVersion, 99);
     });
 
-    it("should preserve a newer-format lockfile on disk after a version mismatch", async () => {
+    it("should preserve a newer-format lockfile on disk after a format mismatch", async () => {
       const newerContent = JSON.stringify({
         version: 99,
         imports: { "https://cdn.com/newer.ts": { resolved: "x", integrity: "y" } },
@@ -269,7 +274,7 @@ describe("import-lockfile", () => {
       assertEquals(await fs.readFile("/project/veryfront.lock"), newerContent);
     });
 
-    it("should not clobber entries flushed by another manager on the same projectDir", async () => {
+    it("should serialize overlapping flushes for managers on the same projectDir", async () => {
       const fs = createMockFS({
         "/project/veryfront.lock": JSON.stringify({
           version: 1,
@@ -292,13 +297,12 @@ describe("import-lockfile", () => {
         resolved: "https://cdn.com/a.ts",
         integrity: "sha256-a",
       });
-      await mgrA.flush();
-
       await mgrB.set("https://cdn.com/b.ts", {
         resolved: "https://cdn.com/b.ts",
         integrity: "sha256-b",
       });
-      await mgrB.flush();
+
+      await Promise.all([mgrA.flush(), mgrB.flush()]);
 
       const onDisk = JSON.parse(await fs.readFile("/project/veryfront.lock")) as {
         imports: Record<string, unknown>;

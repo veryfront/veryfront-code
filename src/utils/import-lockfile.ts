@@ -1,7 +1,11 @@
 import { computeHash } from "./hash-utils.ts";
 import { serverLogger } from "./logger/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { CACHE_ERROR, NETWORK_ERROR, VERSION_MISMATCH } from "#veryfront/errors/error-registry.ts";
+import {
+  CACHE_ERROR,
+  LOCKFILE_FORMAT_MISMATCH,
+  NETWORK_ERROR,
+} from "#veryfront/errors/error-registry.ts";
 
 const logger = serverLogger.component("lockfile");
 
@@ -19,6 +23,26 @@ export interface LockfileData {
 
 const LOCKFILE_NAME = "veryfront.lock";
 const LOCKFILE_VERSION = 1;
+const lockfileMutationTails = new Map<string, Promise<void>>();
+
+function serializeLockfileMutation<T>(
+  lockfilePath: string,
+  mutation: () => Promise<T>,
+): Promise<T> {
+  const predecessor = lockfileMutationTails.get(lockfilePath) ?? Promise.resolve();
+  const result = predecessor.then(mutation);
+  const tail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  lockfileMutationTails.set(lockfilePath, tail);
+
+  return result.finally(() => {
+    if (lockfileMutationTails.get(lockfilePath) === tail) {
+      lockfileMutationTails.delete(lockfilePath);
+    }
+  });
+}
 
 export function createEmptyLockfile(): LockfileData {
   return { version: LOCKFILE_VERSION, imports: {} };
@@ -38,7 +62,7 @@ export async function verifyIntegrity(content: string, integrity: string): Promi
 /**
  * Public API contract for lockfile manager.
  *
- * Reads and mutations fail closed with a `version-mismatch` error when the
+ * Reads and mutations fail closed with a `lockfile-format-mismatch` error when the
  * on-disk lockfile uses an unsupported format version, so an older Veryfront
  * build can never destroy data written by a newer one.
  */
@@ -107,7 +131,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     if (parsed.version !== LOCKFILE_VERSION) {
       // Fail closed: silently substituting an empty lockfile here would let the
       // next flush() overwrite a newer-format file and destroy the user's data.
-      throw VERSION_MISMATCH.create({
+      throw LOCKFILE_FORMAT_MISMATCH.create({
         detail: `Lockfile ${lockfilePath} uses format version ${parsed.version}, but this ` +
           `Veryfront build supports version ${LOCKFILE_VERSION}. The file was left untouched; ` +
           "upgrade Veryfront or migrate the lockfile before reading or modifying it.",
@@ -143,12 +167,14 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   }
 
   async function write(data: LockfileData): Promise<void> {
-    // Revalidate the on-disk format before replacing it. This throws when the
-    // file was written by a newer Veryfront build, preserving that data.
-    await readFromDisk();
-    await writeToDisk(data);
-    cache = data;
-    pendingEntries.clear();
+    await serializeLockfileMutation(lockfilePath, async () => {
+      // Revalidate the on-disk format before replacing it. This throws when the
+      // file was written by a newer Veryfront build, preserving that data.
+      await readFromDisk();
+      await writeToDisk(data);
+      cache = data;
+      pendingEntries.clear();
+    });
   }
 
   async function get(url: string): Promise<LockfileEntry | null> {
@@ -169,34 +195,40 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   }
 
   async function clear(): Promise<void> {
-    cache = createEmptyLockfile();
-    pendingEntries.clear();
+    await serializeLockfileMutation(lockfilePath, async () => {
+      cache = createEmptyLockfile();
+      pendingEntries.clear();
 
-    if (!fs.remove) return;
+      if (!fs.remove) return;
 
-    const exists = await fs.exists(lockfilePath);
-    if (!exists) return;
+      const exists = await fs.exists(lockfilePath);
+      if (!exists) return;
 
-    await fs.remove(lockfilePath);
+      await fs.remove(lockfilePath);
+    });
   }
 
   async function flush(): Promise<void> {
     if (pendingEntries.size === 0) return;
 
-    // Read-merge-write: several managers can share one projectDir, so writing
-    // this manager's whole cache would clobber entries flushed by the others.
-    // Merge only this manager's pending entries onto the current disk state.
-    const snapshot = new Map(pendingEntries);
-    const merged = (await readFromDisk()) ?? createEmptyLockfile();
-    for (const [url, entry] of snapshot) {
-      merged.imports[url] = entry;
-    }
+    await serializeLockfileMutation(lockfilePath, async () => {
+      if (pendingEntries.size === 0) return;
 
-    await writeToDisk(merged);
-    cache = merged;
-    for (const [url, entry] of snapshot) {
-      if (pendingEntries.get(url) === entry) pendingEntries.delete(url);
-    }
+      // Merge only this manager's pending entries onto the latest on-disk
+      // state while holding the per-path mutation turn. This makes the whole
+      // read-merge-write sequence atomic relative to other in-process managers.
+      const snapshot = new Map(pendingEntries);
+      const merged = (await readFromDisk()) ?? createEmptyLockfile();
+      for (const [url, entry] of snapshot) {
+        merged.imports[url] = entry;
+      }
+
+      await writeToDisk(merged);
+      cache = merged;
+      for (const [url, entry] of snapshot) {
+        if (pendingEntries.get(url) === entry) pendingEntries.delete(url);
+      }
+    });
   }
 
   return { read, write, get, set, has, clear, flush };
