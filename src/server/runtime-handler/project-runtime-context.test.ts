@@ -434,17 +434,16 @@ describe("prepareProjectRequest", () => {
   });
 
   it("rejects incomplete and conflicting branch identity from a trusted proxy", async () => {
-    for (
-      const identityHeaders of [
-        { "x-branch-id": "branch-id-a" },
-        { "x-branch-name": "feature-a" },
-        {
-          "x-branch-id": "branch-id-a",
-          "x-branch-name": "feature-a",
-          "x-default-branch-name": "main",
-        },
-      ]
-    ) {
+    const invalidBranchIdentities: Array<Record<string, string>> = [
+      { "x-branch-id": "branch-id-a" },
+      { "x-branch-name": "feature-a" },
+      {
+        "x-branch-id": "branch-id-a",
+        "x-branch-name": "feature-a",
+        "x-default-branch-name": "main",
+      },
+    ];
+    for (const identityHeaders of invalidBranchIdentities) {
       const req = new Request("http://localhost/page", {
         headers: {
           "x-project-slug": "project-a",
@@ -470,12 +469,11 @@ describe("prepareProjectRequest", () => {
   });
 
   it("accepts complete preview or default branch identity from a trusted proxy", async () => {
-    for (
-      const identityHeaders of [
-        { "x-branch-id": "branch-id-a", "x-branch-name": "feature-a" },
-        { "x-default-branch-name": "main" },
-      ]
-    ) {
+    const validBranchIdentities: Array<Record<string, string>> = [
+      { "x-branch-id": "branch-id-a", "x-branch-name": "feature-a" },
+      { "x-default-branch-name": "main" },
+    ];
+    for (const identityHeaders of validBranchIdentities) {
       const req = new Request("http://localhost/page", {
         headers: {
           "x-project-slug": "project-a",
