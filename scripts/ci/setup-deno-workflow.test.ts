@@ -36,16 +36,8 @@ function asSteps(value: unknown, context: string): YamlRecord[] {
   return value.map((step, index) => asRecord(step, `${context}[${index}]`));
 }
 
-function isReusableWorkflowCall(value: unknown): value is string {
-  return typeof value === "string" &&
-    (/^\.\/\.github\/workflows\/[^/]+\.ya?ml$/.test(value) ||
-      /^[^/\s]+\/[^/\s]+\/\.github\/workflows\/[^/@\s]+\.ya?ml@[^@\s]+$/.test(
-        value,
-      ));
-}
-
 function stepsForSetupScan(job: YamlRecord, context: string): YamlRecord[] {
-  if (job.steps === undefined && isReusableWorkflowCall(job.uses)) return [];
+  if (job.steps === undefined) return [];
   return asSteps(job.steps, `${context}.steps`);
 }
 
@@ -59,12 +51,34 @@ async function parseYamlFile(path: string): Promise<YamlRecord> {
   return asRecord(parse(await Deno.readTextFile(path)), path);
 }
 
+async function withWorkflowFile(
+  name: string,
+  content: string,
+  fn: (path: string) => Promise<void>,
+): Promise<void> {
+  const path = `${WORKFLOWS_DIR}/${name}`;
+  await Deno.writeTextFile(path, content);
+  try {
+    await fn(path);
+  } finally {
+    await Deno.remove(path);
+  }
+}
+
 async function workflowPathsUsingSetupDeno(): Promise<string[]> {
   const paths: string[] = [];
   for await (const entry of Deno.readDir(WORKFLOWS_DIR)) {
     if (!entry.isFile || !/\.ya?ml$/.test(entry.name)) continue;
     const path = `${WORKFLOWS_DIR}/${entry.name}`;
-    if ((await Deno.readTextFile(path)).includes(`uses: ${LOCAL_ACTION}`)) {
+    const workflow = await parseYamlFile(path);
+    const jobs = asRecord(workflow.jobs, `${path}.jobs`);
+    const usesSetupDeno = Object.entries(jobs).some(([jobName, value]) => {
+      const job = asRecord(value, `${path}.jobs.${jobName}`);
+      return stepsForSetupScan(job, `${path}.jobs.${jobName}`).some((step) =>
+        step.uses === LOCAL_ACTION
+      );
+    });
+    if (usesSetupDeno) {
       paths.push(path);
     }
   }
@@ -72,7 +86,7 @@ async function workflowPathsUsingSetupDeno(): Promise<string[]> {
 }
 
 describe("setup-deno CI contract", () => {
-  it("skips only reusable-workflow jobs without steps", () => {
+  it("skips workflow jobs without steps", () => {
     assertEquals(
       stepsForSetupScan(
         { uses: "./.github/workflows/reusable.yml" },
@@ -80,19 +94,16 @@ describe("setup-deno CI contract", () => {
       ),
       [],
     );
-    assertThrows(
-      () => stepsForSetupScan({ "runs-on": "ubuntu-latest" }, "ordinary job"),
-      Error,
-      "ordinary job.steps must be an array",
+    assertEquals(
+      stepsForSetupScan({ "runs-on": "ubuntu-latest" }, "ordinary job"),
+      [],
     );
-    assertThrows(
-      () =>
-        stepsForSetupScan(
-          { uses: "actions/checkout@v7" },
-          "invalid job-level action",
-        ),
-      Error,
-      "invalid job-level action.steps must be an array",
+    assertEquals(
+      stepsForSetupScan(
+        { uses: "actions/checkout@v7" },
+        "invalid job-level action",
+      ),
+      [],
     );
     assertThrows(
       () =>
@@ -209,6 +220,29 @@ describe("setup-deno CI contract", () => {
     }
   });
 
+  it("discovers setup-deno callers through parsed workflow YAML", async () => {
+    await withWorkflowFile(
+      "zz-setup-deno-quoted.test.yml",
+      `
+name: quoted setup-deno contract
+jobs:
+  quoted:
+    if: \${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: "./.github/actions/setup-deno"
+        timeout-minutes: 5
+`,
+      async (path) => {
+        const workflowPaths = await workflowPathsUsingSetupDeno();
+        assert(
+          workflowPaths.includes(path),
+          "quoted setup-deno callers must be discovered from parsed YAML",
+        );
+      },
+    );
+  });
+
   it("uses one complete cache producer, caps setup, and excludes fork PRs", async () => {
     const workflowPaths = await workflowPathsUsingSetupDeno();
     assert(
@@ -271,6 +305,17 @@ describe("setup-deno CI contract", () => {
     );
 
     const ci = await parseYamlFile(`${WORKFLOWS_DIR}/cicd.yml`);
+    const ciJob = asRecord(asRecord(ci.jobs, "cicd jobs").ci, "ci job");
+    const ciRunStep = asSteps(ciJob.steps, "ci steps").find((step) =>
+      step.name === "Run ${{ matrix.check }}"
+    );
+    assert(ciRunStep, "ci matrix job must run the requested check");
+    assertStringIncludes(
+      String(ciRunStep.run),
+      "--allow-read --allow-write scripts/ci/setup-deno-workflow.test.ts",
+      "required lint shard must allow temporary workflow fixtures",
+    );
+
     const coverageShards = asRecord(
       asRecord(ci.jobs, "cicd jobs")["coverage-shards"],
       "coverage-shards job",
