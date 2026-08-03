@@ -2761,6 +2761,7 @@ async function main() {
     documented: 0,
     missing: 0,
   };
+  const generatedPaths: string[] = [];
 
   for (const [idx, group] of groups.entries()) {
     const entry = group.parent;
@@ -2824,6 +2825,7 @@ async function main() {
     );
     const outPath = `${VERYFRONT_DIR}/${entry.slug}.md`;
     await Deno.writeTextFile(outPath, md);
+    generatedPaths.push(outPath);
     console.log(`  Wrote ${outPath}`);
   }
 
@@ -2831,6 +2833,7 @@ async function main() {
   const indexMD = normalizeGeneratedMarkdown(generateReadmeMD(indexData));
   const indexPath = `${OUTPUT_DIR}/index.md`;
   await Deno.writeTextFile(indexPath, indexMD);
+  generatedPaths.push(indexPath);
   try {
     await Deno.remove(`${OUTPUT_DIR}/overview.md`);
   } catch (err) {
@@ -2841,6 +2844,7 @@ async function main() {
   } catch (err) {
     if (!(err instanceof Deno.errors.NotFound)) throw err;
   }
+  await formatGeneratedMarkdown(generatedPaths);
   console.log(`\nWrote ${indexPath}`);
   console.log(`Generated ${groups.length} MD files in ${VERYFRONT_DIR}`);
   console.log(
@@ -2852,4 +2856,20 @@ main();
 
 function normalizeGeneratedMarkdown(markdown: string): string {
   return markdown.replace(/[\u2013\u2014]/g, "-");
+}
+
+async function formatGeneratedMarkdown(paths: string[]): Promise<void> {
+  const result = await new Deno.Command(Deno.execPath(), {
+    args: ["fmt", `--config=${ROOT}/deno.json`, ...paths],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  if (result.code === 0) return;
+
+  const stderr = new TextDecoder().decode(result.stderr).trim();
+  throw new Error(
+    `Failed to format generated API reference Markdown (exit ${result.code})${
+      stderr ? `: ${stderr}` : ""
+    }`,
+  );
 }

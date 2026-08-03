@@ -17,7 +17,7 @@ import { MDXProvider } from "veryfront/mdx";
 
 <MDXProvider components={{ h1: CustomH1, code: CustomCode, a: CustomLink }}>
   {children}
-</MDXProvider>
+</MDXProvider>;
 ```
 
 Nested providers inherit outer entries, with the nearest override taking
@@ -30,18 +30,18 @@ For runtime markdown string rendering, use `veryfront/markdown` instead.
 
 ### Components
 
-| Name | Description | Source |
-|------|-------------|--------|
+| Name          | Description                                  | Source                                                                                                   |
+| ------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `MDXProvider` | Provide component overrides to compiled MDX. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L20) |
 
 ### Functions
 
-| Name | Description | Source |
-|------|-------------|--------|
+| Name               | Description                                  | Source                                                                                                   |
+| ------------------ | -------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `useMDXComponents` | Return the memoized effective component map. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L33) |
 
 ### Types
 
-| Name | Description | Source |
-|------|-------------|--------|
+| Name               | Description                      | Source                                                                                                  |
+| ------------------ | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `MDXProviderProps` | Props accepted by `MDXProvider`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L7) |
