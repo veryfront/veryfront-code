@@ -40,6 +40,7 @@ import { getErrorMessage, INVALID_ARGUMENT } from "#veryfront/errors";
 import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
 import { initializeEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { __registerLogRecordEmitter, logger } from "#veryfront/utils";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
@@ -166,7 +167,7 @@ function createBootstrapPrimeContracts(): Record<string, unknown> {
   };
 }
 
-/** @internal Snapshot the explicit Node WebSocket implementation for this generation. */
+/** @internal Snapshot the extension-provided Node WebSocket implementation for this generation. */
 export function resolveNodeWebSocketServerProviderForBootstrap():
   | Readonly<NodeWebSocketServerProvider>
   | undefined {
@@ -608,6 +609,20 @@ function validateProductionEnvironment(): void {
       throw INVALID_ARGUMENT.create({
         detail:
           "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY must be set when running in proxy mode (PROXY_MODE=1)",
+      });
+    }
+
+    if (!isProxyTopologyTrusted()) {
+      logger.error(
+        "[Bootstrap:Prod] CRITICAL: proxy mode does not trust its upstream topology. " +
+          "Set VERYFRONT_TRUST_FORWARDED_HEADERS=1 only when this process is private behind a sanitising edge. " +
+          "Existing hosted deployments must set this variable on the runtime environment before rolling out " +
+          "this version, and must upgrade the proxy tier before (or together with) the runtime tier. " +
+          "See src/security/README.md, 'Rollout ordering for hosted identity changes'.",
+      );
+      throw INVALID_ARGUMENT.create({
+        detail:
+          "VERYFRONT_TRUST_FORWARDED_HEADERS must be exactly '1' for hosted proxy mode behind a sanitising edge",
       });
     }
   }

@@ -1,12 +1,11 @@
 import {
+  DEFAULT_OPTIMIZED_IMAGE_FORMATS,
   generateSrcSet,
   getImageExtension,
   getOptimizedImageFormatFallback,
   getOptimizedImageVariantWidths,
 } from "./helpers.ts";
 import type { OptimizedImageFormat } from "./OptimizedImage.tsx";
-
-const DEFAULT_FORMATS: readonly OptimizedImageFormat[] = ["avif", "webp", "jpeg"];
 
 export interface UseOptimizedImageOptions {
   /** Must match `assetPipeline.images.formats` when custom build formats are configured. */
@@ -25,7 +24,7 @@ export function useOptimizedImage(
   sources: Array<{ format: OptimizedImageFormat; srcSet: string; type: string }>;
   fallback: string;
 } {
-  const { formats = DEFAULT_FORMATS, quality = 80, targetWidths, width } = options;
+  const { formats = DEFAULT_OPTIMIZED_IMAGE_FORMATS, quality = 80, targetWidths, width } = options;
   const variantWidths = getOptimizedImageVariantWidths(width, targetWidths);
 
   const sources = variantWidths.length === 0 ? [] : formats.map((format) => ({

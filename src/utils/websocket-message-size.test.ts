@@ -1,10 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   getWebSocketMessageAdmission,
   getWebSocketMessageSizeBytes,
-} from "./websocket-message-size.ts";
+} from "#veryfront/utils/websocket-message-size.ts";
 
 describe("websocket-message-size", () => {
   describe("getWebSocketMessageSizeBytes", () => {

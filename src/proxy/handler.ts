@@ -14,9 +14,12 @@ import {
 import { profileProxyServerTimingPhase, type ProxyServerTiming } from "./server-timing.ts";
 import {
   classifyInternalControlPlaneRequest,
+  ControlPlaneBranchBindingError,
   isAuthenticInternalControlPlaneCandidate,
   isVerifiedInternalControlPlaneRequest,
+  resolveVerifiedControlPlaneBranchBinding,
 } from "./control-plane-signature.ts";
+import { encodeIdentityHeaderValue } from "#veryfront/utils/header-identity.ts";
 import {
   createProjectMetadataClient,
   type DomainLookupResult,
@@ -36,6 +39,7 @@ export const INTERNAL_PROXY_HEADERS = [
   "x-project-slug",
   "x-environment",
   "x-environment-id",
+  "x-environment-name",
   "x-content-source-id",
   "x-forwarded-host",
   "x-project-path",
@@ -43,6 +47,7 @@ export const INTERNAL_PROXY_HEADERS = [
   "x-release-id",
   "x-branch-id",
   "x-branch-name",
+  "x-default-branch-name",
 ] as const;
 
 interface ProjectRoutingCacheEntry {
@@ -106,7 +111,9 @@ export interface ProxyContext {
   releaseId?: string;
   branchId?: string;
   branchName?: string;
+  defaultBranchName?: string;
   environmentId?: string;
+  environmentName?: string;
   environment: "preview" | "production";
   contentSourceId: string;
   localPath?: string;
@@ -127,6 +134,7 @@ type ResolvedProjectMetadata =
     projectSlug?: string;
     releaseId?: string;
     environmentId?: string;
+    environmentName?: string;
     signedInternalControlPlaneRequest?: boolean;
   }
   | {
@@ -619,6 +627,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       projectSlug: lookupResult.slug,
       releaseId: matchingEnv?.active_release_id ?? undefined,
       environmentId: matchingEnv?.id,
+      environmentName: matchingEnv?.name,
       signedInternalControlPlaneRequest,
     };
   }
@@ -693,7 +702,12 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
         const routingEnv = routingResult.environments.find(envMatcher);
         const accessEnv = accessResult.environments.find(envMatcher);
-        if (!routingEnv || !accessEnv || routingEnv.id !== accessEnv.id) {
+        if (
+          !routingEnv ||
+          !accessEnv ||
+          routingEnv.id !== accessEnv.id ||
+          routingEnv.name !== accessEnv.name
+        ) {
           routingLookupCache.delete(normalizeProjectLookupKey(lookupKey));
           return await resolveFullProjectLookupAndProtection(
             req,
@@ -738,6 +752,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           projectSlug: routingResult.slug,
           releaseId: routingEnv?.active_release_id ?? undefined,
           environmentId: routingEnv?.id,
+          environmentName: routingEnv?.name,
           signedInternalControlPlaneRequest,
         };
       },
@@ -763,6 +778,10 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     let projectId: string | undefined;
     let releaseId: string | undefined;
     let environmentId: string | undefined;
+    let environmentName: string | undefined;
+    let branchId: string | undefined;
+    let branchName: string | undefined;
+    let defaultBranchName: string | undefined;
     const isCustomDomain = !projectSlug && !parsedDomain.isVeryfrontDomain;
 
     // The first pass authenticates the candidate so its x-token can perform the
@@ -1083,6 +1102,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         projectId = resolved.projectId;
         releaseId = resolved.releaseId;
         environmentId = resolved.environmentId;
+        environmentName = resolved.environmentName;
         signedInternalControlPlaneRequest = resolved.signedInternalControlPlaneRequest ?? false;
 
         logger?.info("Resolved custom domain to project", {
@@ -1125,6 +1145,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         projectId = resolved.projectId;
         releaseId = resolved.releaseId;
         environmentId = resolved.environmentId;
+        environmentName = resolved.environmentName;
         signedInternalControlPlaneRequest = resolved.signedInternalControlPlaneRequest ?? false;
 
         logger?.info("Resolved veryfront domain to project", {
@@ -1161,6 +1182,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
         projectId = resolved.projectId;
         environmentId = resolved.environmentId;
+        environmentName = resolved.environmentName;
         signedInternalControlPlaneRequest = resolved.signedInternalControlPlaneRequest ?? false;
 
         if (projectId) {
@@ -1178,6 +1200,26 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         status: 401,
         message: "Control-plane project binding failed",
       });
+    }
+
+    if (signedInternalControlPlaneRequest && projectSlug && projectId) {
+      try {
+        const branchBinding = await resolveVerifiedControlPlaneBranchBinding(req, url, {
+          audience: projectSlug,
+          expectedProjectId: projectId,
+        });
+        branchId = branchBinding?.branchId;
+        branchName = branchBinding?.branchName;
+        defaultBranchName = branchBinding?.defaultBranchName;
+      } catch (error) {
+        if (error instanceof ControlPlaneBranchBindingError) {
+          return createProxyErrorContext(base, {
+            status: error.status,
+            message: error.message,
+          });
+        }
+        throw error;
+      }
     }
 
     if (scope === "production" && projectSlug && !releaseId && !isLocalProject) {
@@ -1202,7 +1244,11 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       projectSlug,
       projectId,
       releaseId,
+      branchId,
+      branchName,
+      defaultBranchName,
       environmentId,
+      environmentName,
       contentSourceId,
       environment: scope,
       localPath,
@@ -1265,6 +1311,17 @@ export function createProxyContextHeaders(
   sourceHeaders: Headers,
   ctx: ProxyContext,
 ): Headers {
+  if (Boolean(ctx.environmentId) !== Boolean(ctx.environmentName)) {
+    throw new TypeError(
+      "Proxy environment identity requires both environmentId and environmentName",
+    );
+  }
+  if (Boolean(ctx.branchId) !== Boolean(ctx.branchName)) {
+    throw new TypeError("Proxy preview branch identity requires both branchId and branchName");
+  }
+  if (ctx.branchId && ctx.defaultBranchName) {
+    throw new TypeError("Proxy branch identity cannot be both preview and default");
+  }
   const headers = createProxyEndToEndHeaders(sourceHeaders);
   for (const header of INTERNAL_PROXY_HEADERS) headers.delete(header);
 
@@ -1285,9 +1342,13 @@ export function createProxyContextHeaders(
   if (ctx.projectId) headers.set("x-project-id", ctx.projectId);
   if (ctx.releaseId) headers.set("x-release-id", ctx.releaseId);
   if (ctx.environmentId) headers.set("x-environment-id", ctx.environmentId);
+  if (ctx.environmentName) headers.set("x-environment-name", ctx.environmentName);
 
   if (ctx.branchId) headers.set("x-branch-id", ctx.branchId);
-  if (ctx.branchName) headers.set("x-branch-name", ctx.branchName);
+  if (ctx.branchName) headers.set("x-branch-name", encodeIdentityHeaderValue(ctx.branchName));
+  if (ctx.defaultBranchName) {
+    headers.set("x-default-branch-name", encodeIdentityHeaderValue(ctx.defaultBranchName));
+  }
 
   headers.delete("host");
   return headers;

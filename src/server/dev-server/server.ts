@@ -286,7 +286,7 @@ export class DevServer {
     return this._handler;
   }
 
-  /** Explicit Node WebSocket implementation captured with this bootstrap generation. */
+  /** Extension-provided Node WebSocket implementation captured with this bootstrap generation. */
   get nodeWebSocketServerProvider(): Readonly<NodeWebSocketServerProvider> | undefined {
     return this._nodeWebSocketServerProvider;
   }

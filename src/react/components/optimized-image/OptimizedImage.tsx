@@ -1,5 +1,6 @@
 import React from "react";
 import {
+  DEFAULT_OPTIMIZED_IMAGE_FORMATS,
   generateSrcSet,
   getImageExtension,
   getOptimizedImageFormatFallback,
@@ -32,8 +33,6 @@ export interface OptimizedImageProps {
   onError?: (event: React.SyntheticEvent<HTMLImageElement>) => void;
 }
 
-const DEFAULT_FORMATS: readonly OptimizedImageFormat[] = ["avif", "webp", "jpeg"];
-
 export function OptimizedImage({
   src,
   alt,
@@ -41,7 +40,7 @@ export function OptimizedImage({
   height,
   sizes = "100vw",
   targetWidths,
-  formats = DEFAULT_FORMATS,
+  formats = DEFAULT_OPTIMIZED_IMAGE_FORMATS,
   quality = 80,
   loading,
   priority = false,

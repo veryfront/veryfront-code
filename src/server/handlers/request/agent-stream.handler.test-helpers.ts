@@ -13,6 +13,7 @@ export function createAgentStreamRequestBody(overrides: Record<string, unknown> 
     agentId = "assistant-1",
     threadId = "10000000-1000-4000-8000-100000000001",
     runId = "run_1",
+    project: projectOverrides = {},
     ...invocationOverrides
   } = overrides;
 
@@ -29,6 +30,7 @@ export function createAgentStreamRequestBody(overrides: Record<string, unknown> 
         projectId: "10000000-1000-4000-8000-100000000005",
         projectSlug: "test-project",
         runtimeTargetKind: "main_branch",
+        ...(projectOverrides as Record<string, unknown>),
       },
     },
     agentSource: { type: "branch", branch: "main" },
@@ -158,6 +160,9 @@ export function createSourceCapableAgentStreamContext(
   const context = createBaseInternalAgentRunContext(publicKeyPem);
   return {
     ...context,
+    branchId: "10000000-1000-4000-8000-100000000006",
+    branchName: "main",
+    defaultBranchName: "main",
     adapter: {
       ...context.adapter,
       fs: createNoopFsAdapter(runWithContextCalls),

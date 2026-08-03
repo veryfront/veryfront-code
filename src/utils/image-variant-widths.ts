@@ -1,4 +1,4 @@
-import { IMAGE_OPTIMIZATION } from "./constants/build.ts";
+import { IMAGE_OPTIMIZATION } from "#veryfront/utils/constants/build.ts";
 
 const apply = Reflect.apply;
 const arrayPush = Array.prototype.push;

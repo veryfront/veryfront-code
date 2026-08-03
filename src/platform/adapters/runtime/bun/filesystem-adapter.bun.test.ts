@@ -4,7 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { constants } from "node:fs";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunFileSystemAdapter } from "./filesystem-adapter.ts";
 import { getBunRuntime } from "./types.ts";
@@ -56,7 +56,11 @@ describe("BunFileSystemAdapter native integration", () => {
         Error,
       );
 
-      if (typeof constants.O_NOFOLLOW !== "number" || constants.O_NOFOLLOW === 0) {
+      if (
+        platform() === "win32" ||
+        typeof constants.O_NOFOLLOW !== "number" ||
+        constants.O_NOFOLLOW === 0
+      ) {
         assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), false);
       } else {
         const empty = join(root, "empty.bin");

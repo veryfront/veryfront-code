@@ -200,6 +200,7 @@ describe("anchored surfaces anchor to the trigger ref", () => {
       assertEquals(selectedAnchor.current?.tagName, "A");
     } finally {
       flushSync(() => root.unmount());
+      await new Promise((resolve) => setTimeout(resolve, 0));
       restore();
     }
   });
@@ -286,6 +287,7 @@ describe("anchored surfaces anchor to the trigger ref", () => {
         };
       } finally {
         flushSync(() => root.unmount());
+        await new Promise((resolve) => setTimeout(resolve, 0));
         restore();
       }
     }

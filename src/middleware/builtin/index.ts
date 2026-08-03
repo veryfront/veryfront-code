@@ -21,6 +21,7 @@ export {
   authRateLimit,
   type AuthRateLimitOptions,
   MemoryRateLimitStore,
+  type MemoryRateLimitStoreOptions,
   rateLimit,
   type RateLimitOptions,
 } from "./security/rate-limit.ts";

@@ -4,6 +4,8 @@ import {
   resolveImageVariantWidths,
 } from "#veryfront/utils/image-variant-widths.ts";
 
+export const DEFAULT_OPTIMIZED_IMAGE_FORMATS = ["avif", "webp", "jpeg"] as const;
+
 function sourcePath(src: string): string {
   const queryIndex = src.indexOf("?");
   const fragmentIndex = src.indexOf("#");
@@ -79,17 +81,17 @@ export function getOptimizedImageFallback(
   return width === undefined ? src : getOptimizedPath(src, format, width, quality);
 }
 
-/** Use an optimized fallback only when the build emitted the source format. */
+/** Use an optimized fallback only when `format` is in the caller-requested formats. */
 export function getOptimizedImageFormatFallback(
   src: string,
   format: string,
-  emittedFormats: readonly string[] | undefined,
+  requestedFormats: readonly string[] | undefined,
   widths: readonly number[],
   quality: number,
 ): string {
-  if (emittedFormats === undefined) return src;
-  for (let index = 0; index < emittedFormats.length; index++) {
-    if (emittedFormats[index] === format) {
+  if (requestedFormats === undefined) return src;
+  for (let index = 0; index < requestedFormats.length; index++) {
+    if (requestedFormats[index] === format) {
       return getOptimizedImageFallback(src, format, widths, quality);
     }
   }

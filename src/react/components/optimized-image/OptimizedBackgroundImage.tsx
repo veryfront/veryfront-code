@@ -7,6 +7,7 @@ export interface OptimizedBackgroundImageProps {
   /** App asset path. URL suffixes are ignored when resolving build-emitted variants. */
   src: string;
   children?: React.ReactNode;
+  /** Must match `assetPipeline.images.formats` when custom build formats are configured. */
   format?: OptimizedImageFormat;
   quality?: number;
   /** Preferred rendered width. Uses the nearest emitted width at or above it, or the largest emitted width. */

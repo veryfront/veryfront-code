@@ -30,7 +30,9 @@ describe("adapters/index.ts exports", () => {
   describe("filesystem snapshot errors", () => {
     it("exports the stable snapshot error contract", async () => {
       await assertExport("FileSnapshotChangedError", "function");
+      await assertExport("FileSnapshotPathError", "function");
       await assertExport("isFileSnapshotChangedError", "function");
+      await assertExport("isFileSnapshotPathError", "function");
     });
   });
 

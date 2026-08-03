@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { resolveImageVariantWidths } from "./image-variant-widths.ts";
+import { resolveImageVariantWidths } from "#veryfront/utils/image-variant-widths.ts";
 
 describe("resolveImageVariantWidths", () => {
   it("emits only the intrinsic width below the smallest default target", () => {

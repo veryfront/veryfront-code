@@ -1,4 +1,4 @@
-import { utf8ByteLength } from "./utf8-byte-length.ts";
+import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
 
 const numberIsSafeInteger = Number.isSafeInteger;
 const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;

@@ -29,11 +29,19 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(headers.projectSlug, "my-project");
     });
 
-    it("extracts project id from header", () => {
+    it("ignores project id from an untrusted request", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-project-id": "proj-123" },
       });
       const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.projectId, undefined);
+    });
+
+    it("extracts project id only at an operator-authenticated proxy boundary", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "x-project-id": "proj-123" },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url), false, true);
       assertEquals(headers.projectId, "proj-123");
     });
 
@@ -45,20 +53,60 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(headers.releaseId, "rel-456");
     });
 
-    it("extracts branch id from header", () => {
+    it("extracts branch id only at an operator-authenticated proxy boundary", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-branch-id": "branch-1" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), false, true);
       assertEquals(headers.branchId, "branch-1");
     });
 
-    it("extracts branch name from header", () => {
+    it("extracts branch name only at an operator-authenticated proxy boundary", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-branch-name": "feature-x" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), false, true);
       assertEquals(headers.branchName, "feature-x");
+    });
+
+    it("normalizes the trusted branch name like the default branch name", () => {
+      const req = new Request("http://localhost/", {
+        headers: {
+          "x-branch-name": "vf-utf8:%20%20feature-x%20%20",
+          "x-default-branch-name": "vf-utf8:%20%20trunk%20%20",
+        },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url), false, true);
+      assertEquals(headers.branchName, "feature-x");
+      assertEquals(headers.defaultBranchName, "trunk");
+    });
+
+    it("extracts the default branch name only at an operator-authenticated proxy boundary", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "x-default-branch-name": "trunk" },
+      });
+      assertEquals(
+        extractRequestHeaders(req, new URL(req.url), false, true).defaultBranchName,
+        "trunk",
+      );
+      assertEquals(
+        extractRequestHeaders(req, new URL(req.url), false, false).defaultBranchName,
+        undefined,
+      );
+    });
+
+    it("ignores branch identity from an untrusted request", () => {
+      const req = new Request("http://localhost/", {
+        headers: {
+          "x-branch-id": "branch-1",
+          "x-branch-name": "feature-x",
+          "x-default-branch-name": "trunk",
+        },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.branchId, undefined);
+      assertEquals(headers.branchName, undefined);
+      assertEquals(headers.defaultBranchName, undefined);
     });
 
     it("extracts environment from header when proxy headers are trusted", () => {
@@ -116,12 +164,28 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(result.proxyEnv, undefined);
     });
 
-    it("extracts environment-id from header", () => {
+    it("ignores environment-id from an untrusted request", () => {
       const req = new Request("http://localhost/", {
-        headers: { "x-environment-id": "env-1" },
+        headers: {
+          "x-environment-id": "env-1",
+          "x-environment-name": "production",
+        },
       });
       const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.environmentId, undefined);
+      assertEquals(headers.environmentName, undefined);
+    });
+
+    it("extracts environment identity only at an operator-authenticated proxy boundary", () => {
+      const req = new Request("http://localhost/", {
+        headers: {
+          "x-environment-id": "env-1",
+          "x-environment-name": "staging",
+        },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url), false, true);
       assertEquals(headers.environmentId, "env-1");
+      assertEquals(headers.environmentName, "staging");
     });
 
     // x-forwarded-host is client-controlled and only honoured behind a trusted

@@ -234,6 +234,7 @@ Deno.test("createHostedChildForkRunContext closes pending tool calls with host l
     pendingToolLogContext: {
       conversationId: "conversation-1",
       parentRunId: "run-1",
+      childRunId: "child-run-1",
       description: "Check the app",
     },
     pendingToolLogWriter: {
@@ -257,6 +258,8 @@ Deno.test("createHostedChildForkRunContext closes pending tool calls with host l
   assertEquals(warnings[0]?.context, {
     conversationId: "conversation-1",
     runId: "run-1",
+    parentRunId: "run-1",
+    childRunId: "child-run-1",
     description: "Check the app",
     reason: "aborted",
     toolCallIds: ["tool-call-1"],

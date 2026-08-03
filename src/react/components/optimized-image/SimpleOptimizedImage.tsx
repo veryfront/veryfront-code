@@ -11,6 +11,7 @@ export function SimpleOptimizedImage({
   alt,
   width,
   height,
+  sizes = "100vw",
   targetWidths,
   format = "webp",
   quality = 80,
@@ -20,7 +21,8 @@ export function SimpleOptimizedImage({
   onClick,
   onLoad,
   onError,
-}: Omit<OptimizedImageProps, "formats" | "sizes" | "priority" | "placeholder" | "blurDataURL"> & {
+}: Omit<OptimizedImageProps, "formats" | "priority" | "placeholder" | "blurDataURL"> & {
+  /** Must match `assetPipeline.images.formats` when custom build formats are configured. */
   format?: OptimizedImageFormat;
 }): React.JSX.Element {
   const variantWidths = getOptimizedImageVariantWidths(width, targetWidths);
@@ -33,6 +35,7 @@ export function SimpleOptimizedImage({
     <img
       src={optimizedSrc}
       srcSet={srcSet}
+      sizes={srcSet === undefined ? undefined : sizes}
       alt={alt}
       width={width}
       height={height}

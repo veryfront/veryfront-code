@@ -54,6 +54,12 @@ export interface HandlerContext {
   projectId?: string;
   /** Release ID (from domain lookup for production custom domains) */
   releaseId?: string;
+  /** Canonical branch ID supplied by the operator-authenticated proxy. */
+  branchId?: string;
+  /** Canonical branch name paired with branchId by the operator-authenticated proxy. */
+  branchName?: string;
+  /** Canonical project default branch name supplied by the operator-authenticated proxy. */
+  defaultBranchName?: string;
   /** OAuth token from proxy (via x-token header) */
   proxyToken?: string;
   /** Actual environment name from API (e.g., "Development", "Production") */
@@ -74,6 +80,8 @@ export interface HandlerContext {
    * enabling development-only local-project behavior.
    */
   allowHostProjectCodeExecution?: boolean;
+  /** Whether this request is executing in the shared multi-project proxy runtime. */
+  isProxyMode?: boolean;
   /** Environment ID for per-project env var resolution (from proxy x-environment-id header) */
   environmentId?: string;
   /**

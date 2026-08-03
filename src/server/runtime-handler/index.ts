@@ -92,7 +92,6 @@ import {
 } from "./request-lifecycle.ts";
 import {
   checkRequestIsolation,
-  completeIsolatedRequest,
   completeIsolatedRequestOnSettlement,
   createIsolationErrorResponse,
   startIsolatedRequest,
@@ -334,8 +333,8 @@ export function createVeryfrontHandler(
   // Per-project environment variable cache (fetches from API, caches with 60s TTL)
   const apiBaseUrl = adapter.env.get("VERYFRONT_API_BASE_URL") ?? "https://api.veryfront.com/api";
   const envVarCache = new EnvironmentVariableCache(
-    (environmentId, token, projectSlug) =>
-      fetchProjectEnvVars(apiBaseUrl, projectSlug, environmentId, token),
+    ({ environmentId, token, projectSlug }, signal) =>
+      fetchProjectEnvVars(apiBaseUrl, projectSlug, environmentId, token, signal),
   );
 
   let config: VeryfrontConfig | undefined = opts.config;
@@ -393,7 +392,6 @@ export function createVeryfrontHandler(
       req,
       url,
       isProxyMode,
-      adapterEnv: adapter.env,
     });
     const { headers, requestContext: reqCtx } = preparedRequest;
     const { proxyTrusted } = preparedRequest.proxyTrust;
@@ -419,6 +417,26 @@ export function createVeryfrontHandler(
     return runWithRequestContextAsync(loggerContext, async () => {
       const spanInfo = startRequestTracing(req, url.pathname);
       setRequestAttributes(spanInfo.span, req, url);
+
+      // Reject untrusted/malformed proxy identity before any project-keyed
+      // accounting is touched. In particular, isolation creates per-slug
+      // state on first access; admitting attacker-controlled slugs there would
+      // let rejected requests grow shared-process state indefinitely.
+      if (preparedRequest.proxyGuard) {
+        try {
+          logger.warn(preparedRequest.proxyGuard.detail, {
+            pathname: url.pathname,
+            domain: preparedRequest.loggerFacts.domain,
+            projectSlug: headers.projectSlug,
+            host: req.headers.get("host"),
+            forwardedHost: req.headers.get("x-forwarded-host"),
+          });
+          endRequestTracing(spanInfo.span, preparedRequest.proxyGuard.response.status);
+          return preparedRequest.proxyGuard.response;
+        } finally {
+          endRequestLifecycle(lifecycle);
+        }
+      }
 
       startRequestTracking(
         lifecycle.requestId,
@@ -453,25 +471,6 @@ export function createVeryfrontHandler(
       startIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation);
 
       try {
-        if (preparedRequest.proxyGuard) {
-          logger.warn(preparedRequest.proxyGuard.detail, {
-            pathname: url.pathname,
-            domain: preparedRequest.loggerFacts.domain,
-            projectSlug: headers.projectSlug,
-            host: req.headers.get("host"),
-            forwardedHost: req.headers.get("x-forwarded-host"),
-          });
-          endContentMetrics({
-            requestId: lifecycle.requestId,
-            pathname: url.pathname,
-            mode: "proxy",
-          });
-          completeRequestTracking(lifecycle.requestId, 502, false);
-          completeIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation, false);
-          endRequestTracing(spanInfo.span, 502);
-          return preparedRequest.proxyGuard.response;
-        }
-
         const profileCategory = url.pathname.startsWith("/_vf_styles/")
           ? "css"
           : url.pathname.startsWith("/_vf_modules/")
@@ -500,7 +499,10 @@ export function createVeryfrontHandler(
               await configPromise;
             }));
 
-          const wsSlugOverride = url.searchParams.get("x-project-slug") || undefined;
+          // Browser-controlled WebSocket query parameters cannot select tenant
+          // identity. Local development uses the configured default project;
+          // hosted requests use the edge-derived header or routed host.
+          const wsSlugOverride = undefined;
 
           // Resolve project from various sources
           const projectRes = await profilePhase(

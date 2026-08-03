@@ -193,7 +193,7 @@ export default function BlogPost({ post }) {
 ### OptimizedImage Component
 
 ```typescript
-import { OptimizedBackgroundImage, OptimizedImage } from "veryfront";
+import { OptimizedBackgroundImage, OptimizedImage, SimpleOptimizedImage } from "veryfront";
 
 export default function Gallery() {
   return (
@@ -217,6 +217,15 @@ export default function Gallery() {
         height={100}
         loading="eager"
         priority
+      />
+
+      <SimpleOptimizedImage
+        src="/images/card.jpg"
+        alt="Card"
+        width={640}
+        height={360}
+        sizes="(max-width: 768px) 100vw, 320px"
+        format="webp"
       />
 
       {/* Background image */}

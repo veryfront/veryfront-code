@@ -139,6 +139,44 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     });
   });
 
+  it("pins same-origin module-server imports before fetching", async () => {
+    const origin = "http://93.184.216.34:3000";
+    const source = `export { value } from "${origin}/_vf_modules/shared/Absolute.js";`;
+    const snapshotKey = "on:snapshot-a";
+    const fetchedUrls: string[] = [];
+
+    await withIsolatedHttpCache(
+      "vf-esm-module-origin-pins-",
+      ((input) => {
+        fetchedUrls.push(String(input));
+        return Promise.resolve(
+          new Response(`export const value = "abs";`, {
+            headers: { "content-type": "application/javascript" },
+          }),
+        );
+      }) as typeof fetch,
+      async (tempDir) => {
+        const result = await cacheHttpImportsToLocal(source, {
+          cacheDir: tempDir,
+          importMap: { imports: {}, scopes: {} },
+          moduleServerOrigin: origin,
+          dependencyPinningCacheKey: snapshotKey,
+        });
+
+        assertEquals(result.code.includes("file://"), true);
+      },
+    );
+
+    assertEquals(fetchedUrls.length, 1);
+    const fetchedUrlString = fetchedUrls[0];
+    assert(fetchedUrlString);
+    const fetchedUrl = new URL(fetchedUrlString);
+    assertEquals(fetchedUrl.origin, origin);
+    assertEquals(fetchedUrl.pathname, "/_vf_modules/shared/Absolute.js");
+    assertEquals(fetchedUrl.searchParams.get("ssr"), "true");
+    assertEquals(fetchedUrl.searchParams.get("pins"), snapshotKey);
+  });
+
   it("does not retry permanent HTTP module failures", async () => {
     let fetchCount = 0;
     let bodyCancelled = false;

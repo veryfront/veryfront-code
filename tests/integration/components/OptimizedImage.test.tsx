@@ -322,6 +322,20 @@ describe("SimpleOptimizedImage", () => {
     assertEquals(element.props.format, "webp");
     assertEquals(element.props.quality, 80);
   });
+
+  it("forwards a sizes attribute when srcset variants are available", () => {
+    const markup = renderToStaticMarkup(
+      React.createElement(SimpleOptimizedImage, {
+        src: "/images/simple.jpg",
+        alt: "Simple image",
+        width: 320,
+        sizes: "(max-width: 768px) 100vw, 320px",
+      }),
+    );
+
+    assertStringIncludes(markup, 'sizes="(max-width: 768px) 100vw, 320px"');
+    assertStringIncludes(markup, "/images/simple-320w.webp 320w");
+  });
 });
 
 describe("OptimizedBackgroundImage", () => {
