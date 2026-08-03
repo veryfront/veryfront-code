@@ -45,6 +45,11 @@ function isReactPackageSegment(segment: string): boolean {
     segment.startsWith("react-server-dom@");
 }
 
+function isUrlPackagePrefixSegment(segment: string): boolean {
+  const normalized = segment.toLowerCase().replace(/^%40/, "@");
+  return normalized === "npm" || /^@v?\d/.test(normalized);
+}
+
 function urlContainsReactPackage(dependency: string): boolean {
   let segments: string[];
   try {
@@ -55,13 +60,13 @@ function urlContainsReactPackage(dependency: string): boolean {
   }
   for (let index = 0; index < segments.length; index++) {
     const segment = segments[index]!;
-    if (segment.startsWith("@") || segment.toLowerCase().startsWith("%40")) {
-      index++;
-      continue;
-    }
+    const previousSegment = segments[index - 1];
     if (
       isReactPackageSegment(segment) &&
-      (index === 0 || segment.includes("@"))
+      (index === 0 ||
+        segment.includes("@") ||
+        (previousSegment !== undefined &&
+          isUrlPackagePrefixSegment(previousSegment)))
     ) {
       return true;
     }
