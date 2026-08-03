@@ -39,6 +39,7 @@ import {
   resolveFrameworkSourcePath,
   resolveRelativeFrameworkSourceImport,
 } from "#veryfront/platform/compat/framework-source-resolver.ts";
+import { PUBLISHED_RUNTIME_HELPERS } from "#veryfront/platform/compat/published-runtime-helpers.ts";
 import { normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 import { extractSourceUrl } from "#veryfront/transforms/esm/source-url-embed.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
@@ -456,6 +457,39 @@ function frameworkSourcePathToSourceKey(sourcePath: string, lookupDirs: string[]
     return normalizeLogicalPath(relativePath);
   }
 
+  return null;
+}
+
+function frameworkRootsForLookupDirs(lookupDirs: string[]): string[] {
+  const roots = new Set<string>();
+  for (const lookupDir of lookupDirs) {
+    if (lookupDir.endsWith("/dist/framework-src")) {
+      roots.add(lookupDir.slice(0, -"/dist/framework-src".length));
+    } else if (lookupDir.endsWith("/src")) {
+      roots.add(lookupDir.slice(0, -"/src".length));
+    }
+  }
+  return [...roots];
+}
+
+/**
+ * Published npm packages emit DNT runtime helpers (`_dnt.shims.js`,
+ * `_dnt.polyfills.js`, `deno.js`) at the package ESM root — outside every
+ * framework source lookup dir. Map those exact files to a reserved source key
+ * so the release dependency walk can publish them instead of leaving the
+ * relative import unresolved.
+ */
+function publishedRuntimeHelperSourceKey(
+  sourcePath: string,
+  lookupDirs: string[],
+): string | null {
+  for (const root of frameworkRootsForLookupDirs(lookupDirs)) {
+    for (const helper of PUBLISHED_RUNTIME_HELPERS) {
+      if (sourcePath === join(root, helper)) {
+        return `_published-runtime/${helper.replace(/\.js$/, "")}`;
+      }
+    }
+  }
   return null;
 }
 
@@ -1892,6 +1926,7 @@ async function buildFrameworkDependencies(
   const lookupDirs = [FRAMEWORK_SRC_DIR, FRAMEWORK_EMBEDDED_SRC_DIR, join(tempDir, "src")];
   const moduleAssets = new Map<string, PreparedAsset>();
   const visiting = new Set<string>();
+  const publishedHelperPaths = new Map<string, string>();
 
   async function resolveFrameworkImport(
     specifier: string,
@@ -1899,7 +1934,13 @@ async function buildFrameworkDependencies(
   ): Promise<string | null> {
     if (specifier.startsWith("./") || specifier.startsWith("../")) {
       const resolvedPath = await resolveRelativeFrameworkSourceImport(specifier, fromSourcePath);
-      return resolvedPath ? frameworkSourcePathToSourceKey(resolvedPath, lookupDirs) : null;
+      if (!resolvedPath) return null;
+      const helperSourceKey = publishedRuntimeHelperSourceKey(resolvedPath, lookupDirs);
+      if (helperSourceKey) {
+        publishedHelperPaths.set(helperSourceKey, resolvedPath);
+        return helperSourceKey;
+      }
+      return frameworkSourcePathToSourceKey(resolvedPath, lookupDirs);
     }
 
     if (specifier.startsWith(FRAMEWORK_MODULE_URL_PREFIX)) {
@@ -1921,9 +1962,12 @@ async function buildFrameworkDependencies(
       return null;
     }
 
-    const frameworkSource = await resolveFrameworkSourcePath(sourceKey, {
-      extraLookupDirs: [join(tempDir, "src")],
-    });
+    const publishedHelperPath = publishedHelperPaths.get(sourceKey);
+    const frameworkSource = publishedHelperPath
+      ? { path: publishedHelperPath, lookupDir: dirname(publishedHelperPath) }
+      : await resolveFrameworkSourcePath(sourceKey, {
+        extraLookupDirs: [join(tempDir, "src")],
+      });
     const embeddedCode = frameworkSource ? null : embeddedFrameworkModuleCode(sourceKey);
     if (!frameworkSource && embeddedCode === null) {
       pushGap(gaps, `dependency-missing:${publicSpecifier}:${sourceKey}`);

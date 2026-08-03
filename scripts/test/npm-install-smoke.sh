@@ -10,13 +10,38 @@
 #   4. installing @veryfront/ext-auth-jwt makes the extension load
 #   5. a broken transitive dependency surfaces the real error, not a
 #      misleading "extension not installed" skip
+#   6. the packed ai-agent starter starts under Node and renders over HTTP
+#      without unresolved generated runtime helpers
 #
-# Requires: `deno task build:npm` output in ./npm, node + npm on PATH.
+# Requires: `deno task build:npm` output in ./npm, node + npm + curl on PATH.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 WORKDIR="$(mktemp -d)"
-trap 'rm -rf "$WORKDIR"' EXIT
+DEV_PID=""
+
+stop_dev_server() {
+  [ -n "$DEV_PID" ] || return 0
+
+  if kill -0 "$DEV_PID" 2>/dev/null; then
+    kill "$DEV_PID" 2>/dev/null || true
+    for _attempt in $(seq 1 50); do
+      kill -0 "$DEV_PID" 2>/dev/null || break
+      sleep 0.1
+    done
+    kill -9 "$DEV_PID" 2>/dev/null || true
+  fi
+
+  wait "$DEV_PID" 2>/dev/null || true
+  DEV_PID=""
+}
+
+cleanup() {
+  stop_dev_server
+  rm -rf "$WORKDIR"
+}
+
+trap cleanup EXIT
 
 fail() {
   echo "SMOKE FAIL: $1" >&2
@@ -45,6 +70,7 @@ fail() {
 
 cd "$WORKDIR"
 npm init -y >/dev/null 2>&1
+npm pkg set type=module >/dev/null
 npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-[0-9]*.tgz ./veryfront-ext-bundler-esbuild-*.tgz ./veryfront-ext-content-mdx-*.tgz ./veryfront-ext-css-tailwind-*.tgz ./veryfront-ext-dev-ui-react-*.tgz ./veryfront-ext-node-websocket-ws-*.tgz ./veryfront-ext-parser-babel-*.tgz ./veryfront-ext-yaml-*.tgz
 
 echo "== 1. root install: CLI and parser extension run under Node"
@@ -140,5 +166,62 @@ echo "$BROKEN_OUTPUT" | grep -q "jose" ||
   fail "broken transitive dependency error does not name the real missing package: $BROKEN_OUTPUT"
 echo "$BROKEN_OUTPUT" | grep -q "install @veryfront/ext-auth-jwt alongside veryfront" &&
   fail "broken transitive dependency was misclassified as a missing extension: $BROKEN_OUTPUT"
+
+echo "== 6. packed ai-agent starter: dev server renders over HTTP"
+cp -R "$ROOT_DIR/cli/templates/files/ai-agent/." "$WORKDIR/"
+
+DEV_PORT="${VF_NPM_SSR_SMOKE_PORT:-43119}"
+DEV_URL="http://127.0.0.1:$DEV_PORT/"
+DEV_LOG="$WORKDIR/veryfront-dev.log"
+DEV_RESPONSE="$WORKDIR/veryfront-response.html"
+
+CI=1 \
+NO_COLOR=1 \
+NODE_ENV=development \
+LOG_FORMAT=text \
+VERYFRONT_NO_UPDATE_CHECK=1 \
+VF_DISABLE_LRU_INTERVAL=1 \
+SSR_TRANSFORM_PER_PROJECT_LIMIT=0 \
+REVALIDATION_PER_PROJECT_LIMIT=0 \
+node node_modules/veryfront/bin/veryfront.js dev --port "$DEV_PORT" --no-hmr \
+  </dev/null >"$DEV_LOG" 2>&1 &
+DEV_PID=$!
+
+DEV_READY=""
+for _attempt in $(seq 1 120); do
+  kill -0 "$DEV_PID" 2>/dev/null || break
+  if grep -q "Ready in" "$DEV_LOG"; then
+    DEV_READY="yes"
+    break
+  fi
+  sleep 0.25
+done
+
+if [ "$DEV_READY" != "yes" ]; then
+  cat "$DEV_LOG" >&2
+  fail "packed ai-agent starter dev server did not become ready"
+fi
+
+DEV_STATUS="$(curl --silent --show-error --max-time 30 \
+  --output "$DEV_RESPONSE" --write-out '%{http_code}' "$DEV_URL" || true)"
+
+if [ "$DEV_STATUS" != "200" ]; then
+  cat "$DEV_LOG" >&2
+  fail "packed ai-agent starter did not return HTTP 200 (last status: ${DEV_STATUS:-none})"
+fi
+
+grep -Eq '<title[^>]*>Assistant</title>' "$DEV_RESPONSE" || {
+  head -c 2000 "$DEV_RESPONSE" >&2
+  fail "packed ai-agent starter response did not contain its title"
+}
+
+if grep -Eq \
+  "Could not resolve relative import|Cached module has missing dependency|Critical page module failed to load|Failed to preload TSX layout|Cannot find module.*_dnt" \
+  "$DEV_LOG"; then
+  cat "$DEV_LOG" >&2
+  fail "packed ai-agent starter logged an SSR module-resolution failure"
+fi
+
+stop_dev_server
 
 echo "npm install smoke: all checks passed"

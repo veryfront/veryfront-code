@@ -1574,6 +1574,66 @@ describe("release asset build executor", () => {
     );
   });
 
+  it("publishes package-root published runtime helper imports as release assets", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "pages/index.tsx",
+        content: 'import { useWorkflow } from "veryfront/workflow"; export default useWorkflow;',
+      },
+    ];
+    const client = makeClient(files, rec);
+    const frameworkUrl = "/_vf_modules/_veryfront/workflow/react/index.js";
+    const consumerUrl = "/_vf_modules/_veryfront/published-helper-consumer.js";
+
+    // Emulate a published package layout: a framework module in the temp
+    // lookup dir importing the DNT runtime helper at the package root.
+    const tempDir = await tmp();
+    await Deno.mkdir(join(tempDir, "src"), { recursive: true });
+    await Deno.writeTextFile(
+      join(tempDir, "src", "published-helper-consumer.ts"),
+      'import "../deno.js";\nexport const consumer = true;\n',
+    );
+    await Deno.writeTextFile(join(tempDir, "deno.js"), "export {};\n");
+
+    const transform = (_source: string, sourceFile: string) => {
+      if (sourceFile.endsWith("pages/index.tsx")) {
+        return Promise.resolve(
+          `import { useWorkflow } from "${frameworkUrl}"; export default useWorkflow;`,
+        );
+      }
+      if (sourceFile.endsWith("src/workflow/react/index.ts")) {
+        return Promise.resolve(
+          `import { consumer } from "${consumerUrl}"; export const useWorkflow = () => consumer;`,
+        );
+      }
+      if (sourceFile.endsWith("published-helper-consumer.ts")) {
+        return Promise.resolve('import "../deno.js"; export const consumer = true;');
+      }
+      return Promise.resolve("export const value = true;");
+    };
+
+    const result = await runReleaseAssetBuild(baseInput(client, transform), tempDir);
+
+    assertEquals(result.success, true);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    const workflowHash = manifest.dependencies["veryfront/workflow"]?.contentHash;
+    assertExists(workflowHash);
+
+    const workflowUpload = rec.uploads.find((u) => u.hash === workflowHash);
+    assertExists(workflowUpload);
+    const consumerMatch = workflowUpload.text.match(/"\/_vf\/assets\/([a-f0-9]{64})\.js"/);
+    assertExists(consumerMatch?.[1]);
+
+    const consumerUpload = rec.uploads.find((u) => u.hash === consumerMatch[1]);
+    assertExists(consumerUpload);
+    assert(!consumerUpload.text.includes("../deno.js"));
+    const helperMatch = consumerUpload.text.match(/"\/_vf\/assets\/([a-f0-9]{64})\.js"/);
+    assertExists(helperMatch?.[1]);
+    assertExists(rec.uploads.find((u) => u.hash === helperMatch[1]));
+  });
+
   it("fails closed on cyclic project imports", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
