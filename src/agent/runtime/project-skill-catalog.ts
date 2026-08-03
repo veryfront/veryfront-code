@@ -10,11 +10,7 @@ import type {
   RuntimeProjectFilesApiOptions,
 } from "./project-files-client.ts";
 import { createRuntimeProjectFileListingBudget } from "./project-files-client.ts";
-import {
-  isRuntimeProjectFileContent,
-  isRuntimeProjectFilePath,
-  MAX_RUNTIME_PROJECT_FILES_TOTAL_ITEMS,
-} from "./project-files-client.ts";
+import { isRuntimeProjectFileContent, isRuntimeProjectFilePath } from "./project-files-client.ts";
 import {
   listRuntimeBuiltinSkillReferences,
   readRuntimeBuiltinDirectorySkill,
@@ -33,6 +29,7 @@ import {
   type SkillOperationBudget,
 } from "#veryfront/skill/operation-budget.ts";
 import {
+  SKILL_ALLOWED_TOOL_MAX_PATTERNS,
   SKILL_CATALOG_MAX_DOCUMENT_CHARACTERS,
   SKILL_CATALOG_MAX_DOCUMENT_UTF8_BYTES,
   SKILL_CATALOG_MAX_METADATA_CHARACTERS,
@@ -44,11 +41,16 @@ import {
   SKILL_STEERING_PATH_MAX_ENTRIES,
   SKILL_SUBDIR_MAX_ENTRIES,
 } from "#veryfront/skill/limits.ts";
-import { isOwnDataPropertyDescriptor } from "./data-property-descriptor.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import { readOwnDataProperty, snapshotOwnDataPropertyArray } from "./data-property-descriptor.ts";
 
 const utf8Encoder = new TextEncoder();
 const ArrayIsArray = Array.isArray;
-const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const NumberIsFinite = Number.isFinite;
+const NumberIsSafeInteger = Number.isSafeInteger;
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectFreeze = Object.freeze;
+const ObjectKeys = Object.keys;
 const ReflectApply = Reflect.apply;
 
 class RuntimeSkillCatalogBudget {
@@ -167,83 +169,247 @@ function sortSkillsById(skills: Iterable<RuntimeSkillDefinition>): RuntimeSkillD
 
 function requireBuiltinSkills(
   value: readonly RuntimeSkillDefinition[],
+  budget: RuntimeSkillCatalogBudget,
 ): readonly RuntimeSkillDefinition[] {
-  if (!ArrayIsArray(value)) {
-    throw new TypeError("builtinSkills must be an array");
+  return snapshotOwnDataPropertyArray(value, {
+    label: "builtinSkills",
+    maximumEntries: SKILL_CATALOG_MAX_SKILLS,
+    mapValue: (definition, index) => {
+      const snapshot = snapshotBuiltinSkillDefinition(definition, index);
+      retainExistingDefinition(budget, snapshot);
+      return snapshot;
+    },
+  });
+}
+
+function isNonArrayObject(value: unknown): value is Record<PropertyKey, unknown> {
+  if (!value || typeof value !== "object") return false;
+  try {
+    return !ArrayIsArray(value);
+  } catch {
+    return false;
   }
-  if (value.length > SKILL_SUBDIR_MAX_ENTRIES) {
-    throw new RangeError(
-      `builtinSkills accepts at most ${SKILL_SUBDIR_MAX_ENTRIES} definitions`,
-    );
+}
+
+function requireBuiltinString(
+  definition: unknown,
+  key: keyof RuntimeSkillDefinition,
+  index: number,
+  required: boolean,
+): string | undefined {
+  const value = readOwnDataProperty(
+    definition,
+    key,
+    `builtinSkills entry ${index}`,
+    required,
+  );
+  if (value === undefined && !required) return undefined;
+  if (typeof value !== "string") {
+    throw new TypeError(`builtinSkills entry ${index}.${key} must be a string`);
   }
   return value;
+}
+
+function snapshotBuiltinStringArray(
+  value: unknown,
+  label: string,
+  maximumEntries: number,
+  validate?: (value: string) => boolean,
+): readonly string[] {
+  return snapshotOwnDataPropertyArray(value, {
+    label,
+    maximumEntries,
+    mapValue: (entry, index) => {
+      if (typeof entry !== "string" || (validate !== undefined && !validate(entry))) {
+        throw new TypeError(`${label} entry ${index} must be a valid string`);
+      }
+      return entry;
+    },
+  });
+}
+
+function snapshotBuiltinReferences(value: unknown, label: string): readonly string[] {
+  const references = snapshotBuiltinStringArray(
+    value,
+    label,
+    SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
+    (reference) =>
+      normalizeStrictRuntimeSkillReferencePath(reference) === reference &&
+      SKILL_READABLE_DIRS.some((directory) => reference.startsWith(`${directory}/`)),
+  );
+  const counts = new Map<string, number>();
+  for (const reference of references) {
+    const directory = reference.slice(0, reference.indexOf("/"));
+    const count = (counts.get(directory) ?? 0) + 1;
+    if (count > SKILL_SUBDIR_MAX_ENTRIES) {
+      throw new RangeError(
+        `${label} ${directory}/ may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
+      );
+    }
+    counts.set(directory, count);
+  }
+  return references;
+}
+
+function snapshotBuiltinMetadata(value: unknown, index: number): Readonly<Record<string, string>> {
+  if (!isNonArrayObject(value) || isProxyWithoutHooks(value)) {
+    throw new TypeError(`builtinSkills entry ${index}.metadata must be an object`);
+  }
+  let keys: string[];
+  try {
+    keys = ReflectApply(ObjectKeys, undefined, [value]) as string[];
+  } catch {
+    throw new TypeError(`builtinSkills entry ${index}.metadata must be readable`);
+  }
+  if (keys.length > SKILL_SUBDIR_MAX_ENTRIES) {
+    throw new RangeError(
+      `builtinSkills entry ${index}.metadata may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
+    );
+  }
+
+  const snapshot: Record<string, string> = {};
+  for (const key of keys) {
+    const metadataValue = readOwnDataProperty(
+      value,
+      key,
+      `builtinSkills entry ${index}.metadata`,
+    );
+    if (typeof metadataValue !== "string") {
+      throw new TypeError(`builtinSkills entry ${index}.metadata.${key} must be a string`);
+    }
+    ReflectApply(ObjectDefineProperty, undefined, [snapshot, key, {
+      configurable: false,
+      enumerable: true,
+      value: metadataValue,
+      writable: false,
+    }]);
+  }
+  return ObjectFreeze(snapshot);
+}
+
+function snapshotBuiltinSkillDefinition(
+  value: unknown,
+  index: number,
+): RuntimeSkillDefinition {
+  if (!isNonArrayObject(value)) {
+    throw new TypeError(`builtinSkills entry ${index} must be an object`);
+  }
+  const label = `builtinSkills entry ${index}`;
+  const allowedTools = snapshotBuiltinStringArray(
+    readOwnDataProperty(value, "allowedTools", label),
+    `${label}.allowedTools`,
+    SKILL_ALLOWED_TOOL_MAX_PATTERNS,
+  );
+  const rawReferences = readOwnDataProperty(value, "references", label, false);
+  const references = rawReferences === undefined ? undefined : snapshotBuiltinReferences(
+    rawReferences,
+    `${label}.references`,
+  );
+  const rawMetadata = readOwnDataProperty(value, "metadata", label, false);
+  const metadata = rawMetadata === undefined
+    ? undefined
+    : snapshotBuiltinMetadata(rawMetadata, index);
+  const allowedToolsDeclared = readOwnDataProperty(
+    value,
+    "allowedToolsDeclared",
+    label,
+    false,
+  );
+  if (allowedToolsDeclared !== undefined && typeof allowedToolsDeclared !== "boolean") {
+    throw new TypeError(`${label}.allowedToolsDeclared must be a boolean`);
+  }
+  const thinking = readOwnDataProperty(value, "thinking", label, false);
+  if (
+    thinking !== undefined &&
+    thinking !== false &&
+    (typeof thinking !== "number" || !NumberIsFinite(thinking) || thinking < 0)
+  ) {
+    throw new TypeError(`${label}.thinking must be false or a non-negative finite number`);
+  }
+  const maxSteps = readOwnDataProperty(value, "maxSteps", label, false);
+  if (
+    maxSteps !== undefined &&
+    (typeof maxSteps !== "number" || !NumberIsSafeInteger(maxSteps) || maxSteps <= 0)
+  ) {
+    throw new TypeError(`${label}.maxSteps must be a positive safe integer`);
+  }
+
+  return ObjectFreeze({
+    id: requireBuiltinString(value, "id", index, true)!,
+    name: requireBuiltinString(value, "name", index, true)!,
+    description: requireBuiltinString(value, "description", index, true)!,
+    instructions: requireBuiltinString(value, "instructions", index, true)!,
+    allowedTools: allowedTools as string[],
+    ...(allowedToolsDeclared === undefined ? {} : { allowedToolsDeclared }),
+    ...(metadata === undefined ? {} : { metadata: metadata as Record<string, string> }),
+    ...(thinking === undefined ? {} : { thinking: thinking as false | number }),
+    ...(maxSteps === undefined ? {} : { maxSteps }),
+    ...(references === undefined ? {} : { references: references as string[] }),
+    ...snapshotOptionalBuiltinStrings(value, index),
+  });
+}
+
+function snapshotOptionalBuiltinStrings(
+  value: unknown,
+  index: number,
+): Pick<
+  RuntimeSkillDefinition,
+  "displayName" | "model" | "ownerAgentId" | "shortName" | "sourcePath"
+> {
+  const snapshot: Pick<
+    RuntimeSkillDefinition,
+    "displayName" | "model" | "ownerAgentId" | "shortName" | "sourcePath"
+  > = {};
+  for (
+    const key of ["displayName", "model", "ownerAgentId", "shortName", "sourcePath"] as const
+  ) {
+    const property = requireBuiltinString(value, key, index, false);
+    if (property !== undefined) snapshot[key] = property;
+  }
+  return snapshot;
 }
 
 function snapshotProjectFileList(
   value: readonly RuntimeProjectFileListItem[] | null,
 ): readonly RuntimeProjectFileListItem[] | null {
   if (value === null) return null;
-  if (!ArrayIsArray(value)) {
-    throw new TypeError("Project file listing must be an array or null");
-  }
-  if (value.length > MAX_RUNTIME_PROJECT_FILES_TOTAL_ITEMS) {
-    throw new RangeError(
-      `Project file listing exceeds ${MAX_RUNTIME_PROJECT_FILES_TOTAL_ITEMS} files`,
-    );
-  }
-
-  const snapshot: RuntimeProjectFileListItem[] = [];
-  for (let index = 0; index < value.length; index += 1) {
-    const itemDescriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
-      value,
-      index,
-    ]) as PropertyDescriptor | undefined;
-    const item = isOwnDataPropertyDescriptor(itemDescriptor) ? itemDescriptor.value : undefined;
-    if (!item || typeof item !== "object" || ArrayIsArray(item)) {
-      throw new TypeError(`Project file listing item ${index} must be an object`);
-    }
-    const pathDescriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
-      item,
-      "path",
-    ]) as PropertyDescriptor | undefined;
-    const path = isOwnDataPropertyDescriptor(pathDescriptor) ? pathDescriptor.value : undefined;
-    if (!isRuntimeProjectFilePath(path)) {
-      throw new TypeError(`Project file listing item ${index} has an invalid path`);
-    }
-    snapshot.push(Object.freeze({ path }));
-  }
-  return Object.freeze(snapshot);
+  return snapshotOwnDataPropertyArray(value, {
+    label: "Project file listing",
+    maximumEntries: SKILL_CATALOG_MAX_PATH_ENTRIES,
+    mapValue: (item, index) => {
+      if (!isNonArrayObject(item)) {
+        throw new TypeError(`Project file listing item ${index} must be an object`);
+      }
+      const path = readOwnDataProperty(
+        item,
+        "path",
+        `Project file listing item ${index}`,
+      );
+      if (!isRuntimeProjectFilePath(path)) {
+        throw new TypeError(`Project file listing item ${index} has an invalid path`);
+      }
+      return ObjectFreeze({ path });
+    },
+  });
 }
 
 function normalizeSteeringPaths(
   value: readonly string[],
   label: string,
 ): readonly string[] {
-  if (!ArrayIsArray(value)) {
-    throw new TypeError(`${label} paths must be an array`);
-  }
-  if (value.length > SKILL_STEERING_PATH_MAX_ENTRIES) {
-    throw new RangeError(
-      `${label} accepts at most ${SKILL_STEERING_PATH_MAX_ENTRIES} paths`,
-    );
-  }
-
-  const paths: string[] = [];
-  for (let index = 0; index < value.length; index += 1) {
-    const descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
-      value,
-      index,
-    ]) as PropertyDescriptor | undefined;
-    if (
-      !isOwnDataPropertyDescriptor(descriptor) ||
-      typeof descriptor.value !== "string" ||
-      normalizeStrictRuntimeSkillReferencePath(descriptor.value) !== descriptor.value
-    ) {
-      throw new TypeError(`Invalid ${label} path at index ${index}`);
-    }
-    paths.push(descriptor.value);
-  }
-  return Object.freeze(paths);
+  return snapshotOwnDataPropertyArray(value, {
+    label: `${label} paths`,
+    maximumEntries: SKILL_STEERING_PATH_MAX_ENTRIES,
+    mapValue: (path, index) => {
+      if (
+        typeof path !== "string" ||
+        normalizeStrictRuntimeSkillReferencePath(path) !== path
+      ) {
+        throw new TypeError(`Invalid ${label} path at index ${index}`);
+      }
+      return path;
+    },
+  });
 }
 
 function getSkillPaths(
@@ -433,9 +599,8 @@ export async function getRuntimeProjectSkillCatalog(
 ): Promise<RuntimeSkillDefinition[]> {
   const budget = createCatalogBudget(input.operationBudget);
   const catalogBudget = new RuntimeSkillCatalogBudget();
-  const builtinSkills = requireBuiltinSkills(input.builtinSkills);
+  const builtinSkills = requireBuiltinSkills(input.builtinSkills, catalogBudget);
   const skillPrefixes = getSkillPaths(input);
-  for (const definition of builtinSkills) retainExistingDefinition(catalogBudget, definition);
   const filesByPath = new Map<string, RuntimeProjectFileListItem>();
   const listingBudget = createRuntimeProjectFileListingBudget();
   let hasAvailableListing = false;
@@ -448,7 +613,7 @@ export async function getRuntimeProjectSkillCatalog(
           authToken: input.authToken,
           branchId: input.branchId,
           pathPrefix: prefix,
-          maximumEntries: SKILL_SUBDIR_MAX_ENTRIES,
+          maximumEntries: SKILL_CATALOG_MAX_PATH_ENTRIES,
           listingBudget,
           abortSignal,
           timeoutMs: budget.remainingMs(),

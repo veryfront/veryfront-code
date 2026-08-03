@@ -1,6 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/skill/_test-setup.ts";
-import { assertEquals, assertRejects, assertStrictEquals, assertStringIncludes } from "@std/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import {
   createRuntimeLoadSkillTool,
   RUNTIME_LOAD_SKILL_CONTINUATION_NOTE,
@@ -12,8 +18,10 @@ import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import {
   SKILL_DOCUMENT_MAX_CHARACTERS,
   SKILL_ID_MAX_LENGTH,
+  SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
   SKILL_RELATIVE_PATH_MAX_LENGTH,
   SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES,
+  SKILL_SUBDIR_MAX_ENTRIES,
 } from "#veryfront/skill/limits.ts";
 import type {
   RuntimeLoadedProjectSkill,
@@ -102,6 +110,14 @@ function createBuiltinStore(input: {
     listReferences: (_skillsDir, skillId) =>
       Promise.resolve(input.referenceLists?.get(skillId) ?? []),
   };
+}
+
+function createReadableReferenceList(length: number): string[] {
+  return Array.from({ length }, (_unused, index) => {
+    const directoryIndex = Math.floor(index / SKILL_SUBDIR_MAX_ENTRIES);
+    const directory = ["references", "resources", "assets"][directoryIndex] ?? "assets";
+    return `${directory}/${index}.txt`;
+  });
 }
 
 Deno.test("createRuntimeLoadSkillTool loads project skills before builtin skills", async () => {
@@ -3067,7 +3083,7 @@ Deno.test("createRuntimeLoadSkillTool bounds skill inventory entries and IDs", a
       });
     },
     RangeError,
-    "at most 1000 availableSkillIds entries",
+    "availableSkillIds may contain at most 1000 entries",
   );
   await assertRejects(
     async () => {
@@ -3227,6 +3243,113 @@ Deno.test("runtime load_skill rejects oversized production-loader documents", as
   );
 });
 
+Deno.test("runtime load_skill admits the complete aggregate readable-file contract", async () => {
+  for (
+    const referenceCount of [
+      SKILL_SUBDIR_MAX_ENTRIES,
+      SKILL_SUBDIR_MAX_ENTRIES + 1,
+      SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
+    ]
+  ) {
+    const references = createReadableReferenceList(referenceCount);
+    const tool = createRuntimeLoadSkillTool({
+      context: createProjectContext({ availableSkillIds: ["plan"] }),
+      skillsDir: "/skills",
+      projectSkillLoader: createProjectSkillLoader({
+        skills: new Map([["plan", { instructions: "# Plan", references }]]),
+      }),
+      builtinStore: createBuiltinStore({}),
+    });
+
+    const response = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
+    assertEquals(response.references?.length, referenceCount);
+  }
+
+  const perDirectoryOverflowReferences = Array.from(
+    { length: SKILL_SUBDIR_MAX_ENTRIES + 1 },
+    (_unused, index) => `references/${index}.txt`,
+  );
+  const perDirectoryOverflow = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["plan"] }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([["plan", {
+        instructions: "# Plan",
+        references: perDirectoryOverflowReferences,
+      }]]),
+    }),
+    builtinStore: createBuiltinStore({}),
+  });
+  await assertRejects(
+    () => perDirectoryOverflow.execute({ skillId: "plan" }),
+    TypeError,
+    "references are invalid",
+  );
+
+  const references = createReadableReferenceList(SKILL_LOADABLE_REFERENCE_MAX_ENTRIES + 1);
+  const overflow = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["plan"] }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([["plan", { instructions: "# Plan", references }]]),
+    }),
+    builtinStore: createBuiltinStore({}),
+  });
+  await assertRejects(
+    () => overflow.execute({ skillId: "plan" }),
+    TypeError,
+    "references are invalid",
+  );
+});
+
+Deno.test("runtime load_skill rejects Array proxies without invoking length get traps", async () => {
+  let lengthReads = 0;
+  const availableToolNames = new Proxy(["invoke_agent"], {
+    get(target, key, receiver) {
+      if (key === "length") {
+        lengthReads += 1;
+        throw new Error("length getter must not run");
+      }
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableToolNames }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({ skills: new Map([["plan", "# Plan"]]) }),
+  });
+  await assertRejects(
+    () => tool.execute({ skillId: "plan" }),
+    TypeError,
+    "must not be a Proxy",
+  );
+  assertEquals(lengthReads, 0);
+
+  const revoked = Proxy.revocable<string[]>(["plan"], {});
+  revoked.revoke();
+  let storageCalls = 0;
+  assertThrows(
+    () =>
+      createRuntimeLoadSkillTool({
+        context: createProjectContext({ availableSkillIds: revoked.proxy }),
+        skillsDir: "/skills",
+        projectSkillLoader: {
+          listProjectSkillReferences: async () => [],
+          loadProjectSkill: async () => {
+            storageCalls += 1;
+            return null;
+          },
+          loadProjectSkillReference: async () => null,
+        },
+        builtinStore: createBuiltinStore({}),
+      }),
+    TypeError,
+    "must not be a Proxy",
+  );
+  assertEquals(storageCalls, 0);
+});
+
 Deno.test("runtime load_skill rejects oversized available-tool inventories before storage", async () => {
   let storageCalls = 0;
   const tool = createRuntimeLoadSkillTool({
@@ -3251,7 +3374,7 @@ Deno.test("runtime load_skill rejects oversized available-tool inventories befor
   await assertRejects(
     () => tool.execute({ skillId: "large" }),
     RangeError,
-    "Runtime tools may contain at most",
+    "availableToolNames may contain at most",
   );
   assertEquals(storageCalls, 0);
 });

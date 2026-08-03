@@ -22,6 +22,7 @@ import {
   SKILL_PATH_SEGMENT_MAX_LENGTH,
   SKILL_RELATIVE_PATH_MAX_LENGTH,
   SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES,
+  SKILL_SUBDIR_MAX_ENTRIES,
 } from "#veryfront/skill/limits.ts";
 import {
   parseBoundedSkillDocument,
@@ -40,6 +41,7 @@ import {
   SKILL_METADATA_KEY_MAX_LENGTH,
   SKILL_METADATA_MAX_ENTRIES,
   SKILL_METADATA_VALUE_MAX_LENGTH,
+  SKILL_READABLE_DIRS,
   type SkillMetadata,
 } from "#veryfront/skill/types.ts";
 import { hasControlCharacters, isWellFormedUtf16 } from "#veryfront/skill/string-safety.ts";
@@ -859,6 +861,23 @@ function snapshotRuntimeSkillReferences(
   return Object.freeze([...normalized].sort()) as string[];
 }
 
+function hasValidRuntimeLoadedSkillReferenceDirectories(
+  references: readonly string[] | undefined,
+): boolean {
+  if (references === undefined) return true;
+  const counts = new Map<string, number>();
+  for (const reference of references) {
+    const directory = SKILL_READABLE_DIRS.find((candidate) =>
+      reference.startsWith(`${candidate}/`)
+    );
+    if (directory === undefined) return false;
+    const count = (counts.get(directory) ?? 0) + 1;
+    if (count > SKILL_SUBDIR_MAX_ENTRIES) return false;
+    counts.set(directory, count);
+  }
+  return true;
+}
+
 type ParsedRuntimeSkillBuildDocument = {
   document: ParsedRuntimeSkillDocument;
   allowedToolsDeclared: boolean;
@@ -1216,7 +1235,7 @@ export function buildStrictRuntimeLoadedSkillResponse(
     );
   }
   const references = snapshotRuntimeSkillReferences(snapshot.references);
-  if (references === null) {
+  if (references === null || !hasValidRuntimeLoadedSkillReferenceDirectories(references)) {
     throw new TypeError("Runtime loaded skill references are invalid");
   }
   const parsedSource = parseStrictRuntimeSkillSource(snapshot.instructions, {

@@ -8,11 +8,7 @@ import type {
   RuntimeProjectFileListItem,
   RuntimeProjectFilesApiOptions,
 } from "./project-files-client.ts";
-import {
-  isRuntimeProjectFileContent,
-  isRuntimeProjectFilePath,
-  MAX_RUNTIME_PROJECT_FILES_TOTAL_ITEMS,
-} from "./project-files-client.ts";
+import { isRuntimeProjectFileContent, isRuntimeProjectFilePath } from "./project-files-client.ts";
 import {
   buildLegacyRuntimeFlatSkillDefinition,
   isValidStrictRuntimeSkillFileDocument,
@@ -26,6 +22,7 @@ import {
   SKILL_DOCUMENT_MAX_CHARACTERS,
   SKILL_FILE_OPERATION_TIMEOUT_MS,
   SKILL_ID_MAX_LENGTH,
+  SKILL_LOADABLE_REFERENCE_LISTING_MAX_ENTRIES,
   SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
   SKILL_STEERING_PATH_MAX_ENTRIES,
   SKILL_SUBDIR_MAX_ENTRIES,
@@ -33,7 +30,11 @@ import {
 import type { SkillDocumentParserProvider } from "#veryfront/extensions/parser/skill-document-parser.ts";
 import { hasControlCharacters, isWellFormedUtf16 } from "#veryfront/skill/string-safety.ts";
 import { SKILL_READABLE_DIRS } from "#veryfront/skill/types.ts";
-import { isOwnDataPropertyDescriptor } from "./data-property-descriptor.ts";
+import {
+  isOwnDataPropertyDescriptor,
+  readOwnDataProperty,
+  snapshotOwnDataPropertyArray,
+} from "./data-property-descriptor.ts";
 
 const RUNTIME_SKILL_READABLE_DIR_SET = new Set<string>(SKILL_READABLE_DIRS);
 const ArrayIsArray = Array.isArray;
@@ -117,66 +118,49 @@ export type RuntimeProjectSkillLoader = {
 
 function getSkillPaths(options: RuntimeProjectSkillLoaderOptions): readonly string[] {
   const paths = options.steeringPaths?.skills ?? DEFAULT_PROJECT_STEERING_PATHS.skills;
-  if (!ArrayIsArray(paths)) {
-    throw new TypeError("Project skills paths must be an array");
-  }
-  if (paths.length > SKILL_STEERING_PATH_MAX_ENTRIES) {
-    throw new RangeError(
-      `Project skills accept at most ${SKILL_STEERING_PATH_MAX_ENTRIES} paths`,
-    );
-  }
+  return snapshotOwnDataPropertyArray(paths, {
+    label: "Project skills paths",
+    maximumEntries: SKILL_STEERING_PATH_MAX_ENTRIES,
+    mapValue: (value, index) => {
+      if (
+        typeof value !== "string" ||
+        normalizeStrictRuntimeSkillReferencePath(value) !== value
+      ) {
+        throw new TypeError(`Invalid project skills path at index ${index}`);
+      }
+      return value;
+    },
+  });
+}
 
-  const snapshot: string[] = [];
-  for (let index = 0; index < paths.length; index += 1) {
-    const descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
-      paths,
-      index,
-    ]) as PropertyDescriptor | undefined;
-    if (
-      !isOwnDataPropertyDescriptor(descriptor) ||
-      typeof descriptor.value !== "string" ||
-      normalizeStrictRuntimeSkillReferencePath(descriptor.value) !== descriptor.value
-    ) {
-      throw new TypeError(`Invalid project skills path at index ${index}`);
-    }
-    snapshot.push(descriptor.value);
+function isNonArrayObject(value: unknown): value is Record<PropertyKey, unknown> {
+  if (!value || typeof value !== "object") return false;
+  try {
+    return !ArrayIsArray(value);
+  } catch {
+    return false;
   }
-  return Object.freeze(snapshot);
 }
 
 function snapshotProjectFileList(value: unknown): readonly RuntimeProjectFileListItem[] {
-  if (!ArrayIsArray(value)) {
-    throw new TypeError("Project file listing must be an array");
-  }
-  if (value.length > MAX_RUNTIME_PROJECT_FILES_TOTAL_ITEMS) {
-    throw new RangeError(
-      `Project file listing exceeds ${MAX_RUNTIME_PROJECT_FILES_TOTAL_ITEMS} files`,
-    );
-  }
-
-  const snapshot: RuntimeProjectFileListItem[] = [];
-  for (let index = 0; index < value.length; index += 1) {
-    const itemDescriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
-      value,
-      index,
-    ]) as PropertyDescriptor | undefined;
-    const item = isOwnDataPropertyDescriptor(itemDescriptor) ? itemDescriptor.value : undefined;
-    if (!item || typeof item !== "object" || ArrayIsArray(item)) {
-      throw new TypeError(`Project file listing item ${index} must be an object`);
-    }
-
-    const pathDescriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
-      item,
-      "path",
-    ]) as PropertyDescriptor | undefined;
-    const path = isOwnDataPropertyDescriptor(pathDescriptor) ? pathDescriptor.value : undefined;
-    if (!isRuntimeProjectFilePath(path)) {
-      throw new TypeError(`Project file listing item ${index} has an invalid path`);
-    }
-    snapshot.push(Object.freeze({ path }));
-  }
-
-  return Object.freeze(snapshot);
+  return snapshotOwnDataPropertyArray(value, {
+    label: "Project file listing",
+    maximumEntries: SKILL_LOADABLE_REFERENCE_LISTING_MAX_ENTRIES,
+    mapValue: (item, index) => {
+      if (!isNonArrayObject(item)) {
+        throw new TypeError(`Project file listing item ${index} must be an object`);
+      }
+      const path = readOwnDataProperty(
+        item,
+        "path",
+        `Project file listing item ${index}`,
+      );
+      if (!isRuntimeProjectFilePath(path)) {
+        throw new TypeError(`Project file listing item ${index} has an invalid path`);
+      }
+      return Object.freeze({ path });
+    },
+  });
 }
 
 function assertRuntimeSkillContent(content: string, label: string): void {
@@ -354,9 +338,9 @@ function collectProjectSkillReferences(input: {
   allFiles: readonly RuntimeProjectFileListItem[];
   skillDir: string;
 }): string[] {
-  if (input.allFiles.length > SKILL_SUBDIR_MAX_ENTRIES) {
+  if (input.allFiles.length > SKILL_LOADABLE_REFERENCE_LISTING_MAX_ENTRIES) {
     throw new RangeError(
-      `Project skill file listing may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
+      `Project skill file listing may contain at most ${SKILL_LOADABLE_REFERENCE_LISTING_MAX_ENTRIES} entries`,
     );
   }
   const skillPrefix = `${input.skillDir}/`;
@@ -427,7 +411,7 @@ async function listProjectSkillReferences(input: {
       projectId,
       authToken: input.context.authToken,
       branchId: input.context.branchId,
-      maximumEntries: SKILL_SUBDIR_MAX_ENTRIES,
+      maximumEntries: SKILL_LOADABLE_REFERENCE_LISTING_MAX_ENTRIES,
       pathPrefix: skillDir,
       abortSignal: input.budget.abortSignal,
       timeoutMs: getRemainingSkillOperationMs(input.budget),

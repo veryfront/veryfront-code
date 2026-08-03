@@ -31,7 +31,6 @@ import {
   SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES,
   SKILL_RUNTIME_LOADED_REFERENCE_CACHE_MAX_ENTRIES,
   SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES,
-  SKILL_SUBDIR_MAX_ENTRIES,
 } from "#veryfront/skill/limits.ts";
 import type {
   RuntimeLoadedProjectSkill,
@@ -48,13 +47,24 @@ import {
 import type { ResolvedSkillSelectorPolicy } from "#veryfront/skill/selector.ts";
 import type { SkillDocumentParserProvider } from "#veryfront/extensions/parser/skill-document-parser.ts";
 import { hasControlCharacters, isWellFormedUtf16 } from "#veryfront/skill/string-safety.ts";
-import { isOwnDataPropertyDescriptor } from "./data-property-descriptor.ts";
+import {
+  isOwnDataPropertyDescriptor,
+  snapshotOwnDataPropertyArray,
+} from "./data-property-descriptor.ts";
 
 const ArrayIsArray = Array.isArray;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ReflectApply = Reflect.apply;
+
+function isRuntimeLoadSkillArray(value: unknown): boolean {
+  try {
+    return ArrayIsArray(value);
+  } catch {
+    return false;
+  }
+}
 
 /** Fail-closed continuation note used when no delegation tool is known available. */
 export const RUNTIME_LOAD_SKILL_CONTINUATION_NOTE =
@@ -467,30 +477,27 @@ function getBuiltinStore(options: RuntimeLoadSkillToolOptions): RuntimeLoadSkill
 }
 
 function assertRuntimeBoundaryCollections(options: RuntimeLoadSkillToolOptions): void {
-  if (
-    (options.context.availableToolNames?.length ?? 0) > SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES
-  ) {
-    throw new RangeError(
-      `Runtime tools may contain at most ${SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES} entries`,
-    );
-  }
-  if ((options.context.availableSkillIds?.length ?? 0) > SKILL_SUBDIR_MAX_ENTRIES) {
-    throw new RangeError(`Runtime skills may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`);
+  snapshotRuntimeLoadSkillAvailableToolNames(
+    readRuntimeLoadSkillDataProperty(
+      options.context,
+      "availableToolNames",
+      "Runtime load skill context",
+    ),
+  );
+  const availableSkillIds = readRuntimeLoadSkillDataProperty(
+    options.context,
+    "availableSkillIds",
+    "Runtime load skill context",
+  );
+  if (availableSkillIds !== undefined) {
+    snapshotRuntimeSkillIdInventory(availableSkillIds, "availableSkillIds");
   }
 }
 
-function assertLoadedSkillPayload(
-  instructions: string,
-  references: readonly string[] | undefined,
-): void {
+function assertLoadedSkillInstructions(instructions: string): void {
   if (instructions.length > SKILL_DOCUMENT_MAX_CHARACTERS) {
     throw new RangeError(
       `Skill document may contain at most ${SKILL_DOCUMENT_MAX_CHARACTERS} characters`,
-    );
-  }
-  if ((references?.length ?? 0) > SKILL_SUBDIR_MAX_ENTRIES) {
-    throw new RangeError(
-      `Skill references may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
     );
   }
 }
@@ -537,49 +544,18 @@ function snapshotRuntimeLoadSkillAvailableToolNames(
   value: unknown,
 ): readonly string[] | undefined {
   if (value === undefined) return undefined;
-  if (!ArrayIsArray(value)) {
-    throw new TypeError("Runtime load skill availableToolNames must be an array");
-  }
-  let lengthDescriptor: PropertyDescriptor | undefined;
-  try {
-    lengthDescriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
-      value,
-      "length",
-    ]) as PropertyDescriptor | undefined;
-  } catch {
-    throw new TypeError("Runtime load skill availableToolNames length must be a data property");
-  }
-  const length = isOwnDataPropertyDescriptor(lengthDescriptor) ? lengthDescriptor.value : undefined;
-  if (!Number.isSafeInteger(length) || length < 0) {
-    throw new TypeError("Runtime load skill availableToolNames length must be a data property");
-  }
-  if (length > SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES) {
-    throw new RangeError(
-      `Runtime load skill accepts at most ${SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES} available tool names`,
-    );
-  }
-
-  const snapshot: string[] = [];
-  for (let index = 0; index < length; index += 1) {
-    let descriptor: PropertyDescriptor | undefined;
-    try {
-      descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
-        value,
-        index,
-      ]) as PropertyDescriptor | undefined;
-    } catch {
-      throw new TypeError(
-        `Runtime load skill available tool name ${index} must be a data property`,
-      );
-    }
-    if (!isOwnDataPropertyDescriptor(descriptor) || typeof descriptor.value !== "string") {
-      throw new TypeError(
-        `Runtime load skill available tool name ${index} must be a string data property`,
-      );
-    }
-    snapshot.push(descriptor.value);
-  }
-  return Object.freeze(snapshot);
+  return snapshotOwnDataPropertyArray(value, {
+    label: "Runtime load skill availableToolNames",
+    maximumEntries: SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES,
+    mapValue: (toolName, index) => {
+      if (typeof toolName !== "string") {
+        throw new TypeError(
+          `Runtime load skill available tool name ${index} must be a string data property`,
+        );
+      }
+      return toolName;
+    },
+  });
 }
 
 function snapshotRuntimeLoadSkillResponseMessages(
@@ -639,7 +615,7 @@ function buildLoadedSkillResponse(input: {
   instructions: string;
   references?: readonly string[];
 }): RuntimeLoadedSkillResponse {
-  assertLoadedSkillPayload(input.instructions, input.references);
+  assertLoadedSkillInstructions(input.instructions);
   const configuredNextStep = readRuntimeLoadSkillDataProperty(
     input.options,
     "nextStep",
@@ -801,52 +777,24 @@ function hasOwnDataProperty(value: unknown, key: PropertyKey): boolean {
 function snapshotRuntimeSkillPrivateArrayScope(
   value: unknown,
 ): RuntimeSkillPrivateArrayScope {
-  if (!ArrayIsArray(value)) {
+  try {
+    const values = snapshotOwnDataPropertyArray(value, {
+      label: "Runtime skill private authority array",
+      maximumEntries: SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES,
+      mapValue: (entry) => entry,
+    });
+    return Object.freeze({
+      identity: value,
+      reusable: true,
+      values,
+    });
+  } catch {
     return Object.freeze({
       identity: value,
       reusable: value === undefined || value === null,
       values: null,
     });
   }
-  let lengthDescriptor: PropertyDescriptor | undefined;
-  try {
-    lengthDescriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
-      value,
-      "length",
-    ]) as PropertyDescriptor | undefined;
-  } catch {
-    return Object.freeze({ identity: value, reusable: false, values: null });
-  }
-  const length = isOwnDataPropertyDescriptor(lengthDescriptor) ? lengthDescriptor.value : undefined;
-  if (
-    !Number.isSafeInteger(length) ||
-    length < 0 ||
-    length > SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES
-  ) {
-    return Object.freeze({ identity: value, reusable: false, values: null });
-  }
-
-  const values: unknown[] = [];
-  for (let index = 0; index < length; index += 1) {
-    let descriptor: PropertyDescriptor | undefined;
-    try {
-      descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
-        value,
-        index,
-      ]) as PropertyDescriptor | undefined;
-    } catch {
-      return Object.freeze({ identity: value, reusable: false, values: null });
-    }
-    if (!isOwnDataPropertyDescriptor(descriptor)) {
-      return Object.freeze({ identity: value, reusable: false, values: null });
-    }
-    values.push(descriptor.value);
-  }
-  return Object.freeze({
-    identity: value,
-    reusable: true,
-    values: Object.freeze(values),
-  });
 }
 
 function snapshotRuntimeSkillPrivateScalarScope(
@@ -920,7 +868,7 @@ function snapshotRuntimeSkillPrivateRecordScope(
   if (value === undefined || value === null) {
     return Object.freeze({ entries: null, identity: value, reusable: true });
   }
-  if (typeof value !== "object" || ArrayIsArray(value)) {
+  if (typeof value !== "object" || isRuntimeLoadSkillArray(value)) {
     return Object.freeze({ entries: null, identity: value, reusable: false });
   }
 
@@ -1067,7 +1015,7 @@ function getOrCreateRuntimeCacheRecord<T>(
   key: "loadedSkillResponses" | "loadedSkillReferenceResponses",
 ): Record<string, T> {
   const existing = readOwnDataProperty(context, key);
-  if (existing && typeof existing === "object" && !ArrayIsArray(existing)) {
+  if (existing && typeof existing === "object" && !isRuntimeLoadSkillArray(existing)) {
     return existing as Record<string, T>;
   }
 
@@ -1241,7 +1189,7 @@ function snapshotLoadedSkillMarker(
   const skillId = readOwnDataProperty(response, "skillId");
   if (skillId !== expectedSkillId) return undefined;
   const references = readOwnDataProperty(response, "references");
-  const referenceLength = ArrayIsArray(references)
+  const referenceLength = isRuntimeLoadSkillArray(references)
     ? readOwnDataProperty(references, "length")
     : undefined;
   return Object.freeze({
@@ -1253,7 +1201,7 @@ function snapshotLoadedSkillMarker(
 function isScopedRuntimeSkillCacheKey(cacheKey: string, skillId: string): boolean {
   try {
     const parsed = JSON.parse(cacheKey);
-    return ArrayIsArray(parsed) &&
+    return isRuntimeLoadSkillArray(parsed) &&
       (parsed.length === 4 || parsed.length === 5) &&
       parsed[0] === skillId;
   } catch {
@@ -1266,7 +1214,7 @@ function snapshotLoadedSkillMarkers(
   skillIds: readonly string[],
 ): readonly RuntimeLoadedSkillMarker[] {
   const record = readOwnDataProperty(context, "loadedSkillResponses");
-  if (!record || typeof record !== "object" || ArrayIsArray(record)) {
+  if (!record || typeof record !== "object" || isRuntimeLoadSkillArray(record)) {
     return [];
   }
 
@@ -1331,7 +1279,7 @@ function executionContextAdvertisesReference(
 
   const availability = readOwnDataProperty(context, "activeSkillToolAvailability");
   const references = readOwnDataProperty(availability, "references");
-  if (!ArrayIsArray(references)) {
+  if (!isRuntimeLoadSkillArray(references)) {
     return false;
   }
 
@@ -1406,59 +1354,23 @@ function snapshotRuntimeSkillIdInventory(
   value: unknown,
   label: "availableSkillIds" | "builtinSkillIds",
 ): string[] {
-  if (!ArrayIsArray(value)) {
-    throw new TypeError(`Runtime load skill ${label} must be an array`);
-  }
-  let lengthDescriptor: PropertyDescriptor | undefined;
-  try {
-    lengthDescriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
-      value,
-      "length",
-    ]) as PropertyDescriptor | undefined;
-  } catch {
-    throw new TypeError(`Runtime load skill ${label} length must be a data property`);
-  }
-  const length = isOwnDataPropertyDescriptor(lengthDescriptor) ? lengthDescriptor.value : undefined;
-  if (!Number.isSafeInteger(length) || length < 0) {
-    throw new TypeError(`Runtime load skill ${label} length must be a data property`);
-  }
-  if (length > SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES) {
-    throw new RangeError(
-      `Runtime load skill accepts at most ${SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES} ${label} entries`,
-    );
-  }
-
-  const snapshot: string[] = [];
-  for (let index = 0; index < length; index += 1) {
-    let descriptor: PropertyDescriptor | undefined;
-    try {
-      descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
-        value,
-        index,
-      ]) as PropertyDescriptor | undefined;
-    } catch {
-      throw new TypeError(
-        `Runtime load skill ${label} entry ${index} must be a data property`,
-      );
-    }
-    if (!isOwnDataPropertyDescriptor(descriptor)) {
-      throw new TypeError(
-        `Runtime load skill ${label} entry ${index} must be a data property`,
-      );
-    }
-    const skillId = descriptor.value;
-    if (
-      typeof skillId !== "string" ||
-      skillId.length === 0 ||
-      skillId.length > SKILL_ID_MAX_LENGTH ||
-      !RUNTIME_SKILL_ID_PATTERN.test(skillId)
-    ) {
-      throw new TypeError(
-        `Runtime load skill ${label} entry ${index} must be a valid bounded skill ID`,
-      );
-    }
-    snapshot.push(skillId);
-  }
+  const snapshot = snapshotOwnDataPropertyArray(value, {
+    label: `Runtime load skill ${label}`,
+    maximumEntries: SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES,
+    mapValue: (skillId, index) => {
+      if (
+        typeof skillId !== "string" ||
+        skillId.length === 0 ||
+        skillId.length > SKILL_ID_MAX_LENGTH ||
+        !RUNTIME_SKILL_ID_PATTERN.test(skillId)
+      ) {
+        throw new TypeError(
+          `Runtime load skill ${label} entry ${index} must be a valid bounded skill ID`,
+        );
+      }
+      return skillId;
+    },
+  });
   return [...new Set(snapshot)].sort();
 }
 

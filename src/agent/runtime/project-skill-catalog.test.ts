@@ -3,6 +3,7 @@ import "#veryfront/skill/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects, assertThrows } from "@std/assert";
 import { resolve } from "node:path";
 import {
+  SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
   SKILL_STEERING_PATH_MAX_ENTRIES,
   SKILL_SUBDIR_MAX_ENTRIES,
   SKILL_TEXT_FILE_MAX_BYTES,
@@ -270,7 +271,12 @@ Deno.test("hosted catalog accepts the exact aggregate reference count and reject
     description: id,
     instructions: "",
     allowedTools: [],
-    references: Array.from({ length: count }, (_, index) => `references/${id}-${index}.md`),
+    references: Array.from({ length: count }, (_, index) => {
+      const directory = ["references", "resources", "assets"][
+        Math.floor(index / SKILL_SUBDIR_MAX_ENTRIES)
+      ] ?? "assets";
+      return `${directory}/${id}-${index}.md`;
+    }),
   });
   const exact = [
     definition("first", SKILL_CATALOG_MAX_PATH_ENTRIES / 2),
@@ -364,6 +370,154 @@ Deno.test("getRuntimeProjectSkillCatalog returns builtin skills when project fil
   assertEquals(await catalog(), builtinSkills);
 });
 
+Deno.test("project catalog snapshots builtin definitions before awaiting project discovery", async () => {
+  let releaseListing!: () => void;
+  const listingGate = new Promise<void>((resolve) => {
+    releaseListing = resolve;
+  });
+  const builtin: RuntimeSkillDefinition = {
+    id: "safe",
+    name: "safe",
+    description: "Safe",
+    instructions: "# Safe",
+    allowedTools: [],
+    references: ["references/safe.md"],
+    metadata: { owner: "safe" },
+  };
+  const builtinSkills = [builtin];
+  const pending = getRuntimeProjectSkillCatalog({
+    ...PROJECT_CONTEXT,
+    builtinSkills,
+    getProjectFiles: async () => {
+      await listingGate;
+      return null;
+    },
+    getProjectFile: async () => null,
+  });
+
+  builtinSkills[0] = {
+    id: "injected",
+    name: "injected",
+    description: "Injected",
+    instructions: "# Injected",
+    allowedTools: ["*"],
+  };
+  builtin.id = "mutated";
+  builtin.allowedTools.push("*");
+  builtin.references?.push("assets/injected.txt");
+  builtin.metadata!.owner = "mutated";
+  releaseListing();
+
+  const result = await pending;
+  assertEquals(result.map((skill) => skill.id), ["safe"]);
+  assertEquals(result[0]?.allowedTools, []);
+  assertEquals(result[0]?.references, ["references/safe.md"]);
+  assertEquals(result[0]?.metadata, { owner: "safe" });
+  assertEquals(Object.isFrozen(result[0]), true);
+  assertEquals(Object.isFrozen(result[0]?.allowedTools), true);
+  assertEquals(Object.isFrozen(result[0]?.references), true);
+  assertEquals(Object.isFrozen(result[0]?.metadata), true);
+});
+
+Deno.test("project catalog rejects proxy-backed builtin metadata without invoking traps", async () => {
+  let ownKeyReads = 0;
+  const metadata = new Proxy<Record<string, string>>({}, {
+    ownKeys() {
+      ownKeyReads += 1;
+      throw new Error("metadata ownKeys trap must not run");
+    },
+  });
+
+  await assertRejects(
+    () =>
+      getRuntimeProjectSkillCatalog({
+        ...PROJECT_CONTEXT,
+        builtinSkills: [{
+          id: "safe",
+          name: "safe",
+          description: "Safe",
+          instructions: "# Safe",
+          allowedTools: [],
+          metadata,
+        }],
+        getProjectFiles: async () => null,
+        getProjectFile: async () => null,
+      }),
+    TypeError,
+    "metadata must be an object",
+  );
+  assertEquals(ownKeyReads, 0);
+});
+
+Deno.test("project catalog rejects Array proxies without invoking get traps", async () => {
+  let lengthReads = 0;
+  const listing = new Proxy(
+    [{ path: "skills/shared/SKILL.md" }],
+    {
+      get(target, key, receiver) {
+        if (key === "length") {
+          lengthReads += 1;
+          throw new Error("length getter must not run");
+        }
+        return Reflect.get(target, key, receiver);
+      },
+    },
+  );
+  await assertRejects(
+    () =>
+      getRuntimeProjectSkillCatalog({
+        ...PROJECT_CONTEXT,
+        builtinSkills: [{
+          id: "shared",
+          name: "shared",
+          description: "Builtin",
+          instructions: "# Builtin",
+          allowedTools: [],
+        }],
+        getProjectFiles: async ({ pathPrefix }) => pathPrefix === "skills" ? listing : [],
+        getProjectFile: async ({ path }) => ({
+          path,
+          content: "---\nname: shared\ndescription: Project\n---\n# Project",
+        }),
+      }),
+    TypeError,
+    "must not be a Proxy",
+  );
+  assertEquals(lengthReads, 0);
+});
+
+Deno.test("project catalog fails closed on throwing descriptors and revoked arrays", async () => {
+  const throwing = new Proxy<RuntimeProjectFileListItem[]>([], {
+    getOwnPropertyDescriptor() {
+      throw new Error("descriptor denied");
+    },
+  });
+  await assertRejects(
+    () =>
+      getRuntimeProjectSkillCatalog({
+        ...PROJECT_CONTEXT,
+        builtinSkills: [],
+        getProjectFiles: async () => throwing,
+        getProjectFile: async () => null,
+      }),
+    TypeError,
+    "must not be a Proxy",
+  );
+
+  const revocable = Proxy.revocable<RuntimeProjectFileListItem[]>([], {});
+  revocable.revoke();
+  await assertRejects(
+    () =>
+      getRuntimeProjectSkillCatalog({
+        ...PROJECT_CONTEXT,
+        builtinSkills: [],
+        getProjectFiles: async () => revocable.proxy,
+        getProjectFile: async () => null,
+      }),
+    TypeError,
+  );
+});
+
 Deno.test("project skill catalog rejects oversized discovery before scheduling file reads", async () => {
   let fileReads = 0;
   await assertRejects(
@@ -373,7 +527,10 @@ Deno.test("project skill catalog rejects oversized discovery before scheduling f
         builtinSkills: [],
         getProjectFiles: () =>
           Promise.resolve(
-            Array.from({ length: 1_001 }, (_, index) => ({ path: `skills/${index}.md` })),
+            Array.from(
+              { length: SKILL_CATALOG_MAX_PATH_ENTRIES + 1 },
+              (_, index) => ({ path: `skills/ignored/nested/${index}.txt` }),
+            ),
           ),
         getProjectFile: () => {
           fileReads += 1;
@@ -381,7 +538,7 @@ Deno.test("project skill catalog rejects oversized discovery before scheduling f
         },
       }),
     RangeError,
-    "may contain at most 1000 entries",
+    `may contain at most ${SKILL_CATALOG_MAX_PATH_ENTRIES} entries`,
   );
   assertEquals(fileReads, 0);
 });
@@ -416,9 +573,13 @@ Deno.test("getRuntimeProjectSkillCatalog parses project directory skills and ref
     "resources/schema.json",
   ]);
   assertEquals(filesCalls.map(withoutRuntimeBudgetFields), [
-    { ...PROJECT_CONTEXT, pathPrefix: "skills", maximumEntries: 1_000 },
-    { ...PROJECT_CONTEXT, pathPrefix: ".veryfront/skills", maximumEntries: 1_000 },
-    { ...PROJECT_CONTEXT, pathPrefix: "agents", maximumEntries: 1_000 },
+    { ...PROJECT_CONTEXT, pathPrefix: "skills", maximumEntries: SKILL_CATALOG_MAX_PATH_ENTRIES },
+    {
+      ...PROJECT_CONTEXT,
+      pathPrefix: ".veryfront/skills",
+      maximumEntries: SKILL_CATALOG_MAX_PATH_ENTRIES,
+    },
+    { ...PROJECT_CONTEXT, pathPrefix: "agents", maximumEntries: SKILL_CATALOG_MAX_PATH_ENTRIES },
   ]);
   assertEquals(fileCalls.map(withoutRuntimeBudgetFields), [
     {
@@ -804,7 +965,7 @@ Deno.test("project skill catalog stops scheduling after a fetch failure and awai
   assertEquals(fileFetches, fetchesAtRejection);
 });
 
-Deno.test("project catalog enforces its aggregate path budget before content fetches", async () => {
+Deno.test("project catalog admits 3000 readable files and rejects 3001", async () => {
   const skillPath = "skills/research/SKILL.md";
   const readablePaths = ["references", "resources", "assets"].flatMap((directory) =>
     Array.from(
@@ -814,6 +975,17 @@ Deno.test("project catalog enforces its aggregate path budget before content fet
   );
   const skillContent = "---\nname: research\ndescription: Research\n---\nBody";
 
+  const catalog = await getRuntimeProjectSkillCatalog({
+    ...PROJECT_CONTEXT,
+    builtinSkills: [],
+    getProjectFiles: async () => [
+      { path: skillPath },
+      ...readablePaths.map((path) => ({ path })),
+    ],
+    getProjectFile: async ({ path }) => path === skillPath ? { path, content: skillContent } : null,
+  });
+  assertEquals(catalog[0]?.references?.length, SKILL_LOADABLE_REFERENCE_MAX_ENTRIES);
+
   await assertRejects(
     () =>
       getRuntimeProjectSkillCatalog({
@@ -822,12 +994,13 @@ Deno.test("project catalog enforces its aggregate path budget before content fet
         getProjectFiles: async () => [
           { path: skillPath },
           ...readablePaths.map((path) => ({ path })),
+          { path: `skills/research/assets/${SKILL_SUBDIR_MAX_ENTRIES}.txt` },
         ],
         getProjectFile: async ({ path }) =>
           path === skillPath ? { path, content: skillContent } : null,
       }),
     RangeError,
-    "Skill catalog paths",
+    `at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
   );
 });
 
@@ -881,7 +1054,7 @@ Deno.test("project catalog rejects accessor entries despite inherited descriptor
             },
           }),
         TypeError,
-        "item 0",
+        "entry 0",
       );
     },
   );

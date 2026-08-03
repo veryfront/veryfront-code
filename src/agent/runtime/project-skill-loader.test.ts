@@ -7,6 +7,8 @@ import {
 } from "#veryfront/extensions/parser/skill-document-parser.ts";
 import {
   SKILL_DOCUMENT_MAX_CHARACTERS,
+  SKILL_LOADABLE_REFERENCE_LISTING_MAX_ENTRIES,
+  SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
   SKILL_SUBDIR_MAX_ENTRIES,
   SKILL_TEXT_FILE_MAX_BYTES,
 } from "#veryfront/skill/limits.ts";
@@ -160,7 +162,10 @@ Deno.test("runtime project skill loader loads directory skills with normalized s
     ],
   });
   assertEquals(filesCalls[0]?.pathPrefix, "skills/research");
-  assertEquals(filesCalls[0]?.maximumEntries, SKILL_SUBDIR_MAX_ENTRIES);
+  assertEquals(
+    filesCalls[0]?.maximumEntries,
+    SKILL_LOADABLE_REFERENCE_LISTING_MAX_ENTRIES,
+  );
 });
 
 Deno.test("runtime project skill loader forwards one cancellation signal through body and listing reads", async () => {
@@ -271,7 +276,7 @@ Deno.test("runtime project skill loader snapshots file listings without invoking
       assertRejects(
         () => loader.loadProjectSkill(PROJECT_CONTEXT, "research"),
         TypeError,
-        "invalid path",
+        "path must be a data property",
       ),
   );
   assertEquals(pathReads, 0);
@@ -301,7 +306,7 @@ Deno.test("runtime project skill loader rejects accessor-backed file list entrie
       assertRejects(
         () => loader.loadProjectSkill(PROJECT_CONTEXT, "research"),
         TypeError,
-        "must be an object",
+        "entry 0 must be a data property",
       ),
   );
   assertEquals(entryReads, 0);
@@ -325,10 +330,109 @@ Deno.test("runtime project skill loader rejects accessor-backed steering paths",
       assertRejects(
         () => loader.loadProjectSkill(PROJECT_CONTEXT, "research"),
         TypeError,
-        "Invalid project skills path",
+        "entry 0 must be a data property",
       ),
   );
   assertEquals(pathReads, 0);
+});
+
+Deno.test("runtime project skill loader rejects Array proxies without invoking get traps", async () => {
+  let lengthReads = 0;
+  const files = new Proxy(
+    [{ path: "skills/research/references/guide.md" }],
+    {
+      get(target, key, receiver) {
+        if (key === "length") {
+          lengthReads += 1;
+          throw new Error("length getter must not run");
+        }
+        return Reflect.get(target, key, receiver);
+      },
+    },
+  );
+  const { loader } = createLoader({
+    getProjectFile: async ({ path }) =>
+      path === "skills/research/SKILL.md"
+        ? { path, content: directorySkill("research", "# Research") }
+        : null,
+    getProjectFiles: async () => files,
+  });
+
+  await assertRejects(
+    () => loader.loadProjectSkill(PROJECT_CONTEXT, "research"),
+    TypeError,
+    "must not be a Proxy",
+  );
+
+  let descriptorReads = 0;
+  const fakeLength = new Proxy(
+    [{ path: "skills/research/references/hidden.md" }],
+    {
+      getOwnPropertyDescriptor(target, key) {
+        descriptorReads += 1;
+        const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+        return key === "length" && descriptor ? { ...descriptor, value: 0 } : descriptor;
+      },
+    },
+  );
+  const fakeLengthLoader = createLoader({ getProjectFiles: async () => fakeLength }).loader;
+  await assertRejects(
+    () =>
+      fakeLengthLoader.listProjectSkillReferences(
+        COLOCATED_CONTEXT,
+        "researcher--cite",
+      ),
+    TypeError,
+    "must not be a Proxy",
+  );
+
+  const skills = new Proxy(["skills"], {
+    get(target, key, receiver) {
+      if (key === "length") {
+        lengthReads += 1;
+        throw new Error("length getter must not run");
+      }
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  const steeringLoader = createLoader({ steeringPaths: { skills } }).loader;
+  await assertRejects(
+    () => steeringLoader.loadProjectSkill(PROJECT_CONTEXT, "research"),
+    TypeError,
+    "must not be a Proxy",
+  );
+  assertEquals(lengthReads, 0);
+  assertEquals(descriptorReads, 0);
+});
+
+Deno.test("runtime project skill loader fails closed on throwing descriptors and revoked arrays", async () => {
+  const throwing = new Proxy<RuntimeProjectFileListItem[]>([], {
+    getOwnPropertyDescriptor() {
+      throw new Error("descriptor denied");
+    },
+  });
+  const throwingLoader = createLoader({ getProjectFiles: async () => throwing }).loader;
+  await assertRejects(
+    () =>
+      throwingLoader.listProjectSkillReferences(
+        COLOCATED_CONTEXT,
+        "researcher--cite",
+      ),
+    TypeError,
+    "must not be a Proxy",
+  );
+
+  const revocable = Proxy.revocable<RuntimeProjectFileListItem[]>([], {});
+  revocable.revoke();
+  const revokedLoader = createLoader({ getProjectFiles: async () => revocable.proxy }).loader;
+  await assertRejects(
+    () =>
+      revokedLoader.listProjectSkillReferences(
+        COLOCATED_CONTEXT,
+        "researcher--cite",
+      ),
+    TypeError,
+  );
 });
 
 Deno.test("runtime project skill loader bounds every remote document read", async () => {
@@ -852,11 +956,11 @@ Deno.test("listProjectSkillReferences lists references under the catalog skill d
   );
   assertEquals(
     filesCalls[0]?.maximumEntries,
-    SKILL_SUBDIR_MAX_ENTRIES,
+    SKILL_LOADABLE_REFERENCE_LISTING_MAX_ENTRIES,
   );
 });
 
-Deno.test("project loader enforces the aggregate listing budget before materialization", async () => {
+Deno.test("project loader preserves per-directory and aggregate readable-file budgets", async () => {
   const readablePaths = ["references", "resources", "assets"].flatMap((directory) =>
     Array.from(
       { length: SKILL_SUBDIR_MAX_ENTRIES },
@@ -869,24 +973,19 @@ Deno.test("project loader enforces the aggregate listing budget before materiali
     getProjectFiles: async () => readablePaths,
   });
 
-  await assertRejects(
-    () =>
-      aggregate.loader.listProjectSkillReferences(
-        COLOCATED_CONTEXT,
-        "researcher--cite",
-      ),
-    RangeError,
-    `at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
+  assertEquals(
+    (await aggregate.loader.listProjectSkillReferences(
+      COLOCATED_CONTEXT,
+      "researcher--cite",
+    )).length,
+    SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
   );
 
   const overflow = createLoader({
-    getProjectFiles: async () =>
-      Array.from(
-        { length: SKILL_SUBDIR_MAX_ENTRIES + 1 },
-        (_unused, index) => ({
-          path: `agents/researcher/skills/cite/assets/${index}.txt`,
-        }),
-      ),
+    getProjectFiles: async () => [
+      ...readablePaths,
+      { path: `agents/researcher/skills/cite/assets/${SKILL_SUBDIR_MAX_ENTRIES}.txt` },
+    ],
   });
   await assertRejects(
     () =>
