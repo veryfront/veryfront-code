@@ -100,11 +100,10 @@ export class DevDashboardHandler extends BaseHandler {
         );
       }
       if (this.browserBundle === undefined) {
+        const response = errorResponse(DEV_UI_ASSET_PROVIDER_MISSING_MESSAGE, 503);
+        response.headers.set("Cache-Control", "no-store");
         return this.respond(
-          omitHeadResponseBody(
-            req,
-            errorResponse(DEV_UI_ASSET_PROVIDER_MISSING_MESSAGE, 503),
-          ),
+          omitHeadResponseBody(req, response),
         );
       }
       return this.respond(

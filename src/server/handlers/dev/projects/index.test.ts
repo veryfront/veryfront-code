@@ -54,6 +54,7 @@ Deno.test("projects handler rejects asset mutations and fails closed without ass
     projectsContext(),
   )).response!;
   assertEquals(unavailableShell.status, 503);
+  assertEquals(unavailableShell.headers.get("cache-control"), "no-store");
   assertStringIncludes(await unavailableShell.text(), "@veryfront/ext-dev-ui-react");
 
   const unavailableBundle = (await unavailable.handle(
