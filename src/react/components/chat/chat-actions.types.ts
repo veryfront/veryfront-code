@@ -1,5 +1,6 @@
 /** Public type surface for `<ChatActions>` and its `ChatActions.*` sub-parts. @module react/components/chat/chat-actions.types */
 import type * as React from "react";
+import type { PolymorphicButtonAttributes } from "../ui/slot.tsx";
 import type { ChatActionsSettings } from "./chat-actions-settings.tsx";
 export type { ChatActionsSettings } from "./chat-actions-settings.tsx";
 
@@ -66,15 +67,29 @@ export interface ChatActionsContextValue {
   settings?: ChatActionsSettings;
 }
 
-/** Props for `ChatActions.Trigger`, the menu's trigger button. */
-export interface ChatActionsTriggerProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  /**
-   * Custom trigger element, rendered via `asChild`. Defaults to the `+` Button.
-   * (Back-compat: `ChatActions`'s `trigger` prop maps here.)
-   */
-  children?: React.ReactNode;
+/** Default-button props for `ChatActions.Trigger`. */
+interface ChatActionsNativeTriggerProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  /** Omit children to render the default `+` Button. */
+  children?: null | undefined;
   ref?: React.Ref<HTMLButtonElement>;
 }
+
+/** Custom-element props for `ChatActions.Trigger`. */
+type ChatActionsSlottedTriggerProps<T extends HTMLElement = HTMLElement> =
+  & Omit<PolymorphicButtonAttributes<T>, "children" | "ref" | "type">
+  & {
+    /** Custom focusable trigger rendered through `asChild`. */
+    children: React.ReactElement;
+    disabled?: boolean;
+    type?: T extends HTMLButtonElement ? React.ButtonHTMLAttributes<HTMLButtonElement>["type"]
+      : never;
+    ref?: React.Ref<T>;
+  };
+
+/** Props for `ChatActions.Trigger`, discriminated by custom-child presence. */
+export type ChatActionsTriggerProps<T extends HTMLElement = HTMLElement> =
+  | ChatActionsNativeTriggerProps
+  | ChatActionsSlottedTriggerProps<T>;
 
 /** Props for `ChatActions.Content`, the dropdown surface. */
 export interface ChatActionsContentProps {

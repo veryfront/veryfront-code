@@ -7,7 +7,10 @@
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
-import { createAnchoredSurfaceParts } from "./anchored-surface.tsx";
+import {
+  type AnchoredTriggerPublicProps,
+  createAnchoredSurfaceParts,
+} from "./anchored-surface.tsx";
 
 // Per-skin context + machinery -- distinct from DropdownMenu's instance so
 // a DropdownMenu nested inside a Popover cannot accidentally close the Popover.
@@ -31,10 +34,8 @@ export function Popover(props: PopoverProps): React.ReactElement {
  * Trigger — toggles the popover; the positioning anchor. `asChild` merges onto
  * the child element, which must forward `ref` to its DOM node.
  */
-export function PopoverTrigger(
-  props:
-    & React.ButtonHTMLAttributes<HTMLButtonElement>
-    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> },
+export function PopoverTrigger<T extends HTMLElement = HTMLElement>(
+  props: AnchoredTriggerPublicProps<T>,
 ): React.ReactElement {
   return <_Trigger {...props} haspopup="dialog" />;
 }

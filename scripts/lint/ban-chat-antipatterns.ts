@@ -106,7 +106,7 @@ const FILE_SIZE_CEILINGS: Record<string, number> = {
   "src/react/components/chat/chat/composition/chat-composer.tsx": 394,
   "src/react/components/chat/chat/composition/chat-input-actions.tsx": 165,
   "src/react/components/chat/agent-picker.tsx": 429,
-  "src/react/components/chat/chat-actions.tsx": 215,
+  "src/react/components/chat/chat-actions.tsx": 211,
   "src/react/components/chat/chat/controlled-chat.tsx": 242,
   "src/react/components/chat/chat/app-mode-chat.tsx": 177,
 };

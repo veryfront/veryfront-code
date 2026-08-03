@@ -17,6 +17,38 @@ import * as React from "react";
 type AnyProps = Record<string, unknown>;
 type RefCleanup = () => void;
 
+/** Element attributes used by a control that may slot a native button. */
+export type PolymorphicButtonAttributes<T extends HTMLElement> = T extends HTMLButtonElement
+  ? React.ButtonHTMLAttributes<HTMLButtonElement>
+  : React.HTMLAttributes<T>;
+
+/**
+ * Resolve button submission semantics for a native or slotted control.
+ * Intrinsic non-buttons never receive a button-only default. Opaque components
+ * receive the safe default because their rendered element is not inspectable.
+ */
+export function getPolymorphicButtonType(
+  asChild: boolean | undefined,
+  child: React.ReactNode,
+): "button" | undefined;
+export function getPolymorphicButtonType(
+  asChild: boolean | undefined,
+  child: React.ReactNode,
+  type: React.ButtonHTMLAttributes<HTMLButtonElement>["type"],
+): React.ButtonHTMLAttributes<HTMLButtonElement>["type"];
+export function getPolymorphicButtonType(
+  asChild: boolean | undefined,
+  child: React.ReactNode,
+  type?: React.ButtonHTMLAttributes<HTMLButtonElement>["type"],
+): React.ButtonHTMLAttributes<HTMLButtonElement>["type"] {
+  if (!asChild) return type ?? "button";
+  if (!React.isValidElement(child)) return undefined;
+  if (typeof child.type === "string") {
+    return child.type === "button" ? type ?? "button" : undefined;
+  }
+  return type ?? "button";
+}
+
 const REACT_MAJOR_VERSION = Number.parseInt(React.version, 10);
 const SUPPORTS_REF_CLEANUP = Number.isFinite(REACT_MAJOR_VERSION) &&
   REACT_MAJOR_VERSION >= 19;
@@ -141,6 +173,8 @@ export interface SlotProps extends React.HTMLAttributes<HTMLElement> {
   children?: React.ReactNode;
   /** Block activation when an asChild consumer uses non-native disabled markup. */
   disabled?: boolean;
+  /** Button submission behavior for slotted button-like controls. */
+  type?: React.ButtonHTMLAttributes<HTMLButtonElement>["type"];
 }
 
 function preventDisabledActivation(event: React.SyntheticEvent): void {

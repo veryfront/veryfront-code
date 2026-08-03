@@ -11,6 +11,7 @@ import {
   AgentPicker,
   BranchPicker,
   Chat,
+  ChatActions,
   ChatInputAttach,
   ChatInputExport,
   ChatInputField,
@@ -29,6 +30,12 @@ import {
   Suggestions,
   useChat,
 } from "veryfront/chat";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "veryfront/ui";
 import type {
   AgentPickerActionProps,
   AgentPickerSearchProps,
@@ -98,6 +105,8 @@ export function FlatChatInputDemo(): React.ReactElement {
 }
 
 const anchorActionRef = React.createRef<HTMLAnchorElement>();
+const anchorMenuItemRef = React.createRef<HTMLAnchorElement>();
+const anchorTriggerRef = React.createRef<HTMLAnchorElement>();
 
 /** Slotted action refs describe the element that actually renders. */
 export function PolymorphicChatInputActionDemo(): React.ReactElement {
@@ -107,6 +116,34 @@ export function PolymorphicChatInputActionDemo(): React.ReactElement {
         <a href="#send">Send</a>
       </ChatInputSend>
     </ChatInputRoot>
+  );
+}
+
+/** Slotted menu and ChatActions contracts describe anchor refs and events honestly. */
+export function PolymorphicMenuDemo(): React.ReactElement {
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild ref={anchorTriggerRef}>
+          <a href="#menu">Menu</a>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuItem
+            asChild
+            ref={anchorMenuItemRef}
+            onSelect={(event) => event.currentTarget.focus()}
+          >
+            <a href="#archive">Archive</a>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <ChatActions.Root>
+        <ChatActions.Trigger ref={anchorTriggerRef}>
+          <a href="#actions">Actions</a>
+        </ChatActions.Trigger>
+        <ChatActions.Content />
+      </ChatActions.Root>
+    </>
   );
 }
 

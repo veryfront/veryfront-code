@@ -4,7 +4,12 @@
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
-import { composeRefs, Slot } from "./slot.tsx";
+import {
+  composeRefs,
+  getPolymorphicButtonType,
+  type PolymorphicButtonAttributes,
+  Slot,
+} from "./slot.tsx";
 import { Floating } from "./floating.tsx";
 import { type DisclosureOptions, useDisclosure } from "./disclosure.ts";
 import { useIsomorphicLayoutEffect } from "./use-isomorphic-layout-effect.ts";
@@ -16,7 +21,7 @@ export interface AnchoredState {
   anchorRef: React.RefObject<HTMLElement | null>;
   anchorElement: HTMLElement | null;
   setAnchorElement: React.Dispatch<React.SetStateAction<HTMLElement | null>>;
-  triggerRef: React.RefObject<HTMLButtonElement | null>;
+  triggerRef: React.RefObject<HTMLElement | null>;
   defaultTriggerId: string;
   defaultContentId: string;
   triggerId: string;
@@ -25,14 +30,38 @@ export interface AnchoredState {
   setContentId: React.Dispatch<React.SetStateAction<string>>;
 }
 
-/** Props for `AnchoredTrigger` (returned by the factory). */
-export interface AnchoredTriggerProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  asChild?: boolean;
-  /** Composed with the internal positioning-anchor ref. */
+/** Native-button props for an anchored trigger. */
+interface AnchoredNativeTriggerProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  asChild?: false;
   ref?: React.Ref<HTMLButtonElement>;
-  /** `aria-haspopup` value -- `"dialog"` for Popover, `"menu"` for DropdownMenu. */
-  haspopup: NonNullable<React.AriaAttributes["aria-haspopup"]>;
 }
+
+/** Slotted-element props for an anchored trigger. */
+type AnchoredSlottedTriggerProps<T extends HTMLElement = HTMLElement> =
+  & Omit<PolymorphicButtonAttributes<T>, "children" | "ref" | "type">
+  & {
+    asChild: true;
+    children: React.ReactElement;
+    /** Apply disabled semantics across native and non-native slotted controls. */
+    disabled?: boolean;
+    /** Button-only submission semantics are resolved from the child element. */
+    type?: T extends HTMLButtonElement ? React.ButtonHTMLAttributes<HTMLButtonElement>["type"]
+      : never;
+    ref?: React.Ref<T>;
+  };
+
+/** Public native/slotted contract shared by Popover and DropdownMenu triggers. */
+export type AnchoredTriggerPublicProps<T extends HTMLElement = HTMLElement> =
+  | AnchoredNativeTriggerProps
+  | AnchoredSlottedTriggerProps<T>;
+
+/** Props for `AnchoredTrigger` (returned by the factory). */
+export type AnchoredTriggerProps<T extends HTMLElement = HTMLElement> =
+  & AnchoredTriggerPublicProps<T>
+  & {
+    /** `aria-haspopup` value -- `"dialog"` for Popover, `"menu"` for DropdownMenu. */
+    haspopup: NonNullable<React.AriaAttributes["aria-haspopup"]>;
+  };
 
 /** Props for `AnchoredContent` (returned by the factory). */
 export interface AnchoredContentProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -73,7 +102,7 @@ export function createAnchoredSurfaceParts() {
     const { open: isOpen, setOpen } = useDisclosure({ open, defaultOpen, onOpenChange });
     const anchorRef = React.useRef<HTMLElement | null>(null);
     const [anchorElement, setAnchorElement] = React.useState<HTMLElement | null>(null);
-    const triggerRef = React.useRef<HTMLButtonElement | null>(null);
+    const triggerRef = React.useRef<HTMLElement | null>(null);
     const reactId = stableDomId(React.useId());
     const defaultTriggerId = `vf-anchored-${reactId}-trigger`;
     const defaultContentId = `vf-anchored-${reactId}-content`;
@@ -122,7 +151,7 @@ export function createAnchoredSurfaceParts() {
    * React 19). A child that drops `ref` leaves the surface unanchored —
    * `Floating` warns in that case instead of silently rendering nothing.
    */
-  function AnchoredTrigger(
+  function AnchoredTrigger<T extends HTMLElement = HTMLElement>(
     {
       children,
       asChild,
@@ -133,13 +162,12 @@ export function createAnchoredSurfaceParts() {
       ref,
       type,
       ...props
-    }: AnchoredTriggerProps,
+    }: AnchoredTriggerProps<T>,
   ): React.ReactElement {
     const ctx = React.useContext(Context);
     if (!ctx) {
       throw new Error("Anchored trigger parts must be used within their root");
     }
-    const Comp = asChild ? Slot : "button";
     const resolvedId = id ?? ctx.defaultTriggerId;
     useIsomorphicLayoutEffect(() => {
       ctx.setTriggerId(resolvedId);
@@ -147,33 +175,53 @@ export function createAnchoredSurfaceParts() {
         ctx.setTriggerId((current) => current === resolvedId ? ctx.defaultTriggerId : current);
       };
     }, [ctx.defaultTriggerId, ctx.setTriggerId, resolvedId]);
-    const setTriggerRef = React.useCallback((element: HTMLButtonElement | null) => {
+    const setTriggerRef = React.useCallback((element: HTMLElement | null) => {
       ctx.triggerRef.current = element;
       ctx.anchorRef.current = element;
       ctx.setAnchorElement(element);
     }, [ctx.anchorRef, ctx.setAnchorElement, ctx.triggerRef]);
     const composedRef = React.useMemo(
-      () => composeRefs<HTMLButtonElement>(setTriggerRef, ref),
+      () =>
+        composeRefs<HTMLElement>(
+          setTriggerRef,
+          ref as React.Ref<HTMLElement> | undefined,
+        ),
       [ref, setTriggerRef],
     );
+    const handleClick = (event: React.MouseEvent<HTMLElement>): void => {
+      (onClick as React.MouseEventHandler<HTMLElement> | undefined)?.(event);
+      if (!event.defaultPrevented && !disabled) ctx.setOpen(!ctx.open);
+    };
+    const stateProps = {
+      id: resolvedId,
+      "aria-haspopup": haspopup,
+      "aria-expanded": ctx.open,
+      "aria-controls": ctx.contentId,
+      "aria-disabled": asChild && disabled ? true : undefined,
+      disabled,
+      onClick: handleClick,
+    } as const;
+    if (asChild) {
+      return (
+        <Slot
+          {...(props as React.HTMLAttributes<HTMLElement>)}
+          {...stateProps}
+          type={getPolymorphicButtonType(true, children, type)}
+          ref={composedRef}
+        >
+          {children}
+        </Slot>
+      );
+    }
     return (
-      <Comp
-        {...props}
-        type={asChild ? type : type ?? "button"}
+      <button
+        {...(props as React.ButtonHTMLAttributes<HTMLButtonElement>)}
+        {...stateProps}
+        type={getPolymorphicButtonType(false, children, type)}
         ref={composedRef}
-        id={resolvedId}
-        aria-haspopup={haspopup}
-        aria-expanded={ctx.open}
-        aria-controls={ctx.contentId}
-        aria-disabled={asChild && disabled ? true : undefined}
-        disabled={disabled}
-        onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-          onClick?.(e);
-          if (!e.defaultPrevented && !disabled) ctx.setOpen(!ctx.open);
-        }}
       >
         {children}
-      </Comp>
+      </button>
     );
   }
 

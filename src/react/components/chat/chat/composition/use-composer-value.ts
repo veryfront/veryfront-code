@@ -39,9 +39,8 @@ interface ComposerStateBaseProps {
  * Submit props accepted during the additive ChatInput migration.
  *
  * `sendMessage` takes precedence when both handlers are supplied, matching the
- * legacy runtime. Composer-owned submission validates that `setInput` exists
- * before sending, so an incomplete legacy configuration fails without a
- * partial side effect.
+ * legacy runtime. `setInput` remains optional for source and runtime
+ * compatibility; when present, it clears the controlled value after sending.
  */
 interface ComposerSubmitProps {
   /**
@@ -49,8 +48,8 @@ interface ComposerSubmitProps {
    */
   onSubmit?: (e?: React.FormEvent) => void;
   /**
-   * Send directly through composer-owned submission. `setInput` is validated
-   * before this handler runs and is then used to clear the controlled input.
+   * Send directly through composer-owned submission. When supplied, `setInput`
+   * clears the controlled input after this handler runs.
    */
   sendMessage?: (message: { text: string; files?: ChatFilePart[] }) => void;
   /** Update the controlled input value for headless context consumers. */
@@ -86,19 +85,18 @@ export function useComposerValue(p: ComposerStateProps): ChatInputContextValue {
   // Otherwise fall back to the caller's explicit `onSubmit` (controlled mode).
   const { sendMessage, setInput, onClearAttachments, onSubmit } = p;
   const onSubmitEffective = React.useCallback((e?: React.FormEvent) => {
-    e?.preventDefault();
-    if (!canSubmit) return;
     if (!sendMessage) {
       onSubmit?.(e);
       return;
     }
+    e?.preventDefault();
+    if (!canSubmit) return;
     const attachments = p.attachments ?? [];
     const text = p.input.trim();
     const files = attachmentsToFileParts(attachments);
     if (!text && files.length === 0) return;
-    if (!setInput) missingSetInput();
     sendMessage({ text, ...(files.length > 0 ? { files } : {}) });
-    setInput("");
+    setInput?.("");
     onClearAttachments?.();
   }, [canSubmit, sendMessage, onSubmit, setInput, onClearAttachments, p.input, p.attachments]);
 

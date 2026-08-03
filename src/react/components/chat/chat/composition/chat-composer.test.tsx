@@ -79,7 +79,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     assert(error.message.includes("setInput was not provided"));
   });
 
-  it("fails before a composer-owned send when setInput is omitted", () => {
+  it("preserves composer-owned sends when the legacy setter is omitted", () => {
     let submit: ((e?: FormEvent) => void) | undefined;
     let sends = 0;
     function Capture(): null {
@@ -87,26 +87,40 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       return null;
     }
 
-    const invalidOwnedSubmit = {
+    const legacyOwnedSubmit = {
       input: "ready",
       onChange: () => {},
       sendMessage: () => sends += 1,
     };
     renderToString(
-      <ChatInput.Root {...invalidOwnedSubmit}>
+      <ChatInput.Root {...legacyOwnedSubmit}>
         <Capture />
       </ChatInput.Root>,
     );
 
-    let error: unknown;
-    try {
-      submit?.();
-    } catch (caught) {
-      error = caught;
+    submit?.();
+
+    assertEquals(sends, 1, "the additive API must not break a legacy owned submit");
+  });
+
+  it("leaves legacy controlled submit policy with the caller", () => {
+    let submit: ((e?: FormEvent) => void) | undefined;
+    let submits = 0;
+    let preventDefaults = 0;
+    function Capture(): null {
+      submit = useChatInputContext().onSubmit;
+      return null;
     }
-    assert(error instanceof Error);
-    assert(error.message.includes("setInput was not provided"));
-    assertEquals(sends, 0, "a configuration error must not partially send");
+
+    renderToString(
+      <ChatInput.Root input="" onChange={() => {}} onSubmit={() => submits += 1} isLoading>
+        <Capture />
+      </ChatInput.Root>,
+    );
+    submit?.({ preventDefault: () => preventDefaults += 1 } as FormEvent);
+
+    assertEquals(submits, 1, "controlled submit remains caller-owned");
+    assertEquals(preventDefaults, 0, "controlled submit receives the original event unchanged");
   });
 
   it("preserves legacy mixed submit props and gives sendMessage precedence", () => {

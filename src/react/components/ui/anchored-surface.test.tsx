@@ -119,6 +119,9 @@ describe("anchored surfaces anchor to the trigger ref", () => {
     const commandItemRef = React.createRef<HTMLDivElement>();
     const menuContentRef = React.createRef<HTMLDivElement>();
     const menuItemRef = React.createRef<HTMLButtonElement>();
+    const menuSlottedButtonRef = React.createRef<HTMLButtonElement>();
+    const menuAnchorRef = React.createRef<HTMLAnchorElement>();
+    let selectedAnchor: HTMLElement | null = null;
 
     try {
       flushSync(() => {
@@ -139,6 +142,16 @@ describe("anchored surfaces anchor to the trigger ref", () => {
               <DropdownMenuTrigger>Actions</DropdownMenuTrigger>
               <DropdownMenuContent ref={menuContentRef}>
                 <DropdownMenuItem ref={menuItemRef}>Rename</DropdownMenuItem>
+                <DropdownMenuItem asChild ref={menuSlottedButtonRef}>
+                  {React.createElement("button", null, "Duplicate")}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  asChild
+                  ref={menuAnchorRef}
+                  onSelect={(event) => selectedAnchor = event.currentTarget}
+                >
+                  <a href="#archive">Archive</a>
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </>,
@@ -152,7 +165,9 @@ describe("anchored surfaces anchor to the trigger ref", () => {
           commandListRef.current !== null &&
           commandItemRef.current !== null &&
           menuContentRef.current !== null &&
-          menuItemRef.current !== null,
+          menuItemRef.current !== null &&
+          menuSlottedButtonRef.current !== null &&
+          menuAnchorRef.current !== null,
         { message: "Timed out waiting for portalled surface refs" },
       );
 
@@ -162,6 +177,10 @@ describe("anchored surfaces anchor to the trigger ref", () => {
       assertEquals(commandItemRef.current?.getAttribute("role"), "option");
       assertEquals(menuContentRef.current?.getAttribute("role"), "menu");
       assertEquals(menuItemRef.current?.getAttribute("role"), "menuitem");
+      assertEquals(menuSlottedButtonRef.current?.type, "button");
+      assertEquals(menuAnchorRef.current?.tagName, "A");
+      menuAnchorRef.current?.click();
+      assertEquals(selectedAnchor?.tagName, "A");
     } finally {
       flushSync(() => root.unmount());
       restore();

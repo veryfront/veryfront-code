@@ -5,6 +5,7 @@
  */
 
 import * as React from "react";
+import { getPolymorphicButtonType } from "../../../ui/slot.tsx";
 
 /**
  * Keep action buttons out of native form submission. Intrinsic non-buttons do
@@ -15,8 +16,5 @@ export function getChatInputActionType(
   asChild: boolean | undefined,
   child: React.ReactNode,
 ): "button" | undefined {
-  if (!asChild) return "button";
-  if (!React.isValidElement(child)) return undefined;
-  if (typeof child.type === "string") return child.type === "button" ? "button" : undefined;
-  return "button";
+  return getPolymorphicButtonType(asChild, child);
 }

@@ -15,23 +15,42 @@ import type { ChatActionsTriggerProps } from "./chat-actions.types.ts";
  * children receive trigger props and classes; the childless path renders the
  * standard `+` button.
  */
-export function ChatActionsTrigger(
-  { children, className, ref, ...props }: ChatActionsTriggerProps,
+export function ChatActionsTrigger<T extends HTMLElement = HTMLElement>(
+  triggerProps: ChatActionsTriggerProps<T>,
 ): React.ReactElement {
-  const triggerClassName = children == null ? undefined : className;
+  if (triggerProps.children != null) {
+    const { children, className, ref, ...props } = triggerProps;
+    return (
+      <DropdownMenuTrigger<T>
+        asChild
+        ref={ref}
+        className={className}
+        {...props}
+      >
+        {children}
+      </DropdownMenuTrigger>
+    );
+  }
+
+  const {
+    children: _children,
+    className,
+    ref,
+    type,
+    "aria-label": ariaLabel,
+    ...props
+  } = triggerProps;
   return (
-    <DropdownMenuTrigger asChild ref={ref} className={triggerClassName} {...props}>
-      {children ?? (
-        <Button
-          type="button"
-          variant="icon-tertiary"
-          size="icon-lg"
-          aria-label="Add attachments and settings"
-          className={cn("shrink-0", className)}
-        >
-          <PlusIcon />
-        </Button>
-      )}
+    <DropdownMenuTrigger<HTMLButtonElement> asChild ref={ref} {...props}>
+      <Button
+        type={type ?? "button"}
+        variant="icon-tertiary"
+        size="icon-lg"
+        aria-label={ariaLabel ?? "Add attachments and settings"}
+        className={cn("shrink-0", className)}
+      >
+        <PlusIcon />
+      </Button>
     </DropdownMenuTrigger>
   );
 }

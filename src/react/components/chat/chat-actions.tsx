@@ -8,15 +8,6 @@
  * here `ChatActions` is the whole self-contained menu (trigger + content) so it
  * drops into a composer with a small, focused prop surface.
  *
- * Notes vs Studio:
- * - No `@radix-ui/*`, no `class-variance-authority`, no `@/` imports, no
- *   licensed fonts / motion — the logic is forked onto our `ui` primitives.
- * - Our `dropdown-menu.tsx` has NO submenu primitive (radix `Sub*`), so the
- *   Settings submenu is a nested `DropdownMenu` anchored to its trigger row and
- *   portalled via `Floating` (same overlay pattern), aligned to the side.
- * - Settings-specific glyphs stay private to the submenu implementation rather
- *   than expanding the shared icons barrel.
- *
  * @module react/components/chat/chat-actions
  */
 import * as React from "react";
@@ -94,6 +85,9 @@ function ChatActionsRoot({
   className,
   children,
 }: ChatActionsProps): React.ReactElement {
+  if (trigger != null && !React.isValidElement(trigger)) {
+    throw new TypeError("ChatActions trigger must be a valid React element");
+  }
   const context: ChatActionsContextValue = {
     actions: actions ?? [],
     onAttachFiles,
@@ -109,7 +103,9 @@ function ChatActionsRoot({
       >
         {children ?? (
           <>
-            <ChatActionsTrigger>{trigger}</ChatActionsTrigger>
+            {trigger == null
+              ? <ChatActionsTrigger />
+              : <ChatActionsTrigger>{trigger}</ChatActionsTrigger>}
             <ChatActionsContent className={className}>
               <ChatActionsPreset />
             </ChatActionsContent>
