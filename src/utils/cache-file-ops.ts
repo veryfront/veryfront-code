@@ -74,7 +74,8 @@ export async function writeCacheFile(
 /**
  * Verify a cache file exists before attempting dynamic import.
  * Returns true if the file exists and is a regular file, false when the path
- * is genuinely absent. Non-absence stat failures (EACCES, EIO, ...) are
+ * is genuinely absent or is not a regular file. Non-absence stat failures
+ * (EACCES, EIO, ...) are
  * rethrown so callers do not misreport an unreadable cache as a cache miss
  * and loop forever re-transforming the same module.
  */

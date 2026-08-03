@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { collectFiles, countFiles, discoverFiles, hasMatchingFiles } from "./file-discovery.ts";
@@ -11,11 +11,35 @@ const TEST_DIR = join(cwd(), "src/utils");
 
 function withFixtureTree<T>(build: (root: string) => void, run: (root: string) => Promise<T>) {
   const root = mkdtempSync(join(tmpdir(), "veryfront-file-discovery-"));
-  build(root);
+  try {
+    build(root);
+  } catch (error) {
+    rmSync(root, { recursive: true, force: true });
+    throw error;
+  }
   return run(root).finally(() => rmSync(root, { recursive: true, force: true }));
 }
 
 describe("file-discovery", () => {
+  it("cleans up fixture trees when setup throws", () => {
+    let fixtureRoot = "";
+
+    assertThrows(
+      () =>
+        withFixtureTree(
+          (root) => {
+            fixtureRoot = root;
+            throw new Error("setup failed");
+          },
+          async () => undefined,
+        ),
+      Error,
+      "setup failed",
+    );
+
+    assertEquals(existsSync(fixtureRoot), false);
+  });
+
   it("discovers files with extension filter", async () => {
     const files = await collectFiles({
       baseDir: TEST_DIR,

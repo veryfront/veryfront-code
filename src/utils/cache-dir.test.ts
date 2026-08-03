@@ -125,25 +125,25 @@ describe("cache-dir", () => {
     });
 
     it("redacts both quoted symlink operands when POSIX paths contain spaces", () => {
-      const cacheRoot = "/Users/Private Person/cache root";
-      const frameworkRoot = "/Users/Private Person/framework/node_modules";
+      const cacheRoot = "/workspace/private person/cache root";
+      const frameworkRoot = "/workspace/private person/framework/node_modules";
       const reason = `EEXIST: symlink '${frameworkRoot}' -> '${cacheRoot}/node_modules'`;
 
       const redacted = __cacheDirInternals.redactCachePathDetails(reason, cacheRoot);
 
       assertEquals(redacted, "EEXIST: symlink '[path]' -> '[path]'");
-      assertEquals(redacted.includes("Private Person"), false);
+      assertEquals(redacted.includes("private person"), false);
     });
 
     it("redacts both quoted symlink operands when Windows paths contain spaces", () => {
-      const cacheRoot = "C:\\Users\\Private Person\\cache root";
-      const frameworkRoot = "C:\\Users\\Private Person\\framework\\node_modules";
+      const cacheRoot = "C:\\workspace\\private person\\cache root";
+      const frameworkRoot = "C:\\workspace\\private person\\framework\\node_modules";
       const reason = `EPERM: symlink '${frameworkRoot}' -> '${cacheRoot}\\node_modules'`;
 
       const redacted = __cacheDirInternals.redactCachePathDetails(reason, cacheRoot);
 
       assertEquals(redacted, "EPERM: symlink '[path]' -> '[path]'");
-      assertEquals(redacted.includes("Private Person"), false);
+      assertEquals(redacted.includes("private person"), false);
     });
   });
 
