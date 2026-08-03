@@ -38,6 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
       - name: Run ${{ matrix.check }}
         run: |
           case "${{ matrix.check }}" in
@@ -58,6 +59,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
         with:
           warm-cache: "true"
           warm-redis-cache: "true"
@@ -80,6 +82,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
         with:
           warm-cache: "true"
           warm-redis-cache: "true"
@@ -132,6 +135,7 @@ jobs:
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
       - name: Download unit coverage lcov files
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
@@ -154,6 +158,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
         with:
           warm-cache: "true"
       - name: Configure apt retries and mirrors
@@ -213,6 +218,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
         with:
           warm-cache: "true"
       - name: Configure apt retries and mirrors
@@ -276,6 +282,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
         with:
           warm-cache: "true"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v6
@@ -297,6 +304,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
         with:
           warm-cache: "true"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v6
@@ -319,6 +327,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
 
       - name: Compile binary
         run: deno task build
@@ -432,6 +441,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
 
       - run: deno task build:prepare
 
@@ -466,6 +476,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v6
         with:
@@ -626,6 +637,7 @@ jobs:
           fi
 
       - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v6
         with:
