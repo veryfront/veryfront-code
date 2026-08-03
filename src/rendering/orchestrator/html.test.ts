@@ -485,7 +485,7 @@ describe("HTMLGenerator helpers", () => {
         options: { environment: "preview" },
       }));
 
-      assertEquals(html.includes('id="vf-tailwind-css"'), true);
+      assertEquals(html.includes('id="vf-project-css"'), true);
       assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
     });
 
@@ -1172,7 +1172,7 @@ describe("HTMLGenerator helpers", () => {
         true,
       );
       assertEquals(html.includes('data-theme="dark"'), true);
-      assertEquals(html.includes('id="vf-tailwind-css"'), true);
+      assertEquals(html.includes('id="vf-project-css"'), true);
       assertEquals(html.includes(`localStorage.setItem('theme','dark')`), true);
     });
 

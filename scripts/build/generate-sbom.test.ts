@@ -441,3 +441,24 @@ describe("componentsFromLock", () => {
     );
   });
 });
+
+it("generate-sbom CLI rejects --lock without a value as a usage error", async () => {
+  const command = new Deno.Command(Deno.execPath(), {
+    args: [
+      "run",
+      "--allow-read",
+      "--allow-write",
+      "scripts/build/generate-sbom.ts",
+      "--lock",
+    ],
+    stdout: "piped",
+    stderr: "piped",
+  });
+
+  const result = await command.output();
+  const stderr = new TextDecoder().decode(result.stderr);
+
+  assertEquals(result.code, 2);
+  assertStringIncludes(stderr, "--lock requires a non-empty path");
+  assertStringIncludes(stderr, "Usage:");
+});
