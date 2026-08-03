@@ -223,8 +223,13 @@ describe("transforms/import-rewriter/url-builder", () => {
       assertEquals(
         extractDependencyPinningPathKey(
           "/_vf_modules/_pins/on%3Aa/_pins/not-terminated/page.js",
-        ).malformed,
-        true,
+        ),
+        {
+          pathname: "/_vf_modules/_pins/not-terminated/page.js",
+          cacheKey: "on:a",
+          found: true,
+          malformed: false,
+        },
       );
       assertEquals(
         extractDependencyPinningPathKey(
