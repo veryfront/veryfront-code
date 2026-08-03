@@ -79,6 +79,21 @@ describe("modules/server/websocket-handler", () => {
     assertEquals(cleanups.length, 1);
   });
 
+  it("counts a Blob message at its real byte size when enforcing the limit", () => {
+    const { context, cleanups } = createContext(8);
+    const socket = new StallingWebSocket();
+    setupWebSocketHandlers(socket as unknown as WebSocket, context);
+
+    socket.emitMessage(new Blob([new Uint8Array(64)]));
+
+    assertEquals(socket.closed, [{
+      code: HMR_CLOSE_MESSAGE_TOO_LARGE,
+      reason: "Message too large",
+    }]);
+    assertEquals(context.clients.size, 0);
+    assertEquals(cleanups.length, 1);
+  });
+
   it("deregisters a rate-limited client without awaiting the handshake", () => {
     const { context, cleanups } = createContext(1024, false);
     const socket = new StallingWebSocket();

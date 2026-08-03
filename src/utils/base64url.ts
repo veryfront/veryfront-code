@@ -40,9 +40,16 @@ export function encodeBase64Bytes(bytes: Uint8Array): string {
   if (bufferCtor) return bufferCtor.from(bytes).toString("base64");
 
   if (typeof globalThis.btoa === "function") {
-    let binary = "";
-    for (const byte of bytes) binary += String.fromCharCode(byte);
-    return globalThis.btoa(binary);
+    // The chunk size stays below engine argument limits and is divisible by
+    // three, so only the final base64 chunk can contain padding.
+    const chunkSize = 24 * 1024;
+    let encoded = "";
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      encoded += globalThis.btoa(
+        String.fromCharCode(...bytes.subarray(offset, offset + chunkSize)),
+      );
+    }
+    return encoded;
   }
 
   throw new Error("Base64 encoding is not supported in this runtime");

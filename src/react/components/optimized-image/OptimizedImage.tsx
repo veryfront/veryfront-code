@@ -1,8 +1,6 @@
 import React from "react";
-import {
-  RESPONSIVE_IMAGE_WIDTH_LG,
-  RESPONSIVE_IMAGE_WIDTHS,
-} from "#veryfront/utils/constants/network.ts";
+import { IMAGE_OPTIMIZATION } from "#veryfront/utils/constants/build.ts";
+import { RESPONSIVE_IMAGE_WIDTH_LG } from "#veryfront/utils/constants/network.ts";
 import { generateSrcSet, getImageExtension, getOptimizedPath } from "./helpers.ts";
 
 export interface OptimizedImageProps {
@@ -24,7 +22,9 @@ export interface OptimizedImageProps {
   onError?: (event: React.SyntheticEvent<HTMLImageElement>) => void;
 }
 
-const DEFAULT_SIZES = RESPONSIVE_IMAGE_WIDTHS;
+// Must match the widths the build pipeline actually emits (IMAGE_OPTIMIZATION.DEFAULT_SIZES),
+// otherwise srcset entries point at files that do not exist on disk.
+const DEFAULT_SIZES = IMAGE_OPTIMIZATION.DEFAULT_SIZES;
 const DEFAULT_FORMATS: ("avif" | "webp" | "jpeg")[] = ["avif", "webp", "jpeg"];
 
 export function OptimizedImage({

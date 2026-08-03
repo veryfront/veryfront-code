@@ -1,12 +1,11 @@
 import type React from "react";
 import type { OptimizedImageProps } from "./OptimizedImage.tsx";
-import {
-  RESPONSIVE_IMAGE_WIDTH_LG,
-  RESPONSIVE_IMAGE_WIDTHS,
-} from "#veryfront/utils/constants/network.ts";
+import { IMAGE_OPTIMIZATION } from "#veryfront/utils/constants/build.ts";
+import { RESPONSIVE_IMAGE_WIDTH_LG } from "#veryfront/utils/constants/network.ts";
 import { generateSrcSet, getOptimizedPath } from "./helpers.ts";
 
-const DEFAULT_SIZES = RESPONSIVE_IMAGE_WIDTHS;
+// Must match the widths the build pipeline actually emits.
+const DEFAULT_SIZES = IMAGE_OPTIMIZATION.DEFAULT_SIZES;
 
 export function SimpleOptimizedImage({
   src,

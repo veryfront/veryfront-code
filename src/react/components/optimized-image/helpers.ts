@@ -23,7 +23,12 @@ export function generateSrcSet(
 
 /**
  * Get image file extension, defaulting to "jpeg" if none found.
+ *
+ * "jpg" is normalized to "jpeg" because the build pipeline only emits
+ * "jpeg" variants (see SUPPORTED_FORMATS in the image optimizer), so a
+ * ".jpg" source would otherwise produce a fallback URL that never exists.
  */
 export function getImageExtension(src: string): string {
-  return getExtensionName(src) || "jpeg";
+  const extension = getExtensionName(src) || "jpeg";
+  return extension === "jpg" ? "jpeg" : extension;
 }

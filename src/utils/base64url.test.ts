@@ -65,5 +65,27 @@ describe("base64url", () => {
       const bytes = new Uint8Array([1, 2, 3, 4, 5]);
       assertEquals(base64urlEncodeBytes(bytes), base64urlEncodeBytes(bytes));
     });
+
+    it("should encode large inputs without throwing and round-trip them", () => {
+      // Larger than the internal 24 KiB btoa chunk and not a multiple of it,
+      // so both full chunks and a partial tail chunk are exercised.
+      const bytes = new Uint8Array(300_001);
+      for (let index = 0; index < bytes.length; index++) {
+        bytes[index] = index % 256;
+      }
+
+      const encoded = base64urlEncodeBytes(bytes);
+      assertEquals(encoded.includes("="), false);
+
+      const base64 = encoded.replaceAll("-", "+").replaceAll("_", "/") +
+        "=".repeat((4 - (encoded.length % 4)) % 4);
+      const decoded = atob(base64);
+      assertEquals(decoded.length, bytes.length);
+      for (let index = 0; index < bytes.length; index++) {
+        if (decoded.charCodeAt(index) !== bytes[index]) {
+          throw new Error(`Round-trip mismatch at byte ${index}`);
+        }
+      }
+    });
   });
 });

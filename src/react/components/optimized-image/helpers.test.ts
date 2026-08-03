@@ -46,8 +46,12 @@ describe("optimized-image helpers", () => {
   describe("getImageExtension", () => {
     it("returns extension for known image types", () => {
       assertEquals(getImageExtension("/photo.png"), "png");
-      assertEquals(getImageExtension("/photo.jpg"), "jpg");
       assertEquals(getImageExtension("/photo.webp"), "webp");
+    });
+
+    it("normalizes jpg to the jpeg variant the build emits", () => {
+      assertEquals(getImageExtension("/photo.jpg"), "jpeg");
+      assertEquals(getImageExtension("/photo.jpeg"), "jpeg");
     });
 
     it("returns jpeg for paths without extension", () => {

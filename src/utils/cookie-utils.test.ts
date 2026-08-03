@@ -31,6 +31,21 @@ describe("cookie-utils", () => {
       assertEquals(parseCookies("name=hello%20world"), { name: "hello world" });
     });
 
+    it("should omit malformed URL encoding without discarding valid siblings", () => {
+      assertEquals(parseCookies("name=incomplete%2; other=valid"), {
+        other: "valid",
+      });
+    });
+
+    it("should safely parse cookie names inherited from Object.prototype", () => {
+      const cookies = parseCookies("__proto__=safe; constructor=value");
+
+      assertEquals(Object.hasOwn(cookies, "__proto__"), true);
+      assertEquals(cookies["__proto__"], "safe");
+      assertEquals(Object.hasOwn(cookies, "constructor"), true);
+      assertEquals(cookies["constructor"], "value");
+    });
+
     it("should handle empty cookies", () => {
       assertEquals(parseCookies("name=value;;other=data"), {
         name: "value",
