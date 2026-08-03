@@ -25,6 +25,7 @@ import { assertMdxModuleImportCount, MAX_MDX_MODULE_TRANSFORM_CONCURRENCY } from
 
 export interface FetchModuleViaHttpOptions {
   fetchFn?: typeof fetch;
+  moduleServerOrigin?: string;
   timeoutMs?: number;
 }
 
@@ -97,13 +98,21 @@ export async function fetchModuleViaHTTP(
 
   log.debug(`${LOG_PREFIX_MDX_LOADER} Direct read failed, falling back to HTTP: ${normalizedPath}`);
 
-  const port = requireLocalDevPort(
-    adapter.env.get("VERYFRONT_DEV_PORT") || adapter.env.get("PORT") || "3001",
-  );
-  const host = requireProjectSlug(projectSlug);
   const timeoutMs = requireFetchTimeout(options.timeoutMs ?? HTTP_FETCH_TIMEOUT_MS);
   const fetchFn = options.fetchFn ?? fetch;
-  const moduleUrl = new URL(`http://${host}:${port}`);
+  const moduleServerOrigin = options.moduleServerOrigin ??
+    `http://${requireProjectSlug(projectSlug)}:${
+      requireLocalDevPort(
+        adapter.env.get("VERYFRONT_DEV_PORT") || adapter.env.get("PORT") || "3001",
+      )
+    }`;
+  const moduleServerUrl = new URL(
+    moduleServerOrigin,
+  );
+  if (moduleServerUrl.protocol !== "http:" && moduleServerUrl.protocol !== "https:") {
+    throw new TypeError("Module server origin must use http or https");
+  }
+  const moduleUrl = new URL(moduleServerUrl.origin);
   moduleUrl.pathname = `/${normalizedPath}`;
   moduleUrl.searchParams.set("ssr", "true");
   if (dependencyPinningCacheKey?.startsWith("on:")) {
@@ -131,7 +140,7 @@ export async function fetchModuleViaHTTP(
         "http.method": "GET",
         "http.url": moduleUrlString,
         "http.target": `/${normalizedPath}`,
-        "http.host": host,
+        "http.host": moduleUrl.host,
         "mdx.module_path": normalizedPath,
       },
     );

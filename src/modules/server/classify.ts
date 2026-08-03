@@ -23,6 +23,15 @@ function isInNamespace(pathname: string, namespace: string): boolean {
   return pathname === namespace || pathname.startsWith(`${namespace}/`);
 }
 
+/**
+ * Cross-project source keys use literal URL path segments. The registry route
+ * does not define a percent-decoding contract, so forwarding a percent sign
+ * would make admission depend on how many times an intermediary decodes it.
+ */
+function hasAmbiguousCrossProjectPath(path: string): boolean {
+  return path.includes("%");
+}
+
 /** URL does not start with any module prefix — not a module request. */
 export interface NotModuleKind {
   kind: "not-module";
@@ -94,20 +103,28 @@ export function classifyModuleRequest(url: URL): ModuleRequestKind {
 
   const versionedMatch = url.pathname.match(CROSS_PROJECT_VERSIONED_PREFIX);
   if (versionedMatch) {
+    const path = versionedMatch[3] ?? "";
+    if (hasAmbiguousCrossProjectPath(path)) {
+      return { kind: "invalid-module", namespace: "cross-project" };
+    }
     return {
       kind: "cross-project-versioned",
       slug: versionedMatch[1] ?? "",
       version: versionedMatch[2] ?? "",
-      path: versionedMatch[3] ?? "",
+      path,
     };
   }
 
   const latestMatch = url.pathname.match(CROSS_PROJECT_LATEST_PREFIX);
   if (latestMatch) {
+    const path = latestMatch[2] ?? "";
+    if (hasAmbiguousCrossProjectPath(path)) {
+      return { kind: "invalid-module", namespace: "cross-project" };
+    }
     return {
       kind: "cross-project-latest",
       slug: latestMatch[1] ?? "",
-      path: latestMatch[2] ?? "",
+      path,
     };
   }
 

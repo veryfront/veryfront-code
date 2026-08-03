@@ -12,12 +12,18 @@ import {
 import { createHostedDurableChildForkRunContext } from "./child-fork-run-context.ts";
 import type { AgentResponse } from "../schemas/index.ts";
 import { UNCONFIRMED_AGENT_PROJECT_IDENTITY_MESSAGE } from "../project/context.ts";
-import { getActiveModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
 import {
   createHostedRunEventWriterCapability,
   getActiveHostedRunEventWriterCapability,
   runWithHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
+import {
+  getActiveRunEventSink,
+  runWithRunEventSink,
+} from "../../runtime/run-event-sink-context.ts";
+import { streamText } from "../../runtime/runtime-bridge.ts";
+import { createStreamModel } from "../../runtime/runtime-bridge.test-helpers.ts";
+import type { ForkPart } from "../streaming/fork-runtime-stream.ts";
 
 function createRuntimeEventStream(
   events: readonly Record<string, unknown>[],
@@ -356,10 +362,22 @@ for (
   });
 }
 
-Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run context factory", async () => {
+Deno.test("executeHostedChildForkWithPreparedTools preserves the mandatory sink through middleware next()", async () => {
   let createRunContextCalls = 0;
   let activeDuringStart = false;
   let activeDuringIteration = false;
+  const persisted: unknown[] = [];
+  const observed: unknown[] = [];
+  const order: string[] = [];
+  const model = createStreamModel("test", "test/hosted-child", async () => {
+    order.push("dispatch");
+    return {
+      stream: ReadableStream.from([
+        { type: "text-delta", delta: "Injected context." },
+        { type: "finish", finishReason: "stop", usage: {} },
+      ]),
+    };
+  });
   const result = await executeHostedChildForkWithPreparedTools({
     authToken: "token",
     apiUrl: "https://api.example.com",
@@ -410,8 +428,14 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run cont
         ...context,
         durableRunMirror: {
           handleChunk: async () => {},
-          appendEvents: async () => {},
-          flush: async () => quiescentSnapshot,
+          appendEvents: async (events) => {
+            order.push("append");
+            persisted.push(...events);
+          },
+          flush: async () => {
+            order.push("flush");
+            return quiescentSnapshot;
+          },
           getSnapshot: () => quiescentSnapshot,
           dispose: () => {},
         },
@@ -419,7 +443,20 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run cont
     },
     startRuntime: (input) => {
       assertEquals(input.authToken, "token");
-      activeDuringStart = getActiveModelCallRecorder() !== undefined;
+      activeDuringStart = getActiveRunEventSink() !== undefined;
+      const next = () =>
+        streamText({
+          model,
+          system: "Hosted child instructions",
+          messages: [{ role: "user", content: "Run child" }],
+        });
+      const stream = runWithRunEventSink(
+        (event) => {
+          order.push("observe");
+          observed.push(event);
+        },
+        next,
+      );
       return {
         forkStreamAbortController: new AbortController(),
         childRunMonitorAbortController: null,
@@ -427,8 +464,10 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run cont
         forkToolNames: [],
         streamResult: {
           fullStream: (async function* () {
-            activeDuringIteration = getActiveModelCallRecorder() !== undefined;
-            yield { type: "text-delta", text: "Injected context." } as const;
+            activeDuringIteration = getActiveRunEventSink() !== undefined;
+            for await (const part of stream.fullStream) {
+              yield part as ForkPart;
+            }
           })(),
           steps: Promise.resolve([
             {
@@ -448,10 +487,148 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run cont
   assertEquals(createRunContextCalls, 1);
   assertEquals(activeDuringStart, true);
   assertEquals(activeDuringIteration, true);
+  assertEquals(order.slice(0, 4), ["append", "flush", "observe", "dispatch"]);
+  assertEquals(persisted, [{
+    type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+    messages: [
+      { role: "system", content: "Hosted child instructions" },
+      { role: "user", content: [{ type: "text", text: "Run child" }] },
+    ],
+  }]);
+  assertEquals(observed, persisted);
   assertEquals(result.success, true);
   if (result.success) {
     assertEquals(result.summary.text, "Injected context.");
   }
+});
+
+Deno.test("executeHostedChildForkWithPreparedTools drains queued child events before a subsequent model dispatch", async () => {
+  let pendingEventCount = 0;
+  let dispatches = 0;
+  let queueChildEvent = () => {};
+  const persisted: unknown[] = [];
+  const order: string[] = [];
+  const model = createStreamModel("test", "test/hosted-child-two-step", async () => {
+    dispatches += 1;
+    order.push(`dispatch-${dispatches}`);
+    return {
+      stream: ReadableStream.from([
+        { type: "text-delta", delta: `step ${dispatches}` },
+        { type: "finish", finishReason: "stop", usage: {} },
+      ]),
+    };
+  });
+  const result = await executeHostedChildForkWithPreparedTools({
+    authToken: "token",
+    apiUrl: "https://api.example.com",
+    description: "Check two steps",
+    kind: "invoke_agent",
+    provider: "anthropic",
+    forkModel: "anthropic/claude-sonnet-4",
+    maxSteps: 4,
+    effectivePrompt: "Do the work.",
+    toolAssembly: { ok: true, forkTools: {}, availableToolNames: [] },
+    durableChildRun: {
+      childConversationId: "11111111-1111-4111-a111-111111111111",
+      childRunId: "child-run-two-step",
+      childMessageId: "22222222-2222-4222-a222-222222222222",
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+    },
+    createRunContext: (input) => {
+      const context = createHostedDurableChildForkRunContext({
+        instrumentation: input.instrumentation,
+        pendingToolLogContext: {
+          conversationId: input.conversationId,
+          parentRunId: input.parentRunId,
+          description: input.description,
+        },
+        pendingToolLogWriter: input.pendingToolLogWriter,
+      });
+      const getSnapshot = () => ({
+        latestEventId: 0,
+        latestExternalEventSequence: 0,
+        pendingEventCount,
+        consecutiveFailures: 0,
+        disabled: false,
+        hasFlushTimer: pendingEventCount > 0,
+        hasRetryTimer: false,
+        inFlight: false,
+      });
+      queueChildEvent = () => {
+        pendingEventCount += 1;
+        order.push("queue-child");
+      };
+      return {
+        ...context,
+        durableRunMirror: {
+          handleChunk: async () => {
+            pendingEventCount += 1;
+            order.push("queue-child");
+          },
+          appendEvents: async (events) => {
+            pendingEventCount += events.length;
+            persisted.push(...events);
+            order.push("append-context");
+          },
+          flush: async () => {
+            order.push("flush");
+            pendingEventCount = 0;
+            return getSnapshot();
+          },
+          getSnapshot,
+          dispose: () => {},
+        },
+      };
+    },
+    startRuntime: () => {
+      const first = streamText({
+        model,
+        messages: [{ role: "user", content: "First child step" }],
+      });
+      return {
+        forkStreamAbortController: new AbortController(),
+        childRunMonitorAbortController: null,
+        childRunMonitorPromise: Promise.resolve(),
+        forkToolNames: [],
+        streamResult: {
+          fullStream: (async function* () {
+            for await (const part of first.fullStream) yield part as ForkPart;
+            queueChildEvent();
+            const second = streamText({
+              model,
+              messages: [{ role: "user", content: "Second child step" }],
+            });
+            for await (const part of second.fullStream) yield part as ForkPart;
+          })(),
+          steps: Promise.resolve([
+            { text: "step 1", finishReason: "stop", messages: [], toolCalls: [], toolResults: [] },
+            { text: "step 2", finishReason: "stop", messages: [], toolCalls: [], toolResults: [] },
+          ]),
+          totalUsage: Promise.resolve(undefined),
+        },
+      };
+    },
+  });
+
+  assertEquals(result.success, true);
+  assertEquals(dispatches, 2);
+  assertEquals(
+    persisted.filter((event) =>
+      (event as { type?: string }).type === "AGENT_RUN_MODEL_CALL_CONTEXT"
+    ).length,
+    2,
+  );
+  const secondDispatch = order.indexOf("dispatch-2");
+  const secondContextFlush = order.lastIndexOf("flush", secondDispatch);
+  const secondContextAppend = order.lastIndexOf("append-context", secondContextFlush);
+  const priorEventFlush = order.lastIndexOf("flush", secondContextAppend - 1);
+  const priorChildEvent = order.lastIndexOf("queue-child", priorEventFlush);
+  assertEquals(
+    priorChildEvent < priorEventFlush && priorEventFlush < secondContextAppend &&
+      secondContextAppend < secondContextFlush && secondContextFlush < secondDispatch,
+    true,
+  );
 });
 
 Deno.test("executeHostedChildForkToolInput resolves runtime config and prepares tools", async () => {

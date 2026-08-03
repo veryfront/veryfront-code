@@ -28,6 +28,7 @@ import { withTestContext } from "../../_helpers/context.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 import { invalidateProjectMiddlewareCache } from "../../../src/server/runtime-handler/project-middleware.ts";
 import { registerTailwindExtension } from "../../../src/html/styles-builder/__tests__/css-processor-setup.ts";
+import { deleteEnv, getHostEnv, setEnv } from "../../../src/platform/compat/process.ts";
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -498,6 +499,8 @@ describe(
         });
 
         it("refuses shared proxy middleware after trusted request context is resolved", async () => {
+          const trustEnvName = "VERYFRONT_TRUST_FORWARDED_HEADERS";
+          const originalProxyTrust = getHostEnv(trustEnvName);
           const projectSlug = "shared-middleware-project";
           const projectId = "shared-middleware-project-id";
           const releaseId = "shared-middleware-release";
@@ -576,6 +579,7 @@ describe(
           };
 
           let server: Awaited<ReturnType<typeof startProductionServer>> | undefined;
+          setEnv(trustEnvName, "1");
           try {
             server = await startProductionServer({
               projectDir: "/app",
@@ -633,6 +637,8 @@ describe(
               "Middleware loading must use production release context",
             );
           } finally {
+            if (originalProxyTrust === undefined) deleteEnv(trustEnvName);
+            else setEnv(trustEnvName, originalProxyTrust);
             invalidateProjectMiddlewareCache(projectSlug, projectId);
             await server?.stop();
             (multiProjectFs as any).manager = originalManager;

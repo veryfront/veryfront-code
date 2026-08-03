@@ -32,6 +32,16 @@ Primary source areas:
 4. Invoke handlers execute project-scoped runtime work and return structured
    results.
 
+Agent run signatures bind `agentSource` together with the runtime target kind,
+environment ID, and branch ID. Shared runtimes revalidate a named source's
+environment name/ID pair against project metadata before loading secrets.
+The operator proxy verifies the body hash before reconstructing preview branch
+ID/name pairs or a project's default branch name for the runtime; inbound
+branch headers are discarded. The runtime compares the signed source with that
+trusted context, so default branches are not assumed to be named `main`.
+Branch and bare-release sources have no authoritative environment identity and
+therefore receive no project environment variables.
+
 ## Boundaries
 
 - Control-plane channels are signed management surfaces, not public app routes.

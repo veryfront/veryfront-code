@@ -748,6 +748,49 @@ export async function verifyControlPlaneJwsSignature(
   );
 }
 
+/**
+ * Verify a control-plane JWS against its request body without depending on the
+ * extension-backed schema registry.
+ *
+ * The split proxy uses this after it has resolved the project audience. It
+ * needs the signed body binding before it may turn target metadata in the body
+ * into trusted downstream headers, while the authoritative request handler
+ * still performs the full schema-backed verification.
+ */
+export async function verifyControlPlaneJwsRequestSignature(
+  jws: string,
+  body: string,
+  options: {
+    audience: string;
+    expectedProjectId?: string;
+    publicKeyPem: string;
+    maxAgeSeconds: number;
+    requestMethod: string;
+    requestPath: string;
+  },
+): Promise<boolean> {
+  let requestBinding: { method: string; path: string };
+  try {
+    requestBinding = readExpectedRequestBinding(options);
+  } catch {
+    return false;
+  }
+
+  return await verifySignedRequestJwsSignature(
+    jws,
+    parseControlPlaneSignatureClaims,
+    {
+      audience: options.audience,
+      expectedProjectId: options.expectedProjectId,
+      maxAgeSeconds: options.maxAgeSeconds,
+      publicKeyPem: options.publicKeyPem,
+      requestBinding,
+      expectedRequestHash: await sha256Base64url(body),
+      requestHashClaimKey: "request_hash",
+    },
+  );
+}
+
 async function verifySignedRequestJwsSignature(
   jws: string,
   parseClaims: (encodedPayload: string) => SignedRequestClaims,
@@ -756,6 +799,8 @@ async function verifySignedRequestJwsSignature(
     expectedProjectId?: string;
     publicKeyPem: string;
     maxAgeSeconds: number;
+    expectedRequestHash?: string;
+    requestHashClaimKey?: string;
     requestBinding?: {
       method: string;
       path: string;
@@ -803,6 +848,15 @@ async function verifySignedRequestJwsSignature(
         options.requestBinding.method,
         options.requestBinding.path,
       );
+    }
+    if (
+      options.expectedRequestHash !== undefined &&
+      (
+        options.requestHashClaimKey === undefined ||
+        claims[options.requestHashClaimKey] !== options.expectedRequestHash
+      )
+    ) {
+      return false;
     }
     if (
       !Number.isSafeInteger(claims.iat) ||
