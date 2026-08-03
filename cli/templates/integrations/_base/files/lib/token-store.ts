@@ -4,7 +4,11 @@
  * The same store owns authorization state and tokens. This is required for
  * callbacks and token refresh to work across production workers. Configure a
  * durable, extension-owned RefreshCapableTokenStore before the first OAuth
- * request in production. The built-in memory store is development-only.
+ * request in production. The built-in memory store is for development and test.
+ *
+ * To build that durable store on top of a plain key-value service with
+ * AES-256-GCM encryption at rest, see `encrypted-token-store.ts` (reference
+ * backends live in `token-store-examples.ts`).
  */
 
 import {
@@ -38,11 +42,27 @@ const REQUIRED_STORE_METHODS = [
   "setState",
   "consumeState",
 ] as const;
+const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1_000;
 
-function isProductionRuntime(): boolean {
-  if (typeof process !== "undefined") return process.env?.NODE_ENV === "production";
-  return (globalThis as { Deno?: { env?: { get?: (name: string) => string | undefined } } }).Deno
-    ?.env?.get?.("NODE_ENV") === "production";
+function runtimeMode(): string | undefined {
+  try {
+    if (typeof process !== "undefined" && process.env) return process.env.NODE_ENV;
+  } catch {
+    // Deno exposes the Node-compatible `process` global even when env access
+    // is denied. Preserve the fail-closed mode decision in that runtime.
+    return undefined;
+  }
+  try {
+    return (globalThis as { Deno?: { env?: { get?: (name: string) => string | undefined } } })
+      .Deno?.env?.get?.("NODE_ENV");
+  } catch {
+    return undefined;
+  }
+}
+
+function allowsProcessLocalStorage(): boolean {
+  const mode = runtimeMode();
+  return mode === "development" || mode === "test";
 }
 
 function assertRefreshCapableStore(
@@ -131,6 +151,76 @@ export function createTokenStore(store: RefreshCapableTokenStore): TokenStore {
   };
 }
 
+function unexpiredAccessToken(token: OAuthToken, now = Date.now()): string | null {
+  return token.expiresAt === undefined || now < token.expiresAt ? token.accessToken : null;
+}
+
+/**
+ * Resolve an access token, refreshing it under the store's distributed lock.
+ * Revisioned compare-and-set prevents a refresh from overwriting a concurrent
+ * reconnect or revocation that did not participate in the refresh lock.
+ */
+export async function getRefreshableAccessToken(
+  store: TokenStore,
+  serviceId: string,
+  userId: string,
+  refresh: (refreshToken: string) => Promise<OAuthToken>,
+): Promise<string | null> {
+  const initial = await store.getTokenSnapshot(serviceId, userId);
+  if (!initial) return null;
+
+  const initialToken = initial.tokens;
+  const now = Date.now();
+  if (
+    initialToken.expiresAt === undefined ||
+    now < initialToken.expiresAt - TOKEN_REFRESH_BUFFER_MS
+  ) {
+    return initialToken.accessToken;
+  }
+  if (!initialToken.refreshToken) return unexpiredAccessToken(initialToken, now);
+
+  return await store.withTokenRefreshLock(serviceId, userId, async () => {
+    // Another worker may have refreshed this slot while this caller waited.
+    const current = await store.getTokenSnapshot(serviceId, userId);
+    if (!current) return null;
+
+    const token = current.tokens;
+    const lockedNow = Date.now();
+    if (
+      token.expiresAt === undefined ||
+      lockedNow < token.expiresAt - TOKEN_REFRESH_BUFFER_MS
+    ) {
+      return token.accessToken;
+    }
+    if (!token.refreshToken) return unexpiredAccessToken(token, lockedNow);
+
+    let refreshed: OAuthToken;
+    try {
+      refreshed = await refresh(token.refreshToken);
+    } catch {
+      // A provider failure must not unconditionally delete a row that may
+      // have been replaced by a concurrent reconnect outside the lock.
+      const latest = await store.getTokens(serviceId, userId);
+      return latest ? unexpiredAccessToken(latest) : null;
+    }
+
+    if (refreshed.refreshToken === undefined) {
+      refreshed = { ...refreshed, refreshToken: token.refreshToken };
+    }
+
+    const replaced = await store.compareAndSetTokens(
+      serviceId,
+      userId,
+      current.revision,
+      refreshed,
+    );
+    if (replaced) return refreshed.accessToken;
+
+    const latest = await store.getTokens(serviceId, userId);
+    return latest ? unexpiredAccessToken(latest) : null;
+  });
+}
+
 let configuredTokenStore: TokenStore | null = null;
 let defaultTokenStore: TokenStore | null = null;
 
@@ -146,17 +236,20 @@ export function configureTokenStore(store: RefreshCapableTokenStore): void {
   if (configuredTokenStore || defaultTokenStore) {
     throw new Error("OAuth token store must be configured exactly once before first use");
   }
-  if (isProductionRuntime() && store instanceof MemoryTokenStore) {
-    throw new Error("MemoryTokenStore is not allowed for production OAuth storage");
+  if (!allowsProcessLocalStorage() && store instanceof MemoryTokenStore) {
+    throw new Error(
+      "MemoryTokenStore is allowed only when NODE_ENV is explicitly development or test",
+    );
   }
   configuredTokenStore = createTokenStore(store);
 }
 
 /** Resolve the development default without doing work during module import. */
 export function createDefaultTokenStore(): TokenStore {
-  if (isProductionRuntime()) {
+  if (!allowsProcessLocalStorage()) {
     throw new Error(
-      "OAuth token storage is not configured for production. " +
+      "OAuth token storage is not configured. The in-memory default is allowed " +
+        "only when NODE_ENV is explicitly development or test. " +
         "Configure an extension-owned RefreshCapableTokenStore with " +
         "configureTokenStore() before the first OAuth request.",
     );
