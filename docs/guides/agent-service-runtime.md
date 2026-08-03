@@ -185,6 +185,54 @@ If `mcpServers` is omitted, the Veryfront Cloud preset includes
 `veryfrontApiMcpServer()` by default. Pass `mcpServers: []` to run without
 remote MCP tools.
 
+### Reach trusted deployment-local MCP servers
+
+The default remote MCP source uses guarded outbound networking. Keep that
+default for third-party, request-derived, and tenant-configured endpoints.
+
+A separately deployed agent service may need to reach a trusted MCP server on
+a private cluster address. In that case, capture the host transport and the
+exact allowed endpoints once at startup. Use the host transport only for those
+immutable endpoints and preserve the guarded source for everything else:
+
+```ts
+import { startAgentService } from "veryfront/agent";
+import {
+  createRemoteMCPToolSource,
+  createRemoteMCPToolSourceWithTransport,
+  type RemoteMCPToolSourceConfig,
+} from "veryfront/tool";
+
+function requiredUrl(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing ${name}`);
+  return new URL(value).toString();
+}
+
+const hostFetch = globalThis.fetch.bind(globalThis);
+const trustedEndpoints = new Set([
+  requiredUrl("VERYFRONT_MCP_URL"),
+  requiredUrl("VERYFRONT_STUDIO_MCP_URL"),
+]);
+
+await startAgentService({
+  createRemoteToolSource(config: RemoteMCPToolSourceConfig) {
+    if (
+      typeof config.endpoint === "string" &&
+      trustedEndpoints.has(new URL(config.endpoint).toString())
+    ) {
+      return createRemoteMCPToolSourceWithTransport(config, hostFetch);
+    }
+    return createRemoteMCPToolSource(config);
+  },
+});
+```
+
+Do not use a suffix, hostname-only, or private-address check here. The
+privileged path must match the complete normalized URL from deployment
+configuration. Never route a callback endpoint or a per-request URL through
+the host transport.
+
 ## Refresh runtime state
 
 Use `resolveRuntimeState` when a long-lived service run must refresh

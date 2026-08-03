@@ -134,7 +134,7 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `isWithinDirectory` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/path-utils.ts#L22) |
 | `memoize` | Memoize. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L79) |
 | `memoizeAsync` | Memoize async. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L71) |
-| `memoizeHash` | FNV-1a hash algorithm for fast cache key generation. 10-15x faster than JSON.stringify() and uses 70-80% less memory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L90) |
+| `memoizeHash` | FNV-1a hash algorithm for fast, framed cache key generation. 10-15x faster than JSON.stringify() and uses 70-80% less memory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L90) |
 | `normalizePath` | Normalizes path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/path-utils.ts#L11) |
 | `parallelMap` | Run parallel map. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/parallel.ts#L52) |
 | `redactForSerialization` | Returns a JSON-safe redacted snapshot of `context`. Sensitive keys are masked, nested values are traversed, BigInts become decimal strings, non-finite numbers become `null`, and unsupported or unreadable values fail closed. Objects with `toJSON` are snapshotted exactly once before redaction. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/redact.ts#L425) |
@@ -147,7 +147,7 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `sanitizeUrlForSpan` | Return the URL form safe to attach to observability span attributes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/redact.ts#L857) |
 | `shortHash` | Create short hash. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L51) |
 | `simpleHash` | Create simple hash. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L34) |
-| `sleep` | Resolve after `ms` milliseconds; rejects with `abortSignal.reason` if aborted first. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/sleep.ts#L2) |
+| `sleep` | Return a promise that resolves after `ms` milliseconds. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/sleep.ts#L10) |
 | `startRequest` | Request payload for start. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/perf-timer.ts#L36) |
 | `startTimer` | Starts timer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/perf-timer.ts#L44) |
 | `throwIfAborted` | Throw the normalized abort reason when a signal has already been aborted. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/abort.ts#L14) |

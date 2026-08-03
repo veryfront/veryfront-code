@@ -118,6 +118,22 @@ describe("guide content contracts", () => {
     assertStringIncludes(reference, "### `HostedAgentServiceDetachedExecutionInput`");
   });
 
+  it("keeps privileged MCP transport limited to deployment-owned exact endpoints", async () => {
+    const guide = await Deno.readTextFile(
+      "docs/guides/agent-service-runtime.md",
+    );
+    const reference = await Deno.readTextFile(
+      "docs/api-reference/veryfront/tool.md",
+    );
+
+    assertStringIncludes(guide, "exact allowed endpoints once at startup");
+    assertStringIncludes(guide, "createRemoteMCPToolSourceWithTransport");
+    assertStringIncludes(guide, "return createRemoteMCPToolSource(config)");
+    assertStringIncludes(guide, "complete normalized URL");
+    assertStringIncludes(guide, "Never route a callback endpoint");
+    assertStringIncludes(reference, "`createRemoteMCPToolSourceWithTransport`");
+  });
+
   it("documents deploy URL output for the first deploy path", async () => {
     const guide = await Deno.readTextFile("docs/guides/deploying.md");
 

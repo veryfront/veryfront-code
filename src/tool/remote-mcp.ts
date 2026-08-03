@@ -946,8 +946,10 @@ function createRemoteMCPToolSourceWithFetch(
  * Create a remote MCP source with transport authority supplied by the caller.
  *
  * This is a deployment-composition seam: the framework does not capture or
- * grant network authority here. Callers remain responsible for constraining
- * the supplied transport and deciding which source configurations may use it.
+ * grant network authority here. A separately deployed, trusted host may use
+ * it for exact endpoints from immutable deployment configuration. Keep
+ * request- or tenant-derived endpoints on {@link createRemoteMCPToolSource},
+ * which preserves the framework's guarded outbound transport.
  */
 export function createRemoteMCPToolSourceWithTransport(
   config: RemoteMCPToolSourceConfig,
@@ -956,7 +958,7 @@ export function createRemoteMCPToolSourceWithTransport(
   return createRemoteMCPToolSourceWithFetch(config, requestFetch);
 }
 
-/** Create a remote MCP source for a tenant-configurable endpoint. */
+/** Create a remote MCP source with the framework's guarded outbound transport. */
 export function createRemoteMCPToolSource(
   config: RemoteMCPToolSourceConfig,
 ): RemoteToolSource {
