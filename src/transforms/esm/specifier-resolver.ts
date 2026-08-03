@@ -29,6 +29,16 @@ import {
 /** Function signature for caching an HTTP module and returning its local path. */
 export type CacheHttpModuleFn = (url: string, options: CacheOptions) => Promise<string | null>;
 
+function parseHttpBase(value?: string): URL | undefined {
+  if (!value || !/^https?:\/\//i.test(value)) return undefined;
+
+  try {
+    return new URL(value);
+  } catch {
+    return undefined;
+  }
+}
+
 function canonicalizeHttpSpecifier(
   specifier: string,
   baseUrl?: string,
@@ -37,8 +47,7 @@ function canonicalizeHttpSpecifier(
   if (/^https?:\/\//i.test(specifier)) return new URL(specifier).toString();
   if (!specifier.startsWith("//")) return specifier;
 
-  const resolutionBase = moduleServerOrigin ??
-    (baseUrl && /^https?:\/\//i.test(baseUrl) ? baseUrl : undefined);
+  const resolutionBase = parseHttpBase(baseUrl) ?? parseHttpBase(moduleServerOrigin);
   if (!resolutionBase) {
     throw new Error(`Cannot resolve protocol-relative HTTP module ${specifier}`);
   }

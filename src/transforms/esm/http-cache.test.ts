@@ -221,6 +221,42 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     });
   }
 
+  it("resolves a nested protocol-relative import against its HTTPS parent", async () => {
+    const parentUrl = "https://93.184.216.34/recursive/parent.js";
+    const childUrl = "https://93.184.216.34/recursive/child.js";
+    const fetchedUrls: string[] = [];
+
+    await withIsolatedHttpCache(
+      "vf-esm-nested-protocol-relative-",
+      ((input) => {
+        const url = String(input);
+        fetchedUrls.push(url);
+        const code = url === parentUrl
+          ? `export { value } from "//93.184.216.34/recursive/child.js";`
+          : `export const value = "child";`;
+        return Promise.resolve(
+          new Response(code, {
+            headers: { "content-type": "application/javascript" },
+          }),
+        );
+      }) as typeof fetch,
+      async (tempDir) => {
+        const result = await cacheHttpImportsToLocal(
+          `export { value } from "${parentUrl}";`,
+          {
+            cacheDir: tempDir,
+            importMap: { imports: {}, scopes: {} },
+            moduleServerOrigin: "http://93.184.216.34:3000",
+          },
+        );
+
+        assertEquals(result.code.includes("file://"), true);
+      },
+    );
+
+    assertEquals(fetchedUrls, [parentUrl, childUrl]);
+  });
+
   it("does not retry permanent HTTP module failures", async () => {
     let fetchCount = 0;
     let bodyCancelled = false;

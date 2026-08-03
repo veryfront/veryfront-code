@@ -104,6 +104,23 @@ describe("transforms/esm/specifier-resolver", () => {
       );
     });
 
+    it("uses the module-server origin when the HTTP parent URL is unusable", async () => {
+      const specifier = "//cdn.example/child.js";
+      const cacheCalls: string[] = [];
+      const result = await buildReplacements(
+        `export { value } from "${specifier}";`,
+        "https://",
+        { ...defaultOptions, moduleServerOrigin: "http://app.example" },
+        async (url) => {
+          cacheCalls.push(url);
+          return "/tmp/cache/http-child.mjs";
+        },
+      );
+
+      assertEquals(cacheCalls, ["http://cdn.example/child.js"]);
+      assertEquals(result.replacements.get(specifier), "./http-child.mjs");
+    });
+
     it("rewrites mapped esm.sh veryfront URLs to local framework modules without caching", async () => {
       const specifier = "https://esm.sh/veryfront@0.1.759/chat";
       const code = `import { Chat } from "${specifier}";`;
