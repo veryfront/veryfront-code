@@ -792,10 +792,10 @@ function decodeUrlParameterName(value: string): string {
  * {@link redactSensitive}, which is key-based, this scrubs secrets embedded in
  * the *value* itself:
  *
- * - URL userinfo: `http://user:pass@host` → `http://user:[REDACTED]@host`
- * - sensitive query params: `?access_token=abc` → `?access_token=[REDACTED]`
- * - credential assignments: `refreshToken=abc` → `refreshToken=[REDACTED]`
- * - common provider tokens: `Using token sk-...` → `Using token [REDACTED]`
+ * - URL userinfo: `https://user:password@example.test/path` -> `https://user:[REDACTED]@example.test/path`
+ * - sensitive query params: `?access_token=abc` -> `?access_token=[REDACTED]`
+ * - credential assignments: `refreshToken=abc` -> `refreshToken=[REDACTED]`
+ * - common provider tokens: `Using token sk-...` -> `Using token [REDACTED]`
  *
  * It is intentionally tolerant: it operates on any string (a DSN, a Mongo URI,
  * an axios error message containing a URL) via regex rather than requiring a

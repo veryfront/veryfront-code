@@ -607,6 +607,55 @@ describe("observability/tracing/service-tracer", () => {
     });
   });
 
+  it("serializes object attributes without inherited toJSON hooks", () => {
+    const originalObjectToJSON = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+    const originalArrayToJSON = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+    Object.defineProperty(Object.prototype, "toJSON", {
+      configurable: true,
+      value() {
+        throw new Error("polluted object serializer");
+      },
+    });
+    Object.defineProperty(Array.prototype, "toJSON", {
+      configurable: true,
+      value() {
+        throw new Error("polluted array serializer");
+      },
+    });
+
+    try {
+      const harness = createHarness();
+      const serviceTracer = createOpenTelemetryServiceTracer({
+        serviceName: "test-service",
+        context: harness.contextApi,
+        trace: harness.traceApi,
+        errorStatusCode: 2,
+      });
+      const span = serviceTracer.tracer.startSpan("manual-operation");
+
+      span.setTag("metadata", {
+        apiKey: "secret",
+        nested: [{ ok: true }],
+      });
+
+      assertEquals(
+        harness.startedSpans[0]?.attributes.metadata,
+        '{"apiKey":"[REDACTED]","nested":[{"ok":true}]}',
+      );
+    } finally {
+      if (originalObjectToJSON) {
+        Object.defineProperty(Object.prototype, "toJSON", originalObjectToJSON);
+      } else {
+        delete (Object.prototype as { toJSON?: unknown }).toJSON;
+      }
+      if (originalArrayToJSON) {
+        Object.defineProperty(Array.prototype, "toJSON", originalArrayToJSON);
+      } else {
+        delete (Array.prototype as { toJSON?: unknown }).toJSON;
+      }
+    }
+  });
+
   it("isolates manual span attribute and finish failures", () => {
     const harness = createHarness();
     const serviceTracer = createOpenTelemetryServiceTracer({
