@@ -134,9 +134,10 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     try {
       const rootElement = document.getElementById("root");
       assert(rootElement, "Expected root element to exist");
-      root = createRoot(rootElement);
+      const createdRoot = createRoot(rootElement);
+      root = createdRoot;
       flushSync(() => {
-        root.render(
+        createdRoot.render(
           <ChatInput.Root
             input=""
             onChange={() => {}}
@@ -682,9 +683,10 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     let customStops = 0;
     let root: Root | undefined;
     try {
-      root = createRoot(document.getElementById("root")!);
+      const createdRoot = createRoot(document.getElementById("root")!);
+      root = createdRoot;
       flushSync(() => {
-        root.render(
+        createdRoot.render(
           <ChatInput.Root input="" onChange={() => {}} isLoading>
             <ChatInput.Stop onClick={() => customStops += 1} />
           </ChatInput.Root>,
@@ -714,9 +716,10 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     try {
       const rootElement = document.getElementById("root");
       assert(rootElement, "Expected root element to exist");
-      root = createRoot(rootElement);
+      const createdRoot = createRoot(rootElement);
+      root = createdRoot;
       flushSync(() => {
-        root.render(
+        createdRoot.render(
           <ChatInput.Root
             input="ready"
             onChange={() => {}}
@@ -881,9 +884,10 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     try {
       const rootElement = document.getElementById("root");
       assert(rootElement, "Expected root element to exist");
-      root = createRoot(rootElement);
+      const createdRoot = createRoot(rootElement);
+      root = createdRoot;
       flushSync(() => {
-        root.render(
+        createdRoot.render(
           <ChatInput.Root
             input="ready"
             onChange={() => {}}
@@ -928,9 +932,10 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     try {
       const rootElement = document.getElementById("root");
       assert(rootElement, "Expected root element to exist");
-      root = createRoot(rootElement);
+      const createdRoot = createRoot(rootElement);
+      root = createdRoot;
       flushSync(() => {
-        root.render(
+        createdRoot.render(
           <ChatInput.Root
             input="ready"
             onChange={() => {}}
@@ -976,9 +981,10 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     try {
       const rootElement = document.getElementById("root");
       assert(rootElement, "Expected root element to exist");
-      root = createRoot(rootElement);
+      const createdRoot = createRoot(rootElement);
+      root = createdRoot;
       flushSync(() => {
-        root.render(
+        createdRoot.render(
           <ChatInput.Root
             input="ready"
             onChange={() => {}}
