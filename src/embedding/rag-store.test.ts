@@ -112,17 +112,24 @@ describe("ragStore", () => {
       });
       const renameDescriptor = Object.getOwnPropertyDescriptor(Deno, "rename");
       assert(renameDescriptor !== undefined);
+      const originalRename = Deno.rename.bind(Deno);
       Object.defineProperty(Deno, "rename", {
         ...renameDescriptor,
-        value: () => Promise.reject(new Error("simulated rename failure")),
+        value: (from: string | URL, to: string | URL) =>
+          String(to) === storagePath
+            ? Promise.reject(new Error("simulated rename failure"))
+            : originalRename(from, to),
       });
 
       try {
-        await assertRejects(
+        const error = await assertRejects(
           () => store.ingest("Must not persist", "replacement content"),
-          Error,
-          "simulated rename failure",
+          VeryfrontError,
+          "could not be read",
         );
+        assert(error instanceof VeryfrontError);
+        assertEquals(error.slug, "rag-store-unavailable");
+        assertEquals(error.message.includes(storagePath), false);
       } finally {
         Object.defineProperty(Deno, "rename", renameDescriptor);
       }
@@ -133,6 +140,403 @@ describe("ragStore", () => {
         entries.push(entry.name);
       }
       assertEquals(entries, ["index.json"]);
+    });
+  });
+
+  it("cleans a partially written unique temp file without touching the live store", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      await Deno.mkdir(join(tempDir, "data"), { recursive: true });
+      const original = JSON.stringify({ documents: [], chunks: [] });
+      await Deno.writeTextFile(storagePath, original);
+      const store = ragStore({ model: "local/test-model", storagePath });
+      const writeDescriptor = Object.getOwnPropertyDescriptor(Deno, "writeTextFile");
+      assert(writeDescriptor !== undefined);
+      const originalWrite = Deno.writeTextFile.bind(Deno);
+      Object.defineProperty(Deno, "writeTextFile", {
+        ...writeDescriptor,
+        value: async (path: string | URL, data: string, options?: Deno.WriteFileOptions) => {
+          if (String(path).includes(".tmp.")) {
+            await originalWrite(path, "partial", options);
+            throw new Error("simulated partial temp write");
+          }
+          await originalWrite(path, data, options);
+        },
+      });
+
+      try {
+        const error = await assertRejects(
+          () => store.ingest("Must not persist", "replacement content"),
+          VeryfrontError,
+          "could not be read",
+        );
+        assert(error instanceof VeryfrontError);
+        assertEquals(error.slug, "rag-store-unavailable");
+        assertEquals(error.message.includes(storagePath), false);
+      } finally {
+        Object.defineProperty(Deno, "writeTextFile", writeDescriptor);
+      }
+
+      assertEquals(await readTextFile(storagePath), original);
+      const entries = await Array.fromAsync(Deno.readDir(join(tempDir, "data")));
+      assertEquals(entries.map((entry) => entry.name), ["index.json"]);
+    });
+  });
+
+  it("cleans an orphaned temp file left by an interrupted process", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      await Deno.mkdir(join(tempDir, "data"), { recursive: true });
+      const original = JSON.stringify({ documents: [], chunks: [] });
+      const orphanPath = `${storagePath}.tmp.${crypto.randomUUID()}`;
+      await Deno.writeTextFile(storagePath, original);
+      await Deno.writeTextFile(orphanPath, "partial");
+
+      const store = ragStore({ model: "local/test-model", storagePath });
+      assertEquals(await store.listDocuments(), []);
+      assertEquals(await readTextFile(storagePath), original);
+      assertEquals(await exists(orphanPath), false);
+    });
+  });
+
+  it("serializes concurrent store instances targeting the same local index", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const first = ragStore({ model: "local/test-model", storagePath });
+      const second = ragStore({ model: "local/test-model", storagePath });
+
+      await Promise.all([
+        first.ingest("First", "first content"),
+        second.ingest("Second", "second content"),
+      ]);
+
+      const persisted = JSON.parse(await readTextFile(storagePath)) as {
+        documents: Array<{ title: string }>;
+      };
+      assertEquals(persisted.documents.map((document) => document.title).sort(), [
+        "First",
+        "Second",
+      ]);
+    });
+  });
+
+  it("serializes concurrent local-index writers in separate processes", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const moduleUrl = new URL("./rag-store.ts", import.meta.url).href;
+      const startAtMs = Date.now() + 250;
+      const commandFor = (title: string) =>
+        new Deno.Command(Deno.execPath(), {
+          args: [
+            "eval",
+            `import { ragStore } from ${JSON.stringify(moduleUrl)};` +
+            `while (Date.now() < ${startAtMs}) await new Promise((resolve) => setTimeout(resolve, 5));` +
+            `await ragStore({backend:"local-json",model:"local/test-model",storagePath:${
+              JSON.stringify(storagePath)
+            }}).ingest(${JSON.stringify(title)},${JSON.stringify(`${title} content`)});`,
+          ],
+          cwd: Deno.cwd(),
+          stdout: "piped",
+          stderr: "piped",
+        });
+
+      const [first, second] = await Promise.all([
+        commandFor("First process").output(),
+        commandFor("Second process").output(),
+      ]);
+      assertEquals(new TextDecoder().decode(first.stderr), "");
+      assertEquals(new TextDecoder().decode(second.stderr), "");
+      assertEquals(first.success, true);
+      assertEquals(second.success, true);
+
+      const persisted = JSON.parse(await readTextFile(storagePath)) as {
+        documents: Array<{ title: string }>;
+      };
+      assertEquals(persisted.documents.map((document) => document.title).sort(), [
+        "First process",
+        "Second process",
+      ]);
+    });
+  });
+
+  it("recovers an expired adjacent store lock before reading", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const lockDirectory = `${storagePath}.veryfront-rag.lock`;
+      const token = crypto.randomUUID();
+      await Deno.mkdir(lockDirectory, { recursive: true });
+      await Deno.writeTextFile(
+        join(lockDirectory, "owner.json"),
+        `${JSON.stringify({ token, createdAtMs: 1 })}\n`,
+      );
+      const leasePath = join(lockDirectory, `${token}.lease`);
+      await Deno.writeTextFile(leasePath, "1\n");
+      await Deno.utime(leasePath, new Date(0), new Date(0));
+      await Deno.writeTextFile(storagePath, JSON.stringify({ documents: [], chunks: [] }));
+
+      const store = ragStore({ model: "local/test-model", storagePath });
+      assertEquals(await store.listDocuments(), []);
+      assertEquals(await exists(lockDirectory), false);
+      assertEquals(await exists(`${lockDirectory}.recovering`), false);
+    });
+  });
+
+  it("recovers a missing lease from immutable owner age without refreshing directory time", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const lockDirectory = `${storagePath}.veryfront-rag.lock`;
+      const token = crypto.randomUUID();
+      await Deno.mkdir(lockDirectory, { recursive: true });
+      await Deno.writeTextFile(
+        join(lockDirectory, "owner.json"),
+        `${JSON.stringify({ token, createdAtMs: 1 })}\n`,
+      );
+      const now = new Date();
+      await Deno.utime(lockDirectory, now, now);
+      await Deno.writeTextFile(storagePath, JSON.stringify({ documents: [], chunks: [] }));
+
+      const store = ragStore({ model: "local/test-model", storagePath });
+      assertEquals(await store.listDocuments(), []);
+      assertEquals(await exists(lockDirectory), false);
+      assertEquals(await exists(`${lockDirectory}.recovering`), false);
+    });
+  });
+
+  it("rejects a stale update when the live index changes before publication", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      await Deno.mkdir(join(tempDir, "data"), { recursive: true });
+      const original = JSON.stringify({ documents: [], chunks: [] });
+      const external = JSON.stringify({
+        documents: [{
+          id: "external",
+          title: "External",
+          source: "external",
+          type: "txt",
+          createdAt: 1,
+        }],
+        chunks: [],
+      });
+      await Deno.writeTextFile(storagePath, original);
+      const store = ragStore({ model: "local/test-model", storagePath });
+      const writeDescriptor = Object.getOwnPropertyDescriptor(Deno, "writeTextFile");
+      assert(writeDescriptor !== undefined);
+      const originalWrite = Deno.writeTextFile.bind(Deno);
+      Object.defineProperty(Deno, "writeTextFile", {
+        ...writeDescriptor,
+        value: async (path: string | URL, data: string, options?: Deno.WriteFileOptions) => {
+          await originalWrite(path, data, options);
+          if (String(path).includes(".tmp.")) await originalWrite(storagePath, external);
+        },
+      });
+
+      try {
+        const error = await assertRejects(
+          () => store.ingest("Stale", "must not overwrite"),
+          VeryfrontError,
+          "changed while an update was in progress",
+        );
+        assert(error instanceof VeryfrontError);
+        assertEquals(error.slug, "rag-store-unavailable");
+      } finally {
+        Object.defineProperty(Deno, "writeTextFile", writeDescriptor);
+      }
+
+      assertEquals(await readTextFile(storagePath), external);
+      const entries = await Array.fromAsync(Deno.readDir(join(tempDir, "data")));
+      assertEquals(entries.map((entry) => entry.name), ["index.json"]);
+    });
+  });
+
+  it("compares exact snapshot bytes before publication", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      await Deno.mkdir(join(tempDir, "data"), { recursive: true });
+      const original = JSON.stringify({ documents: [], chunks: [] });
+      const originalBytes = new TextEncoder().encode(original);
+      const externalBytes = new Uint8Array(originalBytes.byteLength + 3);
+      externalBytes.set([0xef, 0xbb, 0xbf]);
+      externalBytes.set(originalBytes, 3);
+      await Deno.writeFile(storagePath, originalBytes);
+      const store = ragStore({ model: "local/test-model", storagePath });
+      const writeDescriptor = Object.getOwnPropertyDescriptor(Deno, "writeTextFile");
+      assert(writeDescriptor !== undefined);
+      const originalWrite = Deno.writeTextFile.bind(Deno);
+      Object.defineProperty(Deno, "writeTextFile", {
+        ...writeDescriptor,
+        value: async (path: string | URL, data: string, options?: Deno.WriteFileOptions) => {
+          await originalWrite(path, data, options);
+          if (String(path).includes(".tmp.")) await Deno.writeFile(storagePath, externalBytes);
+        },
+      });
+
+      try {
+        const error = await assertRejects(
+          () => store.ingest("Stale bytes", "must not overwrite"),
+          VeryfrontError,
+          "changed while an update was in progress",
+        );
+        assert(error instanceof VeryfrontError);
+        assertEquals(error.slug, "rag-store-unavailable");
+      } finally {
+        Object.defineProperty(Deno, "writeTextFile", writeDescriptor);
+      }
+
+      assertEquals(await Deno.readFile(storagePath), externalBytes);
+    });
+  });
+
+  it("fences a writer that loses its adjacent lock before publication", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const lockDirectory = `${storagePath}.veryfront-rag.lock`;
+      await Deno.mkdir(join(tempDir, "data"), { recursive: true });
+      const original = JSON.stringify({ documents: [], chunks: [] });
+      await Deno.writeTextFile(storagePath, original);
+      const store = ragStore({ model: "local/test-model", storagePath });
+      const writeDescriptor = Object.getOwnPropertyDescriptor(Deno, "writeTextFile");
+      assert(writeDescriptor !== undefined);
+      const originalWrite = Deno.writeTextFile.bind(Deno);
+      Object.defineProperty(Deno, "writeTextFile", {
+        ...writeDescriptor,
+        value: async (path: string | URL, data: string, options?: Deno.WriteFileOptions) => {
+          await originalWrite(path, data, options);
+          if (!String(path).includes(".tmp.")) return;
+          await Deno.remove(lockDirectory, { recursive: true });
+          await Deno.mkdir(lockDirectory);
+          const replacementToken = crypto.randomUUID();
+          await originalWrite(
+            join(lockDirectory, "owner.json"),
+            `${JSON.stringify({ token: replacementToken, createdAtMs: Date.now() })}\n`,
+          );
+          await originalWrite(join(lockDirectory, `${replacementToken}.lease`), "replacement\n");
+        },
+      });
+
+      try {
+        const error = await assertRejects(
+          () => store.ingest("Fenced", "must not overwrite"),
+          VeryfrontError,
+          "could not be read",
+        );
+        assert(error instanceof VeryfrontError);
+        assertEquals(error.slug, "rag-store-unavailable");
+      } finally {
+        Object.defineProperty(Deno, "writeTextFile", writeDescriptor);
+      }
+
+      assertEquals(await readTextFile(storagePath), original);
+      const entries = await Array.fromAsync(Deno.readDir(join(tempDir, "data")));
+      assertEquals(
+        entries.map((entry) => entry.name).filter((name) => name.includes(".tmp.")),
+        [],
+      );
+    });
+  });
+
+  it("cannot publish after losing the lease in the final check-to-rename gap", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const lockDirectory = `${storagePath}.veryfront-rag.lock`;
+      await Deno.mkdir(join(tempDir, "data"), { recursive: true });
+      const original = JSON.stringify({ documents: [], chunks: [] });
+      await Deno.writeTextFile(storagePath, original);
+      const store = ragStore({ model: "local/test-model", storagePath });
+      const renameDescriptor = Object.getOwnPropertyDescriptor(Deno, "rename");
+      assert(renameDescriptor !== undefined);
+      const originalRename = Deno.rename.bind(Deno);
+      Object.defineProperty(Deno, "rename", {
+        ...renameDescriptor,
+        value: async (from: string | URL, to: string | URL) => {
+          if (String(from).includes(".tmp.") && String(to) === storagePath) {
+            await Deno.remove(lockDirectory, { recursive: true });
+            await Deno.mkdir(lockDirectory);
+            const replacementToken = crypto.randomUUID();
+            await Deno.writeTextFile(
+              join(lockDirectory, "owner.json"),
+              `${JSON.stringify({ token: replacementToken, createdAtMs: Date.now() })}\n`,
+            );
+            await Deno.writeTextFile(
+              join(lockDirectory, `${replacementToken}.lease`),
+              "replacement\n",
+            );
+          }
+          await originalRename(from, to);
+        },
+      });
+
+      try {
+        const error = await assertRejects(
+          () => store.ingest("Fenced at rename", "must not overwrite"),
+          VeryfrontError,
+          "could not be read",
+        );
+        assert(error instanceof VeryfrontError);
+        assertEquals(error.slug, "rag-store-unavailable");
+        assertEquals(error.message.includes(storagePath), false);
+      } finally {
+        Object.defineProperty(Deno, "rename", renameDescriptor);
+      }
+
+      assertEquals(await readTextFile(storagePath), original);
+    });
+  });
+
+  it("does not delete replacement ownership created in the release gap", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const lockDirectory = `${storagePath}.veryfront-rag.lock`;
+      await Deno.mkdir(join(tempDir, "data"), { recursive: true });
+      await Deno.writeTextFile(storagePath, JSON.stringify({ documents: [], chunks: [] }));
+      const store = ragStore({ model: "local/test-model", storagePath });
+      const removeDescriptor = Object.getOwnPropertyDescriptor(Deno, "remove");
+      assert(removeDescriptor !== undefined);
+      const originalRemove = Deno.remove.bind(Deno);
+      const replacementToken = crypto.randomUUID();
+      const replacementOwner = `${
+        JSON.stringify({
+          token: replacementToken,
+          createdAtMs: Date.now(),
+        })
+      }\n`;
+      let replacementInjected = false;
+      let recursiveLockCleanupAttempted = false;
+      Object.defineProperty(Deno, "remove", {
+        ...removeDescriptor,
+        value: async (path: string | URL, options?: Deno.RemoveOptions) => {
+          const candidate = String(path);
+          if (candidate.startsWith(lockDirectory) && options?.recursive === true) {
+            recursiveLockCleanupAttempted = true;
+          }
+          const generationMarkerWindow = candidate.startsWith(
+            `${lockDirectory}/.owner.releasing.`,
+          );
+          if (!replacementInjected && generationMarkerWindow) {
+            await originalRemove(lockDirectory, { recursive: true });
+            await Deno.mkdir(lockDirectory);
+            await Deno.writeTextFile(
+              join(lockDirectory, "owner.json"),
+              replacementOwner,
+            );
+            await Deno.writeTextFile(
+              join(lockDirectory, `${replacementToken}.lease`),
+              "replacement\n",
+            );
+            replacementInjected = true;
+          }
+          await originalRemove(path, options);
+        },
+      });
+
+      try {
+        assertEquals(await store.listDocuments(), []);
+      } finally {
+        Object.defineProperty(Deno, "remove", removeDescriptor);
+      }
+
+      assertEquals(replacementInjected, true);
+      assertEquals(recursiveLockCleanupAttempted, false);
+      assertEquals(await readTextFile(join(lockDirectory, "owner.json")), replacementOwner);
     });
   });
 
@@ -220,7 +624,7 @@ describe("ragStore", () => {
       let parseCalls = 0;
       const originalParse = JSON.parse;
       JSON.parse = ((text, reviver) => {
-        parseCalls++;
+        if (text.includes('"documents"') && text.includes('"chunks"')) parseCalls++;
         return originalParse(text, reviver);
       }) as typeof JSON.parse;
 
@@ -369,6 +773,70 @@ describe("ragStore", () => {
     });
   });
 
+  it("fails closed on duplicate document identities before a mutation can discard chunks", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      await Deno.mkdir(join(tempDir, "data"), { recursive: true });
+      const original = JSON.stringify({
+        documents: [
+          { id: "duplicate", title: "First", source: "first", type: "txt", createdAt: 1 },
+          { id: "duplicate", title: "Second", source: "second", type: "txt", createdAt: 2 },
+        ],
+        chunks: [
+          {
+            id: "chunk-first",
+            documentId: "duplicate",
+            text: "first",
+            embedding: [],
+            index: 0,
+          },
+          {
+            id: "chunk-second",
+            documentId: "duplicate",
+            text: "second",
+            embedding: [],
+            index: 1,
+          },
+        ],
+      });
+      await Deno.writeTextFile(storagePath, original);
+      const store = ragStore({ model: "local/test-model", storagePath });
+
+      await assertRejects(
+        () => store.refreshDocument!("duplicate", "replacement"),
+        VeryfrontError,
+        "failed validation",
+      );
+      assertEquals(await readTextFile(storagePath), original);
+    });
+  });
+
+  it("fails closed on chunks that do not belong to a persisted document", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      await Deno.mkdir(join(tempDir, "data"), { recursive: true });
+      const original = JSON.stringify({
+        documents: [],
+        chunks: [{
+          id: "orphan",
+          documentId: "missing",
+          text: "orphaned content",
+          embedding: [],
+          index: 0,
+        }],
+      });
+      await Deno.writeTextFile(storagePath, original);
+      const store = ragStore({ model: "local/test-model", storagePath });
+
+      await assertRejects(
+        () => store.removeDocument("missing"),
+        VeryfrontError,
+        "failed validation",
+      );
+      assertEquals(await readTextFile(storagePath), original);
+    });
+  });
+
   it("fails closed without overwriting malformed JSON", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");
@@ -399,23 +867,69 @@ describe("ragStore", () => {
     });
   });
 
-  it("reports an unreadable store without exposing its path in the message", async () => {
+  it("fails closed on invalid UTF-8 without replacing persisted bytes", async () => {
     await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      await Deno.mkdir(join(tempDir, "data"), { recursive: true });
+      const original = new Uint8Array([0xff, 0xfe, 0xfd]);
+      await Deno.writeFile(storagePath, original);
+      const store = ragStore({ model: "local/test-model", storagePath });
+
+      const error = await assertRejects(
+        () => store.listDocuments(),
+        VeryfrontError,
+        "not valid UTF-8",
+      );
+      assert(error instanceof VeryfrontError);
+      assertEquals(error.slug, "rag-store-corrupt");
+      assertEquals(error.message.includes(storagePath), false);
+      assertEquals(await Deno.readFile(storagePath), original);
+    });
+  });
+
+  it("rejects an oversized index before allocating or parsing its contents", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      await Deno.mkdir(join(tempDir, "data"), { recursive: true });
+      const oversizedBytes = 64 * 1024 * 1024 + 1;
+      await Deno.writeFile(storagePath, new Uint8Array([0x7b]));
+      await Deno.truncate(storagePath, oversizedBytes);
+      const store = ragStore({ model: "local/test-model", storagePath });
+
+      const error = await assertRejects(
+        () => store.listDocuments(),
+        VeryfrontError,
+        "file exceeds size limit",
+      );
+      assert(error instanceof VeryfrontError);
+      assertEquals(error.slug, "rag-store-corrupt");
+      assertEquals(error.message.includes(storagePath), false);
+      assertEquals((await Deno.stat(storagePath)).size, oversizedBytes);
+    });
+  });
+
+  it("rejects a directory store path without deleting matching sibling temps", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "index.json");
+      const siblingTemp = `${storagePath}.tmp.${crypto.randomUUID()}`;
+      await Deno.mkdir(storagePath);
+      await Deno.writeTextFile(siblingTemp, "unrelated sibling bytes");
       const store = ragStore({
         model: "local/test-model",
-        storagePath: tempDir,
+        storagePath,
       });
 
       const error = await assertRejects(
         () => store.listDocuments(),
         VeryfrontError,
-        "could not be read",
+        "must be a regular file or be absent",
       );
 
       assert(error instanceof VeryfrontError);
       assertEquals(error.slug, "rag-store-unavailable");
-      assertEquals(error.message.includes(tempDir), false);
-      assertEquals(error.context, { storagePath: tempDir });
+      assertEquals(error.message.includes(storagePath), false);
+      assertEquals(error.context, { storagePath });
+      assertEquals(await readTextFile(siblingTemp), "unrelated sibling bytes");
     });
   });
 
@@ -802,7 +1316,9 @@ describe("ragStore", () => {
         });
         assertEquals(embeddingVectors.size, 1);
 
-        const listedDocuments = await store.listDocuments() as Array<Record<string, unknown>>;
+        const listedDocuments = await store.listDocuments() as unknown as Array<
+          Record<string, unknown>
+        >;
         assertEquals("filePath" in listedDocuments[0]!, false);
       },
     );
