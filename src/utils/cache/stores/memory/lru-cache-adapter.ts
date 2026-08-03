@@ -83,9 +83,13 @@ export class LRUCacheAdapter implements CacheAdapter {
     this.entryManager = new EntryManager(estimateSizeOf, this.now);
   }
 
-  /** Entries expire exactly at their expiry timestamp. */
+  /**
+   * Entries expire exactly at their expiry timestamp. Delegates to
+   * EvictionManager.isExpired so the boundary semantics have one source of
+   * truth across the cache subsystem.
+   */
   private isExpired(entry: LRUEntry<unknown>, now: number): boolean {
-    return typeof entry.expiry === "number" && now >= entry.expiry;
+    return this.evictionManager.isExpired(entry, undefined, now);
   }
 
   get<T>(key: string): T | undefined {
@@ -200,13 +204,30 @@ export class LRUCacheAdapter implements CacheAdapter {
   }
 
   getStats(): LRUCacheStats {
-    this.cleanupExpired();
+    // Pure expiry view: a stats read must not delete entries or fire onEvict
+    // observers. Expired entries are excluded from every reported figure
+    // (matching keys()/entries()); reclamation stays with cleanupExpired()
+    // and the mutating paths.
+    const now = this.now();
+    let entries = 0;
+    let sizeBytes = 0;
+    const liveTags = new Set<string>();
+
+    for (const node of this.store.values()) {
+      if (this.isExpired(node.entry, now)) continue;
+      entries++;
+      sizeBytes += node.entry.size;
+      if (node.entry.tags) {
+        for (const tag of node.entry.tags) liveTags.add(tag);
+      }
+    }
+
     return {
-      entries: this.store.size,
-      sizeBytes: this.currentSize,
+      entries,
+      sizeBytes,
       maxEntries: this.maxEntries,
       maxSizeBytes: this.maxSizeBytes,
-      tags: this.tagIndex.size,
+      tags: liveTags.size,
     };
   }
 

@@ -1,11 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { buildMdxModuleCacheIdentity } from "./module-writer.ts";
+import { __moduleWriterInternals, buildMdxModuleCacheIdentity } from "./module-writer.ts";
 import { mdxRenderer } from "../index.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/deno.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
+import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import type { MDXModule } from "../types.ts";
 
 function cacheKeyForDependencies(
   dependencies: Readonly<Record<string, string>>,
@@ -142,5 +147,90 @@ describe("MDX root module cache identity", () => {
       const esbuild = await import("veryfront/extensions/bundler");
       await esbuild.stop();
     }
+  });
+});
+
+describe("verifyMdxCacheFile", () => {
+  const { verifyMdxCacheFile } = __moduleWriterInternals;
+
+  const FILE_STAT: FileInfo = {
+    isFile: true,
+    isDirectory: false,
+    isSymlink: false,
+    size: 100,
+    mtime: null,
+  };
+
+  function filesystemError(message: string, code: string): Error & { code: string } {
+    return Object.assign(new Error(message), { code });
+  }
+
+  function createStatFs(stat: FileSystem["stat"]): FileSystem {
+    return { stat } as FileSystem;
+  }
+
+  function createContext(): { moduleCache: LRUCache<string, MDXModule> } {
+    return { moduleCache: new LRUCache<string, MDXModule>({ maxEntries: 10 }) };
+  }
+
+  it("returns true when the cache file exists", async () => {
+    const result = await verifyMdxCacheFile(
+      createStatFs(() => Promise.resolve(FILE_STAT)),
+      "/cache/module.mjs",
+      createContext(),
+      "ns:hash",
+    );
+
+    assertEquals(result, true);
+  });
+
+  it("returns false when the cache file is genuinely absent", async () => {
+    const result = await verifyMdxCacheFile(
+      createStatFs(() => Promise.reject(filesystemError("not found", "ENOENT"))),
+      "/cache/module.mjs",
+      createContext(),
+      "ns:hash",
+    );
+
+    assertEquals(result, false);
+  });
+
+  it("wraps operational stat failures in CACHE_ERROR with the original cause", async () => {
+    const original = filesystemError("permission denied", "EACCES");
+
+    const error = await assertRejects(
+      () =>
+        verifyMdxCacheFile(
+          createStatFs(() => Promise.reject(original)),
+          "/cache/module.mjs",
+          createContext(),
+          "ns:hash",
+        ),
+      VeryfrontError,
+      "MDX module cache file inspection failed",
+    ) as VeryfrontError;
+
+    assertEquals(error.slug, "cache-error");
+    assertEquals(error.cause, original);
+  });
+
+  it("invalidates the stale module index entry on operational stat failures", async () => {
+    const context = createContext();
+    context.moduleCache.set("ns:hash", {} as MDXModule);
+    context.moduleCache.set("ns:other", {} as MDXModule);
+
+    await assertRejects(
+      () =>
+        verifyMdxCacheFile(
+          createStatFs(() => Promise.reject(filesystemError("io error", "EIO"))),
+          "/cache/module.mjs",
+          context,
+          "ns:hash",
+        ),
+      VeryfrontError,
+    );
+
+    assertEquals(context.moduleCache.has("ns:hash"), false);
+    assertEquals(context.moduleCache.has("ns:other"), true);
   });
 });

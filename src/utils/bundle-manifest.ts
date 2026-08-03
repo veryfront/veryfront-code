@@ -45,11 +45,18 @@ export interface BundleManifestStore {
   getStats(): Promise<BundleManifestStats>;
 }
 
+/** Minimum interval between full expired-metadata sweeps (amortized on writes). */
+export const BUNDLE_MANIFEST_SWEEP_INTERVAL_MS = 30_000;
+
 export class InMemoryBundleManifestStore implements BundleManifestStore {
   private metadata = new Map<string, { value: BundleMetadata; expiry?: number }>();
   private code = new Map<string, { value: BundleCode; expiry?: number }>();
   private sourceIndex = new Map<string, Set<string>>();
-  private codeReferenceCounts = new Map<string, number>();
+  // codeHash → metadata keys holding a reference. Each key holds at most one
+  // reference per hash, so set size is the reference count and the members
+  // let reads prune only the metadata entries relevant to one hash.
+  private codeReferences = new Map<string, Set<string>>();
+  private lastExpiredSweepAt = Date.now();
 
   async getBundleMetadata(key: string): Promise<BundleMetadata | undefined> {
     const entry = this.metadata.get(key);
@@ -64,15 +71,16 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
   }
 
   async setBundleMetadata(key: string, metadata: BundleMetadata, ttlMs?: number): Promise<void> {
+    this.sweepExpiredMetadataIfDue();
     const expiry = ttlMs != null ? Date.now() + ttlMs : undefined;
     const snapshot = structuredClone(metadata);
     const previous = this.metadata.get(key)?.value;
 
     if (!previous) {
-      this.incrementCodeReference(snapshot.codeHash);
+      this.addCodeReference(snapshot.codeHash, key);
     } else if (previous.codeHash !== snapshot.codeHash) {
-      this.decrementCodeReference(previous.codeHash);
-      this.incrementCodeReference(snapshot.codeHash);
+      this.removeCodeReference(previous.codeHash, key);
+      this.addCodeReference(snapshot.codeHash, key);
     }
 
     if (previous && previous.source !== snapshot.source) {
@@ -87,7 +95,10 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
   }
 
   async getBundleCode(hash: string): Promise<BundleCode | undefined> {
-    this.pruneExpiredMetadata();
+    // Only the metadata entries referencing this hash decide its liveness, so
+    // prune those lazily instead of sweeping the entire metadata map on every
+    // per-render read. Full sweeps are amortized onto writes.
+    this.pruneExpiredReferencesTo(hash);
     const entry = this.code.get(hash);
     if (!entry) return undefined;
 
@@ -96,7 +107,7 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
     if (
       entry.expiry != null &&
       Date.now() >= entry.expiry &&
-      !this.codeReferenceCounts.has(hash)
+      !this.codeReferences.has(hash)
     ) {
       this.code.delete(hash);
       return undefined;
@@ -106,6 +117,7 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
   }
 
   async setBundleCode(hash: string, code: BundleCode, ttlMs?: number): Promise<void> {
+    this.sweepExpiredMetadataIfDue();
     const expiry = ttlMs != null ? Date.now() + ttlMs : undefined;
     this.code.set(hash, { value: structuredClone(code), expiry });
   }
@@ -129,7 +141,7 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
     this.metadata.clear();
     this.code.clear();
     this.sourceIndex.clear();
-    this.codeReferenceCounts.clear();
+    this.codeReferences.clear();
   }
 
   async isAvailable(): Promise<boolean> {
@@ -137,12 +149,17 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
   }
 
   async getStats(): Promise<BundleManifestStats> {
-    this.pruneExpiredMetadata();
+    // Non-mutating expiry view: expired entries are excluded from the
+    // aggregate without paying a pruning sweep on this read path.
+    const now = Date.now();
+    let totalBundles = 0;
     let totalSize = 0;
     let oldestBundle: number | undefined;
     let newestBundle: number | undefined;
 
-    for (const { value } of this.metadata.values()) {
+    for (const { value, expiry } of this.metadata.values()) {
+      if (expiry != null && now >= expiry) continue;
+      totalBundles++;
       totalSize += value.size;
       oldestBundle = oldestBundle == null
         ? value.compiledAt
@@ -153,32 +170,60 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
     }
 
     return {
-      totalBundles: this.metadata.size,
+      totalBundles,
       totalSize,
       oldestBundle,
       newestBundle,
     };
   }
 
-  private incrementCodeReference(codeHash: string): void {
-    const count = this.codeReferenceCounts.get(codeHash) ?? 0;
-    this.codeReferenceCounts.set(codeHash, count + 1);
+  private addCodeReference(codeHash: string, key: string): void {
+    const refs = this.codeReferences.get(codeHash) ?? new Set<string>();
+    refs.add(key);
+    this.codeReferences.set(codeHash, refs);
   }
 
-  private pruneExpiredMetadata(now = Date.now()): void {
+  /**
+   * Drop expired metadata entries referencing one code hash so the reference
+   * check in getBundleCode stays trustworthy without a full-map sweep.
+   */
+  private pruneExpiredReferencesTo(hash: string, now = Date.now()): void {
+    const refs = this.codeReferences.get(hash);
+    if (!refs) return;
+
+    for (const key of [...refs]) {
+      const entry = this.metadata.get(key);
+      if (!entry) {
+        // Defensive: a reference without metadata is stale bookkeeping.
+        this.removeCodeReference(hash, key);
+        continue;
+      }
+      if (entry.expiry != null && now >= entry.expiry) this.removeMetadata(key);
+    }
+  }
+
+  /**
+   * Full expired-metadata sweep, amortized: runs on writes at most once per
+   * BUNDLE_MANIFEST_SWEEP_INTERVAL_MS so unread expired entries cannot pin
+   * memory forever while per-render reads stay off the O(all-metadata) path.
+   */
+  private sweepExpiredMetadataIfDue(now = Date.now()): void {
+    if (now - this.lastExpiredSweepAt < BUNDLE_MANIFEST_SWEEP_INTERVAL_MS) return;
+    this.lastExpiredSweepAt = now;
+
     for (const [key, entry] of this.metadata) {
       if (entry.expiry != null && now >= entry.expiry) this.removeMetadata(key);
     }
   }
 
-  private decrementCodeReference(codeHash: string): void {
-    const count = this.codeReferenceCounts.get(codeHash);
-    if (count != null && count > 1) {
-      this.codeReferenceCounts.set(codeHash, count - 1);
-      return;
+  private removeCodeReference(codeHash: string, key: string): void {
+    const refs = this.codeReferences.get(codeHash);
+    if (refs) {
+      refs.delete(key);
+      if (refs.size > 0) return;
+      this.codeReferences.delete(codeHash);
     }
 
-    this.codeReferenceCounts.delete(codeHash);
     this.code.delete(codeHash);
   }
 
@@ -188,7 +233,7 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
 
     this.metadata.delete(key);
     this.removeSourceReference(key, metadata.source);
-    this.decrementCodeReference(metadata.codeHash);
+    this.removeCodeReference(metadata.codeHash, key);
     return metadata;
   }
 

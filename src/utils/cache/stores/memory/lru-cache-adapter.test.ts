@@ -259,6 +259,30 @@ describe("LRUCacheAdapter", () => {
       expect(stats.tags).toBe(1);
       expect(retainedSize).toBeGreaterThan(0);
     });
+
+    it("does not mutate the cache or fire onEvict from a stats read", () => {
+      let now = 100;
+      const evicted: string[] = [];
+      const cacheWithClock = new LRUCacheAdapter({
+        maxEntries: 5,
+        maxSizeBytes: 1024,
+        now: () => now,
+        onEvict: (key) => {
+          evicted.push(key);
+        },
+      });
+      cacheWithClock.set("expired", "value", 10);
+      cacheWithClock.set("fresh", "value", 100);
+      now = 110;
+
+      expect(cacheWithClock.getStats().entries).toBe(1);
+
+      // The stats read is pure: no observer fired, and the expired entry is
+      // still present internally for the mutating cleanup path to reclaim.
+      expect(evicted).toEqual([]);
+      expect(cacheWithClock.cleanupExpired()).toBe(1);
+      expect(evicted).toEqual(["expired"]);
+    });
   });
 
   describe("onEvict callback", () => {

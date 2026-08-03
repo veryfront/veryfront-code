@@ -73,6 +73,7 @@ function restoreManagedEnv(): void {
 describe("cache-dir", () => {
   afterEach(() => {
     restoreManagedEnv();
+    __cacheDirInternals.resetNodeModulesLinkState();
     for (const root of nodeCacheRoots) {
       rmSync(root, { recursive: true, force: true });
     }
@@ -235,19 +236,46 @@ describe("cache-dir", () => {
       assertFrameworkNodeModulesLink(secondRoot);
     });
 
-    it("should deduplicate concurrent callers and release completed operations", async () => {
+    it("should deduplicate concurrent callers and memoize verified roots", async () => {
       const cacheRoot = makeNodeCacheRoot();
 
-      await runWithCacheDir(
+      const results = await runWithCacheDir(
         cacheRoot,
         () => Promise.all(Array.from({ length: 20 }, () => ensureCacheNodeModules())),
       );
+      assertEquals(results, Array.from({ length: 20 }, () => true));
       assertFrameworkNodeModulesLink(cacheRoot);
 
+      // A verified root is memoized: later callers succeed without re-running
+      // the sync link inspection, even if the link is racily removed.
       unlinkSync(join(cacheRoot, "node_modules"));
-      await runWithCacheDir(cacheRoot, ensureCacheNodeModules);
+      assertEquals(await runWithCacheDir(cacheRoot, ensureCacheNodeModules), true);
 
+      // Resetting the memo restores self-healing for the same root.
+      __cacheDirInternals.resetNodeModulesLinkState();
+      assertEquals(await runWithCacheDir(cacheRoot, ensureCacheNodeModules), true);
       assertFrameworkNodeModulesLink(cacheRoot);
+    });
+
+    it("should report failure when the link cannot be created", async () => {
+      const cacheRoot = makeNodeCacheRoot();
+      const blocker = join(cacheRoot, "blocker");
+      writeFileSync(blocker, "not a directory");
+      const impossibleCacheBase = join(blocker, "nested");
+
+      assertEquals(
+        await runWithCacheDir(impossibleCacheBase, ensureCacheNodeModules),
+        false,
+      );
+
+      // A failed root is not memoized as verified; once the obstruction is
+      // gone the next call self-heals and reports success.
+      unlinkSync(blocker);
+      assertEquals(
+        await runWithCacheDir(impossibleCacheBase, ensureCacheNodeModules),
+        true,
+      );
+      assertFrameworkNodeModulesLink(impossibleCacheBase);
     });
 
     it("should replace wrong and dangling symlinks", async () => {

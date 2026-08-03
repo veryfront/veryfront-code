@@ -5,6 +5,7 @@ import { delay } from "#std/async.ts";
 import { FakeTime } from "#std/testing/time";
 import { scaleMs } from "#veryfront/testing/timing.ts";
 import {
+  BUNDLE_MANIFEST_SWEEP_INTERVAL_MS,
   type BundleCode,
   type BundleMetadata,
   computeCodeHash,
@@ -429,6 +430,68 @@ describe("InMemoryBundleManifestStore", () => {
     assertEquals(await store.getBundleCode(metadata.codeHash), undefined);
     assertEquals(await store.invalidateSource(metadata.source), 0);
     assertEquals((await store.getStats()).totalBundles, 0);
+  });
+
+  it("excludes expired metadata from stats without a pruning sweep", async () => {
+    using time = new FakeTime();
+    const store = new InMemoryBundleManifestStore();
+    const now = Date.now();
+    const expiring: BundleMetadata = {
+      hash: "expiring-hash",
+      codeHash: "expiring-code",
+      size: 100,
+      compiledAt: now - 1000,
+      source: "expiring.mdx",
+      mode: "development",
+    };
+    const durable: BundleMetadata = {
+      hash: "durable-hash",
+      codeHash: "durable-code",
+      size: 50,
+      compiledAt: now,
+      source: "durable.mdx",
+      mode: "development",
+    };
+
+    await store.setBundleCode(expiring.codeHash, { code: "export default 1" }, 10);
+    await store.setBundleMetadata("expiring", expiring, 10);
+    await store.setBundleMetadata("durable", durable);
+    await time.tickAsync(10);
+
+    const stats = await store.getStats();
+    assertEquals(stats.totalBundles, 1);
+    assertEquals(stats.totalSize, durable.size);
+    assertEquals(stats.oldestBundle, durable.compiledAt);
+    assertEquals(stats.newestBundle, durable.compiledAt);
+
+    // The expired entry was excluded from the view, never served, and its
+    // code is not resolvable either.
+    assertEquals(await store.getBundleMetadata("expiring"), undefined);
+    assertEquals(await store.getBundleCode(expiring.codeHash), undefined);
+    assertEquals(await store.getBundleMetadata("durable"), durable);
+  });
+
+  it("sweeps unread expired metadata on writes after the sweep interval", async () => {
+    using time = new FakeTime();
+    const store = new InMemoryBundleManifestStore();
+    const stale: BundleMetadata = {
+      hash: "stale-hash",
+      codeHash: "stale-code",
+      size: 10,
+      compiledAt: Date.now(),
+      source: "stale.mdx",
+      mode: "development",
+    };
+
+    await store.setBundleMetadata("stale", stale, 10);
+    await time.tickAsync(BUNDLE_MANIFEST_SWEEP_INTERVAL_MS + 1);
+
+    // An unrelated write amortizes the full sweep; the expired entry must be
+    // gone from the source index without ever having been read.
+    await store.setBundleMetadata("fresh", { ...stale, hash: "fresh-hash", source: "fresh.mdx" });
+
+    assertEquals(await store.invalidateSource(stale.source), 0);
+    assertEquals((await store.getStats()).totalBundles, 1);
   });
 
   it("delete bundle", async () => {

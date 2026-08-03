@@ -134,6 +134,41 @@ async function cacheHttpImports(
   return result.code;
 }
 
+/**
+ * Verify an MDX module cache file, mirroring the SSR loader's handling of the
+ * throwing `verifyCacheFileExists`: a genuinely absent file returns `false`,
+ * while an operational stat failure (EACCES, EIO, ...) drops the stale
+ * in-memory module index entry — so a repaired filesystem cannot keep routing
+ * requests to untrusted metadata — and is rethrown inside the CACHE_ERROR
+ * taxonomy with the original error attached as `cause`.
+ */
+async function verifyMdxCacheFile(
+  localFs: Parameters<typeof verifyCacheFileExists>[0],
+  filePath: string,
+  context: Pick<ESMLoaderContext, "moduleCache">,
+  compositeKey: string,
+): Promise<boolean> {
+  try {
+    return await verifyCacheFileExists(localFs, filePath, "MDX-ESM-LOADER");
+  } catch (error) {
+    try {
+      context.moduleCache.delete(compositeKey);
+    } catch (invalidationError) {
+      logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to invalidate module cache entry`, {
+        compositeKey,
+        error: invalidationError,
+      });
+    }
+    throw CACHE_ERROR.create({
+      detail: `MDX module cache file inspection failed: ${filePath}`,
+      cause: error,
+    });
+  }
+}
+
+/** Internal test seam for cache verification error handling. */
+export const __moduleWriterInternals = { verifyMdxCacheFile };
+
 export async function doLoadModuleESM(
   compiledProgramCode: string,
   context: ESMLoaderContext,
@@ -280,7 +315,7 @@ export async function doLoadModuleESM(
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: mdxWriteFlight START`, { projectSlug, filePath });
     await mdxWriteFlight.do(filePath, async () => {
       // Check if file already exists (written by another request)
-      if (await verifyCacheFileExists(localFs, filePath, "MDX-ESM-LOADER")) {
+      if (await verifyMdxCacheFile(localFs, filePath, effectiveContext, compositeKey)) {
         logger.debug(`${LOG_PREFIX_MDX_LOADER} File exists, skipping write`, {
           projectSlug,
           filePath,
@@ -474,7 +509,7 @@ export async function doLoadModuleESM(
     }
 
     // Verify the cache file exists before attempting dynamic import
-    const fileExists = await verifyCacheFileExists(localFs, filePath, "MDX-ESM-LOADER");
+    const fileExists = await verifyMdxCacheFile(localFs, filePath, effectiveContext, compositeKey);
     if (!fileExists) {
       throw CACHE_ERROR.create({
         detail: `MDX module cache file missing before import: ${filePath}`,
