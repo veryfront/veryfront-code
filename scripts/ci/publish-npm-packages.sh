@@ -168,19 +168,19 @@ sanitize_npm_lookup_output() {
   printf '%s\n' "$1" \
     | sed -E \
       -e '/^npm error A complete log of this run can be found in:/d' \
-      -e 's#Bearer [^[:space:]]+#Bearer <REDACTED>#g' \
-      -e 's#([?&]token=)[^[:space:]&]+#\1<REDACTED>#g' \
-      -e 's#(_authToken=)[^[:space:]]+#\1<REDACTED>#g' \
+      -e "s#Bearer [^][[:space:]\"'),]+#Bearer <REDACTED>#g" \
+      -e "s#([?&]token=)[^][[:space:]\"'),&]+#\1<REDACTED>#g" \
+      -e "s#(_authToken=)[^][[:space:]\"'),]+#\1<REDACTED>#g" \
       -e 's#"(file://)/[^"]*"#"\1<path>"#g' \
       -e "s#'(file://)/[^']*'#'\1<path>'#g" \
       -e 's#\[(file://)/[^]]*\]#[\1<path>]#g' \
-      -e 's#(file://)/[^[:space:]]+#\1<path>#g' \
+      -e 's#(file://)/[^][[:space:]"),]+#\1<path>#g' \
       -e 's#(^|[[:space:]=(])"((/|[A-Za-z]:[\\/]|\\\\)[^"]*)"#\1"<path>"#g' \
       -e "s#(^|[[:space:]=(])'((/|[A-Za-z]:[\\\\/]|\\\\\\\\)[^']*)'#\1'<path>'#g" \
       -e 's#\[(/|[A-Za-z]:[\\/]|\\\\)[^]]*\]#[<path>]#g' \
-      -e 's#(^|[[:space:]"=(])/[^[:space:]"]+#\1<path>#g' \
-      -e 's#(^|[[:space:]"=(])[A-Za-z]:[\\/][^[:space:]"]+#\1<path>#g' \
-      -e 's#(^|[[:space:]"=(])\\\\[^[:space:]"]+#\1<path>#g'
+      -e 's#(^|[[:space:]"=(])/[^][[:space:]"),]+#\1<path>#g' \
+      -e 's#(^|[[:space:]"=(])[A-Za-z]:[\\/][^][[:space:]"),]+#\1<path>#g' \
+      -e 's#(^|[[:space:]"=(])\\\\[^][[:space:]"),]+#\1<path>#g'
 }
 
 ensure_package_names_registered() {
