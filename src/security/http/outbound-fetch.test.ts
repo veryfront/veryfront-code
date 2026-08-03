@@ -248,4 +248,38 @@ describe("guardedOutboundFetch", () => {
       "unexpected redirect",
     );
   });
+
+  for (const hostilePrimordial of ["url", "request-prototype"] as const) {
+    it(`keeps trusted endpoint transport pinned with hostile ${hostilePrimordial}`, async () => {
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "run",
+          "--quiet",
+          new URL("./outbound-fetch-hostile-primordial.fixture.ts", import.meta.url).pathname,
+          hostilePrimordial,
+        ],
+        cwd: Deno.cwd(),
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+
+      const stderr = new TextDecoder().decode(output.stderr);
+      assertEquals(output.success, true, stderr);
+      const result = JSON.parse(new TextDecoder().decode(output.stdout));
+      assertEquals(
+        result,
+        hostilePrimordial === "url"
+          ? {
+            error: "",
+            transportCalls: 1,
+            transportedUrl: "http://veryfront-api/mcp",
+          }
+          : {
+            error: "Control-plane request blocked: destination does not match the trusted endpoint",
+            transportCalls: 0,
+            transportedUrl: "",
+          },
+      );
+    });
+  }
 });

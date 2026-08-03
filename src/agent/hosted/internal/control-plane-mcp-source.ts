@@ -1,6 +1,9 @@
 /** Host-only transport for exact operator-configured control-plane MCP endpoints. */
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-import { createOutboundFetchBoundary } from "#veryfront/security/http/outbound-fetch.ts";
+import {
+  createOutboundFetchBoundary,
+  normalizeTrustedEndpoint,
+} from "#veryfront/security/http/outbound-fetch.ts";
 import { createRemoteMCPToolSource } from "#veryfront/tool/remote-mcp.ts";
 import { createRemoteMCPToolSourceWithFetch } from "#veryfront/tool/internal/remote-mcp-transport.ts";
 import type { RemoteMCPToolSourceConfig, RemoteToolSource } from "#veryfront/tool";
@@ -23,26 +26,41 @@ export function createTrustedControlPlaneMCPToolSourceFactory(
   trustedEndpoints: readonly string[],
 ): (config: RemoteMCPToolSourceConfig) => RemoteToolSource {
   const boundary = createOutboundFetchBoundary({ fetch: getHostFetch() });
-  const trustedFetchByEndpoint = new Map(
-    trustedEndpoints.map((endpoint) => {
-      const normalizedEndpoint = new URL(endpoint).toString();
-      return [
-        normalizedEndpoint,
-        boundary.createTrustedEndpointFetch(normalizedEndpoint),
-      ] as const;
-    }),
-  );
+  const trustedTransports: Array<{
+    configuredEndpoint: string;
+    normalizedEndpoint: string;
+    requestFetch: typeof fetch;
+  }> = [];
+  for (let index = 0; index < trustedEndpoints.length; index++) {
+    const configuredEndpoint = trustedEndpoints[index]!;
+    const normalizedEndpoint = normalizeTrustedEndpoint(configuredEndpoint);
+    trustedTransports[trustedTransports.length] = {
+      configuredEndpoint,
+      normalizedEndpoint,
+      requestFetch: boundary.createTrustedEndpointFetch(normalizedEndpoint),
+    };
+  }
 
   return (config) => {
-    const normalizedEndpoint = typeof config.endpoint === "string"
-      ? new URL(config.endpoint).toString()
-      : null;
-    const trustedFetch = normalizedEndpoint === null
-      ? undefined
-      : trustedFetchByEndpoint.get(normalizedEndpoint);
-    return trustedFetch === undefined
+    let trustedTransport: (typeof trustedTransports)[number] | undefined;
+    if (typeof config.endpoint === "string") {
+      for (let index = 0; index < trustedTransports.length; index++) {
+        const candidate = trustedTransports[index]!;
+        if (
+          config.endpoint === candidate.configuredEndpoint ||
+          config.endpoint === candidate.normalizedEndpoint
+        ) {
+          trustedTransport = candidate;
+          break;
+        }
+      }
+    }
+    return trustedTransport === undefined
       ? createRemoteMCPToolSource(config)
-      : createRemoteMCPToolSourceWithFetch(config, trustedFetch);
+      : createRemoteMCPToolSourceWithFetch(
+        { ...config, endpoint: trustedTransport.normalizedEndpoint },
+        trustedTransport.requestFetch,
+      );
   };
 }
 

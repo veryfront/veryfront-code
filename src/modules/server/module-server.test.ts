@@ -347,6 +347,33 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(response.status, 200);
   });
 
+  it("serves project modules whose paths resemble private framework subtrees", async () => {
+    const { serveModule } = await import("./module-server.ts");
+    const projectDir = "/project-private-path-regression";
+    const adapter = createMockAdapter();
+    adapter.fs.files.set(
+      `${projectDir}/tool/internal/helper.ts`,
+      "export const projectToolHelper = true;",
+    );
+    adapter.fs.files.set(
+      `${projectDir}/agent/hosted/internal/helper.ts`,
+      "export const projectAgentHelper = true;",
+    );
+
+    for (
+      const path of [
+        "tool/internal/helper.js",
+        "agent/hosted/internal/helper.js",
+      ]
+    ) {
+      const response = await serveModule(
+        new Request(`http://localhost:3000/_vf_modules/@/${path}`),
+        { projectId: "project-private-path-regression", projectDir, adapter },
+      );
+      assertEquals(response.status, 200, path);
+    }
+  });
+
   it("should serve browser-safe framework version modules without #deno-config", async () => {
     const response = await serve(
       new Request("http://localhost:3000/_vf_modules/_veryfront/utils/version.js"),

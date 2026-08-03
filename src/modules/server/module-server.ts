@@ -589,7 +589,10 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       }
       if (modulePath.startsWith("@/")) modulePath = modulePath.slice(2);
 
-      if (isPrivateFrameworkModulePath(modulePath)) {
+      if (
+        modulePath.startsWith("_veryfront/") &&
+        isPrivateFrameworkModulePath(modulePath)
+      ) {
         return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
           "Content-Type": "text/plain",
         });
@@ -1008,9 +1011,9 @@ async function findSourceFile(
     basePathWithoutExt = basePathWithoutExt.slice("_vf_modules/".length);
   }
 
-  if (isPrivateFrameworkModulePath(basePathWithoutExt)) return null;
-
   const isFrameworkPath = basePathWithoutExt.startsWith("_veryfront/");
+  if (isFrameworkPath && isPrivateFrameworkModulePath(basePathWithoutExt)) return null;
+
   const isFrameworkPackageAssetPath = basePathWithoutExt.startsWith("react/") ||
     basePathWithoutExt.startsWith("deps/");
   const missCacheKey = buildSourceMissCacheKey({
