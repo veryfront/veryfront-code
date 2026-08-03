@@ -58,6 +58,10 @@ describe("GitHubApiClient", () => {
       assertMethod(createClient(), "getBlob");
     });
 
+    it("should have bounded raw blob method", () => {
+      assertMethod(createClient(), "getBlobBytesWithinLimit");
+    });
+
     it("should have getRateLimitInfo method", () => {
       assertMethod(createClient(), "getRateLimitInfo");
     });

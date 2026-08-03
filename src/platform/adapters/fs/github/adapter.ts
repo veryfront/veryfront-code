@@ -104,6 +104,11 @@ export class GitHubFSAdapter implements FSAdapter {
     return this.readOps.readTextFile(path);
   }
 
+  async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    await this.ensureInitialized();
+    return await this.readOps.readFileBytesWithinLimit(path, byteLimit);
+  }
+
   async exists(path: string): Promise<boolean> {
     await this.ensureInitialized();
     return this.statOps.exists(path);
