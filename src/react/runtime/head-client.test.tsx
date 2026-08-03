@@ -1265,7 +1265,7 @@ describe("Head client management", () => {
       assertEquals(meta.hasAttribute("onclick"), false);
       assertEquals(accessorCalls, 0);
 
-      root.unmount();
+      await unmount(root);
     } finally {
       restore();
     }
