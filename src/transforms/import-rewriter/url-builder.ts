@@ -160,6 +160,15 @@ function decodeDependencyPinningPathKey(encodedKey: string): string | undefined 
   }
 }
 
+function hasMalformedPercentEncoding(value: string): boolean {
+  try {
+    decodeURIComponent(value);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 /**
  * Bind an import-map prefix target to a dependency snapshot without adding a
  * query string. Import-map prefix targets must end in `/`; placing the token in
@@ -369,7 +378,10 @@ export function extractDependencyPinningPathKey(
           DEPENDENCY_PINNING_PATH_MARKER.length,
           nestedKeyEnd,
         );
-      if (decodeDependencyPinningPathKey(nestedEncodedKey)) {
+      if (
+        decodeDependencyPinningPathKey(nestedEncodedKey) ||
+        hasMalformedPercentEncoding(nestedEncodedKey)
+      ) {
         return { pathname, found: true, malformed: true };
       }
     }

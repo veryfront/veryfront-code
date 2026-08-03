@@ -222,6 +222,12 @@ describe("transforms/import-rewriter/url-builder", () => {
       );
       assertEquals(
         extractDependencyPinningPathKey(
+          "/_vf_modules/_pins/on%3Aa/_pins/%E0%A4%A/page.js",
+        ).malformed,
+        true,
+      );
+      assertEquals(
+        extractDependencyPinningPathKey(
           "/_vf_modules/_pins/%E0%A4%A/page.js",
         ).malformed,
         true,

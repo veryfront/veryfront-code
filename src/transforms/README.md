@@ -35,6 +35,9 @@ transforms/
 import { mdxRenderer, transformToESM } from "#veryfront/internal";
 
 // Transform TypeScript to ESM
+const code = `export function Component() {
+  return <h1>Hello</h1>;
+}`;
 const result = await transformToESM(code, {
   filename: "component.tsx",
   jsx: "react",

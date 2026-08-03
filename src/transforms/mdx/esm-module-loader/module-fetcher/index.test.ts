@@ -573,6 +573,12 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
           "dependency-pin-malformed",
           "Malformed dependency snapshot module path",
         ],
+        [
+          "a nested reserved path with malformed percent encoding",
+          "/_vf_modules/_pins/on%3Asnapshot-a/_pins/%E0%A4%A/components/Child.js",
+          "dependency-pin-malformed",
+          "Malformed dependency snapshot module path",
+        ],
       ] as const
     ) {
       it(`rejects ${name} before adapter access`, async () => {
