@@ -69,6 +69,62 @@ describe("ragStore", () => {
     });
   });
 
+  it("creates the storage directory during first ingest", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const store = ragStore({
+        model: "local/test-model",
+        storagePath,
+      });
+
+      const id = await store.ingest("Doc", "Hello world");
+
+      assert(id.length > 0);
+      assertEquals(await exists(storagePath), true);
+      assertEquals((await store.listDocuments()).map((document) => document.id), [id]);
+    });
+  });
+
+  it("treats a missing temp cleanup directory as empty", async () => {
+    await withTempDir(async (tempDir) => {
+      const storageDirectory = join(tempDir, "data");
+      const storagePath = join(storageDirectory, "index.json");
+      const store = ragStore({
+        model: "local/test-model",
+        storagePath,
+      });
+      const readDirDescriptor = Object.getOwnPropertyDescriptor(Deno, "readDir");
+      assert(readDirDescriptor !== undefined);
+      const originalReadDir = Deno.readDir.bind(Deno);
+      Object.defineProperty(Deno, "readDir", {
+        ...readDirDescriptor,
+        value: (path: string | URL) =>
+          String(path) === storageDirectory
+            ? ({
+              [Symbol.asyncIterator]() {
+                return {
+                  next() {
+                    return Promise.reject(
+                      new Deno.errors.NotFound("missing storage directory"),
+                    );
+                  },
+                };
+              },
+            } satisfies AsyncIterable<Deno.DirEntry>)
+            : originalReadDir(path),
+      });
+
+      try {
+        const id = await store.ingest("Doc", "Hello world");
+
+        assert(id.length > 0);
+        assertEquals(await exists(storagePath), true);
+      } finally {
+        Object.defineProperty(Deno, "readDir", readDirDescriptor);
+      }
+    });
+  });
+
   it("persists ingest with atomic temp+rename workflow", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");
@@ -647,6 +703,61 @@ describe("ragStore", () => {
 
       const results = await store.search("   ");
       assertEquals(results, []);
+    });
+  });
+
+  it("does not hold the local store lock while embedding the search query", async () => {
+    let releaseQueryEmbedding!: () => void;
+    let signalQueryEmbedding!: () => void;
+    const queryEmbeddingStarted = new Promise<void>((resolve) => {
+      signalQueryEmbedding = resolve;
+    });
+    const queryEmbeddingReleased = new Promise<void>((resolve) => {
+      releaseQueryEmbedding = resolve;
+    });
+    registerEmbeddingProvider("slow-query", () =>
+      ({
+        specificationVersion: "v2",
+        provider: "slow-query",
+        modelId: "test",
+        maxEmbeddingsPerCall: undefined,
+        supportsParallelCalls: true,
+        async doEmbed({ values }: { values: string[] }) {
+          if (values.length === 1 && values[0] === "needle") {
+            signalQueryEmbedding();
+            await queryEmbeddingReleased;
+          }
+          return {
+            embeddings: values.map((value) => {
+              const vector = new Array<number>(1536).fill(0);
+              vector[0] = value.length;
+              return vector;
+            }),
+            usage: { tokens: 0 },
+            rawResponse: undefined,
+            warnings: [],
+          };
+        },
+      }) as never);
+
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const store = ragStore({ model: "slow-query/test", storagePath });
+      await store.ingest("Doc", "Hello world");
+      await store.search("warm");
+
+      const searchPromise = store.search("needle");
+      await queryEmbeddingStarted;
+      const documents = await Promise.race([
+        store.listDocuments(),
+        new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 50)),
+      ]);
+      releaseQueryEmbedding();
+      await searchPromise;
+
+      assert(Array.isArray(documents));
+      assertEquals(documents.length, 1);
+      assertEquals(documents[0]?.title, "Doc");
     });
   });
 

@@ -342,30 +342,36 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
     const storageName = basename(storagePath);
     const uniqueTempPrefix = `${storageName}.tmp.`;
     let matchingTemps = 0;
-    for await (const entry of readDir(storageDirectory)) {
-      const isLegacyTemp = entry.name === `${storageName}.tmp`;
-      const token = entry.name.startsWith(uniqueTempPrefix)
-        ? entry.name.slice(uniqueTempPrefix.length)
-        : null;
-      if (!isLegacyTemp && (token === null || !STORE_TEMP_TOKEN_PATTERN.test(token))) continue;
-      matchingTemps++;
-      if (matchingTemps > MAX_ORPHANED_STORE_TEMPS) {
-        throw RAG_STORE_UNAVAILABLE.create({
-          detail: "Too many orphaned RAG store temporary files require cleanup.",
-          context: { storagePath },
-        });
+    try {
+      for await (const entry of readDir(storageDirectory)) {
+        const isLegacyTemp = entry.name === `${storageName}.tmp`;
+        const token = entry.name.startsWith(uniqueTempPrefix)
+          ? entry.name.slice(uniqueTempPrefix.length)
+          : null;
+        if (!isLegacyTemp && (token === null || !STORE_TEMP_TOKEN_PATTERN.test(token))) continue;
+        matchingTemps++;
+        if (matchingTemps > MAX_ORPHANED_STORE_TEMPS) {
+          throw RAG_STORE_UNAVAILABLE.create({
+            detail: "Too many orphaned RAG store temporary files require cleanup.",
+            context: { storagePath },
+          });
+        }
+        if (!entry.isFile || entry.isSymlink) {
+          throw RAG_STORE_UNAVAILABLE.create({
+            detail: "A RAG store temporary path is not a regular file.",
+            context: { storagePath },
+          });
+        }
+        try {
+          await remove(join(storageDirectory, entry.name));
+        } catch (error) {
+          if (!isCanonicalNotFoundError(error)) throw unavailableStoreError(error);
+        }
       }
-      if (!entry.isFile || entry.isSymlink) {
-        throw RAG_STORE_UNAVAILABLE.create({
-          detail: "A RAG store temporary path is not a regular file.",
-          context: { storagePath },
-        });
-      }
-      try {
-        await remove(join(storageDirectory, entry.name));
-      } catch (error) {
-        if (!isCanonicalNotFoundError(error)) throw unavailableStoreError(error);
-      }
+    } catch (error) {
+      if (isCanonicalNotFoundError(error)) return;
+      if (isVeryfrontError(error)) throw error;
+      throw unavailableStoreError(error);
     }
   }
 
@@ -588,6 +594,48 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
     return true;
   }
 
+  async function withStoreProviderFailure<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (isVeryfrontError(error)) throw error;
+      throw unavailableStoreError(error);
+    }
+  }
+
+  function sameStoreSource(
+    expected: Uint8Array | null,
+    actual: Uint8Array | null,
+  ): boolean {
+    if (expected === null) return actual === null;
+    return actual !== null && sameBytes(expected, actual);
+  }
+
+  async function loadSearchDataWithEmbeddings(): Promise<RagStoreData | null> {
+    let loaded = await withLock(async () => await load());
+    while (true) {
+      if (loaded.data.chunks.length === 0) return null;
+
+      const updated = await withStoreProviderFailure(async () =>
+        await ensureEmbeddings(loaded.data)
+      );
+      if (!updated) return loaded.data;
+
+      const embeddedData = loaded.data;
+      const persisted = await withLock(async (lease) => {
+        const current = await load();
+        if (!sameStoreSource(loaded.sourceBytes, current.sourceBytes)) {
+          return { saved: false as const, loaded: current };
+        }
+        await save(embeddedData, loaded.sourceBytes, lease);
+        return { saved: true as const, data: embeddedData };
+      });
+
+      if (persisted.saved) return persisted.data;
+      loaded = persisted.loaded;
+    }
+  }
+
   async function listContentFiles(dir: string): Promise<string[]> {
     const files: string[] = [];
     try {
@@ -697,14 +745,9 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
       options?: RagSearchOptions,
     ): Promise<RagSearchResult[]> {
       if (!query.trim()) return [];
-      return withLock(async (lease) => {
-        const loaded = await load();
-        const data = loaded.data;
-        if (data.chunks.length === 0) return [];
-
-        const updated = await ensureEmbeddings(data);
-        if (updated) await save(data, loaded.sourceBytes, lease);
-
+      const data = await loadSearchDataWithEmbeddings();
+      if (data === null) return [];
+      return await withStoreProviderFailure(async () => {
         const embedder = createEmbedder();
         const queryEmbedding = await embedder.embed(query);
         const topK = options?.topK ?? DEFAULT_TOP_K;
