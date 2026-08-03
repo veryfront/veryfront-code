@@ -48,7 +48,12 @@ export type HostedChatProjectAccessResult =
   | { success: true; projectSlug?: string }
   | { success: false; error: HostedChatProjectAccessError };
 
-/** Request payload for parsed hosted chat. */
+/**
+ * Request payload for parsed hosted chat.
+ *
+ * Verified run-event credentials remain in process-private ingress state and
+ * are never exposed on this application-facing request value.
+ */
 export type ParsedHostedChatRequest = {
   agentId: string | undefined;
   userId: string;

@@ -115,7 +115,10 @@ export type HostedChildForkExecutionRunContextFactoryInput<
   pendingToolLogWriter?: { warn: (message: string, metadata?: Record<string, unknown>) => void };
 };
 
-/** Input payload for execute hosted child fork with prepared tools. */
+/**
+ * Input for a hosted child fork whose tools are already prepared.
+ * Durable execution requires a capability bound to `durableChildRun.childRunId`.
+ */
 export type ExecuteHostedChildForkWithPreparedToolsInput<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 > = {
@@ -215,7 +218,11 @@ function defaultResolveSystem(input: {
   return typeof remindedSystem === "string" ? remindedSystem : input.system;
 }
 
-/** Options accepted by execute hosted child fork tool input. */
+/**
+ * Options for executing a hosted child-fork tool input.
+ * When `durableChildRun` is present, `runEventWriterCapability` must carry
+ * exact-child authority; parent and sibling capabilities fail before dispatch.
+ */
 export type ExecuteHostedChildForkToolInputOptions<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 > =

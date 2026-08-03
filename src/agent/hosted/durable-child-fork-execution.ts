@@ -436,7 +436,11 @@ export type HostedDurableChildRuntimeDependencies = {
   shouldSkipTerminalPersistence?: typeof shouldSkipHostedChildTerminalPersistence;
 };
 
-/** Input payload for execute hosted durable child fork. */
+/**
+ * Input for bootstrapping and executing a hosted durable child fork.
+ * `runEventWriterCapability` carries exact-parent authority; this helper mints
+ * the exact-child capability only after the child run is persisted.
+ */
 export type ExecuteHostedDurableChildForkInput<
   TResult,
   TLocalResult extends ChildRunExecutionResult,
@@ -822,7 +826,7 @@ async function executeHostedDurableChildForkWithCapability<
       throw new HostedChildRunEventWriterTokenExchangeError();
     }
     childRunEventWriterCapability = await runEventWriterCapability
-      .mintChildRunEventAppendToken(
+      .mintChildRunEventWriterCapability(
         identifiers.childRunId,
         input.executionOptions.abortSignal,
       );
@@ -837,7 +841,7 @@ async function executeHostedDurableChildForkWithCapability<
     await notifyBootstrapError(
       {
         onBootstrapError: input.bootstrap?.onBootstrapError,
-        onCallbackError: () => input.onLifecycleError?.(setupError),
+        onCallbackError: input.onLifecycleError,
       },
       {
         error: setupError,
@@ -886,7 +890,6 @@ async function executeHostedDurableChildForkWithCapability<
     }
 
     if (cancelled) {
-      throwIfChildRunAborted(input.executionOptions.abortSignal);
       throw new DOMException("The operation was aborted.", "AbortError");
     }
 

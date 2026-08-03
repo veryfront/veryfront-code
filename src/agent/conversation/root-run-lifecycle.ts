@@ -77,7 +77,12 @@ export interface HostedConversationRootRunContext {
   publishParentRunEvents?: (events: ConversationRunEvent[]) => Promise<void>;
 }
 
-/** Input payload for prepare hosted conversation root run context. */
+/**
+ * Input for hosted root-run preparation.
+ *
+ * Exact-root event-writer authority is supplied only by the framework's
+ * bounded capability scope; this input does not accept raw writer tokens.
+ */
 export interface PrepareHostedConversationRootRunContextInput {
   authToken: string;
   apiUrl: string;
@@ -126,6 +131,7 @@ export async function prepareHostedConversationRootRunContext(
   options: { abortSignal: AbortSignal },
 ): Promise<HostedConversationRootRunContext> {
   let durableRunMirror: ConversationRunChunkMirror | null = null;
+  let privateDurableRunMirror: ConversationRunChunkMirror | null = null;
   const runEventWriterCapability = getActiveHostedRunEventWriterCapability();
   const startConversationRootRun = createConversationRootRunStartAdapter({
     authToken: input.authToken,
@@ -172,10 +178,11 @@ export async function prepareHostedConversationRootRunContext(
           latestExternalEventSequence: run.latestExternalEventSequence,
           instrumentation: input.instrumentation,
         };
-        durableRunMirror = createHostedConversationRunChunkMirrorFromCapability(
+        privateDurableRunMirror = createHostedConversationRunChunkMirrorFromCapability(
           runEventWriterCapability,
-          mirrorOptions,
-        ) ?? createHostedConversationRunChunkMirror({
+          { ...mirrorOptions, expectedRunId: run.runId },
+        ) ?? null;
+        durableRunMirror = privateDurableRunMirror ?? createHostedConversationRunChunkMirror({
           ...mirrorOptions,
           apiUrl: input.apiUrl,
           authToken: input.authToken,
@@ -193,7 +200,7 @@ export async function prepareHostedConversationRootRunContext(
   return {
     durableRootRun: toHostedConversationRootRunState(rootRunLifecycle.run),
     durableRunMirror,
-    privateDurableRunMirror: runEventWriterCapability ? durableRunMirror : null,
+    privateDurableRunMirror,
     effectiveParentRunId: rootRunLifecycle.effectiveParentRunId,
     effectiveParentMessageId: rootRunLifecycle.effectiveParentMessageId,
     publishParentRunEvents: rootRunLifecycle.publishParentRunEvents

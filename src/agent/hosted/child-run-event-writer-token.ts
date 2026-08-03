@@ -15,9 +15,74 @@ const MAX_CHILD_RUN_EVENT_WRITER_TOKEN_BYTES = 4 * 1024;
 const MAX_CHILD_RUN_EVENT_WRITER_TOKEN_RESPONSE_BYTES = 16 * 1024;
 const CHILD_RUN_EVENT_WRITER_TOKEN_SETUP_ERROR =
   "Unable to initialize durable child event persistence";
-const utf8Encoder = new TextEncoder();
 
 type Fetch = typeof globalThis.fetch;
+
+// These intrinsics are captured before tenant code can mutate the shared realm.
+// Secret-bearing operations below must use only these references.
+const NativeTextEncoder = TextEncoder;
+const NativeWeakMap = WeakMap;
+const apply = Reflect.apply;
+const arrayIsArray = Array.isArray;
+const arraySome = Array.prototype.some;
+const jsonParse = JSON.parse;
+const objectCreate = Object.create;
+const objectDefineProperty = Object.defineProperty;
+const objectFreeze = Object.freeze;
+const objectHasOwnProperty = Object.prototype.hasOwnProperty;
+const objectKeys = Object.keys;
+const stringSplit = String.prototype.split;
+const stringToLowerCase = String.prototype.toLowerCase;
+const stringTrim = String.prototype.trim;
+const textEncoderEncode = NativeTextEncoder.prototype.encode;
+const weakMapGet = NativeWeakMap.prototype.get;
+const weakMapSet = NativeWeakMap.prototype.set;
+const asyncLocalStorageGetStore = AsyncLocalStorage.prototype.getStore;
+const asyncLocalStorageRun = AsyncLocalStorage.prototype.run;
+const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+const typedArrayByteLengthGetterCandidate = Object.getOwnPropertyDescriptor(
+  typedArrayPrototype,
+  "byteLength",
+)?.get;
+const hostFetch = globalThis.fetch;
+const utf8Encoder = new NativeTextEncoder();
+
+if (typeof typedArrayByteLengthGetterCandidate !== "function") {
+  throw new TypeError("Required Uint8Array byteLength intrinsic is unavailable");
+}
+const typedArrayByteLengthGetter = typedArrayByteLengthGetterCandidate;
+
+function getWeakMapValue<K extends object, V>(map: WeakMap<K, V>, key: K): V | undefined {
+  return apply(weakMapGet, map, [key]) as V | undefined;
+}
+
+function setWeakMapValue<K extends object, V>(map: WeakMap<K, V>, key: K, value: V): void {
+  apply(weakMapSet, map, [key, value]);
+}
+
+function getAsyncStore<T>(storage: AsyncLocalStorage<T>): T | undefined {
+  return apply(asyncLocalStorageGetStore, storage, []) as T | undefined;
+}
+
+function runInAsyncStore<TStore, TResult>(
+  storage: AsyncLocalStorage<TStore>,
+  store: TStore,
+  operation: () => TResult,
+): TResult {
+  return apply(asyncLocalStorageRun, storage, [store, operation]) as TResult;
+}
+
+function trim(value: string): string {
+  return apply(stringTrim, value, []) as string;
+}
+
+function capturedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return apply(hostFetch, globalThis, [input, init]) as Promise<Response>;
+}
+
+function snapshotFetch(fetchImpl: Fetch): Fetch {
+  return (input, init) => apply(fetchImpl, undefined, [input, init]) as Promise<Response>;
+}
 
 /** Internal failure raised when the control plane cannot issue an exact-child writer token. */
 export class HostedChildRunEventWriterTokenExchangeError extends Error {
@@ -39,7 +104,7 @@ export class HostedChildRunEventWriterTokenExchangeError extends Error {
  */
 export interface HostedRunEventWriterCapability {
   /** Exchange this run's authority for an exact direct-child capability. */
-  mintChildRunEventAppendToken(
+  mintChildRunEventWriterCapability(
     childRunId: string,
     abortSignal?: AbortSignal,
   ): Promise<HostedRunEventWriterCapability>;
@@ -63,6 +128,8 @@ type VerifiedRequestWriterState = {
   token: string;
   projectId: string;
   runId: string;
+  /** Explicit trusted-host or test transport retained with verified ingress. */
+  fetch?: Fetch;
 };
 
 type VerifiedRequestWriterScope = {
@@ -70,20 +137,27 @@ type VerifiedRequestWriterScope = {
   state: VerifiedRequestWriterState | undefined;
 };
 
-const capabilityState = new WeakMap<HostedRunEventWriterCapability, CapabilityState>();
-const requestRunEventWriterState = new WeakMap<object, VerifiedRequestWriterState>();
+const capabilityState = new NativeWeakMap<HostedRunEventWriterCapability, CapabilityState>();
+const requestRunEventWriterState = new NativeWeakMap<object, VerifiedRequestWriterState>();
 const capabilityStorage = new AsyncLocalStorage<CapabilityScope>();
 const verifiedRequestWriterStorage = new AsyncLocalStorage<VerifiedRequestWriterScope>();
 
 function isNoStoreResponse(response: Response): boolean {
-  return response.headers.get("Cache-Control")?.split(",").some((directive) =>
-    directive.trim().toLowerCase() === "no-store"
-  ) ?? false;
+  const value = response.headers.get("Cache-Control");
+  if (value === null) return false;
+  const directives = apply(stringSplit, value, [","]) as string[];
+  return apply(arraySome, directives, [
+    (directive: string) => apply(stringToLowerCase, trim(directive), []) === "no-store",
+  ]) as boolean;
 }
 
 function isValidRunEventWriterToken(token: unknown): token is string {
-  return typeof token === "string" && token.length > 0 && token.trim() === token &&
-    utf8Encoder.encode(token).byteLength <= MAX_CHILD_RUN_EVENT_WRITER_TOKEN_BYTES;
+  if (typeof token !== "string" || token.length === 0 || trim(token) !== token) {
+    return false;
+  }
+  const encoded = apply(textEncoderEncode, utf8Encoder, [token]) as Uint8Array;
+  const byteLength = apply(typedArrayByteLengthGetter, encoded, []) as number;
+  return byteLength <= MAX_CHILD_RUN_EVENT_WRITER_TOKEN_BYTES;
 }
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
@@ -93,9 +167,9 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
 
 function parseRunEventToken(value: unknown): string {
   if (
-    typeof value !== "object" || value === null || Array.isArray(value) ||
-    Object.keys(value).length !== 1 ||
-    !Object.prototype.hasOwnProperty.call(value, "run_event_token")
+    typeof value !== "object" || value === null || arrayIsArray(value) ||
+    objectKeys(value).length !== 1 ||
+    !apply(objectHasOwnProperty, value, ["run_event_token"])
   ) {
     throw new HostedChildRunEventWriterTokenExchangeError();
   }
@@ -162,7 +236,7 @@ async function exchangeChildRunEventWriterToken(
     }
     let responseValue: unknown;
     try {
-      responseValue = JSON.parse(responseBody.text);
+      responseValue = apply(jsonParse, undefined, [responseBody.text]);
     } catch {
       throw new HostedChildRunEventWriterTokenExchangeError();
     }
@@ -185,7 +259,7 @@ export function registerHostedRunEventWriterToken(
   request: object,
   input: VerifiedRequestWriterState,
 ): void {
-  requestRunEventWriterState.set(request, input);
+  setWeakMapValue(requestRunEventWriterState, request, input);
 }
 
 /** Create the opaque exact-run capability associated with a verified parsed request. */
@@ -193,8 +267,8 @@ export function createHostedRunEventWriterCapabilityForRequest(
   request: object,
   input: Omit<Parameters<typeof createHostedRunEventWriterCapability>[0], "runEventAppendToken">,
 ): HostedRunEventWriterCapability | undefined {
-  const directState = requestRunEventWriterState.get(request);
-  const ambientScope = verifiedRequestWriterStorage.getStore();
+  const directState = getWeakMapValue(requestRunEventWriterState, request);
+  const ambientScope = getAsyncStore(verifiedRequestWriterStorage);
   const ambientState = ambientScope?.active ? ambientScope.state : undefined;
   const candidateState = directState ?? ambientState;
   const requestRecord = request as Record<string, unknown>;
@@ -208,7 +282,11 @@ export function createHostedRunEventWriterCapabilityForRequest(
     ? candidateState.token
     : undefined;
   return token
-    ? createHostedRunEventWriterCapability({ ...input, runEventAppendToken: token })
+    ? createHostedRunEventWriterCapability({
+      ...input,
+      runEventAppendToken: token,
+      fetch: input.fetch ?? candidateState?.fetch,
+    })
     : undefined;
 }
 
@@ -219,10 +297,10 @@ export async function runWithVerifiedHostedRunEventWriterRequest<T>(
 ): Promise<T> {
   const scope: VerifiedRequestWriterScope = {
     active: true,
-    state: requestRunEventWriterState.get(request),
+    state: getWeakMapValue(requestRunEventWriterState, request),
   };
   try {
-    return await verifiedRequestWriterStorage.run(scope, operation);
+    return await runInAsyncStore(verifiedRequestWriterStorage, scope, operation);
   } finally {
     scope.active = false;
     scope.state = undefined;
@@ -235,7 +313,7 @@ export async function runWithVerifiedHostedRunEventWriterRequest<T>(
  * The returned frozen object does not expose or serialize the credential.
  */
 export function createHostedRunEventWriterCapability(input: {
-  /** Trusted Veryfront API origin used for child-capability exchange. */
+  /** Trusted Veryfront API base URL used for child-capability exchange. */
   apiUrl: string;
   /** Exact run authorized by `runEventAppendToken`. */
   runId: string;
@@ -243,7 +321,7 @@ export function createHostedRunEventWriterCapability(input: {
   runEventAppendToken: string;
   /** Bounded child-capability exchange timeout. */
   timeoutMs?: number;
-  /** Test or host transport override. */
+  /** Explicit trusted-host or test transport; tenant code must omit this seam. */
   fetch?: Fetch;
 }): HostedRunEventWriterCapability {
   if (!isValidRunEventWriterToken(input.runEventAppendToken)) {
@@ -255,10 +333,10 @@ export function createHostedRunEventWriterCapability(input: {
     runId: input.runId,
     runEventAppendToken: input.runEventAppendToken,
     timeoutMs: input.timeoutMs ?? DEFAULT_CHILD_RUN_EVENT_WRITER_TOKEN_TIMEOUT_MS,
-    fetch: input.fetch ?? globalThis.fetch,
+    fetch: input.fetch ? snapshotFetch(input.fetch) : capturedFetch,
   };
-  const capability = Object.create(null) as HostedRunEventWriterCapability;
-  Object.defineProperty(capability, "mintChildRunEventAppendToken", {
+  const capability = objectCreate(null) as HostedRunEventWriterCapability;
+  objectDefineProperty(capability, "mintChildRunEventWriterCapability", {
     enumerable: false,
     value: async (childRunId: string, abortSignal?: AbortSignal) => {
       const childToken = await exchangeChildRunEventWriterToken(state, childRunId, abortSignal);
@@ -271,23 +349,30 @@ export function createHostedRunEventWriterCapability(input: {
       });
     },
   });
-  capabilityState.set(capability, state);
-  return Object.freeze(capability);
+  setWeakMapValue(capabilityState, capability, state);
+  return objectFreeze(capability);
 }
 
 /** Build a durable mirror from private capability state without exposing its credential. */
 export function createHostedConversationRunChunkMirrorFromCapability(
   capability: HostedRunEventWriterCapability | undefined,
-  input: Omit<HostedConversationRunChunkMirrorOptions, "apiUrl" | "authToken" | "runId">,
+  input:
+    & Omit<HostedConversationRunChunkMirrorOptions, "apiUrl" | "authToken" | "runId" | "fetch">
+    & {
+      /** Exact durable run for which the caller is preparing a mirror. */
+      expectedRunId: string;
+    },
 ): ConversationRunChunkMirror | undefined {
   if (!capability) return undefined;
-  const state = capabilityState.get(capability);
-  if (!state) return undefined;
+  const state = getWeakMapValue(capabilityState, capability);
+  if (!state || state.runId !== input.expectedRunId) return undefined;
+  const { expectedRunId: _expectedRunId, ...mirrorInput } = input;
   return createHostedConversationRunChunkMirror({
-    ...input,
+    ...mirrorInput,
     apiUrl: state.apiUrl,
     authToken: state.runEventAppendToken,
     runId: state.runId,
+    fetch: state.fetch,
   });
 }
 
@@ -295,7 +380,7 @@ export function createHostedConversationRunChunkMirrorFromCapability(
 export function getActiveHostedRunEventWriterCapability():
   | HostedRunEventWriterCapability
   | undefined {
-  const scope = capabilityStorage.getStore();
+  const scope = getAsyncStore(capabilityStorage);
   return scope?.active ? scope.capability : undefined;
 }
 
@@ -310,7 +395,7 @@ export function runWithHostedRunEventWriterCapability<T>(
     scope.capability = undefined;
   };
   try {
-    const result = capabilityStorage.run(scope, operation);
+    const result = runInAsyncStore(capabilityStorage, scope, operation);
     if (isPromiseLike(result)) {
       return Promise.resolve(result).finally(revoke) as T;
     }

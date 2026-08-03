@@ -37,10 +37,11 @@ export type HostedDurableRunLogger = {
   error(message: string, metadata?: Record<string, unknown>): void;
 };
 
-/** Input payload for hosted durable run start execution. */
+/** Input delivered to a hosted durable-run starter after request isolation. */
 export type HostedDurableRunStartExecutionInput<TExecution> = {
   execution: TExecution;
   abortSignal: AbortSignal;
+  /** Required application-facing request clone with internal control headers removed. */
   rawRequest: Request;
 };
 

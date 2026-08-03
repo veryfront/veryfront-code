@@ -153,7 +153,11 @@ export type DefaultHostedInvokeAgentProjectRefresh<
   context: TContext,
 ) => Promise<void> | void;
 
-/** Options accepted by default hosted invoke agent tool. */
+/**
+ * Options for the default hosted invoke-agent tool.
+ * `runEventWriterCapability` carries the current parent run's authority and is
+ * delegated internally after each durable child run is persisted.
+ */
 export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedInvokeAgentContext> =
   {
     context: TContext;

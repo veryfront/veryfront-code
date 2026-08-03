@@ -1647,9 +1647,27 @@ interface APIDocs {
 
 const API_DOCS: Record<string, APIDocs> = {
   "veryfront/agent": {
-    functions: { agent: { configType: "AgentConfig" } },
-    methods: { Agent: "Agent instance" },
-    expandTypes: ["AgentConfig", "MemoryConfig", "EdgeConfig"],
+    functions: {
+      agent: { configType: "AgentConfig" },
+      createHostedRunEventWriterCapability: {},
+    },
+    methods: {
+      Agent: "Agent instance",
+      HostedRunEventWriterCapability: "Exact-run event-writer authority",
+    },
+    expandTypes: [
+      "AgentConfig",
+      "MemoryConfig",
+      "EdgeConfig",
+      "ParsedHostedChatRequest",
+      "PrepareHostedConversationRootRunContextInput",
+      "HostedDurableChildForkRunContextInput",
+      "ExecuteHostedChildForkWithPreparedToolsInput",
+      "ExecuteHostedDurableChildForkInput",
+      "DefaultHostedInvokeAgentToolOptions",
+      "HostedDurableRunStartExecutionInput",
+      "HostedAgentServiceDetachedExecutionInput",
+    ],
   },
   "veryfront/tool": {
     functions: { tool: { configType: "ToolConfig" } },

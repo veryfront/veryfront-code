@@ -361,7 +361,7 @@ it("agent service routes remove verified writer credentials before detached call
           );
         },
       });
-      await capability?.mintChildRunEventAppendToken("child-run-1");
+      await capability?.mintChildRunEventWriterCapability("child-run-1");
       return { executionId: "exec-sanitized" };
     },
     startDetachedExecution: async ({ rawRequest }) => {
@@ -404,7 +404,7 @@ it("agent service routes preserve verified writer authority across request cloni
           );
         },
       });
-      await capability?.mintChildRunEventAppendToken("child-run-1");
+      await capability?.mintChildRunEventWriterCapability("child-run-1");
       return { executionId: "exec-cloned" };
     },
     startDetachedExecution: () => {

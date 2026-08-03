@@ -461,27 +461,8 @@ Deno.test("created invoke tools preserve distinct writer capabilities across con
   const waitForSiblingGrandchildExchange = createBarrier();
 
   try {
-    globalThis.fetch = (async (input, init) => {
-      const request = new Request(input, init);
-      mirrorRequests.push({
-        authorization: request.headers.get("Authorization"),
-        url: request.url,
-      });
-      const url = new URL(request.url);
-      const pathParts = url.pathname.split("/");
-      const conversationId = pathParts[pathParts.indexOf("conversations") + 1];
-      const runId = pathParts[pathParts.indexOf("runs") + 1];
-      return Response.json({
-        latestEventId: 1,
-        latestExternalEventSequence: 1,
-        appendedCount: 1,
-        run: {
-          runId,
-          conversationId,
-          latestEventId: 1,
-          latestExternalEventSequence: 1,
-        },
-      });
+    globalThis.fetch = (() => {
+      throw new Error("capability-backed mirrors must not use the mutable global fetch");
     }) as typeof fetch;
 
     const createSiblingCapability = (label: "a" | "b") => {
@@ -492,6 +473,27 @@ Deno.test("created invoke tools preserve distinct writer capabilities across con
         runEventAppendToken: `root-${label}-writer-token`,
         fetch: async (input, init) => {
           const request = new Request(input, init);
+          if (request.url.endsWith("/events")) {
+            mirrorRequests.push({
+              authorization: request.headers.get("Authorization"),
+              url: request.url,
+            });
+            const url = new URL(request.url);
+            const pathParts = url.pathname.split("/");
+            const conversationId = pathParts[pathParts.indexOf("conversations") + 1];
+            const runId = pathParts[pathParts.indexOf("runs") + 1];
+            return Response.json({
+              latestEventId: 1,
+              latestExternalEventSequence: 1,
+              appendedCount: 1,
+              run: {
+                runId,
+                conversationId,
+                latestEventId: 1,
+                latestExternalEventSequence: 1,
+              },
+            });
+          }
           tokenRequests.push({
             authorization: request.headers.get("Authorization"),
             url: request.url,
@@ -541,12 +543,13 @@ Deno.test("created invoke tools preserve distinct writer capabilities across con
                   };
                   executeNestedDelegation = async () => {
                     const childCapability = await assembledCapability
-                      .mintChildRunEventAppendToken(`run_child_${label}`);
+                      .mintChildRunEventWriterCapability(`run_child_${label}`);
                     await runWithHostedRunEventWriterCapability(childCapability, async () => {
                       const activeChildCapability = getActiveHostedRunEventWriterCapability();
                       const mirror = createHostedConversationRunChunkMirrorFromCapability(
                         activeChildCapability,
                         {
+                          expectedRunId: `run_child_${label}`,
                           conversationId,
                           latestEventId: 0,
                           latestExternalEventSequence: 0,
@@ -560,7 +563,7 @@ Deno.test("created invoke tools preserve distinct writer capabilities across con
                       ]);
                       await mirror.flush();
                       mirror.dispose();
-                      await activeChildCapability.mintChildRunEventAppendToken(
+                      await activeChildCapability.mintChildRunEventWriterCapability(
                         `run_grandchild_${label}`,
                       );
                     });

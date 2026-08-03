@@ -88,12 +88,34 @@ describe("guide content contracts", () => {
 
     assertStringIncludes(guide, "## Migrate custom durable child event writers");
     assertStringIncludes(guide, "createHostedRunEventWriterCapability");
-    assertStringIncludes(guide, "mintChildRunEventAppendToken");
+    assertStringIncludes(guide, "mintChildRunEventWriterCapability");
     assertStringIncludes(guide, "runEventWriterCapability: childWriter");
-    assertStringIncludes(guide, "fails before provider dispatch");
-    assertStringIncludes(guide, "must not retry by falling back to\na user API token");
+    assertStringIncludes(guide, "fails before\nprovider dispatch");
+    assertStringIncludes(guide, "must not retry by falling back to a user API token");
+    for (
+      const contract of [
+        "ParsedHostedChatRequest",
+        "PrepareHostedConversationRootRunContextInput",
+        "ExecuteHostedDurableChildForkInput",
+        "DefaultHostedInvokeAgentToolOptions",
+        "ExecuteHostedChildForkWithPreparedToolsInput",
+        "ExecuteHostedChildForkToolInputOptions",
+        "HostedDurableChildForkRunContextInput",
+        "HostedDurableRunStartExecutionInput",
+        "HostedAgentServiceDetachedExecutionInput",
+      ]
+    ) {
+      assertStringIncludes(guide, `\`${contract}\``);
+    }
     assertStringIncludes(reference, "`HostedRunEventWriterCapability`");
     assertStringIncludes(reference, "`createHostedRunEventWriterCapability`");
+    assertStringIncludes(
+      reference,
+      "hostedRunEventWriterCapability.mintChildRunEventWriterCapability",
+    );
+    assertStringIncludes(reference, "### `ExecuteHostedDurableChildForkInput`");
+    assertStringIncludes(reference, "### `HostedDurableRunStartExecutionInput`");
+    assertStringIncludes(reference, "### `HostedAgentServiceDetachedExecutionInput`");
   });
 
   it("documents deploy URL output for the first deploy path", async () => {

@@ -67,10 +67,11 @@ export type HostedAgentServiceStreamExecutionInput<TExecution extends object> = 
 export type AgentServiceStreamExecutionInput<TExecution extends object> =
   HostedAgentServiceStreamExecutionInput<TExecution>;
 
-/** Input payload for hosted agent service detached execution. */
+/** Input delivered to a hosted agent-service detached execution callback. */
 export type HostedAgentServiceDetachedExecutionInput<TExecution extends object> = {
   execution: TExecution;
   abortSignal: AbortSignal;
+  /** Required application-facing request clone with internal control headers removed. */
   rawRequest: Request;
 };
 

@@ -142,6 +142,7 @@ Deno.test("createHostedDurableChildForkRunContext authorizes its mirror with onl
         apiUrl: "https://api.example.com",
         runId: "child-run-1",
         runEventAppendToken: "child-writer-token",
+        fetch: globalThis.fetch,
       }),
       () =>
         createHostedDurableChildForkRunContext(
@@ -192,6 +193,34 @@ Deno.test("public durable child context accepts an explicit opaque writer capabi
   assertEquals(context.durableRunMirror !== null, true);
   context.durableRunMirror?.dispose();
 });
+
+for (
+  const [authorityKind, capabilityRunId] of [
+    ["parent", "parent-run-public"],
+    ["sibling", "sibling-run-public"],
+  ] as const
+) {
+  Deno.test(`public durable child context rejects ${authorityKind} writer authority`, () => {
+    const context = createPublicHostedDurableChildForkRunContext({
+      runEventWriterCapability: createPublicHostedRunEventWriterCapability({
+        apiUrl: "https://api.example.com",
+        runId: capabilityRunId,
+        runEventAppendToken: "wrong-run-writer-token",
+      }),
+      durableChildRun: {
+        childConversationId: "11111111-1111-4111-a111-111111111111",
+        childRunId: "target-child-run-public",
+        childMessageId: "child-message-public",
+        latestEventId: 0,
+        latestExternalEventSequence: 0,
+      },
+      pendingToolLogContext: { description: "Check public API" },
+    });
+
+    assertEquals(context.durableRunMirror, null);
+    assertEquals(context.streamMirrorContext.durableRunMirror, false);
+  });
+}
 
 Deno.test("createHostedChildForkRunContext closes pending tool calls with host logger", async () => {
   const chunks: ChatUiMessageChunk<ChatMessageMetadata>[] = [];

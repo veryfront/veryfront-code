@@ -112,6 +112,7 @@ function createParsedHostedChatRequest(
         token: runEventAppendToken,
         projectId: request.projectId ?? "project-from-context",
         runId: request.durableRootRun?.runId ?? "run-1",
+        fetch: globalThis.fetch,
       },
     );
   }

@@ -1,4 +1,5 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   createHostedConversationRunChunkMirrorFromCapability,
   createHostedRunEventWriterCapability,
@@ -20,7 +21,7 @@ Deno.test("explicit authority-less scopes clear and restore ambient writer autho
     await runWithHostedRunEventWriterCapability(undefined, async () => {
       const detachedCapability = getActiveHostedRunEventWriterCapability();
       assertEquals(detachedCapability, undefined);
-      assertEquals(detachedCapability?.mintChildRunEventAppendToken, undefined);
+      assertEquals(detachedCapability?.mintChildRunEventWriterCapability, undefined);
     });
 
     assertEquals(getActiveHostedRunEventWriterCapability(), capability);
@@ -72,8 +73,8 @@ Deno.test("run event writer capability delegates parent to child to grandchild e
       );
     },
   });
-  const childCapability = await capability.mintChildRunEventAppendToken("run_child");
-  const grandchildCapability = await childCapability.mintChildRunEventAppendToken(
+  const childCapability = await capability.mintChildRunEventWriterCapability("run_child");
+  const grandchildCapability = await childCapability.mintChildRunEventWriterCapability(
     "run_grandchild",
   );
 
@@ -127,10 +128,12 @@ Deno.test("capability-backed mirrors ignore caller-supplied API and run identiti
       apiUrl: "https://trusted.example.test",
       runId: "run_trusted",
       runEventAppendToken: "trusted-writer-token",
+      fetch: globalThis.fetch,
     });
     const mirror = createHostedConversationRunChunkMirrorFromCapability(
       capability,
       {
+        expectedRunId: "run_trusted",
         apiUrl: "https://attacker.example.test",
         conversationId,
         runId: "run_attacker",
@@ -161,6 +164,25 @@ Deno.test("capability-backed mirrors ignore caller-supplied API and run identiti
   }
 });
 
+for (const capabilityRunId of ["run_parent", "run_sibling"]) {
+  Deno.test(`capability-backed mirrors reject ${capabilityRunId} authority for another child`, () => {
+    const capability = createHostedRunEventWriterCapability({
+      apiUrl: "https://api.example.test",
+      runId: capabilityRunId,
+      runEventAppendToken: "scoped-writer-token",
+    });
+
+    const mirror = createHostedConversationRunChunkMirrorFromCapability(capability, {
+      expectedRunId: "run_child",
+      conversationId: "11111111-1111-4111-a111-111111111111",
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+    });
+
+    assertEquals(mirror, undefined);
+  });
+}
+
 Deno.test("run event writer capability preserves the configured API base path", async () => {
   let requestUrl: string | undefined;
   const capability = createHostedRunEventWriterCapability({
@@ -178,7 +200,7 @@ Deno.test("run event writer capability preserves the configured API base path", 
     },
   });
 
-  await capability.mintChildRunEventAppendToken("run_child");
+  await capability.mintChildRunEventWriterCapability("run_child");
 
   assertEquals(
     requestUrl,
@@ -186,7 +208,7 @@ Deno.test("run event writer capability preserves the configured API base path", 
   );
 });
 
-Deno.test("mintChildRunEventAppendToken rejects responses without no-store", async () => {
+Deno.test("mintChildRunEventWriterCapability rejects responses without no-store", async () => {
   await assertRejects(
     () =>
       createHostedRunEventWriterCapability({
@@ -194,13 +216,13 @@ Deno.test("mintChildRunEventAppendToken rejects responses without no-store", asy
         runId: "run_parent",
         runEventAppendToken: "parent-writer-token",
         fetch: () => Promise.resolve(Response.json({ run_event_token: "child-writer-token" })),
-      }).mintChildRunEventAppendToken("run_child"),
+      }).mintChildRunEventWriterCapability("run_child"),
     HostedChildRunEventWriterTokenExchangeError,
     "Unable to initialize durable child event persistence",
   );
 });
 
-Deno.test("mintChildRunEventAppendToken rejects an oversized response body", async () => {
+Deno.test("mintChildRunEventWriterCapability rejects an oversized response body", async () => {
   await assertRejects(
     () =>
       createHostedRunEventWriterCapability({
@@ -214,13 +236,13 @@ Deno.test("mintChildRunEventAppendToken rejects an oversized response body", asy
               { headers: { "Cache-Control": "no-store" } },
             ),
           ),
-      }).mintChildRunEventAppendToken("run_child"),
+      }).mintChildRunEventWriterCapability("run_child"),
     HostedChildRunEventWriterTokenExchangeError,
     "Unable to initialize durable child event persistence",
   );
 });
 
-Deno.test("mintChildRunEventAppendToken rejects an oversized token", async () => {
+Deno.test("mintChildRunEventWriterCapability rejects an oversized token", async () => {
   await assertRejects(
     () =>
       createHostedRunEventWriterCapability({
@@ -234,7 +256,7 @@ Deno.test("mintChildRunEventAppendToken rejects an oversized token", async () =>
               { headers: { "Cache-Control": "no-store" } },
             ),
           ),
-      }).mintChildRunEventAppendToken("run_child"),
+      }).mintChildRunEventWriterCapability("run_child"),
     HostedChildRunEventWriterTokenExchangeError,
     "Unable to initialize durable child event persistence",
   );
@@ -253,7 +275,7 @@ Deno.test("run event writer capabilities reject oversized root tokens", () => {
   );
 });
 
-Deno.test("mintChildRunEventAppendToken rejects control-plane errors without reading their body", async () => {
+Deno.test("mintChildRunEventWriterCapability rejects control-plane errors without reading their body", async () => {
   let bodyRead = false;
   const response = new Response("parent-writer-token-must-not-leak", { status: 503 });
   const originalJson = response.json.bind(response);
@@ -269,7 +291,7 @@ Deno.test("mintChildRunEventAppendToken rejects control-plane errors without rea
         runId: "run_parent",
         runEventAppendToken: "parent-writer-token",
         fetch: () => Promise.resolve(response),
-      }).mintChildRunEventAppendToken("run_child"),
+      }).mintChildRunEventWriterCapability("run_child"),
     HostedChildRunEventWriterTokenExchangeError,
     "Unable to initialize durable child event persistence",
   );
@@ -288,7 +310,7 @@ for (
     { run_event_token: "child-writer-token", extra: true },
   ]
 ) {
-  Deno.test(`mintChildRunEventAppendToken rejects invalid response ${JSON.stringify(body)}`, async () => {
+  Deno.test(`mintChildRunEventWriterCapability rejects invalid response ${JSON.stringify(body)}`, async () => {
     await assertRejects(
       () =>
         createHostedRunEventWriterCapability({
@@ -299,14 +321,14 @@ for (
             Promise.resolve(
               Response.json(body, { headers: { "Cache-Control": "no-store" } }),
             ),
-        }).mintChildRunEventAppendToken("run_child"),
+        }).mintChildRunEventWriterCapability("run_child"),
       HostedChildRunEventWriterTokenExchangeError,
       "Unable to initialize durable child event persistence",
     );
   });
 }
 
-Deno.test("mintChildRunEventAppendToken maps aborts to a sanitized error", async () => {
+Deno.test("mintChildRunEventWriterCapability maps aborts to a sanitized error", async () => {
   const controller = new AbortController();
   controller.abort("parent-writer-token-must-not-leak");
 
@@ -317,7 +339,7 @@ Deno.test("mintChildRunEventAppendToken maps aborts to a sanitized error", async
         runId: "run_parent",
         runEventAppendToken: "parent-writer-token",
         fetch: (input, init) => Promise.reject(new Request(input, init).signal.reason),
-      }).mintChildRunEventAppendToken("run_child", controller.signal),
+      }).mintChildRunEventWriterCapability("run_child", controller.signal),
     HostedChildRunEventWriterTokenExchangeError,
     "Unable to initialize durable child event persistence",
   );
@@ -332,7 +354,7 @@ Deno.test("mintChildRunEventAppendToken maps aborts to a sanitized error", async
   );
 });
 
-Deno.test("mintChildRunEventAppendToken applies a bounded timeout", async () => {
+Deno.test("mintChildRunEventWriterCapability applies a bounded timeout", async () => {
   const error = await assertRejects(
     () =>
       createHostedRunEventWriterCapability({
@@ -346,7 +368,7 @@ Deno.test("mintChildRunEventAppendToken applies a bounded timeout", async () => 
             signal.addEventListener("abort", () => reject(signal.reason), { once: true });
           });
         },
-      }).mintChildRunEventAppendToken("run_child"),
+      }).mintChildRunEventWriterCapability("run_child"),
     HostedChildRunEventWriterTokenExchangeError,
     "Unable to initialize durable child event persistence",
   );
@@ -358,7 +380,7 @@ Deno.test("mintChildRunEventAppendToken applies a bounded timeout", async () => 
   );
 });
 
-Deno.test("mintChildRunEventAppendToken keeps the first cancellation classification", async () => {
+Deno.test("mintChildRunEventWriterCapability keeps the first cancellation classification", async () => {
   const controller = new AbortController();
   const callerAbort = setTimeout(
     () => controller.abort("parent-writer-token-must-not-leak"),
@@ -378,7 +400,7 @@ Deno.test("mintChildRunEventAppendToken keeps the first cancellation classificat
               signal.addEventListener("abort", () => reject(signal.reason), { once: true });
             });
           },
-        }).mintChildRunEventAppendToken("run_child", controller.signal),
+        }).mintChildRunEventWriterCapability("run_child", controller.signal),
       HostedChildRunEventWriterTokenExchangeError,
       "Unable to initialize durable child event persistence",
     );
@@ -390,4 +412,233 @@ Deno.test("mintChildRunEventAppendToken keeps the first cancellation classificat
   } finally {
     clearTimeout(callerAbort);
   }
+});
+
+Deno.test("writer capabilities keep credentials private after shared-realm poisoning", async () => {
+  const rootToken = "root-writer-token-must-stay-private";
+  const childToken = "child-writer-token-must-stay-private";
+  const conversationId = "11111111-1111-4111-a111-111111111111";
+  const trustedAuthorizations: Array<string | null> = [];
+  const trustedFetch: typeof fetch = (input, init) => {
+    const request = new Request(input, init);
+    trustedAuthorizations.push(request.headers.get("Authorization"));
+    if (request.url.endsWith("/event-writer-token")) {
+      return Promise.resolve(
+        Response.json(
+          { run_event_token: childToken },
+          { headers: { "Cache-Control": "no-store" } },
+        ),
+      );
+    }
+    return Promise.resolve(Response.json({
+      latestEventId: 1,
+      latestExternalEventSequence: 1,
+      appendedCount: 1,
+      run: {
+        runId: "run_child",
+        conversationId,
+        latestEventId: 1,
+        latestExternalEventSequence: 1,
+      },
+    }));
+  };
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = trustedFetch;
+  const freshModule = await import(
+    "./child-run-event-writer-token.ts?shared-realm-poisoning"
+  );
+
+  const nativeApply = Reflect.apply;
+  const nativeWeakMapGet = WeakMap.prototype.get;
+  const nativeWeakMapSet = WeakMap.prototype.set;
+  const nativeAlsGetStore = AsyncLocalStorage.prototype.getStore;
+  const nativeAlsRun = AsyncLocalStorage.prototype.run;
+  const nativeTrim = String.prototype.trim;
+  const nativeSplit = String.prototype.split;
+  const nativeToLowerCase = String.prototype.toLowerCase;
+  const nativeStringValueOf = String.prototype.valueOf;
+  const nativeEncode = TextEncoder.prototype.encode;
+  const nativeJsonParse = JSON.parse;
+  const nativeObjectKeys = Object.keys;
+  const nativeHasOwnProperty = Object.prototype.hasOwnProperty;
+  const nativeArrayIsArray = Array.isArray;
+  const observations = {
+    weakMapMethod: 0,
+    weakMapSecret: 0,
+    asyncScope: 0,
+    stringDirective: 0,
+    tokenTrim: 0,
+    tokenEncode: 0,
+    childJson: 0,
+    childObject: 0,
+    poisonedFetch: 0,
+  };
+
+  const inspectSecretRecord = (value: unknown) => {
+    if (typeof value !== "object" || value === null) return;
+    const record = value as Record<string, unknown>;
+    if (record.runEventAppendToken === rootToken || record.runEventAppendToken === childToken) {
+      observations.weakMapSecret += 1;
+    }
+    if (record.token === rootToken || record.token === childToken) {
+      observations.weakMapSecret += 1;
+    }
+  };
+
+  try {
+    WeakMap.prototype.get = function (key: WeakKey) {
+      observations.weakMapMethod += 1;
+      return nativeApply(nativeWeakMapGet, this, [key]);
+    };
+    WeakMap.prototype.set = function (key: WeakKey, value: unknown) {
+      observations.weakMapMethod += 1;
+      inspectSecretRecord(value);
+      return nativeApply(nativeWeakMapSet, this, [key, value]);
+    };
+    AsyncLocalStorage.prototype.getStore = function () {
+      observations.asyncScope += 1;
+      return nativeApply(nativeAlsGetStore, this, []);
+    };
+    AsyncLocalStorage.prototype.run = function <R, TArgs extends unknown[]>(
+      store: unknown,
+      callback: (...args: TArgs) => R,
+      ...args: TArgs
+    ): R {
+      observations.asyncScope += 1;
+      return nativeApply(nativeAlsRun, this, [store, callback, ...args]) as R;
+    };
+    String.prototype.trim = function () {
+      const value = nativeApply(nativeStringValueOf, this, []) as string;
+      if (value === rootToken || value === childToken) observations.tokenTrim += 1;
+      return nativeApply(nativeTrim, this, []) as string;
+    };
+    String.prototype.split = (function (
+      this: string,
+      separator?: unknown,
+      limit?: number,
+    ) {
+      observations.stringDirective += 1;
+      return nativeApply(nativeSplit, this, [separator, limit]) as string[];
+    }) as typeof String.prototype.split;
+    String.prototype.toLowerCase = function () {
+      observations.stringDirective += 1;
+      return nativeApply(nativeToLowerCase, this, []) as string;
+    };
+    TextEncoder.prototype.encode = (function (this: TextEncoder, input = "") {
+      if (input === rootToken || input === childToken) observations.tokenEncode += 1;
+      return nativeApply(nativeEncode, this, [input]) as Uint8Array;
+    }) as typeof TextEncoder.prototype.encode;
+    JSON.parse =
+      ((text: string, reviver?: (this: unknown, key: string, value: unknown) => unknown) => {
+        if (text.includes(childToken)) observations.childJson += 1;
+        return nativeApply(nativeJsonParse, JSON, [text, reviver]);
+      }) as typeof JSON.parse;
+    Object.keys = ((value: object) => {
+      inspectSecretRecord(value);
+      if (
+        typeof value === "object" && value !== null &&
+        (value as Record<string, unknown>).run_event_token === childToken
+      ) {
+        observations.childObject += 1;
+      }
+      return nativeApply(nativeObjectKeys, Object, [value]) as string[];
+    }) as typeof Object.keys;
+    Object.prototype.hasOwnProperty = function (property: PropertyKey) {
+      if (
+        property === "run_event_token" &&
+        (this as Record<string, unknown>).run_event_token === childToken
+      ) {
+        observations.childObject += 1;
+      }
+      return nativeApply(nativeHasOwnProperty, this, [property]) as boolean;
+    };
+    Array.isArray = ((value: unknown) => {
+      inspectSecretRecord(value);
+      return nativeApply(nativeArrayIsArray, Array, [value]) as boolean;
+    }) as typeof Array.isArray;
+    globalThis.fetch = (() => {
+      observations.poisonedFetch += 1;
+      return Promise.reject(new Error("poisoned global fetch must not run"));
+    }) as typeof fetch;
+    Reflect.apply = (() => {
+      throw new Error("poisoned Reflect.apply must not run");
+    }) as typeof Reflect.apply;
+
+    const verifiedRequest = {
+      projectId: "project-1",
+      durableRootRun: { runId: "run_parent" },
+    };
+    freshModule.registerHostedRunEventWriterToken(verifiedRequest, {
+      token: rootToken,
+      projectId: "project-1",
+      runId: "run_parent",
+    });
+    const ingressCapability = await freshModule.runWithVerifiedHostedRunEventWriterRequest(
+      verifiedRequest,
+      () =>
+        freshModule.createHostedRunEventWriterCapabilityForRequest(
+          { ...verifiedRequest },
+          { apiUrl: "https://api.example.test", runId: "run_parent" },
+        ),
+    );
+    if (!ingressCapability) {
+      throw new Error("Expected verified ingress to create exact-root writer authority");
+    }
+
+    const parentCapability = freshModule.createHostedRunEventWriterCapability({
+      apiUrl: "https://api.example.test",
+      runId: "run_parent",
+      runEventAppendToken: rootToken,
+    });
+    const childCapability = await parentCapability.mintChildRunEventWriterCapability(
+      "run_child",
+    );
+    await freshModule.runWithHostedRunEventWriterCapability(childCapability, async () => {
+      if (freshModule.getActiveHostedRunEventWriterCapability() !== childCapability) {
+        throw new Error("Expected exact child authority inside its bounded host scope");
+      }
+    });
+    const mirror = freshModule.createHostedConversationRunChunkMirrorFromCapability(
+      childCapability,
+      {
+        expectedRunId: "run_child",
+        conversationId,
+        latestEventId: 0,
+        latestExternalEventSequence: 0,
+      },
+    );
+    if (!mirror) throw new Error("Expected an exact-child capability-backed mirror");
+    await mirror.appendEvents([{ type: "TEXT_MESSAGE_CONTENT", delta: "persisted" }]);
+    await mirror.flush();
+    mirror.dispose();
+  } finally {
+    Reflect.apply = nativeApply;
+    WeakMap.prototype.get = nativeWeakMapGet;
+    WeakMap.prototype.set = nativeWeakMapSet;
+    AsyncLocalStorage.prototype.getStore = nativeAlsGetStore;
+    AsyncLocalStorage.prototype.run = nativeAlsRun;
+    String.prototype.trim = nativeTrim;
+    String.prototype.split = nativeSplit;
+    String.prototype.toLowerCase = nativeToLowerCase;
+    TextEncoder.prototype.encode = nativeEncode;
+    JSON.parse = nativeJsonParse;
+    Object.keys = nativeObjectKeys;
+    Object.prototype.hasOwnProperty = nativeHasOwnProperty;
+    Array.isArray = nativeArrayIsArray;
+    globalThis.fetch = originalFetch;
+  }
+
+  assertEquals(observations, {
+    weakMapMethod: 0,
+    weakMapSecret: 0,
+    asyncScope: 0,
+    stringDirective: 0,
+    tokenTrim: 0,
+    tokenEncode: 0,
+    childJson: 0,
+    childObject: 0,
+    poisonedFetch: 0,
+  });
+  assertEquals(trustedAuthorizations, [`Bearer ${rootToken}`, `Bearer ${childToken}`]);
 });

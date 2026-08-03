@@ -233,7 +233,23 @@ and scope writer capabilities internally.
 Raw `authToken`, `apiUrl`, and `runEventAppendToken` fields no longer grant
 durable child event-writer authority. The parsed hosted request also excludes
 the writer credential. Keep the credential inside trusted ingress and replace
-the removed fields with an opaque `HostedRunEventWriterCapability`:
+the removed fields with an opaque `HostedRunEventWriterCapability`.
+
+Apply the change at every integration point your custom runtime implements:
+
+| Integration point                                                                                     | Migration action                                                                                   |
+| ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `ParsedHostedChatRequest` / `ParsedAgentServiceChatRequest`                                           | Stop reading `runEventAppendToken`; verified ingress retains it privately.                         |
+| `PrepareHostedConversationRootRunContextInput` / `PrepareAgentServiceConversationRootRunContextInput` | Remove `runEventAppendToken`; keep the exact-root capability in trusted host composition.          |
+| `ExecuteHostedDurableChildForkInput`                                                                  | Pass the exact-parent capability; this helper mints the exact-child capability after persistence.  |
+| `DefaultHostedInvokeAgentToolOptions`                                                                 | Pass the current run's exact-parent capability.                                                    |
+| `ExecuteHostedChildForkWithPreparedToolsInput` / `ExecuteHostedChildForkToolInputOptions`             | Pass a capability bound to `durableChildRun.childRunId`.                                           |
+| `HostedDurableChildForkRunContextInput`                                                               | Remove `authToken` and `apiUrl`; pass the exact-child capability.                                  |
+| `HostedDurableRunStartExecutionInput`                                                                 | Accept the required application-facing `rawRequest` in the starter callback.                       |
+| `HostedAgentServiceDetachedExecutionInput` / `AgentServiceDetachedExecutionInput`                     | Accept the required application-facing `rawRequest`; internal control headers are already removed. |
+
+The generated [`veryfront/agent` reference](../api-reference/veryfront/agent.md#type-reference)
+lists the complete properties for these contracts.
 
 1. After trusted ingress verifies an exact root-run append credential, create
    the root capability. Do not pass a general user API token.
@@ -242,6 +258,7 @@ the removed fields with an opaque `HostedRunEventWriterCapability`:
    import {
      createHostedRunEventWriterCapability,
      executeHostedChildForkWithPreparedTools,
+     executeHostedDurableChildFork,
    } from "veryfront/agent";
 
    const rootWriter = createHostedRunEventWriterCapability({
@@ -251,19 +268,25 @@ the removed fields with an opaque `HostedRunEventWriterCapability`:
    });
    ```
 
-2. After the control plane persists the direct child run, mint an exact-child
-   capability:
+2. Pass that exact-parent capability to helpers that own child persistence and
+   capability delegation. Do not pre-mint for these helpers.
 
    ```ts
-   const childWriter = await rootWriter.mintChildRunEventAppendToken(
+   const result = await executeHostedDurableChildFork({
+     ...input,
+     runEventWriterCapability: rootWriter,
+   });
+   ```
+
+3. For lower-level helpers that receive an already-persisted `durableChildRun`,
+   mint and pass an exact-child capability:
+
+   ```ts
+   const childWriter = await rootWriter.mintChildRunEventWriterCapability(
      durableChildRun.childRunId,
      abortSignal,
    );
-   ```
 
-3. Pass the child capability to the durable child helper:
-
-   ```ts
    const result = await executeHostedChildForkWithPreparedTools({
      ...input,
      durableChildRun,
@@ -271,11 +294,21 @@ the removed fields with an opaque `HostedRunEventWriterCapability`:
    });
    ```
 
-`HostedDurableChildForkRunContextInput` accepts the same
-`runEventWriterCapability` field. A durable child execution without exact-child
-authority now fails before provider dispatch. Token exchange failures are
-bounded, sanitized, and fail closed; callers must not retry by falling back to
-a user API token.
+4. Update detached starter callbacks to accept the isolated request:
+
+   ```ts
+   const startDetachedExecution = async ({
+     execution,
+     abortSignal,
+     rawRequest,
+   }: HostedAgentServiceDetachedExecutionInput<Execution>) => {
+     await host.start({ execution, abortSignal, request: rawRequest });
+   };
+   ```
+
+A durable execution without authority bound to the expected run fails before
+provider dispatch. Token exchange failures are bounded, sanitized, and fail
+closed; callers must not retry by falling back to a user API token.
 
 ## Verify it worked
 

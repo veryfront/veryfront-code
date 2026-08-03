@@ -308,6 +308,54 @@ Deno.test("executeHostedChildForkWithPreparedTools fails closed before provider 
   }
 });
 
+for (
+  const [authorityKind, capabilityRunId] of [
+    ["parent", "parent-run-scoped"],
+    ["sibling", "sibling-run-scoped"],
+  ] as const
+) {
+  Deno.test(`executeHostedChildForkWithPreparedTools rejects ${authorityKind} authority before provider dispatch`, async () => {
+    let startRuntimeCalls = 0;
+    const result = await executeHostedChildForkWithPreparedTools({
+      authToken: "user-token",
+      apiUrl: "https://api.example.com",
+      runEventWriterCapability: createHostedRunEventWriterCapability({
+        apiUrl: "https://api.example.com",
+        runId: capabilityRunId,
+        runEventAppendToken: "wrong-run-writer-token",
+      }),
+      description: "Check the app",
+      kind: "invoke_agent",
+      provider: "anthropic",
+      forkModel: "anthropic/claude-sonnet-4",
+      maxSteps: 4,
+      effectivePrompt: "Do the work.",
+      durableChildRun: {
+        childConversationId: "11111111-1111-4111-a111-111111111111",
+        childRunId: "target-child-run-scoped",
+        childMessageId: "22222222-2222-4222-a222-222222222222",
+        latestEventId: 0,
+        latestExternalEventSequence: 0,
+      },
+      toolAssembly: {
+        ok: true,
+        forkTools: {},
+        availableToolNames: [],
+      },
+      startRuntime: () => {
+        startRuntimeCalls += 1;
+        throw new Error("provider dispatch must not start");
+      },
+    });
+
+    assertEquals(startRuntimeCalls, 0);
+    assertEquals(result.success, false);
+    if (!result.success) {
+      assertEquals(result.error, "Durable hosted child run requires an event mirror");
+    }
+  });
+}
+
 Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run context factory", async () => {
   let createRunContextCalls = 0;
   let activeDuringStart = false;

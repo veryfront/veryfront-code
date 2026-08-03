@@ -24,7 +24,6 @@ import { bootstrapHostedChildRun, type BootstrapHostedChildRunInput } from "./ch
 import {
   createHostedRunEventWriterCapability,
   getActiveHostedRunEventWriterCapability,
-  HostedChildRunEventWriterTokenExchangeError,
   runWithHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
 
@@ -858,7 +857,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
               assertEquals(JSON.stringify(options).includes(CHILD_RUN_EVENT_TOKEN), false);
               assertEquals("runEventWriterCapability" in (options ?? {}), false);
               const grandchildCapability = await getActiveHostedRunEventWriterCapability()
-                ?.mintChildRunEventAppendToken("run_grandchild_1");
+                ?.mintChildRunEventWriterCapability("run_grandchild_1");
               assertEquals(JSON.stringify(grandchildCapability), "{}");
               bootstrapCalls.push("execute");
               return baseSuccessResult();
@@ -1168,8 +1167,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
     assertEquals(observedLifecycleErrors.length, 2);
     assertEquals(
       observedLifecycleErrors[0] instanceof Error &&
-        observedLifecycleErrors[0].message ===
-          "Unable to initialize durable child event persistence",
+        observedLifecycleErrors[0].message === "observer failed",
       true,
     );
     assertEquals(observedLifecycleErrors[1] instanceof HostedChildRunFinalizationError, true);
@@ -1341,9 +1339,8 @@ describe("agent/hosted-durable-child-fork-execution", () => {
     assertEquals(error instanceof HostedChildRunFinalizationError, true);
     assertEquals(observedLifecycleErrors.length, 2);
     assertEquals(
-      observedLifecycleErrors[0] instanceof HostedChildRunEventWriterTokenExchangeError &&
-        observedLifecycleErrors[0].classification,
-      "aborted",
+      observedLifecycleErrors[0] instanceof Error && observedLifecycleErrors[0].message,
+      "observer rejected",
     );
     assertEquals(observedLifecycleErrors[1] instanceof HostedChildRunFinalizationError, true);
     assertEquals(
@@ -1356,7 +1353,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
     );
   });
 
-  it("rethrows caller cancellation after persisting setup cancellation", async () => {
+  it("sanitizes caller cancellation after persisting setup cancellation", async () => {
     const controller = new AbortController();
     let executed = false;
     let cancellationAttempts = 0;
@@ -1418,10 +1415,15 @@ describe("agent/hosted-durable-child-fork-execution", () => {
           },
         }),
       DOMException,
-      "caller cancelled",
+      "The operation was aborted.",
     );
 
-    assertEquals(error, callerAbort);
+    assertEquals(error === callerAbort, false);
+    if (!(error instanceof DOMException)) {
+      throw new Error("Expected a sanitized AbortError");
+    }
+    assertEquals(error.name, "AbortError");
+    assertEquals(error.message.includes(callerAbort.message), false);
     assertEquals(executed, false);
     assertEquals(cancellationAttempts, 1);
   });
