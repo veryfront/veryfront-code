@@ -5,13 +5,21 @@ function ownDataValue(record: object, key: string): unknown {
   return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }
 
+/** Return whether an event declares the private durable run-event discriminator. */
+export function hasPrivateConversationRunEventType(value: unknown): value is object {
+  return !!value && typeof value === "object" && !Array.isArray(value) &&
+    ownDataValue(value, "type") === "AGENT_RUN_MODEL_CALL_CONTEXT";
+}
+
 /** Return whether an event belongs to the private durable run-event sequence. */
 export function isPrivateConversationRunEvent(value: unknown): boolean {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  if (ownDataValue(value, "type") !== "AGENT_RUN_MODEL_CALL_CONTEXT") return false;
+  if (!hasPrivateConversationRunEventType(value)) return false;
   if (!Array.isArray(ownDataValue(value, "messages"))) return false;
-  const tools = ownDataValue(value, "tools");
-  if (tools !== undefined && !Array.isArray(tools)) return false;
+  const toolsDescriptor = Object.getOwnPropertyDescriptor(value, "tools");
+  if (
+    toolsDescriptor !== undefined &&
+    (!("value" in toolsDescriptor) || !Array.isArray(toolsDescriptor.value))
+  ) return false;
   return Object.keys(value).every((key) => key === "type" || key === "messages" || key === "tools");
 }
 

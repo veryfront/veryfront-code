@@ -26,6 +26,7 @@ import {
   resolveConversationRunTargets,
   resyncConversationRunAppendCursor,
 } from "./durable.ts";
+import { DurableRunEventPersistenceError } from "./private-run-event.ts";
 
 const API_URL = "https://api.example.com";
 const AUTH_TOKEN = "token-123";
@@ -611,6 +612,83 @@ describe("agent/durable", () => {
     assertEquals("expected_previous_external_event_sequence" in body, false);
   });
 
+  it("rejects malformed model-call context before normalization or fetch", async () => {
+    let accessorReads = 0;
+    let fetchCalls = 0;
+    const event = {
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      messages: [],
+      extra: "invalid",
+    };
+    Object.defineProperty(event, "secret", {
+      enumerable: true,
+      get() {
+        accessorReads += 1;
+        return "must not be read";
+      },
+    });
+
+    await assertRejects(
+      () =>
+        appendConversationRunEvents({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          runId: "run_mcc_malformed",
+          expectedPreviousEventId: 6,
+          expectedPreviousExternalEventSequence: 4,
+          events: [event],
+          fetch: async () => {
+            fetchCalls += 1;
+            return jsonResponse({}, 200);
+          },
+        }),
+      DurableRunEventPersistenceError,
+      "Invalid private run event shape",
+    );
+
+    assertEquals(accessorReads, 0);
+    assertEquals(fetchCalls, 0);
+  });
+
+  it("rejects an accessor-backed tools field before fetch", async () => {
+    let accessorReads = 0;
+    let fetchCalls = 0;
+    const event = {
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      messages: [],
+    };
+    Object.defineProperty(event, "tools", {
+      enumerable: true,
+      get() {
+        accessorReads += 1;
+        return [{ name: "must-not-run" }];
+      },
+    });
+
+    await assertRejects(
+      () =>
+        appendConversationRunEvents({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          runId: "run_mcc_tools_accessor",
+          expectedPreviousEventId: 6,
+          expectedPreviousExternalEventSequence: 4,
+          events: [event],
+          fetch: async () => {
+            fetchCalls += 1;
+            return jsonResponse({}, 200);
+          },
+        }),
+      DurableRunEventPersistenceError,
+      "Invalid private run event shape",
+    );
+
+    assertEquals(accessorReads, 0);
+    assertEquals(fetchCalls, 0);
+  });
+
   it("rejects a mixed model-call context response without an advanced external cursor", async () => {
     const event = modelCallContextEvent("exact");
     stubFetchSequence(jsonResponse({
@@ -771,6 +849,53 @@ describe("agent/durable", () => {
         latestExternalEventSequence: 4,
       },
     );
+  });
+
+  it("backfills pure-private cursors without mutating camel or snake response bodies", async () => {
+    const cases = [
+      {
+        latest_event_id: 7,
+        appended_count: 1,
+        run: {
+          run_id: "run_mcc_immutable_snake",
+          conversation_id: CONVERSATION_ID,
+          latest_event_id: 7,
+        },
+      },
+      {
+        latestEventId: 8,
+        appendedCount: 1,
+        run: {
+          runId: "run_mcc_immutable_camel",
+          conversationId: CONVERSATION_ID,
+          latestEventId: 8,
+        },
+      },
+    ] as const;
+
+    for (const responseBody of cases) {
+      const originalResponseBody = structuredClone(responseBody);
+      const response = jsonResponse({}, 200);
+      Object.defineProperty(response, "json", {
+        value: () => Promise.resolve(responseBody),
+      });
+
+      const result = await appendConversationRunEvents({
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_mcc_immutable",
+        expectedPreviousEventId: 6,
+        expectedPreviousExternalEventSequence: 4,
+        events: [modelCallContextEvent("immutable")],
+        fetch: async () => response,
+      });
+
+      assertEquals(result.latestExternalEventSequence, 4);
+      assertEquals(result.run.latestExternalEventSequence, 4);
+      assertEquals(responseBody, originalResponseBody);
+      assertEquals(responseBody.run, originalResponseBody.run);
+    }
   });
 
   it("stops an ambiguous private-event replay after response loss and an interleaved event", async () => {

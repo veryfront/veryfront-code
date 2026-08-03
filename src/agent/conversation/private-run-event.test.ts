@@ -52,7 +52,7 @@ describe("agent/conversation/private-run-event", () => {
       },
     });
 
-    assertEquals(isPrivateConversationRunEvent(event), true);
+    assertEquals(isPrivateConversationRunEvent(event), false);
     assertEquals(reads, 0);
   });
 
