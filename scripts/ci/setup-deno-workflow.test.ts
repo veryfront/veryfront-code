@@ -105,8 +105,7 @@ describe("setup-deno CI contract", () => {
     assertEquals(
       stepsForSetupScan(
         {
-          uses:
-            "veryfront/veryfront-code/.github/workflows/reusable.yml@main",
+          uses: "veryfront/veryfront-code/.github/workflows/reusable.yml@main",
         },
         "owner reusable job",
       ),
