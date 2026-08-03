@@ -7,7 +7,7 @@ import { relativeToProjectDir } from "./project-paths.ts";
 import {
   appendDependencyPinningPathKey,
   appendSameOriginDependencyPinningPathKey,
-  appendSameOriginSSRDependencyPinningKey,
+  appendSameOriginSSRDependencyPinningPathKey,
   normalizeExtension,
 } from "./url-builder.ts";
 import type {
@@ -39,7 +39,7 @@ function pinSameOriginModuleUrl(
       ctx.dependencyPinningCacheKey,
       ctx.moduleServerOrigin,
     )
-    : appendSameOriginSSRDependencyPinningKey(
+    : appendSameOriginSSRDependencyPinningPathKey(
       specifier,
       ctx.dependencyPinningCacheKey,
       ctx.moduleServerOrigin,

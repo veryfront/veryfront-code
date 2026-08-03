@@ -161,6 +161,7 @@ export async function processVfModuleImports(
     context.projectId,
     {
       contentSourceId: context.contentSourceId,
+      isLocalProject: context.isLocalProject,
       reactVersion: context.reactVersion,
       moduleServerOrigin: context.moduleServerOrigin,
       dependencyPinningCacheKey: context.dependencyPinningCacheKey,

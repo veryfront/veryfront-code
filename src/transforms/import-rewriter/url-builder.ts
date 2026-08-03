@@ -262,6 +262,43 @@ export function appendSameOriginSSRDependencyPinningKey(
       return url;
     }
 
+    const params = target.searchParams;
+    params.set("pins", dependencyPinningCacheKey);
+    params.set("ssr", "true");
+    return target.toString();
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Bind a same-origin absolute module URL to an SSR dependency snapshot using
+ * the module-server path transport. Use this only when the consumer resolves
+ * `/_vf_modules/` paths through the module server instead of generic fetch.
+ */
+export function appendSameOriginSSRDependencyPinningPathKey(
+  url: string,
+  dependencyPinningCacheKey?: string,
+  moduleServerOrigin?: string,
+): string {
+  if (
+    !dependencyPinningCacheKey?.startsWith("on:") ||
+    !moduleServerOrigin ||
+    (!/^https?:\/\//i.test(url) && !url.startsWith("//"))
+  ) {
+    return url;
+  }
+
+  try {
+    const requestOrigin = new URL(moduleServerOrigin);
+    const target = new URL(url, requestOrigin);
+    if (
+      target.origin !== requestOrigin.origin ||
+      !target.pathname.startsWith("/_vf_modules/")
+    ) {
+      return url;
+    }
+
     const moduleUrl = appendDependencyPinningPathKey(
       `${target.pathname}${target.search}${target.hash}`,
       dependencyPinningCacheKey,

@@ -7,6 +7,7 @@ import {
   appendDependencyPinningPathKey,
   appendSameOriginDependencyPinningPathKey,
   appendSameOriginSSRDependencyPinningKey,
+  appendSameOriginSSRDependencyPinningPathKey,
   buildCrossProjectUrl,
   buildEsmShUrl,
   buildModuleServerUrl,
@@ -118,14 +119,14 @@ describe("transforms/import-rewriter/url-builder", () => {
       );
     });
 
-    it("canonicalizes same-origin SSR module URLs to snapshot paths", () => {
+    it("adds query pinning to same-origin SSR module URLs for fetchable imports", () => {
       assertEquals(
         appendSameOriginSSRDependencyPinningKey(
           "https://app.example/_vf_modules/components/Button.js?pins=on%3Astale#default",
           "on:snapshot-a",
           "https://app.example",
         ),
-        "/_vf_modules/_pins/on%3Asnapshot-a/components/Button.js?ssr=true#default",
+        "https://app.example/_vf_modules/components/Button.js?pins=on%3Asnapshot-a&ssr=true#default",
       );
       assertEquals(
         appendSameOriginSSRDependencyPinningKey(
@@ -133,7 +134,7 @@ describe("transforms/import-rewriter/url-builder", () => {
           "on:snapshot-a",
           "https://app.example",
         ),
-        "/_vf_modules/_pins/on%3Asnapshot-a/components/Protocol.js?debug=1&ssr=true",
+        "https://app.example/_vf_modules/components/Protocol.js?debug=1&pins=on%3Asnapshot-a&ssr=true",
       );
       assertEquals(
         appendSameOriginSSRDependencyPinningKey(
@@ -142,6 +143,17 @@ describe("transforms/import-rewriter/url-builder", () => {
           "https://app.example",
         ),
         "https://cdn.example/_vf_modules/components/Button.js",
+      );
+    });
+
+    it("canonicalizes same-origin SSR module-server URLs to snapshot paths", () => {
+      assertEquals(
+        appendSameOriginSSRDependencyPinningPathKey(
+          "https://app.example/_vf_modules/components/Button.js?pins=on%3Astale#default",
+          "on:snapshot-a",
+          "https://app.example",
+        ),
+        "/_vf_modules/_pins/on%3Asnapshot-a/components/Button.js?ssr=true#default",
       );
     });
 

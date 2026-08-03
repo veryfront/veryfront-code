@@ -45,6 +45,7 @@ export class MDXRenderer {
     dependencyPinningDependencies?: Readonly<Record<string, string>>,
     dependencyPinningSource?: DependencyPinningSourceInput,
     moduleServerOrigin?: string,
+    isLocalProject?: boolean,
   ): Promise<MDXModule> {
     const resolvedDependencyPinningSource = dependencyPinningSource ?? projectDir;
     const dependencySnapshot = await resolveDependencyPinningSnapshot(
@@ -67,6 +68,7 @@ export class MDXRenderer {
       moduleServerOrigin: dependencySnapshot.cacheKey.startsWith("on:")
         ? moduleServerOrigin
         : undefined,
+      isLocalProject,
     };
 
     return await loadModuleESM(compiledProgramCode, context);
