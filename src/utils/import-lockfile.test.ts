@@ -293,6 +293,26 @@ describe("import-lockfile", () => {
       assertEquals(await fs.exists("/project/veryfront.lock"), true);
     });
 
+    it("should persist a __proto__ module specifier without mutating the imports prototype", async () => {
+      const fs = createMockFS();
+      const mgr = createLockfileManager("/project", fs);
+      const entry = {
+        resolved: "https://cdn.com/proto.ts",
+        integrity: "sha256-proto",
+      };
+
+      await mgr.set("__proto__", entry);
+      await mgr.flush();
+
+      const inMemory = await mgr.read();
+      assertExists(inMemory);
+      assertEquals(Object.getPrototypeOf(inMemory.imports), null);
+      assertEquals(inMemory.imports["__proto__"], entry);
+      const onDisk = JSON.parse(await fs.readFile("/project/veryfront.lock")) as LockfileData;
+      assertEquals(Object.keys(onDisk.imports), ["__proto__"]);
+      assertEquals(onDisk.imports["__proto__"], entry);
+    });
+
     it("should not flush when not dirty", async () => {
       const fs = createMockFS();
       const mgr = createLockfileManager("/project", fs);

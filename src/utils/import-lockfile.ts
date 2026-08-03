@@ -38,10 +38,18 @@ function cloneLockfileEntry(entry: LockfileEntry): LockfileEntry {
   };
 }
 
+function createImportDictionary(
+  entries: Iterable<readonly [string, LockfileEntry]> = [],
+): Record<string, LockfileEntry> {
+  const imports = Object.create(null) as Record<string, LockfileEntry>;
+  for (const [url, entry] of entries) imports[url] = entry;
+  return imports;
+}
+
 function cloneLockfileData(data: LockfileData): LockfileData {
   return {
     version: LOCKFILE_VERSION,
-    imports: Object.fromEntries(
+    imports: createImportDictionary(
       Object.entries(data.imports).map(([url, entry]) => [url, cloneLockfileEntry(entry)]),
     ),
   };
@@ -119,11 +127,11 @@ function parseLockfile(content: string, lockfilePath: string): LockfileData {
     }
     imports.push([url, cloneLockfileEntry(entry)]);
   }
-  return { version: LOCKFILE_VERSION, imports: Object.fromEntries(imports) };
+  return { version: LOCKFILE_VERSION, imports: createImportDictionary(imports) };
 }
 
 export function createEmptyLockfile(): LockfileData {
-  return { version: LOCKFILE_VERSION, imports: {} };
+  return { version: LOCKFILE_VERSION, imports: createImportDictionary() };
 }
 
 /** Compute integrity. */
@@ -319,7 +327,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   async function writeToDisk(data: LockfileData): Promise<void> {
     const sorted: LockfileData = {
       version: LOCKFILE_VERSION,
-      imports: Object.fromEntries(
+      imports: createImportDictionary(
         Object.entries(data.imports)
           .sort(([a], [b]) => a.localeCompare(b))
           .map(([url, entry]) => [url, cloneLockfileEntry(entry)]),
