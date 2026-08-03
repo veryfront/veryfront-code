@@ -28,13 +28,19 @@ export interface LockfileData {
 
 const LOCKFILE_NAME = "veryfront.lock";
 const LOCKFILE_VERSION = 1;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwn = Object.hasOwn;
 
 function cloneLockfileEntry(entry: LockfileEntry): LockfileEntry {
+  const dependencies = getOwnDataProperty(entry, "dependencies")?.value as
+    | string[]
+    | undefined;
+  const fetchedAt = getOwnDataProperty(entry, "fetchedAt")?.value as string | undefined;
   return {
     resolved: entry.resolved,
     integrity: entry.integrity,
-    ...(entry.dependencies === undefined ? {} : { dependencies: [...entry.dependencies] }),
-    ...(entry.fetchedAt === undefined ? {} : { fetchedAt: entry.fetchedAt }),
+    ...(dependencies === undefined ? {} : { dependencies: [...dependencies] }),
+    ...(fetchedAt === undefined ? {} : { fetchedAt }),
   };
 }
 
@@ -59,17 +65,40 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isLockfileEntry(value: unknown): value is LockfileEntry {
-  if (!isRecord(value)) return false;
-  if (typeof value.resolved !== "string" || typeof value.integrity !== "string") return false;
+function getOwnDataProperty(
+  value: object,
+  key: PropertyKey,
+): { readonly value: unknown } | undefined {
+  const descriptor = objectGetOwnPropertyDescriptor(value, key);
+  if (descriptor === undefined || !objectHasOwn(descriptor, "value")) return undefined;
+  return { value: descriptor.value };
+}
+
+function sanitizeLockfileEntry(value: unknown): LockfileEntry | null {
+  if (!isRecord(value)) return null;
+
+  const resolved = getOwnDataProperty(value, "resolved")?.value;
+  const integrity = getOwnDataProperty(value, "integrity")?.value;
+  if (typeof resolved !== "string" || typeof integrity !== "string") return null;
+
+  const dependencies = getOwnDataProperty(value, "dependencies")?.value;
   if (
-    value.dependencies !== undefined &&
-    (!Array.isArray(value.dependencies) ||
-      value.dependencies.some((dependency) => typeof dependency !== "string"))
+    dependencies !== undefined &&
+    (!Array.isArray(dependencies) ||
+      dependencies.some((dependency) => typeof dependency !== "string"))
   ) {
-    return false;
+    return null;
   }
-  return value.fetchedAt === undefined || typeof value.fetchedAt === "string";
+
+  const fetchedAt = getOwnDataProperty(value, "fetchedAt")?.value;
+  if (fetchedAt !== undefined && typeof fetchedAt !== "string") return null;
+
+  return {
+    resolved,
+    integrity,
+    ...(dependencies === undefined ? {} : { dependencies: [...dependencies] }),
+    ...(fetchedAt === undefined ? {} : { fetchedAt }),
+  };
 }
 
 function lockfileReadError(
@@ -101,11 +130,7 @@ function parseLockfile(content: string, lockfilePath: string): LockfileData {
   if (!isRecord(parsed)) {
     throw lockfileReadError(lockfilePath, "invalid-structure");
   }
-  const versionDescriptor = Object.getOwnPropertyDescriptor(parsed, "version");
-  if (versionDescriptor === undefined || !Object.hasOwn(versionDescriptor, "value")) {
-    throw lockfileReadError(lockfilePath, "invalid-structure");
-  }
-  const version = versionDescriptor.value;
+  const version = getOwnDataProperty(parsed, "version")?.value;
   if (typeof version !== "number" || !Number.isSafeInteger(version)) {
     throw lockfileReadError(lockfilePath, "invalid-structure");
   }
@@ -121,21 +146,18 @@ function parseLockfile(content: string, lockfilePath: string): LockfileData {
       },
     });
   }
-  const importsDescriptor = Object.getOwnPropertyDescriptor(parsed, "imports");
-  if (
-    importsDescriptor === undefined ||
-    !Object.hasOwn(importsDescriptor, "value") ||
-    !isRecord(importsDescriptor.value)
-  ) {
+  const parsedImports = getOwnDataProperty(parsed, "imports")?.value;
+  if (!isRecord(parsedImports)) {
     throw lockfileReadError(lockfilePath, "invalid-structure");
   }
 
   const imports: Array<[string, LockfileEntry]> = [];
-  for (const [url, entry] of Object.entries(importsDescriptor.value)) {
-    if (!isLockfileEntry(entry)) {
+  for (const [url, entry] of Object.entries(parsedImports)) {
+    const sanitizedEntry = sanitizeLockfileEntry(entry);
+    if (sanitizedEntry === null) {
       throw lockfileReadError(lockfilePath, "invalid-structure");
     }
-    imports.push([url, cloneLockfileEntry(entry)]);
+    imports.push([url, sanitizedEntry]);
   }
   return { version: LOCKFILE_VERSION, imports: createImportDictionary(imports) };
 }

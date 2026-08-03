@@ -404,6 +404,56 @@ describe("import-lockfile", () => {
       }
     });
 
+    it("rejects inherited required entry fields and ignores inherited optional fields", async () => {
+      const fieldNames = ["resolved", "integrity", "dependencies", "fetchedAt"] as const;
+      const descriptors = new Map(
+        fieldNames.map((
+          field,
+        ) => [field, Object.getOwnPropertyDescriptor(Object.prototype, field)]),
+      );
+
+      try {
+        Object.defineProperties(Object.prototype, {
+          resolved: { configurable: true, value: "https://poisoned.example/mod.ts" },
+          integrity: { configurable: true, value: "sha256-poisoned" },
+          dependencies: { configurable: true, value: ["https://poisoned.example/dep.ts"] },
+          fetchedAt: { configurable: true, value: "poisoned-date" },
+        });
+
+        const invalidFs = createMockFS({
+          "/invalid/veryfront.lock": '{"version":1,"imports":{"package":{}}}',
+        });
+        const invalidManager = createLockfileManager("/invalid", invalidFs);
+        const error = await assertRejects(() => invalidManager.read(), VeryfrontError);
+        assertExists(error);
+        if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
+        assertEquals(error.slug, "lockfile-read-error");
+        assertEquals((error.context as { reason?: string }).reason, "invalid-structure");
+
+        const validFs = createMockFS({
+          "/valid/veryfront.lock": JSON.stringify({
+            version: 1,
+            imports: {
+              package: { resolved: "https://example.com/mod.ts", integrity: "sha256-valid" },
+            },
+          }),
+        });
+        const validManager = createLockfileManager("/valid", validFs);
+        assertEquals(await validManager.read(), {
+          version: 1,
+          imports: {
+            package: { resolved: "https://example.com/mod.ts", integrity: "sha256-valid" },
+          },
+        });
+      } finally {
+        for (const field of fieldNames) {
+          const descriptor = descriptors.get(field);
+          if (descriptor) Object.defineProperty(Object.prototype, field, descriptor);
+          else Reflect.deleteProperty(Object.prototype, field);
+        }
+      }
+    });
+
     it("should preserve a newer-format lockfile on disk after a format mismatch", async () => {
       const fs = createMockFS();
       const mgr = createLockfileManager("/project", fs);
