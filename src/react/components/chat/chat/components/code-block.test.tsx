@@ -2,6 +2,7 @@ import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { RichCodeBlock } from "./code-block.tsx";
@@ -48,12 +49,20 @@ async function settle(): Promise<void> {
   flushSync(() => {});
 }
 
-// Unmounting leaves a scheduler callback queued; drain it so the leak
-// sanitizer does not attribute that timer to the test.
-async function unmount(root: Root | undefined): Promise<void> {
-  if (!root) return;
-  flushSync(() => root.unmount());
-  await new Promise((resolve) => setTimeout(resolve, 0));
+/**
+ * Poll for a state transition instead of assuming `settle()` covered it.
+ *
+ * A copy result travels through a promise chain and then a React commit, and a
+ * single macrotask does not always cover both under load.
+ */
+async function waitFor(condition: () => boolean, timeoutMs = 3000): Promise<void> {
+  const startedAt = Date.now();
+  while (!condition()) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error("Timed out waiting for code block state");
+    }
+    await settle();
+  }
 }
 
 describe("RichCodeBlock — inline mode", () => {
@@ -133,7 +142,7 @@ describe("RichCodeBlock — block mode", () => {
       );
       assertEquals(document.querySelectorAll("textarea").length, 0);
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       dom.restore();
     }
   });
@@ -170,8 +179,7 @@ describe("RichCodeBlock — block mode", () => {
       assertEquals(pending.length, 2);
 
       pending[1]?.();
-      await settle();
-      assertEquals(secondButton.textContent?.trim(), "Copied");
+      await waitFor(() => secondButton.textContent?.trim() === "Copied");
 
       pending[0]?.();
       await settle();
@@ -179,7 +187,7 @@ describe("RichCodeBlock — block mode", () => {
       assertStringIncludes(rootElement.textContent ?? "", "new code");
       assert(!(rootElement.textContent ?? "").includes("old code"));
     } finally {
-      await unmount(root);
+      await unmountReactRoot(root);
       dom.restore();
     }
   });

@@ -1,6 +1,6 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { formatAmount, getBalance } from "../../lib/stripe-client.ts";
+import { formatAmount, getBalance } from "../lib/stripe-client.ts";
 
 type BalanceItem = {
   amount: number;
@@ -23,7 +23,7 @@ function mapBalanceItem(bal: BalanceItem): {
 }
 
 export default tool({
-  id: "get-balance",
+  id: "stripe-get-balance",
   description: "Retrieve the current Stripe account balance including available and pending funds.",
   inputSchema: defineSchema((v) => v.object({}))(),
   async execute() {

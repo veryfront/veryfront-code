@@ -16,7 +16,7 @@
  * This is run automatically before `deno compile` in production builds.
  */
 
-import { walk } from "@std/fs";
+import { walk } from "#std/fs";
 import { dirname, fromFileUrl, join, relative } from "#std/path.ts";
 
 const FRAMEWORK_ROOT = fromFileUrl(new URL("../..", import.meta.url));
@@ -54,10 +54,12 @@ export async function prepareFrameworkSources(
   let totalBytes = 0;
   const encoder = new TextEncoder();
 
-  for await (const entry of walk(srcRoot, {
-    exts: SOURCE_EXTENSIONS.map((extension) => extension.slice(1)),
-    includeDirs: false,
-  })) {
+  for await (
+    const entry of walk(srcRoot, {
+      exts: SOURCE_EXTENSIONS.map((extension) => extension.slice(1)),
+      includeDirs: false,
+    })
+  ) {
     const relativePath = relative(srcRoot, entry.path);
     const normalizedPath = relativePath.replaceAll("\\", "/");
     if (
@@ -90,7 +92,11 @@ async function main(): Promise<void> {
 
   const { fileCount, totalBytes } = await prepareFrameworkSources();
 
-  console.log(`[prepare-framework-sources] Complete: ${fileCount} files, ${(totalBytes / 1024).toFixed(1)} KB`);
+  console.log(
+    `[prepare-framework-sources] Complete: ${fileCount} files, ${
+      (totalBytes / 1024).toFixed(1)
+    } KB`,
+  );
 }
 
 if (import.meta.main) await main();

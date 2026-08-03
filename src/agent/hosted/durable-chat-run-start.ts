@@ -37,10 +37,12 @@ export type HostedDurableRunLogger = {
   error(message: string, metadata?: Record<string, unknown>): void;
 };
 
-/** Input payload for hosted durable run start execution. */
+/** Input delivered to a hosted durable-run starter after request isolation. */
 export type HostedDurableRunStartExecutionInput<TExecution> = {
   execution: TExecution;
   abortSignal: AbortSignal;
+  /** Required application-facing request clone with internal control headers removed. */
+  rawRequest: Request;
 };
 
 /** Input payload for hosted durable run start cleanup. */
@@ -179,10 +181,11 @@ async function executeHostedDurableChatRunStart<TExecution>(
   const detachedStartResponse = await executeAgUiDetachedStart(
     {
       sessionManager: input.tracker.sessionManager,
-      startDetachedExecution: async ({ abortSignal }) => {
+      startDetachedExecution: async ({ abortSignal, rawRequest }) => {
         const detachedExecution = input.startDetachedExecution({
           execution,
           abortSignal,
+          rawRequest,
         });
         input.tracker.registerExecution(durableRootRun.runId, detachedExecution);
         await detachedExecution;

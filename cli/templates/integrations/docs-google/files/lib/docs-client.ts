@@ -4,7 +4,7 @@
  * Provides a type-safe interface to Google Docs API operations.
  */
 
-import { getValidToken } from "./oauth.ts";
+import { getValidToken } from "./docs-google-oauth.ts";
 
 function getEnv(key: string): string | undefined {
   // @ts-ignore - Deno global

@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getQueryStatus, runQuery } from "../../lib/snowflake-client.ts";
+import { getQueryStatus, runQuery } from "../lib/snowflake-client.ts";
 
 export default tool({
-  id: "run-query",
+  id: "snowflake-run-query",
   description:
     "Execute a SQL query against your Snowflake data warehouse. Supports SELECT, INSERT, UPDATE, DELETE, and other SQL operations.",
   inputSchema: defineSchema((v) => v.object({
@@ -66,7 +66,7 @@ export default tool({
 });
 
 export const checkQueryStatus = tool({
-  id: "check-query-status",
+  id: "snowflake-check-query-status",
   description:
     "Check the status and retrieve results of an asynchronously executed query.",
   inputSchema: defineSchema((v) => v.object({

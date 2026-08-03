@@ -1925,6 +1925,107 @@ describe("server/handlers/request/agent-stream.handler", () => {
     ]);
   });
 
+  it("uses the validated runtime target environment without production discovery", async () => {
+    const targetEnvironmentId = "10000000-1000-4000-8000-100000000088";
+    let capturedProjectEnv: string | undefined;
+    const fetchUrls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+    const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+
+    Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
+    Deno.env.delete("VERYFRONT_API_BASE_URL");
+    globalThis.fetch = ((url, init) => {
+      fetchUrls.push(String(url));
+      assertEquals(
+        new Headers(init?.headers).get("authorization"),
+        "Bearer request-scoped-user-token",
+      );
+      assertEquals(
+        String(url),
+        `https://api.veryfront.org/projects/demo-project/environment-variables?environment_id=${targetEnvironmentId}&limit=100`,
+      );
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ data: [{ key: "TARGET_ENV_VALUE", value: "staging-value" }] }),
+          { headers: { "content-type": "application/json" } },
+        ),
+      );
+    }) as typeof fetch;
+
+    const agent = createAgentWithConfig("assistant-1", {
+      system: () => `target=${getEnv("TARGET_ENV_VALUE")}`,
+    });
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => id === "assistant-1" ? agent : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: (runtimeAgent) => ({
+        stream: async (_messages, _context, callbacks) => {
+          capturedProjectEnv = typeof runtimeAgent.config.system === "function"
+            ? await runtimeAgent.config.system()
+            : runtimeAgent.config.system;
+          callbacks?.onFinish?.({
+            text: "ok",
+            messages: [],
+            toolCalls: [],
+            status: "completed",
+            usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+          });
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+
+    const invocation = JSON.parse(
+      createAgentStreamRequestBody({
+        credentials: { authToken: "request-scoped-user-token" },
+      }),
+    );
+    invocation.run.project.runtimeTargetKind = "environment";
+    invocation.run.project.runtimeTargetEnvironmentId = targetEnvironmentId;
+    const body = JSON.stringify(invocation);
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+
+    let result;
+    try {
+      result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        {
+          ...createCtx(publicKeyPem),
+          environmentId: "20000000-2000-4000-8000-200000000099",
+        },
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+      else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
+      if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+      else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertStringIncludes(capturedProjectEnv ?? "", "target=staging-value");
+    assertEquals(fetchUrls, [
+      `https://api.veryfront.org/projects/demo-project/environment-variables?environment_id=${targetEnvironmentId}&limit=100`,
+    ]);
+  });
+
   it("prefers VERYFRONT_API_BASE_URL over VERYFRONT_API_URL", async () => {
     const apiBaseUrl = "http://93.184.216.34:8080";
     let capturedEnv: Record<string, string | undefined> | null = null;

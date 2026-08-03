@@ -50,6 +50,15 @@ describe("generate-api-reference", () => {
       const uiReference = await Deno.readTextFile(
         `${outputDir}/veryfront/ui.md`,
       );
+      const chatReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/chat.md`,
+      );
+      const agentReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/agent.md`,
+      );
+      const mcpReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/mcp.md`,
+      );
       const providerReference = await Deno.readTextFile(
         `${outputDir}/veryfront/provider.md`,
       );
@@ -75,6 +84,37 @@ describe("generate-api-reference", () => {
         'import type { DisclosureParts, DisclosureProps, MultipleToggleGroupRootProps } from "veryfront/ui/adapter";',
         "type-only deep exports must use a copyable type import",
       );
+      for (
+        const exportName of [
+          "ChatInputSend",
+          "ChatInputStop",
+          "ChatInputVoice",
+        ]
+      ) {
+        assertEquals(
+          chatReference.match(
+            new RegExp("^\\| `" + exportName + "` \\|", "gm"),
+          )?.length,
+          1,
+          `${exportName} must appear once in the exports table`,
+        );
+      }
+      assertEquals(
+        agentReference.match(/^\| `createAgUiHandler` \|/gm)?.length,
+        1,
+        "createAgUiHandler must appear once in the exports table",
+      );
+      assertEquals(
+        uiReference.match(
+          /^\| `ToggleGroupParts` \|[^\n]*data-state="on"\\\|"off"[^\n]*\|/gm,
+        )?.length,
+        2,
+        "ToggleGroupParts descriptions must escape table delimiters",
+      );
+      assertStringIncludes(
+        mcpReference,
+        "| `formatSSEPrimingEvent` | Format an SSE priming event. |",
+      );
       assertStringIncludes(
         routerReference,
         "| Name | Description | Source |",
@@ -87,7 +127,11 @@ describe("generate-api-reference", () => {
       const generateResultIndex = providerTypes.split("\n").findIndex((line) =>
         line.startsWith("export interface ModelRuntimeGenerateResult")
       );
-      assertEquals(generateResultIndex >= 0, true, "test declaration must exist");
+      assertEquals(
+        generateResultIndex >= 0,
+        true,
+        "test declaration must exist",
+      );
       assertStringIncludes(
         providerReference,
         `| \`ModelRuntimeGenerateResult\` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L${

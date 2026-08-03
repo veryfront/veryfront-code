@@ -887,6 +887,10 @@ export {
   type HostedDurableChildForkRunContextInput,
 } from "./hosted/child-fork-run-context.ts";
 export {
+  createHostedRunEventWriterCapability,
+  type HostedRunEventWriterCapability,
+} from "./hosted/child-run-event-writer-token.ts";
+export {
   executeHostedChildForkStream,
   type ExecuteHostedChildForkStreamInput,
   finalizeHostedChildForkCompletion,

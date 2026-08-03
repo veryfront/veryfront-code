@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { calculateFunnelConversionRate, getFunnel } from "../../lib/mixpanel-client.ts";
+import { calculateFunnelConversionRate, getFunnel } from "../lib/mixpanel-client.ts";
 
 export default tool({
-  id: "get-funnel",
+  id: "mixpanel-get-funnel",
   description:
     "Retrieve funnel analysis data from Mixpanel. Analyze conversion rates and user drop-off at each step of a funnel.",
   inputSchema: defineSchema((v) => v.object({

@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { formatAddress, getAccount } from "../../lib/salesforce-client.ts";
+import { formatAddress, getAccount } from "../lib/salesforce-client.ts";
 
 export default tool({
-  id: "get-account",
+  id: "salesforce-get-account",
   description:
     "Get detailed information about a specific account in Salesforce CRM by their account ID.",
   inputSchema: defineSchema((v) => v.object({

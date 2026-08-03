@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ListItem } from "./list.tsx";
@@ -103,7 +104,7 @@ describe("ListItem", () => {
     }
   });
 
-  it("activates on Enter and Space with native-button timing", () => {
+  it("activates on Enter and Space with native-button timing", async () => {
     const dom = createDom();
     const restore = installDom(dom);
     const root = createRoot(document.getElementById("root")!);
@@ -148,12 +149,12 @@ describe("ListItem", () => {
       assertEquals(keyDownCalls, 2);
       assertEquals(keyUpCalls, 1);
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       restore();
     }
   });
 
-  it("lets caller handlers cancel synthesized activation", () => {
+  it("lets caller handlers cancel synthesized activation", async () => {
     const dom = createDom();
     const restore = installDom(dom);
     const root = createRoot(document.getElementById("root")!);
@@ -184,12 +185,12 @@ describe("ListItem", () => {
       flushSync(() => item.dispatchEvent(keyboardEvent("keyup", " ")));
       assertEquals(activations, 0);
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       restore();
     }
   });
 
-  it("renders primary and trailing actions as independently accessible controls", () => {
+  it("renders primary and trailing actions as independently accessible controls", async () => {
     const dom = createDom();
     const restore = installDom(dom);
     const root = createRoot(document.getElementById("root")!);
@@ -260,13 +261,13 @@ describe("ListItem", () => {
       assertEquals(legacyRowClicks, 0);
       assertEquals(activationCurrentTarget, primaryAction);
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       assertEquals(primaryActionRef.current, null);
       restore();
     }
   });
 
-  it("delegates the non-action row surface to its native primary action", () => {
+  it("delegates the non-action row surface to its native primary action", async () => {
     const dom = createDom();
     const restore = installDom(dom);
     const root = createRoot(document.getElementById("root")!);
@@ -306,12 +307,12 @@ describe("ListItem", () => {
       assertEquals(primaryActivations, 1);
       assertEquals(actionActivations, 1);
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       restore();
     }
   });
 
-  it("does not fall through to legacy onClick after synchronous primary removal", () => {
+  it("does not fall through to legacy onClick after synchronous primary removal", async () => {
     const dom = createDom();
     const restore = installDom(dom);
     const root = createRoot(document.getElementById("root")!);
@@ -345,12 +346,12 @@ describe("ListItem", () => {
       assertEquals(primaryActivations, 1);
       assertEquals(legacyRowClicks, 0);
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       restore();
     }
   });
 
-  it("retains primary-action provenance without Event.composedPath", () => {
+  it("retains primary-action provenance without Event.composedPath", async () => {
     const dom = createDom();
     const restore = installDom(dom);
     const composedPathDescriptor = Object.getOwnPropertyDescriptor(
@@ -386,7 +387,7 @@ describe("ListItem", () => {
       assertEquals(primaryActivations, 1);
       assertEquals(legacyRowClicks, 0);
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       if (composedPathDescriptor) {
         Object.defineProperty(
           dom.window.Event.prototype,
@@ -401,7 +402,7 @@ describe("ListItem", () => {
     }
   });
 
-  it("preserves React 19 callback-ref cleanup for the primary action", () => {
+  it("preserves React 19 callback-ref cleanup for the primary action", async () => {
     const dom = createDom();
     const restore = installDom(dom);
     let root: ReturnType<typeof createRoot> | undefined;
@@ -433,13 +434,13 @@ describe("ListItem", () => {
       assert(renderedPrimaryAction);
       assertEquals(primaryAction, renderedPrimaryAction);
 
-      flushSync(() => root?.unmount());
+      await unmountReactRoot(root);
       root = undefined;
       assertEquals(primaryAction, null);
       assertEquals(cleanupCalls, 1);
       assertEquals(nullCalls, 0);
     } finally {
-      if (root) flushSync(() => root?.unmount());
+      if (root) await unmountReactRoot(root);
       restore();
     }
   });
@@ -468,7 +469,7 @@ describe("ListItem", () => {
     }
   });
 
-  it("cancels a pending Space activation when focus leaves the row", () => {
+  it("cancels a pending Space activation when focus leaves the row", async () => {
     const dom = createDom();
     const restore = installDom(dom);
     const root = createRoot(document.getElementById("root")!);
@@ -494,12 +495,12 @@ describe("ListItem", () => {
       flushSync(() => item.dispatchEvent(keyboardEvent("keyup", " ")));
       assertEquals(activations, 0);
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       restore();
     }
   });
 
-  it("does not re-arm Space when the caller moves focus during keydown", () => {
+  it("does not re-arm Space when the caller moves focus during keydown", async () => {
     const dom = createDom();
     const restore = installDom(dom);
     const root = createRoot(document.getElementById("root")!);
@@ -527,12 +528,12 @@ describe("ListItem", () => {
       flushSync(() => item.dispatchEvent(keyboardEvent("keyup", " ")));
       assertEquals(activations, 0);
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       restore();
     }
   });
 
-  it("does not synthesize activation while an IME composition is active", () => {
+  it("does not synthesize activation while an IME composition is active", async () => {
     const dom = createDom();
     const restore = installDom(dom);
     const root = createRoot(document.getElementById("root")!);
@@ -559,12 +560,12 @@ describe("ListItem", () => {
       assertEquals(composingEnter.defaultPrevented, false);
       assertEquals(activations, 0);
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       restore();
     }
   });
 
-  it("forwards refs without replacing structural active state", () => {
+  it("forwards refs without replacing structural active state", async () => {
     const dom = createDom();
     const restore = installDom(dom);
     const root = createRoot(document.getElementById("root")!);
@@ -595,7 +596,7 @@ describe("ListItem", () => {
       });
       assertEquals(itemRef.current.getAttribute("data-active"), null);
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       assertEquals(itemRef.current, null);
       restore();
     }

@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import { computeIntegrity, type LockfileManager } from "#veryfront/utils";
 import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
@@ -562,7 +563,7 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       try {
         globalThis.fetch = ((_input, init) => {
           attempts += 1;
-          const signal = init?.signal;
+          const signal = observeFetchRequestInit(init).signal;
           return Promise.resolve(
             new Response(
               new ReadableStream<Uint8Array>({

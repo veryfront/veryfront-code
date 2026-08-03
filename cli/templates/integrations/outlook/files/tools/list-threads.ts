@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listThreads, summarizeContact } from "../../lib/outlook-client.ts";
+import { listThreads, summarizeContact } from "../lib/outlook-client.ts";
 
 export default tool({
-  id: "list-threads",
+  id: "outlook-list-threads",
   description:
     "List recent Outlook conversation threads for request-desk triage. Returns representative messages with thread_id values that can be passed to get-thread.",
   inputSchema: defineSchema((v) => v.object({

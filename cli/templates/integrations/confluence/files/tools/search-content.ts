@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { searchContent } from "../../lib/confluence-client.ts";
+import { searchContent } from "../lib/confluence-client.ts";
 
 export default tool({
-  id: "search-content",
+  id: "confluence-search-content",
   description:
     "Search for pages and blog posts in Confluence. Returns matching content with titles, excerpts, and links.",
   inputSchema: defineSchema((v) => v.object({

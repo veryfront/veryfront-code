@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createIssue } from "../../lib/jira-client.ts";
+import { createIssue } from "../lib/jira-client.ts";
 
 export default tool({
-  id: "create-issue",
+  id: "jira-create-issue",
   description:
     "Create a new Jira issue in a project. Requires project key, summary, and issue type. Optionally set description, priority, assignee, and labels.",
   inputSchema: defineSchema((v) =>

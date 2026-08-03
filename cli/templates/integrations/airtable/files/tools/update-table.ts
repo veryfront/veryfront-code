@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { updateTable } from "../../lib/airtable-client.ts";
+import { updateTable } from "../lib/airtable-client.ts";
 
 export default tool({
-  id: "update-table",
+  id: "airtable-update-table",
   description:
     "Update Airtable table metadata, such as name or description. Uses the table ID for stable updates.",
   inputSchema: defineSchema((v) =>

@@ -3,10 +3,10 @@ import { defineSchema } from "veryfront/schemas";
 import {
   formatIssueForDisplay,
   searchIssues,
-} from "../../lib/gitlab-client.ts";
+} from "../lib/gitlab-client.ts";
 
 export default tool({
-  id: "search-issues",
+  id: "gitlab-search-issues",
   description:
     "Search for issues in GitLab projects. Can search across all accessible projects or within a specific project. Returns issue titles, states, assignees, and labels.",
   inputSchema: defineSchema((v) =>

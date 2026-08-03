@@ -5,6 +5,7 @@
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -108,7 +109,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       await settle();
       assertEquals(view.get().conversation?.title, "Alpha");
       assertEquals(view.get().isLoading, false);
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -122,7 +123,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       const view = mount(store, "does-not-exist");
       await settle();
       assert(view.get().conversation === null, "unknown id resolves to null");
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -197,7 +198,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       assertEquals(latest!.conversation?.title, "Provider record");
       assertEquals(latest!.isLoading, false);
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
       restoreDom();
     }
@@ -244,7 +245,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       assertEquals(loadCalls, 2);
       assertEquals(latest!.conversation?.title, "Reloaded provider record");
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
       restoreDom();
     }
@@ -302,7 +303,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       flushSync(() => latest!.clearError());
       assertEquals(latest!.error, null);
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
       restoreDom();
     }
@@ -355,7 +356,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       assertEquals(latest!.error, null);
       assertEquals(provider!.error, deleteFailure);
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       await settle();
       restoreDom();
     }
@@ -382,7 +383,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       flushSync(() => view.get().clearError());
       assertEquals(persistenceError(view.get()), null);
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -414,7 +415,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       assertEquals(persistenceError(view.get())?.cause, loadFailure);
       assertEquals(callbackErrors, [callbackFailure]);
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       if (previousReportError) {
@@ -443,7 +444,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       const view = mount(store, "a");
       await Promise.resolve();
       assert(rejectLoad);
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       rejectLoad(new Error("late load failure"));
       await settle();
     } finally {
@@ -481,7 +482,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       assertEquals(view.get().isLoading, false);
       assertEquals(persistenceError(view.get()), null);
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
     } finally {
       restoreDom();
@@ -527,7 +528,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       await settle();
       assertEquals([firstLoads, secondLoads], [1, 1]);
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       retained.reload();
       retained.clearError();
       await settle();
@@ -567,7 +568,7 @@ describe("react/components/chat/hooks/useConversation", () => {
       await settle();
       assertEquals([firstDisposals, secondDisposals], [0, 0]);
 
-      flushSync(() => view.root.unmount());
+      await unmountReactRoot(view.root);
       await settle();
       assertEquals([firstDisposals, secondDisposals], [0, 0]);
     } finally {

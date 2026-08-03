@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { updateIssue } from "../../lib/linear-client.ts";
+import { updateIssue } from "../lib/linear-client.ts";
 
 export default tool({
-  id: "update-issue",
+  id: "linear-update-issue",
   description:
     "Update an existing Linear issue. You can change the title, description, status, priority, assignee, project, or labels.",
   inputSchema: defineSchema((v) => v.object({

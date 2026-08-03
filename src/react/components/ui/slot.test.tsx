@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import {
   assert,
   assertEquals,
@@ -109,7 +110,7 @@ describe("Slot", () => {
     assertStringIncludes(ownedOpaqueButton, 'type="button"');
   });
 
-  it("preserves React 19 callback-ref cleanup for both composed refs", () => {
+  it("preserves React 19 callback-ref cleanup for both composed refs", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { pretendToBeVisual: true, url: "https://example.com/" },
@@ -146,13 +147,13 @@ describe("Slot", () => {
       assertEquals(attached, ["outer", "child"]);
       assertEquals(cleaned, []);
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       assertEquals(cleaned, ["child", "outer"]);
       restore();
     }
   });
 
-  it("does not run slot behavior after a child handler cancels the event", () => {
+  it("does not run slot behavior after a child handler cancels the event", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { pretendToBeVisual: true, url: "https://example.com/" },
@@ -183,12 +184,12 @@ describe("Slot", () => {
       );
       assertEquals(slotCalls, 0);
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       restore();
     }
   });
 
-  it("blocks disabled activation, handlers, and propagation", () => {
+  it("blocks disabled activation, handlers, and propagation", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { pretendToBeVisual: true, url: "https://example.com/start" },
@@ -276,7 +277,7 @@ describe("Slot", () => {
         assertEquals(calls, []);
       }
     } finally {
-      flushSync(() => root.unmount());
+      await unmountReactRoot(root);
       restore();
     }
   });

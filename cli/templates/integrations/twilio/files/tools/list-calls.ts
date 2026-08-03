@@ -1,6 +1,6 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { formatPhoneNumber, listCalls } from "../../lib/twilio-client.ts";
+import { formatPhoneNumber, listCalls } from "../lib/twilio-client.ts";
 
 type CallStatus =
   | "queued"
@@ -21,7 +21,7 @@ type ListCallsOptions = {
 };
 
 export default tool({
-  id: "list-calls",
+  id: "twilio-list-calls",
   description:
     "List recent phone calls from your Twilio account. Supports filtering by recipient, sender, status, and date.",
   inputSchema: defineSchema((v) => v.object({

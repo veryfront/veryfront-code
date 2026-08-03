@@ -16,6 +16,7 @@ import {
   buildIntegrationDirectory,
   buildUnknownIntegrationErrors,
   mergeIntegrationFiles,
+  namespaceIntegrationTemplateFiles,
   resolveIntegrationModuleDir,
 } from "./integration-loader-helpers.ts";
 import type {
@@ -152,7 +153,10 @@ export async function loadIntegration(
   const config = await loadIntegrationConfig(integrationName);
   if (!config) return null;
 
-  const files = await loadTemplateFromDirectory(`integration:${integrationName}`);
+  const files = namespaceIntegrationTemplateFiles(
+    integrationName,
+    await loadTemplateFromDirectory(`integration:${integrationName}`),
+  );
 
   return { config, files };
 }
