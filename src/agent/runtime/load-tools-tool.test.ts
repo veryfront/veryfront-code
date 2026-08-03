@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeToolDiscoveryContext } from "./tool-discovery-context.ts";
 import { createLoadToolsTool, type LoadToolsToolOptions } from "./load-tools-tool.ts";
@@ -254,7 +254,9 @@ describe("load_tools tool", () => {
       await tool.execute({ names: ["overflow_tool"] });
 
       assertEquals(rejected.length, 1);
-      assertEquals(rejected[0].names, ["overflow_tool"]);
+      const [rejection] = rejected;
+      assertExists(rejection);
+      assertEquals(rejection.names, ["overflow_tool"]);
     });
   });
 

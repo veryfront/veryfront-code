@@ -8,7 +8,7 @@ export const scheduleHelp: CommandHelp = {
   options: [
     {
       flag: "--input <file>",
-      description: "JSON input file to override the schedule input (run only)",
+      description: "JSON object file to override the schedule input (run only)",
     },
     {
       flag: "--remote",
@@ -18,6 +18,10 @@ export const scheduleHelp: CommandHelp = {
     {
       flag: "--json",
       description: "Output as JSON",
+    },
+    {
+      flag: "--debug",
+      description: "Enable debug logging (run only)",
     },
   ],
   examples: [

@@ -165,7 +165,9 @@ veryfront eval deep-research \
 
 Usage and p95 latency deltas are reported in `summary.json` whenever both the
 current report and baseline include those values. They fail the run only when
-the matching threshold flag is set.
+the matching threshold flag is set. A baseline is accepted only for the same
+eval definition and target; a report from another eval is rejected instead of
+being compared.
 
 Update the baseline explicitly after reviewing the current report:
 
@@ -229,10 +231,11 @@ veryfront eval deep-research \
 Policy metrics can reference `passRate`, `failed`, `gateFailures`,
 `groundednessScore`, `inputTokens`, `outputTokens`, `totalTokens`,
 `billableInputTokens`, `billableOutputTokens`, `costUsd`, `providerCostUsd`,
-`veryfrontChargeUsd`, `costCredits`, and `p95Ms`. `costUsd` remains a
-backward-compatible cost objective and prefers gateway Veryfront charge when it
-is available. Use `min`, `max`, and `maxRegressionPct` for constraints. Use
-`weight` with `direction` set to `"minimize"` or `"maximize"` for objectives.
+`veryfrontChargeUsd`, `veryfrontBilledUsd`, `costCredits`, and `p95Ms`.
+`costUsd` remains a backward-compatible cost objective and prefers gateway
+Veryfront charge when it is available. Use `min`, `max`, and
+`maxRegressionPct` for constraints. Use `weight` with `direction` set to
+`"minimize"` or `"maximize"` for objectives.
 
 Each report includes provenance metadata. Local runs record git SHA, branch,
 dirty state, and a dirty hash. Cloud runs prefer release, deployment, or preview
@@ -299,9 +302,11 @@ metrics.ops.tokens({ maxTotal: 4_000 }).budget();
 metrics.ops.cost({ maxUsd: 0.05 }).budget();
 ```
 
-`metrics.ops.cost` uses gateway `veryfrontChargeUsd` first, then legacy
-`costUsd`, then `providerCostUsd`. It does not maintain a separate pricing table
-inside the framework.
+`metrics.ops.cost` uses gateway `veryfrontBilledUsd` first, then
+`veryfrontChargeUsd`, legacy `costUsd`, and finally `providerCostUsd`. It does
+not maintain a separate pricing table inside the framework. Token and cost
+budgets fail when the measurement required by their configured limit is
+missing; absent usage evidence never passes a budget.
 
 Use `calledTool` when the agent must call a tool. Add `input` when the tool
 arguments must include specific fields. `match: "partial"` checks that the
@@ -574,6 +579,13 @@ proxy. The adapter reads AG-UI events into `record.trace.events`, records tool
 calls as `record.trace.toolCalls`, captures tool call IDs, status, streamed
 arguments, result payloads, and denied/error state when the AG-UI endpoint emits
 them, and puts the parsed text at `record.output.text`.
+
+Live adapters and CLI helpers require a non-empty `VERYFRONT_TOKEN`. CLI case
+filters cannot opt into mutation: a requested write case still requires
+`AG_UI_EVAL_WRITE=1`, and an experimental write case requires both
+`AG_UI_EVAL_WRITE=1` and `AG_UI_EVAL_EXPERIMENTAL=1`. Unknown, duplicate, or
+disabled case selections fail before any case runs. A run with no passing case
+exits unsuccessfully instead of treating an all-skipped selection as evidence.
 
 Projects with existing live AG-UI suites can also import reusable CLI, API, and
 durable canary helpers from `veryfront/eval/agent-service`. Use those helpers

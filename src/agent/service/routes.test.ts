@@ -36,6 +36,13 @@ function createAuthenticatedRequest(
   });
 }
 
+function getAuthorizationFromFetchInit(init: unknown): string | null {
+  if (typeof init !== "object" || init === null || !("headers" in init)) {
+    return null;
+  }
+  return new Headers(init.headers as HeadersInit).get("authorization");
+}
+
 function withImmutableHeaders(request: Request): Request {
   const headers = new Headers(request.headers);
   Object.defineProperty(headers, "delete", {
@@ -354,7 +361,7 @@ it("agent service routes remove verified writer credentials before detached call
         apiUrl: "https://api.example.test",
         runId: "run-1",
         fetch: async (_input, init) => {
-          childAuthorizations.push(new Headers(init?.headers).get("authorization"));
+          childAuthorizations.push(getAuthorizationFromFetchInit(init));
           return Response.json(
             { run_event_token: "child-writer-token" },
             { headers: { "Cache-Control": "no-store" } },
@@ -397,7 +404,7 @@ it("agent service routes preserve verified writer authority across request cloni
         apiUrl: "https://api.example.test",
         runId: requestClone.durableRootRun?.runId ?? "missing-run",
         fetch: async (_input, init) => {
-          childAuthorizations.push(new Headers(init?.headers).get("authorization"));
+          childAuthorizations.push(getAuthorizationFromFetchInit(init));
           return Response.json(
             { run_event_token: "child-writer-token" },
             { headers: { "Cache-Control": "no-store" } },
