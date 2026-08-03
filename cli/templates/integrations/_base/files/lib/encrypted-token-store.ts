@@ -155,8 +155,12 @@ const REQUIRED_BACKEND_METHODS = [
 
 function readEnvironmentVariable(name: string): string | undefined {
   if (typeof process !== "undefined" && process.env) return process.env[name];
-  return (globalThis as { Deno?: { env?: { get?: (name: string) => string | undefined } } })
-    .Deno?.env?.get?.(name);
+  try {
+    return (globalThis as { Deno?: { env?: { get?: (name: string) => string | undefined } } })
+      .Deno?.env?.get?.(name);
+  } catch {
+    return undefined;
+  }
 }
 
 /** Generate a fresh 256-bit key encoded as 64 hex characters. */

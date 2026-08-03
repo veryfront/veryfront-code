@@ -43,8 +43,12 @@ import type { EncryptedKvBackend } from "./encrypted-token-store.ts";
 
 function runtimeMode(): string | undefined {
   if (typeof process !== "undefined" && process.env) return process.env.NODE_ENV;
-  return (globalThis as { Deno?: { env?: { get?: (name: string) => string | undefined } } }).Deno
-    ?.env?.get?.("NODE_ENV");
+  try {
+    return (globalThis as { Deno?: { env?: { get?: (name: string) => string | undefined } } })
+      .Deno?.env?.get?.("NODE_ENV");
+  } catch {
+    return undefined;
+  }
 }
 
 interface MemoryRow {
