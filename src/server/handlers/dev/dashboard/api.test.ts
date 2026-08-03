@@ -215,14 +215,14 @@ describe("Dashboard API - GET endpoints", () => {
     assertEquals("errors" in body, true);
     assertEquals("categories" in body, true);
     assertEquals("count" in body, true);
-    assertEquals(body.count, 63);
+    assertEquals(body.count, 65);
     assertEquals(body.categories, {
       config: 7,
       build: 8,
       runtime: 7,
       route: 6,
       server: 8,
-      module: 6,
+      module: 8,
       dev: 5,
       rsc: 6,
       deployment: 4,

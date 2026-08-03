@@ -4,12 +4,15 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getSkillInfo, listSkills } from "./command.ts";
 
 describe("Skills Command", () => {
+  const repositoryRoot = new URL("../../../", import.meta.url).pathname;
+
   async function runSkillsInfo(
     args: string[],
   ): Promise<{ code: number; stdout: string; stderr: string }> {
     const cliPath = new URL("../../main.ts", import.meta.url).pathname;
     const result = await new Deno.Command(Deno.execPath(), {
       args: ["run", "-A", cliPath, "skills", "info", ...args, "--json"],
+      cwd: repositoryRoot,
       env: { VERYFRONT_NO_UPDATE_CHECK: "1", NO_COLOR: "1" },
       stdin: "null",
       stdout: "piped",
