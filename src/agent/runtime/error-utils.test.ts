@@ -80,14 +80,26 @@ describe("agent/runtime/error-utils", () => {
       );
     });
 
+    it("retains safe fields when structured diagnostics contain unsupported values", () => {
+      assertEquals(
+        stringifyToolError({
+          code: "E_TOOL",
+          detail: undefined,
+          occurredAt: new Date("2026-08-03T00:00:00.000Z"),
+        }),
+        '{"code":"E_TOOL","occurredAt":"2026-08-03T00:00:00.000Z"}',
+      );
+    });
+
     it("bounds serialized structured values after JSON escaping", () => {
-      const value = { message: "\u0000".repeat(MAX_TOOL_ERROR_TEXT_BYTES) };
+      const value = { details: "\u0000".repeat(MAX_TOOL_ERROR_TEXT_BYTES) };
       const result = stringifyToolError(value);
 
       assertEquals(
         new TextEncoder().encode(result).byteLength <= MAX_TOOL_ERROR_TEXT_BYTES,
         true,
       );
+      assertStringIncludes(result, '"details"');
     });
 
     it("uses a stable fallback when safe JSON serialization fails", () => {
@@ -115,6 +127,20 @@ describe("agent/runtime/error-utils", () => {
       };
 
       assertEquals(stringifyToolError(hostile), "Unknown error");
+      assertEquals(calls, 0);
+    });
+
+    it("retains safe siblings without invoking unsupported diagnostic branches", () => {
+      let calls = 0;
+      const diagnostic = Object.defineProperty({ code: "E_TOOL" }, "detail", {
+        enumerable: true,
+        get() {
+          calls += 1;
+          return "private";
+        },
+      });
+
+      assertEquals(stringifyToolError(diagnostic), '{"code":"E_TOOL"}');
       assertEquals(calls, 0);
     });
 

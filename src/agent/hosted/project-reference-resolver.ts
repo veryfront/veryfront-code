@@ -123,7 +123,7 @@ export async function resolveHostedProjectReference(input: {
   };
   const confirmed = requireConfirmedHostedProjectReference(
     resolution,
-    input.projectReference,
+    projectReference,
   );
   return {
     projectId: confirmed.projectId,

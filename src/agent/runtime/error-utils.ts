@@ -14,14 +14,46 @@ const TOOL_ERROR_TEXT_TRUNCATION_SUFFIX = "…";
 const TOOL_ERROR_TEXT_TRUNCATION_SUFFIX_BYTES = 3;
 const UNKNOWN_TOOL_ERROR_TEXT = "Unknown error";
 const apply = Reflect.apply;
+const ArrayIsArray = Array.isArray;
+const dateToISOString = Date.prototype.toISOString;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const getPrototypeOf = Object.getPrototypeOf;
+const objectCreate = Object.create;
+const objectDefineProperty = Object.defineProperty;
 const objectHasOwnProperty = Object.prototype.hasOwnProperty;
+const ownKeys = Reflect.ownKeys;
 const stringCharCodeAt = String.prototype.charCodeAt;
 const stringSlice = String.prototype.slice;
 const jsonStringify = JSON.stringify;
+const mathMin = Math.min;
+const NativeArrayPrototype = Array.prototype;
+const NativeDatePrototype = Date.prototype;
+const NativeObjectPrototype = Object.prototype;
+const NativeWeakSet = WeakSet;
+const numberIsFinite = Number.isFinite;
+const numberIsSafeInteger = Number.isSafeInteger;
+const stringFromValue = String;
+const weakSetAdd = WeakSet.prototype.add;
+const weakSetDelete = WeakSet.prototype.delete;
+const weakSetHas = WeakSet.prototype.has;
+const MAX_BEST_EFFORT_DEPTH = 8;
+const MAX_BEST_EFFORT_NODES = 256;
+const OMIT_DIAGNOSTIC_VALUE = Symbol("omit-diagnostic-value");
 
 function hasOwn(object: object, key: PropertyKey): boolean {
   return apply(objectHasOwnProperty, object, [key]) as boolean;
+}
+
+function hasWeakSetValue(set: WeakSet<object>, value: object): boolean {
+  return apply(weakSetHas, set, [value]) as boolean;
+}
+
+function addWeakSetValue(set: WeakSet<object>, value: object): void {
+  apply(weakSetAdd, set, [value]);
+}
+
+function deleteWeakSetValue(set: WeakSet<object>, value: object): void {
+  apply(weakSetDelete, set, [value]);
 }
 
 function readOwnGetter(object: object, key: PropertyKey): (() => unknown) | undefined {
@@ -112,6 +144,163 @@ function readNativeDomExceptionMessage(error: unknown): string | undefined {
   }
 }
 
+type BestEffortDiagnosticValue =
+  | null
+  | boolean
+  | number
+  | string
+  | BestEffortDiagnosticValue[]
+  | { [key: string]: BestEffortDiagnosticValue };
+
+interface BestEffortDiagnosticState {
+  ancestors: WeakSet<object>;
+  nodes: number;
+}
+
+function inspectOwnDescriptor(
+  value: object,
+  key: PropertyKey,
+): PropertyDescriptor | undefined {
+  try {
+    return getOwnPropertyDescriptor(value, key);
+  } catch {
+    return undefined;
+  }
+}
+
+function defineDiagnosticProperty(
+  target: object,
+  key: PropertyKey,
+  value: BestEffortDiagnosticValue,
+): void {
+  objectDefineProperty(target, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
+
+/**
+ * Build a partial diagnostic after the strict JSON snapshot rejects one
+ * branch. This path never evaluates accessors, coercion hooks, or Proxy traps:
+ * unsafe branches are omitted (or represented as null in arrays) while safe
+ * siblings remain useful to operators and models.
+ */
+function snapshotBestEffortDiagnostic(
+  value: unknown,
+  depth: number,
+  state: BestEffortDiagnosticState,
+): BestEffortDiagnosticValue | typeof OMIT_DIAGNOSTIC_VALUE {
+  if (state.nodes >= MAX_BEST_EFFORT_NODES || depth > MAX_BEST_EFFORT_DEPTH) {
+    return OMIT_DIAGNOSTIC_VALUE;
+  }
+  state.nodes += 1;
+
+  if (value === null) return null;
+  if (typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") return numberIsFinite(value) ? value : OMIT_DIAGNOSTIC_VALUE;
+  if (typeof value !== "object") return OMIT_DIAGNOSTIC_VALUE;
+
+  if (isProxyWithoutHooks(value) || hasWeakSetValue(state.ancestors, value)) {
+    return OMIT_DIAGNOSTIC_VALUE;
+  }
+
+  let prototype: object | null;
+  try {
+    prototype = getPrototypeOf(value);
+  } catch {
+    return OMIT_DIAGNOSTIC_VALUE;
+  }
+
+  if (prototype === NativeDatePrototype) {
+    try {
+      return apply(dateToISOString, value, []) as string;
+    } catch {
+      return OMIT_DIAGNOSTIC_VALUE;
+    }
+  }
+
+  const isArray = ArrayIsArray(value);
+  if (
+    (isArray && prototype !== NativeArrayPrototype) ||
+    (!isArray && prototype !== NativeObjectPrototype && prototype !== null)
+  ) {
+    return OMIT_DIAGNOSTIC_VALUE;
+  }
+
+  addWeakSetValue(state.ancestors, value);
+  try {
+    if (isArray) {
+      const lengthDescriptor = inspectOwnDescriptor(value, "length");
+      if (
+        !lengthDescriptor || !hasOwn(lengthDescriptor, "value") ||
+        !numberIsSafeInteger(lengthDescriptor.value) || lengthDescriptor.value < 0
+      ) {
+        return OMIT_DIAGNOSTIC_VALUE;
+      }
+      const length = mathMin(
+        lengthDescriptor.value as number,
+        MAX_BEST_EFFORT_NODES - state.nodes,
+      );
+      const result: BestEffortDiagnosticValue[] = [];
+      for (let index = 0; index < length; index += 1) {
+        const descriptor = inspectOwnDescriptor(value, stringFromValue(index));
+        const child = descriptor && descriptor.enumerable === true && hasOwn(descriptor, "value")
+          ? snapshotBestEffortDiagnostic(descriptor.value, depth + 1, state)
+          : OMIT_DIAGNOSTIC_VALUE;
+        defineDiagnosticProperty(
+          result,
+          index,
+          child === OMIT_DIAGNOSTIC_VALUE ? null : child,
+        );
+      }
+      return result;
+    }
+
+    let keys: (string | symbol)[];
+    try {
+      keys = ownKeys(value);
+    } catch {
+      return OMIT_DIAGNOSTIC_VALUE;
+    }
+    const result = objectCreate(null) as Record<string, BestEffortDiagnosticValue>;
+    let retainedProperties = 0;
+    for (let index = 0; index < keys.length; index += 1) {
+      const key = keys[index]!;
+      if (typeof key !== "string") continue;
+      const descriptor = inspectOwnDescriptor(value, key);
+      if (!descriptor || descriptor.enumerable !== true || !hasOwn(descriptor, "value")) continue;
+      const child = snapshotBestEffortDiagnostic(descriptor.value, depth + 1, state);
+      if (child !== OMIT_DIAGNOSTIC_VALUE) {
+        defineDiagnosticProperty(result, key, child);
+        retainedProperties += 1;
+      }
+      if (state.nodes >= MAX_BEST_EFFORT_NODES) break;
+    }
+    return retainedProperties > 0 ? result : OMIT_DIAGNOSTIC_VALUE;
+  } finally {
+    deleteWeakSetValue(state.ancestors, value);
+  }
+}
+
+function stringifyBestEffortDiagnostic(error: unknown): string | undefined {
+  if (!canIdentifyProxyWithoutHooks) return undefined;
+  const snapshot = snapshotBestEffortDiagnostic(error, 0, {
+    ancestors: new NativeWeakSet(),
+    nodes: 0,
+  });
+  if (snapshot === OMIT_DIAGNOSTIC_VALUE) return undefined;
+  try {
+    const serialized = jsonStringify(snapshot);
+    return typeof serialized === "string" && serialized.length > 0
+      ? boundToolErrorText(serialized)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function stringifyToolError(error: unknown): string {
   if (typeof error === "string" && error.length > 0) {
     return boundToolErrorText(error);
@@ -159,6 +348,6 @@ export function stringifyToolError(error: unknown): string {
     if (error === undefined) return "undefined";
     if (typeof error === "bigint") return "bigint";
     if (typeof error === "symbol") return "symbol";
-    return UNKNOWN_TOOL_ERROR_TEXT;
+    return stringifyBestEffortDiagnostic(error) ?? UNKNOWN_TOOL_ERROR_TEXT;
   }
 }

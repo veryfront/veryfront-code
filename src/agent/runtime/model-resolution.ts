@@ -22,12 +22,12 @@ const HOSTED_PROVIDER_NAMES = new Set([
   "moonshotai",
   "openai",
 ]);
-const DIRECT_CREDENTIAL_PROVIDER_ALIASES: Record<string, string> = {
-  "google-ai-studio": "google",
-};
-const DIRECT_RUNTIME_PROVIDER_ALIASES: Record<string, string> = {
-  "google-ai-studio": "google",
-};
+const DIRECT_CREDENTIAL_PROVIDER_ALIASES = new Map<string, string>([
+  ["google-ai-studio", "google"],
+]);
+const DIRECT_RUNTIME_PROVIDER_ALIASES = new Map<string, string>([
+  ["google-ai-studio", "google"],
+]);
 const DIRECT_AUTO_MODEL_DEFAULTS: Array<{ provider: string; modelId: string }> = [
   { provider: "openai", modelId: "gpt-5.4-nano" },
   { provider: "anthropic", modelId: "claude-sonnet-4-6" },
@@ -83,7 +83,7 @@ export function resolveConfiguredAgentModel(model?: string): string {
 }
 
 function hasDirectProviderCredentials(provider: string): boolean {
-  switch (DIRECT_CREDENTIAL_PROVIDER_ALIASES[provider] ?? provider) {
+  switch (DIRECT_CREDENTIAL_PROVIDER_ALIASES.get(provider) ?? provider) {
     case "anthropic":
       return Boolean(getAnthropicEnvConfig().apiKey);
     case "google":
@@ -114,7 +114,7 @@ function normalizeVeryfrontCloudRuntimeModel(modelId: string): string {
 }
 
 function toDirectRuntimeModel(provider: string, modelId: string): string {
-  const runtimeProvider = DIRECT_RUNTIME_PROVIDER_ALIASES[provider] ?? provider;
+  const runtimeProvider = DIRECT_RUNTIME_PROVIDER_ALIASES.get(provider) ?? provider;
   return `${runtimeProvider}/${modelId}`;
 }
 

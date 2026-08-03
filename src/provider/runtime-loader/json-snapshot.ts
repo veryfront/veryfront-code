@@ -29,6 +29,7 @@ const objectIs = Object.is;
 const objectKeys = Object.keys;
 const ownKeys = Reflect.ownKeys;
 const jsonParse = JSON.parse;
+const structuredCloneValue = globalThis.structuredClone;
 const stringCharCodeAt = String.prototype.charCodeAt;
 const stringFromValue = String;
 const weakSetAdd = WeakSet.prototype.add;
@@ -121,6 +122,7 @@ type SnapshotState = ResolvedJsonSnapshotOptions & {
   nodes: number;
   bytes: number;
   ancestors: WeakSet<object>;
+  valuesAreOwned: boolean;
 };
 
 function invalidValue(reason: string): never {
@@ -507,11 +509,13 @@ function snapshotValue(
       return value;
     case "object": {
       const objectValue = value as object;
-      if (!canIdentifyProxyWithoutHooks) {
-        invalidValue("cannot inspect object values without Proxy detection");
-      }
-      if (isProxyWithoutHooks(objectValue)) {
-        invalidValue("must not contain Proxy values");
+      if (!state.valuesAreOwned) {
+        if (!canIdentifyProxyWithoutHooks) {
+          invalidValue("cannot inspect object values without Proxy detection");
+        }
+        if (isProxyWithoutHooks(objectValue)) {
+          invalidValue("must not contain Proxy values");
+        }
       }
       if (hasWeakSetValue(state.ancestors, objectValue)) {
         invalidValue("must not contain cycles");
@@ -604,6 +608,46 @@ export function snapshotJsonValue(
     ancestors: new NativeWeakSet(),
     bytes: 0,
     nodes: 0,
+    valuesAreOwned: false,
+  });
+}
+
+/**
+ * Create the provider-boundary snapshot used by request builders.
+ *
+ * Node-compatible runtimes use the strict descriptor walk above. Edge hosts
+ * cannot distinguish Proxy objects before reflection, so they first cross the
+ * captured structured-clone boundary. The host rejects Proxy values (including
+ * nested Proxies) without running Proxy traps and returns a newly owned graph.
+ * Ordinary accessors follow the host's structured-clone semantics; this is an
+ * explicit edge-runtime compatibility trade-off because those hosts expose no
+ * no-hook Proxy brand primitive.
+ */
+export function snapshotProviderJsonValue(
+  value: unknown,
+  options: JsonSnapshotOptions = {},
+): JsonSnapshotValue {
+  if (canIdentifyProxyWithoutHooks) {
+    return snapshotJsonValue(value, options);
+  }
+  if (typeof structuredCloneValue !== "function") {
+    invalidValue("cannot inspect object values without Proxy detection or structured clone");
+  }
+
+  const resolved = resolveOptions(options);
+  let cloned: unknown;
+  try {
+    cloned = apply(structuredCloneValue, globalThis, [value]);
+  } catch {
+    invalidValue("could not cross the edge-runtime structured-clone boundary");
+  }
+
+  return snapshotValue(cloned, 0, {
+    ...resolved,
+    ancestors: new NativeWeakSet(),
+    bytes: 0,
+    nodes: 0,
+    valuesAreOwned: true,
   });
 }
 
@@ -635,8 +679,8 @@ export function jsonValuesEqual(
 
   try {
     return snapshotsEqual(
-      snapshotJsonValue(normalize(left)),
-      snapshotJsonValue(normalize(right)),
+      snapshotProviderJsonValue(normalize(left)),
+      snapshotProviderJsonValue(normalize(right)),
     );
   } catch {
     return false;

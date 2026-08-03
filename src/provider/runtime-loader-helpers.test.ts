@@ -163,9 +163,19 @@ describe("provider/runtime-loader helpers", () => {
       const {
         canIdentifyProxyWithoutHooks,
       } = await import("./src/platform/compat/error-introspection.ts");
-      const { snapshotJsonValue } = await import("./src/provider/runtime-loader.ts");
+      const { jsonValuesEqual, snapshotJsonValue, stringifyJsonValue } = await import(
+        "./src/provider/runtime-loader.ts"
+      );
 
       let calls = 0;
+      let getterCalls = 0;
+      const accessor = Object.defineProperty({}, "safe", {
+        enumerable: true,
+        get() {
+          getterCalls += 1;
+          return true;
+        },
+      });
       const proxy = new Proxy({ safe: true }, {
         getPrototypeOf(target) {
           calls += 1;
@@ -186,7 +196,12 @@ describe("provider/runtime-loader helpers", () => {
         primitive: snapshotJsonValue("safe"),
         calls,
         plainObject: "",
+        providerObject: "",
+        providerAccessor: stringifyJsonValue(accessor),
+        providerEquality: jsonValuesEqual('{"safe":true}', { safe: true }, true),
+        getterCalls,
         proxy: "",
+        providerProxy: "",
       };
       try {
         snapshotJsonValue({ safe: true });
@@ -194,9 +209,19 @@ describe("provider/runtime-loader helpers", () => {
         result.plainObject = error instanceof Error ? error.message : String(error);
       }
       try {
+        result.providerObject = stringifyJsonValue({ safe: true });
+      } catch (error) {
+        result.providerObject = error instanceof Error ? error.message : String(error);
+      }
+      try {
         snapshotJsonValue(proxy);
       } catch (error) {
         result.proxy = error instanceof Error ? error.message : String(error);
+      }
+      try {
+        stringifyJsonValue({ nested: proxy });
+      } catch (error) {
+        result.providerProxy = error instanceof Error ? error.message : String(error);
       }
       console.log(JSON.stringify(result));
     `;
@@ -215,7 +240,12 @@ describe("provider/runtime-loader helpers", () => {
       primitive: "safe",
       calls: 0,
       plainObject: "Provider JSON snapshot cannot inspect object values without Proxy detection",
+      providerObject: '{"safe":true}',
+      providerAccessor: '{"safe":true}',
+      providerEquality: true,
+      getterCalls: 1,
       proxy: "Provider JSON snapshot cannot inspect object values without Proxy detection",
+      providerProxy: "Provider tool value must be JSON-serializable",
     });
   });
 

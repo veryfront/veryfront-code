@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { canIdentifyProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { MAX_OPAQUE_ID_CODE_UNITS } from "#veryfront/utils/project-identity.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   canReadHostedProjectLookupDataProperties,
   resolveHostedProjectReference,
@@ -12,19 +13,6 @@ const LOOKUP_INPUT = {
   authToken: "token-1",
   apiUrl: "https://api.example.test",
 };
-
-async function withMockFetch<T>(
-  mockFetch: typeof globalThis.fetch,
-  operation: () => Promise<T>,
-): Promise<T> {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = mockFetch;
-  try {
-    return await operation();
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-}
 
 async function assertLookupFailure(mockFetch: typeof globalThis.fetch): Promise<void> {
   await withMockFetch(mockFetch, () =>

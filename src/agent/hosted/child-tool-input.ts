@@ -26,10 +26,17 @@ export const getHostedChildForkToolInputSchema = defineSchema((v) =>
     ),
     project_reference: v
       .string()
+      .min(1, INVALID_AGENT_PROJECT_REFERENCE_MESSAGE)
       .max(MAX_OPAQUE_ID_CODE_UNITS)
-      .refine(
-        isCanonicalOpaqueProjectIdentifier,
-        INVALID_AGENT_PROJECT_REFERENCE_MESSAGE,
+      .transform((value) => value.trim())
+      .pipe(
+        v.string()
+          .min(1, INVALID_AGENT_PROJECT_REFERENCE_MESSAGE)
+          .max(MAX_OPAQUE_ID_CODE_UNITS)
+          .refine(
+            isCanonicalOpaqueProjectIdentifier,
+            INVALID_AGENT_PROJECT_REFERENCE_MESSAGE,
+          ),
       )
       .optional()
       .describe(

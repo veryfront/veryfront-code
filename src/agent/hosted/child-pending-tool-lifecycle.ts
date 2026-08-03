@@ -56,10 +56,9 @@ export function createHostedChildPendingToolLifecycleLogger(
   context: HostedChildPendingToolLifecycleLogContext,
   writer: HostedChildPendingToolLifecycleLogWriter,
 ): HostedChildPendingToolLifecycleLogger {
+  const runId = context.parentRunId ?? context.childRunId;
   const runContext = {
-    ...(context.childRunId ?? context.parentRunId
-      ? { runId: context.childRunId ?? context.parentRunId }
-      : {}),
+    ...(runId ? { runId } : {}),
     ...(context.parentRunId ? { parentRunId: context.parentRunId } : {}),
     ...(context.childRunId ? { childRunId: context.childRunId } : {}),
   };

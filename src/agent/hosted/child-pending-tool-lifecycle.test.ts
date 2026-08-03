@@ -176,3 +176,34 @@ Deno.test("createHostedChildPendingToolLifecycleLogger writes host context for p
     },
   ]);
 });
+
+Deno.test("createHostedChildPendingToolLifecycleLogger preserves the parent run as runId", () => {
+  const warnings: Array<{ message: string; context: Record<string, unknown> }> = [];
+  const logger = createHostedChildPendingToolLifecycleLogger(
+    {
+      parentRunId: "run-parent",
+      childRunId: "run-child",
+      description: "Summarize docs",
+    },
+    {
+      warn: (message, context) => warnings.push({ message, context }),
+    },
+  );
+
+  logger.warnIncompleteToolLifecycles?.({
+    reason: "ended",
+    toolCallIds: ["tool-1"],
+    errorMessage: null,
+  });
+
+  assertEquals(warnings[0]?.context, {
+    conversationId: undefined,
+    runId: "run-parent",
+    parentRunId: "run-parent",
+    childRunId: "run-child",
+    description: "Summarize docs",
+    reason: "ended",
+    toolCallIds: ["tool-1"],
+    errorMessage: null,
+  });
+});

@@ -2,12 +2,14 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import {
   DEFAULT_HOSTED_CHILD_AGENT_ID,
+  getHostedChildForkToolInputSchema,
   hostedChildForkToolInputSchema,
   MAX_HOSTED_CHILD_DELEGATION_DEPTH,
   resolveHostedChildForkRuntimeConfig,
   resolveHostedChildForkThinkingOverride,
   withHostedChildInvocationContext,
 } from "./child-tool-input.ts";
+import { schemaToJsonSchema } from "#veryfront/schemas/index.ts";
 import { INVALID_AGENT_PROJECT_REFERENCE_MESSAGE } from "../project/context.ts";
 import { MAX_OPAQUE_ID_CODE_UNITS } from "#veryfront/utils/project-identity.ts";
 
@@ -149,7 +151,6 @@ Deno.test("hostedChildForkToolInputSchema rejects unsafe project references", ()
   for (
     const projectReference of [
       "",
-      " project-123",
       "project-\n123",
       "p".repeat(MAX_OPAQUE_ID_CODE_UNITS + 1),
     ]
@@ -173,6 +174,27 @@ Deno.test("hostedChildForkToolInputSchema rejects unsafe project references", ()
         : INVALID_AGENT_PROJECT_REFERENCE_MESSAGE,
     );
   }
+});
+
+Deno.test("hostedChildForkToolInputSchema trims project references", () => {
+  const result = hostedChildForkToolInputSchema.parse({
+    description: "switch project",
+    prompt: "Open the requested project.",
+    project_reference: "  project-123  ",
+  });
+
+  assertEquals(result.project_reference, "project-123");
+});
+
+Deno.test("hosted child fork JSON Schema exposes project-reference bounds", () => {
+  const schema = schemaToJsonSchema(getHostedChildForkToolInputSchema());
+  const projectReference = schema.properties?.project_reference as
+    | Record<string, unknown>
+    | undefined;
+
+  assertEquals(projectReference?.type, "string");
+  assertEquals(projectReference?.minLength, 1);
+  assertEquals(projectReference?.maxLength, MAX_OPAQUE_ID_CODE_UNITS);
 });
 
 Deno.test("DEFAULT_HOSTED_CHILD_AGENT_ID names the hosted child runtime agent", () => {
