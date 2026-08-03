@@ -1,9 +1,9 @@
 const MAX_GITHUB_PATH_CODE_UNITS = 4_096;
 
-function hasAsciiControlCharacter(value: string): boolean {
+function hasControlCharacter(value: string): boolean {
   for (let index = 0; index < value.length; index++) {
     const codeUnit = value.charCodeAt(index);
-    if (codeUnit <= 0x1f || codeUnit === 0x7f) return true;
+    if (codeUnit <= 0x1f || (codeUnit >= 0x7f && codeUnit <= 0x9f)) return true;
   }
   return false;
 }
@@ -36,7 +36,7 @@ function normalizePathSegments(value: string, label: string): string {
       `GitHub ${label} exceeds the ${MAX_GITHUB_PATH_CODE_UNITS}-character limit`,
     );
   }
-  if (hasAsciiControlCharacter(value)) {
+  if (hasControlCharacter(value)) {
     throw new TypeError(`GitHub ${label} must not contain control characters`);
   }
   if (value.includes("\\")) {

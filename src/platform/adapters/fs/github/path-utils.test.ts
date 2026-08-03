@@ -72,6 +72,8 @@ describe("platform/adapters/fs/github/path-utils", () => {
         const [path, message] of [
           ["..\\..\\user/repos", "forward slashes"],
           ["src/\u0000secret.ts", "control characters"],
+          ["src/\u0080secret.ts", "control characters"],
+          ["src/\u009fsecret.ts", "control characters"],
           ["a".repeat(4_097), "4096-character limit"],
         ] as const
       ) {
