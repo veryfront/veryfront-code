@@ -179,7 +179,7 @@ Deno.test("npm release preflight rejects an unbootstrapped package name", async 
     );
     assertStringIncludes(
       decoder.decode(output.stderr),
-      "For each package named above, publish a prerelease once",
+      "Publish each package once with a prerelease version and a non-latest dist-tag",
     );
     const calls = (await Deno.readTextFile(npmLog)).trim().split("\n");
     assertEquals(calls, [
