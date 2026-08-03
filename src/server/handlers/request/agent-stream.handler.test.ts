@@ -2729,6 +2729,81 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(getVerifiedCacheApiCredential(), undefined);
   });
 
+  it("does not fall back to the host token for a signed exact environment source", async () => {
+    let environmentLoadCalls = 0;
+    const runWithContextCalls: Array<{
+      token?: string;
+      productionMode?: boolean;
+      releaseId?: string | null;
+      branch?: string | null;
+      environmentName?: string | null;
+    }> = [];
+
+    const handler = createTestAgentStreamHandler({
+      loadAgentSourceEnvironment: () => {
+        environmentLoadCalls += 1;
+        return Promise.resolve({});
+      },
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: () => {
+        throw new Error("runtime should not be created before env lookup");
+      },
+    });
+
+    const body = createAgentStreamRequestBody({
+      project: {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000098",
+      },
+      agentSource: {
+        type: "environment",
+        environmentName: "staging",
+        releaseId: "10000000-1000-4000-8000-100000000099",
+      },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    const ctx = createCtx(publicKeyPem);
+    ctx.proxyToken = undefined;
+    ctx.adapter = {
+      ...ctx.adapter,
+      env: createNoopEnvAdapter(publicKeyPem),
+      fs: createNoopFsAdapter(runWithContextCalls),
+    };
+
+    const originalHostToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const signingKeyEnv = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
+    const originalSigningKey = Deno.env.get(signingKeyEnv);
+    Deno.env.set("VERYFRONT_API_TOKEN", "host-only-token");
+    Deno.env.set(signingKeyEnv, publicKeyPem);
+    let result;
+    try {
+      result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        ctx,
+      );
+    } finally {
+      if (originalHostToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+      else Deno.env.set("VERYFRONT_API_TOKEN", originalHostToken);
+      if (originalSigningKey === undefined) Deno.env.delete(signingKeyEnv);
+      else Deno.env.set(signingKeyEnv, originalSigningKey);
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 401);
+    assertEquals(runWithContextCalls.length, 0);
+    assertEquals(environmentLoadCalls, 0);
+  });
+
   it("returns 409 when the same run is started twice", async () => {
     const sessionManager = new AgentRunSessionManager();
     const handler = createTestAgentStreamHandler({

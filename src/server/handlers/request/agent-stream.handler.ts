@@ -54,6 +54,7 @@ import {
   toRuntimeRunAgentInput,
 } from "#veryfront/internal-agents/schema.ts";
 import {
+  AUTHENTICATION_REQUIRED,
   errorToResponse,
   INVALID_ARGUMENT,
   isVeryfrontError,
@@ -718,7 +719,7 @@ export class AgentStreamHandler extends BaseHandler {
       });
     }
 
-    const token = ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "";
+    const token = ctx.proxyToken || "";
     return fsWrapper.runWithContext(
       ctx.projectSlug,
       token,
@@ -761,8 +762,12 @@ export class AgentStreamHandler extends BaseHandler {
         expectedSurface: "studio",
       });
       assertAgentSourceMatchesHostedTarget(ctx, payload);
-      const apiAuthToken = payload.credentials?.authToken || ctx.proxyToken ||
-        getHostEnv("VERYFRONT_API_TOKEN") || "";
+      const apiAuthToken = payload.credentials?.authToken || ctx.proxyToken || "";
+      if (payload.agentSource.type === "environment" && !apiAuthToken) {
+        throw AUTHENTICATION_REQUIRED.create({
+          detail: "Named agent source environment requires a request-scoped API token",
+        });
+      }
       const requestScopedContext: HandlerContext = {
         ...ctx,
         proxyToken: apiAuthToken || undefined,
