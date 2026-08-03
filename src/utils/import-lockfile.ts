@@ -1,4 +1,5 @@
 import { computeHash } from "./hash-utils.ts";
+import { generateUuid } from "./id.ts";
 import { serverLogger } from "./logger/index.ts";
 import {
   createFileSystem,
@@ -11,6 +12,7 @@ import {
   LOCKFILE_READ_ERROR,
   NETWORK_ERROR,
 } from "#veryfront/errors/error-registry.ts";
+import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 
 const logger = serverLogger.component("lockfile");
 
@@ -240,9 +242,21 @@ export type FSAdapter = {
   readonly coordinationKey?: string;
   readFile(path: string): Promise<string>;
   writeFile(path: string, content: string): Promise<void>;
+  /**
+   * Atomically replace `to` with the file at `from` (same-directory rename).
+   * When present, lockfile writes stage a temp file and rename it into place,
+   * so a crash mid-write can never leave a truncated lockfile behind.
+   */
+  rename?(from: string, to: string): Promise<void>;
   exists(path: string): Promise<boolean>;
   remove?(path: string): Promise<void>;
-  /** Resolve an existing project path to its stable backing identity. */
+  /**
+   * Resolve an existing project path to its stable backing identity.
+   * Coordination through realPath is per-adapter-instance (or per shared
+   * coordinationKey domain): two separate adapter instances without a shared
+   * coordinationKey never serialize with each other through realPath alone,
+   * even when both implementations agree on the canonical path.
+   */
   realPath?(path: string): Promise<string>;
 };
 
@@ -566,6 +580,7 @@ function serializeLockfileAccess<T>(
 
 function createPlatformFSAdapter(): FSAdapter {
   const fs = createFileSystem();
+  const renameFile = fs.rename?.bind(fs);
 
   return {
     coordinationKey: PLATFORM_FS_COORDINATION_KEY,
@@ -575,6 +590,11 @@ function createPlatformFSAdapter(): FSAdapter {
     writeFile(path: string, content: string): Promise<void> {
       return fs.writeTextFile(path, content);
     },
+    ...(renameFile === undefined ? {} : {
+      rename(from: string, to: string): Promise<void> {
+        return renameFile(from, to);
+      },
+    }),
     exists(path: string): Promise<boolean> {
       return fs.exists(path);
     },
@@ -735,6 +755,29 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     });
   }
 
+  async function replaceLockfileAtomically(
+    rename: (from: string, to: string) => Promise<void>,
+    serialized: string,
+  ): Promise<void> {
+    // Stage the new content next to the lockfile and rename it into place, so
+    // readers observe either the previous or the new complete file and a
+    // crash mid-write can never leave a truncated lockfile behind.
+    const tempPath = `${lockfilePath}.${generateUuid()}.tmp`;
+    try {
+      await fs.writeFile(tempPath, serialized);
+      await rename(tempPath, lockfilePath);
+    } catch (error) {
+      if (fs.remove) {
+        try {
+          await fs.remove(tempPath);
+        } catch {
+          // Best-effort cleanup only; the original write/rename failure wins.
+        }
+      }
+      throw error;
+    }
+  }
+
   async function writeToDisk(data: LockfileData): Promise<void> {
     const sorted: LockfileData = {
       version: LOCKFILE_VERSION,
@@ -744,8 +787,16 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
           .map(([url, entry]) => [url, cloneLockfileEntry(entry)]),
       ),
     };
+    const serialized = `${JSON.stringify(sorted, null, 2)}\n`;
 
-    await fs.writeFile(lockfilePath, `${JSON.stringify(sorted, null, 2)}\n`);
+    const rename = fs.rename?.bind(fs);
+    if (rename) {
+      await replaceLockfileAtomically(rename, serialized);
+    } else {
+      // Adapters without rename cannot replace the file atomically; fall back
+      // to an in-place write and accept the torn-write risk for them.
+      await fs.writeFile(lockfilePath, serialized);
+    }
     logger.debug(`Written ${Object.keys(data.imports).length} entries`);
   }
 
@@ -860,6 +911,86 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   }
 
   return { read, write, get, set, has, clear, flush };
+}
+
+const lockfileReadWarningIssued = new WeakSet<LockfileManager>();
+
+/**
+ * Degrade an unreadable-lockfile failure (`lockfile-read-error`) on a build
+ * hot path: warn once per manager, naming the file and the
+ * `veryfront lock --clear` remedy, and report the error as absorbed. Every
+ * other failure — most importantly `lockfile-format-mismatch`, a valid
+ * lockfile written by a newer Veryfront build — is reported as not absorbed
+ * so it keeps failing loudly.
+ */
+function absorbUnreadableLockfileError(
+  lockfile: LockfileManager,
+  error: unknown,
+): boolean {
+  const snapshot = snapshotVeryfrontError(error);
+  if (snapshot?.slug !== LOCKFILE_READ_ERROR.slug) return false;
+
+  if (!lockfileReadWarningIssued.has(lockfile)) {
+    lockfileReadWarningIssued.add(lockfile);
+    const context = isRecord(snapshot.context) ? snapshot.context : undefined;
+    const lockfilePath = context === undefined
+      ? undefined
+      : getOwnDataProperty(context, "lockfilePath")?.value;
+    const fileLabel = typeof lockfilePath === "string" ? lockfilePath : LOCKFILE_NAME;
+    logger.warn(
+      `Lockfile ${fileLabel} could not be read (${snapshot.message}); ` +
+        "continuing this build without lockfile entries. " +
+        "Run `veryfront lock --clear` to reset the corrupted lockfile.",
+    );
+  }
+  return true;
+}
+
+/**
+ * Read a lockfile entry on a build or dev-server hot path.
+ *
+ * A lockfile written by a newer Veryfront build (`lockfile-format-mismatch`)
+ * keeps failing loudly: proceeding around data the running build cannot
+ * understand is exactly the overwrite hazard this module guards against. An
+ * unreadable or malformed lockfile (`lockfile-read-error`) instead degrades to
+ * a cache miss so builds keep working from fresh fetches; a warning naming
+ * the lockfile and the `veryfront lock --clear` remedy is logged once per
+ * manager instead of once per import.
+ */
+export async function getLockfileEntryForBuild(
+  lockfile: LockfileManager,
+  url: string,
+): Promise<LockfileEntry | null> {
+  try {
+    return await lockfile.get(url);
+  } catch (error) {
+    if (!absorbUnreadableLockfileError(lockfile, error)) throw error;
+    return null;
+  }
+}
+
+/**
+ * Persist a lockfile entry from a build or dev-server hot path.
+ *
+ * Mirrors {@link getLockfileEntryForBuild}: when the on-disk lockfile is
+ * unreadable or malformed (`lockfile-read-error`), the file is left untouched
+ * for `veryfront lock --clear` and the entry is simply not recorded, so a
+ * successful refetch still serves the build. Returns whether the entry was
+ * staged; callers should only `flush()` after a `true` result. A newer-format
+ * lockfile (`lockfile-format-mismatch`) keeps failing loudly.
+ */
+export async function setLockfileEntryForBuild(
+  lockfile: LockfileManager,
+  url: string,
+  entry: LockfileEntry,
+): Promise<boolean> {
+  try {
+    await lockfile.set(url, entry);
+    return true;
+  } catch (error) {
+    if (!absorbUnreadableLockfileError(lockfile, error)) throw error;
+    return false;
+  }
 }
 
 export interface FetchWithLockOptions {

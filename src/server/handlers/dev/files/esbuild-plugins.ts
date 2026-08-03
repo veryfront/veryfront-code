@@ -13,7 +13,9 @@ import {
 import {
   computeIntegrity,
   createLockfileManager,
+  getLockfileEntryForBuild,
   type LockfileManager,
+  setLockfileEntryForBuild,
 } from "#veryfront/utils/import-lockfile.ts";
 import {
   importMapOwnsSpecifier,
@@ -404,7 +406,9 @@ async function loadFromLockfile(
 ): Promise<
   { contents: string; loader: "js" } | { errors: { text: string; location: null }[] } | null
 > {
-  const cached = await lockfile.get(url);
+  // A newer-format lockfile keeps failing the build loudly; an unreadable or
+  // malformed lockfile degrades to a cache miss with a logged remedy.
+  const cached = await getLockfileEntryForBuild(lockfile, url);
   if (!cached) return null;
 
   logger.debug(`lockfile hit: ${url}`);
@@ -535,13 +539,17 @@ export function createBareExternalPlugin(
 
           if (lockfile) {
             const integrity = await computeIntegrity(contents);
-            await lockfile.set(args.path, {
+            // An unreadable lockfile skips persistence instead of failing the
+            // refetched load; the file stays intact for `veryfront lock --clear`.
+            const staged = await setLockfileEntryForBuild(lockfile, args.path, {
               resolved: resolvedUrl,
               integrity,
               fetchedAt: new Date().toISOString(),
             });
-            await lockfile.flush();
-            logger.debug(`lockfile updated: ${args.path} -> ${resolvedUrl}`);
+            if (staged) {
+              await lockfile.flush();
+              logger.debug(`lockfile updated: ${args.path} -> ${resolvedUrl}`);
+            }
           }
 
           return { contents, loader: "js" };

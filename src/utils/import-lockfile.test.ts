@@ -14,9 +14,11 @@ import {
   extractImports,
   fetchWithLock,
   type FSAdapter,
+  getLockfileEntryForBuild,
   type LockfileData,
   type LockfileEntry,
   resolveImportUrl,
+  setLockfileEntryForBuild,
   verifyIntegrity,
 } from "./import-lockfile.ts";
 
@@ -1977,6 +1979,199 @@ describe("import-lockfile", () => {
       };
       assertEquals(Object.keys(onDisk.imports).sort(), [lateUrl, writtenUrl]);
       assertEquals(onDisk.imports[writtenUrl]?.integrity, "sha256-written");
+    });
+
+    it("should replace the lockfile through a staged temp file when the adapter supports rename", async () => {
+      const url = "https://cdn.com/mod.ts";
+      const lockfilePath = "/project/veryfront.lock";
+      const store = new Map<string, string>();
+      const directWrites: string[] = [];
+      const fs: FSAdapter = {
+        readFile: (path: string) => {
+          const content = store.get(path);
+          if (content == null) return Promise.reject(new Error("ENOENT"));
+          return Promise.resolve(content);
+        },
+        writeFile: (path: string, content: string) => {
+          directWrites.push(path);
+          store.set(path, content);
+          return Promise.resolve();
+        },
+        exists: (path: string) => Promise.resolve(store.has(path)),
+        remove: (path: string) => {
+          store.delete(path);
+          return Promise.resolve();
+        },
+        rename: (from: string, to: string) => {
+          const content = store.get(from);
+          if (content == null) return Promise.reject(new Error("ENOENT"));
+          store.delete(from);
+          store.set(to, content);
+          return Promise.resolve();
+        },
+      };
+      const mgr = createLockfileManager("/project", fs);
+
+      await mgr.set(url, { resolved: url, integrity: "sha256-abc" });
+      await mgr.flush();
+
+      // The lockfile path itself is never written directly: the content is
+      // staged under a sibling temp name and renamed into place, so a crash
+      // mid-write cannot leave truncated JSON at the lockfile path.
+      assertEquals(directWrites.length, 1);
+      const [tempPath] = directWrites;
+      assertExists(tempPath);
+      assertEquals(tempPath.startsWith(`${lockfilePath}.`), true);
+      assertEquals(tempPath.endsWith(".tmp"), true);
+      assertEquals([...store.keys()], [lockfilePath]);
+      const onDiskContent = store.get(lockfilePath);
+      assertExists(onDiskContent);
+      const onDisk = JSON.parse(onDiskContent) as { imports: Record<string, unknown> };
+      assertEquals(Object.keys(onDisk.imports), [url]);
+    });
+
+    it("should clean up the staged temp file and preserve the lockfile when rename fails", async () => {
+      const url = "https://cdn.com/mod.ts";
+      const lockfilePath = "/project/veryfront.lock";
+      const originalContent = JSON.stringify({
+        version: 1,
+        imports: {
+          "https://cdn.com/base.ts": {
+            resolved: "https://cdn.com/base.ts",
+            integrity: "sha256-base",
+          },
+        },
+      });
+      const store = new Map<string, string>([[lockfilePath, originalContent]]);
+      const fs: FSAdapter = {
+        readFile: (path: string) => {
+          const content = store.get(path);
+          if (content == null) return Promise.reject(new Error("ENOENT"));
+          return Promise.resolve(content);
+        },
+        writeFile: (path: string, content: string) => {
+          store.set(path, content);
+          return Promise.resolve();
+        },
+        exists: (path: string) => Promise.resolve(store.has(path)),
+        remove: (path: string) => {
+          store.delete(path);
+          return Promise.resolve();
+        },
+        rename: () => Promise.reject(new Error("EACCES")),
+      };
+      const mgr = createLockfileManager("/project", fs);
+
+      await mgr.set(url, { resolved: url, integrity: "sha256-abc" });
+      await assertRejects(() => mgr.flush(), Error, "EACCES");
+
+      // The failed replacement leaves no temp file behind and keeps the
+      // previous lockfile content intact.
+      assertEquals([...store.keys()], [lockfilePath]);
+      assertEquals(store.get(lockfilePath), originalContent);
+    });
+  });
+
+  describe("getLockfileEntryForBuild", () => {
+    it("should return entries from a healthy lockfile", async () => {
+      const url = "https://cdn.com/mod.ts";
+      const fs = createMockFS({
+        "/project/veryfront.lock": JSON.stringify({
+          version: 1,
+          imports: { [url]: { resolved: url, integrity: "sha256-abc" } },
+        }),
+      });
+      const mgr = createLockfileManager("/project", fs);
+
+      assertEquals(await getLockfileEntryForBuild(mgr, url), {
+        resolved: url,
+        integrity: "sha256-abc",
+      });
+      assertEquals(await getLockfileEntryForBuild(mgr, "https://cdn.com/missing.ts"), null);
+    });
+
+    it("should degrade to a cache miss when the lockfile is unreadable", async () => {
+      const truncated = '{"version":1,"imports":{';
+      const fs = createMockFS({ "/project/veryfront.lock": truncated });
+      const mgr = createLockfileManager("/project", fs);
+
+      // Truncated or malformed JSON must not fail the build hot path; the
+      // file itself stays untouched for inspection or `veryfront lock --clear`.
+      assertEquals(await getLockfileEntryForBuild(mgr, "https://cdn.com/mod.ts"), null);
+      assertEquals(await getLockfileEntryForBuild(mgr, "https://cdn.com/other.ts"), null);
+      assertEquals(await fs.readFile("/project/veryfront.lock"), truncated);
+    });
+
+    it("should keep failing loudly for a newer-format lockfile", async () => {
+      const newerContent = JSON.stringify({
+        version: 99,
+        imports: { "https://cdn.com/newer.ts": { resolved: "x", integrity: "y" } },
+      });
+      const fs = createMockFS({ "/project/veryfront.lock": newerContent });
+      const mgr = createLockfileManager("/project", fs);
+
+      // A valid lockfile written by a newer Veryfront is not corruption; the
+      // build must stop instead of proceeding around data it cannot read.
+      const error = await assertRejects(
+        () => getLockfileEntryForBuild(mgr, "https://cdn.com/mod.ts"),
+        VeryfrontError,
+      );
+      assertExists(error);
+      if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
+      assertEquals(error.slug, "lockfile-format-mismatch");
+      assertEquals(await fs.readFile("/project/veryfront.lock"), newerContent);
+    });
+  });
+
+  describe("setLockfileEntryForBuild", () => {
+    it("should stage entries against a healthy lockfile", async () => {
+      const url = "https://cdn.com/mod.ts";
+      const fs = createMockFS();
+      const mgr = createLockfileManager("/project", fs);
+
+      assertEquals(
+        await setLockfileEntryForBuild(mgr, url, { resolved: url, integrity: "sha256-abc" }),
+        true,
+      );
+      await mgr.flush();
+      const onDisk = JSON.parse(await fs.readFile("/project/veryfront.lock")) as {
+        imports: Record<string, unknown>;
+      };
+      assertEquals(Object.keys(onDisk.imports), [url]);
+    });
+
+    it("should skip persistence when the lockfile is unreadable", async () => {
+      const url = "https://cdn.com/mod.ts";
+      const truncated = '{"version":1,"imports":{';
+      const fs = createMockFS({ "/project/veryfront.lock": truncated });
+      const mgr = createLockfileManager("/project", fs);
+
+      // A refetched module must still be served: the entry is simply not
+      // recorded and the corrupted file is preserved for `lock --clear`.
+      assertEquals(
+        await setLockfileEntryForBuild(mgr, url, { resolved: url, integrity: "sha256-abc" }),
+        false,
+      );
+      assertEquals(await fs.readFile("/project/veryfront.lock"), truncated);
+    });
+
+    it("should keep failing loudly when persisting against a newer-format lockfile", async () => {
+      const url = "https://cdn.com/mod.ts";
+      const newerContent = JSON.stringify({
+        version: 99,
+        imports: { "https://cdn.com/newer.ts": { resolved: "x", integrity: "y" } },
+      });
+      const fs = createMockFS({ "/project/veryfront.lock": newerContent });
+      const mgr = createLockfileManager("/project", fs);
+
+      const error = await assertRejects(
+        () => setLockfileEntryForBuild(mgr, url, { resolved: url, integrity: "sha256-abc" }),
+        VeryfrontError,
+      );
+      assertExists(error);
+      if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
+      assertEquals(error.slug, "lockfile-format-mismatch");
+      assertEquals(await fs.readFile("/project/veryfront.lock"), newerContent);
     });
   });
 
