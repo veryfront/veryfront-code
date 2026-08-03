@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals, assertThrows } from "#std/assert";
 import { FakeTime } from "#std/testing/time";
 import { createTestEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   createOAuthCallbackHandler as createRuntimeOAuthCallbackHandler,
   type OAuthCallbackHandlerOptions,
@@ -9,16 +10,17 @@ import {
 import { MemoryTokenStore } from "../token-store/memory.ts";
 import type { OAuthServiceConfig, OAuthTokens, StoredOAuthState, TokenStore } from "../types.ts";
 
+const TEST_PUBLIC_PROVIDER_ORIGIN = "https://93.184.216.34";
 const TEST_CONFIG: OAuthServiceConfig = {
   providerId: "test-provider",
   serviceId: "test-provider",
   displayName: "Test Provider",
   clientIdEnvVar: "TEST_CLIENT_ID",
   clientSecretEnvVar: "TEST_CLIENT_SECRET",
-  authorizationUrl: "https://provider.test/auth",
-  tokenUrl: "https://provider.test/token",
+  authorizationUrl: `${TEST_PUBLIC_PROVIDER_ORIGIN}/provider/auth`,
+  tokenUrl: `${TEST_PUBLIC_PROVIDER_ORIGIN}/provider/token`,
   defaultScopes: ["read"],
-  apiBaseUrl: "https://api.provider.test",
+  apiBaseUrl: `${TEST_PUBLIC_PROVIDER_ORIGIN}/provider/api`,
 };
 
 const ENV: Record<string, string> = {
@@ -40,6 +42,22 @@ function createOAuthCallbackHandler(
     env: TEST_ENV,
     ...options,
   });
+}
+
+async function withTokenExchange<T>(
+  response: () => Response,
+  operation: () => Promise<T>,
+): Promise<T> {
+  return await withMockFetch(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    assertEquals(request.url, TEST_CONFIG.tokenUrl);
+    assertEquals(request.method, "POST");
+    return response();
+  }, operation);
+}
+
+function tokenExchangeError(): Response {
+  return Response.json({ error: "invalid_grant" }, { status: 400 });
 }
 
 function makeRequest(params: Record<string, string>): Request {
@@ -264,8 +282,12 @@ Deno.test("callback-handler accepts verifier-free state for a provider without P
     envReader: (key) => ENV[key],
   });
 
-  const response = await handler(
-    makeRequest({ code: "auth-code-123", state: "verifier-free-state" }),
+  const response = await withTokenExchange(
+    tokenExchangeError,
+    () =>
+      handler(
+        makeRequest({ code: "auth-code-123", state: "verifier-free-state" }),
+      ),
   );
 
   assertNotEquals(
@@ -292,13 +314,15 @@ Deno.test("callback-handler: consumes state once (double-use rejected)", async (
     envReader: (key) => ENV[key],
   });
 
-  // First call consumes state
-  await handler(makeRequest({ code: "auth-code-123", state: "valid-state" }));
+  const response = await withTokenExchange(tokenExchangeError, async () => {
+    // First call consumes state.
+    await handler(makeRequest({ code: "auth-code-123", state: "valid-state" }));
 
-  // Second call with same state should fail with invalid_state
-  const response = await handler(
-    makeRequest({ code: "auth-code-456", state: "valid-state" }),
-  );
+    // A second call with the same state fails before another token exchange.
+    return await handler(
+      makeRequest({ code: "auth-code-456", state: "valid-state" }),
+    );
+  });
 
   assertEquals(response.status, 302);
   const location = new URL(response.headers.get("location")!);
@@ -359,8 +383,12 @@ Deno.test("callback-handler: proceeds with valid state matching serviceId", asyn
     envReader: (key) => ENV[key],
   });
 
-  const response = await handler(
-    makeRequest({ code: "auth-code-123", state: "valid-state-abc" }),
+  const response = await withTokenExchange(
+    tokenExchangeError,
+    () =>
+      handler(
+        makeRequest({ code: "auth-code-123", state: "valid-state-abc" }),
+      ),
   );
 
   assertEquals(response.status, 302);
@@ -389,47 +417,36 @@ Deno.test("callback-handler: stores tokens keyed by (serviceId, userId) — bob'
     createdAt: Date.now(),
   });
 
-  // Stub token exchange to succeed without a network call by intercepting fetch.
-  const origFetch = globalThis.fetch;
-  globalThis.fetch = async (url: string | URL | Request, _init?: RequestInit) => {
-    const href = typeof url === "string" ? url : (url as URL).toString();
-    if (href === TEST_CONFIG.tokenUrl) {
-      return new Response(
-        JSON.stringify({
-          access_token: "alice-access-token",
-          refresh_token: "alice-refresh-token",
-          expires_in: 3600,
-          token_type: "Bearer",
-          scope: "read",
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
+  await withTokenExchange(
+    () =>
+      Response.json({
+        access_token: "alice-access-token",
+        refresh_token: "alice-refresh-token",
+        expires_in: 3600,
+        token_type: "Bearer",
+        scope: "read",
+      }),
+    async () => {
+      const handler = createOAuthCallbackHandler(TEST_CONFIG, {
+        tokenStore,
+        baseUrl: "http://localhost:3000",
+        envReader: (key) => ENV[key],
+      });
+
+      const response = await handler(
+        makeRequest({ code: "auth-code-abc", state: "alice-state" }),
       );
-    }
-    return new Response("not found", { status: 404 });
-  };
+      assertEquals(response.status, 302);
 
-  try {
-    const handler = createOAuthCallbackHandler(TEST_CONFIG, {
-      tokenStore,
-      baseUrl: "http://localhost:3000",
-      envReader: (key) => ENV[key],
-    });
+      // Alice's tokens stored under her userId
+      const aliceTokens = await tokenStore.getTokens(TEST_CONFIG.serviceId, "alice");
+      assertEquals(aliceTokens?.accessToken, "alice-access-token");
 
-    const response = await handler(
-      makeRequest({ code: "auth-code-abc", state: "alice-state" }),
-    );
-    assertEquals(response.status, 302);
-
-    // Alice's tokens stored under her userId
-    const aliceTokens = await tokenStore.getTokens(TEST_CONFIG.serviceId, "alice");
-    assertEquals(aliceTokens?.accessToken, "alice-access-token");
-
-    // Bob's slot untouched
-    const bobTokens = await tokenStore.getTokens(TEST_CONFIG.serviceId, "bob");
-    assertEquals(bobTokens?.accessToken, "bob-existing-token");
-  } finally {
-    globalThis.fetch = origFetch;
-  }
+      // Bob's slot untouched
+      const bobTokens = await tokenStore.getTokens(TEST_CONFIG.serviceId, "bob");
+      assertEquals(bobTokens?.accessToken, "bob-existing-token");
+    },
+  );
 });
 
 Deno.test("callback-handler: validates and consumes state before handling provider errors", async () => {
@@ -668,30 +685,27 @@ Deno.test("callback-handler: detaches persisted tokens from post-commit hooks", 
     setState: () => Promise.resolve(),
     consumeState: () => Promise.resolve(storedState),
   };
-  const original = globalThis.fetch;
-  globalThis.fetch =
-    (() => Promise.resolve(Response.json({ access_token: "provider-token" }))) as typeof fetch;
+  await withTokenExchange(
+    () => Response.json({ access_token: "provider-token" }),
+    async () => {
+      const handler = createOAuthCallbackHandler(TEST_CONFIG, {
+        tokenStore,
+        baseUrl: "http://localhost:3000",
+        envReader: (key) => ENV[key],
+        onSuccess: (_serviceId, tokens) => {
+          tokens.accessToken = "hook-mutated-token";
+          throw new Error("notification failed");
+        },
+      });
+      const response = await handler(makeRequest({ code: "code", state: "state" }));
 
-  try {
-    const handler = createOAuthCallbackHandler(TEST_CONFIG, {
-      tokenStore,
-      baseUrl: "http://localhost:3000",
-      envReader: (key) => ENV[key],
-      onSuccess: (_serviceId, tokens) => {
-        tokens.accessToken = "hook-mutated-token";
-        throw new Error("notification failed");
-      },
-    });
-    const response = await handler(makeRequest({ code: "code", state: "state" }));
-
-    assertEquals(
-      new URL(response.headers.get("location")!).searchParams.get("connected"),
-      TEST_CONFIG.serviceId,
-    );
-    assertEquals((persistedTokens as OAuthTokens | null)?.accessToken, "provider-token");
-  } finally {
-    globalThis.fetch = original;
-  }
+      assertEquals(
+        new URL(response.headers.get("location")!).searchParams.get("connected"),
+        TEST_CONFIG.serviceId,
+      );
+      assertEquals((persistedTokens as OAuthTokens | null)?.accessToken, "provider-token");
+    },
+  );
 });
 
 Deno.test("callback-handler: error hook failures do not replace the OAuth response", async () => {

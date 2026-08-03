@@ -34,6 +34,11 @@ import {
   runWithRequestContext,
 } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 
+// Literal public addresses exercise guarded egress deterministically without
+// depending on external DNS answers for production or reserved test hosts.
+const TEST_PUBLIC_API_ORIGIN = "https://93.184.216.34";
+const TEST_PUBLIC_STUDIO_MCP_URL = "https://93.184.216.35/studio-mcp";
+
 function createRuntimeAgentRunInvocationBody() {
   return JSON.stringify({
     run: {
@@ -642,10 +647,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
 
-    Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
+    Deno.env.set("VERYFRONT_API_URL", TEST_PUBLIC_API_ORIGIN);
     Deno.env.delete("VERYFRONT_API_BASE_URL");
     globalThis.fetch = ((url, init) => {
-      if (String(url) === "https://api.veryfront.org/mcp") {
+      if (String(url) === `${TEST_PUBLIC_API_ORIGIN}/mcp`) {
         platformMcpFetchCalls += 1;
         assertEquals(
           new Headers(init?.headers).get("authorization"),
@@ -676,7 +681,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         );
       }
 
-      if (String(url) === "https://api.veryfront.org/projects/demo-project/environments") {
+      if (String(url) === `${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/environments`) {
         return Promise.resolve(
           new Response(JSON.stringify({ data: [] }), {
             headers: { "content-type": "application/json" },
@@ -1113,9 +1118,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const originalFetch = globalThis.fetch;
     const originalStudioMcpUrl = Deno.env.get("VERYFRONT_STUDIO_MCP_URL");
 
-    Deno.env.set("VERYFRONT_STUDIO_MCP_URL", "https://studio.veryfront.org/mcp");
+    Deno.env.set("VERYFRONT_STUDIO_MCP_URL", TEST_PUBLIC_STUDIO_MCP_URL);
     globalThis.fetch = ((url, init) => {
-      assertEquals(String(url), "https://studio.veryfront.org/mcp");
+      assertEquals(String(url), TEST_PUBLIC_STUDIO_MCP_URL);
       const headers = new Headers(init?.headers);
       assertEquals(headers.get("authorization"), "Bearer request-scoped-user-token");
       assertEquals(headers.get("x-project-id"), "proj-1");
@@ -1230,9 +1235,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const originalFetch = globalThis.fetch;
     const originalStudioMcpUrl = Deno.env.get("VERYFRONT_STUDIO_MCP_URL");
 
-    Deno.env.set("VERYFRONT_STUDIO_MCP_URL", "https://studio.veryfront.org/mcp");
+    Deno.env.set("VERYFRONT_STUDIO_MCP_URL", TEST_PUBLIC_STUDIO_MCP_URL);
     globalThis.fetch = ((url) => {
-      if (String(url) === "https://studio.veryfront.org/mcp") {
+      if (String(url) === TEST_PUBLIC_STUDIO_MCP_URL) {
         studioMcpFetchCalls += 1;
       }
       return Promise.resolve(new Response(null, { status: 503 }));
@@ -1571,10 +1576,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
 
-    Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
+    Deno.env.set("VERYFRONT_API_URL", TEST_PUBLIC_API_ORIGIN);
     Deno.env.delete("VERYFRONT_API_BASE_URL");
     globalThis.fetch = ((url, init) => {
-      assertEquals(String(url), "https://api.veryfront.org/mcp");
+      assertEquals(String(url), `${TEST_PUBLIC_API_ORIGIN}/mcp`);
       assertEquals(
         new Headers(init?.headers).get("authorization"),
         "Bearer request-scoped-user-token",
@@ -1793,7 +1798,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
     const fetchUrls: string[] = [];
-    Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
+    Deno.env.set("VERYFRONT_API_URL", TEST_PUBLIC_API_ORIGIN);
     Deno.env.delete("VERYFRONT_API_BASE_URL");
     globalThis.fetch = ((url, init) => {
       fetchUrls.push(String(url));
@@ -1838,7 +1843,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         );
       }
 
-      if (String(url) === "https://api.veryfront.org/mcp") {
+      if (String(url) === `${TEST_PUBLIC_API_ORIGIN}/mcp`) {
         capturedMcpRequest = {
           url: String(url),
           authorization: new Headers(init?.headers).get("authorization"),
@@ -1896,7 +1901,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(result.response.status, 200);
     assertEquals(capturedEnv, {
       VERYFRONT_API_TOKEN: "request-scoped-user-token",
-      VERYFRONT_API_URL: "https://api.veryfront.org",
+      VERYFRONT_API_URL: TEST_PUBLIC_API_ORIGIN,
       VERYFRONT_PROJECT_SLUG: "support-agent-fork",
       CUSTOM_PROJECT_ENV: "project-value",
       OTEL_EXPORTER_OTLP_ENDPOINT: undefined,
@@ -1905,7 +1910,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertStringIncludes(capturedSystem ?? "", "project_reference=support-agent-fork");
     assertStringIncludes(capturedSystem ?? "", '<project_context>\nproject_reference: "proj-1"');
     assertEquals(capturedMcpRequest, {
-      url: "https://api.veryfront.org/mcp",
+      url: `${TEST_PUBLIC_API_ORIGIN}/mcp`,
       authorization: "Bearer request-scoped-user-token",
     });
     assertEquals(capturedAllowedRemoteTools, ["list_projects", "search_knowledge"]);
@@ -1913,14 +1918,14 @@ describe("server/handlers/request/agent-stream.handler", () => {
     // The environment is resolved before the source config is evaluated, so
     // both the config and the MCP tool headers see the same variables.
     assertEquals(fetchUrls, [
-      "https://api.veryfront.org/projects/support-agent-fork/environments",
-      "https://api.veryfront.org/projects/support-agent-fork/environment-variables?environment_id=env-production&limit=100",
-      "https://api.veryfront.org/mcp",
+      `${TEST_PUBLIC_API_ORIGIN}/projects/support-agent-fork/environments`,
+      `${TEST_PUBLIC_API_ORIGIN}/projects/support-agent-fork/environment-variables?environment_id=env-production&limit=100`,
+      `${TEST_PUBLIC_API_ORIGIN}/mcp`,
     ]);
   });
 
   it("prefers VERYFRONT_API_BASE_URL over VERYFRONT_API_URL", async () => {
-    const apiBaseUrl = "http://veryfront-api.veryfront-staging.svc.cluster.local:80";
+    const apiBaseUrl = "http://93.184.216.34:8080";
     let capturedEnv: Record<string, string | undefined> | null = null;
     let capturedSystem: string | null = null;
 
@@ -1982,7 +1987,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
     const fetchUrls: string[] = [];
-    Deno.env.set("VERYFRONT_API_URL", "https://wrong-api.example.test");
+    Deno.env.set("VERYFRONT_API_URL", "https://1.1.1.1/unused-fallback");
     Deno.env.set("VERYFRONT_API_BASE_URL", apiBaseUrl);
     globalThis.fetch = ((url, init) => {
       fetchUrls.push(String(url));
