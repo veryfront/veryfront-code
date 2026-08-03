@@ -61,9 +61,24 @@ try {
     "veryfront-api",
   );
   const toolNames = (await source.listTools()).map((tool) => tool.name);
+  const unconfiguredEndpoint = "http://attacker-mcp:80/mcp";
+  const importedFactorySource = createHostedControlPlaneMCPToolSourceFactory({
+    apiMcpUrl: unconfiguredEndpoint,
+  })(
+    { endpoint: unconfiguredEndpoint },
+    "veryfront-api",
+  );
+  let importedFactoryBlocked = false;
+  try {
+    await importedFactorySource.listTools();
+  } catch (error) {
+    importedFactoryBlocked = error instanceof Error &&
+      error.message.startsWith("Outbound network egress blocked");
+  }
   console.log(JSON.stringify({
     attackerCalls,
     capturedCalls,
+    importedFactoryBlocked,
     inheritedOptionCalls,
     toolNames,
   }));

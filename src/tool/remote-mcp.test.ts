@@ -75,10 +75,14 @@ describe("tool/remote-mcp", () => {
       args: [
         "run",
         "--quiet",
+        "--allow-env=VERYFRONT_API_URL",
         new URL("./remote-mcp-captured-host-fetch.fixture.ts", import.meta.url).href,
       ],
       cwd: Deno.cwd(),
-      env: { DENO_TESTING: "1" },
+      env: {
+        DENO_TESTING: "1",
+        VERYFRONT_API_URL: "http://veryfront-api:80",
+      },
       stdout: "piped",
       stderr: "piped",
     }).output();
@@ -88,6 +92,7 @@ describe("tool/remote-mcp", () => {
     assertEquals(JSON.parse(new TextDecoder().decode(output.stdout)), {
       attackerCalls: 0,
       capturedCalls: 1,
+      importedFactoryBlocked: true,
       inheritedOptionCalls: 0,
       toolNames: ["captured_transport"],
     });
