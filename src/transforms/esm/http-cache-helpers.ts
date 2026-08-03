@@ -36,6 +36,7 @@ const StringIncludes = String.prototype.includes;
 const StringReplace = String.prototype.replace;
 const StringSlice = String.prototype.slice;
 const StringSplit = String.prototype.split;
+const StringStartsWith = String.prototype.startsWith;
 const URLHostnameGet = ObjectGetOwnPropertyDescriptor(
   IntrinsicURL.prototype,
   "hostname",
@@ -120,6 +121,10 @@ function stringSlice(value: string, start: number): string {
 
 function stringSplit(value: string, separator: string): string[] {
   return ReflectApply(StringSplit, value, [separator]);
+}
+
+function stringStartsWith(value: string, search: string): boolean {
+  return ReflectApply(StringStartsWith, value, [search]);
 }
 
 function stripLeadingSlashes(value: string): string {
@@ -558,11 +563,11 @@ export function hasIncompatibleFilePaths(code: string, localCacheDir: string): b
   const filePathPattern = /file:\/\/([^"'\s]+)/gi;
 
   let match: RegExpExecArray | null;
-  while ((match = filePathPattern.exec(code)) !== null) {
+  while ((match = execRegExp(filePathPattern, code)) !== null) {
     const path = match[1]!;
-    if (!path.includes("veryfront-http-bundle")) continue;
+    if (!stringIncludes(path, "veryfront-http-bundle")) continue;
 
-    if (!path.startsWith(localCacheDir)) {
+    if (!stringStartsWith(path, localCacheDir)) {
       logger.debug("Bundle has incompatible file path from different environment", {
         path,
         expectedDir: localCacheDir,

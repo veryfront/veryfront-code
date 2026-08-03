@@ -618,6 +618,41 @@ describe("transforms/esm/http-cache-helpers", () => {
       assertEquals(hasIncompatibleFilePaths(code, "/cache"), true);
     });
 
+    it("uses captured intrinsics after prototype poisoning", () => {
+      const code = 'import x from "file:///remote/cache/veryfront-http-bundle/http-deadbeef.mjs";';
+      const stringPrototypeDescriptors = Object.getOwnPropertyDescriptors(String.prototype);
+      const regExpPrototypeDescriptors = Object.getOwnPropertyDescriptors(RegExp.prototype);
+
+      try {
+        Object.defineProperty(RegExp.prototype, "exec", {
+          configurable: true,
+          value() {
+            return null;
+          },
+          writable: true,
+        });
+        Object.defineProperty(String.prototype, "includes", {
+          configurable: true,
+          value() {
+            return false;
+          },
+          writable: true,
+        });
+        Object.defineProperty(String.prototype, "startsWith", {
+          configurable: true,
+          value() {
+            return true;
+          },
+          writable: true,
+        });
+
+        assertEquals(hasIncompatibleFilePaths(code, "/local/cache"), true);
+      } finally {
+        Object.defineProperties(String.prototype, stringPrototypeDescriptors);
+        Object.defineProperties(RegExp.prototype, regExpPrototypeDescriptors);
+      }
+    });
+
     it("ignores non-bundle file:// paths", () => {
       const code = 'import "file:///other/some-file.js";';
       assertEquals(hasIncompatibleFilePaths(code, "/cache"), false);
