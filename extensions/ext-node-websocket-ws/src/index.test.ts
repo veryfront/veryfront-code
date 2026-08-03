@@ -3,6 +3,7 @@ import {
   type NodeWebSocketServerProvider,
   NodeWebSocketServerProviderName,
 } from "veryfront/extensions/websocket";
+import extensionPackage from "../deno.json" with { type: "json" };
 import extNodeWebSocketWs, { WsNodeWebSocketServerProvider } from "./index.ts";
 
 const logger = {
@@ -27,10 +28,11 @@ function createContext(provided: Map<string, unknown>, signal?: AbortSignal) {
   };
 }
 
-Deno.test("ws extension explicitly publishes one immutable provider", () => {
+Deno.test("ws extension auto-activates one immutable provider", () => {
   const extension = extNodeWebSocketWs();
   const provided = new Map<string, unknown>();
 
+  assertEquals(extensionPackage.veryfront.activation, "auto");
   extension.setup?.(createContext(provided));
   assertStrictEquals(
     provided.get(NodeWebSocketServerProviderName),

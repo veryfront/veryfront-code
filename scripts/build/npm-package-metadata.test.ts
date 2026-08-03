@@ -1,5 +1,6 @@
 import { assertEquals, assertStringIncludes } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
+import { STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES } from "../../src/extensions/first-party-defaults.ts";
 import {
   BROWSER_SAFE_CLIENT_MODULES,
   BROWSER_SAFE_EXPORTS,
@@ -77,31 +78,36 @@ Deno.test("root npm build metadata does not inject extension implementation depe
   }
 });
 
-Deno.test("root npm CLI package declares auto-loaded first-party extensions after local install", async () => {
+Deno.test("standard npm extension policy covers baseline app and developer features", () => {
+  assertEquals([...STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES], [
+    "ext-bundler-esbuild",
+    "ext-parser-babel",
+    "ext-yaml",
+    "ext-content-mdx",
+    "ext-css-tailwind",
+    "ext-node-websocket-ws",
+  ]);
+});
+
+Deno.test("root npm CLI package declares standard extensions after local install", async () => {
   const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
   const installIndex = source.indexOf(
     "const { code } = await npmInstall.output();",
   );
-  for (
-    const packageName of [
-      "@veryfront/ext-bundler-esbuild",
-      "@veryfront/ext-content-mdx",
-      "@veryfront/ext-css-tailwind",
-      "@veryfront/ext-parser-babel",
-      "@veryfront/ext-yaml",
-    ]
-  ) {
-    const dependencyAssignment =
-      `pkg.dependencies["${packageName}"] = version;`;
-    const dependencyIndex = source.indexOf(dependencyAssignment);
+  const dependencyLoop =
+    "for (const extensionDirectory of STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES)";
+  const dependencyIndex = source.indexOf(dependencyLoop);
 
-    assertStringIncludes(source, dependencyAssignment);
-    assertEquals(
-      dependencyIndex > installIndex,
-      true,
-      `${packageName} dependency must be added after build-local npm install so prerelease builds do not require the extension to already be published`,
-    );
-  }
+  assertStringIncludes(source, dependencyLoop);
+  assertStringIncludes(
+    source,
+    "pkg.dependencies[`@veryfront/${extensionDirectory}`] = version;",
+  );
+  assertEquals(
+    dependencyIndex > installIndex,
+    true,
+    "standard extension dependencies must be added after the build-local npm install",
+  );
 });
 
 Deno.test("npm lifecycle probe installs auto-loaded extensions in a real consumer layout", async () => {
@@ -110,20 +116,14 @@ Deno.test("npm lifecycle probe installs auto-loaded extensions in a real consume
   assertStringIncludes(source, '"--install-links"');
   assertStringIncludes(source, 'const agent = await import("veryfront/agent")');
   assertStringIncludes(source, "agent.parseRuntimeSkillMetadata(");
-  for (
-    const extensionDirectory of [
-      "ext-bundler-esbuild",
-      "ext-content-mdx",
-      "ext-css-tailwind",
-      "ext-parser-babel",
-      "ext-yaml",
-    ]
-  ) {
-    assertStringIncludes(
-      source,
-      `Deno.realPath("./npm/extensions/${extensionDirectory}")`,
-    );
-  }
+  assertStringIncludes(
+    source,
+    "...STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES.map",
+  );
+  assertStringIncludes(
+    source,
+    "Deno.realPath(`./npm/extensions/${extensionDirectory}`)",
+  );
 });
 
 Deno.test("npm publish version bump pins first-party extension dependencies to the publish version", async () => {
@@ -143,6 +143,7 @@ Deno.test("npm publish version bump pins first-party extension dependencies to t
             "@veryfront/ext-bundler-esbuild": "0.1.1016",
             "@veryfront/ext-content-mdx": "^0.1.1016",
             "@veryfront/ext-css-tailwind": "^0.1.1016",
+            "@veryfront/ext-node-websocket-ws": "^0.1.1016",
             "@veryfront/ext-parser-babel": "^0.1.1016",
             "@veryfront/ext-yaml": "^0.1.1016",
             "@veryfront/not-an-extension": "^0.1.1016",
@@ -184,6 +185,7 @@ Deno.test("npm publish version bump pins first-party extension dependencies to t
       "@veryfront/ext-bundler-esbuild": publishVersion,
       "@veryfront/ext-content-mdx": publishVersion,
       "@veryfront/ext-css-tailwind": publishVersion,
+      "@veryfront/ext-node-websocket-ws": publishVersion,
       "@veryfront/ext-parser-babel": publishVersion,
       "@veryfront/ext-yaml": publishVersion,
       "@veryfront/not-an-extension": "^0.1.1016",
@@ -331,6 +333,11 @@ const ROOT_BUNDLED_EXTENSIONS = new Set([
   "ext-eval-report-mlflow",
 ]);
 
+// The framework and ext-dev-ui-react both consume the application's React
+// generation. These remain root dependencies so npm resolves one React graph
+// instead of treating the extension's use as private implementation detail.
+const ROOT_SHARED_EXTENSION_DEPENDENCIES = new Set(["react", "react-dom"]);
+
 Deno.test("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests", async () => {
   const denoConfig = JSON.parse(
     await Deno.readTextFile("deno.json"),
@@ -365,7 +372,8 @@ Deno.test("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests",
 
     for (const dependency of dependencies) {
       assertEquals(
-        owned.has(dependency) || optionalPeers.has(dependency),
+        owned.has(dependency) || optionalPeers.has(dependency) ||
+          ROOT_SHARED_EXTENSION_DEPENDENCIES.has(dependency),
         true,
         `${dependency} (declared by ${manifestPath}) must be added to EXTENSION_OWNED_DEPENDENCIES so it does not leak into root veryfront npm installs`,
       );
@@ -598,6 +606,7 @@ describe("npm supply-chain policy", () => {
       "ext-bundler-esbuild",
       "ext-content-mdx",
       "ext-css-tailwind",
+      "ext-node-websocket-ws",
       "ext-parser-babel",
       "ext-yaml",
     ];
@@ -651,6 +660,7 @@ describe("npm supply-chain policy", () => {
       "ext-bundler-esbuild",
       "ext-content-mdx",
       "ext-css-tailwind",
+      "ext-node-websocket-ws",
       "ext-db-sqlite",
       "ext-document-kreuzberg",
       "ext-eval-report-mlflow",

@@ -141,14 +141,34 @@ describe("createBuiltinExtensions", () => {
     assert(getDeferredExtensionState(authCandidate));
   });
 
-  it("never auto-loads the explicit Node WebSocket implementation", async () => {
-    const source = await Deno.readTextFile(new URL("./builtin-extensions.ts", import.meta.url));
+  it("ships baseline CSS and Node WebSocket providers as deferred builtins", () => {
+    for (const name of ["ext-css-tailwind", "ext-node-websocket-ws"]) {
+      const definition = OPTIONAL_BUILTIN_EXTENSIONS.find((entry) => entry.name === name);
+      const candidate = createBuiltinExtensions().find((entry) => entry.extension.name === name);
 
-    assertEquals(source.includes("ext-node-websocket-ws"), false);
-    assertEquals(
-      OPTIONAL_BUILTIN_EXTENSIONS.some((definition) => definition.name === "ext-node-websocket-ws"),
-      false,
-    );
+      assert(definition, `${name} must be part of the default runtime composition`);
+      assert(candidate, `${name} must have a builtin candidate`);
+      assert(getDeferredExtensionState(candidate), `${name} must remain lazy until activation`);
+    }
+  });
+
+  it("keeps builtin package discovery metadata auto-activated", async () => {
+    for (const definition of OPTIONAL_BUILTIN_EXTENSIONS) {
+      const manifest = JSON.parse(
+        await Deno.readTextFile(
+          new URL(
+            `../../extensions/${definition.sourceDirectory}/deno.json`,
+            import.meta.url,
+          ),
+        ),
+      ) as { veryfront?: { activation?: string } };
+
+      assertEquals(
+        manifest.veryfront?.activation ?? "auto",
+        "auto",
+        `${definition.name} cannot be both a builtin and explicit-only package`,
+      );
+    }
   });
 
   it("does not statically import workspace implementation paths", async () => {

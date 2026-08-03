@@ -161,26 +161,18 @@ fallback.
 
 ## Enable Node.js WebSocket upgrades
 
-Install the explicit Node.js transport extension:
+The standard `veryfront` npm/CLI distribution installs and auto-activates the
+Node.js transport extension, including for local HMR. Custom Node service
+distributions must install it alongside `veryfront`:
 
 ```bash
 deno add npm:@veryfront/ext-node-websocket-ws
 ```
 
-Add it to `veryfront.config.ts`:
-
-```ts
-import { defineConfig } from "veryfront";
-import extNodeWebSocketWs from "@veryfront/ext-node-websocket-ws";
-
-export default defineConfig({
-  extensions: [extNodeWebSocketWs()],
-});
-```
-
-Restart the Node.js server after changing the configuration. HTTP serving does
-not require this extension. Without it, Node.js WebSocket upgrades fail closed
-with an error that names the required package.
+No `veryfront.config.ts` entry is required. Projects can disable the builtin by
+name when WebSocket support is intentionally unavailable. HTTP serving does not
+require the provider; without it, Node.js WebSocket upgrades fail closed with an
+error that names the required package.
 
 ## First-party extension areas
 
@@ -207,7 +199,7 @@ replacement passes preflight.
 
 ## Verify it worked
 
-Restart `veryfront dev` after editing `veryfront.config.ts`:
+Restart `veryfront dev` after changing extension configuration:
 
 - The dev log should print a setup line for each loaded extension.
 - Any contract the extension provides should now be resolvable through the

@@ -52,11 +52,6 @@ export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
       "@kreuzberg/wasm": "4.5.2",
     },
   },
-  "saas-starter": {
-    // Node WebSocket support is deliberately explicit. Tailwind is omitted
-    // because the framework auto-loads its CSS processor when available.
-    firstPartyExtensions: ["@veryfront/ext-node-websocket-ws"],
-  },
 };
 
 const DIRECTORY_BASED_TEMPLATES: TemplateName[] = [...STARTER_TEMPLATE_NAMES];

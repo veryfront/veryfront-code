@@ -76,17 +76,12 @@ describe("cli/templates", () => {
     }
   });
 
-  it("keeps SaaS starter extension composition explicit and non-redundant", async () => {
+  it("does not make baseline framework extensions starter-specific", async () => {
     const files = await getTemplate("saas-starter");
     assertExists(files);
-    const config = files.find((file) => file.path === "veryfront.config.ts")?.content;
-    assertExists(config);
 
-    assertEquals(config.includes("@veryfront/ext-css-tailwind"), false);
-    assertEquals(config.includes("@veryfront/ext-node-websocket-ws"), true);
-    assertEquals(templateConfigs["saas-starter"]?.firstPartyExtensions, [
-      "@veryfront/ext-node-websocket-ws",
-    ]);
+    assertEquals(files.some((file) => file.path === "veryfront.config.ts"), false);
+    assertEquals(templateConfigs["saas-starter"], undefined);
   });
 
   it("imports globals.css from each styled starter root layout", async () => {

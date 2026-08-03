@@ -1,8 +1,9 @@
 import { assertEquals } from "#std/assert";
 import { walk } from "#std/fs/walk";
 import { createCompileArgs, DEFAULT_INCLUDES } from "./compile-binary.ts";
+import { FIRST_PARTY_BUILTIN_EXTENSION_POLICIES } from "../../src/extensions/first-party-defaults.ts";
 
-Deno.test("compiled CLI embeds the explicit Node WebSocket extension for opt-in activation", () => {
+Deno.test("compiled CLI embeds the default Node WebSocket extension for HMR", () => {
   const args = createCompileArgs({
     entrypoint: "cli/main.ts",
     extraIncludes: [],
@@ -29,15 +30,7 @@ Deno.test("compiled CLI embeds the explicit Redis extension for opt-in activatio
 });
 
 Deno.test("compiled CLI embeds optional builtin extension source files", async () => {
-  const source = await Deno.readTextFile(
-    "src/extensions/builtin-extensions.ts",
-  );
-  const sourceDirectories = Array.from(
-    source.matchAll(/sourceDirectory:\s*"([^"]+)"/g),
-    (match) => match[1]!,
-  );
-
-  for (const sourceDirectory of sourceDirectories) {
+  for (const { sourceDirectory } of FIRST_PARTY_BUILTIN_EXTENSION_POLICIES) {
     assertEquals(
       DEFAULT_INCLUDES.includes(`extensions/${sourceDirectory}/src/index.ts`),
       true,

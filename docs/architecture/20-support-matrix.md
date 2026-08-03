@@ -60,7 +60,7 @@ project.
 | ----------------------------- | --------------------------------------------------------- | ------------------------------------- | --------------------------------------- | ---------------------------- |
 | `SchemaValidator`             | `@veryfront/ext-schema-zod`                               | Built-in                              | Schema-backed runtime validation        | None (pure JS)               |
 | `Bundler`, `ModuleLexer`      | `@veryfront/ext-bundler-esbuild`                          | Built-in                              | Build, import analysis, module bundling | esbuild binary               |
-| `CSSProcessor`                | `@veryfront/ext-css-tailwind`                             | Built-in                              | Tailwind CSS processing                 | Network (esm.sh for plugins) |
+| `CSSProcessor`                | `@veryfront/ext-css-tailwind`                             | Built-in                              | Tailwind CSS processing                 | Scoped filesystem read       |
 | `ContentProcessor`            | `@veryfront/ext-content-mdx`                              | Built-in                              | MDX or Markdown content compilation     | None (unified ecosystem)     |
 | `CodeParser`                  | `@veryfront/ext-parser-babel`                             | Built-in                              | AST parsing or build-time code analysis | None (Babel)                 |
 | `DocumentExtractor`           | `@veryfront/ext-document-kreuzberg`                       | Built-in                              | Document text extraction                | FS (WASM/native extraction)  |
@@ -73,7 +73,7 @@ project.
 | `NodeTelemetryProvider`       | `@veryfront/ext-observability-opentelemetry`              | Built-in                              | Node OpenTelemetry SDK bootstrap        | Network (OTLP endpoint)      |
 | `EvalReportExporterRegistry`  | Core registry and future `@veryfront/ext-eval-*` packages | Built-in registry, optional exporters | Eval report export                      | Vendor-specific              |
 | `TokenCacheStore`             | `@veryfront/ext-cache-redis`                              | Optional                              | Redis-backed token cache                | Network (Redis)              |
-| `NodeWebSocketServerProvider` | `@veryfront/ext-node-websocket-ws`                        | Explicit                              | Node.js WebSocket upgrades              | Node.js and scoped env reads |
+| `NodeWebSocketServerProvider` | `@veryfront/ext-node-websocket-ws`                        | Built-in                              | Node.js WebSocket upgrades and HMR      | Node.js and scoped env reads |
 
 ## Dependency boundaries
 
