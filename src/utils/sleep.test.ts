@@ -4,7 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { sleep } from "./sleep.ts";
 
 describe("sleep", () => {
-  it("rejects delays unsupported by JavaScript timers", () => {
+  it("throws for delays unsupported by JavaScript timers", () => {
     for (
       const delayMs of [
         -1,
