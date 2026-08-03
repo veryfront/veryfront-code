@@ -78,12 +78,14 @@ describe("server/handlers/preview/hmr-client-message", () => {
     const socket = new MockSocket();
     let checkedRateLimit = false;
     let activityCount = 0;
+    const exactLimitPayload = "é".repeat(Math.floor(HMR_MAX_MESSAGE_SIZE_BYTES / 2)) +
+      "x".repeat(HMR_MAX_MESSAGE_SIZE_BYTES % 2);
 
-    // "é" is one UTF-16 code unit but two UTF-8 bytes, so this payload sits
-    // exactly at the byte limit while its string length is only half of it.
+    // "é" is one UTF-16 code unit but two UTF-8 bytes. The optional ASCII
+    // suffix keeps this payload exact even if the configured limit is odd.
     handleHmrClientMessage({
       socket,
-      data: "é".repeat(HMR_MAX_MESSAGE_SIZE_BYTES / 2),
+      data: exactLimitPayload,
       rateLimiter: {
         check: () => {
           checkedRateLimit = true;
@@ -104,12 +106,14 @@ describe("server/handlers/preview/hmr-client-message", () => {
     const socket = new MockSocket();
     let checkedRateLimit = false;
     let activityCount = 0;
+    const exactLimitPayload = "é".repeat(Math.floor(HMR_MAX_MESSAGE_SIZE_BYTES / 2)) +
+      "x".repeat(HMR_MAX_MESSAGE_SIZE_BYTES % 2);
 
     // One code unit over the exact-limit payload: string length stays far
     // below the limit, but the UTF-8 wire size exceeds it by two bytes.
     handleHmrClientMessage({
       socket,
-      data: "é".repeat(HMR_MAX_MESSAGE_SIZE_BYTES / 2 + 1),
+      data: exactLimitPayload + "é",
       rateLimiter: {
         check: () => {
           checkedRateLimit = true;

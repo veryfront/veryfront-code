@@ -7,7 +7,10 @@ const POSITIVE_INFINITY = Number.POSITIVE_INFINITY;
 
 export interface WebSocketMessageAdmission {
   readonly accepted: boolean;
-  /** Exact size when accepted, or `maximumBytes + 1` when a string is rejected early. */
+  /**
+   * Exact size when accepted, or an over-limit sentinel when a string is
+   * rejected early. The sentinel is `Infinity` at `Number.MAX_SAFE_INTEGER`.
+   */
   readonly sizeBytes: number;
 }
 
