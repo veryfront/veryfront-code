@@ -1,6 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_VERYFRONT_FILESYSTEM_RETRIES } from "#veryfront/utils/config-resource-limits.ts";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 import {
   buildFileCacheOptions,
   buildRetryConfig,
@@ -27,6 +30,37 @@ describe("veryfront adapter helpers", () => {
       maxRetries: 5,
       initialDelay: 200,
       maxDelay: DEFAULT_MAX_RETRY_DELAY_MS,
+    });
+  });
+
+  it("rejects retry counts that exceed the filesystem request budget", () => {
+    const error = assertThrows(
+      () =>
+        buildRetryConfig({
+          maxRetries: MAX_VERYFRONT_FILESYSTEM_RETRIES + 1,
+        }),
+      VeryfrontError,
+      "maxRetries",
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "config-validation-failed");
+  });
+
+  it("rejects invalid retry delays at direct adapter construction", () => {
+    for (
+      const retry of [
+        { initialDelay: -1 },
+        { initialDelay: 0.5 },
+        { maxDelay: MAX_TIMER_DELAY_MS + 1 },
+        { initialDelay: 2, maxDelay: 1 },
+      ]
+    ) {
+      assertThrows(() => buildRetryConfig(retry), VeryfrontError);
+    }
+    assertEquals(buildRetryConfig({ initialDelay: 0, maxDelay: 0 }), {
+      maxRetries: DEFAULT_MAX_RETRIES,
+      initialDelay: 0,
+      maxDelay: 0,
     });
   });
 

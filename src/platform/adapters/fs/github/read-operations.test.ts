@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { GitHubReadOperations } from "./read-operations.ts";
+import { FileCache } from "../cache/file-cache.ts";
 
 describe("GitHubReadOperations", () => {
   it("should export GitHubReadOperations class", () => {
@@ -231,6 +232,32 @@ describe("GitHubReadOperations", () => {
       assertEquals(result instanceof Uint8Array, true);
       // Should encode "plain text" as UTF-8 bytes
       assertEquals(new TextDecoder().decode(result), "plain text");
+    });
+  });
+
+  describe("cache scoping", () => {
+    it("isolates content cache entries by repository", async () => {
+      const cache = new FileCache();
+      // "Zmlyc3Q=" is base64 for "first"; "c2Vjb25k" is base64 for "second".
+      const first = new GitHubReadOperations(
+        mockConfig,
+        createMockClient({
+          getContents: () => Promise.resolve({ type: "file", content: "Zmlyc3Q=" }),
+        }) as any,
+        cache as any,
+        createMockStatOps() as any,
+      );
+      const second = new GitHubReadOperations(
+        { ...mockConfig, repo: "other-repo" },
+        createMockClient({
+          getContents: () => Promise.resolve({ type: "file", content: "c2Vjb25k" }),
+        }) as any,
+        cache as any,
+        createMockStatOps() as any,
+      );
+
+      assertEquals(await first.readTextFile("src/data.txt"), "first");
+      assertEquals(await second.readTextFile("src/data.txt"), "second");
     });
   });
 });
