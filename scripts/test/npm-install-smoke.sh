@@ -55,8 +55,8 @@ node node_modules/veryfront/bin/veryfront.js schema --json >/dev/null ||
 node -e "
 const p = require('./node_modules/veryfront/package.json');
 if (p.dependencies?.['@veryfront/ext-parser-babel'] !== p.version) process.exit(1);
-if (p.dependencies?.['@veryfront/ext-yaml'] !== p.version) process.exit(1);
 if (p.dependencies?.['@veryfront/ext-dev-ui-react'] !== p.version) process.exit(1);
+if (p.dependencies?.['@veryfront/ext-yaml'] !== p.version) process.exit(1);
 if (p.dependencies?.['@veryfront/ext-node-websocket-ws'] !== p.version) process.exit(1);
 " || fail "root package does not pin standard extensions to its version"
 node --input-type=module -e "
