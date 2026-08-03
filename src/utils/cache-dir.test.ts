@@ -107,6 +107,24 @@ describe("cache-dir", () => {
     });
   });
 
+  describe("link failure diagnostics", () => {
+    it("should describe cache roots without exposing absolute paths", () => {
+      const cacheRoot = "/tmp/veryfront-cache-node-modules/private";
+      const reason = `ENOTDIR: not a directory, mkdir '${cacheRoot}/node_modules'`;
+
+      const context = {
+        cacheRoot: __cacheDirInternals.describeCacheRoot(cacheRoot),
+        reason: __cacheDirInternals.redactCachePathDetails(reason, cacheRoot),
+      };
+
+      assert(context.cacheRoot.startsWith("cache:"));
+      assertEquals(context.cacheRoot.includes(cacheRoot), false);
+      assertEquals(context.reason.includes(cacheRoot), false);
+      assertEquals(context.reason.includes("/tmp/veryfront-cache-node-modules"), false);
+      assertEquals(context.reason.includes("ENOTDIR"), true);
+    });
+  });
+
   describe("runWithCacheDir", () => {
     it("should make cache dir available within the callback", () => {
       const result = runWithCacheDir("/tmp/test-cache", getCacheDirFromContext);

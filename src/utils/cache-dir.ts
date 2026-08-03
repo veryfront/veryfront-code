@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "#veryfront/compat/path/index.ts";
 import { cwd, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { isNode } from "#veryfront/platform/compat/runtime.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
 import { serverLogger } from "./logger/index.ts";
 
 const logger = serverLogger.component("cache-dir");
@@ -42,6 +43,16 @@ function getReactNodeModulesDir(reactEntry: string): string | undefined {
   return reactEntry.slice(0, markerIndex + "/node_modules".length);
 }
 
+function describeCacheRoot(cacheBase: string): string {
+  return `cache:${hashString(cacheBase)}`;
+}
+
+function redactCachePathDetails(reason: string, cacheBase: string): string {
+  return reason
+    .replaceAll(cacheBase, "[cache-dir]")
+    .replace(/(?:[A-Za-z]:)?[\\/][^\s'"`]+/g, "[path]");
+}
+
 /** Reset memoized link state (test seam). */
 function resetNodeModulesLinkState(): void {
   nodeModulesLinkOperations.clear();
@@ -50,7 +61,12 @@ function resetNodeModulesLinkState(): void {
 }
 
 /** Internal test seam for platform-specific resolved module paths. */
-export const __cacheDirInternals = { getReactNodeModulesDir, resetNodeModulesLinkState };
+export const __cacheDirInternals = {
+  describeCacheRoot,
+  getReactNodeModulesDir,
+  redactCachePathDetails,
+  resetNodeModulesLinkState,
+};
 
 export function runWithCacheDir<T>(cacheDir: string, fn: () => T): T {
   return cacheStorage.run(cacheDir, fn);
@@ -224,7 +240,10 @@ async function linkCacheNodeModules(cacheBase: string): Promise<string | undefin
 function warnLinkFailure(cacheBase: string, reason: string): undefined {
   if (!warnedLinkFailureRoots.has(cacheBase)) {
     rememberBounded(warnedLinkFailureRoots, cacheBase);
-    logger.warn("Cache node_modules link not established", { cacheBase, reason });
+    logger.warn("Cache node_modules link not established", {
+      cacheRoot: describeCacheRoot(cacheBase),
+      reason: redactCachePathDetails(reason, cacheBase),
+    });
   }
   return undefined;
 }
