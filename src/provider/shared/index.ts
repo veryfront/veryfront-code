@@ -59,6 +59,7 @@ export {
   requestJson,
   requestStream,
   snapshotJsonValue,
+  snapshotProviderJsonValue,
   stringifyJsonValue,
   stringifyToolArguments,
   stringifyToolResultValue,

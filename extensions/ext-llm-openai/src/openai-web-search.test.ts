@@ -35,6 +35,18 @@ function captureThrownError(
   throw new Error("Expected function to throw");
 }
 
+async function runNoBrandEval(script: string): Promise<unknown> {
+  const output = await new Deno.Command(Deno.execPath(), {
+    args: ["eval", "--config=deno.json", script],
+    cwd: new URL("../../../", import.meta.url),
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  const stderr = new TextDecoder().decode(output.stderr);
+  assertEquals(output.code, 0, stderr);
+  return JSON.parse(new TextDecoder().decode(output.stdout));
+}
+
 describe("ext-llm-openai/openai-web-search", () => {
   it("maps the four supported provider tool revisions and preserves the runtime name", () => {
     for (
@@ -537,5 +549,46 @@ describe("ext-llm-openai/openai-web-search", () => {
     );
     assertEquals(proxyPropertyReads, 0);
     assertEquals(proxyError.cause, undefined);
+  });
+
+  it("accepts plain raw response metadata without Proxy detection", async () => {
+    const result = await runNoBrandEval(`
+      Object.defineProperty(globalThis, "caches", {
+        configurable: true,
+        value: {},
+      });
+      Object.defineProperty(globalThis, "WebSocketPair", {
+        configurable: true,
+        value: function WebSocketPair() {},
+      });
+
+      const { canIdentifyProxyWithoutHooks } = await import(
+        "./src/platform/compat/error-introspection.ts"
+      );
+      const {
+        createOpenAIRawResponseMetadata,
+        readOpenAIRawResponseOutputItems,
+      } = await import("./extensions/ext-llm-openai/src/openai-web-search.ts");
+
+      const metadata = createOpenAIRawResponseMetadata([{
+        id: "ws_edge",
+        type: "web_search_call",
+        status: "completed",
+        action: { type: "search", query: "Veryfront" },
+      }]);
+      console.log(JSON.stringify({
+        canIdentifyProxyWithoutHooks,
+        items: readOpenAIRawResponseOutputItems(metadata),
+      }));
+    `);
+    assertEquals(result, {
+      canIdentifyProxyWithoutHooks: false,
+      items: [{
+        id: "ws_edge",
+        type: "web_search_call",
+        status: "completed",
+        action: { type: "search", query: "Veryfront" },
+      }],
+    });
   });
 });
