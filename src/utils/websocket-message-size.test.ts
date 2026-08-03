@@ -48,7 +48,12 @@ describe("websocket-message-size", () => {
     });
 
     it("rejects obviously oversized strings without exact full-string sizing", () => {
-      assertEquals(getWebSocketMessageAdmission("x".repeat(1_000_000), 8), {
+      const admission = getWebSocketMessageAdmission("x".repeat(1_000_000), 8);
+      assertEquals(admission, {
+        accepted: false,
+        sizeBytes: 9,
+      });
+      assertEquals(JSON.parse(JSON.stringify(admission)), {
         accepted: false,
         sizeBytes: 9,
       });

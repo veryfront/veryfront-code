@@ -3,13 +3,12 @@ import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
 const numberIsSafeInteger = Number.isSafeInteger;
 const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
 const NativeRangeError = RangeError;
-const POSITIVE_INFINITY = Number.POSITIVE_INFINITY;
 
 export interface WebSocketMessageAdmission {
   readonly accepted: boolean;
   /**
-   * Exact size when accepted, or an over-limit sentinel when a string is
-   * rejected early. The sentinel is `Infinity` at `Number.MAX_SAFE_INTEGER`.
+   * Exact size when accepted, or a finite lower-bound sentinel when a string
+   * is rejected early.
    */
   readonly sizeBytes: number;
 }
@@ -44,7 +43,7 @@ export function getWebSocketMessageAdmission(
   }
 
   if (typeof data === "string") {
-    const rejectedSize = maximumBytes === MAX_SAFE_INTEGER ? POSITIVE_INFINITY : maximumBytes + 1;
+    const rejectedSize = maximumBytes === MAX_SAFE_INTEGER ? MAX_SAFE_INTEGER : maximumBytes + 1;
     if (data.length > maximumBytes) {
       return { accepted: false, sizeBytes: rejectedSize };
     }
