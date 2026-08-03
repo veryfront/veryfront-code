@@ -822,7 +822,7 @@ async function reconcileHistoricalCoordinationRecords(
   domain: LockfileCoordinationDomain,
   currentRecordKey: string,
   accessKey: string,
-): Promise<void> {
+): Promise<boolean> {
   const candidates: Array<{
     recordKey: string;
     record: LockfileCoordinationRecord;
@@ -913,6 +913,7 @@ async function reconcileHistoricalCoordinationRecords(
       apply(jsonStringify, NativeJSON, [[accessKey, knownCanonicalPath]]) as string,
     ]);
   }
+  return candidates.length > 0;
 }
 
 async function resolveLockfileCoordinationIdentity(
@@ -928,6 +929,7 @@ async function resolveLockfileCoordinationIdentity(
   stateKeys: string[];
   unresolvedRecord?: LockfileCoordinationRecord;
   resolvedRecordKey?: string;
+  reconciledUnresolvedRecords?: boolean;
 }> {
   // A declared coordination key is the complete shared lock domain. Including
   // a canonical path here would split adapters that share a backing store when
@@ -979,7 +981,7 @@ async function resolveLockfileCoordinationIdentity(
   // Historical aliases are reconciled incrementally. A stale or deleted
   // project remains retryable but cannot fail an unrelated healthy project or
   // monopolize the shared backing-store queue.
-  await reconcileHistoricalCoordinationRecords(
+  const reconciledUnresolvedRecords = await reconcileHistoricalCoordinationRecords(
     fs,
     domain,
     recordKey,
@@ -989,6 +991,7 @@ async function resolveLockfileCoordinationIdentity(
   return {
     coordinationDomain: domain,
     resolvedRecordKey: recordKey,
+    reconciledUnresolvedRecords,
     stateKeys: [
       logicalStateKey,
       apply(jsonStringify, NativeJSON, [[accessKey, canonicalLockfilePath]]) as string,
@@ -1093,20 +1096,26 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   async function resolveStateUnderAccess(): Promise<{
     state: LockfileSharedState;
     accessQueueKey: string;
+    unresolved: boolean;
   }> {
     // Retry canonicalization for every serialized manager operation. A
     // project path may not exist on the first access, and a later successful
     // resolution must bridge the earlier logical state to canonical aliases.
-    const { coordinationDomain, stateKeys, unresolvedRecord, resolvedRecordKey } =
-      await resolveLockfileCoordinationIdentity(
-        fs,
-        normalizedProjectDir,
-        lockfilePath,
-        accessKey,
-        hasSharedCoordinationKey,
-        canonicalizationState,
-        managerCoordinationDomain,
-      );
+    const {
+      coordinationDomain,
+      stateKeys,
+      unresolvedRecord,
+      resolvedRecordKey,
+      reconciledUnresolvedRecords,
+    } = await resolveLockfileCoordinationIdentity(
+      fs,
+      normalizedProjectDir,
+      lockfilePath,
+      accessKey,
+      hasSharedCoordinationKey,
+      canonicalizationState,
+      managerCoordinationDomain,
+    );
     managerCoordinationDomain = coordinationDomain;
     // A coordinationKey declares a shared backing store. Canonicalize the
     // per-lockfile cache state independently so aliases invalidate each other
@@ -1131,6 +1140,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
       // alias owned by an adapter without realPath; both must then serialize
       // through the same queue to protect the read-merge-write window.
       accessQueueKey: getLockfileSharedStateAccessKey(state),
+      unresolved: unresolvedRecord !== undefined || reconciledUnresolvedRecords === true,
     };
   }
 
@@ -1159,10 +1169,14 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
       () =>
         chainPromise(
           resolveStateUnderAccess(),
-          ({ state, accessQueueKey }) =>
-            accessQueueKey === logicalQueueKey
+          ({ state, accessQueueKey, unresolved }) => {
+            const resolvedAccessQueueKey = hasSharedCoordinationKey && unresolved
+              ? accessKey
+              : accessQueueKey;
+            return resolvedAccessQueueKey === logicalQueueKey
               ? operation(state)
-              : serializeLockfileAccess(accessQueueKey, () => operation(state)),
+              : serializeLockfileAccess(resolvedAccessQueueKey, () => operation(state));
+          },
         ),
     );
   }

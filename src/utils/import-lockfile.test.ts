@@ -2100,12 +2100,81 @@ describe("import-lockfile", () => {
       ]);
     });
 
-    it("should allow distinct shared-store lockfiles to flush independently", async () => {
+    it("should serialize aliased paths when no shared adapter has realPath", async () => {
+      const canonicalPath = "/backing/project/veryfront.lock";
+      const baseUrl = "https://cdn.com/base.ts";
+      const aUrl = "https://cdn.com/a.ts";
+      const bUrl = "https://cdn.com/b.ts";
+      const store = new Map<string, string>([[
+        canonicalPath,
+        JSON.stringify({
+          version: 1,
+          imports: {
+            [baseUrl]: { resolved: baseUrl, integrity: "sha256-base" },
+          },
+        }),
+      ]]);
+      const backingPath = (path: string): string =>
+        path === "/project/veryfront.lock" || path === "/alias/veryfront.lock"
+          ? canonicalPath
+          : path;
+      const firstWriteStarted = Promise.withResolvers<void>();
+      const secondWriteStarted = Promise.withResolvers<void>();
+      const releaseFirstWrite = Promise.withResolvers<void>();
+      let writes = 0;
+      const writeFile = async (path: string, content: string): Promise<void> => {
+        writes++;
+        if (writes === 1) {
+          firstWriteStarted.resolve();
+          await releaseFirstWrite.promise;
+        } else if (writes === 2) {
+          secondWriteStarted.resolve();
+        }
+        store.set(backingPath(path), content);
+      };
+      const shared = {
+        coordinationKey: "no-realpath-alias-test-store",
+        exists: (path: string) => Promise.resolve(store.has(backingPath(path))),
+        readFile: (path: string) => {
+          const content = store.get(backingPath(path));
+          return content === undefined
+            ? Promise.reject(new Error("ENOENT"))
+            : Promise.resolve(content);
+        },
+        writeFile,
+        remove: (path: string) => {
+          store.delete(backingPath(path));
+          return Promise.resolve();
+        },
+      } satisfies FSAdapter;
+      const managerA = createLockfileManager("/project", shared);
+      const managerB = createLockfileManager("/alias", { ...shared });
+      await managerA.set(aUrl, { resolved: aUrl, integrity: "sha256-a" });
+      await managerB.set(bUrl, { resolved: bUrl, integrity: "sha256-b" });
+
+      const flushA = managerA.flush();
+      await firstWriteStarted.promise;
+      const flushB = managerB.flush();
+      const secondWriteBeforeRelease = await resolvesWithin(secondWriteStarted.promise);
+      releaseFirstWrite.resolve();
+      await Promise.all([flushA, flushB]);
+
+      assertEquals(secondWriteBeforeRelease, false);
+      const onDisk = JSON.parse(store.get(canonicalPath)!) as {
+        imports: Record<string, unknown>;
+      };
+      assertEquals(Object.keys(onDisk.imports).sort(), [aUrl, bUrl, baseUrl]);
+    });
+
+    it("should allow distinct canonical shared-store lockfiles to flush independently", async () => {
       const firstPath = "/project-a/veryfront.lock";
       const secondPath = "/project-b/veryfront.lock";
       const aUrl = "https://cdn.com/a.ts";
       const bUrl = "https://cdn.com/b.ts";
-      const backingFS = createMockFS({}, "independent-lockfile-test-store");
+      const backingFS: FSAdapter = {
+        ...createMockFS({}, "independent-lockfile-test-store"),
+        realPath: (path) => Promise.resolve(path),
+      };
       const firstWriteStarted = Promise.withResolvers<void>();
       const secondWriteStarted = Promise.withResolvers<void>();
       const releaseFirstWrite = Promise.withResolvers<void>();
