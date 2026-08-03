@@ -1128,6 +1128,45 @@ describe("modules/import-map/preloader", () => {
       await first;
     });
 
+    it("counts cleared underlying work against the total project bound", async () => {
+      const adapter = createMinimalAdapter();
+      const loads: Array<ReturnType<typeof createDeferred<ImportMapConfig>>> = [];
+      const preloader = new ImportMapPreloader({
+        maxProjects: 2,
+        maxVariantsPerProject: 1,
+        ttlMs: 1_000,
+        loadTimeoutMs: 1_000,
+        loadImportMap: () => {
+          const load = createDeferred<ImportMapConfig>();
+          loads.push(load);
+          return load.promise;
+        },
+      });
+
+      const cached = preloader.preload("/cached", adapter, "cached");
+      await waitForLoadCount(loads, 1);
+      loads[0]!.resolve({ imports: { source: "cached" } });
+      await cached;
+
+      const cleared = preloader.preload("/project-a", adapter, "project-a");
+      await waitForLoadCount(loads, 2);
+      preloader.clear("project-a");
+
+      const activeB = preloader.preload("/project-b", adapter, "project-b");
+      await waitForLoadCount(loads, 3);
+      const queuedD = preloader.preload("/project-d", adapter, "project-d");
+      await Promise.resolve();
+      assertEquals(loads.length, 3);
+
+      loads[1]!.resolve({ imports: { source: "late-a" } });
+      assertEquals((await cleared).imports?.source, "late-a");
+      await waitForLoadCount(loads, 4);
+      loads[2]!.resolve({ imports: { source: "b" } });
+      loads[3]!.resolve({ imports: { source: "d" } });
+      assertEquals((await activeB).imports?.source, "b");
+      assertEquals((await queuedD).imports?.source, "d");
+    });
+
     it("keeps timed-out underlying work scoped to its project capacity", async () => {
       const adapter = createMinimalAdapter();
       const loads: Array<ReturnType<typeof createDeferred<ImportMapConfig>>> = [];
@@ -1212,6 +1251,84 @@ describe("modules/import-map/preloader", () => {
 
       loads[0]!.resolve({ imports: { source: "a" } });
       assertEquals((await invalidated).imports?.source, "a");
+    });
+
+    it("counts timed-out work against the total project bound", async () => {
+      const adapter = createMinimalAdapter();
+      const loads: Array<ReturnType<typeof createDeferred<ImportMapConfig>>> = [];
+      const preloader = new ImportMapPreloader({
+        maxProjects: 2,
+        maxVariantsPerProject: 1,
+        ttlMs: 1_000,
+        loadTimeoutMs: 100,
+        loadImportMap: () => {
+          const load = createDeferred<ImportMapConfig>();
+          loads.push(load);
+          return load.promise;
+        },
+      });
+
+      const timedOutA = preloader.preload("/project-a", adapter, "project-a");
+      await waitForLoadCount(loads, 1);
+      await assertRejects(() => timedOutA, RangeError, "load timed out");
+
+      const activeB = preloader.preload("/project-b", adapter, "project-b");
+      await waitForLoadCount(loads, 2);
+      const queuedC = preloader.preload("/project-c", adapter, "project-c");
+      await Promise.resolve();
+      assertEquals(loads.length, 2);
+
+      loads[0]!.resolve({ imports: { source: "late-a" } });
+      await waitForLoadCount(loads, 3);
+      loads[1]!.resolve({ imports: { source: "b" } });
+      loads[2]!.resolve({ imports: { source: "c" } });
+      assertEquals((await activeB).imports?.source, "b");
+      assertEquals((await queuedC).imports?.source, "c");
+    });
+
+    it("does not miss capacity released before a waiter observes its signal", async () => {
+      const adapter = createMinimalAdapter();
+      const loads: Array<ReturnType<typeof createDeferred<ImportMapConfig>>> = [];
+      let releaseDuringAdmission = false;
+      let admissionClockReads = 0;
+      let clock = 0;
+      const preloader = new ImportMapPreloader({
+        maxProjects: 1,
+        maxVariantsPerProject: 2,
+        ttlMs: 1_000,
+        loadTimeoutMs: 1_000,
+        now: () => {
+          if (releaseDuringAdmission && admissionClockReads++ === 0) {
+            loads[0]!.resolve({ imports: { source: "a" } });
+          }
+          return ++clock;
+        },
+        loadImportMap: () => {
+          const load = createDeferred<ImportMapConfig>();
+          loads.push(load);
+          return load.promise;
+        },
+      });
+
+      const first = preloader.preload("/project", adapter, "project", {
+        contentSourceId: "source-a",
+      });
+      const unrelated = preloader.preload("/project", adapter, "project", {
+        contentSourceId: "source-b",
+      });
+      await waitForLoadCount(loads, 2);
+
+      releaseDuringAdmission = true;
+      const queued = preloader.preload("/project", adapter, "project", {
+        contentSourceId: "source-c",
+      });
+
+      await waitForLoadCount(loads, 3);
+      assertEquals((await first).imports?.source, "a");
+      loads[2]!.resolve({ imports: { source: "c" } });
+      assertEquals((await queued).imports?.source, "c");
+      loads[1]!.resolve({ imports: { source: "b" } });
+      assertEquals((await unrelated).imports?.source, "b");
     });
 
     it("keeps variant identity and capacity deterministic after primordial poisoning", async () => {

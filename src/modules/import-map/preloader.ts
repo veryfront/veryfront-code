@@ -665,21 +665,26 @@ export class ImportMapPreloader {
   }
 
   private reportTimedOutLoad(cacheKey: string): void {
+    // Hashing is asynchronous. Snapshot the transition counters first so the
+    // diagnostic describes this timeout rather than later concurrent changes.
+    const orphanedLoadsForProject = this.projectOrphanCount(cacheKey);
+    const orphanedProjects = mapSize(this.orphanedLoadsByProject);
+    const activeLoads = setSize(this.activeLoads);
     void promiseThen(
       computeHash(cacheKey),
       (cacheKeyHash) => {
         logger.warn("Import-map load timed out with underlying work still active", {
           cacheKeyHash,
-          orphanedLoadsForProject: this.projectOrphanCount(cacheKey),
-          orphanedProjects: mapSize(this.orphanedLoadsByProject),
-          activeLoads: setSize(this.activeLoads),
+          orphanedLoadsForProject,
+          orphanedProjects,
+          activeLoads,
         });
       },
       () => {
         logger.warn("Import-map load timed out with underlying work still active", {
-          orphanedLoadsForProject: this.projectOrphanCount(cacheKey),
-          orphanedProjects: mapSize(this.orphanedLoadsByProject),
-          activeLoads: setSize(this.activeLoads),
+          orphanedLoadsForProject,
+          orphanedProjects,
+          activeLoads,
         });
       },
     );
