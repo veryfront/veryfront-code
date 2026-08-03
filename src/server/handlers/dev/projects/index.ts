@@ -21,7 +21,7 @@ import {
   DEV_UI_ASSET_PROVIDER_MISSING_MESSAGE,
   omitHeadResponseBody,
 } from "../shared/dev-ui-bundle-response.ts";
-import { type DevUiAssetProvider, snapshotDevUiAssetProvider } from "#veryfront/extensions/dev-ui";
+import type { DevUiAssetProvider } from "#veryfront/extensions/dev-ui";
 
 const PROJECTS_ALLOWED_METHODS = "GET, HEAD";
 
@@ -39,9 +39,7 @@ export class ProjectsHandler extends BaseHandler {
 
   constructor(provider?: Readonly<DevUiAssetProvider>) {
     super();
-    this.browserBundle = provider === undefined
-      ? undefined
-      : snapshotDevUiAssetProvider(provider).browserBundle;
+    this.browserBundle = provider?.browserBundle;
   }
 
   metadata: HandlerMetadata = {

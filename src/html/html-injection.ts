@@ -80,7 +80,8 @@ function toProjectRelativePath(absolutePath: string, projectDir?: string): strin
 }
 
 function hasProjectStylesheet(html: string): boolean {
-  return /id=["']vf-tailwind-css["']/i.test(html) ||
+  return /id=["']vf-project-css["']/i.test(html) ||
+    /id=["']vf-tailwind-css["']/i.test(html) ||
     /href=["'][^"']*\/_vf_styles\/styles\.css(?:\?[^"']*)?["']/i.test(html) ||
     /href=["'][^"']*\/_vf\/css\/[^"']+\.css["']/i.test(html);
 }

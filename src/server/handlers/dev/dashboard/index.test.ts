@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "../../types.ts";
 import { DevDashboardHandler } from "./index.ts";
 import {
+  DASHBOARD_CSRF_HEADER_NAME,
   DASHBOARD_CSRF_META_NAME,
   DASHBOARD_SESSION_PATH,
   getDashboardSessionCookieName,
@@ -196,6 +197,47 @@ describe("DevDashboardHandler admission", () => {
     )).response!;
     assertEquals(rejectedMethod.status, 405);
     assertEquals(rejectedMethod.headers.get("allow"), "GET, HEAD");
+  });
+
+  it("enforces the dashboard mutation session on POST API routes", async () => {
+    const handler = new DevDashboardHandler(DEV_UI_PROVIDER);
+    const missingSession = (await handler.handle(
+      requestFromPeer(
+        new Request("http://localhost/_dev/api/hmr-trigger", {
+          method: "POST",
+          headers: { host: "localhost" },
+          body: "{}",
+        }),
+      ),
+      localContext(),
+    )).response!;
+
+    assertEquals(missingSession.status, 403);
+
+    const sessionResponse = (await handler.handle(
+      dashboardRequest(`http://localhost${DASHBOARD_SESSION_PATH}`),
+      localContext(),
+    )).response!;
+    const cookie = sessionResponse.headers.get("set-cookie") ?? "";
+    const cookiePair = cookie.split(";", 1)[0] ?? "";
+    const token = cookiePair.slice(cookiePair.indexOf("=") + 1);
+
+    const validSession = (await handler.handle(
+      requestFromPeer(
+        new Request("http://localhost/_dev/api/hmr-trigger", {
+          method: "POST",
+          headers: {
+            host: "localhost",
+            cookie: cookiePair,
+            [DASHBOARD_CSRF_HEADER_NAME]: token,
+          },
+          body: "{}",
+        }),
+      ),
+      localContext(),
+    )).response!;
+
+    assertEquals(validSession.status, 200);
   });
 
   it("serves only the captured local bundle and fails closed without it", async () => {

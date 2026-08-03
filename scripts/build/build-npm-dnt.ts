@@ -316,6 +316,7 @@ await build({
 		pkg.dependencies["@veryfront/ext-bundler-esbuild"] = version;
 		pkg.dependencies["@veryfront/ext-content-mdx"] = version;
 		pkg.dependencies["@veryfront/ext-css-tailwind"] = version;
+		pkg.dependencies["@veryfront/ext-dev-ui-react"] = version;
 		// ext-parser-babel provides the CodeParser contract that `veryfront serve`
 		// needs to vet client-page modules for /_veryfront/rsc/module hydration;
 		// without it the endpoint 404s and client pages render without hydrating.
@@ -359,6 +360,7 @@ async function installBuiltNpmLifecycleConsumer(consumerDirectory: string): Prom
 		Deno.realPath("./npm/extensions/ext-bundler-esbuild"),
 		Deno.realPath("./npm/extensions/ext-content-mdx"),
 		Deno.realPath("./npm/extensions/ext-css-tailwind"),
+		Deno.realPath("./npm/extensions/ext-dev-ui-react"),
 		Deno.realPath("./npm/extensions/ext-parser-babel"),
 		Deno.realPath("./npm/extensions/ext-yaml"),
 	]);

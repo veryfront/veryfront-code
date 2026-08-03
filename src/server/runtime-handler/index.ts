@@ -9,6 +9,7 @@
 
 import { getBaseLogger, type RequestContext, runWithRequestContextAsync } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { inheritRequestPeerProvenance } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getConfig } from "#veryfront/config/loader.ts";
 import { errorToRFC9457Response, getErrorMessage, UNKNOWN_ERROR } from "#veryfront/errors";
@@ -653,7 +654,7 @@ export function createVeryfrontHandler(
             // closes with an unexpected EOF.
             const timeoutRequest = isHMRWebSocketUpgrade(req, url.pathname)
               ? req
-              : new Request(req, { signal });
+              : inheritRequestPeerProvenance(req, new Request(req, { signal }));
             return runWithRequestProfiling(
               {
                 category: profileCategory,

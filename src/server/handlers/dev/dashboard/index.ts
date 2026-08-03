@@ -21,9 +21,10 @@ import {
   createDashboardSessionCookie,
   DASHBOARD_ACCESS_DENIED_MESSAGE,
   getDashboardSessionToken,
+  hasValidDashboardMutationSession,
   isTrustedDashboardRequest,
 } from "./access-policy.ts";
-import { type DevUiAssetProvider, snapshotDevUiAssetProvider } from "#veryfront/extensions/dev-ui";
+import type { DevUiAssetProvider } from "#veryfront/extensions/dev-ui";
 import { DASHBOARD_SESSION_PATH } from "#veryfront/extensions/dev-ui/protocol";
 import { cancelRejectedLocalControlRequestBody } from "#veryfront/security/http/local-control-request.ts";
 
@@ -38,9 +39,7 @@ export class DevDashboardHandler extends BaseHandler {
 
   constructor(provider?: Readonly<DevUiAssetProvider>) {
     super();
-    this.browserBundle = provider === undefined
-      ? undefined
-      : snapshotDevUiAssetProvider(provider).browserBundle;
+    this.browserBundle = provider?.browserBundle;
   }
 
   metadata: HandlerMetadata = {
@@ -130,6 +129,12 @@ export class DevDashboardHandler extends BaseHandler {
     }
 
     if (pathname.startsWith("/_dev/api/")) {
+      if (req.method === "POST" && !hasValidDashboardMutationSession(req)) {
+        cancelRejectedLocalControlRequestBody(req, "Dashboard mutation session rejected");
+        const response = errorResponse("Dashboard mutation requires a valid session", 403);
+        response.headers.set("Cache-Control", "no-store");
+        return this.respond(omitHeadResponseBody(req, response));
+      }
       const response = await handleDashboardAPI(req, ctx);
       if (response) return this.respond(omitHeadResponseBody(req, response));
       return this.respond(omitHeadResponseBody(req, createDevNotFoundResponse()));

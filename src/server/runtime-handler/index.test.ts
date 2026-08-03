@@ -370,6 +370,40 @@ describe("server/runtime-handler/index", () => {
     }
   });
 
+  it("preserves loopback peer provenance when dispatching cloned dev-dashboard requests", async () => {
+    const adapter = new DenoAdapter();
+    const projectDir = Deno.cwd();
+    const handler = createVeryfrontHandler(projectDir, adapter, {
+      projectDir,
+      config: {} as any,
+      defaultProjectSlug: "test-project",
+      defaultEnvironment: "preview",
+      localProjects: { "test-project": projectDir },
+    });
+    await handler.ready;
+
+    let port = 0;
+    const server = await adapter.serve(handler, {
+      hostname: "127.0.0.1",
+      port: 0,
+      onListen: (address) => {
+        port = address.port;
+      },
+    });
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/_dev/api/agents`, {
+        headers: { host: `localhost:${port}` },
+      });
+      const body = await response.text();
+
+      assertEquals(response.status, 200, body);
+      assertEquals(body.includes("Dashboard access requires"), false);
+    } finally {
+      await server.stop();
+    }
+  });
+
   it("skips the proxy header guard for lightweight module requests", async () => {
     const handler = createProxyModeHandler();
 

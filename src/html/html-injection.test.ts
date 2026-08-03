@@ -455,7 +455,7 @@ describe("html/html-injection", () => {
         },
       );
 
-      assertEquals(html.includes('id="vf-tailwind-css"'), true);
+      assertEquals(html.includes('id="vf-project-css"'), true);
       assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
     });
 

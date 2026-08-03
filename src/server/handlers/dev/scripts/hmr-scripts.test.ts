@@ -10,6 +10,7 @@ describe("server/handlers/dev/scripts/hmr-scripts", () => {
     assertStringIncludes(script, "pending.setAttribute('data-vf-stylesheet-pending', 'true');");
     assertStringIncludes(script, "pending.removeAttribute('data-vf-stylesheet-pending');");
     assertStringIncludes(script, "pending.id = 'vf-project-css';");
+    assertStringIncludes(script, "document.getElementById('vf-project-css')");
     assertStringIncludes(script, "current.remove();");
   });
 

@@ -87,6 +87,7 @@ Deno.test("root npm CLI package declares auto-loaded first-party extensions afte
       "@veryfront/ext-bundler-esbuild",
       "@veryfront/ext-content-mdx",
       "@veryfront/ext-css-tailwind",
+      "@veryfront/ext-dev-ui-react",
       "@veryfront/ext-parser-babel",
       "@veryfront/ext-yaml",
     ]
@@ -115,6 +116,7 @@ Deno.test("npm lifecycle probe installs auto-loaded extensions in a real consume
       "ext-bundler-esbuild",
       "ext-content-mdx",
       "ext-css-tailwind",
+      "ext-dev-ui-react",
       "ext-parser-babel",
       "ext-yaml",
     ]
@@ -331,6 +333,11 @@ const ROOT_BUNDLED_EXTENSIONS = new Set([
   "ext-eval-report-mlflow",
 ]);
 
+const ROOT_SHARED_PUBLIC_DEPENDENCIES = new Set([
+  "react",
+  "react-dom",
+]);
+
 Deno.test("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests", async () => {
   const denoConfig = JSON.parse(
     await Deno.readTextFile("deno.json"),
@@ -365,7 +372,8 @@ Deno.test("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests",
 
     for (const dependency of dependencies) {
       assertEquals(
-        owned.has(dependency) || optionalPeers.has(dependency),
+        owned.has(dependency) || optionalPeers.has(dependency) ||
+          ROOT_SHARED_PUBLIC_DEPENDENCIES.has(dependency),
         true,
         `${dependency} (declared by ${manifestPath}) must be added to EXTENSION_OWNED_DEPENDENCIES so it does not leak into root veryfront npm installs`,
       );
