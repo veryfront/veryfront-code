@@ -89,6 +89,15 @@ function isReactRuntimeDependency(dependency: string): boolean {
     isReactPackageSegment(packageRoot);
 }
 
+function isPackageSpecifier(
+  specifier: string,
+  packageName: string,
+): boolean {
+  return specifier === packageName ||
+    specifier.startsWith(`${packageName}/`) ||
+    specifier.startsWith(`${packageName}@`);
+}
+
 function isUiDependency(dependency: string): boolean {
   const isUrl = hasScheme(dependency, "http:") ||
     hasScheme(dependency, "https:") ||
@@ -100,7 +109,7 @@ function isUiDependency(dependency: string): boolean {
   ).replaceAll("%40", "@");
   if (
     normalized.startsWith("@mui/") ||
-    isVersionedPackageSegment(normalized, "framer-motion") ||
+    isPackageSpecifier(normalized, "framer-motion") ||
     normalized.startsWith("@headlessui/")
   ) {
     return true;
@@ -115,8 +124,9 @@ function isUiDependency(dependency: string): boolean {
   }
   return pathname.includes("/@mui/") ||
     pathname.includes("/@headlessui/") ||
+    pathname.includes("/framer-motion/") ||
     pathname.includes("/framer-motion@") ||
-    pathname === "/framer-motion";
+    pathname.endsWith("/framer-motion");
 }
 
 function isChunkableDependency(dependency: string): boolean {

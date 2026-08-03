@@ -8,6 +8,8 @@ import { hasControlCharacter } from "./data-properties.ts";
 import { MAX_IMPORT_SPECIFIER_CHARS, MAX_IMPORTS_PER_PAGE } from "./limits.ts";
 import { hasScheme } from "./specifier.ts";
 
+const TEXT_ENCODER = new TextEncoder();
+
 export interface ImportGroups {
   local: string[];
   remote: string[];
@@ -417,5 +419,5 @@ export function analyzePageImports(
 }
 
 export function utf8ByteLength(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
+  return TEXT_ENCODER.encode(value).byteLength;
 }
