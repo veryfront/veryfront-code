@@ -5,6 +5,11 @@
  * Ensures consistent URLs across SSR and browser for hydration parity.
  */
 
+import {
+  primordialArrayJoin as arrayJoin,
+  primordialArrayPush as arrayPush,
+} from "#veryfront/platform/compat/primordials/array.ts";
+
 /**
  * Default React version - used when not specified.
  *
@@ -27,6 +32,30 @@ type EsmShOptions = {
   deps?: Record<string, string>;
 };
 
+const ObjectEntries = Object.entries;
+
+function buildEsmShParams(options?: EsmShOptions): string[] {
+  const params: string[] = [];
+
+  if (options?.external?.length) {
+    arrayPush(params, `external=${arrayJoin(options.external, ",")}`);
+  }
+
+  arrayPush(params, `target=${options?.target ?? "es2022"}`);
+
+  if (options?.deps) {
+    const deps: string[] = [];
+    const entries = ObjectEntries(options.deps);
+    for (let index = 0; index < entries.length; index++) {
+      const [key, value] = entries[index]!;
+      arrayPush(deps, `${key}@${value}`);
+    }
+    arrayPush(params, `deps=${arrayJoin(deps, ",")}`);
+  }
+
+  return params;
+}
+
 /**
  * Build esm.sh URL with proper configuration.
  *
@@ -41,26 +70,27 @@ export function buildEsmShUrl(
   subpath?: string,
   options?: EsmShOptions,
 ): string {
-  const params: string[] = [];
-
-  if (options?.external?.length) {
-    params.push(`external=${options.external.join(",")}`);
-  }
-
-  params.push(`target=${options?.target ?? "es2022"}`);
-
-  if (options?.deps) {
-    const depsStr = Object.entries(options.deps)
-      .map(([k, v]) => `${k}@${v}`)
-      .join(",");
-    params.push(`deps=${depsStr}`);
-  }
+  const params = buildEsmShParams(options);
 
   const versionStr = version ? `@${version}` : "";
   const pathStr = subpath ?? "";
-  const queryStr = params.length ? `?${params.join("&")}` : "";
+  const queryStr = params.length ? `?${arrayJoin(params, "&")}` : "";
 
   return `https://esm.sh/${pkg}${versionStr}${pathStr}${queryStr}`;
+}
+
+/**
+ * Build an esm.sh package-prefix URL. esm.sh's `&option/` form keeps the
+ * trailing slash required by the import-map prefix-matching algorithm.
+ */
+function buildEsmShPrefixUrl(
+  pkg: string,
+  version: string,
+  options?: EsmShOptions,
+): string {
+  const params = buildEsmShParams(options);
+  const optionStr = params.length ? `&${arrayJoin(params, "&")}` : "";
+  return `https://esm.sh/${pkg}@${version}${optionStr}/`;
 }
 
 /**
@@ -79,6 +109,16 @@ export function buildReactUrl(
   });
 }
 
+function buildReactPrefixUrl(
+  pkg: "react" | "react-dom",
+  version: string,
+): string {
+  return buildEsmShPrefixUrl(pkg, version, {
+    external: ["react"],
+    deps: { csstype: CSSTYPE_VERSION },
+  });
+}
+
 /**
  * Get complete React import map for a specific version.
  */
@@ -90,8 +130,10 @@ export function getReactImportMap(version: string): Record<string, string> {
     "react-dom/server": buildReactUrl("react-dom", version, "/server", true),
     "react/jsx-runtime": buildReactUrl("react", version, "/jsx-runtime", true),
     "react/jsx-dev-runtime": buildReactUrl("react", version, "/jsx-dev-runtime", true),
-    // Prefix match for any react/* subpath imports
-    "react/": buildReactUrl("react", version, "/", true),
+    // Prefix matches cover future package exports without allowing a project
+    // import map to redirect React or ReactDOM subpaths.
+    "react/": buildReactPrefixUrl("react", version),
+    "react-dom/": buildReactPrefixUrl("react-dom", version),
   };
 }
 

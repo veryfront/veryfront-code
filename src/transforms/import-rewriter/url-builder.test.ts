@@ -308,11 +308,16 @@ describe("transforms/import-rewriter/url-builder", () => {
         "react/jsx-runtime",
         "react/jsx-dev-runtime",
         "react/",
+        "react-dom/",
       ] as const;
 
       for (const key of keys) {
         assertEquals(typeof map[key], "string");
       }
+
+      assertEquals(map["react/"]?.endsWith("/"), true);
+      assertEquals(map["react-dom/"]?.endsWith("/"), true);
+      assertEquals(map["react-dom/"]?.includes("&external=react"), true);
     });
   });
 

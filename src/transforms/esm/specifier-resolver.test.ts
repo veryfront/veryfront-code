@@ -93,6 +93,28 @@ describe("transforms/esm/specifier-resolver", () => {
       assertEquals(result.replacements.get("npm:react@18"), "react@18");
     });
 
+    it("resolves npm: specifiers after String prefix poisoning", async () => {
+      const stringPrototypeDescriptors = Object.getOwnPropertyDescriptors(String.prototype);
+
+      try {
+        Object.defineProperty(String.prototype, "startsWith", {
+          configurable: true,
+          value() {
+            throw new Error("poisoned String.prototype.startsWith");
+          },
+          writable: true,
+        });
+
+        const code = `import React from "npm:react@18";`;
+        const result = await buildReplacements(code, undefined, defaultOptions, async () => {
+          return "/tmp/cache/http-12345.mjs";
+        });
+        assertEquals(result.replacements.get("npm:react@18"), "file:///tmp/cache/http-12345.mjs");
+      } finally {
+        Object.defineProperties(String.prototype, stringPrototypeDescriptors);
+      }
+    });
+
     it("rewrites http URL when cache returns a path", async () => {
       const code = `import lodash from "https://esm.sh/lodash@4";`;
       const mockCache: CacheHttpModuleFn = async () => "/tmp/cache/http-99999.mjs";

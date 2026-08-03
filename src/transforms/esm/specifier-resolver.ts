@@ -26,6 +26,18 @@ import {
   resolveBareSpecifier,
 } from "./http-cache-helpers.ts";
 
+const ReflectApply = Reflect.apply;
+const StringSlice = String.prototype.slice;
+const StringStartsWith = String.prototype.startsWith;
+
+function stringSlice(value: string, start: number, end?: number): string {
+  return ReflectApply(StringSlice, value, end === undefined ? [start] : [start, end]) as string;
+}
+
+function stringStartsWith(value: string, search: string): boolean {
+  return ReflectApply(StringStartsWith, value, [search]) as boolean;
+}
+
 /** Function signature for caching an HTTP module and returning its local path. */
 export type CacheHttpModuleFn = (url: string, options: CacheOptions) => Promise<string | null>;
 
@@ -63,9 +75,9 @@ function canonicalizeHttpSpecifier(
 }
 
 function isLocalMappedSpecifier(specifier: string): boolean {
-  return specifier.startsWith("/_vf_modules/") ||
-    specifier.startsWith("_vf_modules/") ||
-    specifier.startsWith("file://");
+  return stringStartsWith(specifier, "/_vf_modules/") ||
+    stringStartsWith(specifier, "_vf_modules/") ||
+    stringStartsWith(specifier, "file://");
 }
 
 /**
@@ -94,7 +106,9 @@ async function resolveSpecifier(
   // configured code path, so leaving the specifier external lets the runtime
   // resolve the real package (node_modules on Node, npm: on Deno) if and when
   // the backend is actually used — and costs nothing when it is not.
-  const serverOnlyCandidate = specifier.startsWith("npm:") ? specifier.slice(4) : specifier;
+  const serverOnlyCandidate = stringStartsWith(specifier, "npm:")
+    ? stringSlice(specifier, 4)
+    : specifier;
   const serverOnlyParsed = parseBarePackageSpecifier(serverOnlyCandidate);
   if (serverOnlyParsed && isServerOnlyPackage(serverOnlyParsed.packageName)) return null;
 
@@ -105,8 +119,8 @@ async function resolveSpecifier(
     return resolveSpecifier(mapped, baseUrl, options, cacheHttpModule);
   }
 
-  if (specifier.startsWith("npm:")) {
-    const bareSpecifier = specifier.slice(4);
+  if (stringStartsWith(specifier, "npm:")) {
+    const bareSpecifier = stringSlice(specifier, 4);
     const cached = await cacheHttpModule(`https://esm.sh/${bareSpecifier}`, options);
     if (!cached) return bareSpecifier;
 
@@ -145,7 +159,7 @@ async function resolveSpecifier(
   }
 
   if (isRelative(specifier)) {
-    if (specifier.startsWith("/_vf_modules/")) return null;
+    if (stringStartsWith(specifier, "/_vf_modules/")) return null;
     if (!baseUrl || !isHttpUrl(baseUrl)) return null;
 
     const resolved = new URL(specifier, baseUrl).toString();

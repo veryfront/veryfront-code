@@ -14,6 +14,11 @@ import { type MDXLoadModuleOptions, mdxRenderer } from "#veryfront/transforms/md
 import type { MdxBundle } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
+import { validateVeryfrontConfig } from "#veryfront/config";
+import {
+  clearImportMapCache,
+  getCachedImportMap,
+} from "#veryfront/modules/import-map/preloader.ts";
 
 function cacheKeyForDependencies(
   dependencies: Readonly<Record<string, string>>,
@@ -517,6 +522,75 @@ describe("rendering/layouts/utils/component-loader", () => {
       assertEquals(moduleDependencies, SNAPSHOT_A_DEPENDENCIES);
     } finally {
       mutableRenderer.loadModuleESM = originalLoadModuleESM;
+    }
+  });
+
+  it("preloads the MDX import map under the exact request context", async () => {
+    clearImportMapCache();
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+    mutableRenderer.loadModuleESM =
+      (() => Promise.resolve({ default: () => null })) as typeof mdxRenderer.loadModuleESM;
+
+    const adapter = {
+      fs: {
+        readFile: () => {
+          const error = new Error("not found") as Error & { code: string };
+          error.code = "ENOENT";
+          throw error;
+        },
+        exists: () => false,
+      },
+      env: { get: () => undefined },
+    } as unknown as RuntimeAdapter;
+    const config = validateVeryfrontConfig({
+      resolve: {
+        importMap: {
+          imports: { "context-package": "https://example.com/context-package.ts" },
+        },
+      },
+    });
+
+    try {
+      await loadMDXLayout(
+        { compiledCode: "export default function Layout() { return null; }" } as MdxBundle,
+        "/context-project",
+        adapter,
+        "context-project-id",
+        "project-slug",
+        "release-1",
+        undefined,
+        "19.1.0",
+        SNAPSHOT_A_PIN_KEY,
+        SNAPSHOT_A_DEPENDENCIES,
+        undefined,
+        undefined,
+        config,
+      );
+
+      // The production call site must register the preloaded map under the
+      // exact release/config variant, not the ambient projectId-only variant.
+      const exactVariant = await getCachedImportMap("context-project-id", {
+        projectDir: "/context-project",
+        contentSourceId: "release-1",
+        config,
+      });
+      assertEquals(
+        exactVariant?.imports?.["context-package"],
+        "https://example.com/context-package.ts",
+      );
+
+      const otherContentSource = await getCachedImportMap("context-project-id", {
+        projectDir: "/context-project",
+        contentSourceId: "release-2",
+        config,
+      });
+      assertEquals(otherContentSource, undefined);
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+      clearImportMapCache();
     }
   });
 

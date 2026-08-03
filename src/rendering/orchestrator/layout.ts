@@ -180,6 +180,11 @@ export class LayoutOrchestrator {
                   this.config.projectDir,
                   this.config.adapter,
                   this.config.projectId,
+                  {
+                    projectDir: this.config.projectDir,
+                    contentSourceId: this.config.contentSourceId,
+                    config: this.config.config,
+                  },
                 );
                 this._preloadedImportMap = importMap;
                 return { type: "importMap" as const, success: true };
@@ -251,6 +256,7 @@ export class LayoutOrchestrator {
                   dependencyPinningDependencies,
                   dependencyPinningSource,
                   moduleServerOrigin,
+                  this.config.config,
                   this.config.isLocalProject === true,
                 );
                 return { type: "mdx" as const, path: layout.path, success: true };

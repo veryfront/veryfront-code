@@ -5,6 +5,7 @@ import { JSDOM } from "npm:jsdom@28.0.0";
 import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import {
   useAttachments,
   useUploadsRegistry,
@@ -1055,7 +1056,10 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
           </React.Suspense>,
         );
       });
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await waitFor(() => attemptedSuspendedRender, {
+        interval: 1,
+        message: "Concurrent endpoint render did not start",
+      });
       assertEquals(attemptedSuspendedRender, true);
       assertEquals(pending[0]?.signal?.aborted, false);
       assertEquals(pending.length, 1, "an uncommitted scope must not start a refresh");

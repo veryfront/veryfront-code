@@ -1,6 +1,7 @@
 import { rendererLogger } from "#veryfront/utils";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import type { LayoutItem, MdxBundle, MDXComponents } from "#veryfront/types";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { SpanNames } from "#veryfront/observability";
@@ -33,6 +34,7 @@ export function applyLayoutsESM(
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
+  config?: VeryfrontConfig,
   isLocalProject?: boolean,
 ): Promise<BundledReact.ReactElement> {
   return withSpan(
@@ -84,6 +86,7 @@ export function applyLayoutsESM(
                   dependencyPinningDependencies,
                   dependencyPinningSource,
                   moduleServerOrigin,
+                  config,
                   isLocalProject,
                 ),
               spanAttrs,
@@ -147,6 +150,7 @@ export function applyLayoutsESM(
             dependencyPinningDependencies,
             dependencyPinningSource,
             moduleServerOrigin,
+            config,
             isLocalProject,
           ),
         { "layout.kind": "mdx", "layout.type": "named" },
