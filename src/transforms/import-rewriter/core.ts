@@ -70,7 +70,8 @@ export async function rewriteWithImportRewriteCore(input: TransformCoreInput): P
   const isCrossProjectSSRPinning = input.context.target === "ssr" &&
     pinningEnabled &&
     input.context.moduleServerUrl?.includes("/_vf_modules/_cross/") === true;
-  if (!isBrowserPinning && !isCrossProjectSSRPinning) {
+  const guardFrameworkImports = input.strategies.some((strategy) => strategy.name === "veryfront");
+  if (!isBrowserPinning && !isCrossProjectSSRPinning && !guardFrameworkImports) {
     return rewritten;
   }
 
@@ -88,12 +89,15 @@ export async function rewriteWithImportRewriteCore(input: TransformCoreInput): P
         !input.context.filePath.startsWith("/")
       ? input.context.filePath
       : null);
-  const modulePath = relativeFilePath === null ? undefined : appendDependencyPinningPathKey(
-    `${moduleServerBase}/${normalizeExtension(relativeFilePath)}`,
-    input.context.dependencyPinningCacheKey,
-  );
+  const modulePath = !pinningEnabled || relativeFilePath === null
+    ? undefined
+    : appendDependencyPinningPathKey(
+      `${moduleServerBase}/${normalizeExtension(relativeFilePath)}`,
+      input.context.dependencyPinningCacheKey,
+    );
   return applyComputedDynamicImportPinning(computedParsed, modulePath, {
     ssr: isCrossProjectSSRPinning,
+    guardFrameworkImports,
   });
 }
 

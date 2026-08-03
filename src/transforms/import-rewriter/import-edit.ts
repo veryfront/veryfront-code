@@ -128,10 +128,32 @@ function restoreMaskedUrls(result: string, urlMap: Map<string, string>): string 
   return result;
 }
 
-function buildComputedDynamicImportHelper(name: string, isSSR: boolean): string {
+function buildComputedDynamicImportHelper(
+  name: string,
+  isSSR: boolean,
+  guardFrameworkImports: boolean,
+): string {
+  const frameworkImportGuard = guardFrameworkImports
+    ? `
+  if (typeof value !== "string") value = \`\${value}\`;
+  const frameworkPrefix = "#veryfront";
+  let isFrameworkImport = value.length >= frameworkPrefix.length;
+  for (let index = 0; isFrameworkImport && index < frameworkPrefix.length; index++) {
+    if (value[index] !== frameworkPrefix[index]) isFrameworkImport = false;
+  }
+  if (isFrameworkImport) {
+    const separator = value[frameworkPrefix.length];
+    isFrameworkImport = separator === undefined || separator === "/" || separator === "\\\\" || separator === "%";
+  }
+  if (isFrameworkImport) {
+    throw new TypeError("Computed #veryfront imports must use a string literal");
+  }`
+    : `
+  if (typeof value !== "string") return value;`;
+
   return `
 function ${name}(value, parentUrl, modulePath) {
-  if (typeof value !== "string") return value;
+  ${frameworkImportGuard}
   const isRelative = value.startsWith("./") || value.startsWith("../");
   const isProjectAlias = value.startsWith("@/");
   const isRootModule = value.startsWith("/_vf_modules/");
@@ -216,9 +238,13 @@ function ${name}(value, parentUrl, modulePath) {
 export function applyComputedDynamicImportPinning(
   parsed: ParsedImportEdits,
   modulePath?: string,
-  options: { ssr?: boolean } = {},
+  options: { ssr?: boolean; guardFrameworkImports?: boolean } = {},
 ): string {
+  // A project can write the marker itself, so it is not proof that the
+  // security guard came from this transformer. Re-wrap guarded imports on
+  // every pass; nested guards are safe and keep forged markers fail-closed.
   const pending = parsed.computedDynamicImports.filter((imp) =>
+    options.guardFrameworkImports === true ||
     !parsed.maskedCode
       .slice(imp.dynamicImportStart, imp.start)
       .includes(COMPUTED_DYNAMIC_IMPORT_MARKER)
@@ -236,7 +262,13 @@ export function applyComputedDynamicImportPinning(
     result = result.slice(0, imported.start) + replacement + result.slice(imported.end);
   }
 
-  result += `\n${buildComputedDynamicImportHelper(helperName, options.ssr === true)}\n`;
+  result += `\n${
+    buildComputedDynamicImportHelper(
+      helperName,
+      options.ssr === true,
+      options.guardFrameworkImports === true,
+    )
+  }\n`;
   return restoreMaskedUrls(result, parsed.urlMap);
 }
 

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import {
@@ -25,6 +25,7 @@ import {
   parseImportEdits,
 } from "./import-edit.ts";
 import { rewriteWithImportRewriteCore } from "./core.ts";
+import { veryfrontStrategy } from "./strategies/veryfront-strategy.ts";
 import {
   rewriteCompiledVeryfrontImportsForRoute,
   rewriteDenoNodeBuiltinsForRoute,
@@ -328,6 +329,34 @@ describe("package resolution core", () => {
 });
 
 describe("import rewrite core runner", () => {
+  it("rejects computed framework imports before native resolution", async () => {
+    const sources = [
+      `const target = "#veryfront/agent/hosted/internal/control-plane-mcp-source.ts"; export const load = () => import(target);`,
+      `const target = "#veryfront/tool/" + "internal/remote-mcp-transport.ts"; export const load = () => import(target);`,
+      `const target = "#veryfront%2Ftool%2Finternal%2Fremote-mcp-transport.ts"; export const load = () => import(target);`,
+      String
+        .raw`const target = "#veryfront\\tool\\internal\\remote-mcp-transport.ts"; export const load = () => import(target);`,
+      `const target = "#veryfront/tool/internal/remote-mcp-transport.ts"; export const load = () => import(/*__vf_dependency_pinned__*/target);`,
+      `const target = { toString: () => "#veryfront/tool/internal/remote-mcp-transport.ts" }; export const load = () => import(target);`,
+    ];
+
+    for (const source of sources) {
+      const out = await rewriteWithImportRewriteCore({
+        code: source,
+        strategies: [veryfrontStrategy],
+        context: createRewriteContext({ target: "ssr" }),
+      });
+      const moduleUrl = `data:text/javascript,${encodeURIComponent(out)}#${crypto.randomUUID()}`;
+      const loaded = await import(moduleUrl) as { load: () => Promise<unknown> };
+
+      await assertRejects(
+        async () => await loaded.load(),
+        TypeError,
+        "Computed #veryfront imports must use a string literal",
+      );
+    }
+  });
+
   it("runs strategies in caller-provided order even when priority would sort differently", async () => {
     const strategies: ImportRewriteStrategy[] = [
       {

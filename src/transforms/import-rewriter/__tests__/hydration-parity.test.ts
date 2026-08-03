@@ -212,12 +212,15 @@ describe("Hydration Parity", () => {
           throw new Error("native coercion");
         },
       };
-      expect(helper(nonString, parentUrl, modulePath)).toBe(nonString);
+      expect(() => helper(nonString, parentUrl, modulePath)).toThrow("native coercion");
       expect(
         helper("../../../Escape.js", parentUrl, modulePath),
       ).toBe("/_vf_modules/_pins/invalid");
 
-      expect(await rewriteImports(result, context)).toBe(result);
+      const rewrittenAgain = await rewriteImports(result, context);
+      expect(rewrittenAgain.match(/__vf_dependency_pinned__/g)?.length).toBeGreaterThan(
+        result.match(/__vf_dependency_pinned__/g)?.length ?? 0,
+      );
     });
 
     it("keeps computed cross-project SSR children on the snapshot and SSR target", async () => {

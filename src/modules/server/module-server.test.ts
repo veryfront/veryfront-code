@@ -2718,7 +2718,11 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
         flagOffCode,
         "http://localhost:3000/components/Child.js",
       );
-      assertStringIncludes(flagOffCode, "import(childPath)");
+      assertStringIncludes(flagOffCode, "__veryfrontPinDynamicImport(childPath");
+      assertStringIncludes(
+        flagOffCode,
+        "Computed #veryfront imports must use a string literal",
+      );
       assertEquals(flagOffCode.includes("/_pins/"), false);
     } finally {
       globalThis.fetch = originalFetch;
@@ -2934,7 +2938,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
-  it("keeps flag-off prefix graphs byte-compatible and query-free", async () => {
+  it("keeps flag-off prefix graphs query-free while guarding computed framework imports", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-module-prefix-off-" });
     try {
       setEnv(DEPENDENCY_PINNING_ENV_FLAG, "0");
@@ -2976,7 +2980,11 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(parentResponse.status, 200);
       const parentCode = await parentResponse.text();
       assertStringIncludes(parentCode, `"./Static.js"`);
-      assertStringIncludes(parentCode, "import(path)");
+      assertStringIncludes(parentCode, "__veryfrontPinDynamicImport(path");
+      assertStringIncludes(
+        parentCode,
+        "Computed #veryfront imports must use a string literal",
+      );
       assertEquals(parentCode.includes("/_vf_modules/components/Static.js"), false);
 
       const childUrl = new URL("./Lazy.js", parentUrl);
