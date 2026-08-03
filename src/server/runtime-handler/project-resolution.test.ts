@@ -69,6 +69,18 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(headers.branchName, "feature-x");
     });
 
+    it("normalizes the trusted branch name like the default branch name", () => {
+      const req = new Request("http://localhost/", {
+        headers: {
+          "x-branch-name": "vf-utf8:%20%20feature-x%20%20",
+          "x-default-branch-name": "vf-utf8:%20%20trunk%20%20",
+        },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url), false, true);
+      assertEquals(headers.branchName, "feature-x");
+      assertEquals(headers.defaultBranchName, "trunk");
+    });
+
     it("extracts the default branch name only at an operator-authenticated proxy boundary", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-default-branch-name": "trunk" },

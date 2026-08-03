@@ -119,7 +119,7 @@ export function extractRequestHeaders(
     releaseId: req.headers.get("x-release-id") ?? undefined,
     branchId: identityHeadersTrusted ? req.headers.get("x-branch-id") ?? undefined : undefined,
     branchName: identityHeadersTrusted
-      ? decodeIdentityHeaderValue(req.headers.get("x-branch-name"))
+      ? decodeIdentityHeaderValue(req.headers.get("x-branch-name"))?.trim() || undefined
       : undefined,
     defaultBranchName: identityHeadersTrusted
       ? decodeIdentityHeaderValue(req.headers.get("x-default-branch-name"))?.trim() || undefined
