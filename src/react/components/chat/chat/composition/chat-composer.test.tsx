@@ -2,11 +2,13 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import {
+  type AnchorHTMLAttributes,
   type ButtonHTMLAttributes,
   createElement,
   createRef,
   type FormEvent,
   forwardRef,
+  type ReactElement,
 } from "react";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
@@ -104,23 +106,47 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
   });
 
   it("leaves legacy controlled submit policy with the caller", () => {
-    let submit: ((e?: FormEvent) => void) | undefined;
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDomGlobals(dom);
     let submits = 0;
-    let preventDefaults = 0;
-    function Capture(): null {
-      submit = useChatInputContext().onSubmit;
-      return null;
+    let defaultPrevented: boolean | undefined;
+    function Capture(): ReactElement {
+      const submit = useChatInputContext().onSubmit;
+      return <form onSubmit={(event) => submit(event)} data-submit-probe />;
     }
 
-    renderToString(
-      <ChatInput.Root input="" onChange={() => {}} onSubmit={() => submits += 1} isLoading>
-        <Capture />
-      </ChatInput.Root>,
-    );
-    submit?.({ preventDefault: () => preventDefaults += 1 } as FormEvent);
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "Expected root element to exist");
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <ChatInput.Root
+            input=""
+            onChange={() => {}}
+            onSubmit={(event) => {
+              submits += 1;
+              defaultPrevented = event?.defaultPrevented;
+            }}
+            isLoading
+          >
+            <Capture />
+          </ChatInput.Root>,
+        );
+      });
+      const form = document.querySelector<HTMLFormElement>("[data-submit-probe]");
+      assert(form, "Expected submit probe to render");
+      form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true }));
 
-    assertEquals(submits, 1, "controlled submit remains caller-owned");
-    assertEquals(preventDefaults, 0, "controlled submit receives the original event unchanged");
+      assertEquals(submits, 1, "controlled submit remains caller-owned");
+      assertEquals(defaultPrevented, false, "controlled submit receives the event unchanged");
+      root.unmount();
+    } finally {
+      restore();
+    }
   });
 
   it("preserves legacy mixed submit props and gives sendMessage precedence", () => {
@@ -716,9 +742,25 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       nativeButton.includes('type="button"'),
       "a native asChild button keeps the non-submitting Button default",
     );
+
+    const ForwardedAnchor = forwardRef<
+      HTMLAnchorElement,
+      AnchorHTMLAttributes<HTMLAnchorElement>
+    >((props, ref) => <a ref={ref} {...props} />);
+    const opaqueAnchor = renderToString(
+      <ChatInput.Root input="ready" onChange={() => {}} onSubmit={() => {}}>
+        <ChatInput.Send asChild>
+          <ForwardedAnchor href="/send">Send</ForwardedAnchor>
+        </ChatInput.Send>
+      </ChatInput.Root>,
+    );
+    assert(
+      !/<a\b[^>]*\btype=/.test(opaqueAnchor),
+      "an opaque asChild anchor must not receive button type",
+    );
   });
 
-  it("keeps an opaque forwardRef asChild button out of native form submission", () => {
+  it("lets an opaque forwardRef button own its native form semantics", () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
@@ -749,7 +791,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
               }}
             >
               <ChatInput.Send asChild>
-                <ForwardedButton>Send</ForwardedButton>
+                <ForwardedButton type="button">Send</ForwardedButton>
               </ChatInput.Send>
             </form>
           </ChatInput.Root>,
@@ -758,7 +800,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
 
       const button = document.querySelector<HTMLButtonElement>('button[aria-label="Send"]');
       assert(button, "Expected the forwarded custom button to render");
-      assertEquals(button.type, "button", "opaque button components stay non-submitting");
+      assertEquals(button.type, "button", "the opaque child keeps its explicit button type");
       flushSync(() => button.click());
       assertEquals(actionSubmits, 1);
       assertEquals(nativeSubmits, 0, "the enclosing form must not submit a second time");

@@ -24,8 +24,9 @@ export type PolymorphicButtonAttributes<T extends HTMLElement> = T extends HTMLB
 
 /**
  * Resolve button submission semantics for a native or slotted control.
- * Intrinsic non-buttons never receive a button-only default. Opaque components
- * receive the safe default because their rendered element is not inspectable.
+ * Native controls and intrinsic slotted buttons default to `type="button"`.
+ * Intrinsic non-buttons and opaque components never receive a button-only
+ * attribute; an opaque component that renders a button must own its `type`.
  */
 export function getPolymorphicButtonType(
   asChild: boolean | undefined,
@@ -35,17 +36,14 @@ export function getPolymorphicButtonType(
   asChild: boolean | undefined,
   child: React.ReactNode,
   type: React.ButtonHTMLAttributes<HTMLButtonElement>["type"],
-): React.ButtonHTMLAttributes<HTMLButtonElement>["type"];
+): React.ButtonHTMLAttributes<HTMLButtonElement>["type"] | undefined;
 export function getPolymorphicButtonType(
   asChild: boolean | undefined,
   child: React.ReactNode,
   type?: React.ButtonHTMLAttributes<HTMLButtonElement>["type"],
-): React.ButtonHTMLAttributes<HTMLButtonElement>["type"] {
+): React.ButtonHTMLAttributes<HTMLButtonElement>["type"] | undefined {
   if (!asChild) return type ?? "button";
-  if (!React.isValidElement(child)) return undefined;
-  if (typeof child.type === "string") {
-    return child.type === "button" ? type ?? "button" : undefined;
-  }
+  if (!React.isValidElement(child) || child.type !== "button") return undefined;
   return type ?? "button";
 }
 

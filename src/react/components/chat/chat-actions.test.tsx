@@ -12,6 +12,7 @@ import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import {
+  type AnchorHTMLAttributes,
   type ButtonHTMLAttributes,
   createElement,
   forwardRef,
@@ -125,7 +126,11 @@ describe("ChatActions — render-or-compose", () => {
     );
   });
 
-  it("defaults custom button triggers safely without leaking button type to anchors", () => {
+  it("defaults only native button triggers and leaves opaque semantics to the child", () => {
+    const OpaqueAnchor = forwardRef<
+      HTMLAnchorElement,
+      AnchorHTMLAttributes<HTMLAnchorElement>
+    >((props, ref) => <a {...props} ref={ref} />);
     const OpaqueButton = forwardRef<
       HTMLButtonElement,
       ButtonHTMLAttributes<HTMLButtonElement>
@@ -147,6 +152,14 @@ describe("ChatActions — render-or-compose", () => {
         <ChatActions.Content />
       </ChatActions.Root>,
     );
+    const ownedOpaqueButton = renderToString(
+      <ChatActions.Root>
+        <ChatActions.Trigger>
+          <OpaqueButton type="button">owned opaque</OpaqueButton>
+        </ChatActions.Trigger>
+        <ChatActions.Content />
+      </ChatActions.Root>,
+    );
     const anchor = renderToString(
       <ChatActions.Root>
         <ChatActions.Trigger>
@@ -155,10 +168,23 @@ describe("ChatActions — render-or-compose", () => {
         <ChatActions.Content />
       </ChatActions.Root>,
     );
+    const opaqueAnchor = renderToString(
+      <ChatActions.Root>
+        <ChatActions.Trigger>
+          <OpaqueAnchor href="#actions">opaque anchor</OpaqueAnchor>
+        </ChatActions.Trigger>
+        <ChatActions.Content />
+      </ChatActions.Root>,
+    );
 
     assertStringIncludes(intrinsicButton, 'type="button"');
-    assertStringIncludes(opaqueButton, 'type="button"');
+    assert(!/<button\b[^>]*\btype=/.test(opaqueButton));
+    assertStringIncludes(ownedOpaqueButton, 'type="button"');
     assert(!/<a\b[^>]*\btype=/.test(anchor), "anchor triggers must not receive button type");
+    assert(
+      !/<a\b[^>]*\btype=/.test(opaqueAnchor),
+      "opaque anchor triggers must not receive button type",
+    );
   });
 
   it("keeps a custom button trigger from submitting its containing form", async () => {

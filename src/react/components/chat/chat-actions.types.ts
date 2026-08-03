@@ -81,6 +81,7 @@ type ChatActionsSlottedTriggerProps<T extends HTMLElement = HTMLElement> =
     /** Custom focusable trigger rendered through `asChild`. */
     children: React.ReactElement;
     disabled?: boolean;
+    /** Applied only when `children` is an intrinsic `<button>`; opaque buttons own `type`. */
     type?: T extends HTMLButtonElement ? React.ButtonHTMLAttributes<HTMLButtonElement>["type"]
       : never;
     ref?: React.Ref<T>;

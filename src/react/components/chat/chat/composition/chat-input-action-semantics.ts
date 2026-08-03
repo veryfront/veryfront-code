@@ -9,8 +9,8 @@ import { getPolymorphicButtonType } from "../../../ui/slot.tsx";
 
 /**
  * Keep action buttons out of native form submission. Intrinsic non-buttons do
- * not receive button-only attributes; opaque components receive the safe
- * button default because their rendered element cannot be inspected here.
+ * not receive button-only attributes. Opaque components own their native
+ * semantics because their rendered element cannot be inspected here.
  */
 export function getChatInputActionType(
   asChild: boolean | undefined,

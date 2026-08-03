@@ -46,7 +46,10 @@ interface ChatInputNativeActionProps extends ChatInputActionBaseProps {
 
 /** Slotted mode for a ChatInput action leaf. */
 interface ChatInputSlottedActionProps extends ChatInputActionBaseProps {
-  /** Merge action behavior and styling onto one custom child element. */
+  /**
+   * Merge action behavior and styling onto one custom child element. An opaque
+   * component that renders a button must set its own `type="button"`.
+   */
   asChild: true;
   children: React.ReactElement;
   /** React 19: ref targets the element rendered by the custom child. */

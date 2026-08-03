@@ -107,6 +107,23 @@ describe("anchored surfaces anchor to the trigger ref", () => {
     assertStringIncludes(html, 'aria-haspopup="dialog"');
   });
 
+  it("does not inject button type into an opaque asChild anchor", () => {
+    const OpaqueAnchor = React.forwardRef<
+      HTMLAnchorElement,
+      React.AnchorHTMLAttributes<HTMLAnchorElement>
+    >((props, ref) => <a {...props} ref={ref} />);
+    const html = renderToString(
+      <Popover>
+        <PopoverTrigger asChild>
+          <OpaqueAnchor href="#open">Open</OpaqueAnchor>
+        </PopoverTrigger>
+      </Popover>,
+    );
+
+    assert(html.startsWith("<a "), `expected opaque anchor markup, got: ${html.slice(0, 60)}`);
+    assert(!/<a\b[^>]*\btype=/.test(html), "opaque anchor must not receive button type");
+  });
+
   it("forwards consumer refs through portalled surfaces and command leaves", async () => {
     const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
       url: "https://example.com/",
@@ -121,7 +138,7 @@ describe("anchored surfaces anchor to the trigger ref", () => {
     const menuItemRef = React.createRef<HTMLButtonElement>();
     const menuSlottedButtonRef = React.createRef<HTMLButtonElement>();
     const menuAnchorRef = React.createRef<HTMLAnchorElement>();
-    let selectedAnchor: HTMLElement | null = null;
+    const selectedAnchor = { current: null as HTMLAnchorElement | null };
 
     try {
       flushSync(() => {
@@ -148,7 +165,7 @@ describe("anchored surfaces anchor to the trigger ref", () => {
                 <DropdownMenuItem
                   asChild
                   ref={menuAnchorRef}
-                  onSelect={(event) => selectedAnchor = event.currentTarget}
+                  onSelect={(event) => selectedAnchor.current = event.currentTarget}
                 >
                   <a href="#archive">Archive</a>
                 </DropdownMenuItem>
@@ -180,7 +197,7 @@ describe("anchored surfaces anchor to the trigger ref", () => {
       assertEquals(menuSlottedButtonRef.current?.type, "button");
       assertEquals(menuAnchorRef.current?.tagName, "A");
       menuAnchorRef.current?.click();
-      assertEquals(selectedAnchor?.tagName, "A");
+      assertEquals(selectedAnchor.current?.tagName, "A");
     } finally {
       flushSync(() => root.unmount());
       restore();

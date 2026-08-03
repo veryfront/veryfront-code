@@ -3,9 +3,14 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
-import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { Slot } from "./slot.tsx";
+import { getPolymorphicButtonType, Slot } from "./slot.tsx";
 
 function installDom(dom: JSDOM): () => void {
   const window = dom.window;
@@ -60,6 +65,48 @@ describe("Slot", () => {
       TypeError,
       "exactly one valid React element",
     );
+  });
+
+  it("defaults button type only when the slotted child is a native button", () => {
+    const OpaqueAnchor = React.forwardRef<
+      HTMLAnchorElement,
+      React.AnchorHTMLAttributes<HTMLAnchorElement>
+    >((props, ref) => <a {...props} ref={ref} />);
+    const OpaqueButton = React.forwardRef<
+      HTMLButtonElement,
+      React.ButtonHTMLAttributes<HTMLButtonElement>
+    >((props, ref) => <button {...props} ref={ref} />);
+
+    const nativeButtonChild = React.createElement("button", null, "Native button");
+    const opaqueAnchorChild = <OpaqueAnchor href="#opaque">Opaque anchor</OpaqueAnchor>;
+    const opaqueButtonChild = <OpaqueButton>Opaque button</OpaqueButton>;
+    const ownedOpaqueButtonChild = <OpaqueButton type="button">Owned button</OpaqueButton>;
+
+    const nativeButton = renderToString(
+      <Slot type={getPolymorphicButtonType(true, nativeButtonChild)}>
+        {nativeButtonChild}
+      </Slot>,
+    );
+    const opaqueAnchor = renderToString(
+      <Slot type={getPolymorphicButtonType(true, opaqueAnchorChild, "button")}>
+        {opaqueAnchorChild}
+      </Slot>,
+    );
+    const opaqueButton = renderToString(
+      <Slot type={getPolymorphicButtonType(true, opaqueButtonChild)}>
+        {opaqueButtonChild}
+      </Slot>,
+    );
+    const ownedOpaqueButton = renderToString(
+      <Slot type={getPolymorphicButtonType(true, ownedOpaqueButtonChild)}>
+        {ownedOpaqueButtonChild}
+      </Slot>,
+    );
+
+    assertStringIncludes(nativeButton, 'type="button"');
+    assert(!/<a\b[^>]*\btype=/.test(opaqueAnchor));
+    assert(!/<button\b[^>]*\btype=/.test(opaqueButton));
+    assertStringIncludes(ownedOpaqueButton, 'type="button"');
   });
 
   it("preserves React 19 callback-ref cleanup for both composed refs", () => {

@@ -128,6 +128,9 @@ export function PolymorphicMenuDemo(): React.ReactElement {
           <a href="#menu">Menu</a>
         </DropdownMenuTrigger>
         <DropdownMenuContent>
+          <DropdownMenuItem onSelect={() => undefined}>
+            No-argument handler
+          </DropdownMenuItem>
           <DropdownMenuItem
             asChild
             ref={anchorMenuItemRef}

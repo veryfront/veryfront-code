@@ -44,7 +44,7 @@ type AnchoredSlottedTriggerProps<T extends HTMLElement = HTMLElement> =
     children: React.ReactElement;
     /** Apply disabled semantics across native and non-native slotted controls. */
     disabled?: boolean;
-    /** Button-only submission semantics are resolved from the child element. */
+    /** Applied only when `children` is an intrinsic `<button>`; opaque buttons own `type`. */
     type?: T extends HTMLButtonElement ? React.ButtonHTMLAttributes<HTMLButtonElement>["type"]
       : never;
     ref?: React.Ref<T>;
