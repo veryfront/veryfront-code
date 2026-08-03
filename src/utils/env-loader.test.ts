@@ -252,5 +252,67 @@ describe("env-loader", () => {
         __resetLoggerConfigForTests();
       }
     });
+
+    it("should not print environment values in debug logs", async () => {
+      const key = createKey("SECRET_LOG");
+      const secret = "highly-sensitive-value";
+      const previousLogLevel = getEnv("LOG_LEVEL");
+      const previousLogFormat = getEnv("LOG_FORMAT");
+      const originalDebug = console.debug;
+      const output: string[] = [];
+
+      try {
+        setEnv("LOG_LEVEL", "DEBUG");
+        setEnv("LOG_FORMAT", "json");
+        __resetLoggerConfigForTests();
+        console.debug = (message: string) => output.push(message);
+        await writeEnvFile(".env", `${key}=${secret}`);
+
+        await loadEnv({ cwd: tempDir, override: true, debug: true });
+
+        assertEquals(output.join("\n").includes("highly-sensitive"), false);
+        assertEquals(output.join("\n").includes(key), true);
+      } finally {
+        console.debug = originalDebug;
+        cleanupKeys(key);
+        if (previousLogLevel === undefined) deleteEnv("LOG_LEVEL");
+        else setEnv("LOG_LEVEL", previousLogLevel);
+        if (previousLogFormat === undefined) deleteEnv("LOG_FORMAT");
+        else setEnv("LOG_FORMAT", previousLogFormat);
+        __resetLoggerConfigForTests();
+      }
+    });
+
+    it("should strip credentials from the logged VERYFRONT_API_BASE_URL", async () => {
+      const previousValue = getEnv("VERYFRONT_API_BASE_URL");
+      const previousLogFormat = getEnv("LOG_FORMAT");
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        setEnv("LOG_FORMAT", "json");
+        __resetLoggerConfigForTests();
+        await writeEnvFile(
+          ".env",
+          "VERYFRONT_API_BASE_URL=https://user:hybrid-basic-secret@api.example.com/api",
+        );
+
+        await loadEnv({ cwd: tempDir, override: true });
+
+        const output = getOutput();
+        const entry = JSON.parse(output) as LogEntry;
+        assertEquals(
+          entry.message,
+          "VERYFRONT_API_BASE_URL loaded: https://user:[REDACTED]@api.example.com/api",
+        );
+        assertEquals(output.includes("hybrid-basic-secret"), false);
+      } finally {
+        restore();
+        if (previousValue === undefined) deleteEnv("VERYFRONT_API_BASE_URL");
+        else setEnv("VERYFRONT_API_BASE_URL", previousValue);
+        if (previousLogFormat === undefined) deleteEnv("LOG_FORMAT");
+        else setEnv("LOG_FORMAT", previousLogFormat);
+        __resetLoggerConfigForTests();
+      }
+    });
   });
 });
