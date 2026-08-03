@@ -16,7 +16,7 @@ import {
 } from "#veryfront/observability/application-errors.ts";
 import { register, unregister } from "#veryfront/extensions/contracts.ts";
 import { SandboxShellToolsProviderName } from "#veryfront/extensions/sandbox/index.ts";
-import { tool, toolRegistry } from "#veryfront/tool";
+import { createRemoteMCPToolSource, tool, toolRegistry } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { __resetLogRecordEmitterForTests, agentLogger } from "#veryfront/utils/logger/index.ts";
 import {
@@ -38,6 +38,7 @@ import type { NodeVeryfrontCloudAgentServiceOptions } from "./veryfront-cloud-ag
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
 import { initializeNodeAgentServiceSentryApplicationErrors } from "../service/node-sentry.ts";
+import { getRemoteToolSourceFactory } from "./cloud-agent-config.ts";
 
 type CaptureRecord = {
   error: unknown;
@@ -58,6 +59,23 @@ Deno.test("public agent service options expose deployment-owned remote MCP compo
     : false;
   const hasCreateRemoteToolSource: HasCreateRemoteToolSource = true;
   assertEquals(hasCreateRemoteToolSource, true);
+});
+
+Deno.test("root and child runtimes share the deployment-owned remote MCP factory", () => {
+  const injectedFactory = () => ({
+    id: "injected",
+    listTools: () => Promise.resolve([]),
+    executeTool: () => Promise.resolve(null),
+  });
+
+  assertStrictEquals(
+    getRemoteToolSourceFactory({ options: { createRemoteToolSource: injectedFactory } } as never),
+    injectedFactory,
+  );
+  assertStrictEquals(
+    getRemoteToolSourceFactory({ options: {} } as never),
+    createRemoteMCPToolSource,
+  );
 });
 
 type TestDenoRuntime = {

@@ -4,7 +4,6 @@
  */
 import { createAgentServiceSandboxTools } from "#veryfront/sandbox";
 import {
-  createRemoteMCPToolSource,
   createToolsFromRemoteDefinitions,
   type HostToolSet,
   isToolVisibleTo,
@@ -50,6 +49,7 @@ import { createLiveStudioMcpTools } from "../project/live-studio-mcp-tools.ts";
 import {
   getProjectAgentRuntime,
   getProjectSteering,
+  getRemoteToolSourceFactory,
   type NodeVeryfrontCloudAgentServiceContext,
   resolveAgentConfig,
 } from "./cloud-agent-config.ts";
@@ -412,7 +412,7 @@ export function createInvokeAgentTool(
       refreshProjectSkillIds(context, projectSkillContext),
     createAgentServiceSandboxTools,
     createLiveStudioTools: createLiveStudioMcpTools,
-    createRemoteToolSource: context.options.createRemoteToolSource ?? createRemoteMCPToolSource,
+    createRemoteToolSource: getRemoteToolSourceFactory(context),
     createToolsFromRemoteDefinitions,
     requireDurableInvokeAgent: options?.requireDurable,
   });
