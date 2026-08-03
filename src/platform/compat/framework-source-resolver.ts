@@ -3,6 +3,7 @@ import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
 import { isCompiledBinary } from "#veryfront/utils/platform.ts";
 import { createFileSystem, isNotFoundError } from "./fs.ts";
+import { PUBLISHED_RUNTIME_HELPERS } from "./published-runtime-helpers.ts";
 import { getFrameworkRoot, getFrameworkRootFromMeta } from "./vfs-paths.ts";
 
 /**
@@ -49,12 +50,6 @@ export const DEFAULT_FRAMEWORK_SOURCE_EXTENSIONS = [
   ".js",
   ".mdx",
   ".md",
-] as const;
-
-const PUBLISHED_RUNTIME_HELPERS = [
-  "_dnt.shims.js",
-  "_dnt.polyfills.js",
-  "deno.js",
 ] as const;
 
 export interface FrameworkSourceFileSystem {
