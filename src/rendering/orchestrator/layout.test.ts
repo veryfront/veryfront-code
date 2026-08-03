@@ -3,8 +3,8 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { LayoutOrchestrator } from "./layout.ts";
-import { createLayoutComponentCache } from "../layouts/utils/component-loader.ts";
-import type { LayoutCollector, LayoutCompiler } from "../layouts/index.ts";
+import { createLayoutComponentCache } from "#veryfront/rendering/layouts/utils/component-loader.ts";
+import type { LayoutCollector, LayoutCompiler } from "#veryfront/rendering/layouts/index.ts";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { validateVeryfrontConfig } from "#veryfront/config";
 import {

@@ -4,7 +4,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
-import { clearMDXRendererCache, mdxRenderer } from "./index.ts";
+import { clearMDXRendererCache, mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 
 async function withIsolatedCache<T>(fn: (projectDir: string) => Promise<T>): Promise<T> {
   const cacheDir = await makeTempDir({ prefix: "veryfront_mdx_index_test_" });

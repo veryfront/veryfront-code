@@ -105,39 +105,39 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
               headers: { "content-type": "application/javascript" },
             }),
         );
-        const moduleOrigin = `http://127.0.0.1:${moduleServer.addr.port}`;
+        const controller = new AbortController();
+        try {
+          const moduleOrigin = `http://127.0.0.1:${moduleServer.addr.port}`;
 
-        await writeTextFile(
-          join(context.projectDir, "veryfront.config.js"),
-          TestDataFactory.createConfig({
-            security: {
-              remoteHosts: [moduleOrigin],
-            },
-          }),
-        );
+          await writeTextFile(
+            join(context.projectDir, "veryfront.config.js"),
+            TestDataFactory.createConfig({
+              security: {
+                remoteHosts: [moduleOrigin],
+              },
+            }),
+          );
 
-        await mkdir(join(context.projectDir, "app", "api", "allowed"), { recursive: true });
-        await writeTextFile(
-          join(context.projectDir, "app", "api", "allowed", "route.ts"),
-          `export const GET = async () => {
+          await mkdir(join(context.projectDir, "app", "api", "allowed"), { recursive: true });
+          await writeTextFile(
+            join(context.projectDir, "app", "api", "allowed", "route.ts"),
+            `export const GET = async () => {
           const m = await import('${moduleOrigin}/allowed.js');
           return new Response(m.allowedValue, {
             headers: { 'content-type': 'text/plain' }
           });
         }`,
-        );
+          );
 
-        await mkdir(join(context.projectDir, "app", "api", "blocked"), { recursive: true });
-        await writeTextFile(
-          join(context.projectDir, "app", "api", "blocked", "route.ts"),
-          `export const GET = async () => {
+          await mkdir(join(context.projectDir, "app", "api", "blocked"), { recursive: true });
+          await writeTextFile(
+            join(context.projectDir, "app", "api", "blocked", "route.ts"),
+            `export const GET = async () => {
           await import('https://example.com/malicious.js');
           return new Response('should not reach here');
         }`,
-        );
+          );
 
-        const controller = new AbortController();
-        try {
           const server = await context.startDevServer({
             enableHMR: false,
             signal: controller.signal,
