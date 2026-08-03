@@ -348,6 +348,7 @@ export function loadMDXLayout(
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
   config?: VeryfrontConfig,
+  isLocalProject?: boolean,
 ): Promise<BundledReact.ComponentType<{ components?: MDXComponents }> | undefined> {
   return withSpan(
     SpanNames.LAYOUT_LOAD_MDX,
@@ -372,8 +373,7 @@ export function loadMDXLayout(
         codeLength: code.length,
       });
 
-      const mod = (await mdxRenderer.loadModuleESM(
-        code,
+      const mod = (await mdxRenderer.loadModuleESM(code, {
         adapter,
         projectId,
         projectDir,
@@ -384,7 +384,8 @@ export function loadMDXLayout(
         dependencyPinningDependencies,
         dependencyPinningSource,
         moduleServerOrigin,
-      )) as MDXModule;
+        isLocalProject,
+      })) as MDXModule;
 
       loadMdxLayoutLog.debug("loadModuleESM DONE", {
         projectSlug,
@@ -415,6 +416,7 @@ export async function preloadMDXLayoutModule(
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
   config?: VeryfrontConfig,
+  isLocalProject?: boolean,
 ): Promise<void> {
   await loadMDXLayout(
     bundle,
@@ -430,6 +432,7 @@ export async function preloadMDXLayoutModule(
     dependencyPinningSource,
     moduleServerOrigin,
     config,
+    isLocalProject,
   );
 }
 
@@ -517,6 +520,7 @@ export async function applyMDXLayout(
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
   config?: VeryfrontConfig,
+  isLocalProject?: boolean,
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact(reactVersion);
   const LayoutFn = await loadMDXLayout(
@@ -533,6 +537,7 @@ export async function applyMDXLayout(
     dependencyPinningSource,
     moduleServerOrigin,
     config,
+    isLocalProject,
   );
 
   if (!LayoutFn) {

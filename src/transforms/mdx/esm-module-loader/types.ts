@@ -12,6 +12,8 @@ export interface ESMLoaderContext {
   projectDir?: string;
   projectSlug?: string;
   contentSourceId?: string;
+  /** Server-trusted local-project identity for dev-only module-server fallback. */
+  isLocalProject?: boolean;
   /** React version for transforms (from project config) */
   reactVersion?: string;
   /** Absolute request origin used to identify same-origin module URLs. */

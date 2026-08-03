@@ -6,6 +6,8 @@ import {
   appendDependencyPinningKey,
   appendDependencyPinningPathKey,
   appendSameOriginDependencyPinningPathKey,
+  appendSameOriginSSRDependencyPinningKey,
+  appendSameOriginSSRDependencyPinningPathKey,
   buildCrossProjectUrl,
   buildEsmShUrl,
   buildModuleServerUrl,
@@ -117,6 +119,44 @@ describe("transforms/import-rewriter/url-builder", () => {
       );
     });
 
+    it("adds query pinning to same-origin SSR module URLs for fetchable imports", () => {
+      assertEquals(
+        appendSameOriginSSRDependencyPinningKey(
+          "https://app.example/_vf_modules/components/Button.js?pins=on%3Astale#default",
+          "on:snapshot-a",
+          "https://app.example",
+        ),
+        "https://app.example/_vf_modules/components/Button.js?pins=on%3Asnapshot-a&ssr=true#default",
+      );
+      assertEquals(
+        appendSameOriginSSRDependencyPinningKey(
+          "//app.example/_vf_modules/components/Protocol.js?debug=1",
+          "on:snapshot-a",
+          "https://app.example",
+        ),
+        "https://app.example/_vf_modules/components/Protocol.js?debug=1&pins=on%3Asnapshot-a&ssr=true",
+      );
+      assertEquals(
+        appendSameOriginSSRDependencyPinningKey(
+          "https://cdn.example/_vf_modules/components/Button.js",
+          "on:snapshot-a",
+          "https://app.example",
+        ),
+        "https://cdn.example/_vf_modules/components/Button.js",
+      );
+    });
+
+    it("canonicalizes same-origin SSR module-server URLs to snapshot paths", () => {
+      assertEquals(
+        appendSameOriginSSRDependencyPinningPathKey(
+          "https://app.example/_vf_modules/components/Button.js?pins=on%3Astale#default",
+          "on:snapshot-a",
+          "https://app.example",
+        ),
+        "/_vf_modules/_pins/on%3Asnapshot-a/components/Button.js?ssr=true#default",
+      );
+    });
+
     it("preserves flag-off and non-module targets", () => {
       assertEquals(
         appendDependencyPinningPathKey("/_vf_modules/components/", "off"),
@@ -170,6 +210,12 @@ describe("transforms/import-rewriter/url-builder", () => {
       );
       assertEquals(
         extractDependencyPinningPathKey(
+          "/_vf_modules/_pins/on%3Aa/_pins/project-dir/page.js",
+        ).malformed,
+        true,
+      );
+      assertEquals(
+        extractDependencyPinningPathKey(
           "/_vf_modules/_pins/on%3Asnapshot-a",
         ).malformed,
         true,
@@ -182,9 +228,21 @@ describe("transforms/import-rewriter/url-builder", () => {
       );
       assertEquals(
         extractDependencyPinningPathKey(
+          "/_vf_modules/_pins/on%3Aa/_pins/not-terminated/page.js",
+        ).malformed,
+        true,
+      );
+      assertEquals(
+        extractDependencyPinningPathKey(
+          "/_vf_modules/_pins/on%3Aa/_pins/%E0%A4%A/page.js",
+        ).malformed,
+        true,
+      );
+      assertEquals(
+        extractDependencyPinningPathKey(
           "/_vf_modules/_pins/%E0%A4%A/page.js",
-        ).found,
-        false,
+        ).malformed,
+        true,
       );
     });
   });

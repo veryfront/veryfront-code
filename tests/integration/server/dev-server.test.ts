@@ -91,64 +91,83 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
 
   describe("Dev Server - Security", {}, () => {
     it("enforces remote import allow-list for security", async () => {
-      /**
-       * Tests security feature that restricts remote imports in API routes
-       * to only allowed domains (esm.sh, deno.land by default)
-       */
       await withTestContext("dev-security-allowlist", async (context) => {
-        await writeTextFile(
-          join(context.projectDir, "veryfront.config.js"),
-          TestDataFactory.createConfig({
-            security: {
-              remoteHosts: ["https://esm.sh", "https://deno.land"],
-            },
-          }),
+        const moduleServerController = new AbortController();
+        const moduleServer = Deno.serve(
+          {
+            hostname: "127.0.0.1",
+            port: 0,
+            signal: moduleServerController.signal,
+            onListen: () => {},
+          },
+          () =>
+            new Response("export const allowedValue = 'ok';", {
+              headers: { "content-type": "application/javascript" },
+            }),
         );
+        const controller = new AbortController();
+        try {
+          const moduleOrigin = `http://127.0.0.1:${moduleServer.addr.port}`;
 
-        await mkdir(join(context.projectDir, "app", "api", "allowed"), { recursive: true });
-        await writeTextFile(
-          join(context.projectDir, "app", "api", "allowed", "route.ts"),
-          `export const GET = async () => {
-          const m = await import('https://esm.sh/nanoid@5.0.4');
-          return new Response(typeof m.nanoid === 'function' ? 'ok' : 'fail', {
+          await writeTextFile(
+            join(context.projectDir, "veryfront.config.js"),
+            TestDataFactory.createConfig({
+              security: {
+                remoteHosts: [moduleOrigin],
+              },
+            }),
+          );
+
+          await mkdir(join(context.projectDir, "app", "api", "allowed"), { recursive: true });
+          await writeTextFile(
+            join(context.projectDir, "app", "api", "allowed", "route.ts"),
+            `export const GET = async () => {
+          const m = await import('${moduleOrigin}/allowed.js');
+          return new Response(m.allowedValue, {
             headers: { 'content-type': 'text/plain' }
           });
         }`,
-        );
+          );
 
-        await mkdir(join(context.projectDir, "app", "api", "blocked"), { recursive: true });
-        await writeTextFile(
-          join(context.projectDir, "app", "api", "blocked", "route.ts"),
-          `export const GET = async () => {
+          await mkdir(join(context.projectDir, "app", "api", "blocked"), { recursive: true });
+          await writeTextFile(
+            join(context.projectDir, "app", "api", "blocked", "route.ts"),
+            `export const GET = async () => {
           await import('https://example.com/malicious.js');
           return new Response('should not reach here');
         }`,
-        );
+          );
 
-        const controller = new AbortController();
-        const server = await context.startDevServer({
-          enableHMR: false,
-          signal: controller.signal,
-        });
+          const server = await context.startDevServer({
+            enableHMR: false,
+            signal: controller.signal,
+          });
 
-        const allowedResponse = await fetch(`http://127.0.0.1:${server.port}/api/allowed`);
-        assertEquals(allowedResponse.status, 200, "Should allow esm.sh imports");
-        assertEquals(
-          await allowedResponse.text(),
-          "ok",
-          "Should successfully import from allowed host",
-        );
+          const allowedResponse = await fetch(`http://127.0.0.1:${server.port}/api/allowed`);
+          assertEquals(
+            allowedResponse.status,
+            200,
+            "Should allow configured remote imports",
+          );
+          assertEquals(
+            await allowedResponse.text(),
+            "ok",
+            "Should successfully import from the configured remote host",
+          );
 
-        // Returns 502 (build failure) or 500 (runtime import failure in Deno direct mode)
-        const blockedResponse = await fetch(`http://127.0.0.1:${server.port}/api/blocked`);
-        assertEquals(
-          blockedResponse.status === 502 || blockedResponse.status === 500,
-          true,
-          `Should block unauthorized imports, got status ${blockedResponse.status}`,
-        );
-        await blockedResponse.body?.cancel();
-
-        controller.abort();
+          // Returns 502 (build failure) or 500 (runtime import failure in Deno direct mode)
+          const blockedResponse = await fetch(`http://127.0.0.1:${server.port}/api/blocked`);
+          assertEquals(
+            blockedResponse.status === 502 || blockedResponse.status === 500,
+            true,
+            `Should block unauthorized imports, got status ${blockedResponse.status}`,
+          );
+          await blockedResponse.body?.cancel();
+        } finally {
+          controller.abort();
+          moduleServerController.abort();
+          await moduleServer.finished.catch(() => {});
+        }
       });
     });
   });

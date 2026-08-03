@@ -2,7 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { createMockServer } from "../../../tests/_helpers/utils.ts";
-import { fetchProjectEnvVars, PROJECT_ENV_RESPONSE_MAX_BYTES } from "./fetcher.ts";
+import {
+  fetchProjectEnvVars,
+  PROJECT_ENV_RESPONSE_MAX_BYTES,
+  projectEnvFetcherInternals,
+} from "#veryfront/server/project-env/fetcher.ts";
 
 const INTERNAL_USER_ENV = "VERYFRONT_API_INTERNAL_USER";
 const INTERNAL_PASS_ENV = "VERYFRONT_API_INTERNAL_PASS";
@@ -314,6 +318,35 @@ describe("project-env/fetcher", () => {
       ]);
     } finally {
       await server.shutdown();
+    }
+  });
+
+  it("keeps required env fetch headers authoritative over optional Headers input", async () => {
+    const originalFetch = globalThis.fetch;
+    let capturedHeaders: Headers | undefined;
+    globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+      capturedHeaders = new Headers(init?.headers);
+      return Promise.resolve(Response.json({ data: [] }));
+    }) as typeof fetch;
+
+    try {
+      await projectEnvFetcherInternals.fetchEnvironmentVariables(
+        "https://api.veryfront.test/internal/project-environment-variables",
+        "Basic runtime-secret",
+        "my-project",
+        "env-123",
+        undefined,
+        new Headers({
+          accept: "text/plain",
+          authorization: "Bearer attacker",
+          "x-project-slug": "my-project",
+        }),
+      );
+      assertEquals(capturedHeaders?.get("authorization"), "Basic runtime-secret");
+      assertEquals(capturedHeaders?.get("accept"), "application/json");
+      assertEquals(capturedHeaders?.get("x-project-slug"), "my-project");
+    } finally {
+      globalThis.fetch = originalFetch;
     }
   });
 

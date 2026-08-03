@@ -80,6 +80,7 @@ export function createPageRenderer(
     componentRegistry,
     compileMDX,
     moduleServerUrl: ctx.moduleServerUrl,
+    isLocalProject: ctx.isLocalProject === true,
   });
 }
 

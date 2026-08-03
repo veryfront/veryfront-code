@@ -177,6 +177,86 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(fetchedUrl.searchParams.get("pins"), snapshotKey);
   });
 
+  for (
+    const [name, specifier] of [
+      ["protocol-relative", "//93.184.216.34:3000/_vf_modules/shared/Protocol.js"],
+      ["uppercase HTTP", "HTTP://93.184.216.34:3000/_vf_modules/shared/Uppercase.js"],
+    ] as const
+  ) {
+    it(`pins ${name} same-origin module-server imports before fetching`, async () => {
+      const origin = "http://93.184.216.34:3000";
+      const snapshotKey = "on:snapshot-a";
+      const fetchedUrls: string[] = [];
+
+      await withIsolatedHttpCache(
+        `vf-esm-${name.replaceAll(" ", "-")}-pins-`,
+        ((input) => {
+          fetchedUrls.push(String(input));
+          return Promise.resolve(
+            new Response(`export const value = "pinned";`, {
+              headers: { "content-type": "application/javascript" },
+            }),
+          );
+        }) as typeof fetch,
+        async (tempDir) => {
+          const result = await cacheHttpImportsToLocal(
+            `export { value } from "${specifier}";`,
+            {
+              cacheDir: tempDir,
+              importMap: { imports: {}, scopes: {} },
+              moduleServerOrigin: origin,
+              dependencyPinningCacheKey: snapshotKey,
+            },
+          );
+
+          assertEquals(result.code.includes("file://"), true);
+        },
+      );
+
+      assertEquals(fetchedUrls.length, 1);
+      const fetchedUrl = new URL(fetchedUrls[0]!);
+      assertEquals(fetchedUrl.origin, origin);
+      assertEquals(fetchedUrl.searchParams.get("ssr"), "true");
+      assertEquals(fetchedUrl.searchParams.get("pins"), snapshotKey);
+    });
+  }
+
+  it("resolves a nested protocol-relative import against its HTTPS parent", async () => {
+    const parentUrl = "https://93.184.216.34/recursive/parent.js";
+    const childUrl = "https://93.184.216.34/recursive/child.js";
+    const fetchedUrls: string[] = [];
+
+    await withIsolatedHttpCache(
+      "vf-esm-nested-protocol-relative-",
+      ((input) => {
+        const url = String(input);
+        fetchedUrls.push(url);
+        const code = url === parentUrl
+          ? `export { value } from "//93.184.216.34/recursive/child.js";`
+          : `export const value = "child";`;
+        return Promise.resolve(
+          new Response(code, {
+            headers: { "content-type": "application/javascript" },
+          }),
+        );
+      }) as typeof fetch,
+      async (tempDir) => {
+        const result = await cacheHttpImportsToLocal(
+          `export { value } from "${parentUrl}";`,
+          {
+            cacheDir: tempDir,
+            importMap: { imports: {}, scopes: {} },
+            moduleServerOrigin: "http://93.184.216.34:3000",
+          },
+        );
+
+        assertEquals(result.code.includes("file://"), true);
+      },
+    );
+
+    assertEquals(fetchedUrls, [parentUrl, childUrl]);
+  });
+
   it("does not retry permanent HTTP module failures", async () => {
     let fetchCount = 0;
     let bodyCancelled = false;
@@ -371,19 +451,10 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
   });
 
   it("preserves and shares canonical React versions across project import maps", async () => {
-    const tempDir = await makeTempDir({ prefix: "vf-react-singleton-cache-" });
-    const originalFetch = globalThis.fetch;
     const reactUrl = "https://esm.sh/react@19.0.0?target=es2022";
     const requestedUrls: string[] = [];
     let fetchCount = 0;
-
-    __injectCachesForTests({
-      cachedPaths: new Map(),
-      processingStack: new Set(),
-      lastDistributedRefresh: new Map(),
-    });
-    __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
-    globalThis.fetch = ((input: string | URL | Request) => {
+    const mockFetch = ((input: string | URL | Request) => {
       fetchCount += 1;
       requestedUrls.push(String(input));
       return Promise.resolve(
@@ -393,7 +464,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       );
     }) as typeof fetch;
 
-    try {
+    await withIsolatedHttpCache("vf-react-singleton-cache-", mockFetch, async (tempDir) => {
       const source = `import React from "${reactUrl}"; export default React;`;
       const first = await cacheHttpImportsToLocal(source, {
         cacheDir: tempDir,
@@ -425,27 +496,12 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(fetchCount, 1);
       assert(requestedUrls.some((url) => url.includes("react@19.0.0")));
       assertEquals(requestedUrls.some((url) => url.includes("react@19.2.4")), false);
-    } finally {
-      globalThis.fetch = originalFetch;
-      __injectCachesForTests(null);
-      __setDistributedCacheAccessorForTests(null);
-      __clearInFlightHttpFetches();
-      await remove(tempDir, { recursive: true });
-    }
+    });
   });
 
   it("aligns explicit React URLs to the resolved project version", async () => {
-    const tempDir = await makeTempDir({ prefix: "vf-react-version-align-" });
-    const originalFetch = globalThis.fetch;
     const requestedUrls: string[] = [];
-
-    __injectCachesForTests({
-      cachedPaths: new Map(),
-      processingStack: new Set(),
-      lastDistributedRefresh: new Map(),
-    });
-    __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
-    globalThis.fetch = ((input: string | URL | Request) => {
+    const mockFetch = ((input: string | URL | Request) => {
       requestedUrls.push(String(input));
       return Promise.resolve(
         new Response("export default { version: '19.0.0' };", {
@@ -454,7 +510,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       );
     }) as typeof fetch;
 
-    try {
+    await withIsolatedHttpCache("vf-react-version-align-", mockFetch, async (tempDir) => {
       await cacheHttpImportsToLocal(
         'import React from "https://esm.sh/react@18.3.1?target=es2022";',
         {
@@ -470,27 +526,12 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       assert(requestedUrls.some((url) => url.includes("react@19.0.0")));
       assertEquals(requestedUrls.some((url) => url.includes("react@18.3.1")), false);
       assertEquals(requestedUrls.some((url) => url.includes("react@19.2.4")), false);
-    } finally {
-      globalThis.fetch = originalFetch;
-      __injectCachesForTests(null);
-      __setDistributedCacheAccessorForTests(null);
-      __clearInFlightHttpFetches();
-      await remove(tempDir, { recursive: true });
-    }
+    });
   });
 
   it("isolates rewritten modules with the same URL and React version by import map", async () => {
-    const tempDir = await makeTempDir({ prefix: "vf-import-map-cache-" });
-    const originalFetch = globalThis.fetch;
     const rootUrl = "https://93.184.216.34/root.js";
-
-    __injectCachesForTests({
-      cachedPaths: new Map(),
-      processingStack: new Set(),
-      lastDistributedRefresh: new Map(),
-    });
-    __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
-    globalThis.fetch = ((input: string | URL | Request) => {
+    const mockFetch = ((input: string | URL | Request) => {
       const url = String(input);
       const code = url.startsWith(rootUrl)
         ? 'import { marker } from "mapped-dependency"; export { marker };'
@@ -504,7 +545,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       );
     }) as typeof fetch;
 
-    try {
+    await withIsolatedHttpCache("vf-import-map-cache-", mockFetch, async (tempDir) => {
       const source = `import { marker } from "${rootUrl}"; export { marker };`;
       const first = await cacheHttpImportsToLocal(source, {
         cacheDir: tempDir,
@@ -572,28 +613,13 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       assertNotEquals(await readTextFile(firstPath), await readTextFile(secondPath));
       assertEquals(reorderedFirstPath, firstPath);
       assertNotEquals(differentScopePath, firstPath);
-    } finally {
-      globalThis.fetch = originalFetch;
-      __injectCachesForTests(null);
-      __setDistributedCacheAccessorForTests(null);
-      __clearInFlightHttpFetches();
-      await remove(tempDir, { recursive: true });
-    }
+    });
   });
 
   it("does not coalesce concurrent modules whose import maps collide under legacy hashing", async () => {
-    const tempDir = await makeTempDir({ prefix: "vf-import-map-collision-" });
-    const originalFetch = globalThis.fetch;
     const rootUrl = "https://93.184.216.34/collision.js";
     let fetchCount = 0;
-
-    __injectCachesForTests({
-      cachedPaths: new Map(),
-      processingStack: new Set(),
-      lastDistributedRefresh: new Map(),
-    });
-    __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
-    globalThis.fetch = (async () => {
+    const mockFetch = (async () => {
       fetchCount += 1;
       await new Promise((resolve) => setTimeout(resolve, 5));
       return new Response("export const value = true;", {
@@ -601,7 +627,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       });
     }) as typeof fetch;
 
-    try {
+    await withIsolatedHttpCache("vf-import-map-collision-", mockFetch, async (tempDir) => {
       const source = `import { value } from "${rootUrl}"; export { value };`;
       const [aaResult, bbResult] = await Promise.all([
         cacheHttpImportsToLocal(source, {
@@ -620,28 +646,11 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       assert(bbPath);
       assertNotEquals(aaPath, bbPath);
       assertEquals(fetchCount, 2);
-    } finally {
-      globalThis.fetch = originalFetch;
-      __injectCachesForTests(null);
-      __setDistributedCacheAccessorForTests(null);
-      __clearInFlightHttpFetches();
-      await remove(tempDir, { recursive: true });
-    }
+    });
   });
 
   it("tracks circular processing by the full cache identity", async () => {
-    const tempDir = await makeTempDir({ prefix: "vf-processing-identity-" });
-    const originalFetch = globalThis.fetch;
     const rootUrl = "https://93.184.216.34/circular-identity.js";
-    const options = {
-      cacheDir: tempDir,
-      reactVersion: "19.0.0",
-      importMap: {
-        imports: { dependency: "https://93.184.216.35/dependency.js" },
-        scopes: {},
-      },
-    };
-    const expectedIdentity = await buildHttpCacheIdentity(rootUrl, options);
     const active = new Set<string>();
     const hasCalls: string[] = [];
     const addCalls: string[] = [];
@@ -662,20 +671,30 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       },
     };
 
-    __injectCachesForTests({
-      cachedPaths: new Map(),
-      processingStack,
-      lastDistributedRefresh: new Map(),
-    });
-    __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
-    globalThis.fetch = (() =>
+    const mockFetch = (() =>
       Promise.resolve(
         new Response("export const value = true;", {
           headers: { "content-type": "application/javascript" },
         }),
       )) as typeof fetch;
 
-    try {
+    await withIsolatedHttpCache("vf-processing-identity-", mockFetch, async (tempDir) => {
+      const options = {
+        cacheDir: tempDir,
+        reactVersion: "19.0.0",
+        importMap: {
+          imports: { dependency: "https://93.184.216.35/dependency.js" },
+          scopes: {},
+        },
+      };
+      const expectedIdentity = await buildHttpCacheIdentity(rootUrl, options);
+
+      __injectCachesForTests({
+        cachedPaths: new Map(),
+        processingStack,
+        lastDistributedRefresh: new Map(),
+      });
+
       await cacheHttpImportsToLocal(
         `import { value } from "${rootUrl}"; export { value };`,
         options,
@@ -684,30 +703,15 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(hasCalls, [expectedIdentity]);
       assertEquals(addCalls, [expectedIdentity]);
       assertEquals(deleteCalls, [expectedIdentity]);
-    } finally {
-      globalThis.fetch = originalFetch;
-      __injectCachesForTests(null);
-      __setDistributedCacheAccessorForTests(null);
-      __clearInFlightHttpFetches();
-      await remove(tempDir, { recursive: true });
-    }
+    });
   });
 
   it("rejects and does not persist a module whose lazy dependency failed to prefetch", async () => {
-    const tempDir = await makeTempDir({ prefix: "vf-degraded-artifact-" });
-    const originalFetch = globalThis.fetch;
     const parentUrl = "https://93.184.216.34/degraded-parent.js";
     const childUrl = "https://93.184.216.34/degraded-child.js";
     const distributed = new Map<string, string>();
     let parentFetches = 0;
-
-    __injectCachesForTests({
-      cachedPaths: new Map(),
-      processingStack: new Set(),
-      lastDistributedRefresh: new Map(),
-    });
-    __setDistributedCacheAccessorForTests(() => Promise.resolve(createMemoryBackend(distributed)));
-    globalThis.fetch = ((input: string | URL | Request) => {
+    const mockFetch = ((input: string | URL | Request) => {
       if (String(input) === childUrl) {
         return Promise.resolve(new Response("upstream failure", { status: 502 }));
       }
@@ -719,7 +723,11 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       );
     }) as typeof fetch;
 
-    try {
+    await withIsolatedHttpCache("vf-degraded-artifact-", mockFetch, async (tempDir) => {
+      __setDistributedCacheAccessorForTests(() =>
+        Promise.resolve(createMemoryBackend(distributed))
+      );
+
       const source = `import { load } from "${parentUrl}"; export { load };`;
       const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
 
@@ -730,29 +738,14 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       await assertRejects(() => cacheHttpImportsToLocal(source, options), Error, "Failed to fetch");
       assertEquals(parentFetches, 2);
       assertEquals(distributed.size, 0);
-    } finally {
-      globalThis.fetch = originalFetch;
-      __injectCachesForTests(null);
-      __setDistributedCacheAccessorForTests(null);
-      __clearInFlightHttpFetches();
-      await remove(tempDir, { recursive: true });
-    }
+    });
   });
 
   it("fails instead of emitting an internal dynamic import after egress denial", async () => {
-    const tempDir = await makeTempDir({ prefix: "vf-egress-denied-dynamic-import-" });
-    const originalFetch = globalThis.fetch;
     const parentUrl = "https://93.184.216.34/parent.js";
     const internalUrl = "http://169.254.169.254/latest/meta-data";
     let internalFetches = 0;
-
-    __injectCachesForTests({
-      cachedPaths: new Map(),
-      processingStack: new Set(),
-      lastDistributedRefresh: new Map(),
-    });
-    __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
-    globalThis.fetch = ((input: string | URL | Request) => {
+    const mockFetch = ((input: string | URL | Request) => {
       if (String(input) === internalUrl) internalFetches += 1;
       return Promise.resolve(
         new Response(`export const load = () => import("${internalUrl}");`, {
@@ -761,41 +754,30 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       );
     }) as typeof fetch;
 
-    try {
-      await assertRejects(
-        () =>
-          cacheHttpImportsToLocal(
-            `import { load } from "${parentUrl}"; export { load };`,
-            { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } },
-          ),
-        OutboundRequestBlockedError,
-        "internal host",
-      );
-      assertEquals(internalFetches, 0);
-    } finally {
-      globalThis.fetch = originalFetch;
-      __injectCachesForTests(null);
-      __setDistributedCacheAccessorForTests(null);
-      __clearInFlightHttpFetches();
-      await remove(tempDir, { recursive: true });
-    }
+    await withIsolatedHttpCache(
+      "vf-egress-denied-dynamic-import-",
+      mockFetch,
+      async (tempDir) => {
+        await assertRejects(
+          () =>
+            cacheHttpImportsToLocal(
+              `import { load } from "${parentUrl}"; export { load };`,
+              { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } },
+            ),
+          OutboundRequestBlockedError,
+          "internal host",
+        );
+        assertEquals(internalFetches, 0);
+      },
+    );
   });
 
   it("persists a module whose lazy dependency prefetched successfully", async () => {
-    const tempDir = await makeTempDir({ prefix: "vf-healthy-artifact-" });
-    const originalFetch = globalThis.fetch;
     const parentUrl = "https://93.184.216.34/healthy-parent.js";
     const childUrl = "https://93.184.216.34/healthy-child.js";
     const distributed = new Map<string, string>();
     let parentFetches = 0;
-
-    __injectCachesForTests({
-      cachedPaths: new Map(),
-      processingStack: new Set(),
-      lastDistributedRefresh: new Map(),
-    });
-    __setDistributedCacheAccessorForTests(() => Promise.resolve(createMemoryBackend(distributed)));
-    globalThis.fetch = ((input: string | URL | Request) => {
+    const mockFetch = ((input: string | URL | Request) => {
       if (String(input) === childUrl) {
         return Promise.resolve(
           new Response("export const child = true;", {
@@ -811,7 +793,11 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       );
     }) as typeof fetch;
 
-    try {
+    await withIsolatedHttpCache("vf-healthy-artifact-", mockFetch, async (tempDir) => {
+      __setDistributedCacheAccessorForTests(() =>
+        Promise.resolve(createMemoryBackend(distributed))
+      );
+
       const source = `import { load } from "${parentUrl}"; export { load };`;
       const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
 
@@ -821,13 +807,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
 
       await cacheHttpImportsToLocal(source, options);
       assertEquals(parentFetches, 1);
-    } finally {
-      globalThis.fetch = originalFetch;
-      __injectCachesForTests(null);
-      __setDistributedCacheAccessorForTests(null);
-      __clearInFlightHttpFetches();
-      await remove(tempDir, { recursive: true });
-    }
+    });
   });
 
   it("creates the same complete manifest for network, disk, and memory cache hits", async () => {
@@ -975,17 +955,8 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
   });
 
   it("rewrites react-dom dependencies with the requested React version", async () => {
-    const tempDir = await makeTempDir({ prefix: "vf-react-version-cache-" });
-    const originalFetch = globalThis.fetch;
     const requestedUrls: string[] = [];
-
-    __injectCachesForTests({
-      cachedPaths: new Map(),
-      processingStack: new Set(),
-      lastDistributedRefresh: new Map(),
-    });
-    __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
-    globalThis.fetch = ((input: string | URL | Request) => {
+    const mockFetch = ((input: string | URL | Request) => {
       const url = String(input);
       requestedUrls.push(url);
       const code = url.includes("react-dom@18.3.1")
@@ -998,7 +969,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       );
     }) as typeof fetch;
 
-    try {
+    await withIsolatedHttpCache("vf-react-version-cache-", mockFetch, async (tempDir) => {
       const rootUrl = "https://esm.sh/react-dom@18.3.1/server?external=react&target=es2022";
       const cachedRootUrl = await cacheModuleToLocal(rootUrl, tempDir, "18.3.1");
       const cachedRootPath = cachedRootUrl.replace(/^file:\/\//, "");
@@ -1021,13 +992,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
         if (sourceUrl) sourceUrls.push(sourceUrl);
       }
       assert(sourceUrls.some((url) => url.includes("/react@18.3.1")));
-    } finally {
-      globalThis.fetch = originalFetch;
-      __injectCachesForTests(null);
-      __setDistributedCacheAccessorForTests(null);
-      __clearInFlightHttpFetches();
-      await remove(tempDir, { recursive: true });
-    }
+    });
   });
 
   describe("HTTP_BUNDLE_PATTERN regex", () => {

@@ -41,6 +41,39 @@ function stringStartsWith(value: string, search: string): boolean {
 /** Function signature for caching an HTTP module and returning its local path. */
 export type CacheHttpModuleFn = (url: string, options: CacheOptions) => Promise<string | null>;
 
+function parseHttpBase(value?: string): URL | undefined {
+  if (!value || !/^https?:\/\//i.test(value)) return undefined;
+
+  try {
+    return new URL(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function canonicalizeHttpSpecifier(
+  specifier: string,
+  baseUrl?: string,
+  moduleServerOrigin?: string,
+): string {
+  if (/^https?:\/\//i.test(specifier)) return new URL(specifier).toString();
+  if (!stringStartsWith(specifier, "//")) return specifier;
+
+  const resolutionBase = parseHttpBase(baseUrl) ?? parseHttpBase(moduleServerOrigin);
+  if (!resolutionBase) {
+    throw new Error(`Cannot resolve protocol-relative HTTP module ${specifier}`);
+  }
+  const resolved = new URL(specifier, resolutionBase);
+  // A protocol-relative specifier inherits the resolution base's scheme, and
+  // the base may be a plaintext local-dev module-server origin. Only the
+  // base's own host may keep that scheme; executable code from any other
+  // host must never be fetched over plaintext because of a dev-origin scheme.
+  if (resolved.protocol === "http:" && resolved.host !== resolutionBase.host) {
+    resolved.protocol = "https:";
+  }
+  return resolved.toString();
+}
+
 function isLocalMappedSpecifier(specifier: string): boolean {
   return stringStartsWith(specifier, "/_vf_modules/") ||
     stringStartsWith(specifier, "_vf_modules/") ||
@@ -59,6 +92,11 @@ async function resolveSpecifier(
   options: CacheOptions,
   cacheHttpModule: CacheHttpModuleFn,
 ): Promise<string | null> {
+  specifier = canonicalizeHttpSpecifier(
+    specifier,
+    baseUrl,
+    options.moduleServerOrigin,
+  );
   if (isExternalScheme(specifier)) return null;
 
   // Server-only packages (`redis`, `pg`, …), including their explicit `npm:`

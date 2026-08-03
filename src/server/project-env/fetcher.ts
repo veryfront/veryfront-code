@@ -134,12 +134,11 @@ async function fetchEnvironmentVariables(
   headers: HeadersInit = {},
 ): Promise<Response> {
   try {
+    const requestHeaders = new Headers(headers);
+    requestHeaders.set("Authorization", authorization);
+    requestHeaders.set("Accept", "application/json");
     return await fetch(url, {
-      headers: {
-        Authorization: authorization,
-        Accept: "application/json",
-        ...headers,
-      },
+      headers: requestHeaders,
       redirect: "error",
       signal,
     });
@@ -270,3 +269,19 @@ export async function fetchProjectEnvVars(
     throw error;
   }
 }
+
+/**
+ * Test-only access to the privileged fetch helper. Never import this outside
+ * `fetcher.test.ts`.
+ *
+ * The header-authority regression it guards (authoritative `Authorization`/
+ * `Accept` must be set after merging optional caller headers) is unobservable
+ * through `fetchProjectEnvVars`: the public path only ever passes a benign
+ * `x-project-slug` header, so a reintroduced spread-order bug would not change
+ * the public function's behavior in a test.
+ *
+ * @internal
+ */
+export const projectEnvFetcherInternals = {
+  fetchEnvironmentVariables,
+} as const;

@@ -38,6 +38,8 @@ export interface LifecycleOptions {
   projectId?: string;
   /** Content source identifier for cache isolation (branch or release) */
   contentSourceId?: string;
+  /** Server-trusted local-project identity. */
+  isLocalProject?: boolean;
   /** Injectable factory for testing — bypasses real service construction */
   servicesFactory?: (adapter: RuntimeAdapter) => RendererServices;
 }
@@ -62,6 +64,7 @@ export class RendererLifecycle {
   private moduleServerUrl?: string;
   private projectId?: string;
   private contentSourceId?: string;
+  private isLocalProject: boolean;
   private services?: RendererServices;
   private adapter!: RuntimeAdapter;
   private servicesFactory?: (adapter: RuntimeAdapter) => RendererServices;
@@ -72,6 +75,7 @@ export class RendererLifecycle {
     this.moduleServerUrl = options.moduleServerUrl;
     this.projectId = options.projectId;
     this.contentSourceId = options.contentSourceId;
+    this.isLocalProject = options.isLocalProject === true;
     this.servicesFactory = options.servicesFactory;
   }
 
@@ -181,6 +185,7 @@ export class RendererLifecycle {
       componentRegistry,
       compileMDX: compileMDXProxy,
       moduleServerUrl: this.moduleServerUrl,
+      isLocalProject: this.isLocalProject,
     });
 
     const pageResolver = new PageResolver({

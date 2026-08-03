@@ -33,6 +33,8 @@ export interface RenderHandlerModuleOptions {
   projectSlug?: string;
   contentSourceId?: string;
   dependencyPinningSource?: DependencyPinningSourceInput;
+  /** Server-trusted local-project identity for dev-only module-server fallback. */
+  isLocalProject?: boolean;
   reactVersion?: (snapshot: DependencyPinningSnapshot) => Promise<string>;
   runtimeAdapter?: () => Promise<RuntimeAdapter>;
   moduleLoader?: typeof loadModuleFromSource;
@@ -153,19 +155,19 @@ export class RenderHandler {
         "server",
       );
 
-      return await mdxRenderer.loadModuleESM(
-        compiled.compiledCode,
+      return await mdxRenderer.loadModuleESM(compiled.compiledCode, {
         adapter,
-        this.moduleOptions.projectId ?? this.projectDir,
-        this.projectDir,
-        this.moduleOptions.projectSlug,
-        this.moduleOptions.contentSourceId,
+        projectId: this.moduleOptions.projectId ?? this.projectDir,
+        projectDir: this.projectDir,
+        projectSlug: this.moduleOptions.projectSlug,
+        contentSourceId: this.moduleOptions.contentSourceId,
         reactVersion,
-        dependencySnapshot.cacheKey,
-        dependencySnapshot.dependencies,
-        this.moduleOptions.dependencyPinningSource,
+        dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+        dependencyPinningDependencies: dependencySnapshot.dependencies,
+        dependencyPinningSource: this.moduleOptions.dependencyPinningSource,
         moduleServerOrigin,
-      ) as Record<string, unknown>;
+        isLocalProject: this.moduleOptions.isLocalProject === true,
+      }) as Record<string, unknown>;
     }
 
     if (!adapter) {

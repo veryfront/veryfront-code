@@ -56,6 +56,8 @@ export interface LayoutApplicationOptions {
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
   dependencyPinningSource?: DependencyPinningSourceInput;
+  /** Server-trusted local-project identity. */
+  isLocalProject?: boolean;
 }
 
 export class LayoutApplicator {
@@ -78,6 +80,7 @@ export class LayoutApplicator {
   private readonly dependencyPinningCacheKey?: string;
   private readonly dependencyPinningDependencies?: Readonly<Record<string, string>>;
   private readonly dependencyPinningSource?: DependencyPinningSourceInput;
+  private readonly isLocalProject: boolean;
   private reactVersionPromise: Promise<string> | null = null;
   private frameworkProviderModulesPromise?: Promise<{
     PageContextProvider: BundledReact.ComponentType<Record<string, unknown>>;
@@ -104,6 +107,7 @@ export class LayoutApplicator {
     this.dependencyPinningCacheKey = options.dependencyPinningCacheKey;
     this.dependencyPinningDependencies = options.dependencyPinningDependencies;
     this.dependencyPinningSource = options.dependencyPinningSource;
+    this.isLocalProject = options.isLocalProject === true;
   }
 
   private getReactVersion(): Promise<string> {
@@ -289,6 +293,7 @@ export class LayoutApplicator {
             this.dependencyPinningSource,
             this.requestUrl?.origin,
             this.config,
+            this.isLocalProject,
           );
         }
 

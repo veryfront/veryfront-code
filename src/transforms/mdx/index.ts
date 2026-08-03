@@ -8,6 +8,7 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { MDX_RENDERER_MAX_ENTRIES, MDX_RENDERER_TTL_MS } from "#veryfront/utils/constants/cache.ts";
 import React from "react";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { type ESMLoaderContext, loadModuleESM } from "./esm-module-loader/index.ts";
 import type { MDXComponents, MDXFrontmatter, MDXGlobals, MDXModule } from "./types.ts";
 import {
@@ -23,6 +24,27 @@ export interface MDXRenderOptions {
   children?: React.ReactNode;
 }
 
+/** Options for {@link MDXRenderer.loadModuleESM}. */
+export interface MDXLoadModuleOptions {
+  adapter?: RuntimeAdapter;
+  projectId?: string;
+  projectDir?: string;
+  projectSlug?: string;
+  contentSourceId?: string;
+  reactVersion?: string;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningSource?: DependencyPinningSourceInput;
+  moduleServerOrigin?: string;
+  isLocalProject?: boolean;
+}
+
+function isRuntimeAdapter(value: unknown): value is RuntimeAdapter {
+  return typeof value === "object" && value !== null &&
+    !("adapter" in value) &&
+    ("fs" in value || "env" in value);
+}
+
 export class MDXRenderer {
   private moduleCache: LRUCache<string, MDXModule> = new LRUCache({
     maxEntries: MDX_RENDERER_MAX_ENTRIES,
@@ -33,9 +55,10 @@ export class MDXRenderer {
     this.moduleCache.destroy();
   }
 
-  async loadModuleESM(
+  loadModuleESM(compiledProgramCode: string, options?: MDXLoadModuleOptions): Promise<MDXModule>;
+  loadModuleESM(
     compiledProgramCode: string,
-    adapter?: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter,
+    adapter?: RuntimeAdapter,
     projectId?: string,
     projectDir?: string,
     projectSlug?: string,
@@ -45,7 +68,50 @@ export class MDXRenderer {
     dependencyPinningDependencies?: Readonly<Record<string, string>>,
     dependencyPinningSource?: DependencyPinningSourceInput,
     moduleServerOrigin?: string,
+    isLocalProject?: boolean,
+  ): Promise<MDXModule>;
+  async loadModuleESM(
+    compiledProgramCode: string,
+    optionsOrAdapter: MDXLoadModuleOptions | RuntimeAdapter | undefined = {},
+    legacyProjectId?: string,
+    legacyProjectDir?: string,
+    legacyProjectSlug?: string,
+    legacyContentSourceId?: string,
+    legacyReactVersion?: string,
+    legacyDependencyPinningCacheKey?: string,
+    legacyDependencyPinningDependencies?: Readonly<Record<string, string>>,
+    legacyDependencyPinningSource?: DependencyPinningSourceInput,
+    legacyModuleServerOrigin?: string,
+    legacyIsLocalProject?: boolean,
   ): Promise<MDXModule> {
+    const options = arguments.length <= 2 && !isRuntimeAdapter(optionsOrAdapter)
+      ? (optionsOrAdapter ?? {}) as MDXLoadModuleOptions
+      : {
+        adapter: optionsOrAdapter as RuntimeAdapter | undefined,
+        projectId: legacyProjectId,
+        projectDir: legacyProjectDir,
+        projectSlug: legacyProjectSlug,
+        contentSourceId: legacyContentSourceId,
+        reactVersion: legacyReactVersion,
+        dependencyPinningCacheKey: legacyDependencyPinningCacheKey,
+        dependencyPinningDependencies: legacyDependencyPinningDependencies,
+        dependencyPinningSource: legacyDependencyPinningSource,
+        moduleServerOrigin: legacyModuleServerOrigin,
+        isLocalProject: legacyIsLocalProject,
+      };
+    const {
+      adapter,
+      projectId,
+      projectDir,
+      projectSlug,
+      contentSourceId,
+      reactVersion,
+      dependencyPinningCacheKey,
+      dependencyPinningDependencies,
+      dependencyPinningSource,
+      moduleServerOrigin,
+      isLocalProject,
+    } = options;
     const resolvedDependencyPinningSource = dependencyPinningSource ?? projectDir;
     const dependencySnapshot = await resolveDependencyPinningSnapshot(
       resolvedDependencyPinningSource,
@@ -67,6 +133,7 @@ export class MDXRenderer {
       moduleServerOrigin: dependencySnapshot.cacheKey.startsWith("on:")
         ? moduleServerOrigin
         : undefined,
+      isLocalProject,
     };
 
     return await loadModuleESM(compiledProgramCode, context);

@@ -35,13 +35,27 @@ transforms/
 import { mdxRenderer, transformToESM } from "#veryfront/internal";
 
 // Transform TypeScript to ESM
+const code = `export function Component() {
+  return <h1>Hello</h1>;
+}`;
 const result = await transformToESM(code, {
   filename: "component.tsx",
   jsx: "react",
 });
 
 // Render MDX (for runtime usage)
-const module = await mdxRenderer.loadModuleESM(compiledCode, undefined, undefined, projectDir);
+const compiledCode = `
+  export default function MDXContent() {
+    return null;
+  }
+`;
+const projectDir = Deno.cwd();
+const module = await mdxRenderer.loadModuleESM(compiledCode, {
+  projectId: "example-project",
+  projectDir,
+  projectSlug: "example-project",
+  contentSourceId: "content",
+});
 // Use module.default or module exports
 ```
 
