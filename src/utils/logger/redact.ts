@@ -34,7 +34,8 @@ const objectGetPrototypeOf = Object.getPrototypeOf;
 const objectHasOwn = Object.hasOwn;
 const objectPrototype = Object.prototype;
 const regExpExec = RegExp.prototype.exec;
-const regExpReplace = RegExp.prototype[Symbol.replace];
+const regExpGlobalGetter = objectGetOwnPropertyDescriptor(RegExp.prototype, "global")!.get!;
+const regExpUnicodeGetter = objectGetOwnPropertyDescriptor(RegExp.prototype, "unicode")!.get!;
 const stringCharCodeAt = String.prototype.charCodeAt;
 const stringIncludes = String.prototype.includes;
 const stringSlice = String.prototype.slice;
@@ -53,17 +54,37 @@ const PROVIDER_CREDENTIAL_PATTERN =
 function replaceWithCapturedExec(
   input: string,
   pattern: RegExp,
-  replacement: unknown,
+  replacement: string | ((match: RegExpExecArray) => string),
 ): string {
-  if (!objectHasOwn(pattern, "exec")) {
-    objectDefineProperty(pattern, "exec", {
-      configurable: false,
-      enumerable: false,
-      value: regExpExec,
-      writable: false,
-    });
+  const global = apply(regExpGlobalGetter, pattern, []) as boolean;
+  const unicode = apply(regExpUnicodeGetter, pattern, []) as boolean;
+  let cursor = 0;
+  let matched = false;
+  let result = "";
+
+  pattern.lastIndex = 0;
+  try {
+    while (true) {
+      const match = apply(regExpExec, pattern, [input]) as RegExpExecArray | null;
+      if (match === null) break;
+
+      const text = match[0];
+      const start = match.index;
+      result += sliceString(input, cursor, start);
+      result += typeof replacement === "string" ? replacement : replacement(match);
+      cursor = start + text.length;
+      matched = true;
+
+      if (!global) break;
+      if (text.length === 0) {
+        pattern.lastIndex = advanceStringIndex(input, start, unicode);
+      }
+    }
+  } finally {
+    pattern.lastIndex = 0;
   }
-  return apply(regExpReplace, pattern, [input, replacement]) as string;
+
+  return matched ? result + sliceString(input, cursor) : input;
 }
 
 /** Strip all non-alphanumeric characters and lowercase, used for key normalization. */
@@ -81,6 +102,16 @@ const ASCII_LOWERCASE_OFFSET = 32;
 
 function stringCodeUnitAt(value: string, index: number): number {
   return apply(stringCharCodeAt, value, [index]) as number;
+}
+
+function advanceStringIndex(value: string, index: number, unicode: boolean): number {
+  const next = index + 1;
+  if (!unicode || next >= value.length) return next;
+
+  const first = stringCodeUnitAt(value, index);
+  if (first < 0xd800 || first > 0xdbff) return next;
+  const second = stringCodeUnitAt(value, next);
+  return second >= 0xdc00 && second <= 0xdfff ? index + 2 : next;
 }
 
 function sliceString(value: string, start: number, end?: number): string {
@@ -774,12 +805,12 @@ function isSensitiveAssignmentKey(key: string): boolean {
   const withAcronymBoundaries = replaceWithCapturedExec(
     key,
     ACRONYM_BOUNDARY_PATTERN,
-    "$1 $2",
+    (match) => `${match[1]} ${match[2]}`,
   );
   const withBoundaries = replaceWithCapturedExec(
     withAcronymBoundaries,
     CAMEL_CASE_BOUNDARY_PATTERN,
-    "$1 $2",
+    (match) => `${match[1]} ${match[2]}`,
   );
   const lowercase = apply(stringToLowerCase, withBoundaries, []) as string;
   const tokens = splitIdentifierTokens(lowercase);
@@ -857,7 +888,9 @@ export function sanitizeUrlCredentials(input: string): string {
   let out = replaceWithCapturedExec(
     input,
     URL_USERINFO_RE,
-    (_match: string, scheme: string, userinfo: string) => {
+    (match) => {
+      const scheme = match[1]!;
+      const userinfo = match[2]!;
       const colon = userinfo.indexOf(":");
       if (colon === -1) {
         // `scheme://token@host` — the whole userinfo is credential-like.
@@ -870,18 +903,16 @@ export function sanitizeUrlCredentials(input: string): string {
   out = replaceWithCapturedExec(
     out,
     HORIZONTAL_WHITESPACE_URL_USERINFO_RE,
-    (
-      match: string,
-      scheme: string,
-      user: string,
-      password: string,
-    ) => {
+    (match) => {
+      const scheme = match[1]!;
+      const user = match[2]!;
+      const password = match[3]!;
       // Do not reinterpret a complete URL followed later by an email address
       // on the same line as malformed userinfo. Raw-horizontal-whitespace
       // recovery is limited to explicit `user:password` shapes whose prefix
       // cannot already be parsed as a standalone authority.
       if (isStandaloneUrlAuthorityBeforeWhitespace(scheme, user, password)) {
-        return match;
+        return match[0];
       }
       return `${scheme}${user}:${REDACTED}@`;
     },
@@ -893,13 +924,15 @@ export function sanitizeUrlCredentials(input: string): string {
   out = replaceWithCapturedExec(
     out,
     /([?#&;])([-a-z0-9_.%\[\]]+)=([^&#;\s]*)/gi,
-    (match: string, sep: string, key: string, _val: string) => {
+    (match) => {
+      const sep = match[1]!;
+      const key = match[2]!;
       const decodedKey = decodeUrlParameterName(key);
       const sensitive = apply(setHas, NORMALIZED_SENSITIVE_URL_PARAMS, [
         normalizeToAlphanumeric(decodedKey),
       ]) ||
         isSensitiveKey(decodedKey);
-      return sensitive ? `${sep}${key}=${REDACTED}` : match;
+      return sensitive ? `${sep}${key}=${REDACTED}` : match[0];
     },
   );
 
@@ -911,7 +944,7 @@ export function sanitizeUrlCredentials(input: string): string {
   out = replaceWithCapturedExec(
     out,
     /(^|[^a-z0-9_-])((?:set-cookie|cookie)\s*:\s*)[^\r\n]*/gi,
-    (_match: string, boundary: string, prefix: string) => `${boundary}${prefix}${REDACTED}`,
+    (match) => `${match[1]}${match[2]}${REDACTED}`,
   );
 
   // 4) Header-shaped authorization values and standalone auth schemes.
@@ -921,12 +954,12 @@ export function sanitizeUrlCredentials(input: string): string {
   out = replaceWithCapturedExec(
     out,
     /\b(authorization\s*[:=]\s*)[^\r\n]*/gi,
-    (_match: string, prefix: string) => `${prefix}${REDACTED}`,
+    (match) => `${match[1]}${REDACTED}`,
   );
   out = replaceWithCapturedExec(
     out,
     /\b(bearer|basic)(\s+)(?:"[^"\r\n]*"|'[^'\r\n]*'|[a-z0-9._~+/=-]+)/gi,
-    (_match: string, scheme: string, whitespace: string) => `${scheme}${whitespace}${REDACTED}`,
+    (match) => `${match[1]}${match[2]}${REDACTED}`,
   );
 
   // 5) Common provider token shapes can appear as bare values without an

@@ -379,6 +379,67 @@ describe("logger/redact", () => {
       }
     });
 
+    it("does not inherit poisoned property-descriptor fields during regex sanitization", () => {
+      const descriptorFields = [
+        "value",
+        "writable",
+        "get",
+        "set",
+        "enumerable",
+        "configurable",
+      ] as const;
+      const previousDescriptors = descriptorFields.map((field) =>
+        Object.getOwnPropertyDescriptor(Object.prototype, field)
+      );
+      const poisonDescriptors = descriptorFields.map(() => {
+        const descriptor = Object.create(null) as PropertyDescriptor;
+        descriptor.configurable = true;
+        descriptor.get = () => {
+          throw new Error("descriptor prototype must not be read");
+        };
+        descriptor.set = () => {
+          throw new Error("descriptor prototype must not be written");
+        };
+        return descriptor;
+      });
+      let sanitized: string[] | undefined;
+      let failure: unknown;
+
+      try {
+        for (let index = 0; index < descriptorFields.length; index++) {
+          Object.defineProperty(
+            Object.prototype,
+            descriptorFields[index]!,
+            poisonDescriptors[index]!,
+          );
+        }
+        sanitized = [
+          sanitizeUrlCredentials("Using token sk-proj-abc123456789"),
+          sanitizeUrlCredentials("https://user:password@example.test/path"),
+          sanitizeUrlCredentials("https://example.test/?access_token=secret"),
+          sanitizeUrlCredentials("refreshToken=prototype-poison-secret"),
+        ];
+      } catch (error) {
+        failure = error;
+      } finally {
+        for (const field of descriptorFields) {
+          Reflect.deleteProperty(Object.prototype, field);
+        }
+        for (let index = 0; index < descriptorFields.length; index++) {
+          const previous = previousDescriptors[index];
+          if (previous) Object.defineProperty(Object.prototype, descriptorFields[index]!, previous);
+        }
+      }
+
+      if (failure) throw failure;
+      assertEquals(sanitized, [
+        `Using token ${REDACTED}`,
+        `https://user:${REDACTED}@example.test/path`,
+        `https://example.test/?access_token=${REDACTED}`,
+        `refreshToken=${REDACTED}`,
+      ]);
+    });
+
     it("keeps structured and URL key redaction stable after collection prototypes change", () => {
       const originalMapGet = Map.prototype.get;
       const originalSetHas = Set.prototype.has;
