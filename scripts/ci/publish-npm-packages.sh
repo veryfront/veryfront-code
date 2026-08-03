@@ -171,7 +171,7 @@ ensure_package_names_registered() {
   done
 
   if [ "${MISSING_PACKAGE_NAMES}" -ne 0 ]; then
-    echo "::error::Before releasing, bootstrap the package and configure trusted publishing. Use a prerelease version and a non-latest dist-tag so the stable release version remains available to CI." >&2
+    echo "::error::For each package named above, publish a prerelease once with a non-latest dist-tag, then configure its trusted publisher. This preserves ${VERSION} for CI's provenance-backed stable publish." >&2
     return 1
   fi
 }
