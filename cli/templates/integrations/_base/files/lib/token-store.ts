@@ -198,6 +198,10 @@ export async function getRefreshableAccessToken(
       return latest ? unexpiredAccessToken(latest) : null;
     }
 
+    if (refreshed.refreshToken === undefined) {
+      refreshed = { ...refreshed, refreshToken: token.refreshToken };
+    }
+
     const replaced = await store.compareAndSetTokens(
       serviceId,
       userId,

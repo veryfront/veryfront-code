@@ -199,6 +199,29 @@ describe("generated OAuth token store", () => {
     assertEquals((await store.getTokens("github", "alice"))?.accessToken, "refreshed");
   });
 
+  it("preserves the existing refresh token when a provider omits one", async () => {
+    const store = createTokenStore(new MemoryTokenStore("refresh-token-preserve"));
+    await store.setTokens("github", "alice", {
+      accessToken: "expiring",
+      refreshToken: "refresh-1",
+      expiresAt: Date.now() + 1_000,
+    });
+
+    assertEquals(
+      await getRefreshableAccessToken(
+        store,
+        "github",
+        "alice",
+        async () => ({
+          accessToken: "refreshed",
+          expiresAt: Date.now() + 10 * 60_000,
+        }),
+      ),
+      "refreshed",
+    );
+    assertEquals((await store.getTokens("github", "alice"))?.refreshToken, "refresh-1");
+  });
+
   it("does not overwrite a concurrent reconnect when refresh loses CAS", async () => {
     const store = createTokenStore(new MemoryTokenStore("refresh-cas"));
     await store.setTokens("github", "alice", {
