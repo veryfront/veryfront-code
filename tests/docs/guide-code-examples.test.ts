@@ -46,6 +46,7 @@ import { PageContextProvider, usePageContext } from "../../src/react/context/ind
 import { Link, RouterProvider, useRouter } from "../../src/react/router/index.tsx";
 import { Sandbox } from "../../src/sandbox/index.ts";
 import { schedule } from "../../src/schedule/index.ts";
+import { webhook } from "../../src/webhook/index.ts";
 import { isTaskDefinition } from "../../src/task/types.ts";
 import {
   getConnector,
@@ -104,6 +105,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "quickstart.md",
   "sandbox.md",
   "schedule.md",
+  "webhook.md",
   "skills.md",
   "storybook-ui-workbench.md",
   "tasks.md",
@@ -187,6 +189,47 @@ describe("Guide: concepts/schedule.md", () => {
     });
 
     assertEquals(definition.health, { maxStalenessSeconds: 1_800 });
+  });
+});
+
+describe("Guide: concepts/webhook.md", () => {
+  it("normalizes the documented event filter example", () => {
+    const definition = webhook({
+      id: "pull-request-review",
+      target: { kind: "workflow", id: "review-pull-request" },
+      eventFilter: {
+        mode: "all",
+        conditions: [
+          { path: "action", operator: "in", value: ["opened", "reopened"] },
+          { path: "pull_request.draft", operator: "equals", value: false },
+          { path: "pull_request.labels", operator: "contains", value: "backend" },
+        ],
+      },
+    });
+
+    assertEquals(definition.eventFilter?.mode, "all");
+    assertEquals(definition.eventFilter?.conditions.map((c) => c.operator), [
+      "in",
+      "equals",
+      "contains",
+    ]);
+  });
+
+  it("normalizes the documented agent prompt mapping example", () => {
+    const definition = webhook({
+      id: "support-escalation",
+      target: { kind: "agent", id: "support-agent" },
+      agentMessage: {
+        promptTemplate: "Triage {{payload.summary}} for account {{payload.account.id}}.",
+        conversationMode: "none",
+      },
+    });
+
+    assertEquals(definition.agentMessage?.conversationMode, "none");
+    assertEquals(
+      definition.agentMessage?.promptTemplate,
+      "Triage {{payload.summary}} for account {{payload.account.id}}.",
+    );
   });
 });
 
