@@ -136,7 +136,9 @@ function unwrapDependencyPinningPath(
     });
   }
   if (!extracted.found && isReservedDependencyPinningPath(pathname)) {
-    throw new TypeError("Malformed dependency snapshot module path");
+    throw MALFORMED_DEPENDENCY_PIN.create({
+      detail: "Malformed dependency snapshot module path",
+    });
   }
   if (!extracted.found) return modulePath;
   if (extracted.cacheKey !== expectedCacheKey) {
