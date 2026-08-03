@@ -15,6 +15,7 @@ import {
 } from "./builtin-extensions.ts";
 import { mergeExtensions } from "./discovery.ts";
 import { getDeferredExtensionState } from "./deferred-extension.ts";
+import { FIRST_PARTY_EXTENSION_POLICIES } from "./first-party-defaults.ts";
 import { createZodAdapter } from "@veryfront/ext-schema-zod";
 import { ExtensionLoader } from "./loader.ts";
 
@@ -132,6 +133,15 @@ describe("createBuiltinExtensions", () => {
     );
   });
 
+  it("loads the generic HTTP eval exporter as a deferred builtin", async () => {
+    const httpExtension = await loadOptionalBuiltin("ext-eval-report-http");
+
+    assertEquals(
+      httpExtension.contracts?.requires?.includes(EvalReportExporterRegistryName),
+      true,
+    );
+  });
+
   it("keeps optional candidates deferred until the loader selects them", () => {
     const authCandidate = createBuiltinExtensions().find((entry) =>
       entry.extension.name === "ext-auth-jwt"
@@ -141,14 +151,94 @@ describe("createBuiltinExtensions", () => {
     assert(getDeferredExtensionState(authCandidate));
   });
 
-  it("never auto-loads the explicit Node WebSocket implementation", async () => {
-    const source = await Deno.readTextFile(new URL("./builtin-extensions.ts", import.meta.url));
+  it("ships baseline CSS and Node WebSocket providers as deferred builtins", () => {
+    for (const name of ["ext-css-tailwind", "ext-node-websocket-ws"]) {
+      const definition = OPTIONAL_BUILTIN_EXTENSIONS.find((entry) => entry.name === name);
+      const candidate = createBuiltinExtensions().find((entry) => entry.extension.name === name);
 
-    assertEquals(source.includes("ext-node-websocket-ws"), false);
-    assertEquals(
-      OPTIONAL_BUILTIN_EXTENSIONS.some((definition) => definition.name === "ext-node-websocket-ws"),
-      false,
+      assert(definition, `${name} must be part of the default runtime composition`);
+      assert(candidate, `${name} must have a builtin candidate`);
+      assert(getDeferredExtensionState(candidate), `${name} must remain lazy until activation`);
+    }
+  });
+
+  it("keeps builtin package discovery metadata auto-activated", async () => {
+    for (const definition of OPTIONAL_BUILTIN_EXTENSIONS) {
+      const manifest = JSON.parse(
+        await Deno.readTextFile(
+          new URL(
+            `../../extensions/${definition.sourceDirectory}/deno.json`,
+            import.meta.url,
+          ),
+        ),
+      ) as { veryfront?: { activation?: string } };
+
+      assertEquals(
+        manifest.veryfront?.activation ?? "auto",
+        "auto",
+        `${definition.name} cannot be both a builtin and explicit-only package`,
+      );
+    }
+  });
+
+  it("classifies every first-party extension exactly once", async () => {
+    const extensionDirectories: string[] = [];
+    for await (const entry of Deno.readDir(new URL("../../extensions", import.meta.url))) {
+      if (!entry.isDirectory || !entry.name.startsWith("ext-")) continue;
+      try {
+        await Deno.stat(
+          new URL(`../../extensions/${entry.name}/deno.json`, import.meta.url),
+        );
+        extensionDirectories.push(entry.name);
+      } catch (error) {
+        if (!(error instanceof Deno.errors.NotFound)) throw error;
+      }
+    }
+
+    const policyDirectories = FIRST_PARTY_EXTENSION_POLICIES.map((policy) =>
+      policy.sourceDirectory
     );
+    assertEquals(
+      [...new Set(policyDirectories)].sort(),
+      extensionDirectories.sort(),
+      "the activation policy must classify every first-party extension once",
+    );
+    assertEquals(
+      new Set(FIRST_PARTY_EXTENSION_POLICIES.map((policy) => policy.name)).size,
+      FIRST_PARTY_EXTENSION_POLICIES.length,
+      "first-party extension names must be unique",
+    );
+  });
+
+  it("keeps discovery activation aligned with first-party selection policy", async () => {
+    for (const policy of FIRST_PARTY_EXTENSION_POLICIES) {
+      const manifest = JSON.parse(
+        await Deno.readTextFile(
+          new URL(
+            `../../extensions/${policy.sourceDirectory}/deno.json`,
+            import.meta.url,
+          ),
+        ),
+      ) as { veryfront?: { activation?: string } };
+      const activation = manifest.veryfront?.activation ?? "auto";
+      const expected = policy.selection === "explicit" ||
+          policy.selection === "service-conditional"
+        ? "explicit"
+        : "auto";
+
+      assertEquals(
+        activation,
+        expected,
+        `${policy.name} manifest activation must match ${policy.selection}`,
+      );
+      if (policy.rootNpm) {
+        assertEquals(
+          policy.selection,
+          "builtin-deferred",
+          `${policy.name} cannot be a root npm dependency without builtin selection`,
+        );
+      }
+    }
   });
 
   it("does not statically import workspace implementation paths", async () => {
@@ -258,18 +348,25 @@ describe("createBuiltinExtensions", () => {
     await loader.teardownAll();
   });
 
-  it("declares explicit eval exporter ids for optional exporter builtins", () => {
+  it("declares eval CLI selectors for optional exporter builtins", () => {
+    const http = OPTIONAL_BUILTIN_EXTENSIONS.find((definition) =>
+      definition.name === "ext-eval-report-http"
+    );
     const mlflow = OPTIONAL_BUILTIN_EXTENSIONS.find((definition) =>
       definition.name === "ext-eval-report-mlflow"
     );
 
-    assertEquals(mlflow?.evalExporterId, "mlflow");
+    assertEquals(http?.evalExporterSelection, { kind: "any-selected" });
+    assertEquals(mlflow?.evalExporterSelection, { kind: "id", id: "mlflow" });
   });
 
   it("builds a minimal eval CLI builtin set for selected eval exporters", () => {
-    const names = createEvalCliBuiltinExtensions(["mlflow"]).map((entry) => entry.extension.name);
+    const names = createEvalCliBuiltinExtensions(["http", "mlflow"]).map((entry) =>
+      entry.extension.name
+    );
 
     assertEquals(names.includes("ext-schema-zod"), true);
+    assertEquals(names.includes("ext-eval-report-http"), true);
     assertEquals(names.includes("ext-eval-report-mlflow"), true);
     assertEquals(names.includes("ext-auth-jwt"), false);
     assertEquals(names.includes("ext-observability-opentelemetry"), false);
@@ -278,7 +375,17 @@ describe("createBuiltinExtensions", () => {
   it("does not load optional eval exporter builtins when no exporters are selected", () => {
     const names = createEvalCliBuiltinExtensions([]).map((entry) => entry.extension.name);
 
+    assertEquals(names.includes("ext-eval-report-http"), false);
     assertEquals(names.includes("ext-eval-report-mlflow"), false);
     assertEquals(names.includes("ext-auth-jwt"), false);
+  });
+
+  it("loads the configurable HTTP exporter for custom selected ids", () => {
+    const names = createEvalCliBuiltinExtensions(["internal-gateway"]).map((entry) =>
+      entry.extension.name
+    );
+
+    assertEquals(names.includes("ext-eval-report-http"), true);
+    assertEquals(names.includes("ext-eval-report-mlflow"), false);
   });
 });

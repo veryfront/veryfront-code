@@ -1503,6 +1503,20 @@ function pushNodeSummary(
   description: string,
   sourceHref: string,
 ): void {
+  const existing = target.find((summary) => summary.name === name);
+  if (existing) {
+    if (!existing.description && description) {
+      existing.description = description;
+    }
+    if (
+      sourceHref &&
+      (!existing.sourceHref ||
+        (!existing.sourceHref.includes("#L") && sourceHref.includes("#L")))
+    ) {
+      existing.sourceHref = sourceHref;
+    }
+    return;
+  }
   target.push({ name, description, sourceHref });
 }
 
@@ -1647,9 +1661,27 @@ interface APIDocs {
 
 const API_DOCS: Record<string, APIDocs> = {
   "veryfront/agent": {
-    functions: { agent: { configType: "AgentConfig" } },
-    methods: { Agent: "Agent instance" },
-    expandTypes: ["AgentConfig", "MemoryConfig", "EdgeConfig"],
+    functions: {
+      agent: { configType: "AgentConfig" },
+      createHostedRunEventWriterCapability: {},
+    },
+    methods: {
+      Agent: "Agent instance",
+      HostedRunEventWriterCapability: "Exact-run event-writer authority",
+    },
+    expandTypes: [
+      "AgentConfig",
+      "MemoryConfig",
+      "EdgeConfig",
+      "ParsedHostedChatRequest",
+      "PrepareHostedConversationRootRunContextInput",
+      "HostedDurableChildForkRunContextInput",
+      "ExecuteHostedChildForkWithPreparedToolsInput",
+      "ExecuteHostedDurableChildForkInput",
+      "DefaultHostedInvokeAgentToolOptions",
+      "HostedDurableRunStartExecutionInput",
+      "HostedAgentServiceDetachedExecutionInput",
+    ],
   },
   "veryfront/tool": {
     functions: { tool: { configType: "ToolConfig" } },
@@ -2553,7 +2585,11 @@ function generateMD(
       lines.push("| Name | Description | Source |");
       lines.push("|------|-------------|--------|");
       for (const e of items) {
-        lines.push(`| \`${e.name}\` | ${e.description} | ${sourceCell(e)} |`);
+        lines.push(
+          `| \`${e.name}\` | ${escapeMarkdownTableCell(e.description)} | ${
+            sourceCell(e)
+          } |`,
+        );
       }
       lines.push("");
     }
@@ -2603,9 +2639,9 @@ function generateMD(
         lines.push("|------|-------------|--------|");
         for (const item of items) {
           lines.push(
-            `| \`${item.name}\` | ${item.description || ""} | ${
-              sourceCell(item)
-            } |`,
+            `| \`${item.name}\` | ${
+              escapeMarkdownTableCell(item.description)
+            } | ${sourceCell(item)} |`,
           );
         }
         lines.push("");
@@ -2636,6 +2672,10 @@ function pickDeepImportSample(
 
 function sourceCell(summary: ExportSummary): string {
   return summary.sourceHref ? `[source](${summary.sourceHref})` : "";
+}
+
+function escapeMarkdownTableCell(value: string): string {
+  return value.replaceAll("|", "\\|");
 }
 
 // ---------------------------------------------------------------------------

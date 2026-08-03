@@ -1,10 +1,15 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   guardedEgressFetch,
   WorkerEgressBlockedError,
 } from "#veryfront/security/sandbox/worker-egress-guard.ts";
-import { createOutboundFetchBoundary, OutboundRequestBlockedError } from "./outbound-fetch.ts";
+import {
+  createOutboundFetchBoundary,
+  guardedOutboundFetch,
+  OutboundRequestBlockedError,
+} from "./outbound-fetch.ts";
 
 function createTestBoundary(fetchImpl: typeof fetch) {
   return createOutboundFetchBoundary({
@@ -14,6 +19,22 @@ function createTestBoundary(fetchImpl: typeof fetch) {
 }
 
 describe("guardedOutboundFetch", () => {
+  it("uses withMockFetch transport instead of the captured host fetch in tests", async () => {
+    let captured: Request | undefined;
+
+    const response = await withMockFetch(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        captured = new Request(input, init);
+        return Response.json({ mocked: true });
+      },
+      () => guardedOutboundFetch("https://93.184.216.34/rag/documents"),
+    );
+
+    assertEquals(response.status, 200);
+    assertEquals(await response.json(), { mocked: true });
+    assertEquals(captured?.url, "https://93.184.216.34/rag/documents");
+  });
+
   it("rejects loopback and cloud metadata before invoking fetch", async () => {
     let calls = 0;
     const fetchImpl: typeof fetch = () => {

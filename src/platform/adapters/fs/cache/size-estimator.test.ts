@@ -53,6 +53,32 @@ describe("estimateSize", () => {
     it("should handle nested objects", () => {
       assertJsonSize({ a: { b: { c: 1 } } });
     });
+
+    it("marks cyclic values as uncacheable without throwing", () => {
+      const value: { self?: unknown } = {};
+      value.self = value;
+      assertEquals(estimateSize(value), Number.MAX_SAFE_INTEGER);
+    });
+
+    it("marks BigInt-containing values as uncacheable without throwing", () => {
+      assertEquals(estimateSize({ value: 1n }), Number.MAX_SAFE_INTEGER);
+    });
+
+    it("contains failures from custom serialization hooks", () => {
+      const value = {
+        toJSON(): never {
+          throw new Error("serialization failed");
+        },
+      };
+      assertEquals(estimateSize(value), Number.MAX_SAFE_INTEGER);
+    });
+
+    it("rejects objects whose serialization omits the value", () => {
+      assertEquals(
+        estimateSize({ toJSON: () => undefined }),
+        Number.MAX_SAFE_INTEGER,
+      );
+    });
   });
 
   describe("primitives", () => {

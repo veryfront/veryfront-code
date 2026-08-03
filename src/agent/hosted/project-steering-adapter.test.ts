@@ -97,8 +97,7 @@ Deno.test("hosted project steering uses the bounded transport by default", async
     );
     await Promise.resolve();
 
-    assert(error instanceof RangeError);
-    assertStringIncludes(error.message, "Project file response may contain at most");
+    assertStringIncludes(String(error), "Project files list response exceeds");
     assertEquals(cancelled, true);
   });
 });

@@ -46,6 +46,10 @@ import {
 } from "../runtime/tool-exposure.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
 import type { HostedHostToolPolicy } from "./chat-runtime-tool-assembly.ts";
+import {
+  createHostedRunEventWriterCapabilityForRequest,
+  runWithHostedRunEventWriterCapability,
+} from "./child-run-event-writer-token.ts";
 
 /** Request payload for normalized hosted chat. */
 export type NormalizedHostedChatRequest = {
@@ -495,23 +499,29 @@ export async function prepareHostedChatExecution<
   HostedChatExecutionPreparationResult<TRuntimeAgentDefinition, TRuntimeResult>
 > {
   const normalized = normalizeParsedHostedChatRequest(input.request);
-  const rootRunContext = await prepareHostedConversationRootRunContext(
-    {
-      authToken: input.request.authToken,
-      runEventAppendToken: input.request.runEventAppendToken,
+  const rootRunEventWriterCapability = input.request.durableRootRun
+    ? createHostedRunEventWriterCapabilityForRequest(input.request, {
       apiUrl: input.apiUrl.toString(),
-      conversationId: input.request.conversationId,
-      projectId: input.request.projectId,
-      branchId: normalized.effectiveValidatedContext.branchId,
-      agentId: input.agentConfig.id,
-      messages: normalized.effectiveMessages,
-      parentRunId: input.request.parentRunId,
-      parentMessageId: normalized.parentMessageId,
-      providedRun: input.request.durableRootRun,
-      persistLatestUserMessageBeforeRun: input.request.persistLatestUserMessageBeforeDurableRun,
-      ...input.rootRun,
-    },
-    { abortSignal: input.abortSignal },
+      runId: input.request.durableRootRun.runId,
+    })
+    : undefined;
+  const rootRunContext = await runWithHostedRunEventWriterCapability(
+    rootRunEventWriterCapability,
+    () =>
+      prepareHostedConversationRootRunContext({
+        authToken: input.request.authToken,
+        apiUrl: input.apiUrl.toString(),
+        conversationId: input.request.conversationId,
+        projectId: input.request.projectId,
+        branchId: normalized.effectiveValidatedContext.branchId,
+        agentId: input.agentConfig.id,
+        messages: normalized.effectiveMessages,
+        parentRunId: input.request.parentRunId,
+        parentMessageId: normalized.parentMessageId,
+        providedRun: input.request.durableRootRun,
+        persistLatestUserMessageBeforeRun: input.request.persistLatestUserMessageBeforeDurableRun,
+        ...input.rootRun,
+      }, { abortSignal: input.abortSignal }),
   );
   const runtimePreparation = await prepareHostedChatRuntimeCreationOptions({
     request: input.request,
@@ -578,10 +588,14 @@ export async function prepareHostedChatExecution<
       ...budgetedContext.diagnostics,
     });
   }
-  const runtime = await input.createRuntime({
-    ...runtimePreparation.creationOptions,
-    ...(submittedFormInputResult ? { submittedFormInputResult } : {}),
-  });
+  const runtime = await runWithHostedRunEventWriterCapability(
+    rootRunEventWriterCapability,
+    () =>
+      input.createRuntime({
+        ...runtimePreparation.creationOptions,
+        ...(submittedFormInputResult ? { submittedFormInputResult } : {}),
+      }),
+  );
 
   return {
     ...normalized,

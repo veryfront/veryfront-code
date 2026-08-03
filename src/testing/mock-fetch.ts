@@ -1,3 +1,5 @@
+import { __runWithOutboundFetchTransportForTests } from "#veryfront/security/http/outbound-fetch.ts";
+
 type FetchMock = typeof globalThis.fetch | undefined;
 
 /** Standard request-init fields that tests may need to observe from a fetch mock. */
@@ -63,7 +65,16 @@ export async function withMockFetch<T>(
   });
 
   try {
-    return await fn();
+    if (typeof mockFetch !== "function") {
+      return await fn();
+    }
+    return await __runWithOutboundFetchTransportForTests(
+      {
+        fetch: mockFetch,
+        pinnedFetch: (url, _addresses, init) => mockFetch(url, init),
+      },
+      fn,
+    );
   } finally {
     Object.defineProperty(globalThis, "fetch", {
       value: originalFetch,

@@ -5,6 +5,10 @@ import {
   prepareConversationRootRunLifecycle,
   prepareHostedConversationRootRunContext,
 } from "./root-run-lifecycle.ts";
+import {
+  createHostedRunEventWriterCapability,
+  runWithHostedRunEventWriterCapability,
+} from "../hosted/child-run-event-writer-token.ts";
 
 describe("agent/conversation-root-run-lifecycle", () => {
   it("starts a run and derives root-run lineage plus a mirror in one helper", async () => {
@@ -110,32 +114,40 @@ describe("agent/conversation-root-run-lifecycle", () => {
     }) as typeof fetch;
 
     try {
-      const context = await prepareHostedConversationRootRunContext(
-        {
-          authToken: "user-api-token",
-          runEventAppendToken: "run-event-service-token",
+      const context = await runWithHostedRunEventWriterCapability(
+        createHostedRunEventWriterCapability({
           apiUrl: "https://api.example.test",
-          conversationId,
-          projectId: "project-1",
-          branchId: "branch-1",
-          agentId: "agent-1",
-          messages: [],
-          providedRun: {
-            runId: "run-1",
-            messageId: "msg-1",
-            latestEventId: 5,
-            latestExternalEventSequence: 6,
-          },
-          persistLatestUserMessageBeforeRun: true,
-          parentRunId: "parent-run",
-          parentMessageId: "parent-message",
-          instrumentation: {
-            debug: (message) => {
-              debugMessages.push(message);
+          runId: "run-1",
+          runEventAppendToken: "run-event-service-token",
+          fetch: globalThis.fetch,
+        }),
+        () =>
+          prepareHostedConversationRootRunContext(
+            {
+              authToken: "user-api-token",
+              apiUrl: "https://api.example.test",
+              conversationId,
+              projectId: "project-1",
+              branchId: "branch-1",
+              agentId: "agent-1",
+              messages: [],
+              providedRun: {
+                runId: "run-1",
+                messageId: "msg-1",
+                latestEventId: 5,
+                latestExternalEventSequence: 6,
+              },
+              persistLatestUserMessageBeforeRun: true,
+              parentRunId: "parent-run",
+              parentMessageId: "parent-message",
+              instrumentation: {
+                debug: (message) => {
+                  debugMessages.push(message);
+                },
+              },
             },
-          },
-        },
-        { abortSignal: new AbortController().signal },
+            { abortSignal: new AbortController().signal },
+          ),
       );
 
       try {
@@ -198,6 +210,42 @@ describe("agent/conversation-root-run-lifecycle", () => {
         value: { runId: "child-run-1" },
       }]);
       assertEquals(context.durableRunMirror?.getSnapshot().pendingEventCount, 1);
+      assertEquals(context.privateDurableRunMirror, null);
+    } finally {
+      context.durableRunMirror?.dispose();
+    }
+  });
+
+  it("rejects wrong-root writer authority without granting private fallback", async () => {
+    const context = await runWithHostedRunEventWriterCapability(
+      createHostedRunEventWriterCapability({
+        apiUrl: "https://api.example.test",
+        runId: "different-root-run",
+        runEventAppendToken: "wrong-root-writer-token",
+      }),
+      () =>
+        prepareHostedConversationRootRunContext(
+          {
+            authToken: "user-api-token",
+            apiUrl: "https://api.example.test",
+            conversationId: "conv-1",
+            projectId: "project-1",
+            agentId: "agent-1",
+            messages: [],
+            providedRun: {
+              runId: "expected-root-run",
+              messageId: "msg-1",
+              latestEventId: 5,
+              latestExternalEventSequence: 6,
+            },
+            persistLatestUserMessageBeforeRun: false,
+          },
+          { abortSignal: new AbortController().signal },
+        ),
+    );
+
+    try {
+      assertEquals(context.durableRunMirror !== null, true);
       assertEquals(context.privateDurableRunMirror, null);
     } finally {
       context.durableRunMirror?.dispose();

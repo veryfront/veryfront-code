@@ -194,7 +194,10 @@ export interface ModelRuntimeCallOptions {
 
 /** Explicit behavioral support advertised by a model runtime. */
 export interface ModelRuntimeCapabilities {
-  /** Whether the runtime accepts and can emit tool calls. Defaults to true for legacy runtimes. */
+  /**
+   * Whether the runtime accepts and can emit tool calls. Omission preserves
+   * legacy behavior: false for legacy local runtimes and true otherwise.
+   */
   readonly toolCalling?: boolean;
   /** Whether the runtime accepts JSON or JSON-schema response formats. */
   readonly structuredOutput?: boolean;
@@ -205,7 +208,10 @@ export interface ModelRuntime<
   CallOptions = unknown,
   ContentPart = unknown,
 > extends RuntimeMetadata {
-  /** Where inference executes. Omitted runtimes are treated as remote. */
+  /**
+   * Where inference executes. When omitted, legacy `provider: "local"`,
+   * `local/*` model IDs, and `_isVfLocalModel` markers remain server-local.
+   */
   readonly executionMode?: "remote" | "server-local";
   /** Provider behavior, kept separate from execution placement. */
   readonly runtimeCapabilities?: ModelRuntimeCapabilities;

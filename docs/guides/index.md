@@ -40,6 +40,7 @@ details, see [API reference](../api-reference/index.md).
 | Emit app and eval dashboard metrics         | [Project metrics](./project-metrics.md)           |
 | Add memory or streamed responses            | [Memory and streaming](./memory-and-streaming.md) |
 | Build document Q&A with RAG                 | [Build a RAG app](./build-a-rag-app.md)           |
+| Search source-controlled project knowledge  | [Project knowledge](./project-knowledge.md)       |
 | Coordinate more than one agent              | [Multi-agent](./multi-agent.md)                   |
 | Package reusable agent instructions         | [Skills](./skills.md)                             |
 
