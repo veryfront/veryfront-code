@@ -30,7 +30,7 @@ import type {
 import { DEFAULT_WORKER_POOL_CONFIG, MAX_WORKER_BODY_BYTES } from "./worker-types.ts";
 import { WORKER_INTERNAL_EGRESS_OVERRIDE_ENV } from "./worker-egress-guard.ts";
 import { resolveWorkerGeneration, snapshotWorkerGenerationIdentity } from "./worker-generation.ts";
-import { fromFileUrl } from "#veryfront/compat/path";
+import { fromFileUrl, join } from "#veryfront/compat/path";
 
 // Worker isolation only works in Deno (requires Deno Worker permissions API)
 const testSuite = isDeno ? describe : describe.skip;
@@ -447,7 +447,7 @@ testSuite("WorkerPool", () => {
         "ssr-permissions",
         [projectRoot],
         makeSSRRequest("ssr-permissions-request", {
-          pageModulePath: `${projectRoot}/page.tsx`,
+          pageModulePath: join(projectRoot, "page.tsx"),
         }),
       );
       const worker = latestWorker(controlled.workers, "ssr-permissions");

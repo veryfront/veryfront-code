@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import {
@@ -25,6 +25,34 @@ import {
   createHttpExternalPlugin,
   createRelativeFsPlugin,
 } from "./esbuild-plugins.ts";
+import type { LockfileManager } from "#veryfront/utils/import-lockfile.ts";
+import * as esbuild from "veryfront/extensions/bundler";
+import type { OnLoadArgs, PluginBuild, ResolveResult } from "veryfront/extensions/bundler";
+
+function createMockBuild(
+  onLoad: PluginBuild["onLoad"],
+): PluginBuild {
+  const resolveResult: ResolveResult = {
+    errors: [],
+    warnings: [],
+    path: "",
+    external: false,
+    sideEffects: false,
+    namespace: "",
+    pluginData: null,
+  };
+
+  return {
+    initialOptions: {},
+    resolve: () => Promise.resolve(resolveResult),
+    onStart: () => {},
+    onEnd: () => {},
+    onResolve: () => {},
+    onLoad,
+    onDispose: () => {},
+    esbuild,
+  } as unknown as PluginBuild;
+}
 
 function writableDependencySource(
   cacheNamespace: string,
@@ -98,6 +126,70 @@ describe(
       );
 
       assertEquals(output.includes('from "https://esm.sh/react@19"'), true);
+    });
+
+    it("serves fetched https modules when lockfile flush hits a read-only filesystem", async () => {
+      const originalFetch = globalThis.fetch;
+      const moduleSource = "export const ok = true;";
+      const entries = new Map<string, {
+        resolved: string;
+        integrity: string;
+        fetchedAt?: string;
+      }>();
+      let lockfileSets = 0;
+      let lockfileFlushes = 0;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+
+      const readOnlyLockfile: LockfileManager = {
+        read: () => Promise.resolve(null),
+        write: () => Promise.reject(new Error("read-only lockfile")),
+        get: (url) => Promise.resolve(entries.get(url) ?? null),
+        set: (url, entry) => {
+          lockfileSets += 1;
+          entries.set(url, entry);
+          return Promise.resolve();
+        },
+        has: () => Promise.resolve(false),
+        clear: () => Promise.resolve(),
+        flush: () => {
+          lockfileFlushes += 1;
+          return Promise.reject(
+            new Error(
+              "Read-only file system (os error 30): writefile '/app/project/veryfront.lock'",
+            ),
+          );
+        },
+      };
+
+      const plugin = createBareExternalPlugin({
+        bundle: true,
+        lockfile: readOnlyLockfile,
+      });
+      plugin.setup(createMockBuild((_opts, fn) => {
+        loadHandler = fn;
+      }));
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = (async () =>
+          new Response(moduleSource, {
+            status: 200,
+          })) as typeof fetch;
+
+        const result = await loadHandler({
+          path: "https://esm.sh/yaml@2/stringify",
+          namespace: "https",
+          pluginData: undefined,
+          suffix: "",
+        });
+
+        assertEquals((result as { contents?: string }).contents, moduleSource);
+        assertEquals((result as { errors?: Array<{ text: string }> }).errors, undefined);
+        assertEquals(lockfileSets, 1);
+        assertEquals(lockfileFlushes, 1);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
 
     it("fails closed on a node: builtin import in a browser bundle", async () => {

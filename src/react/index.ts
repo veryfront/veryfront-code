@@ -29,11 +29,14 @@ export {
   generateBlurDataURL,
   getAspectRatioPadding,
   OptimizedBackgroundImage,
+  type OptimizedBackgroundImageProps,
   OptimizedImage,
+  type OptimizedImageFormat,
   type OptimizedImageProps,
   ResponsiveImageContainer,
   SimpleOptimizedImage,
   useOptimizedImage,
+  type UseOptimizedImageOptions,
 } from "./components/optimized-image/index.ts";
 
 // Primitives (user-facing chat/agent UI)

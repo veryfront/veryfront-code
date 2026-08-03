@@ -2,9 +2,72 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "#veryfront/compat/path/index.ts";
 import { cwd, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { isNode } from "#veryfront/platform/compat/runtime.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
+import { serverLogger } from "./logger/index.ts";
+
+const logger = serverLogger.component("cache-dir");
 
 const cacheStorage = new AsyncLocalStorage<string>();
-let nodeModulesLinked = false;
+const nodeModulesLinkOperations = new Map<string, Promise<string | undefined>>();
+
+// Bounded memo of cache roots and their expected framework dependency root.
+// A cache hit still validates the target entry: cache directories can be
+// cleared or replaced by another process, so remembered success must never
+// turn a missing or wrong link into a false-positive `true` result.
+const MAX_SETTLED_CACHE_ROOTS = 128;
+const verifiedCacheRoots = new Map<string, string>();
+// Roots whose link creation failed, kept only to log the failure once.
+const warnedLinkFailureRoots = new Set<string>();
+
+function rememberBounded(set: Set<string>, value: string): void {
+  if (set.size >= MAX_SETTLED_CACHE_ROOTS) {
+    const oldest = set.values().next().value;
+    if (oldest !== undefined) set.delete(oldest);
+  }
+  set.add(value);
+}
+
+function rememberVerifiedRoot(cacheBase: string, nodeModulesDir: string): void {
+  if (!verifiedCacheRoots.has(cacheBase) && verifiedCacheRoots.size >= MAX_SETTLED_CACHE_ROOTS) {
+    const oldest = verifiedCacheRoots.keys().next().value;
+    if (oldest !== undefined) verifiedCacheRoots.delete(oldest);
+  }
+  verifiedCacheRoots.set(cacheBase, nodeModulesDir);
+}
+
+function getReactNodeModulesDir(reactEntry: string): string | undefined {
+  const normalizedReactEntry = reactEntry.replaceAll("\\", "/");
+  const marker = "/node_modules/react";
+  const markerIndex = normalizedReactEntry.lastIndexOf(marker);
+  if (markerIndex === -1) return undefined;
+  return reactEntry.slice(0, markerIndex + "/node_modules".length);
+}
+
+function describeCacheRoot(cacheBase: string): string {
+  return `cache:${hashString(cacheBase)}`;
+}
+
+function redactCachePathDetails(reason: string, cacheBase: string): string {
+  return reason
+    .replace(/(["'`])(?:(?:[A-Za-z]:)?[\\/])[^"'`]*\1/g, "$1[path]$1")
+    .replaceAll(cacheBase, "[cache-dir]")
+    .replace(/(?:[A-Za-z]:)?[\\/][^\s'"`]+/g, "[path]");
+}
+
+/** Reset memoized link state (test seam). */
+function resetNodeModulesLinkState(): void {
+  nodeModulesLinkOperations.clear();
+  verifiedCacheRoots.clear();
+  warnedLinkFailureRoots.clear();
+}
+
+/** Internal test seam for platform-specific resolved module paths. */
+export const __cacheDirInternals = {
+  describeCacheRoot,
+  getReactNodeModulesDir,
+  redactCachePathDetails,
+  resetNodeModulesLinkState,
+};
 
 export function runWithCacheDir<T>(cacheDir: string, fn: () => T): T {
   return cacheStorage.run(cacheDir, fn);
@@ -56,37 +119,132 @@ export function getHttpBundleCacheDir(): string {
  *
  * so Node.js module resolution finds the same packages the framework itself uses,
  * guaranteeing a single React instance (no "Invalid hook call" errors).
+ *
+ * Returns `true` when a usable framework dependency root is in place for the
+ * cache dir (link created, correct link already present, or an equivalent
+ * real directory), and `false` when it could not be ensured — so callers can
+ * distinguish total link failure from success. Failures are logged once per
+ * cache dir and are retried on later calls (self-healing); only verified
+ * roots retain their expected framework dependency root for a cheaper
+ * revalidation on later calls.
  */
-export async function ensureCacheNodeModules(): Promise<void> {
-  if (!isNode || nodeModulesLinked) return;
-  nodeModulesLinked = true;
+export async function ensureCacheNodeModules(): Promise<boolean> {
+  if (!isNode) return true;
 
+  // Key the memoized link operation by the resolved cache base dir:
+  // getCacheBaseDir() is AsyncLocalStorage-scoped, so different requests can
+  // resolve different cache dirs. A single global done-flag would let the
+  // first cache dir claim the link forever and leave every other cache dir
+  // without a node_modules symlink (second React copy → "Invalid hook call").
+  // Storing the in-flight promise also makes concurrent callers wait for the
+  // link to actually exist instead of returning before the async work is done.
+  const cacheBase = getCacheBaseDir();
+  const verifiedRoot = verifiedCacheRoots.get(cacheBase);
+  if (verifiedRoot !== undefined) {
+    if (await isCacheNodeModulesUsable(cacheBase, verifiedRoot)) return true;
+    verifiedCacheRoots.delete(cacheBase);
+  }
+
+  let operation = nodeModulesLinkOperations.get(cacheBase);
+  if (!operation) {
+    operation = linkCacheNodeModules(cacheBase);
+    nodeModulesLinkOperations.set(cacheBase, operation);
+  }
+  try {
+    const nodeModulesDir = await operation;
+    if (nodeModulesDir === undefined) return false;
+    rememberVerifiedRoot(cacheBase, nodeModulesDir);
+    warnedLinkFailureRoots.delete(cacheBase);
+    return true;
+  } finally {
+    // The in-flight map deduplicates only concurrent work. The identity check
+    // prevents an older waiter from deleting a replacement operation.
+    if (nodeModulesLinkOperations.get(cacheBase) === operation) {
+      nodeModulesLinkOperations.delete(cacheBase);
+    }
+  }
+}
+
+async function isCacheNodeModulesUsable(
+  cacheBase: string,
+  nodeModulesDir: string,
+): Promise<boolean> {
+  try {
+    const { lstatSync, realpathSync } = await import("node:fs");
+    const targetLink = join(cacheBase, "node_modules");
+    const existing = lstatSync(targetLink);
+    if (existing.isSymbolicLink()) {
+      return realpathSync(targetLink) === realpathSync(nodeModulesDir);
+    }
+    if (!existing.isDirectory()) return false;
+    return realpathSync(join(targetLink, "react")) ===
+      realpathSync(join(nodeModulesDir, "react"));
+  } catch {
+    return false;
+  }
+}
+
+async function linkCacheNodeModules(cacheBase: string): Promise<string | undefined> {
   try {
     const { createRequire } = await import("node:module");
-    const { lstatSync, symlinkSync, mkdirSync } = await import("node:fs");
+    const { lstatSync, mkdirSync, realpathSync, symlinkSync, unlinkSync } = await import("node:fs");
 
-    const cacheBase = getCacheBaseDir();
     const targetLink = join(cacheBase, "node_modules");
-
-    try {
-      lstatSync(targetLink);
-      return;
-    } catch (_) {
-      /* expected: symlink doesn't exist yet */
-    }
 
     const require = createRequire(import.meta.url);
     const reactEntry = require.resolve("react");
+    const nodeModulesDir = getReactNodeModulesDir(reactEntry);
+    if (!nodeModulesDir) return warnLinkFailure(cacheBase, "framework node_modules not found");
 
-    const marker = "/node_modules/react";
-    const idx = reactEntry.lastIndexOf(marker);
-    if (idx === -1) return;
-
-    const nodeModulesDir = reactEntry.substring(0, idx + "/node_modules".length);
+    try {
+      const existing = lstatSync(targetLink);
+      if (existing.isSymbolicLink()) {
+        try {
+          if (realpathSync(targetLink) === realpathSync(nodeModulesDir)) return nodeModulesDir;
+        } catch {
+          // A dangling link is safe to replace without touching its target.
+        }
+        unlinkSync(targetLink);
+      } else if (existing.isDirectory()) {
+        // Preserve a real directory only when it resolves React to the same
+        // framework-owned package. Never remove user-created directories.
+        try {
+          if (
+            realpathSync(join(targetLink, "react")) ===
+              realpathSync(join(nodeModulesDir, "react"))
+          ) return nodeModulesDir;
+        } catch {
+          // The existing directory is not a usable framework dependency root.
+        }
+        return warnLinkFailure(cacheBase, "existing node_modules directory preserved");
+      } else {
+        // Do not overwrite a non-directory entry in a best-effort helper.
+        return warnLinkFailure(cacheBase, "existing non-directory node_modules entry preserved");
+      }
+    } catch (_) {
+      // No entry exists yet. mkdir/symlink below owns creation.
+    }
 
     mkdirSync(cacheBase, { recursive: true });
     symlinkSync(nodeModulesDir, targetLink, "dir");
-  } catch (_) {
-    /* expected: best-effort symlink may fail due to permissions or platform */
+    return nodeModulesDir;
+  } catch (error) {
+    // Best-effort: symlink creation may fail due to permissions or platform,
+    // but total failure must stay observable instead of looking like success.
+    return warnLinkFailure(
+      cacheBase,
+      error instanceof Error ? error.message : String(error),
+    );
   }
+}
+
+function warnLinkFailure(cacheBase: string, reason: string): undefined {
+  if (!warnedLinkFailureRoots.has(cacheBase)) {
+    rememberBounded(warnedLinkFailureRoots, cacheBase);
+    logger.warn("Cache node_modules link not established", {
+      cacheRoot: describeCacheRoot(cacheBase),
+      reason: redactCachePathDetails(reason, cacheBase),
+    });
+  }
+  return undefined;
 }
