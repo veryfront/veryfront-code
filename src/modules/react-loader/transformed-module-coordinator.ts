@@ -232,7 +232,7 @@ export class TransformedModuleCoordinator {
     } finally {
       const currentPromise = this.#pendingMaterializations.get(materializationKey);
       // Compare promise identity: only the operation that installed this entry may remove it.
-      if (currentPromise === operationPromise) {
+      if (Object.is(currentPromise, operationPromise)) {
         this.#pendingMaterializations.delete(materializationKey);
       }
     }
