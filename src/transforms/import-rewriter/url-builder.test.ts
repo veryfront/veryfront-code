@@ -6,6 +6,7 @@ import {
   appendDependencyPinningKey,
   appendDependencyPinningPathKey,
   appendSameOriginDependencyPinningPathKey,
+  appendSameOriginSSRDependencyPinningKey,
   buildCrossProjectUrl,
   buildEsmShUrl,
   buildModuleServerUrl,
@@ -114,6 +115,33 @@ describe("transforms/import-rewriter/url-builder", () => {
           "on:snapshot-a",
         ),
         "/_vf_modules/_pins/on%3Asnapshot-a/_pins/project-file.js",
+      );
+    });
+
+    it("canonicalizes same-origin SSR module URLs to snapshot paths", () => {
+      assertEquals(
+        appendSameOriginSSRDependencyPinningKey(
+          "https://app.example/_vf_modules/components/Button.js?pins=on%3Astale#default",
+          "on:snapshot-a",
+          "https://app.example",
+        ),
+        "/_vf_modules/_pins/on%3Asnapshot-a/components/Button.js?ssr=true#default",
+      );
+      assertEquals(
+        appendSameOriginSSRDependencyPinningKey(
+          "//app.example/_vf_modules/components/Protocol.js?debug=1",
+          "on:snapshot-a",
+          "https://app.example",
+        ),
+        "/_vf_modules/_pins/on%3Asnapshot-a/components/Protocol.js?debug=1&ssr=true",
+      );
+      assertEquals(
+        appendSameOriginSSRDependencyPinningKey(
+          "https://cdn.example/_vf_modules/components/Button.js",
+          "on:snapshot-a",
+          "https://app.example",
+        ),
+        "https://cdn.example/_vf_modules/components/Button.js",
       );
     });
 

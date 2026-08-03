@@ -262,8 +262,21 @@ export function appendSameOriginSSRDependencyPinningKey(
       return url;
     }
 
-    target.searchParams.set("ssr", "true");
-    return appendDependencyPinningKey(target.href, dependencyPinningCacheKey);
+    const moduleUrl = appendDependencyPinningPathKey(
+      `${target.pathname}${target.search}${target.hash}`,
+      dependencyPinningCacheKey,
+    );
+    const hashIndex = moduleUrl.indexOf("#");
+    const hash = hashIndex === -1 ? "" : moduleUrl.slice(hashIndex);
+    const urlWithoutHash = hashIndex === -1 ? moduleUrl : moduleUrl.slice(0, hashIndex);
+    const queryIndex = urlWithoutHash.indexOf("?");
+    const path = queryIndex === -1 ? urlWithoutHash : urlWithoutHash.slice(0, queryIndex);
+    const params = new URLSearchParams(
+      queryIndex === -1 ? "" : urlWithoutHash.slice(queryIndex + 1),
+    );
+
+    params.set("ssr", "true");
+    return `${path}?${params.toString()}${hash}`;
   } catch {
     return url;
   }

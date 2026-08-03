@@ -253,10 +253,10 @@ describe("Hydration Parity", () => {
         /\n(function (__veryfrontPinDynamicImport_*)[\s\S]+)\n$/,
       );
       expect(result).toContain(
-        `from "https://app.example/_vf_modules/shared/StaticAbsolute.js?ssr=true&pins=on%3Asnapshot-a"`,
+        `from "/_vf_modules/_pins/on%3Asnapshot-a/shared/StaticAbsolute.js?ssr=true"`,
       );
       expect(result).toContain(
-        `from "https://app.example/_vf_modules/shared/StaticProtocol.js?ssr=true&pins=on%3Asnapshot-a"`,
+        `from "/_vf_modules/_pins/on%3Asnapshot-a/shared/StaticProtocol.js?ssr=true"`,
       );
       expect(result).toContain(
         `from "https://cdn.example/_vf_modules/shared/StaticForeign.js"`,
