@@ -155,9 +155,7 @@ export interface AuthRateLimitOptions {
   trustProxy?: boolean;
 }
 
-function isRateLimitStore(
-  value: RateLimitStore | AuthRateLimitOptions,
-): value is RateLimitStore {
+function isRateLimitStore(value: unknown): value is RateLimitStore {
   return (
     typeof value === "object" &&
     value !== null &&
