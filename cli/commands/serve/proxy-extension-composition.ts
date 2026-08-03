@@ -95,7 +95,7 @@ async function activateStandaloneProxyExtensionsInternal(): Promise<ExtensionLoa
   try {
     await loader.setupAll(extensions, {});
     // Keep the chart compatible with older universal binaries during rollout.
-    // The dedicated entrypoint translates the legacy value only after the
+    // This shared boundary translates the legacy value only after the
     // extension-backed store is registered.
     if (cacheType === "redis") setEnv("CACHE_TYPE", "extension");
     return loader;

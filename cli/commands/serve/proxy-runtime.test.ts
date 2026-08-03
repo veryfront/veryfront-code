@@ -2,7 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { runStandaloneProxyRuntime } from "./proxy-runtime.ts";
+import {
+  createStandaloneProxyKeepAlivePromise,
+  runStandaloneProxyRuntime,
+} from "./proxy-runtime.ts";
 
 describe("standalone proxy runtime", () => {
   const originalHost = Deno.env.get("HOST");
@@ -51,5 +54,24 @@ describe("standalone proxy runtime", () => {
     );
 
     assertEquals(teardownCount, 1);
+  });
+
+  it("uses the Promise constructor captured before extension activation", () => {
+    const NativePromise = Promise;
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, "Promise");
+    if (!descriptor) throw new Error("Promise descriptor is unavailable");
+
+    Object.defineProperty(globalThis, "Promise", {
+      ...descriptor,
+      value: function PoisonedPromise(): never {
+        throw new Error("extension replaced Promise");
+      },
+    });
+    try {
+      const pending = createStandaloneProxyKeepAlivePromise();
+      assertEquals(pending instanceof NativePromise, true);
+    } finally {
+      Object.defineProperty(globalThis, "Promise", descriptor);
+    }
   });
 });

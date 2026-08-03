@@ -30,7 +30,10 @@ run_smoke() {
     if curl -fsS "http://127.0.0.1:${port}/_proxy/health" 2>/dev/null \
       | grep -Fq '"status":"ok"'; then
       if [ -n "$expected_log" ]; then
-        grep -Fq "$expected_log" "$log_file"
+        if ! grep -Fq "$expected_log" "$log_file"; then
+          cat "$log_file"
+          return 1
+        fi
       fi
       kill "$proxy_pid" 2>/dev/null || true
       wait "$proxy_pid" 2>/dev/null || true

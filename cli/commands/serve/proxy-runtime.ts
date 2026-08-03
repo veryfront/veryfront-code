@@ -20,7 +20,14 @@ interface StandaloneProxyRuntimeDependencies {
   registerTeardown?: typeof registerStandaloneProxyExtensionTeardown;
 }
 
-const keepAliveForever = (): Promise<void> => new Promise(() => {});
+// Capture the constructor before extension activation so extension-owned
+// global mutations cannot break the CLI-owned process lifetime promise.
+const NativePromise = Promise;
+
+/** Create the never-settling promise that owns the standalone process lifetime. */
+export function createStandaloneProxyKeepAlivePromise(): Promise<void> {
+  return new NativePromise(() => {});
+}
 
 function showProxyHeader(): void {
   if (isJsonMode()) return;
@@ -62,5 +69,5 @@ export async function runStandaloneProxyRuntime(
 
   // Deno.serve returns after binding in compiled binaries, while the proxy's
   // signal handlers own shutdown and extension teardown.
-  await (dependencies.keepAlive ?? keepAliveForever)();
+  await (dependencies.keepAlive ?? createStandaloneProxyKeepAlivePromise)();
 }

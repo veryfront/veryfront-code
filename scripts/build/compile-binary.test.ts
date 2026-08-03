@@ -183,6 +183,23 @@ Deno.test("compiled proxy smoke covers cache and observability providers", async
   ]) {
     assertEquals(smoke.includes(contract), true, `missing smoke contract ${contract}`);
   }
+
+  assertEquals(
+    smoke.includes('if ! grep -Fq "$expected_log" "$log_file"; then'),
+    true,
+    "missing proxy log markers must print diagnostics before failing",
+  );
+});
+
+Deno.test("proxy binary smoke runs only for same-repository pull requests", async () => {
+  const workflow = await Deno.readTextFile(".github/workflows/cicd.yml");
+
+  assertEquals(
+    workflow.includes(
+      "if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}",
+    ),
+    true,
+  );
 });
 
 Deno.test("full binary remains the default compile profile", () => {
