@@ -52,5 +52,16 @@ describe("errors/catalog/module-errors", () => {
       assertEquals(typeof solution?.example, "string");
       assertEquals(solution?.example?.includes("react"), true);
     });
+
+    it("lockfile recovery guidance should use the supported clear command", () => {
+      for (const slug of ["lockfile-format-mismatch", "lockfile-read-error"] as const) {
+        const solution = MODULE_ERROR_CATALOG[slug];
+        assertEquals(
+          solution?.steps?.some((step) => step.includes("veryfront lock --clear")),
+          true,
+          `${slug} should point to the supported destructive recovery command`,
+        );
+      }
+    });
   });
 });
