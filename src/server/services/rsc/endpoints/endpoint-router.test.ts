@@ -449,6 +449,107 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       }
     });
 
+    it("rejects missing and malformed pins before dependency metadata I/O", async () => {
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      let metadataOperations = 0;
+      const dependencyPinningSource: DependencyPinningSource = {
+        projectDir: "/tmp/test-project",
+        cacheNamespace: "rsc-pre-admission-pin-rejection",
+        fs: {
+          readFile: () => {
+            metadataOperations += 1;
+            return Promise.resolve("{}");
+          },
+          stat: () => {
+            metadataOperations += 1;
+            return Promise.resolve({
+              size: 2,
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+              mtime: new Date(1),
+            });
+          },
+        },
+      };
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      clearReactVersionCache();
+
+      try {
+        for (
+          const query of [
+            "rel=app%2FCounter.client.ts",
+            "rel=app%2FCounter.client.ts&pins=on%3A",
+            "rel=app%2FCounter.client.ts&pins=on%3A1&pins=on%3A1",
+          ]
+        ) {
+          const response = await handleRSCEndpoint(
+            makeParams({
+              pathname: "/_veryfront/rsc/module",
+              dependencyPinningSource,
+              req: new Request(`http://localhost/_veryfront/rsc/module?${query}`),
+            }),
+          );
+          assertEquals(response?.status, 409);
+        }
+        assertEquals(metadataOperations, 0);
+      } finally {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
+      }
+    });
+
+    it("hands a valid requested snapshot to the admitted browser builder without pre-reading it", async () => {
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      let metadataOperations = 0;
+      const dependencyPinningSource: DependencyPinningSource = {
+        projectDir: "/tmp/test-project",
+        cacheNamespace: "rsc-admitted-pin-resolution",
+        fs: {
+          readFile: () => {
+            metadataOperations += 1;
+            return Promise.reject(new Error("snapshot resolved before admission"));
+          },
+          stat: () => {
+            metadataOperations += 1;
+            return Promise.reject(new Error("snapshot resolved before admission"));
+          },
+        },
+      };
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      clearReactVersionCache();
+      setBrowserModuleBuilderForTesting((_path, options) => {
+        assertEquals(options.requestedDependencyPinningCacheKey, "on:1");
+        assertEquals(metadataOperations, 0);
+        return Promise.resolve({
+          source: "export default 1;",
+          contentHash: "content",
+          importMapHash: "import-map",
+          dependencyPinningCacheKey: "on:1",
+          dependencyPinningDependencies: Object.freeze({}),
+          dependencies: Object.freeze([]),
+          resolutionProbes: Object.freeze([]),
+        });
+      });
+
+      try {
+        const response = await handleRSCEndpoint(
+          makeParams({
+            pathname: "/_veryfront/rsc/module",
+            dependencyPinningSource,
+            req: new Request(
+              "http://localhost/_veryfront/rsc/module?rel=app%2FCounter.client.ts&pins=on%3A1",
+            ),
+          }),
+        );
+        assertEquals(response?.status, 200);
+        assertEquals(metadataOperations, 0);
+      } finally {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
+      }
+    });
+
     it("rejects unsupported hybrid CommonJS and ESM JSX suffixes", async () => {
       for (const extension of [".mtsx", ".ctsx", ".mjsx", ".cjsx"] as const) {
         const filePath = `/tmp/test-project/app/Unsupported${extension}`;
@@ -2165,6 +2266,8 @@ Deno.test("RSC module endpoint preserves the exact proxy dependency source", asy
         source: "export default null;",
         contentHash: "proxy-source-test",
         importMapHash: await computeHash(options.importMapJson ?? ""),
+        dependencyPinningCacheKey: snapshot.cacheKey,
+        dependencyPinningDependencies: snapshot.dependencies,
         dependencies: [],
         resolutionProbes: [],
       };

@@ -65,7 +65,9 @@ import { classifyModuleRequest, DEV_MODULE_PREFIX } from "./classify.ts";
 import { transformModuleToServable } from "./module-transform.ts";
 import {
   createDependencyPinningSource,
+  type DependencyPinningSnapshot,
   type DependencyPinningSourceInput,
+  getRememberedDependencyPinningSnapshot,
   resolveProjectReactVersion,
   resolveRequestedDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
@@ -84,6 +86,7 @@ import {
   type BrowserModuleBundle,
   BrowserModuleBundleError,
   type BrowserModuleBundleLimitOverrides,
+  BrowserModuleDependencySnapshotError,
   bundleBrowserModuleWithMetadata,
 } from "#veryfront/server/shared/browser-module-bundler.ts";
 import { ensureDefaultParserContracts } from "#veryfront/extensions/parser/defaults.ts";
@@ -93,10 +96,10 @@ import {
 } from "./browser-module-admission.ts";
 import { hasUseClientDirective } from "#veryfront/rendering/rsc/page-island.ts";
 import { isRSCEnabled } from "#veryfront/utils/feature-flags.ts";
+import { isCanonicalDependencyPinningCacheKey } from "#veryfront/cache/keys/dependency-pinning.ts";
 
 const logger = serverLogger.component("module-server");
 const PROJECT_FALLBACK_EMBEDDED_POLYFILLS = new Set(["deno"]);
-const DEPENDENCY_PIN_PATTERN = /^on:[A-Za-z0-9._-]+$/;
 
 /**
  * Embedded polyfills for compiled Deno binaries.
@@ -362,6 +365,12 @@ export interface ModuleServerOptions {
   browserModuleBundleLimits?: BrowserModuleBundleLimitOverrides;
 }
 
+interface ModuleDependencyState {
+  dependencyPinningCacheKey: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  reactVersion: string;
+}
+
 /** Serve transformed module at /_vf_modules/* path */
 export function serveModule(req: Request, options: ModuleServerOptions): Promise<Response> {
   const url = new URL(req.url);
@@ -402,6 +411,16 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       const requestedPinKey = pathPin.found ? pathPin.cacheKey : queryPinValues[0];
       const requestedPinCount = queryPinValues.length + (pathPin.found ? 1 : 0);
       const hasRequestedPinKey = requestedPinCount > 0;
+      const dependencyPinningEnabled = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG) === "1";
+      if (
+        pathPin.malformed ||
+        requestedPinCount > 1 ||
+        (hasRequestedPinKey &&
+          (!requestedPinKey || !isCanonicalDependencyPinningCacheKey(requestedPinKey))) ||
+        (!hasRequestedPinKey && dependencyPinningEnabled)
+      ) {
+        return unknownDependencySnapshotModuleResponse(method);
+      }
       const dependencySource = options.dependencyPinningSource ??
         createDependencyPinningSource({
           projectDir,
@@ -414,35 +433,46 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           branch: options.branch,
           config,
         });
-      const dependencySnapshot = pathPin.malformed ||
-          requestedPinCount > 1 ||
-          (hasRequestedPinKey &&
-            (!requestedPinKey || !DEPENDENCY_PIN_PATTERN.test(requestedPinKey)))
-        ? undefined
-        : await resolveRequestedDependencyPinningSnapshot(
-          dependencySource,
-          requestedPinKey,
-        );
-      if (
-        !dependencySnapshot ||
-        (!requestedPinKey && dependencySnapshot.cacheKey.startsWith("on:"))
-      ) {
-        return createModuleResponse(method, "Unknown dependency snapshot", 409, {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Cache-Control": "no-store",
+      const rememberedDependencySnapshot = requestedPinKey
+        ? getRememberedDependencyPinningSnapshot(dependencySource, requestedPinKey)
+        : undefined;
+      let dependencyStatePromise: Promise<ModuleDependencyState | undefined> | undefined;
+      const dependencyStateFromSnapshot = async (
+        snapshot: DependencyPinningSnapshot,
+      ): Promise<ModuleDependencyState> => {
+        const dependencyPinningCacheKey = snapshot.cacheKey;
+        const dependencyPinningDependencies = snapshot.dependencies;
+        const snapshotReactVersion = await resolveProjectReactVersion({
+          projectDir,
+          config,
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
         });
-      }
-      const dependencyPinningCacheKey = dependencySnapshot.cacheKey;
-      const dependencyPinningDependencies = dependencySnapshot.dependencies;
-      const snapshotReactVersion = await resolveProjectReactVersion({
-        projectDir,
-        config,
-        dependencyPinningCacheKey,
-        dependencyPinningDependencies,
-      });
-      const reactVersion = dependencyPinningCacheKey.startsWith("on:")
-        ? snapshotReactVersion
-        : explicitReactVersion ?? snapshotReactVersion;
+        return {
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+          reactVersion: dependencyPinningCacheKey.startsWith("on:")
+            ? snapshotReactVersion
+            : explicitReactVersion ?? snapshotReactVersion,
+        };
+      };
+      const resolveDependencyState = (): Promise<ModuleDependencyState | undefined> => {
+        dependencyStatePromise ??= (async () => {
+          const snapshot = rememberedDependencySnapshot ??
+            await resolveRequestedDependencyPinningSnapshot(
+              dependencySource,
+              requestedPinKey,
+            );
+          if (
+            !snapshot ||
+            (requestedPinKey
+              ? snapshot.cacheKey !== requestedPinKey
+              : snapshot.cacheKey.startsWith("on:"))
+          ) return undefined;
+          return await dependencyStateFromSnapshot(snapshot);
+        })();
+        return dependencyStatePromise;
+      };
 
       const secureFs = createSecureFs({
         baseDir: projectDir,
@@ -495,6 +525,13 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             "Cache-Control": "no-cache",
           });
         }
+        const dependencyState = await resolveDependencyState();
+        if (!dependencyState) return unknownDependencySnapshotModuleResponse(method);
+        const {
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+          reactVersion,
+        } = dependencyState;
 
         const { getCompiledSnippetAsync } = await import(
           "#veryfront/rendering/snippet-renderer.ts"
@@ -633,6 +670,13 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             "Cache-Control": "no-store",
           });
         }
+        const dependencyState = await resolveDependencyState();
+        if (!dependencyState) return unknownDependencySnapshotModuleResponse(method);
+        const {
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+          reactVersion,
+        } = dependencyState;
 
         const projectRef = crossVersion === "latest"
           ? crossProjectSlug
@@ -773,6 +817,14 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         options.mode === "production" &&
         options.isLocalProject !== true &&
         options.isProxyMode !== false;
+      const resolveBeforeSourceLookup = !dependencyPinningEnabled ||
+        rememberedDependencySnapshot !== undefined ||
+        isSSR ||
+        isReservedFrameworkModulePath(filePathWithoutExt);
+      let dependencyState = resolveBeforeSourceLookup ? await resolveDependencyState() : undefined;
+      if (resolveBeforeSourceLookup && !dependencyState) {
+        return unknownDependencySnapshotModuleResponse(method);
+      }
 
       if (
         requiresProductionManifestAdmission &&
@@ -804,26 +856,35 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           releaseDependencyManifestVersion = manifestState.manifest?.manifestVersion ?? null;
         }
       }
-      const releaseModuleResponseCacheKey = canCacheReleaseVersionedModule
-        ? buildReleaseModuleResponseCacheKey({
-          projectIdentity: effectiveProjectId,
-          projectDir,
-          projectSlug,
-          branch,
-          releaseId: options.releaseId!,
-          runtimeVersion: VERSION,
-          reactVersion,
-          dependencyPinningCacheKey,
-          moduleServerOrigin: url.origin,
-          releaseDependencyManifestVersion,
-          modulePath,
-        })
-        : null;
+      let releaseModuleResponseCacheKey: string | null | undefined;
+      const getReleaseModuleResponseCacheKey = (
+        state: ModuleDependencyState,
+      ): string | null => {
+        releaseModuleResponseCacheKey ??= canCacheReleaseVersionedModule
+          ? buildReleaseModuleResponseCacheKey({
+            projectIdentity: effectiveProjectId,
+            projectDir,
+            projectSlug,
+            branch,
+            releaseId: options.releaseId!,
+            runtimeVersion: VERSION,
+            reactVersion: state.reactVersion,
+            dependencyPinningCacheKey: state.dependencyPinningCacheKey,
+            moduleServerOrigin: url.origin,
+            releaseDependencyManifestVersion,
+            modulePath,
+          })
+          : null;
+        return releaseModuleResponseCacheKey;
+      };
 
-      const readCachedReleaseModule = async (): Promise<Response | null> => {
-        if (!releaseModuleResponseCacheKey) return null;
+      const readCachedReleaseModule = async (
+        state: ModuleDependencyState,
+      ): Promise<Response | null> => {
+        const cacheKey = getReleaseModuleResponseCacheKey(state);
+        if (!cacheKey) return null;
 
-        const cachedResponse = await getReleaseModuleResponse(releaseModuleResponseCacheKey);
+        const cachedResponse = await getReleaseModuleResponse(cacheKey);
         if (cachedResponse?.entry) {
           const canUseCachedResponse = !releaseDependencyRewriteEnabled ||
             !(await hasReleaseDependencyImportSpecifiers(cachedResponse.entry.body));
@@ -845,8 +906,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         return null;
       };
 
-      if (!requiresProductionManifestAdmission) {
-        const cachedResponse = await readCachedReleaseModule();
+      if (!requiresProductionManifestAdmission && dependencyState) {
+        const cachedResponse = await readCachedReleaseModule(dependencyState);
         if (cachedResponse) return cachedResponse;
       }
 
@@ -863,7 +924,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
                 projectSlug,
                 branch,
                 releaseId: options.releaseId,
-                reactVersion,
+                reactVersion: dependencyState?.reactVersion ??
+                  explicitReactVersion ?? REACT_DEFAULT_VERSION,
                 allowReservedProjectFallback: !requiresProductionManifestAdmission,
               },
               modulePath,
@@ -952,8 +1014,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           productionAdmissionManifest = admissionManifest;
         }
 
-        if (requiresProductionManifestAdmission) {
-          const cachedResponse = await readCachedReleaseModule();
+        if (requiresProductionManifestAdmission && dependencyState) {
+          const cachedResponse = await readCachedReleaseModule(dependencyState);
           if (cachedResponse) return cachedResponse;
         }
 
@@ -989,6 +1051,17 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             hasUseClientDirective(inspectedBrowserSource, sourceFile)
           ) {
             const inspectedBrowserSourceKey = await sha256Short(inspectedBrowserSource);
+            const dependencyPinningOptions = dependencyState
+              ? {
+                dependencyPinningCacheKey: dependencyState.dependencyPinningCacheKey,
+                dependencyPinningDependencies: dependencyState.dependencyPinningDependencies,
+              }
+              : requestedPinKey
+              ? { requestedDependencyPinningCacheKey: requestedPinKey }
+              : undefined;
+            if (!dependencyPinningOptions) {
+              return unknownDependencySnapshotModuleResponse(method);
+            }
             bundledClientBoundary = await bundleBrowserModuleWithMetadata(sourceFile, {
               adapter,
               projectDir,
@@ -996,8 +1069,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               projectSlug: projectSlug ?? undefined,
               config: options.config,
               moduleServerOrigin: url.origin,
-              dependencyPinningCacheKey,
-              dependencyPinningDependencies,
+              ...dependencyPinningOptions,
               dependencyPinningSource: dependencySource,
               signal: req.signal,
               entrySource: inspectedBrowserSource,
@@ -1006,12 +1078,29 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               singleflightKey: [
                 effectiveProjectId,
                 options.contentSourceId ?? options.releaseId ?? branch ?? "working-tree",
-                dependencyPinningCacheKey,
+                dependencyState?.dependencyPinningCacheKey ?? requestedPinKey,
                 url.origin,
                 sourceFile,
                 inspectedBrowserSourceKey,
               ].join("\0"),
             });
+            if (!dependencyState) {
+              const resolvedCacheKey = bundledClientBoundary.dependencyPinningCacheKey;
+              const resolvedDependencies = bundledClientBoundary.dependencyPinningDependencies;
+              if (
+                typeof resolvedCacheKey !== "string" ||
+                resolvedCacheKey !== requestedPinKey ||
+                resolvedDependencies === undefined
+              ) {
+                throw new BrowserModuleDependencySnapshotError();
+              }
+              dependencyState = await dependencyStateFromSnapshot(
+                Object.freeze({
+                  cacheKey: resolvedCacheKey,
+                  dependencies: resolvedDependencies,
+                }),
+              );
+            }
             const dependencyAdmission = validateBundledClientDependencies(
               bundledClientBoundary,
               {
@@ -1033,6 +1122,15 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             }
           }
         }
+
+        dependencyState ??= await resolveDependencyState();
+        if (!dependencyState) return unknownDependencySnapshotModuleResponse(method);
+        const {
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+          reactVersion,
+        } = dependencyState;
+        releaseModuleResponseCacheKey = getReleaseModuleResponseCacheKey(dependencyState);
 
         if (!isHeadRequest) {
           if (bundledClientBoundary) {
@@ -1156,7 +1254,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
 
         const hasUnrewrittenReleaseDependencyImports = releaseDependencyRewriteEnabled &&
           await hasReleaseDependencyImportSpecifiers(code);
-        const canCacheModuleResponse = releaseModuleResponseCacheKey !== null &&
+        const responseCacheKey = releaseModuleResponseCacheKey;
+        const canCacheModuleResponse = typeof responseCacheKey === "string" &&
           !hasUnrewrittenReleaseDependencyImports;
         if (hasUnrewrittenReleaseDependencyImports) {
           markRequestProfilePhase("module.response_cache_dependency_blocked");
@@ -1170,7 +1269,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         });
 
         if (canCacheModuleResponse && method === "GET") {
-          void rememberReleaseModuleResponse(releaseModuleResponseCacheKey, {
+          void rememberReleaseModuleResponse(responseCacheKey, {
             body: code,
             status: HTTP_OK,
             headers: Object.entries(headers),
@@ -1180,6 +1279,9 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
 
         return createModuleResponse(method, code, HTTP_OK, headers);
       } catch (error) {
+        if (error instanceof BrowserModuleDependencySnapshotError) {
+          return unknownDependencySnapshotModuleResponse(method);
+        }
         const errorMsg = getErrorMessage(error);
         logger.error("Module transform error", { modulePath, error: errorMsg });
 
@@ -1631,6 +1733,13 @@ function createModuleErrorBody(modulePath: string, errorMessage: string): string
   }
 
   return `// Transform Error\nthrow new Error(${JSON.stringify(errorMessage)});`;
+}
+
+function unknownDependencySnapshotModuleResponse(method: string): Response {
+  return createModuleResponse(method, "Unknown dependency snapshot", HttpStatus.CONFLICT, {
+    "Content-Type": "text/plain; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
 }
 
 function classifyModuleServeStatus(status: number): ModuleServeStatus {

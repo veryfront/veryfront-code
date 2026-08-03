@@ -12,6 +12,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import {
   type BrowserModuleBundle,
+  BrowserModuleDependencySnapshotError,
   BrowserModuleEntryRejectedError,
   bundleBrowserModuleWithMetadata,
   validateBrowserModuleBundle,
@@ -39,6 +40,7 @@ import {
   PROJECT_EXECUTION_UNAVAILABLE,
 } from "#veryfront/errors";
 import { classifyBrowserModuleAbsoluteSourcePath } from "#veryfront/modules/server/browser-module-admission.ts";
+import { isCanonicalDependencyPinningCacheKey } from "#veryfront/cache/keys/dependency-pinning.ts";
 
 const rscEndpointRouterLog = serverLogger.component("rsc-endpoint-router");
 const rscLog = serverLogger.component("rsc");
@@ -426,18 +428,10 @@ async function handleModuleEndpoint({
   const rel = normalizedRel.startsWith("/") ? normalizedRel : `/${normalizedRel}`;
   const requestedPinKeys = searchParams.getAll("pins");
   const hasMalformedPinKey = requestedPinKeys.length > 1 ||
-    (requestedPinKeys.length === 1 && !requestedPinKeys[0]?.startsWith("on:"));
+    (requestedPinKeys.length === 1 &&
+      !isCanonicalDependencyPinningCacheKey(requestedPinKeys[0] ?? ""));
   const requestedPinKey = requestedPinKeys[0];
-  const dependencyPinningSnapshot = hasMalformedPinKey
-    ? undefined
-    : await resolveRequestedDependencyPinningSnapshot(
-      dependencyPinningSource,
-      requestedPinKey,
-    );
-  if (
-    !dependencyPinningSnapshot ||
-    (requestedPinKeys.length === 0 && dependencyPinningSnapshot.cacheKey !== "off")
-  ) {
+  if (hasMalformedPinKey || (requestedPinKeys.length === 0 && isDependencyPinningEnabled())) {
     return new Response("Unknown dependency snapshot", {
       status: HttpStatus.CONFLICT,
       headers: { "cache-control": "no-store" },
@@ -467,7 +461,7 @@ async function handleModuleEndpoint({
 
     const adapterId = getBrowserModuleAdapterId(adapter);
     const configHash = await computeHash(stableSerialize(config ?? null));
-    const dependencyPinningCacheKey = dependencyPinningSnapshot.cacheKey;
+    const dependencyPinningCacheKey = requestedPinKey ?? "off";
     const projectKey = projectId ?? projectSlug ?? projectDir;
     const cacheKey = buildBrowserModuleCacheKey({
       adapterId,
@@ -491,8 +485,9 @@ async function handleModuleEndpoint({
           config,
           projectSlug,
           moduleServerOrigin,
-          dependencyPinningCacheKey,
-          dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
+          ...(requestedPinKey
+            ? { requestedDependencyPinningCacheKey: requestedPinKey }
+            : { dependencyPinningCacheKey }),
           dependencyPinningSource,
           signal: req.signal,
           requireClientBoundary: true,
@@ -500,10 +495,20 @@ async function handleModuleEndpoint({
         if (hasProtectedBrowserModuleDependency(bundle, projectDir, config)) {
           throw new BrowserModuleEntryRejectedError();
         }
+        if (bundle.dependencyPinningCacheKey !== dependencyPinningCacheKey) {
+          throw new BrowserModuleDependencySnapshotError();
+        }
         return bundle;
       },
       validate: async (bundle) => {
         if (hasProtectedBrowserModuleDependency(bundle, projectDir, config)) return false;
+        if (
+          bundle.dependencyPinningCacheKey !== dependencyPinningCacheKey ||
+          (dependencyPinningCacheKey.startsWith("on:") &&
+            bundle.dependencyPinningDependencies === undefined)
+        ) {
+          return false;
+        }
         return validateBrowserModuleBundle(bundle, {
           adapter,
           projectDir,
@@ -511,8 +516,8 @@ async function handleModuleEndpoint({
           importMap: {
             config,
             moduleServerOrigin,
-            dependencyPinningCacheKey,
-            dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
+            dependencyPinningCacheKey: bundle.dependencyPinningCacheKey,
+            dependencyPinningDependencies: bundle.dependencyPinningDependencies,
             dependencyPinningSource,
           },
         });
@@ -537,6 +542,12 @@ async function handleModuleEndpoint({
       },
     });
   } catch (error) {
+    if (error instanceof BrowserModuleDependencySnapshotError) {
+      return new Response("Unknown dependency snapshot", {
+        status: HttpStatus.CONFLICT,
+        headers: { "cache-control": "no-store" },
+      });
+    }
     if (error instanceof BrowserModuleEntryRejectedError) {
       return new Response("Not Found", {
         status: HttpStatus.NOT_FOUND,
@@ -631,7 +642,11 @@ function stableSerialize(value: unknown, seen = new WeakSet<object>()): string {
 
 function estimateBrowserModuleBundleSize(bundle: BrowserModuleBundle): number {
   let size = new TextEncoder().encode(bundle.source).byteLength +
-    bundle.contentHash.length + bundle.importMapHash.length;
+    bundle.contentHash.length + bundle.importMapHash.length +
+    (bundle.dependencyPinningCacheKey?.length ?? 0);
+  for (const [name, declaration] of Object.entries(bundle.dependencyPinningDependencies ?? {})) {
+    size += name.length + declaration.length;
+  }
   for (const dependency of bundle.dependencies) {
     size += dependency.path.length + dependency.contentHash.length + 8;
   }

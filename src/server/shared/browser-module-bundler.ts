@@ -19,6 +19,7 @@ import type {
   DependencyPinningSource,
   DependencyPinningSourceInput,
 } from "#veryfront/transforms/esm/package-registry.ts";
+import { resolveRequestedDependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
 import { PermitSemaphore } from "#veryfront/utils/permit-semaphore.ts";
 import { waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
 import { createAbortError, throwIfAborted } from "#veryfront/utils/abort.ts";
@@ -98,6 +99,14 @@ export class BrowserModuleEntryRejectedError extends Error {
   }
 }
 
+/** Requested dependency snapshot rejection that callers surface as a conflict. */
+export class BrowserModuleDependencySnapshotError extends Error {
+  constructor() {
+    super("Unknown dependency snapshot");
+    this.name = "BrowserModuleDependencySnapshotError";
+  }
+}
+
 function createIgnoreCSSImportsPlugin(): Plugin {
   return {
     name: "veryfront-ignore-css-imports",
@@ -126,6 +135,8 @@ export interface BrowserModuleBundlerOptions {
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
   dependencyPinningSource?: DependencyPinningSourceInput;
+  /** Resolve this request token only after browser-bundle admission is held. */
+  requestedDependencyPinningCacheKey?: string;
   /** Caller cancellation is propagated into the bundler implementation. */
   signal?: AbortSignal;
   /** Stable request identity used to coalesce equivalent concurrent bundles. */
@@ -153,6 +164,8 @@ export interface BrowserModuleBundle {
   source: string;
   contentHash: string;
   importMapHash: string;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
   dependencies: ReadonlyArray<{ path: string; contentHash: string; byteLength: number }>;
   resolutionProbes: ReadonlyArray<{ path: string; state: ResolutionProbeState }>;
 }
@@ -751,6 +764,17 @@ export function bundleBrowserModuleWithMetadata(
       new TypeError("Browser module entrySource requires a content-derived entrySourceKey"),
     );
   }
+  if (
+    options.requestedDependencyPinningCacheKey !== undefined &&
+    (options.dependencyPinningCacheKey !== undefined ||
+      options.dependencyPinningDependencies !== undefined)
+  ) {
+    return Promise.reject(
+      new TypeError(
+        "Browser module requested dependency snapshot cannot be combined with resolved pins",
+      ),
+    );
+  }
   const operationIdentity = options.entrySourceKey === undefined
     ? absPath
     : `${absPath}\0${options.entrySourceKey}`;
@@ -768,6 +792,36 @@ export function bundleBrowserModuleWithMetadata(
           limits,
           signal,
         );
+        const dependencyPinningSource = createTrackedDependencyPinningSource(
+          options.dependencyPinningSource,
+          options.projectDir,
+          tracked,
+        );
+        const dependencySnapshot = options.requestedDependencyPinningCacheKey === undefined
+          ? undefined
+          : await resolveRequestedDependencyPinningSnapshot(
+            dependencyPinningSource,
+            options.requestedDependencyPinningCacheKey,
+          );
+        const dependencySnapshotReadFailure = tracked.getFailure();
+        if (dependencySnapshotReadFailure) throw dependencySnapshotReadFailure;
+        if (
+          options.requestedDependencyPinningCacheKey !== undefined &&
+          (!dependencySnapshot ||
+            dependencySnapshot.cacheKey !== options.requestedDependencyPinningCacheKey)
+        ) {
+          throw new BrowserModuleDependencySnapshotError();
+        }
+        const dependencyPinningCacheKey = dependencySnapshot?.cacheKey ??
+          options.dependencyPinningCacheKey;
+        const dependencyPinningDependencies = dependencySnapshot?.dependencies ??
+          options.dependencyPinningDependencies;
+        const effectiveOptions: BrowserModuleBundlerOptions = {
+          ...options,
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+          dependencyPinningSource,
+        };
 
         const { build } = await import("veryfront/extensions/bundler");
         if (options.entrySource !== undefined) {
@@ -798,14 +852,9 @@ export function bundleBrowserModuleWithMetadata(
         if (boundaryViolation) {
           throw new Error(describeBrowserModuleBoundaryViolation(boundaryViolation));
         }
-        const dependencyPinningSource = createTrackedDependencyPinningSource(
-          options.dependencyPinningSource,
-          options.projectDir,
-          tracked,
-        );
         const importMapJson = options.importMapJson === undefined
           ? await buildTrackedImportMapJson(
-            options,
+            effectiveOptions,
             tracked,
             signal,
             dependencyPinningSource,
@@ -841,13 +890,13 @@ export function bundleBrowserModuleWithMetadata(
                 importMapImports: importMap.imports,
                 projectDir: options.projectDir,
                 projectId: options.projectId ?? options.projectSlug,
-                dependencyPinningCacheKey: options.dependencyPinningCacheKey,
-                dependencyPinningDependencies: options.dependencyPinningDependencies,
+                dependencyPinningCacheKey,
+                dependencyPinningDependencies,
                 dependencyPinningSource,
               }),
               createHttpExternalPlugin({
                 moduleServerOrigin: options.moduleServerOrigin,
-                dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+                dependencyPinningCacheKey,
               }),
             ],
             signal,
@@ -902,6 +951,8 @@ export function bundleBrowserModuleWithMetadata(
           source,
           contentHash,
           importMapHash,
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
           dependencies,
           resolutionProbes,
         });

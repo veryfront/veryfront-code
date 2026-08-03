@@ -6,6 +6,10 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import type { Bundler } from "#veryfront/extensions/bundler/bundler.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
+import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { clearReactVersionCache } from "#veryfront/transforms/esm/package-registry.ts";
 import {
   BrowserModuleBundleError,
   bundleBrowserModule,
@@ -418,25 +422,33 @@ describe(
         rawReads++;
         return Promise.reject(new Error("raw package metadata read is forbidden"));
       };
-
-      const error = await assertRejects(
-        () =>
-          bundleBrowserModuleWithMetadata(entryPath, {
-            adapter,
-            projectDir,
-            projectId: "bounded-package-metadata",
-            dependencyPinningSource: {
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      clearReactVersionCache();
+      try {
+        const error = await assertRejects(
+          () =>
+            bundleBrowserModuleWithMetadata(entryPath, {
+              adapter,
               projectDir,
-              fs: adapter.fs,
-              cacheNamespace: "bounded-package-metadata",
-            },
-            limits: { maxAggregateInputBytes: 1024 * 1024 },
-          }),
-        BrowserModuleBundleError,
-      );
+              projectId: "bounded-package-metadata",
+              requestedDependencyPinningCacheKey: `on:${hashString("[]")}`,
+              dependencyPinningSource: {
+                projectDir,
+                fs: adapter.fs,
+                cacheNamespace: "bounded-package-metadata",
+              },
+              limits: { maxAggregateInputBytes: 1024 * 1024 },
+            }),
+          BrowserModuleBundleError,
+        );
 
-      assertEquals((error as BrowserModuleBundleError).kind, "limit");
-      assertEquals(rawReads, 0);
+        assertEquals((error as BrowserModuleBundleError).kind, "limit");
+        assertEquals(rawReads, 0);
+      } finally {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
+      }
     });
 
     it("rejects invalid UTF-8 through the stable bounded reader", async () => {
@@ -753,6 +765,103 @@ describe(
       }
     });
 
+    it("defers requested snapshot metadata I/O until project admission is held", async () => {
+      const projectDir = "/snapshot-admission-project";
+      const packagePath = `${projectDir}/package.json`;
+      const dependencies = { react: "19.2.4" };
+      const requestedCacheKey = `on:${hashString(JSON.stringify(Object.entries(dependencies)))}`;
+      const adapter = createMockAdapter();
+      const entryPaths = ["One", "Two", "Three"].map(
+        (name) => `${projectDir}/app/${name}.ts`,
+      );
+      for (const entryPath of entryPaths) {
+        adapter.fs.files.set(entryPath, "export default 1;");
+      }
+      adapter.fs.files.set(packagePath, JSON.stringify({ dependencies }));
+      const snapshotRead = adapter.fs.readFileSnapshotWithinLimit!;
+      const stat = adapter.fs.stat;
+      let packageReads = 0;
+      let packageStats = 0;
+      adapter.fs.readFileSnapshotWithinLimit = (path, root, limit) => {
+        if (path === packagePath) packageReads += 1;
+        return snapshotRead(path, root, limit);
+      };
+      adapter.fs.stat = (path) => {
+        if (path === packagePath) packageStats += 1;
+        return stat(path);
+      };
+
+      const release = Promise.withResolvers<void>();
+      const twoStarted = Promise.withResolvers<void>();
+      let buildCalls = 0;
+      const previous = tryResolve<Bundler>("Bundler");
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      register<Bundler>("Bundler", {
+        bundle: async () => {
+          buildCalls += 1;
+          if (buildCalls === 2) twoStarted.resolve();
+          await release.promise;
+          return {
+            outputFiles: [{
+              path: "out.js",
+              contents: new TextEncoder().encode("export default 1;"),
+              text: "export default 1;",
+            }],
+            warnings: [],
+            errors: [],
+          };
+        },
+        transform: () => Promise.resolve({ code: "", warnings: [] }),
+      });
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      clearReactVersionCache();
+
+      try {
+        const occupying = entryPaths.slice(0, 2).map((entryPath, index) =>
+          bundleBrowserModuleWithMetadata(entryPath, {
+            adapter,
+            projectDir,
+            projectId: "snapshot-admission-project",
+            dependencyPinningCacheKey: "off",
+            importMapJson: "{}",
+            singleflightKey: `occupying-${index}`,
+          })
+        );
+        occupying.forEach((promise) => void promise.catch(() => undefined));
+        await twoStarted.promise;
+
+        const queued = bundleBrowserModuleWithMetadata(entryPaths[2]!, {
+          adapter,
+          projectDir,
+          projectId: "snapshot-admission-project",
+          requestedDependencyPinningCacheKey: requestedCacheKey,
+          dependencyPinningSource: {
+            projectDir,
+            fs: adapter.fs,
+            cacheNamespace: "snapshot-admission-project",
+          },
+          singleflightKey: "queued-snapshot",
+        });
+        void queued.catch(() => undefined);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        assertEquals(packageStats, 0);
+        assertEquals(packageReads, 0);
+
+        release.resolve();
+        await Promise.all([...occupying, queued]);
+        assertEquals(packageStats, 1);
+        assertEquals(packageReads, 1);
+      } finally {
+        release.resolve();
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
+        if (previous) register("Bundler", previous);
+        else unregister("Bundler");
+      }
+    });
+
     it("counts project-lane waiters against the isolate-wide queue ceiling", async () => {
       const release = Promise.withResolvers<void>();
       const eightStarted = Promise.withResolvers<void>();
@@ -877,6 +986,70 @@ describe(
       } finally {
         if (previous) register("Bundler", previous);
         else unregister("Bundler");
+      }
+    });
+
+    it("cancels a bounded requested-snapshot metadata read without releasing its permit early", async () => {
+      const projectDir = "/cancelled-snapshot-project";
+      const entryPath = `${projectDir}/app/Counter.ts`;
+      const packagePath = `${projectDir}/package.json`;
+      const dependencies = { react: "19.2.4" };
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(entryPath, "export default 1;");
+      adapter.fs.files.set(packagePath, JSON.stringify({ dependencies }));
+      const snapshotRead = adapter.fs.readFileSnapshotWithinLimit!;
+      const metadataStarted = Promise.withResolvers<void>();
+      const releaseMetadata = Promise.withResolvers<void>();
+      adapter.fs.readFileSnapshotWithinLimit = async (path, root, limit) => {
+        if (path === packagePath) {
+          metadataStarted.resolve();
+          await releaseMetadata.promise;
+        }
+        return await snapshotRead(path, root, limit);
+      };
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      clearReactVersionCache();
+
+      try {
+        const controller = new AbortController();
+        const bundling = bundleBrowserModuleWithMetadata(entryPath, {
+          adapter,
+          projectDir,
+          projectId: "cancelled-snapshot-project",
+          requestedDependencyPinningCacheKey: `on:${
+            hashString(JSON.stringify(Object.entries(dependencies)))
+          }`,
+          dependencyPinningSource: {
+            projectDir,
+            fs: adapter.fs,
+            cacheNamespace: "cancelled-snapshot-project",
+          },
+          signal: controller.signal,
+        });
+        await metadataStarted.promise;
+        controller.abort(new DOMException("metadata cancelled", "AbortError"));
+        await assertRejects(() => bundling, DOMException, "metadata cancelled");
+
+        releaseMetadata.resolve();
+        const next = await bundleBrowserModuleWithMetadata(entryPath, {
+          adapter,
+          projectDir,
+          projectId: "cancelled-snapshot-project",
+          requestedDependencyPinningCacheKey: `on:${
+            hashString(JSON.stringify(Object.entries(dependencies)))
+          }`,
+          dependencyPinningSource: {
+            projectDir,
+            fs: adapter.fs,
+            cacheNamespace: "cancelled-snapshot-project-next",
+          },
+        });
+        assertEquals(next.dependencyPinningCacheKey?.startsWith("on:"), true);
+      } finally {
+        releaseMetadata.resolve();
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
       }
     });
 

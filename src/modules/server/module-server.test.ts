@@ -42,6 +42,10 @@ import {
   getDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { buildImportMapJson, clearImportMapCache } from "../../html/utils.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
+import type { Bundler } from "#veryfront/extensions/bundler/bundler.ts";
+import { bundleBrowserModuleWithMetadata } from "#veryfront/server/shared/browser-module-bundler.ts";
 
 describe("isModuleRequest", () => {
   it("should return true for /_vf_modules/ path", () => {
@@ -579,6 +583,108 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(headResponse.status, 413);
     assertEquals((await getResponse.text()).includes("value3"), false);
     assertEquals(await headResponse.text(), "");
+  });
+
+  it("defers client-boundary dependency metadata until browser admission", async () => {
+    const projectDir = "/module-server-snapshot-admission";
+    const packagePath = `${projectDir}/package.json`;
+    const clientPath = `${projectDir}/app/client.tsx`;
+    const dependencies = { react: "19.2.4" };
+    const requestedCacheKey = `on:${hashString(JSON.stringify(Object.entries(dependencies)))}`;
+    const adapter = createMockAdapter();
+    adapter.fs.files.set(clientPath, '"use client"; export default function Client() {}');
+    adapter.fs.files.set(packagePath, JSON.stringify({ dependencies }));
+    const occupyingPaths = [0, 1].map(
+      (index) => `${projectDir}/app/occupying-${index}.ts`,
+    );
+    for (const path of occupyingPaths) adapter.fs.files.set(path, "export default 1;");
+    const snapshotRead = adapter.fs.readFileSnapshotWithinLimit!;
+    const stat = adapter.fs.stat;
+    let packageReads = 0;
+    let packageStats = 0;
+    adapter.fs.readFileSnapshotWithinLimit = (path, root, limit) => {
+      if (path === packagePath) packageReads += 1;
+      return snapshotRead(path, root, limit);
+    };
+    adapter.fs.stat = (path) => {
+      if (path === packagePath) packageStats += 1;
+      return stat(path);
+    };
+
+    const release = Promise.withResolvers<void>();
+    const twoStarted = Promise.withResolvers<void>();
+    let buildCalls = 0;
+    const previous = tryResolve<Bundler>("Bundler");
+    register<Bundler>("Bundler", {
+      bundle: async () => {
+        buildCalls += 1;
+        if (buildCalls === 2) twoStarted.resolve();
+        await release.promise;
+        return {
+          outputFiles: [{
+            path: "out.js",
+            contents: new TextEncoder().encode("export default 1;"),
+            text: "export default 1;",
+          }],
+          warnings: [],
+          errors: [],
+        };
+      },
+      transform: () => Promise.resolve({ code: "", warnings: [] }),
+    });
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    clearReactVersionCache();
+
+    try {
+      const occupying = occupyingPaths.map((entryPath, index) =>
+        bundleBrowserModuleWithMetadata(entryPath, {
+          adapter,
+          projectDir,
+          projectId: "test",
+          dependencyPinningCacheKey: "off",
+          importMapJson: "{}",
+          singleflightKey: `module-server-occupying-${index}`,
+        })
+      );
+      occupying.forEach((promise) => void promise.catch(() => undefined));
+      await twoStarted.promise;
+
+      const { serveModule } = await import("./module-server.ts");
+      const responsePromise = serveModule(
+        new Request(
+          `http://localhost:3000/_vf_modules/app/client.js?pins=${requestedCacheKey}`,
+        ),
+        {
+          projectId: "test",
+          projectDir,
+          adapter,
+          isLocalProject: false,
+          isProxyMode: true,
+          mode: "preview",
+          config: { experimental: { rsc: true } },
+          dependencyPinningSource: {
+            projectDir,
+            fs: adapter.fs,
+            cacheNamespace: "module-server-snapshot-admission",
+          },
+        },
+      );
+      void responsePromise.catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      assertEquals(packageStats, 0);
+      assertEquals(packageReads, 0);
+
+      release.resolve();
+      const [response] = await Promise.all([responsePromise, ...occupying]);
+      assertEquals(response.status, 200);
+      assertEquals(packageStats, 1);
+      assertEquals(packageReads, 1);
+    } finally {
+      release.resolve();
+      clearReactVersionCache();
+      if (previous) register("Bundler", previous);
+      else unregister("Bundler");
+    }
   });
 
   it("does not let remote requests spoof the local SSR module capability", async () => {
@@ -2841,6 +2947,55 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       clearReactVersionCache();
       await Deno.remove(projectDir, { recursive: true });
     }
+  });
+
+  it("rejects missing and malformed dependency snapshots before metadata I/O", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    clearReactVersionCache();
+    let metadataOperations = 0;
+    const adapter = createMockAdapter();
+    const dependencyPinningSource = {
+      projectDir: "/pre-admission-pin-rejection",
+      cacheNamespace: "module-server-pre-admission-pin-rejection",
+      fs: {
+        readFile: () => {
+          metadataOperations += 1;
+          return Promise.resolve("{}");
+        },
+        stat: () => {
+          metadataOperations += 1;
+          return Promise.resolve({
+            size: 2,
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            mtime: new Date(1),
+          });
+        },
+      },
+    };
+    const { serveModule } = await import("./module-server.ts");
+
+    for (
+      const pathAndQuery of [
+        "/_vf_modules/app/client.js",
+        "/_vf_modules/app/client.js?pins=on%3A",
+        "/_vf_modules/app/client.js?pins=on%3A1&pins=on%3A1",
+      ]
+    ) {
+      const response = await serveModule(
+        new Request(`http://localhost:3000${pathAndQuery}`),
+        {
+          projectId: "pre-admission-pin-rejection",
+          projectDir: "/pre-admission-pin-rejection",
+          adapter,
+          config: { experimental: { rsc: true } },
+          dependencyPinningSource,
+        },
+      );
+      assertEquals(response.status, 409);
+    }
+    assertEquals(metadataOperations, 0);
   });
 
   it("rejects missing, duplicate, malformed, and unknown dependency snapshots", async () => {
