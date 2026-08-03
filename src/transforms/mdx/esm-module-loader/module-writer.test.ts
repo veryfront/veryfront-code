@@ -6,6 +6,7 @@ import { mdxRenderer } from "../index.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/deno.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { extractDependencyPinningPathKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 
 function cacheKeyForDependencies(
   dependencies: Readonly<Record<string, string>>,
@@ -103,9 +104,12 @@ describe("MDX root module cache identity", () => {
         async (input, init) => {
           const request = new Request(input, init);
           const url = new URL(request.url);
-          if (url.pathname !== modulePath) return new Response("not found", { status: 404 });
+          const pinnedPath = extractDependencyPinningPathKey(url.pathname);
+          if (pinnedPath.pathname !== modulePath) {
+            return new Response("not found", { status: 404 });
+          }
           if (
-            url.searchParams.get("pins") !== snapshotPinKey ||
+            pinnedPath.cacheKey !== snapshotPinKey ||
             url.searchParams.get("ssr") !== "true"
           ) {
             rawRequests++;
@@ -130,6 +134,7 @@ describe("MDX root module cache identity", () => {
             dependencies,
             projectDir,
             origin,
+            true,
           ),
       );
 

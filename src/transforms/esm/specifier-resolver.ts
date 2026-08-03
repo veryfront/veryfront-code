@@ -29,6 +29,11 @@ import {
 /** Function signature for caching an HTTP module and returning its local path. */
 export type CacheHttpModuleFn = (url: string, options: CacheOptions) => Promise<string | null>;
 
+function toCacheableHttpSpecifier(specifier: string, moduleServerOrigin?: string): string {
+  if (!specifier.startsWith("/") || !moduleServerOrigin) return specifier;
+  return new URL(specifier, moduleServerOrigin).toString();
+}
+
 function isLocalMappedSpecifier(specifier: string): boolean {
   return specifier.startsWith("/_vf_modules/") ||
     specifier.startsWith("_vf_modules/") ||
@@ -95,7 +100,10 @@ async function resolveSpecifier(
       options.dependencyPinningCacheKey,
       options.moduleServerOrigin,
     );
-    const cached = await cacheHttpModule(effectiveSpecifier, options);
+    const cached = await cacheHttpModule(
+      toCacheableHttpSpecifier(effectiveSpecifier, options.moduleServerOrigin),
+      options,
+    );
     if (!cached) {
       throw new Error(`Failed to cache absolute HTTP module ${effectiveSpecifier}`);
     }
