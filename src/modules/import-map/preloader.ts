@@ -198,7 +198,7 @@ function snapshotPreloadContext(
     throw new IntrinsicTypeError("Import-map projectDir must be a string");
   }
   if (!context) return ObjectFreeze({ projectDir });
-  if (context === null || typeof context !== "object") {
+  if (typeof context !== "object") {
     throw new IntrinsicTypeError("Import-map context must be an object");
   }
   const contentSourceDescriptor = ObjectGetOwnPropertyDescriptor(
