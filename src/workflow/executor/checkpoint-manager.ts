@@ -77,8 +77,8 @@ export class CheckpointManager {
   }
 
   async getAll(runId: string): Promise<Checkpoint[]> {
-    const { getCheckpoints } = this.config.backend;
-    if (getCheckpoints) return getCheckpoints(runId);
+    const { backend } = this.config;
+    if (backend.getCheckpoints) return backend.getCheckpoints(runId);
 
     const latest = await this.getLatest(runId);
     return latest ? [latest] : [];
@@ -155,13 +155,12 @@ export class CheckpointManager {
     return checkpointDefaults[config.type] ?? false;
   }
 
+  /** Retain the newest appended checkpoints, independent of their durable timestamps. */
   async cleanup(runId: string, keepCount: number = 5): Promise<void> {
     const all = await this.getAll(runId);
     if (all.length <= keepCount) return;
 
-    all.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-
-    const idsToDelete = all.slice(keepCount).map((c) => c.id);
+    const idsToDelete = all.slice(0, all.length - keepCount).map((checkpoint) => checkpoint.id);
     if (idsToDelete.length === 0) return;
 
     logger.debug("Cleaning up old checkpoints", {

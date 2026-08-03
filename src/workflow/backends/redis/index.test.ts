@@ -14,6 +14,7 @@ import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { RedisBackend } from "./index.ts";
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 import type { PendingApproval, WorkflowRun } from "../../types.ts";
+import { MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES } from "../../limits.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { WorkflowRunManager } from "../../worker/run-manager.ts";
 import type {
@@ -137,6 +138,18 @@ class MockRedisAdapter implements RedisAdapter {
   eval(script: string, keys: string[], args: string[]): Promise<unknown> {
     const key = keys[0]!;
 
+    if (script.includes("retained-list-append")) {
+      let list = this.lists.get(key);
+      if (!list) {
+        list = [];
+        this.lists.set(key, list);
+      }
+      list.push(args[0]!);
+      const maxEntries = Number(args[1]);
+      if (list.length > maxEntries) list.splice(0, list.length - maxEntries);
+      return Promise.resolve(list.length);
+    }
+
     if (script.includes("conditional-stalled-run-claim")) {
       const claimKey = keys[1]!;
       const observedActivity = args[0]!;
@@ -176,6 +189,10 @@ class MockRedisAdapter implements RedisAdapter {
         this.lists.set(storageKey, list);
       }
       list.push(value);
+      const maxEntries = Number(args[expectedCount + 4]);
+      if (Number.isSafeInteger(maxEntries) && maxEntries > 0 && list.length > maxEntries) {
+        list.splice(0, list.length - maxEntries);
+      }
       return Promise.resolve(1);
     }
 
@@ -929,6 +946,23 @@ describe("RedisBackend", () => {
       assertEquals(all.length, 2);
     });
 
+    it("bounds unconditional checkpoint history at the shared limit", async () => {
+      for (let index = 0; index <= MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES; index++) {
+        await backend.saveCheckpoint("run-cp-bounded", {
+          id: `cp-${index}`,
+          nodeId: `step-${index}`,
+          timestamp: new Date(index),
+          context: { input: {} },
+          nodeStates: {},
+        });
+      }
+
+      const checkpoints = await backend.getCheckpoints("run-cp-bounded");
+      assertEquals(checkpoints.length, MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES);
+      assertEquals(checkpoints[0]?.id, "cp-1");
+      assertEquals(checkpoints.at(-1)?.id, `cp-${MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES}`);
+    });
+
     it("should condition checkpoint appends on the canonical run owner", async () => {
       await backend.createRun(createTestRun("run-cp-owned", {
         status: "running",
@@ -963,6 +997,54 @@ describe("RedisBackend", () => {
         true,
       );
       assertEquals((await backend.getCheckpoints("synthetic-child-run"))[0]?.id, "cp-owned");
+    });
+
+    it("bounds owned checkpoint history without mutating it after a failed fence", async () => {
+      await backend.createRun(createTestRun("run-cp-owned-bounded", {
+        status: "running",
+        workerId: "worker-current",
+      }));
+
+      for (let index = 0; index <= MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES; index++) {
+        assertEquals(
+          await backend.saveCheckpointIfStatusAndWorker(
+            "run-cp-owned-bounded",
+            "run-cp-owned-bounded",
+            ["running"],
+            "worker-current",
+            {
+              id: `owned-${index}`,
+              nodeId: `step-${index}`,
+              timestamp: new Date(index),
+              context: { input: {} },
+              nodeStates: {},
+            },
+          ),
+          true,
+        );
+      }
+
+      const beforeFailedFence = await backend.getCheckpoints("run-cp-owned-bounded");
+      assertEquals(beforeFailedFence.length, MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES);
+      assertEquals(beforeFailedFence[0]?.id, "owned-1");
+
+      assertEquals(
+        await backend.saveCheckpointIfStatusAndWorker(
+          "run-cp-owned-bounded",
+          "run-cp-owned-bounded",
+          ["running"],
+          "worker-stale",
+          {
+            id: "must-not-append",
+            nodeId: "step-stale",
+            timestamp: new Date(),
+            context: { input: {} },
+            nodeStates: {},
+          },
+        ),
+        false,
+      );
+      assertEquals(await backend.getCheckpoints("run-cp-owned-bounded"), beforeFailedFence);
     });
   });
 
