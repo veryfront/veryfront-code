@@ -2486,12 +2486,11 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
           ssrParentUrl.searchParams.set("ssr", "true");
           const ssrParentResponse = await serve(new Request(ssrParentUrl), projectDir);
           assertEquals(ssrParentResponse.status, 200);
-          for (const childName of ["Absolute.js", "Protocol.js"]) {
-            const childFetch = nestedFetches.find((href) =>
-              new URL(href).pathname.endsWith(`/shared/${childName}`)
-            );
-            assertEquals(childFetch !== undefined, true);
-            const childUrl = new URL(childFetch!);
+          const ssrParentCode = await ssrParentResponse.text();
+          assertStringIncludes(ssrParentCode, absolutePath);
+          assertStringIncludes(ssrParentCode, protocolPath);
+          for (const childFetch of nestedFetches) {
+            const childUrl = new URL(childFetch);
             assertEquals(childUrl.searchParams.get("ssr"), "true");
             assertEquals(childUrl.searchParams.get("pins"), snapshot.cacheKey);
           }
