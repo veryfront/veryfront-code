@@ -52,6 +52,14 @@ Deno.test("public agent service options do not expose the internal eager rollbac
   assertEquals(hasOperationalToolLoadingOverride, false);
 });
 
+Deno.test("public agent service options expose deployment-owned remote MCP composition", () => {
+  type HasCreateRemoteToolSource = "createRemoteToolSource" extends
+    keyof NodeVeryfrontCloudAgentServiceOptions ? true
+    : false;
+  const hasCreateRemoteToolSource: HasCreateRemoteToolSource = true;
+  assertEquals(hasCreateRemoteToolSource, true);
+});
+
 type TestDenoRuntime = {
   serve: typeof Deno.serve;
   addSignalListener: typeof Deno.addSignalListener;

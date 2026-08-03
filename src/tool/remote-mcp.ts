@@ -666,6 +666,7 @@ async function postJsonRpc(
   endpoint: string,
   headers: Headers,
   body: Record<string, unknown>,
+  requestFetch: typeof fetch,
   callerSignal: AbortSignal | undefined,
   maxResponseBytes: number,
 ): Promise<unknown> {
@@ -677,7 +678,7 @@ async function postJsonRpc(
   const requestScope = createRequestSignalScope(callerSignal);
 
   try {
-    const response = await guardedOutboundFetch(endpoint, {
+    const response = await requestFetch(endpoint, {
       method: "POST",
       headers,
       body: serializedBody,
@@ -816,9 +817,9 @@ function buildRunContextMeta(
   return Object.keys(meta).length > 0 ? meta : undefined;
 }
 
-/** Create remote MCP tool source. */
-export function createRemoteMCPToolSource(
+function createRemoteMCPToolSourceWithFetch(
   config: RemoteMCPToolSourceConfig,
+  requestFetch: typeof fetch,
 ): RemoteToolSource {
   const id = config.id ?? "remote-mcp";
   const listMethod = config.listMethod ?? "tools/list";
@@ -845,6 +846,7 @@ export function createRemoteMCPToolSource(
             method: listMethod,
             ...(cursor !== undefined ? { params: { cursor } } : {}),
           },
+          requestFetch,
           context?.abortSignal,
           MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
         );
@@ -912,6 +914,7 @@ export function createRemoteMCPToolSource(
               ...(meta ? { _meta: meta } : {}),
             },
           },
+          requestFetch,
           context?.abortSignal,
           MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
         );
@@ -937,4 +940,25 @@ export function createRemoteMCPToolSource(
       }
     },
   };
+}
+
+/**
+ * Create a remote MCP source with transport authority supplied by the caller.
+ *
+ * This is a deployment-composition seam: the framework does not capture or
+ * grant network authority here. Callers remain responsible for constraining
+ * the supplied transport and deciding which source configurations may use it.
+ */
+export function createRemoteMCPToolSourceWithTransport(
+  config: RemoteMCPToolSourceConfig,
+  requestFetch: typeof fetch,
+): RemoteToolSource {
+  return createRemoteMCPToolSourceWithFetch(config, requestFetch);
+}
+
+/** Create a remote MCP source for a tenant-configurable endpoint. */
+export function createRemoteMCPToolSource(
+  config: RemoteMCPToolSourceConfig,
+): RemoteToolSource {
+  return createRemoteMCPToolSourceWithFetch(config, guardedOutboundFetch);
 }

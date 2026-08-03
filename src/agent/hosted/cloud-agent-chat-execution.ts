@@ -182,7 +182,7 @@ export function createAgentRuntime(
     projectScopedRemoteToolOptions: {
       projectNavigationToolNames: DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES,
     },
-    createRemoteToolSource: createRemoteMCPToolSource,
+    createRemoteToolSource: context.options.createRemoteToolSource ?? createRemoteMCPToolSource,
     traceLocalTools: {
       trace: (spanName, operation) => context.infrastructure.tracer.trace(spanName, operation),
       buildAttributes: ({ toolName, toolCallId }) =>

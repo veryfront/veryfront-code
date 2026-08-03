@@ -1,4 +1,5 @@
 import type { AgentServiceSandboxToolsOptions } from "#veryfront/sandbox";
+import type { RemoteMCPToolSourceConfig, RemoteToolSource } from "#veryfront/tool";
 import { agentLogger } from "#veryfront/utils";
 import { __registerTraceContextGetter } from "../../utils/logger/logger.ts";
 import {
@@ -118,6 +119,8 @@ export type NodeVeryfrontCloudAgentServiceOptions = {
   forwardedConfigNamespace?: string;
   /** Framework host tools this service deployment authorizes. */
   hostToolPolicy?: HostedHostToolPolicy;
+  /** Deployment-owned remote MCP source composition. */
+  createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
   createBashTool?: AgentServiceSandboxToolsOptions["createBashTool"];
   env?: CreateNodeAgentServiceRuntimeInfrastructureOptions["env"];
   processTarget?: NodeVeryfrontCloudAgentServiceProcessTarget;

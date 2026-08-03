@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   createRemoteMCPToolSource,
+  createRemoteMCPToolSourceWithTransport,
   MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
   MAX_REMOTE_MCP_TOOL_DEFINITIONS,
   MAX_REMOTE_MCP_TOOL_LIST_PAGES,
@@ -11,6 +12,28 @@ import {
 } from "./remote-mcp.ts";
 
 describe("tool/remote-mcp", () => {
+  it("uses an explicitly supplied host transport without widening the default source", async () => {
+    let transportCalls = 0;
+    const source = createRemoteMCPToolSourceWithTransport(
+      {
+        id: "control-plane",
+        endpoint: "http://veryfront-api/mcp",
+      },
+      async (_input, init) => {
+        transportCalls++;
+        const body = JSON.parse(String(init?.body)) as { id: string };
+        return Response.json({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { tools: [] },
+        });
+      },
+    );
+
+    assertEquals(await source.listTools(), []);
+    assertEquals(transportCalls, 1);
+  });
+
   it("normalizes non-Error caller abort reasons", async () => {
     const controller = new AbortController();
     controller.abort("caller stopped");
