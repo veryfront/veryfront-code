@@ -87,8 +87,8 @@ interface RemoteSchedulePollOptions {
 
 interface LocalScheduleTimeoutOptions {
   maxDelaySeconds?: number;
-  setTimer?: (callback: () => void, delayMs: number) => number;
-  clearTimer?: (timerId: number) => void;
+  setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
+  clearTimer?: (timerId: ReturnType<typeof setTimeout>) => void;
 }
 
 export interface LocalScheduleTimeout {
@@ -122,7 +122,7 @@ export function createLocalScheduleTimeout(
   const clearTimer = options.clearTimer ?? globalThis.clearTimeout;
   const controller = new AbortController();
   let remainingSeconds = timeoutSeconds;
-  let timerId: number | undefined;
+  let timerId: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
 
   const armNextChunk = (): void => {
@@ -160,7 +160,9 @@ export function createLocalScheduleTimeout(
 
 export function normalizeLocalScheduleInput(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("--input JSON file must contain a JSON object.");
+    throw INVALID_ARGUMENT.create({
+      detail: "--input JSON file must contain a JSON object.",
+    });
   }
   return value as Record<string, unknown>;
 }

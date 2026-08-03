@@ -4,6 +4,7 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { clearProjectAgentRuntimeRegistries } from "../../../src/agent/project/agent-runtime.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+import { VeryfrontError } from "veryfront/errors";
 import type { CreateScheduleRunFromSourceResult, Run, VeryfrontRunsClient } from "veryfront/runs";
 import { setJsonMode } from "../../shared/json-output.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
@@ -683,11 +684,12 @@ describe("local schedule execution boundaries", () => {
     assertEquals(normalizeLocalScheduleInput(input), input);
 
     for (const value of [null, "priority", 42, true, []]) {
-      assertThrows(
+      const error = assertThrows(
         () => normalizeLocalScheduleInput(value),
-        Error,
+        VeryfrontError,
         "--input JSON file must contain a JSON object.",
       );
+      assertEquals(error.slug, "invalid-argument");
     }
   });
 
@@ -699,7 +701,7 @@ describe("local schedule execution boundaries", () => {
       setTimer: (callback, delayMs) => {
         callbacks.push(callback);
         delays.push(delayMs);
-        return callbacks.length;
+        return callbacks.length as unknown as ReturnType<typeof setTimeout>;
       },
       clearTimer: () => {},
     });
@@ -724,8 +726,8 @@ describe("local schedule execution boundaries", () => {
   it("disposes the active execution timer after completion", () => {
     const cleared: number[] = [];
     const timeout = createLocalScheduleTimeout(30, {
-      setTimer: () => 17,
-      clearTimer: (timerId) => cleared.push(timerId),
+      setTimer: () => 17 as unknown as ReturnType<typeof setTimeout>,
+      clearTimer: (timerId) => cleared.push(timerId as unknown as number),
     });
 
     timeout.dispose();

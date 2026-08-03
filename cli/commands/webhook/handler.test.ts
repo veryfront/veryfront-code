@@ -1,12 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { clearProjectAgentRuntimeRegistries } from "#veryfront/agent/project/agent-runtime.ts";
 import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+import { VeryfrontError } from "veryfront/errors";
 import { setJsonMode } from "../../shared/json-output.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
-import { handleWebhookCommand } from "./handler.ts";
+import { handleWebhookCommand, toWebhookAgentOptions } from "./handler.ts";
 
 // Derived from the module URL rather than load-time Deno.cwd(): under
 // `deno test --parallel` this module can be evaluated while a sibling test
@@ -209,5 +210,45 @@ describe("webhook command", () => {
       Error,
       'Invalid webhook id: "Invalid ID".',
     );
+  });
+
+  it("reports local-only agent webhook usage failures as invalid arguments", () => {
+    const existingConversationError = assertThrows(
+      () =>
+        toWebhookAgentOptions(
+          {
+            definition: {
+              id: "pull-request",
+              target: { kind: "agent", id: "capture-agent" },
+              agentMessage: { conversationMode: "existing" },
+            },
+            payload: {},
+            matched: true,
+            targetInput: {},
+            agentInput: "Review the payload.",
+          } as unknown as Parameters<typeof toWebhookAgentOptions>[0],
+        ),
+      VeryfrontError,
+      "Local agent webhook runs cannot attach to an existing cloud conversation.",
+    );
+    assertEquals(existingConversationError.slug, "invalid-argument");
+
+    const missingPromptError = assertThrows(
+      () =>
+        toWebhookAgentOptions(
+          {
+            definition: {
+              id: "pull-request",
+              target: { kind: "agent", id: "capture-agent" },
+            },
+            payload: {},
+            matched: true,
+            targetInput: {},
+          } as unknown as Parameters<typeof toWebhookAgentOptions>[0],
+        ),
+      VeryfrontError,
+      "Local agent webhook runs require a rendered prompt.",
+    );
+    assertEquals(missingPromptError.slug, "invalid-argument");
   });
 });

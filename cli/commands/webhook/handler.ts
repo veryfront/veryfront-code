@@ -38,7 +38,7 @@ const parseWebhookArgs = createArgParser(WebhookArgsSchema, {
   debug: { keys: ["debug"], type: "boolean" },
 });
 
-function toWebhookAgentOptions(
+export function toWebhookAgentOptions(
   invocation: PreparedWebhookInvocation,
 ): {
   agentInput?: string;
@@ -47,12 +47,14 @@ function toWebhookAgentOptions(
   const webhook = invocation.definition;
   if (webhook.target.kind !== "agent") return {};
   if (webhook.agentMessage?.conversationMode === "existing") {
-    throw new Error(
-      "Local agent webhook runs cannot attach to an existing cloud conversation.",
-    );
+    throw INVALID_ARGUMENT.create({
+      detail: "Local agent webhook runs cannot attach to an existing cloud conversation.",
+    });
   }
   if (typeof invocation.agentInput !== "string") {
-    throw new Error("Local agent webhook runs require a rendered prompt.");
+    throw INVALID_ARGUMENT.create({
+      detail: "Local agent webhook runs require a rendered prompt.",
+    });
   }
   return {
     agentInput: invocation.agentInput,
