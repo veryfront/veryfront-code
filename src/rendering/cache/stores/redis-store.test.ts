@@ -283,6 +283,43 @@ describe("RedisCacheStore", () => {
       }
     });
 
+    it("recognizes only exact successful Redis integer replies", async () => {
+      const expected: CachePayload = {
+        result: { html: "<p>expected</p>", frontmatter: {}, stream: null },
+        storedAt: 1_000,
+      };
+      const cases: Array<[unknown, boolean]> = [
+        [1, true],
+        ["1", true],
+        [1n, true],
+        [0, false],
+        ["0", false],
+        [true, false],
+      ];
+
+      for (const [reply, expectedResult] of cases) {
+        const client: RedisClient = {
+          ...createRedisClient(),
+          eval: () => Promise.resolve(reply),
+        };
+        register(
+          RedisRuntimeProviderName,
+          createRedisProvider(client, () => Promise.resolve()),
+        );
+        const store = createStore({ keyPrefix: "render:" });
+
+        try {
+          assertEquals(
+            await store.deleteIfUnchanged("reply-key", expected),
+            expectedResult,
+          );
+        } finally {
+          await store.destroy();
+          unregister(RedisRuntimeProviderName);
+        }
+      }
+    });
+
     it("uses object-shaped SCAN results and closes its owned connection", async () => {
       const scanResults = [
         { cursor: 3, keys: ["render:a"] },

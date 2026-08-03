@@ -18,6 +18,10 @@ const REDIS_CLEAR_SCAN_COUNT = 50;
 const COMPARE_AND_DELETE_SCRIPT =
   'if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) else return 0 end';
 
+function isSuccessfulRedisDelete(value: unknown): boolean {
+  return value === 1 || value === "1" || value === 1n;
+}
+
 export interface RedisCacheStoreOptions {
   url?: string;
   keyPrefix?: string;
@@ -183,8 +187,9 @@ export class RedisCacheStore implements CacheStore {
         keys: [this.storageKey(key)],
         arguments: [comparisonValue],
       });
-      if (deleted === 1) this.observedRawByPayload.delete(expected);
-      return deleted === 1;
+      const succeeded = isSuccessfulRedisDelete(deleted);
+      if (succeeded) this.observedRawByPayload.delete(expected);
+      return succeeded;
     } catch (error) {
       this.markRedisUnavailable();
       logger.warn("compare-and-delete failed", { key, error });
