@@ -5,6 +5,11 @@ import type { ModelRuntime } from "#veryfront/provider";
 import { defineSchema } from "#veryfront/schemas";
 import { type RemoteToolSource, tool, type ToolDefinition } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/index.ts";
 import { agent } from "../index.ts";
 import type { AgentConfig, Message } from "../types.ts";
 import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
@@ -1040,6 +1045,55 @@ it("omits provider tools when the runtime cannot call tools", async () => {
   assertEquals(observedSystems.length, 2);
   for (const system of observedSystems) {
     assertEquals(system.includes("- web_search"), false);
+  }
+});
+
+it("legacy local tool suppression does not claim an explicit capability declaration", async () => {
+  const entries: LogEntry[] = [];
+  const originalWarn = console.warn;
+  console.warn = () => undefined;
+  __resetLogRecordEmitterForTests();
+  __registerLogRecordEmitter((entry) => entries.push(entry));
+
+  try {
+    const model: ModelRuntime = {
+      provider: "local",
+      modelId: "legacy-local-model",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+        };
+      },
+      async doStream() {
+        return { stream: new ReadableStream() };
+      },
+    };
+    const assistant = agent({
+      id: "legacy-local-tool-warning",
+      model: "local/legacy-local-model",
+      system: "Answer directly.",
+      skills: false,
+      tools: { get_release: releaseTool() },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
+
+    await assistant.generate({ input: "hi" });
+
+    const warning = entries.find((entry) =>
+      entry.level === "warn" && entry.component === "agent" &&
+      entry.message.includes("Tools will be skipped")
+    );
+    assertEquals(
+      warning?.message,
+      'Agent "legacy-local-tool-warning" has tools configured, but model ' +
+        '"local/legacy-local-model" does not support tool calling. Tools will be skipped.',
+    );
+    assertEquals(warning?.message.includes("declares"), false);
+  } finally {
+    __resetLogRecordEmitterForTests();
+    console.warn = originalWarn;
   }
 });
 

@@ -661,8 +661,8 @@ function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
 
 function warnUnsupportedToolCalling(agentId: string, modelId: string): void {
   logger.warn(
-    `Agent "${agentId}" has tools configured, but model "${modelId}" declares that ` +
-      "it does not support tool calling. Tools will be skipped.",
+    `Agent "${agentId}" has tools configured, but model "${modelId}" does not support ` +
+      "tool calling. Tools will be skipped.",
   );
 }
 

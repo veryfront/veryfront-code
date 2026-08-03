@@ -30,10 +30,16 @@ const GATEWAY_PATHS = new Map<VeryfrontCloudProviderId, string>([
   ["moonshotai", "ai/gateway/moonshotai/v1"],
 ]);
 
-function joinUrl(base: string, path: string): string {
+function parseVeryfrontCloudApiBaseUrl(value: string): URL {
+  if (typeof value !== "string" || value.length === 0 || value.trim() !== value) {
+    throw new TypeError(
+      "Veryfront Cloud API base URL must be a non-empty valid HTTP(S) URL",
+    );
+  }
+
   let url: URL;
   try {
-    url = new URL(base);
+    url = new URL(value);
   } catch {
     throw new TypeError("Veryfront Cloud API base URL must be a valid HTTP(S) URL");
   }
@@ -45,6 +51,11 @@ function joinUrl(base: string, path: string): string {
       "Veryfront Cloud API base URL must not contain embedded credentials",
     );
   }
+  return url;
+}
+
+function joinUrl(base: string, path: string): string {
+  const url = parseVeryfrontCloudApiBaseUrl(base);
   url.pathname = `${url.pathname.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
   url.hash = "";
   return url.toString();
@@ -165,7 +176,7 @@ export function createVeryfrontCloudFetch(
     apiToken,
     "Veryfront Cloud API token",
   );
-  const authorizedOrigin = new URL(apiBaseUrl).origin;
+  const authorizedOrigin = parseVeryfrontCloudApiBaseUrl(apiBaseUrl).origin;
   return (input, init) => {
     const request = new Request(input, init);
     const headers = new Headers(request.headers);

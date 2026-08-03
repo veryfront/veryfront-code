@@ -124,6 +124,28 @@ describe("provider/veryfront-cloud/shared", () => {
     }
   });
 
+  it("rejects unsafe API base URLs before creating a fetch wrapper", () => {
+    const cases = [
+      ["", "non-empty valid HTTP(S) URL"],
+      [" https://api.veryfront.com", "non-empty valid HTTP(S) URL"],
+      ["not a URL", "valid HTTP(S) URL"],
+      ["file:///tmp/gateway", "HTTP or HTTPS"],
+      ["javascript:alert(1)", "HTTP or HTTPS"],
+      [
+        "https://user:private-password@api.veryfront.com/ai/gateway/openai/v1",
+        "must not contain embedded credentials",
+      ],
+    ] as const;
+
+    for (const [baseURL, expectedMessage] of cases) {
+      assertThrows(
+        () => createVeryfrontCloudFetch("vf_test_provider", baseURL),
+        TypeError,
+        expectedMessage,
+      );
+    }
+  });
+
   it("rewrites auth headers for the gateway fetch wrapper", async () => {
     let capturedRequest: Request | undefined;
     globalThis.fetch = ((input: URL | Request | string, init?: RequestInit) => {
