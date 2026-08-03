@@ -21,4 +21,8 @@ describe("header identity encoding", () => {
     assertEquals(encodeIdentityHeaderValue(value), "vf-utf8:vf-utf8%3Aliteral");
     assertEquals(decodeIdentityHeaderValue(encodeIdentityHeaderValue(value)), value);
   });
+
+  it("treats malformed encoded values as absent", () => {
+    assertEquals(decodeIdentityHeaderValue("vf-utf8:%"), undefined);
+  });
 });

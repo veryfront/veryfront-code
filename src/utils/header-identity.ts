@@ -15,5 +15,9 @@ export function encodeIdentityHeaderValue(value: string): string {
 export function decodeIdentityHeaderValue(value: string | null): string | undefined {
   if (!value) return undefined;
   if (!value.startsWith(ENCODED_HEADER_VALUE_PREFIX)) return value;
-  return decodeURIComponent(value.slice(ENCODED_HEADER_VALUE_PREFIX.length));
+  try {
+    return decodeURIComponent(value.slice(ENCODED_HEADER_VALUE_PREFIX.length));
+  } catch {
+    return undefined;
+  }
 }
