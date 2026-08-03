@@ -351,6 +351,9 @@ async function getReadyManifestAsync(
   return await fetchManifest(releaseId);
 }
 
+/**
+ * Fetch or return a cached ready manifest for render-time asset resolution.
+ */
 export async function getReadyManifestForRenderAsync(
   releaseId: string | null | undefined,
   options: ReadyManifestReadOptions = {},

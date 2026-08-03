@@ -66,18 +66,20 @@ const url = releaseAssetUrl("a".repeat(64), "js");
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `clearCachedReleaseAssetManifests` | Clear cached manifest bodies while keeping registered fetchers intact. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L544) |
-| `clearReleaseAssetManifestCache` | Clear the cache and fetcher registry (tests / adapter teardown). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L554) |
+| `clearCachedReleaseAssetManifests` | Clear cached manifest bodies while keeping registered fetchers intact. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L566) |
+| `clearReleaseAssetManifestCache` | Clear the cache and fetcher registry (tests / adapter teardown). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L576) |
 | `contentTypeForExtension` | Resolve the content type for an extension, or null if not allowed. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L96) |
 | `getReadyManifestForRender` | Return a ready manifest for `releaseId` if one is cached, else null. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L257) |
-| `getReadyManifestForRenderAsync` | Await a ready manifest for `releaseId`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L310) |
-| `hasImmutableReleaseAssetDependencies` | True only when manifest dependency entries are safe immutable rewrite targets. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L279) |
+| `getReadyManifestForRenderAsync` | Fetch or return a cached ready manifest for render-time asset resolution. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L357) |
+| `hasImmutableReleaseAssetDependencies` | True only when manifest dependency entries are safe immutable rewrite targets. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L283) |
 | `isAllowedReleaseAssetContentType` | True when the value is a valid allowlisted release asset content type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L105) |
 | `isReleaseAssetManifestEnabled` | True when production manifest consumption is enabled via env flag. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L202) |
+| `isSafeBoundedText` | Check that an untrusted value is a non-empty, trimmed string within `maxLength` that contains no control characters. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L80) |
 | `isValidContentHash` | Validate a content hash is exactly 64 lowercase hex characters. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L114) |
 | `normalizeManifestModuleKey` | Normalize a logical module path to the manifest's key convention. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/html-consumption.ts#L27) |
-| `parseReadyReleaseAssetManifestResponse` | Parse an untrusted ready response without executing accessors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L332) |
-| `parseReleaseAssetManifest` | Parse an untrusted manifest without requiring a registered schema extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L317) |
+| `parseReadyReleaseAssetManifestResponse` | Parse an untrusted ready response without executing accessors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L337) |
+| `parseReleaseAssetManifest` | Parse an untrusted manifest without requiring a registered schema extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L322) |
+| `readUntrustedOwnDataProperty` | Read an own data property from an untrusted value without invoking accessors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L374) |
 | `registerManifestFetcherForRelease` | Register a project-scoped manifest fetcher for the given releaseId. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L158) |
 | `releaseAssetUrl` | Map a 64-hex content hash + extension to its public asset URL. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L85) |
 | `resolveManifestModuleUrl` | Resolve a module URL through the manifest. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/html-consumption.ts#L42) |
@@ -89,24 +91,24 @@ const url = releaseAssetUrl("a".repeat(64), "js");
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ImmutableReleaseAssetManifest` | Manifest whose dependency entries name uploaded content-addressed assets. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L274) |
+| `ImmutableReleaseAssetManifest` | Manifest whose dependency entries name uploaded content-addressed assets. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L278) |
 | `ReadyManifestReadOptions` | Controls revalidation behavior for awaited manifest reads. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L76) |
-| `ReadyReleaseAssetManifestResponse` | Strict ready response with a generation-matched validated manifest body. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L301) |
+| `ReadyReleaseAssetManifestResponse` | Strict ready response with a generation-matched validated manifest body. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L306) |
 | `ReleaseAssetContentType` | MIME types accepted for immutable release asset uploads and responses. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L24) |
-| `ReleaseAssetCssEntry` | Content-addressed CSS entry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L268) |
-| `ReleaseAssetDependencyMode` | Capability represented by entries in the manifest dependency map. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L272) |
-| `ReleaseAssetEntry` | Content-addressed JavaScript module entry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L266) |
+| `ReleaseAssetCssEntry` | Content-addressed CSS entry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L272) |
+| `ReleaseAssetDependencyMode` | Capability represented by entries in the manifest dependency map. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L276) |
+| `ReleaseAssetEntry` | Content-addressed JavaScript module entry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L270) |
 | `ReleaseAssetExtension` | File extensions supported by the immutable release asset endpoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L22) |
-| `ReleaseAssetManifest` | Validated, immutable release asset manifest v2 body. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L262) |
+| `ReleaseAssetManifest` | Validated, immutable release asset manifest v2 body. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L266) |
 | `ReleaseAssetManifestFetchContext` | Cancellation context passed to a release-scoped manifest fetcher. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L91) |
 | `ReleaseAssetManifestFetcher` | Fetcher used to retrieve a manifest for a release. Registered per-releaseId by the runtime adapter that owns that release, so the correct project-scoped token is always used. Returns null when the manifest is unavailable. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L108) |
 | `ReleaseAssetManifestFetcherCleanup` | Idempotent cleanup for one fetcher registration. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L116) |
-| `ReleaseAssetManifestResponse` | Response shape for the GET asset-manifest endpoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L294) |
-| `ReleaseAssetManifestState` | Manifest lifecycle states (DB-owned; mirrored here for runtime checks). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L286) |
-| `ReleaseAssetRouteEntry` | Per-route module and CSS closure. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L270) |
+| `ReleaseAssetManifestResponse` | Response shape for the GET asset-manifest endpoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L299) |
+| `ReleaseAssetManifestState` | Manifest lifecycle states (DB-owned; mirrored here for runtime checks). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L290) |
+| `ReleaseAssetRouteEntry` | Per-route module and CSS closure. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L274) |
 
 ### Constants
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `getReleaseAssetManifestSchema` | Extension-backed validator for the strict release asset manifest v2 body. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L212) |
+| `getReleaseAssetManifestSchema` | Extension-backed validator for the strict release asset manifest v2 body. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L216) |

@@ -46,7 +46,7 @@ const result = await withSpan("load-data", async () => {
 | `captureApplicationError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L223) |
 | `createChildSpan` | Create child span. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L79) |
 | `createFileLogSubscriber` | Create file log subscriber. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/file-log-subscriber.ts#L541) |
-| `createOpenTelemetryServiceTracer` | Create open telemetry service tracer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/service-tracer.ts#L370) |
+| `createOpenTelemetryServiceTracer` | Create open telemetry service tracer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/service-tracer.ts#L364) |
 | `endSpan` | End an active tracing span. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L57) |
 | `extractContext` | Context for extract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L88) |
 | `flushApplicationErrors` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L241) |

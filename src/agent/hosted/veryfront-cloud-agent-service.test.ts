@@ -16,7 +16,13 @@ import {
 } from "#veryfront/observability/application-errors.ts";
 import { register, unregister } from "#veryfront/extensions/contracts.ts";
 import { SandboxShellToolsProviderName } from "#veryfront/extensions/sandbox/index.ts";
-import { tool, toolRegistry } from "#veryfront/tool";
+import {
+  createRemoteMCPToolSource,
+  type RemoteMCPToolSourceConfig,
+  type RemoteToolSource,
+  tool,
+  toolRegistry,
+} from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { __resetLogRecordEmitterForTests, agentLogger } from "#veryfront/utils/logger/index.ts";
 import {
@@ -35,9 +41,13 @@ import {
   veryfrontStudioMcpServer,
 } from "./veryfront-cloud-agent-service.ts";
 import type { NodeVeryfrontCloudAgentServiceOptions } from "./veryfront-cloud-agent-service.ts";
+import { createAgentRuntime } from "./cloud-agent-chat-execution.ts";
+import { createInvokeAgentTool } from "./cloud-agent-child-tools.ts";
+import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
 import { initializeNodeAgentServiceSentryApplicationErrors } from "../service/node-sentry.ts";
+import { getRemoteToolSourceFactory } from "./cloud-agent-config.ts";
 
 type CaptureRecord = {
   error: unknown;
@@ -50,6 +60,123 @@ Deno.test("public agent service options do not expose the internal eager rollbac
     : false;
   const hasOperationalToolLoadingOverride: HasOperationalToolLoadingOverride = false;
   assertEquals(hasOperationalToolLoadingOverride, false);
+});
+
+Deno.test("public agent service options expose deployment-owned remote MCP composition", () => {
+  type HasCreateRemoteToolSource = "createRemoteToolSource" extends
+    keyof NodeVeryfrontCloudAgentServiceOptions ? true
+    : false;
+  const hasCreateRemoteToolSource: HasCreateRemoteToolSource = true;
+  assertEquals(hasCreateRemoteToolSource, true);
+});
+
+Deno.test("root and child runtimes use the deployment-owned remote MCP factory", async () => {
+  const createdConfigs: RemoteMCPToolSourceConfig[] = [];
+  let failStudioListing = false;
+  const injectedFactory = (config: RemoteMCPToolSourceConfig): RemoteToolSource => {
+    createdConfigs.push(config);
+    return {
+      id: config.id ?? "injected",
+      listTools: () =>
+        failStudioListing && config.endpoint === "https://studio.example/mcp"
+          ? Promise.reject(new Error("stop after transport capture"))
+          : Promise.resolve([]),
+      executeTool: () => Promise.resolve(null),
+    };
+  };
+  const context = {
+    options: {
+      createBashTool,
+      createRemoteToolSource: injectedFactory,
+      mcpServers: [veryfrontApiMcpServer(), veryfrontStudioMcpServer()],
+    },
+    infrastructure: {
+      getConfig: () => ({
+        VERYFRONT_API_URL: "https://api.example",
+        VERYFRONT_MCP_URL: "https://api.example/mcp",
+        VERYFRONT_STUDIO_MCP_URL: "https://studio.example/mcp",
+        VERYFRONT_ENABLE_DURABLE_INVOKE_AGENT: false,
+      }),
+      logger: {
+        debug: () => undefined,
+        info: () => undefined,
+        warn: () => undefined,
+        error: () => undefined,
+      },
+      tracer: {
+        trace: (_name: string, operation: () => unknown) => operation(),
+        scope: () => ({ active: () => undefined }),
+      },
+      setActiveSpanAttributes: () => undefined,
+    },
+    discoveryResult: {
+      agents: new Map(),
+      tools: new Map(),
+      sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+    },
+    defaultAgentId: "root-agent",
+    projectSteeringByAgentId: new Map([["root-agent", {
+      createLoadSkillTool: () =>
+        tool({
+          id: "load_skill",
+          description: "Load a skill.",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({ ok: true }),
+        }),
+    }]]),
+    trace: (_name: string, operation: () => unknown) => operation(),
+  } as never;
+  const clientProfile = {
+    id: "veryfront-studio",
+    type: "web",
+    trusted: true,
+    capabilities: ["ui_panels"],
+  };
+
+  await createAgentRuntime(context, {
+    projectId: "project-1",
+    branchId: "branch-1",
+    authToken: "token-1",
+    instructions: "Use the available tools.",
+    agentId: "root-agent",
+    allowedTools: [],
+    allowDelegation: false,
+    clientProfile,
+  });
+  assertEquals(
+    createdConfigs.map(({ id, endpoint }) => ({ id, endpoint })),
+    [
+      { id: "veryfront-mcp", endpoint: "https://api.example/mcp" },
+      { id: "studio-mcp", endpoint: "https://studio.example/mcp" },
+    ],
+  );
+
+  createdConfigs.length = 0;
+  failStudioListing = true;
+  const invokeAgent = createInvokeAgentTool(context, {
+    authToken: "token-1",
+    projectId: "project-1",
+    branchId: "branch-1",
+    agentId: "orchestrator",
+    clientProfile,
+  });
+  await invokeAgent.execute({
+    agent_id: "child-agent",
+    description: "Verify child MCP composition.",
+    prompt: "Inspect the available tools.",
+  }, { toolCallId: "tool-call-1" });
+  assertEquals(
+    createdConfigs.map(({ id, endpoint }) => ({ id, endpoint })),
+    [
+      { id: "veryfront-mcp-fork", endpoint: "https://api.example/mcp" },
+      { id: "studio-mcp-live-tools", endpoint: "https://studio.example/mcp" },
+    ],
+  );
+
+  assertStrictEquals(
+    getRemoteToolSourceFactory({ options: {} } as never),
+    createRemoteMCPToolSource,
+  );
 });
 
 type TestDenoRuntime = {
@@ -1267,6 +1394,57 @@ Deno.test("hosted MCP resolver preserves default behavior without a service ceil
     [{
       kind: "veryfront-studio",
       toolPolicy: { allow: ["studio_open_project"] },
+    }],
+  );
+});
+
+Deno.test("hosted MCP resolver binds deployment-owned transports to first-party defaults", () => {
+  const createRemoteToolSource = () => ({
+    id: "injected",
+    listTools: () => Promise.resolve([]),
+    executeTool: () => Promise.resolve(null),
+  });
+  const serviceGenericMcpServer = {
+    id: "operator-docs",
+    endpoint: "https://operator.example/mcp",
+  } as const;
+  // Project agent parsing rejects generic endpoints. This unchecked shape
+  // verifies the resolver still fails closed if another caller bypasses it.
+  const untrustedGenericAgentConfig = {
+    mcpServers: [{ id: "operator-docs", endpoint: "https://project.example/mcp" }],
+  } as unknown as Pick<RuntimeAgentMarkdownDefinition, "mcpServers">;
+
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveMcpServers({ createRemoteToolSource }),
+    [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }],
+  );
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveMcpServers(
+      { createRemoteToolSource },
+      untrustedGenericAgentConfig,
+    ),
+    [],
+  );
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveMcpServers(
+      { createRemoteToolSource, mcpServers: [serviceGenericMcpServer] },
+      untrustedGenericAgentConfig,
+    ),
+    [serviceGenericMcpServer],
+  );
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveMcpServers(
+      { createRemoteToolSource },
+      {
+        mcpServers: [{
+          kind: "veryfront-api",
+          toolPolicy: { allow: ["read_job"] },
+        }],
+      },
+    ),
+    [{
+      kind: "veryfront-api",
+      toolPolicy: { allow: ["read_job"] },
     }],
   );
 });
