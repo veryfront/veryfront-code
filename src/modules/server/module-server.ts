@@ -795,7 +795,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         isPrivateFrameworkModulePath(modulePath)
       ) {
         return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
-          "Content-Type": "text/plain",
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-store",
         });
       }
 

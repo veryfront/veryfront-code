@@ -1545,6 +1545,8 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     ) {
       const response = await serve(new Request(`http://localhost:3000${path}`));
       assertEquals(response.status, 404, path);
+      assertEquals(response.headers.get("cache-control"), "no-store", path);
+      assertEquals(response.headers.get("content-type"), "text/plain; charset=utf-8", path);
     }
   });
 

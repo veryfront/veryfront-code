@@ -1,5 +1,4 @@
 /** Host-only transport for exact operator-configured control-plane MCP endpoints. */
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import {
   createOutboundFetchBoundary,
   normalizeTrustedEndpoint,
@@ -14,9 +13,14 @@ import type {
 
 // Capture the host transport before project execution can replace global fetch.
 const capturedHostFetch = globalThis.fetch.bind(globalThis);
-function getHostFetch(): typeof fetch {
-  return getHostEnv("DENO_TESTING") === "1" ? globalThis.fetch.bind(globalThis) : capturedHostFetch;
-}
+
+type TrustedControlPlaneMCPToolSourceFactoryOptions = {
+  /** Host-owned test seam. Production composition must omit this field. */
+  hostFetch?: typeof fetch;
+  logger?: {
+    warn(message: string, metadata: { kind: "veryfront-api" | "veryfront-studio" }): void;
+  };
+};
 
 /**
  * Build a source factory that bypasses tenant egress policy only for the exact
@@ -30,8 +34,11 @@ export function createTrustedControlPlaneMCPToolSourceFactory(
     kind: "veryfront-api" | "veryfront-studio";
     endpoint: string;
   }[],
+  options: TrustedControlPlaneMCPToolSourceFactoryOptions = {},
 ): AgentServiceRemoteMcpSourceFactory {
-  const boundary = createOutboundFetchBoundary({ fetch: getHostFetch() });
+  const boundary = createOutboundFetchBoundary({
+    fetch: options.hostFetch ?? capturedHostFetch,
+  });
   const trustedTransports: Array<{
     kind: "veryfront-api" | "veryfront-studio";
     configuredEndpoint: string;
@@ -46,6 +53,9 @@ export function createTrustedControlPlaneMCPToolSourceFactory(
       normalizedEndpoint = normalizeTrustedEndpoint(configuredEndpoint);
     } catch {
       // Unsafe operator endpoints retain guarded egress instead of blocking runtime startup.
+      options.logger?.warn("Ignored invalid control-plane MCP endpoint configuration", {
+        kind: trustedEndpoint.kind,
+      });
       continue;
     }
     trustedTransports[trustedTransports.length] = {
@@ -84,14 +94,20 @@ export function createTrustedControlPlaneMCPToolSourceFactory(
 }
 
 /** Build the shared root/child source factory from host runtime configuration. */
-export function createHostedControlPlaneMCPToolSourceFactory(config: {
-  apiMcpUrl: string;
-  studioMcpUrl?: string | null;
-}): AgentServiceRemoteMcpSourceFactory {
-  return createTrustedControlPlaneMCPToolSourceFactory([
-    { kind: "veryfront-api", endpoint: config.apiMcpUrl },
-    ...(config.studioMcpUrl
-      ? [{ kind: "veryfront-studio" as const, endpoint: config.studioMcpUrl }]
-      : []),
-  ]);
+export function createHostedControlPlaneMCPToolSourceFactory(
+  config: {
+    apiMcpUrl: string;
+    studioMcpUrl?: string | null;
+  },
+  options: TrustedControlPlaneMCPToolSourceFactoryOptions = {},
+): AgentServiceRemoteMcpSourceFactory {
+  return createTrustedControlPlaneMCPToolSourceFactory(
+    [
+      { kind: "veryfront-api", endpoint: config.apiMcpUrl },
+      ...(config.studioMcpUrl
+        ? [{ kind: "veryfront-studio" as const, endpoint: config.studioMcpUrl }]
+        : []),
+    ],
+    options,
+  );
 }

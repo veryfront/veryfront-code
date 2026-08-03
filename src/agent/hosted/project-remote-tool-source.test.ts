@@ -11,6 +11,8 @@ import {
 } from "./project-remote-tool-source.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { createUnconfirmedProjectContextSwitchResult } from "../project/context.ts";
+import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 function projectFileTool(name: string): ToolDefinition {
   return {
@@ -509,18 +511,28 @@ Deno.test("createHostedProjectRemoteToolSources defaults to first-party MCP serv
 });
 
 Deno.test("createHostedProjectRemoteToolSources keeps caller-provided first-party endpoints guarded", async () => {
-  const sources = createHostedProjectRemoteToolSources({
-    authToken: "token-1",
-    apiMcpUrl: "http://veryfront-api:80/mcp",
-    mcpServers: [{ kind: "veryfront-api" }],
-    getProjectId: () => "project-1",
-  });
+  let transportCalls = 0;
+  await withMockFetch(
+    () => {
+      transportCalls++;
+      return Promise.resolve(Response.json({}));
+    },
+    async () => {
+      const sources = createHostedProjectRemoteToolSources({
+        authToken: "token-1",
+        apiMcpUrl: "http://127.0.0.1/mcp",
+        mcpServers: [{ kind: "veryfront-api" }],
+        getProjectId: () => "project-1",
+      });
 
-  await assertRejects(
-    () => sources[0]!.listTools({ projectId: "project-1" }),
-    Error,
-    "Outbound network egress blocked",
+      await assertRejects(
+        () => sources[0]!.listTools({ projectId: "project-1" }),
+        OutboundRequestBlockedError,
+        "Outbound network egress blocked",
+      );
+    },
   );
+  assertEquals(transportCalls, 0);
 });
 
 Deno.test("createHostedProjectRemoteToolSources filters Veryfront API MCP tools with the tool access profile", async () => {

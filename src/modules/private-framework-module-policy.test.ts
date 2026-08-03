@@ -42,4 +42,27 @@ describe("private framework module policy", () => {
       false,
     );
   });
+
+  it("retains private-path classification after primordial mutation", async () => {
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "--quiet",
+        new URL(
+          "./private-framework-module-policy-hostile.fixture.ts",
+          import.meta.url,
+        ).pathname,
+      ],
+      cwd: Deno.cwd(),
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+
+    const stderr = new TextDecoder().decode(output.stderr);
+    assertEquals(output.success, true, stderr);
+    assertEquals(JSON.parse(new TextDecoder().decode(output.stdout)), {
+      canonical: "agent/hosted/internal/control-plane-mcp-source.js",
+      private: true,
+    });
+  });
 });

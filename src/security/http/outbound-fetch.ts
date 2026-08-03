@@ -83,20 +83,10 @@ function getTrustedHostTransport(): OutboundFetchTransport {
     return outboundFetchTransportForTests;
   }
 
-  if (getHostEnv("DENO_TESTING") !== "1") {
-    // Omitting pinnedFetch is deliberate: Node and Bun then use the native
-    // address-pinned transport, while Deno uses its pinned SOCKS client.
-    return { fetch: capturedHostFetch };
-  }
-
-  // Tests explicitly opt into their current deterministic fetch replacement.
-  // The pinned seam receives only addresses that the egress guard validated,
-  // and production never selects this transport.
-  const fetchImpl = globalThis.fetch.bind(globalThis);
-  return {
-    fetch: fetchImpl,
-    pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
-  };
+  // Omitting pinnedFetch is deliberate: Node and Bun then use the native
+  // address-pinned transport, while Deno uses its pinned SOCKS client. Tests
+  // must opt into a deterministic replacement through the explicit seam.
+  return { fetch: capturedHostFetch };
 }
 
 async function fetchWithHostTransport(

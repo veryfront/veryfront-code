@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../../release-assets/constants.ts";
@@ -15,6 +15,7 @@ import {
 } from "#veryfront/transforms/esm/package-registry.ts";
 import type { ImportSpecifierInfo, RewriteContext } from "../types.ts";
 import { VeryfrontStrategy } from "./veryfront-strategy.ts";
+import { VeryfrontError } from "#veryfront/errors";
 
 function makeCtx(overrides: Partial<RewriteContext> = {}): RewriteContext {
   return {
@@ -209,10 +210,16 @@ describe("VeryfrontStrategy", () => {
           "#veryfront/tool/Internal/remote-mcp-transport.ts",
         ]
       ) {
-        assertThrows(
-          () => strategy.rewrite(makeInfo(specifier), makeCtx({ target: "ssr" })),
-          TypeError,
-          "Private Veryfront host module cannot be imported",
+        let thrown: unknown;
+        try {
+          strategy.rewrite(makeInfo(specifier), makeCtx({ target: "ssr" }));
+        } catch (error) {
+          thrown = error;
+        }
+        assertInstanceOf(thrown, VeryfrontError);
+        assertEquals(thrown.slug, "security-violation");
+        assert(
+          thrown.message.includes("Private Veryfront host module cannot be imported"),
         );
       }
     });

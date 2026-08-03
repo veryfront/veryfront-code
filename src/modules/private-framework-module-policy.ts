@@ -4,11 +4,49 @@ const PRIVATE_FRAMEWORK_MODULE_PREFIXES = [
   "tool/internal/",
 ] as const;
 
+const DecodeURIComponent = decodeURIComponent;
+const ReflectApply = Reflect.apply;
+const ArrayPrototypeJoin = Array.prototype.join;
+const StringPrototypeReplaceAll = String.prototype.replaceAll;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeStartsWith = String.prototype.startsWith;
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
+
+function startsWith(value: string, prefix: string): boolean {
+  return ReflectApply(StringPrototypeStartsWith, value, [prefix]) as boolean;
+}
+
+function slice(value: string, start: number, end?: number): string {
+  return ReflectApply(
+    StringPrototypeSlice,
+    value,
+    end === undefined ? [start] : [start, end],
+  ) as string;
+}
+
+function trimTrailing(value: string, characters: string): string {
+  let result = value;
+  while (result.length > 0) {
+    const lastCharacter = result[result.length - 1]!;
+    let shouldTrim = false;
+    for (let index = 0; index < characters.length; index++) {
+      if (lastCharacter === characters[index]) {
+        shouldTrim = true;
+        break;
+      }
+    }
+    if (!shouldTrim) break;
+    result = slice(result, 0, -1);
+  }
+  return result;
+}
+
 function repeatedlyDecodePath(value: string): string {
   let decoded = value;
   for (let index = 0; index < 4; index++) {
     try {
-      const next = decodeURIComponent(decoded);
+      const next = ReflectApply(DecodeURIComponent, undefined, [decoded]) as string;
       if (next === decoded) return decoded;
       decoded = next;
     } catch {
@@ -19,31 +57,57 @@ function repeatedlyDecodePath(value: string): string {
 }
 
 function stripFrameworkModulePrefix(value: string): string {
-  const decoded = repeatedlyDecodePath(value).replaceAll("\\", "/");
-  return decoded
-    .replace(/^\/*_vf_modules\/+_veryfront\//u, "")
-    .replace(/^\/*_veryfront\//u, "")
-    .replace(/^#veryfront\//u, "");
+  const decoded = ReflectApply(StringPrototypeReplaceAll, repeatedlyDecodePath(value), [
+    "\\",
+    "/",
+  ]) as string;
+  let withoutLeadingSlashes = decoded;
+  while (startsWith(withoutLeadingSlashes, "/")) {
+    withoutLeadingSlashes = slice(withoutLeadingSlashes, 1);
+  }
+
+  const internalPrefix = "#veryfront/";
+  if (startsWith(withoutLeadingSlashes, internalPrefix)) {
+    return slice(withoutLeadingSlashes, internalPrefix.length);
+  }
+
+  const frameworkPrefix = "_veryfront/";
+  if (startsWith(withoutLeadingSlashes, frameworkPrefix)) {
+    return slice(withoutLeadingSlashes, frameworkPrefix.length);
+  }
+
+  const modulePrefix = "_vf_modules/";
+  if (startsWith(withoutLeadingSlashes, modulePrefix)) {
+    let nestedPath = slice(withoutLeadingSlashes, modulePrefix.length);
+    while (startsWith(nestedPath, "/")) nestedPath = slice(nestedPath, 1);
+    if (startsWith(nestedPath, frameworkPrefix)) {
+      return slice(nestedPath, frameworkPrefix.length);
+    }
+  }
+
+  return decoded;
 }
 
 function canonicalizePath(value: string, foldFilesystemAliases: boolean): string {
   const withoutPrefix = stripFrameworkModulePrefix(value);
   const segments: string[] = [];
-  for (const rawSegment of withoutPrefix.split("/")) {
-    const spaceTrimmedSegment = rawSegment.replace(/ +$/gu, "");
+  const rawSegments = ReflectApply(StringPrototypeSplit, withoutPrefix, ["/"]) as string[];
+  for (let index = 0; index < rawSegments.length; index++) {
+    const rawSegment = rawSegments[index]!;
+    const spaceTrimmedSegment = trimTrailing(rawSegment, " ");
     const segment = foldFilesystemAliases
       ? spaceTrimmedSegment === "." || spaceTrimmedSegment === ".."
         ? spaceTrimmedSegment
-        : rawSegment.replace(/[. ]+$/gu, "").toLowerCase()
+        : ReflectApply(StringPrototypeToLowerCase, trimTrailing(rawSegment, ". "), []) as string
       : rawSegment;
     if (segment === "" || segment === ".") continue;
     if (segment === "..") {
-      segments.pop();
+      if (segments.length > 0) segments.length--;
       continue;
     }
-    segments.push(segment);
+    segments[segments.length] = segment;
   }
-  return segments.join("/");
+  return ReflectApply(ArrayPrototypeJoin, segments, ["/"]) as string;
 }
 
 /** Canonicalize a framework module path for normal module resolution. */
@@ -54,7 +118,14 @@ export function canonicalizeFrameworkModulePath(value: string): string {
 /** Return whether the canonical path belongs to a host-only framework subtree. */
 export function isPrivateFrameworkModulePath(value: string): boolean {
   const canonicalPath = canonicalizePath(value, true);
-  return PRIVATE_FRAMEWORK_MODULE_PREFIXES.some((prefix) =>
-    canonicalPath === prefix.slice(0, -1) || canonicalPath.startsWith(prefix)
-  );
+  for (let index = 0; index < PRIVATE_FRAMEWORK_MODULE_PREFIXES.length; index++) {
+    const prefix = PRIVATE_FRAMEWORK_MODULE_PREFIXES[index]!;
+    if (
+      canonicalPath === slice(prefix, 0, -1) ||
+      startsWith(canonicalPath, prefix)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }

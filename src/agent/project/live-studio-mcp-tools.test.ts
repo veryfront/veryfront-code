@@ -7,6 +7,8 @@ import type {
 } from "#veryfront/tool";
 import { buildStudioMcpHeaders, createLiveStudioMcpTools } from "./live-studio-mcp-tools.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
+import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 const trustedStudioProfile: RuntimeClientProfile = {
   id: "veryfront-studio",
@@ -81,17 +83,27 @@ Deno.test("buildStudioMcpHeaders includes auth and optional context headers", ()
 });
 
 Deno.test("createLiveStudioMcpTools keeps caller-provided Studio endpoints guarded", async () => {
-  await assertRejects(
-    () =>
-      createLiveStudioMcpTools({
-        authToken: "auth-token",
-        clientProfile: trustedStudioProfile,
-        getProjectId: () => "project-1",
-        studioMcpUrl: "http://veryfront-studio:80/mcp",
-      }),
-    Error,
-    "Outbound network egress blocked",
+  let transportCalls = 0;
+  await withMockFetch(
+    () => {
+      transportCalls++;
+      return Promise.resolve(Response.json({}));
+    },
+    async () => {
+      await assertRejects(
+        () =>
+          createLiveStudioMcpTools({
+            authToken: "auth-token",
+            clientProfile: trustedStudioProfile,
+            getProjectId: () => "project-1",
+            studioMcpUrl: "http://127.0.0.1/mcp",
+          }),
+        OutboundRequestBlockedError,
+        "Outbound network egress blocked",
+      );
+    },
   );
+  assertEquals(transportCalls, 0);
 });
 
 Deno.test("createLiveStudioMcpTools reconnects studio tools when the active project changes", async () => {

@@ -144,6 +144,8 @@ export function createAgentRuntime(
   const createRemoteToolSource = createHostedControlPlaneMCPToolSourceFactory({
     apiMcpUrl: config.VERYFRONT_MCP_URL,
     studioMcpUrl: config.VERYFRONT_STUDIO_MCP_URL,
+  }, {
+    logger: context.infrastructure.logger,
   });
   const localToolRuntime = createHostedRootLocalToolRuntime({
     allowedToolNames: options.allowedTools,

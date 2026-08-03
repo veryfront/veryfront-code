@@ -19,8 +19,7 @@ import {
 describe("tool/remote-mcp", () => {
   it("uses the exact trusted control-plane endpoint for first-party list and call", async () => {
     const seenRequests: string[] = [];
-
-    await withMockFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const hostFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const endpoint = String(input);
       assertEquals(init?.redirect, "error");
       const body = JSON.parse(String(init?.body)) as { id: string; method: string };
@@ -39,34 +38,58 @@ describe("tool/remote-mcp", () => {
           }
           : { content: [{ type: "text", text: '{"skills":[]}' }] },
       });
-    }, async () => {
-      const createSource = createHostedControlPlaneMCPToolSourceFactory({
+    };
+    const createSource = createHostedControlPlaneMCPToolSourceFactory(
+      {
         apiMcpUrl: "http://veryfront-api:80/mcp",
         studioMcpUrl: "http://veryfront-studio:80/mcp",
-      });
-      const apiSource = createSource({
-        id: "veryfront-mcp",
-        endpoint: "http://veryfront-api:80/mcp",
-        headers: { Authorization: "Bearer test-token" },
-      }, "veryfront-api");
-      const studioSource = createSource({
-        id: "studio-mcp",
-        endpoint: "http://veryfront-studio:80/mcp",
-        headers: { Authorization: "Bearer test-token" },
-      }, "veryfront-studio");
+      },
+      { hostFetch },
+    );
+    const apiSource = createSource({
+      id: "veryfront-mcp",
+      endpoint: "http://veryfront-api:80/mcp",
+      headers: { Authorization: "Bearer test-token" },
+    }, "veryfront-api");
+    const studioSource = createSource({
+      id: "studio-mcp",
+      endpoint: "http://veryfront-studio:80/mcp",
+      headers: { Authorization: "Bearer test-token" },
+    }, "veryfront-studio");
 
-      assertEquals((await apiSource.listTools()).map((tool) => tool.name), ["list_skills"]);
-      assertEquals(await apiSource.executeTool("list_skills", {}), { skills: [] });
-      assertEquals((await studioSource.listTools()).map((tool) => tool.name), [
-        "studio_suggestions",
-      ]);
-    });
+    assertEquals((await apiSource.listTools()).map((tool) => tool.name), ["list_skills"]);
+    assertEquals(await apiSource.executeTool("list_skills", {}), { skills: [] });
+    assertEquals((await studioSource.listTools()).map((tool) => tool.name), [
+      "studio_suggestions",
+    ]);
 
     assertEquals(seenRequests, [
       "http://veryfront-api/mcp:tools/list",
       "http://veryfront-api/mcp:tools/call",
       "http://veryfront-studio/mcp:tools/list",
     ]);
+  });
+
+  it("keeps trusted host transport captured when the ambient fetch changes", async () => {
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "--quiet",
+        new URL("./remote-mcp-captured-host-fetch.fixture.ts", import.meta.url).pathname,
+      ],
+      cwd: Deno.cwd(),
+      env: { DENO_TESTING: "1" },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+
+    const stderr = new TextDecoder().decode(output.stderr);
+    assertEquals(output.success, true, stderr);
+    assertEquals(JSON.parse(new TextDecoder().decode(output.stdout)), {
+      attackerCalls: 0,
+      capturedCalls: 1,
+      toolNames: ["captured_transport"],
+    });
   });
 
   it("keeps untrusted endpoints guarded when the host trusts first-party MCP", async () => {
@@ -157,50 +180,35 @@ describe("tool/remote-mcp", () => {
   });
 
   it("ignores an inherited first-party kind when selecting trusted transport", async () => {
-    let transportCalls = 0;
-    const prototype = Object.prototype as { kind?: string };
-    Object.defineProperty(prototype, "kind", {
-      configurable: true,
-      value: "veryfront-api",
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "--quiet",
+        new URL("./remote-mcp-inherited-kind.fixture.ts", import.meta.url).pathname,
+      ],
+      cwd: Deno.cwd(),
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+
+    const stderr = new TextDecoder().decode(output.stderr);
+    assertEquals(output.success, true, stderr);
+    assertEquals(JSON.parse(new TextDecoder().decode(output.stdout)), {
+      blocked: true,
+      transportCalls: 0,
     });
-
-    try {
-      await withMockFetch(() => {
-        transportCalls++;
-        return Promise.resolve(Response.json({
-          jsonrpc: "2.0",
-          id: "response-1",
-          result: { tools: [] },
-        }));
-      }, async () => {
-        const endpoint = "http://veryfront-api:80/mcp";
-        const createSource = createHostedControlPlaneMCPToolSourceFactory({
-          apiMcpUrl: endpoint,
-        });
-        const resolved = resolveAgentServiceRemoteMcpConfig({
-          server: { endpoint } as AgentServiceMcpServerConfig,
-          authToken: "host-token",
-          apiMcpUrl: endpoint,
-        });
-        const source = createSource(resolved!.config, resolved!.trustedKind);
-
-        await assertRejects(
-          () => source.listTools(),
-          Error,
-          "Outbound network egress blocked",
-        );
-      });
-    } finally {
-      delete prototype.kind;
-    }
-
-    assertEquals(transportCalls, 0);
   });
 
   it("falls back to guarded egress when an operator endpoint is unsafe", async () => {
-    const createSource = createHostedControlPlaneMCPToolSourceFactory({
-      apiMcpUrl: "http://localhost/mcp",
-    });
+    const warnings: Array<{ message: string; metadata: unknown }> = [];
+    const createSource = createHostedControlPlaneMCPToolSourceFactory(
+      { apiMcpUrl: "http://localhost/mcp" },
+      {
+        logger: {
+          warn: (message, metadata) => warnings.push({ message, metadata }),
+        },
+      },
+    );
     const source = createSource({
       id: "local-api-mcp",
       endpoint: "http://localhost/mcp",
@@ -211,6 +219,10 @@ describe("tool/remote-mcp", () => {
       Error,
       "Outbound network egress blocked",
     );
+    assertEquals(warnings, [{
+      message: "Ignored invalid control-plane MCP endpoint configuration",
+      metadata: { kind: "veryfront-api" },
+    }]);
   });
 
   it("rejects forged host transport authority before invoking caller-controlled fetch", async () => {

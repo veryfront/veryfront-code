@@ -25,6 +25,7 @@ import {
   canonicalizeFrameworkModulePath,
   isPrivateFrameworkModulePath,
 } from "#veryfront/modules/private-framework-module-policy.ts";
+import { SECURITY_VIOLATION } from "#veryfront/errors";
 
 /**
  * Module overrides for framework barrels that are too broad for a target.
@@ -91,7 +92,9 @@ export class VeryfrontStrategy implements ImportRewriteStrategy {
     // Handle #veryfront/* (internal framework imports)
     if (specifier.startsWith("#veryfront/")) {
       if (isPrivateFrameworkModulePath(specifier)) {
-        throw new TypeError(`Private Veryfront host module cannot be imported: ${specifier}`);
+        throw SECURITY_VIOLATION.create({
+          detail: `Private Veryfront host module cannot be imported: ${specifier}`,
+        });
       }
       const path = canonicalizeFrameworkModulePath(specifier);
       const canonicalSpecifier = `#veryfront/${path}`;

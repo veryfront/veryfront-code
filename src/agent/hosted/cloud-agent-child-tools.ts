@@ -413,7 +413,9 @@ export function createInvokeAgentTool(
       refreshProjectSkillIds(context, projectSkillContext),
     createAgentServiceSandboxTools,
     createLiveStudioTools: createLiveStudioMcpTools,
-    createRemoteToolSource: createHostedControlPlaneMCPToolSourceFactory(config),
+    createRemoteToolSource: createHostedControlPlaneMCPToolSourceFactory(config, {
+      logger: context.infrastructure.logger,
+    }),
     createToolsFromRemoteDefinitions,
     requireDurableInvokeAgent: options?.requireDurable,
   });
