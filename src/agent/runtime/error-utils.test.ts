@@ -115,6 +115,31 @@ describe("agent/runtime/error-utils", () => {
       assertEquals(stringifyToolError(proxy), "Unknown error");
     });
 
+    it("fails closed for active proxies without invoking traps", () => {
+      let calls = 0;
+      const proxy = new Proxy({}, {
+        get(target, property, receiver) {
+          calls += 1;
+          return Reflect.get(target, property, receiver);
+        },
+        getOwnPropertyDescriptor(target, property) {
+          calls += 1;
+          return Reflect.getOwnPropertyDescriptor(target, property);
+        },
+        getPrototypeOf(target) {
+          calls += 1;
+          return Reflect.getPrototypeOf(target);
+        },
+        ownKeys(target) {
+          calls += 1;
+          return Reflect.ownKeys(target);
+        },
+      });
+
+      assertEquals(stringifyToolError(proxy), "Unknown error");
+      assertEquals(calls, 0);
+    });
+
     it("bounds direct and Error diagnostic text by UTF-8 byte length", () => {
       const oversized = "é".repeat(MAX_TOOL_ERROR_TEXT_BYTES);
       const direct = stringifyToolError(oversized);

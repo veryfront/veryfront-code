@@ -1,4 +1,5 @@
 import { snapshotJsonValue } from "#veryfront/provider/runtime-loader/json-snapshot.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
 export { createAbortError, throwIfAborted } from "#veryfront/utils/abort.ts";
 
@@ -86,6 +87,10 @@ function readNativeDomExceptionMessage(error: unknown): string | undefined {
 export function stringifyToolError(error: unknown): string {
   if (typeof error === "string" && error.length > 0) {
     return boundToolErrorText(error);
+  }
+
+  if (isProxyWithoutHooks(error)) {
+    return UNKNOWN_TOOL_ERROR_TEXT;
   }
 
   const ownMessage = readOwnMessage(error);
