@@ -22,6 +22,16 @@ import {
   sanitizeUrlCredentials,
 } from "./redact.ts";
 
+// Capture serialization intrinsics before project code can modify globals.
+// Logging is a safety boundary and must not become throwable or leak data when
+// a tenant changes mutable Object/Array prototypes in a shared runtime.
+const arrayIsArray = Array.isArray;
+const jsonStringify = JSON.stringify;
+const objectCreate = Object.create;
+const objectDefineProperty = Object.defineProperty;
+const objectHasOwn = Object.hasOwn;
+const objectValues = Object.values;
+
 export enum LogLevel {
   DEBUG = 0,
   INFO = 1,
@@ -264,7 +274,7 @@ function extractContext(
       error = serializeError(arg);
       continue;
     }
-    if (typeof arg === "object" && arg !== null && !Array.isArray(arg)) {
+    if (typeof arg === "object" && arg !== null && !arrayIsArray(arg)) {
       const contextArg = arg as Record<string, unknown>;
       if (contextArg.error instanceof Error) {
         const { error: contextError, ...rest } = contextArg;
@@ -351,8 +361,8 @@ function sanitizeStringFieldValue(value: unknown): string {
 function blockInheritedSerializationHooks(value: unknown): void {
   if (value === null || typeof value !== "object") return;
 
-  if (!Object.hasOwn(value, "toJSON")) {
-    Object.defineProperty(value, "toJSON", {
+  if (!objectHasOwn(value, "toJSON")) {
+    objectDefineProperty(value, "toJSON", {
       configurable: false,
       enumerable: false,
       value: undefined,
@@ -360,22 +370,27 @@ function blockInheritedSerializationHooks(value: unknown): void {
     });
   }
 
-  if (Array.isArray(value)) {
-    for (const item of value) blockInheritedSerializationHooks(item);
+  if (arrayIsArray(value)) {
+    for (let index = 0; index < value.length; index++) {
+      blockInheritedSerializationHooks(value[index]);
+    }
     return;
   }
-  for (const item of Object.values(value)) blockInheritedSerializationHooks(item);
+  const values = objectValues(value);
+  for (let index = 0; index < values.length; index++) {
+    blockInheritedSerializationHooks(values[index]);
+  }
 }
 
 function createFallbackLogEntry(entry: LogEntry): Record<string, unknown> {
-  const fallback = Object.create(null) as Record<string, unknown>;
+  const fallback = objectCreate(null) as Record<string, unknown>;
   fallback.timestamp = entry.timestamp;
   fallback.level = entry.level;
   fallback.service = entry.service;
   fallback.veryfrontVersion = entry.veryfrontVersion;
   fallback.message = entry.message;
   if (entry.component !== undefined) fallback.component = entry.component;
-  const context = Object.create(null) as Record<string, string>;
+  const context = objectCreate(null) as Record<string, string>;
   context.unserializable_context = REDACTED;
   fallback.context = context;
   return fallback;
@@ -391,9 +406,9 @@ function stringifyLogEntry(entry: LogEntry): string {
   try {
     const snapshot = redactForSerialization(entry);
     blockInheritedSerializationHooks(snapshot);
-    return JSON.stringify(snapshot);
+    return jsonStringify(snapshot);
   } catch {
-    return JSON.stringify(createFallbackLogEntry(entry));
+    return jsonStringify(createFallbackLogEntry(entry));
   }
 }
 

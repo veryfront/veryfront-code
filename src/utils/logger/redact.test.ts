@@ -268,6 +268,33 @@ describe("logger/redact", () => {
       }
     });
 
+    it("keeps assignment redaction fail-closed after prototype methods are replaced", () => {
+      const originalIncludes = String.prototype.includes;
+      const originalSplit = String.prototype.split;
+      const originalFilter = Array.prototype.filter;
+      const originalSome = Array.prototype.some;
+      let sensitive: string;
+      let benign: string;
+
+      try {
+        String.prototype.includes = () => false;
+        String.prototype.split = () => ["mapping"];
+        Array.prototype.filter = () => [];
+        Array.prototype.some = () => false;
+
+        sensitive = sanitizeUrlCredentials("refreshToken=prototype-poison-secret");
+        benign = sanitizeUrlCredentials("mapping: 4 routes resolved");
+      } finally {
+        String.prototype.includes = originalIncludes;
+        String.prototype.split = originalSplit;
+        Array.prototype.filter = originalFilter;
+        Array.prototype.some = originalSome;
+      }
+
+      assertEquals(sensitive, `refreshToken=${REDACTED}`);
+      assertEquals(benign, "mapping: 4 routes resolved");
+    });
+
     it("masks common provider token prefixes without assignment syntax", () => {
       const message = "Using token sk-proj-abc123456789";
       const sanitized = sanitizeUrlCredentials(message);

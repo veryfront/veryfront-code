@@ -613,6 +613,27 @@ describe("logger", () => {
         restore();
       }
     });
+
+    it("uses the captured JSON serializer when the global is replaced", () => {
+      const { getOutput, restore } = captureConsoleLog();
+      const originalStringify = JSON.stringify;
+
+      try {
+        withJsonLogFormat(() => {
+          JSON.stringify = () => {
+            throw new Error("project code replaced JSON.stringify");
+          };
+          serverLogger.info("Protected serializer", { apiKey: "sk-project-secret" });
+        });
+      } finally {
+        JSON.stringify = originalStringify;
+        restore();
+      }
+
+      const entry = JSON.parse(getOutput()) as LogEntry;
+      assertEquals(entry.message, "Protected serializer");
+      assertEquals(entry.context?.apiKey, "[REDACTED]");
+    });
   });
 
   describe("text output format", () => {

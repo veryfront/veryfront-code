@@ -22,10 +22,17 @@ export const REDACTED = "[REDACTED]";
 
 const apply = Reflect.apply;
 const NativeUint32Array = Uint32Array;
+const arrayIsArray = Array.isArray;
+const objectDefineProperty = Object.defineProperty;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const objectHasOwn = Object.hasOwn;
 const regExpExec = RegExp.prototype.exec;
 const regExpReplace = RegExp.prototype[Symbol.replace];
 const stringCharCodeAt = String.prototype.charCodeAt;
+const stringIncludes = String.prototype.includes;
 const stringSlice = String.prototype.slice;
+const stringSplit = String.prototype.split;
 const stringToLowerCase = String.prototype.toLowerCase;
 const NON_ALPHANUMERIC_PATTERN = /[^a-z0-9]/g;
 const CAMEL_CASE_BOUNDARY_PATTERN = /([a-z0-9])([A-Z])/g;
@@ -218,8 +225,10 @@ export function isSensitiveKey(key: string): boolean {
   }
 
   const normalized = normalizeToAlphanumeric(key);
-  const sensitive = normalized === "auth" ||
-    SENSITIVE_KEY_PATTERNS.some((pattern) => normalized.includes(pattern));
+  let sensitive = normalized === "auth";
+  for (let index = 0; !sensitive && index < SENSITIVE_KEY_PATTERNS.length; index++) {
+    sensitive = apply(stringIncludes, normalized, [SENSITIVE_KEY_PATTERNS[index]]) as boolean;
+  }
 
   if (cacheable) {
     if (sensitiveKeyCache.size >= SENSITIVE_KEY_CACHE_MAX_SIZE) {
@@ -254,7 +263,7 @@ interface RedactionBudget {
  */
 function classifyArray(value: object): boolean | null {
   try {
-    return Array.isArray(value);
+    return arrayIsArray(value);
   } catch {
     return null;
   }
@@ -269,14 +278,14 @@ function readSerializationHook(value: object): unknown {
   let owner: object | null = value;
   while (owner !== null) {
     if (owner === Object.prototype || owner === Array.prototype) return undefined;
-    const descriptor = Object.getOwnPropertyDescriptor(owner, "toJSON");
+    const descriptor = objectGetOwnPropertyDescriptor(owner, "toJSON");
     if (descriptor !== undefined) {
-      if (!Object.hasOwn(descriptor, "value")) {
+      if (!objectHasOwn(descriptor, "value")) {
         throw new TypeError("serialization hooks must be data properties");
       }
       return descriptor.value;
     }
-    owner = Object.getPrototypeOf(owner);
+    owner = objectGetPrototypeOf(owner);
   }
   return undefined;
 }
@@ -388,12 +397,12 @@ function redactValue(
     const record = value as Record<string, unknown>;
     let propertyCount = 0;
     for (const key in record) {
-      if (!Object.hasOwn(record, key)) continue;
+      if (!objectHasOwn(record, key)) continue;
       propertyCount++;
       if (propertyCount > MAX_CONTAINER_ENTRIES) return REDACTED;
 
       if (isSensitiveKey(key)) {
-        Object.defineProperty(out, key, {
+        objectDefineProperty(out, key, {
           configurable: true,
           enumerable: true,
           value: REDACTED,
@@ -408,7 +417,7 @@ function redactValue(
       if (mode === "serialization" && child === undefined) continue;
       const redactedChild = redactValue(child, depth + 1, seen, mode, budget);
       if (budget.exhausted) return REDACTED;
-      Object.defineProperty(out, key, {
+      objectDefineProperty(out, key, {
         configurable: true,
         enumerable: true,
         value: redactedChild,
@@ -725,17 +734,18 @@ function isSensitiveAssignmentKey(key: string): boolean {
     "$1 $2",
   ]) as string;
   const lowercase = apply(stringToLowerCase, withBoundaries, []) as string;
-  const tokens = lowercase.split(IDENTIFIER_SEPARATOR_PATTERN).filter(Boolean);
+  const tokens = apply(stringSplit, lowercase, [IDENTIFIER_SEPARATOR_PATTERN]) as string[];
 
   for (let start = 0; start < tokens.length; start++) {
+    if (tokens[start]!.length === 0) continue;
     let candidate = "";
     for (let end = start; end < tokens.length; end++) {
-      candidate += tokens[end];
-      if (
-        candidate === "auth" ||
-        SENSITIVE_KEY_PATTERNS.some((pattern) => candidate === pattern)
-      ) {
-        return true;
+      const token = tokens[end]!;
+      if (token.length === 0) continue;
+      candidate += token;
+      if (candidate === "auth") return true;
+      for (let index = 0; index < SENSITIVE_KEY_PATTERNS.length; index++) {
+        if (candidate === SENSITIVE_KEY_PATTERNS[index]) return true;
       }
     }
   }
@@ -872,9 +882,10 @@ export function sanitizeUrlCredentials(input: string): string {
   out = apply(regExpReplace, PROVIDER_CREDENTIAL_PATTERN, [out, REDACTED]) as string;
 
   // 6) Credential assignments embedded in free-form messages/errors. Match
-  // generic identifier-shaped keys and delegate classification to the same
-  // deny-list used for structured context. This keeps JSON snippets, header
-  // dumps, and ordinary `key=value` text from drifting to a weaker policy.
+  // generic identifier-shaped keys and apply the same credential vocabulary
+  // at identifier boundaries. This keeps JSON snippets, header dumps, and
+  // ordinary `key=value` text from drifting to a weaker policy without
+  // masking benign words that merely contain a short pattern.
   // Handle quoted JSON/object keys first and preserve their quoting so the
   // sanitized text remains intelligible and structurally valid.
   out = redactCredentialAssignments(
