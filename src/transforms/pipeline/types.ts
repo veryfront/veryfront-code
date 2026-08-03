@@ -141,7 +141,11 @@ export interface TransformContext {
 export interface TransformPlugin {
   /** Plugin name for logging/debugging */
   name: string;
-  /** Stage this plugin runs at */
+  /**
+   * Numeric ordering coordinate for this plugin.
+   * TransformStage values are phase anchors; finite fractional values may run
+   * between anchors when a plugin needs a stable intermediate position.
+   */
   stage: TransformStage;
   /**
    * Stable, versioned identity for output-affecting custom plugin behavior.

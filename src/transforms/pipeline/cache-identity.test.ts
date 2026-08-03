@@ -179,15 +179,37 @@ describe("transform pipeline cache identity", () => {
     assertThrows(() => getCustomPluginCacheIdentity([plugin]), TypeError, "invalid name");
   });
 
-  it("rejects fractional custom plugin stages", () => {
+  it("accepts fractional custom plugin stages between enum anchors", () => {
     const plugin: TransformPlugin = {
       name: "custom",
-      stage: TransformStage.FINALIZE + 0.5,
+      stage: TransformStage.RESOLVE_ALIASES + 0.5,
       cacheIdentity: "custom@1",
       transform,
     };
 
-    assertThrows(() => getCustomPluginCacheIdentity([plugin]), TypeError, "invalid stage");
+    const result = getCustomPluginCacheIdentity([plugin]);
+    assertEquals(result.cacheable, true);
+    if (result.cacheable) {
+      assertEquals(result.identity, [[
+        0,
+        "custom",
+        TransformStage.RESOLVE_ALIASES + 0.5,
+        "custom@1",
+      ]]);
+    }
+  });
+
+  it("rejects non-finite and unreasonably large custom plugin stages", () => {
+    for (const stage of [NaN, Infinity, -Infinity, 1_000_001, -1_000_001]) {
+      const plugin = {
+        name: "custom",
+        stage,
+        cacheIdentity: "custom@1",
+        transform,
+      } as TransformPlugin;
+
+      assertThrows(() => getCustomPluginCacheIdentity([plugin]), TypeError, "invalid stage");
+    }
   });
 
   it("rejects oversized base identity fields before hashing", async () => {
@@ -218,17 +240,19 @@ describe("transform pipeline cache identity", () => {
     assertNotEquals(plugins, baseline);
   });
 
-  it("rejects fractional stages in precomputed custom plugin identities", async () => {
-    await assertRejects(
-      () =>
-        computePipelineConfigIdentity(
-          identityInput({
-            customPlugins: [[0, "custom", TransformStage.FINALIZE + 0.5, "custom@1"]],
-          }),
-        ),
-      TypeError,
-      "invalid stage",
+  it("keeps distinct fractional stages distinct in precomputed identities", async () => {
+    const early = await computePipelineConfigIdentity(
+      identityInput({
+        customPlugins: [[0, "custom", TransformStage.COMPILE + 0.5, "custom@1"]],
+      }),
     );
+    const late = await computePipelineConfigIdentity(
+      identityInput({
+        customPlugins: [[0, "custom", TransformStage.COMPILE + 0.7, "custom@1"]],
+      }),
+    );
+
+    assertNotEquals(early, late);
   });
 
   it("changes identity when moduleServerOrigin changes", async () => {

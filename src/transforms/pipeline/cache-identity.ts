@@ -9,6 +9,7 @@ const MAX_IDENTITY_STRING_BYTES = 64 * 1024;
 const MAX_IMPORT_MAP_IDENTITY_BYTES = 8 * 1024 * 1024;
 const MAX_PLUGIN_IDENTITY_BYTES = 4 * 1024;
 const MAX_CUSTOM_PLUGINS = 1_000;
+const MAX_TRANSFORM_STAGE_MAGNITUDE = 1_000_000;
 
 // Transform identities are derived after project code may have run in the
 // shared realm. Keep descriptor inspection, freezing, and bounded string
@@ -53,6 +54,16 @@ function encodedByteLength(value: string): number {
 
 function hasOwn(object: object, key: PropertyKey): boolean {
   return ReflectApply(ObjectPrototypeHasOwnProperty, object, [key]) as boolean;
+}
+
+/**
+ * Transform stages are ordered numeric coordinates, not enum membership.
+ * Built-in and custom plugins deliberately use fractional coordinates to run
+ * between the public enum anchors, so every finite bounded number is valid.
+ */
+function isValidTransformStage(value: unknown): value is number {
+  return typeof value === "number" && NumberIsFinite(value) &&
+    MathAbs(value) <= MAX_TRANSFORM_STAGE_MAGNITUDE;
 }
 
 interface ImportMapBudget {
@@ -267,10 +278,7 @@ export function getCustomPluginCacheIdentity(
     ) {
       throw new IntrinsicTypeError(`Transform plugin at index ${index} has an invalid name`);
     }
-    if (
-      typeof stage !== "number" || !NumberIsFinite(stage) ||
-      !NumberIsSafeInteger(stage) || MathAbs(stage) > 1_000_000
-    ) {
+    if (!isValidTransformStage(stage)) {
       throw new IntrinsicTypeError(`Transform plugin ${name} has an invalid stage`);
     }
     if (condition !== undefined && typeof condition !== "function") {
@@ -397,10 +405,7 @@ function encodeCustomPluginIdentities(
     ) {
       throw new IntrinsicTypeError(`Custom plugin identity ${index} has an invalid name`);
     }
-    if (
-      typeof stage !== "number" || !NumberIsFinite(stage) ||
-      !NumberIsSafeInteger(stage) || MathAbs(stage) > 1_000_000
-    ) {
+    if (!isValidTransformStage(stage)) {
       throw new IntrinsicTypeError(`Custom plugin identity ${index} has an invalid stage`);
     }
     if (

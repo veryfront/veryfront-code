@@ -324,12 +324,12 @@ export default function App() { return dep; }`;
           {
             plugins: [{
               name: "sentinel-late",
-              stage: TransformStage.FINALIZE + 2,
+              stage: TransformStage.FINALIZE + 0.75,
               cacheIdentity: "sentinel-late@1",
               transform: (ctx) => `${ctx.code}\n/* sentinel-late */`,
             }, {
               name: "sentinel-early",
-              stage: TransformStage.FINALIZE + 1,
+              stage: TransformStage.FINALIZE + 0.25,
               cacheIdentity: "sentinel-early@1",
               transform: (ctx) => `${ctx.code}\n/* sentinel-early */`,
             }],
