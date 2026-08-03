@@ -283,6 +283,16 @@ function quoteJsonString(value: string): string {
       default:
         if (code <= 0x1f) {
           quoted += "\\u" + code.toString(16).padStart(4, "0");
+        } else if (code >= 0xd800 && code <= 0xdbff) {
+          const next = value.charCodeAt(index + 1);
+          if (next >= 0xdc00 && next <= 0xdfff) {
+            quoted += value[index]! + value[index + 1]!;
+            index++;
+          } else {
+            quoted += "\\u" + code.toString(16).padStart(4, "0");
+          }
+        } else if (code >= 0xdc00 && code <= 0xdfff) {
+          quoted += "\\u" + code.toString(16).padStart(4, "0");
         } else {
           quoted += value[index];
         }

@@ -157,6 +157,36 @@ function inspectableBackend(): EncryptedKvBackend & { rows: Map<string, string> 
   };
 }
 
+/** Model a durable backend that transports keys as UTF-8 bytes. */
+function utf8KeyBackend(): EncryptedKvBackend & { rows: Map<string, string> } {
+  const rows = new Map<string, string>();
+  const wireKey = (key: string) => new TextDecoder().decode(new TextEncoder().encode(key));
+  return {
+    rows,
+    get(key) {
+      return Promise.resolve(rows.get(wireKey(key)) ?? null);
+    },
+    set(key, value) {
+      rows.set(wireKey(key), value);
+      return Promise.resolve();
+    },
+    delete(key) {
+      rows.delete(wireKey(key));
+      return Promise.resolve();
+    },
+    compareAndSwap(key, expected, next) {
+      const normalized = wireKey(key);
+      if ((rows.get(normalized) ?? null) !== expected) return Promise.resolve(false);
+      if (next === null) rows.delete(normalized);
+      else rows.set(normalized, next);
+      return Promise.resolve(true);
+    },
+    withLock(_key, operation) {
+      return operation();
+    },
+  };
+}
+
 function scanCapableBackend(): ReturnType<typeof inspectableBackend> & {
   scan(prefix: string): AsyncIterable<{ key: string; value: string }>;
 } {
@@ -318,6 +348,18 @@ describe("generated encrypted OAuth token store", () => {
       TypeError,
       "userId",
     );
+  });
+
+  it("keeps ill-formed Unicode key components distinct across UTF-8 storage", async () => {
+    const backend = utf8KeyBackend();
+    const store = createEncryptedTokenStore(backend);
+
+    await store.setTokens("github", "\ud800", { accessToken: "lone-surrogate-token" });
+    await store.setTokens("github", "\ufffd", { accessToken: "replacement-token" });
+
+    assertEquals(backend.rows.size, 2);
+    assertEquals((await store.getTokens("github", "\ud800"))?.accessToken, "lone-surrogate-token");
+    assertEquals((await store.getTokens("github", "\ufffd"))?.accessToken, "replacement-token");
   });
 
   it("stores tokens without invoking inherited JSON serializers", async () => {
