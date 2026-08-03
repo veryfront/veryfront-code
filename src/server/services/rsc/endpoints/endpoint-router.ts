@@ -7,7 +7,6 @@ import { HTTP_SERVER_ERROR, isRSCEnabled, serverLogger } from "#veryfront/utils"
 import { metrics } from "#veryfront/observability";
 import { HttpStatus, jsonErrorResponse } from "#veryfront/http/responses";
 import { isWithinDirectory, joinPath, normalizePath } from "#veryfront/utils/path-utils.ts";
-import { buildImportMapJson } from "#veryfront/html";
 import { escapeHtml } from "#veryfront/html/html-escape.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -39,6 +38,7 @@ import {
   createErrorResponseFromDefinition,
   PROJECT_EXECUTION_UNAVAILABLE,
 } from "#veryfront/errors";
+import { classifyBrowserModuleAbsoluteSourcePath } from "#veryfront/modules/server/browser-module-admission.ts";
 
 const rscEndpointRouterLog = serverLogger.component("rsc-endpoint-router");
 const rscLog = serverLogger.component("rsc");
@@ -47,6 +47,20 @@ let browserModuleBuilds = new BrowserModuleBuildCoordinator<BrowserModuleBundle>
 let browserModuleBuilder = bundleBrowserModuleWithMetadata;
 let browserModuleAdapterIds = new WeakMap<RuntimeAdapter, number>();
 let nextBrowserModuleAdapterId = 1;
+
+function hasProtectedBrowserModuleDependency(
+  bundle: BrowserModuleBundle,
+  projectDir: string,
+  config?: VeryfrontConfig,
+): boolean {
+  return bundle.dependencies.some((dependency) =>
+    classifyBrowserModuleAbsoluteSourcePath(
+      dependency.path,
+      projectDir,
+      { config, rscEnabled: true },
+    ).protectionReason !== null
+  );
+}
 
 export function resetBrowserModuleEndpointStateForTesting(
   options: BrowserModuleBuildCoordinatorOptions = {},
@@ -439,6 +453,17 @@ async function handleModuleEndpoint({
         headers: { "cache-control": "no-store" },
       });
     }
+    const entryPolicy = classifyBrowserModuleAbsoluteSourcePath(
+      modulePath,
+      projectDir,
+      { config, rscEnabled: true },
+    );
+    if (entryPolicy.protectionReason) {
+      return new Response("Not Found", {
+        status: HttpStatus.NOT_FOUND,
+        headers: { "cache-control": "no-store" },
+      });
+    }
 
     const adapterId = getBrowserModuleAdapterId(adapter);
     const configHash = await computeHash(stableSerialize(config ?? null));
@@ -459,7 +484,7 @@ async function handleModuleEndpoint({
       cacheKey,
       projectKey,
       build: async () => {
-        return browserModuleBuilder(modulePath, {
+        const bundle = await browserModuleBuilder(modulePath, {
           adapter,
           projectDir,
           projectId: projectId ?? projectSlug,
@@ -472,18 +497,25 @@ async function handleModuleEndpoint({
           signal: req.signal,
           requireClientBoundary: true,
         });
+        if (hasProtectedBrowserModuleDependency(bundle, projectDir, config)) {
+          throw new BrowserModuleEntryRejectedError();
+        }
+        return bundle;
       },
       validate: async (bundle) => {
-        const importMapJson = await buildImportMapJson({
+        if (hasProtectedBrowserModuleDependency(bundle, projectDir, config)) return false;
+        return validateBrowserModuleBundle(bundle, {
+          adapter,
           projectDir,
-          config,
-          moduleServerOrigin,
-          dependencyPinningCacheKey,
-          dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
-          dependencyPinningSource,
+          signal: req.signal,
+          importMap: {
+            config,
+            moduleServerOrigin,
+            dependencyPinningCacheKey,
+            dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
+            dependencyPinningSource,
+          },
         });
-        if (await computeHash(importMapJson) !== bundle.importMapHash) return false;
-        return validateBrowserModuleBundle(bundle, { adapter, projectDir });
       },
       sizeOf: estimateBrowserModuleBundleSize,
     });

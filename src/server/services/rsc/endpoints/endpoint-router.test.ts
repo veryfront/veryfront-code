@@ -939,6 +939,72 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       }
     });
 
+    it("rejects protected client entry paths before browser compilation", async () => {
+      const projectDir = "/tmp/rsc-protected-entry";
+      const entryPath = `${projectDir}/app/actions/private.client.ts`;
+      const marker = "PROTECTED_ACTION_ENTRY_MARKER";
+      const adapter = createMockAdapter({
+        knownFiles: [entryPath],
+        readFile: () => Promise.resolve(`"use client"; export const secret = "${marker}";`),
+      });
+      let buildCalls = 0;
+      setBrowserModuleBuilderForTesting(async () => {
+        buildCalls++;
+        throw new Error("protected entry must not reach the browser compiler");
+      });
+
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/module",
+          projectDir,
+          config: rscDisabledConfig,
+          adapter,
+          req: new Request(
+            "http://localhost/_veryfront/rsc/module?rel=app%2Factions%2Fprivate.client.ts",
+          ),
+        }),
+      );
+
+      assertEquals(result?.status, 404);
+      assertEquals((await result!.text()).includes(marker), false);
+      assertEquals(buildCalls, 0);
+    });
+
+    it("rejects bundles containing protected transitive project paths", async () => {
+      const projectDir = "/tmp/rsc-protected-dependency";
+      const entryPath = `${projectDir}/app/Counter.client.ts`;
+      const protectedPath = `${projectDir}/app/actions/private.ts`;
+      const marker = "PROTECTED_TRANSITIVE_ACTION_MARKER";
+      const adapter = createMockAdapter({ knownFiles: [entryPath, protectedPath] });
+      setBrowserModuleBuilderForTesting(() =>
+        Promise.resolve({
+          source: `export default "${marker}";`,
+          contentHash: "protected-transitive",
+          importMapHash: "unused",
+          dependencies: [
+            { path: entryPath, contentHash: "entry", byteLength: 1 },
+            { path: protectedPath, contentHash: "protected", byteLength: 1 },
+          ],
+          resolutionProbes: [],
+        })
+      );
+
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/module",
+          projectDir,
+          config: rscDisabledConfig,
+          adapter,
+          req: new Request(
+            "http://localhost/_veryfront/rsc/module?rel=app%2FCounter.client.ts",
+          ),
+        }),
+      );
+
+      assertEquals(result?.status, 404);
+      assertEquals((await result!.text()).includes(marker), false);
+    });
+
     it("serves client modules from the configured app directory", async () => {
       const filePath = "/tmp/test-project/frontend/Counter.tsx";
       const adapter = createMockAdapter({
@@ -1053,10 +1119,23 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
         'import React from "react";',
         "export default function Counter() { return React.createElement('div'); }",
       ].join("\n");
+      const packagePath = `${projectDir}/package.json`;
+      let packageSource = JSON.stringify({ dependencies: { react: "19.1.0" } });
+      let packageGeneration = 1;
       const adapter = createMockAdapter({
-        knownFiles: [entryPath],
-        exists: (path) => Promise.resolve(path === entryPath),
-        readFile: () => Promise.resolve(source),
+        knownFiles: [entryPath, packagePath],
+        readFile: (path) => Promise.resolve(path === packagePath ? packageSource : source),
+        stat: (path) => {
+          if (path === entryPath || path === packagePath) {
+            return Promise.resolve({
+              isFile: true,
+              isDirectory: false,
+              size: path === packagePath ? packageSource.length : source.length,
+              mtime: path === packagePath ? new Date(packageGeneration) : null,
+            });
+          }
+          return Promise.reject(new Deno.errors.NotFound("not found"));
+        },
       });
       const bundler = tryResolve<Bundler>("Bundler");
       if (!bundler) throw new Error("Bundler test contract is not registered");
@@ -1082,18 +1161,12 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
         );
 
       try {
-        await Deno.writeTextFile(
-          `${projectDir}/package.json`,
-          JSON.stringify({ dependencies: { react: "19.1.0" } }),
-        );
         clearReactVersionCache();
         assertEquals((await request())?.status, 200);
         assertEquals(getBrowserModuleEndpointStatsForTesting().cacheEntries, 1);
 
-        await Deno.writeTextFile(
-          `${projectDir}/package.json`,
-          JSON.stringify({ dependencies: { react: "19.2.0" } }),
-        );
+        packageSource = JSON.stringify({ dependencies: { react: "19.2.0" } });
+        packageGeneration++;
         clearReactVersionCache();
         assertEquals((await request())?.status, 200);
         assertEquals(getBrowserModuleEndpointStatsForTesting().cacheEntries, 1);
@@ -1241,7 +1314,7 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       }
 
       const output = logs.join("\n");
-      assertEquals(result?.status, 500);
+      assertEquals(result?.status, 404);
       assertEquals(output.includes("ATTACKER_LOG_PREFIX"), false);
       assertEquals(output.includes("ATTACKER_LOG_SUFFIX"), false);
       assertEquals(output.length < 1000, true);

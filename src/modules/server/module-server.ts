@@ -1,6 +1,6 @@
 /** Module Server - serves transformed ESM modules at /_vf_modules/* URLs */
 
-import { isAbsolute, join, relative } from "#veryfront/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { TransformOptions } from "#veryfront/transforms/esm-transform.ts";
@@ -88,7 +88,7 @@ import {
 } from "#veryfront/server/shared/browser-module-bundler.ts";
 import { ensureDefaultParserContracts } from "#veryfront/extensions/parser/defaults.ts";
 import {
-  classifyBrowserModuleSourcePath,
+  classifyBrowserModuleAbsoluteSourcePath,
   isProtectedBrowserModulePath,
 } from "./browser-module-admission.ts";
 import { hasUseClientDirective } from "#veryfront/rendering/rsc/page-island.ts";
@@ -215,24 +215,6 @@ function isReservedFrameworkModulePath(modulePathWithoutJsExtension: string): bo
     modulePathWithoutJsExtension === "deno";
 }
 
-function projectSourceManifestKey(projectDir: string, sourceFile: string): string | null {
-  const relativePath = relative(projectDir, sourceFile).replaceAll("\\", "/");
-  if (
-    relativePath.length === 0 ||
-    relativePath === "." ||
-    relativePath === ".." ||
-    relativePath.startsWith("../") ||
-    isAbsolute(relativePath)
-  ) {
-    return null;
-  }
-
-  const segments = relativePath.split("/");
-  return segments.every((segment) => segment.length > 0 && segment !== "." && segment !== "..")
-    ? relativePath
-    : null;
-}
-
 function validateBundledClientDependencies(
   bundle: BrowserModuleBundle,
   options: {
@@ -242,15 +224,18 @@ function validateBundledClientDependencies(
   },
 ): { valid: true } | { valid: false; path: string | null; reason: string } {
   for (const dependency of bundle.dependencies) {
-    const path = projectSourceManifestKey(options.projectDir, dependency.path);
+    const policy = classifyBrowserModuleAbsoluteSourcePath(
+      dependency.path,
+      options.projectDir,
+      {
+        config: options.config,
+        rscEnabled: true,
+      },
+    );
+    const path = policy.canonicalPath;
     if (!path) {
       return { valid: false, path: null, reason: "outside-project" };
     }
-
-    const policy = classifyBrowserModuleSourcePath(path, {
-      config: options.config,
-      rscEnabled: true,
-    });
     if (policy.protectionReason) {
       return { valid: false, path, reason: policy.protectionReason };
     }
@@ -898,15 +883,13 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         }
 
         const { path: sourceFile, isFrameworkFile, embeddedContent } = findResult;
-        const exactSourceKey = isFrameworkFile
+        const sourcePolicy = isFrameworkFile
           ? null
-          : projectSourceManifestKey(projectDir, sourceFile);
-        const sourcePolicy = exactSourceKey === null
-          ? null
-          : classifyBrowserModuleSourcePath(exactSourceKey, {
+          : classifyBrowserModuleAbsoluteSourcePath(sourceFile, projectDir, {
             config: options.config,
             rscEnabled: isRSCEnabled(options.config),
           });
+        const exactSourceKey = sourcePolicy?.canonicalPath ?? null;
 
         if (!isFrameworkFile && (!exactSourceKey || sourcePolicy?.protectionReason)) {
           logger.warn("Rejected protected resolved source from browser module endpoint", {

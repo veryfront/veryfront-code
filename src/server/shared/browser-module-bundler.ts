@@ -15,7 +15,10 @@ import {
   inspectBrowserModuleBoundary,
 } from "./browser-module-boundary.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
-import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import type {
+  DependencyPinningSource,
+  DependencyPinningSourceInput,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import { PermitSemaphore } from "#veryfront/utils/permit-semaphore.ts";
 import { waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
 import { createAbortError, throwIfAborted } from "#veryfront/utils/abort.ts";
@@ -154,11 +157,30 @@ export interface BrowserModuleBundle {
   resolutionProbes: ReadonlyArray<{ path: string; state: ResolutionProbeState }>;
 }
 
+export type BrowserModuleImportMapValidationOptions = Pick<
+  BrowserModuleBundlerOptions,
+  | "config"
+  | "moduleServerOrigin"
+  | "dependencyPinningCacheKey"
+  | "dependencyPinningDependencies"
+  | "dependencyPinningSource"
+>;
+
+export interface BrowserModuleBundleValidationOptions extends
+  Pick<
+    BrowserModuleBundlerOptions,
+    "adapter" | "projectDir" | "signal" | "limits"
+  > {
+  /** Rebuild and compare the effective import map through the same bounded reader. */
+  importMap?: BrowserModuleImportMapValidationOptions;
+}
+
 interface TrackingAdapterResult {
   adapter: RuntimeAdapter;
   contents: Map<string, string>;
   probes: Map<string, ResolutionProbeState>;
   readSource(path: string): Promise<string>;
+  readMetadataSource(path: string): Promise<string>;
   admitSource(path: string, content: string): void;
   chargeText(content: string): number;
   getFailure(): BrowserModuleBundleError | undefined;
@@ -295,6 +317,7 @@ function createTrackingAdapter(
   const dependencyPaths = new Set<string>();
   const probePaths = new Set<string>();
   const sourceReads = new Map<string, Promise<string>>();
+  const metadataReads = new Map<string, Promise<string>>();
   const statReads = new Map<string, Promise<Awaited<ReturnType<typeof adapter.fs.stat>>>>();
   const readBoundedSource = createBrowserModuleSourceReader(adapter, projectDir);
   let sourceReadTail = Promise.resolve();
@@ -327,10 +350,14 @@ function createTrackingAdapter(
     contents.set(path, content);
     sourceReads.set(path, Promise.resolve(content));
   };
-  const readSource = (path: string): Promise<string> => {
-    const existing = sourceReads.get(path);
+  const readAccountedSource = (
+    path: string,
+    kind: "module" | "metadata",
+  ): Promise<string> => {
+    const reads = kind === "module" ? sourceReads : metadataReads;
+    const existing = reads.get(path);
     if (existing) return existing;
-    reserveDependency(path);
+    if (kind === "module") reserveDependency(path);
     const reading = sourceReadTail.then(async () => {
       throwIfAborted(signal);
       const remaining = limits.maxAggregateInputBytes - aggregateInputBytes;
@@ -348,16 +375,19 @@ function createTrackingAdapter(
       }
       throwIfAborted(signal);
       aggregateInputBytes += admitted.byteLength;
-      contents.set(path, admitted.content);
+      if (kind === "module") contents.set(path, admitted.content);
       return admitted.content;
     });
     sourceReadTail = reading.then(
       () => undefined,
       () => undefined,
     );
-    sourceReads.set(path, reading);
+    reads.set(path, reading);
     return reading;
   };
+  const readSource = (path: string): Promise<string> => readAccountedSource(path, "module");
+  const readMetadataSource = (path: string): Promise<string> =>
+    readAccountedSource(path, "metadata");
   const trackedFs = new Proxy(adapter.fs, {
     get(target, property, receiver) {
       if (property === "readFile") {
@@ -412,10 +442,79 @@ function createTrackingAdapter(
     contents,
     probes,
     readSource,
+    readMetadataSource,
     admitSource,
     chargeText,
     getFailure: () => failure,
   };
+}
+
+function createTrackedDependencyPinningSource(
+  source: DependencyPinningSourceInput,
+  projectDir: string,
+  tracked: TrackingAdapterResult,
+): DependencyPinningSource {
+  const objectSource = typeof source === "object" && source !== null ? source : undefined;
+  const sourceProjectDir = objectSource
+    ? objectSource.projectDir
+    : typeof source === "string"
+    ? source
+    : projectDir;
+  const assertMetadataPath = (path: string): void => {
+    if (!isWithinDirectory(projectDir, path)) {
+      throw new TypeError("Browser module metadata path is not trusted");
+    }
+  };
+
+  return Object.freeze({
+    ...(objectSource ?? {}),
+    projectDir: sourceProjectDir,
+    fs: Object.freeze({
+      stat: (path: string) => {
+        assertMetadataPath(path);
+        return tracked.adapter.fs.stat(path);
+      },
+      readFile: (path: string) => {
+        assertMetadataPath(path);
+        return tracked.readMetadataSource(path);
+      },
+    }),
+  });
+}
+
+async function buildTrackedImportMapJson(
+  options: Pick<
+    BrowserModuleBundlerOptions,
+    | "projectDir"
+    | "config"
+    | "moduleServerOrigin"
+    | "dependencyPinningCacheKey"
+    | "dependencyPinningDependencies"
+    | "dependencyPinningSource"
+  >,
+  tracked: TrackingAdapterResult,
+  signal: AbortSignal,
+  trackedDependencyPinningSource?: DependencyPinningSource,
+): Promise<string> {
+  const dependencyPinningSource = trackedDependencyPinningSource ??
+    createTrackedDependencyPinningSource(
+      options.dependencyPinningSource,
+      options.projectDir,
+      tracked,
+    );
+  const importMapJson = await buildImportMapJson({
+    projectDir: options.projectDir,
+    config: options.config,
+    moduleServerOrigin: options.moduleServerOrigin,
+    dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+    dependencyPinningDependencies: options.dependencyPinningDependencies,
+    dependencyPinningSource,
+  });
+  const trackedFailure = tracked.getFailure();
+  if (trackedFailure) throw trackedFailure;
+  throwIfAborted(signal);
+  tracked.chargeText(importMapJson);
+  return importMapJson;
 }
 
 interface BundleFlight {
@@ -432,6 +531,14 @@ interface BundleLane {
 }
 
 const bundleLanes = new Map<string, BundleLane>();
+// Reserve one host-owned participant slot before a request may wait in any
+// project lane. This makes the advertised 8 active + 32 queued ceiling true
+// across the whole isolate instead of allowing every project to accumulate a
+// private queue outside the host bound.
+const globalBundleParticipants = new PermitSemaphore(
+  MAX_CONCURRENT_BROWSER_MODULE_BUNDLES + MAX_QUEUED_BROWSER_MODULE_BUNDLES,
+  { maxQueueSize: 0 },
+);
 const globalBundleAdmission = new PermitSemaphore(MAX_CONCURRENT_BROWSER_MODULE_BUNDLES, {
   maxQueueSize: MAX_QUEUED_BROWSER_MODULE_BUNDLES,
 });
@@ -515,6 +622,7 @@ async function runWithBundleAdmission(
 
   const execute = async (parentSignal: AbortSignal | undefined): Promise<BrowserModuleBundle> => {
     const deadline = createBundleDeadline(parentSignal, limits.maxDurationMs);
+    let participantAcquired = false;
     let projectAcquired = false;
     let globalAcquired = false;
     let releaseWhenSettled = false;
@@ -527,9 +635,22 @@ async function runWithBundleAdmission(
         projectAcquired = false;
         lane.semaphore.release();
       }
+      if (participantAcquired) {
+        participantAcquired = false;
+        globalBundleParticipants.release();
+      }
       releaseBundleLane(laneKey, lane);
     };
     try {
+      participantAcquired = await globalBundleParticipants.tryAcquire(0, {
+        signal: deadline.signal,
+      });
+      if (!participantAcquired) {
+        throw new BrowserModuleBundleError(
+          "capacity",
+          "Browser module bundle host capacity is exhausted",
+        );
+      }
       projectAcquired = await lane.semaphore.tryAcquire(Number.POSITIVE_INFINITY, {
         signal: deadline.signal,
       });
@@ -677,15 +798,20 @@ export function bundleBrowserModuleWithMetadata(
         if (boundaryViolation) {
           throw new Error(describeBrowserModuleBoundaryViolation(boundaryViolation));
         }
-        const importMapJson = options.importMapJson ?? await buildImportMapJson({
-          projectDir: options.projectDir,
-          config: options.config,
-          moduleServerOrigin: options.moduleServerOrigin,
-          dependencyPinningCacheKey: options.dependencyPinningCacheKey,
-          dependencyPinningDependencies: options.dependencyPinningDependencies,
-          dependencyPinningSource: options.dependencyPinningSource,
-        });
-        tracked.chargeText(importMapJson);
+        const dependencyPinningSource = createTrackedDependencyPinningSource(
+          options.dependencyPinningSource,
+          options.projectDir,
+          tracked,
+        );
+        const importMapJson = options.importMapJson === undefined
+          ? await buildTrackedImportMapJson(
+            options,
+            tracked,
+            signal,
+            dependencyPinningSource,
+          )
+          : options.importMapJson;
+        if (options.importMapJson !== undefined) tracked.chargeText(importMapJson);
         const importMap = JSON.parse(importMapJson) as { imports?: Record<string, string> };
 
         let outputFiles;
@@ -717,7 +843,7 @@ export function bundleBrowserModuleWithMetadata(
                 projectId: options.projectId ?? options.projectSlug,
                 dependencyPinningCacheKey: options.dependencyPinningCacheKey,
                 dependencyPinningDependencies: options.dependencyPinningDependencies,
-                dependencyPinningSource: options.dependencyPinningSource,
+                dependencyPinningSource,
               }),
               createHttpExternalPlugin({
                 moduleServerOrigin: options.moduleServerOrigin,
@@ -789,11 +915,12 @@ export function bundleBrowserModuleWithMetadata(
 
 export async function validateBrowserModuleBundle(
   bundle: BrowserModuleBundle,
-  options: Pick<BrowserModuleBundlerOptions, "adapter" | "projectDir">,
+  options: BrowserModuleBundleValidationOptions,
 ): Promise<boolean> {
+  const limits = resolveLimits(options.limits);
   if (
-    bundle.dependencies.length > DEFAULT_BROWSER_MODULE_BUNDLE_LIMITS.maxDependencies ||
-    bundle.resolutionProbes.length > DEFAULT_BROWSER_MODULE_BUNDLE_LIMITS.maxResolutionProbes
+    bundle.dependencies.length > limits.maxDependencies ||
+    bundle.resolutionProbes.length > limits.maxResolutionProbes
   ) {
     return false;
   }
@@ -801,27 +928,34 @@ export async function validateBrowserModuleBundle(
   for (const dependency of bundle.dependencies) {
     if (!Number.isSafeInteger(dependency.byteLength) || dependency.byteLength < 0) return false;
     admittedBytes += dependency.byteLength;
-    if (admittedBytes > DEFAULT_BROWSER_MODULE_BUNDLE_LIMITS.maxAggregateInputBytes) return false;
+    if (admittedBytes > limits.maxAggregateInputBytes) return false;
   }
-  let readSource: ReturnType<typeof createBrowserModuleSourceReader>;
+  const signal = options.signal ?? new AbortController().signal;
+  let tracked: TrackingAdapterResult;
   try {
-    readSource = createBrowserModuleSourceReader(options.adapter, options.projectDir);
+    throwIfAborted(signal);
+    tracked = createTrackingAdapter(options.adapter, options.projectDir, limits, signal);
+    if (options.importMap) {
+      const importMapJson = await buildTrackedImportMapJson(
+        { projectDir: options.projectDir, ...options.importMap },
+        tracked,
+        signal,
+      );
+      if (await computeHash(importMapJson) !== bundle.importMapHash) return false;
+    }
   } catch {
+    throwIfAborted(signal);
     return false;
   }
   for (const dependency of bundle.dependencies) {
     if (!isWithinDirectory(options.projectDir, dependency.path)) return false;
 
     try {
-      if (
-        await computeHash(
-          (await readSource(dependency.path, Math.max(1, dependency.byteLength))).content,
-        ) !==
-          dependency.contentHash
-      ) {
+      if (await computeHash(await tracked.readSource(dependency.path)) !== dependency.contentHash) {
         return false;
       }
     } catch {
+      throwIfAborted(signal);
       return false;
     }
   }
@@ -830,9 +964,10 @@ export async function validateBrowserModuleBundle(
     if (!isWithinDirectory(options.projectDir, probe.path)) return false;
     let currentState: ResolutionProbeState;
     try {
-      const info = await options.adapter.fs.stat(probe.path);
+      const info = await tracked.adapter.fs.stat(probe.path);
       currentState = info.isFile ? "file" : info.isDirectory ? "directory" : "other";
     } catch (error) {
+      throwIfAborted(signal);
       if (!isCanonicalNotFoundError(error)) return false;
       currentState = "missing";
     }

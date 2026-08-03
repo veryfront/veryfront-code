@@ -1,4 +1,5 @@
 import type { VeryfrontConfig } from "#veryfront/config";
+import { isAbsolute, relative } from "#veryfront/compat/path/index.ts";
 import {
   createProjectDiscoveryConfig,
   DEFAULT_PROJECT_DISCOVERY_DIRS,
@@ -28,6 +29,34 @@ export interface BrowserModuleSourcePolicy {
 export interface BrowserModuleSourcePolicyOptions {
   config?: VeryfrontConfig;
   rscEnabled?: boolean;
+}
+
+/**
+ * Classify an adapter-resolved absolute source path with the same canonical
+ * browser policy used for logical module requests. Containment is established
+ * before the relative path reaches the policy grammar, so aliases and resolved
+ * dependencies cannot bypass protected project roots.
+ */
+export function classifyBrowserModuleAbsoluteSourcePath(
+  sourcePath: string,
+  projectDir: string,
+  options: BrowserModuleSourcePolicyOptions = {},
+): BrowserModuleSourcePolicy {
+  const relativePath = relative(projectDir, sourcePath).replaceAll("\\", "/");
+  if (
+    relativePath.length === 0 ||
+    relativePath === "." ||
+    relativePath === ".." ||
+    relativePath.startsWith("../") ||
+    isAbsolute(relativePath)
+  ) {
+    return {
+      canonicalPath: null,
+      protectionReason: "invalid-path",
+      requiresClientBoundary: false,
+    };
+  }
+  return classifyBrowserModuleSourcePath(relativePath, options);
 }
 
 function containsControlCharacter(value: string): boolean {

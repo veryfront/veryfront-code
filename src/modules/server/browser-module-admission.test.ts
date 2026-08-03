@@ -1,7 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isProtectedBrowserModulePath } from "./browser-module-admission.ts";
+import {
+  classifyBrowserModuleAbsoluteSourcePath,
+  isProtectedBrowserModulePath,
+} from "./browser-module-admission.ts";
 
 describe("browser module admission", () => {
   it("protects project metadata and environment files", () => {
@@ -106,5 +109,26 @@ describe("browser module admission", () => {
     assertEquals(isProtectedBrowserModulePath("app/page.tsx"), false);
     assertEquals(isProtectedBrowserModulePath("components/Button.tsx"), false);
     assertEquals(isProtectedBrowserModulePath("src/client.ts"), false);
+  });
+
+  it("applies the canonical policy to resolved absolute project paths", () => {
+    assertEquals(
+      classifyBrowserModuleAbsoluteSourcePath(
+        "/tenant/project/app/actions/private.ts",
+        "/tenant/project",
+      ),
+      {
+        canonicalPath: "app/actions/private.ts",
+        protectionReason: "server-route",
+        requiresClientBoundary: false,
+      },
+    );
+    assertEquals(
+      classifyBrowserModuleAbsoluteSourcePath(
+        "/tenant/other/private.ts",
+        "/tenant/project",
+      ).protectionReason,
+      "invalid-path",
+    );
   });
 });

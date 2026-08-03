@@ -406,6 +406,39 @@ describe(
       assertEquals(dependencyStats, 1);
     });
 
+    it("charges package metadata to the exact aggregate input budget", async () => {
+      const projectDir = "/bounded-package-metadata";
+      const entryPath = `${projectDir}/app/Counter.ts`;
+      const packagePath = `${projectDir}/package.json`;
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(entryPath, "export default 1;");
+      adapter.fs.files.set(packagePath, "{}" + " ".repeat(2 * 1024 * 1024));
+      let rawReads = 0;
+      adapter.fs.readFile = () => {
+        rawReads++;
+        return Promise.reject(new Error("raw package metadata read is forbidden"));
+      };
+
+      const error = await assertRejects(
+        () =>
+          bundleBrowserModuleWithMetadata(entryPath, {
+            adapter,
+            projectDir,
+            projectId: "bounded-package-metadata",
+            dependencyPinningSource: {
+              projectDir,
+              fs: adapter.fs,
+              cacheNamespace: "bounded-package-metadata",
+            },
+            limits: { maxAggregateInputBytes: 1024 * 1024 },
+          }),
+        BrowserModuleBundleError,
+      );
+
+      assertEquals((error as BrowserModuleBundleError).kind, "limit");
+      assertEquals(rawReads, 0);
+    });
+
     it("rejects invalid UTF-8 through the stable bounded reader", async () => {
       const projectDir = "/invalid-utf8-project";
       const entryPath = `${projectDir}/app/Counter.ts`;
@@ -713,6 +746,78 @@ describe(
         await Promise.all(admitted);
         assertEquals(calls, 40);
         assertEquals(maximumActive, 8);
+      } finally {
+        release.resolve();
+        if (previous) register("Bundler", previous);
+        else unregister("Bundler");
+      }
+    });
+
+    it("counts project-lane waiters against the isolate-wide queue ceiling", async () => {
+      const release = Promise.withResolvers<void>();
+      const eightStarted = Promise.withResolvers<void>();
+      let calls = 0;
+      const previous = tryResolve<Bundler>("Bundler");
+      register<Bundler>("Bundler", {
+        bundle: async () => {
+          calls += 1;
+          if (calls === 8) eightStarted.resolve();
+          await release.promise;
+          return {
+            outputFiles: [{
+              path: "out.js",
+              contents: new TextEncoder().encode("export default 1;"),
+              text: "export default 1;",
+            }],
+            warnings: [],
+            errors: [],
+          };
+        },
+        transform: () => Promise.resolve({ code: "", warnings: [] }),
+      });
+
+      try {
+        const admitted = Array.from(
+          { length: 4 },
+          (_, projectIndex) =>
+            Array.from({ length: 10 }, (_, operationIndex) => {
+              const projectDir = `/nested-global-capacity-${projectIndex}`;
+              const entryPath = `${projectDir}/app/Counter.ts`;
+              const adapter = createMockAdapter();
+              adapter.fs.files.set(entryPath, "export default 1;");
+              return bundleBrowserModuleWithMetadata(entryPath, {
+                adapter,
+                projectDir,
+                projectId: `nested-global-capacity-${projectIndex}`,
+                importMapJson: "{}",
+                singleflightKey: `operation-${operationIndex}`,
+              });
+            }),
+        ).flat();
+        admitted.forEach((promise) => void promise.catch(() => undefined));
+        await eightStarted.promise;
+
+        const overflowProjectDir = "/nested-global-capacity-overflow";
+        const overflowEntryPath = `${overflowProjectDir}/app/Counter.ts`;
+        const overflowAdapter = createMockAdapter();
+        overflowAdapter.fs.files.set(overflowEntryPath, "export default 1;");
+        const rejected = await assertRejects(
+          () =>
+            bundleBrowserModuleWithMetadata(overflowEntryPath, {
+              adapter: overflowAdapter,
+              projectDir: overflowProjectDir,
+              projectId: "nested-global-capacity-overflow",
+              importMapJson: "{}",
+              singleflightKey: "overflow",
+            }),
+          BrowserModuleBundleError,
+        );
+        assertEquals((rejected as BrowserModuleBundleError).kind, "capacity");
+        assertEquals(calls, 8);
+
+        release.resolve();
+        await Promise.all(admitted);
+        assertEquals(calls, 40);
       } finally {
         release.resolve();
         if (previous) register("Bundler", previous);
