@@ -20,7 +20,11 @@ import {
 } from "./runtime-loader/tool-input-status.ts";
 import { snapshotProviderJsonValue } from "./runtime-loader/json-snapshot.ts";
 
-export { jsonValuesEqual, snapshotJsonValue } from "./runtime-loader/json-snapshot.ts";
+export {
+  jsonValuesEqual,
+  snapshotJsonValue,
+  snapshotProviderJsonValue,
+} from "./runtime-loader/json-snapshot.ts";
 export type { JsonSnapshotOptions, JsonSnapshotValue } from "./runtime-loader/json-snapshot.ts";
 export {
   ProviderError,
