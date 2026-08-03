@@ -51,7 +51,7 @@ describe("private framework module policy", () => {
         new URL(
           "./private-framework-module-policy-hostile.fixture.ts",
           import.meta.url,
-        ).pathname,
+        ).href,
       ],
       cwd: Deno.cwd(),
       stdout: "piped",
