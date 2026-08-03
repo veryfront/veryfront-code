@@ -179,6 +179,22 @@ if (checkOnly) {
     const existingIdentity = existing === null
       ? "missing"
       : `${await sha256(existing)} (${existing.length} characters)`;
+    if (existing !== null) {
+      let divergence = 0;
+      const limit = Math.min(existing.length, output.length);
+      while (divergence < limit && existing[divergence] === output[divergence]) {
+        divergence++;
+      }
+      const from = Math.max(0, divergence - 80);
+      console.error(
+        `[ext-dev-ui-react] Styles diverge at character ${divergence}.\n` +
+          `computed:   ${JSON.stringify(output.slice(from, divergence + 120))}\n` +
+          `checked-in: ${JSON.stringify(existing.slice(from, divergence + 120))}`,
+      );
+      console.error(
+        `[ext-dev-ui-react] Computed output (JSON):\n${JSON.stringify(output)}`,
+      );
+    }
     throw new Error(
       "Extension-owned Dev UI styles are stale; run deno task generate:dev-ui. " +
         `Computed ${await sha256(
