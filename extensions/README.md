@@ -134,6 +134,7 @@ and local development.
 | `@veryfront/ext-db-sqlite`                   | `SqliteStore`                     |
 | `@veryfront/ext-sandbox-shell-tools`         | `SandboxShellToolsProvider`       |
 | `@veryfront/ext-observability-opentelemetry` | `TracingExporter`, Node telemetry |
+| `@veryfront/ext-eval-report-http`            | Generic HTTP eval exporter        |
 | `@veryfront/ext-eval-report-mlflow`          | MLflow eval exporter              |
 | `@veryfront/ext-llm-openai`                  | `LLMProvider:openai`              |
 | `@veryfront/ext-llm-anthropic`               | `LLMProvider:anthropic`           |
@@ -153,6 +154,16 @@ select a specialized isolation implementation.
 | `@veryfront/ext-image-sharp`                                  | Native image processing and output policy             |
 | `@veryfront/ext-react-ssr`                                    | Isolated-worker renderer selected by hosting topology |
 
+## Service-conditional extensions
+
+`@veryfront/ext-observability-sentry` is loaded by the owning server or agent
+service only after its Sentry enablement, reporter-selection, and DSN policy
+passes. It is not a normal application contract extension: automatically
+running its package factory would register no useful contract, while eagerly
+initializing the SDK would change process-wide error reporting and network
+egress. Compiled services may embed the dormant adapter; npm services install
+the runtime-specific package they execute.
+
 ## npm service installs
 
 Install extension packages by the features a service executes. Do not install
@@ -160,23 +171,24 @@ raw transitive dependencies such as `bash-tool`, `just-bash`, `jose`,
 `better-sqlite3`, `@aws-sdk/client-s3`, `@kreuzberg/node`, `@mdx-js/mdx`, or
 `tailwindcss` directly to satisfy Veryfront runtime features.
 
-| Runtime or service role                     | Install these extension packages                                                                                                                                                        |
-| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CLI, build image, or project server runtime | `@veryfront/ext-bundler-esbuild`, `@veryfront/ext-content-mdx`, `@veryfront/ext-css-tailwind`, `@veryfront/ext-node-websocket-ws`, `@veryfront/ext-parser-babel`, `@veryfront/ext-yaml` |
-| Build with CSS optimization                 | `@veryfront/ext-css-lightning` (register explicitly)                                                                                                                                    |
-| Build with CSS purging or critical CSS      | `@veryfront/ext-css-purgecss` (register explicitly)                                                                                                                                     |
-| Build with image optimization               | `@veryfront/ext-image-sharp` (register explicitly)                                                                                                                                      |
-| Proxy or JWT-authenticated service          | `@veryfront/ext-auth-jwt`                                                                                                                                                               |
-| Document upload or knowledge ingestion      | `@veryfront/ext-document-kreuzberg`                                                                                                                                                     |
-| Redis-backed cache or token store           | `@veryfront/ext-cache-redis`                                                                                                                                                            |
-| Redis-backed distributed runtime or Pub/Sub | `@veryfront/ext-redis`                                                                                                                                                                  |
-| S3-compatible blob persistence              | `@veryfront/ext-blob-s3`                                                                                                                                                                |
-| Google Cloud Storage blob persistence       | `@veryfront/ext-blob-gcs`                                                                                                                                                               |
-| SQLite-backed persistence                   | `@veryfront/ext-db-sqlite`                                                                                                                                                              |
-| OpenTelemetry export or Node telemetry      | `@veryfront/ext-observability-opentelemetry`                                                                                                                                            |
-| Sentry application error capture            | `@veryfront/ext-observability-sentry`                                                                                                                                                   |
-| Local shell-tool agent runtime              | `@veryfront/ext-sandbox-shell-tools`                                                                                                                                                    |
-| Eval report export to MLflow                | `@veryfront/ext-eval-report-mlflow`                                                                                                                                                     |
+| Runtime or service role                      | Install these extension packages                                                                                                                                                        |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CLI, build image, or project server runtime  | `@veryfront/ext-bundler-esbuild`, `@veryfront/ext-content-mdx`, `@veryfront/ext-css-tailwind`, `@veryfront/ext-node-websocket-ws`, `@veryfront/ext-parser-babel`, `@veryfront/ext-yaml` |
+| Build with CSS optimization                  | `@veryfront/ext-css-lightning` (register explicitly)                                                                                                                                    |
+| Build with CSS purging or critical CSS       | `@veryfront/ext-css-purgecss` (register explicitly)                                                                                                                                     |
+| Build with image optimization                | `@veryfront/ext-image-sharp` (register explicitly)                                                                                                                                      |
+| Proxy or JWT-authenticated service           | `@veryfront/ext-auth-jwt`                                                                                                                                                               |
+| Document upload or knowledge ingestion       | `@veryfront/ext-document-kreuzberg`                                                                                                                                                     |
+| Redis-backed cache or token store            | `@veryfront/ext-cache-redis`                                                                                                                                                            |
+| Redis-backed distributed runtime or Pub/Sub  | `@veryfront/ext-redis`                                                                                                                                                                  |
+| S3-compatible blob persistence               | `@veryfront/ext-blob-s3`                                                                                                                                                                |
+| Google Cloud Storage blob persistence        | `@veryfront/ext-blob-gcs`                                                                                                                                                               |
+| SQLite-backed persistence                    | `@veryfront/ext-db-sqlite`                                                                                                                                                              |
+| OpenTelemetry export or Node telemetry       | `@veryfront/ext-observability-opentelemetry`                                                                                                                                            |
+| Sentry application error capture             | `@veryfront/ext-observability-sentry`                                                                                                                                                   |
+| Local shell-tool agent runtime               | `@veryfront/ext-sandbox-shell-tools`                                                                                                                                                    |
+| Eval report export to a generic HTTP gateway | `@veryfront/ext-eval-report-http`                                                                                                                                                       |
+| Eval report export to MLflow                 | `@veryfront/ext-eval-report-mlflow`                                                                                                                                                     |
 
 An agent runtime needs `@veryfront/ext-sandbox-shell-tools` only when it creates
 local bash or shell tools. MCP-only remote tool execution does not need that

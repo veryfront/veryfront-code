@@ -81,11 +81,11 @@ Deno.test("root npm build metadata does not inject extension implementation depe
 Deno.test("standard npm extension policy covers baseline app and developer features", () => {
   assertEquals([...STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES], [
     "ext-bundler-esbuild",
-    "ext-parser-babel",
-    "ext-yaml",
     "ext-content-mdx",
     "ext-css-tailwind",
     "ext-node-websocket-ws",
+    "ext-parser-babel",
+    "ext-yaml",
   ]);
 });
 

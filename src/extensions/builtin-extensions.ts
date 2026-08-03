@@ -12,7 +12,10 @@ import { createDeferredResolvedExtension } from "./deferred-extension.ts";
 import { captureRegistrationId } from "./runtime-validation.ts";
 import type { LLMProvider, LLMProviderRegistry } from "./llm/index.ts";
 import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.ts";
-import { FIRST_PARTY_BUILTIN_EXTENSION_POLICIES } from "./first-party-defaults.ts";
+import {
+  FIRST_PARTY_BUILTIN_EXTENSION_POLICIES,
+  type FirstPartyEvalExporterSelection,
+} from "./first-party-defaults.ts";
 import { OpenAIProvider } from "@veryfront/ext-llm-openai";
 import { AnthropicProvider } from "@veryfront/ext-llm-anthropic";
 import { GoogleProvider } from "@veryfront/ext-llm-google";
@@ -30,7 +33,7 @@ export type OptionalBuiltinExtensionDefinition = {
   readonly name: string;
   readonly origin: string;
   readonly sourceDirectory: string;
-  readonly evalExporterId?: string;
+  readonly evalExporterSelection?: FirstPartyEvalExporterSelection;
   readonly factory?: ExtensionFactory;
 };
 
@@ -58,9 +61,11 @@ export const OPTIONAL_BUILTIN_EXTENSIONS = Object.freeze(
       name: policy.name,
       origin: `veryfront/${policy.sourceDirectory}`,
       sourceDirectory: policy.sourceDirectory,
+      ...(policy.evalExporterSelection
+        ? { evalExporterSelection: policy.evalExporterSelection }
+        : {}),
       ...(policy.name === "ext-eval-report-mlflow"
         ? {
-          evalExporterId: "mlflow",
           // MLflow is deliberately shipped inside the root npm package rather
           // than published as a standalone extension package.
           factory: extEvalReportMlflow,
@@ -256,10 +261,11 @@ export function createEvalCliBuiltinExtensions(
   selectedExporterIds: string[] = [],
 ): ResolvedExtension[] {
   const selected = new Set(selectedExporterIds);
-  const exporterExtensions = OPTIONAL_BUILTIN_EXTENSIONS.filter((definition) =>
-    definition.evalExporterId !== undefined &&
-    selected.has(definition.evalExporterId)
-  );
+  const exporterExtensions = OPTIONAL_BUILTIN_EXTENSIONS.filter((definition) => {
+    const selection = definition.evalExporterSelection;
+    if (!selection) return false;
+    return selection.kind === "any-selected" ? selected.size > 0 : selected.has(selection.id);
+  });
 
   return [
     {
