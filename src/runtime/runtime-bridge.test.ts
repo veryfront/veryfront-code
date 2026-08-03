@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type AgentRunEvent, runWithRunEventSink } from "../agent/index.ts";
@@ -9,10 +10,10 @@ import {
   createGenerateModel,
   createStreamModel,
 } from "./runtime-bridge.test-helpers.ts";
-import { VeryfrontError } from "#veryfront/errors";
 
 describe("runtime-bridge", () => {
   it("rejects non-cloneable model context with a stable registered error", async () => {
+    const sensitiveValue = "CUSTOMER_SECRET_123";
     for (
       const testCase of [
         {
@@ -23,7 +24,7 @@ describe("runtime-bridge", () => {
               type: "tool-call" as const,
               toolCallId: "call-1",
               toolName: "unsafe",
-              input: { secret: Symbol("not-cloneable") },
+              input: { secret: Symbol(sensitiveValue) },
             }],
           }, { role: "user" as const, content: "Continue" }],
           tools: undefined,
@@ -71,6 +72,13 @@ describe("runtime-bridge", () => {
       assertEquals(
         error.message,
         "Model call context contains data that cannot be persisted safely",
+      );
+      assertEquals(error.cause, undefined);
+      assertEquals(
+        JSON.stringify(error, Object.getOwnPropertyNames(error)).includes(
+          sensitiveValue,
+        ),
+        false,
       );
       assertEquals(sinkCalls, 0);
       assertEquals(dispatches, 0);

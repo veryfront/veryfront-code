@@ -6,6 +6,7 @@
  * types and calls into this bridge at the edge.
  */
 import type { TextGenerationRuntimeMessage } from "#veryfront/agent/runtime/text-generation-runtime-message-types.ts";
+import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
 import type {
   RuntimeGenerateTextResult,
   RuntimeStreamPart,
@@ -25,7 +26,6 @@ import type {
   ModelCallTool,
 } from "./model-call-context.ts";
 import { getActiveRunEventSinks } from "./run-event-sink-context.ts";
-import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
 
 const cloneStructuredValue = globalThis.structuredClone;
 
@@ -496,10 +496,9 @@ async function emitModelCallContextEvent(directOptions: DirectModelOptions): Pro
   const cloneEvent = (): AgentRunModelCallContextEvent => {
     try {
       return cloneStructuredValue(event);
-    } catch (cause) {
+    } catch {
       throw DURABLE_RUN_EVENT_PERSISTENCE_FAILED.create({
         detail: "Model call context contains data that cannot be persisted safely",
-        cause,
       });
     }
   };
