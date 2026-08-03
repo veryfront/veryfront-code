@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import {
@@ -299,12 +304,35 @@ describe("import-lockfile", () => {
       if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
       assertEquals(error.slug, "lockfile-format-mismatch");
       assertEquals(error.title, "Lockfile format is not supported");
+      assertExists(error.detail);
+      assertStringIncludes(error.detail, "format version 99");
+      assertStringIncludes(error.detail, "supports version 1");
+      assertEquals(error.detail.includes("/project/veryfront.lock"), false);
       assertEquals(
         error.suggestion,
         "Upgrade Veryfront or migrate the lockfile before modifying it",
       );
-      const context = error.context as { actualVersion?: number };
+      const context = error.context as { actualVersion?: number; lockfilePath?: string };
       assertEquals(context.actualVersion, 99);
+      assertEquals(context.lockfilePath, "/project/veryfront.lock");
+    });
+
+    it("should treat a non-numeric lockfile version as invalid structure", async () => {
+      const data = { version: "1", imports: {} };
+      const fs = createMockFS({ "/project/veryfront.lock": JSON.stringify(data) });
+      const mgr = createLockfileManager("/project", fs);
+
+      const error = await assertRejects(() => mgr.read(), VeryfrontError);
+
+      assertExists(error);
+      if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
+      assertEquals(error.slug, "lockfile-read-error");
+      assertExists(error.detail);
+      assertStringIncludes(error.detail, "invalid structure");
+      assertEquals(error.detail.includes("/project/veryfront.lock"), false);
+      const context = error.context as { lockfilePath?: string; reason?: string };
+      assertEquals(context.lockfilePath, "/project/veryfront.lock");
+      assertEquals(context.reason, "invalid-structure");
     });
 
     it("should preserve a newer-format lockfile on disk after a format mismatch", async () => {
@@ -381,6 +409,11 @@ describe("import-lockfile", () => {
       assertExists(error);
       if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
       assertEquals(error.slug, "lockfile-read-error");
+      assertExists(error.detail);
+      assertEquals(error.detail.includes("/project/veryfront.lock"), false);
+      const context = error.context as { lockfilePath?: string; reason?: string };
+      assertEquals(context.lockfilePath, "/project/veryfront.lock");
+      assertEquals(context.reason, "access-failed");
       assertEquals(await mgr.get(url), entry);
     });
 

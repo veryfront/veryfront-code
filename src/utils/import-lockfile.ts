@@ -76,7 +76,7 @@ function lockfileReadError(
     : "has an invalid structure";
 
   return LOCKFILE_READ_ERROR.create({
-    detail: `Lockfile ${lockfilePath} ${description}. The file was left untouched.`,
+    detail: `The lockfile ${description}. The file was left untouched.`,
     cause,
     context: { lockfilePath, reason },
   });
@@ -93,11 +93,14 @@ function parseLockfile(content: string, lockfilePath: string): LockfileData {
   if (!isRecord(parsed) || !("version" in parsed)) {
     throw lockfileReadError(lockfilePath, "invalid-structure");
   }
+  if (typeof parsed.version !== "number" || !Number.isSafeInteger(parsed.version)) {
+    throw lockfileReadError(lockfilePath, "invalid-structure");
+  }
   if (parsed.version !== LOCKFILE_VERSION) {
     throw LOCKFILE_FORMAT_MISMATCH.create({
-      detail: `Lockfile ${lockfilePath} uses format version ${parsed.version}, but this ` +
-        `Veryfront build supports version ${LOCKFILE_VERSION}. The file was left untouched; ` +
-        "upgrade Veryfront or migrate the lockfile before reading or modifying it.",
+      detail: `The lockfile uses format version ${parsed.version}, but this ` +
+        `Veryfront build supports version ${LOCKFILE_VERSION}. The file was left untouched. ` +
+        "Upgrade Veryfront or migrate the lockfile before reading or modifying it.",
       context: {
         lockfilePath,
         expectedVersion: LOCKFILE_VERSION,
