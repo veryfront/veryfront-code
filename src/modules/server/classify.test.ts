@@ -147,6 +147,29 @@ describe("classifyModuleRequest", () => {
         });
       }
     });
+
+    it("rejects percent-encoded cross-project paths as ambiguous", () => {
+      for (
+        const path of [
+          "app%2factions%2fsecret.js",
+          "app%2Factions%2Fsecret.js",
+          "app%5cactions%5csecret.js",
+          "app%5Cactions%5Csecret.js",
+          "app%252factions%252fsecret.js",
+          "app%252Factions%252Fsecret.js",
+          "app%255cactions%255csecret.js",
+          "app%255Cactions%255Csecret.js",
+          "components/encoded%20name.js",
+          "components/incomplete%.js",
+        ]
+      ) {
+        assertEquals(
+          classifyModuleRequest(url(`/_vf_modules/_cross/demo/@/${path}`)),
+          { kind: "invalid-module", namespace: "cross-project" },
+          path,
+        );
+      }
+    });
   });
 
   describe("dev-module", () => {

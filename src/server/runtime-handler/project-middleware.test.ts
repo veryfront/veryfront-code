@@ -195,7 +195,7 @@ describe("ProjectMiddlewareRuntime", () => {
     assertEquals(loadCount, 2);
   });
 
-  it("scopes preview middleware by branch and supports explicit project invalidation", async () => {
+  it("does not cache mutable preview middleware by branch name", async () => {
     const adapter = createAdapter();
     let loadCount = 0;
     const runtime = new ProjectMiddlewareRuntime({
@@ -219,11 +219,55 @@ describe("ProjectMiddlewareRuntime", () => {
     await execute(runtime, previewContext("feature-a"));
     await execute(runtime, previewContext("feature-a"));
     await execute(runtime, previewContext("feature-b"));
-    assertEquals(loadCount, 2);
-
-    assertEquals(runtime.invalidateProject("project-a"), 2);
-    await execute(runtime, previewContext("feature-b"));
     assertEquals(loadCount, 3);
+    assertEquals(runtime.size, 0);
+
+    assertEquals(runtime.invalidateProject("project-a"), 0);
+    await execute(runtime, previewContext("feature-b"));
+    assertEquals(loadCount, 4);
+  });
+
+  it("does not cache shared middleware without a canonical project ID", async () => {
+    const adapter = createAdapter();
+    let loadCount = 0;
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => {
+        loadCount++;
+        return Promise.resolve([]);
+      },
+    });
+    const context = createContext(adapter, { projectId: undefined });
+
+    await execute(runtime, context);
+    await execute(runtime, context);
+
+    assertEquals(loadCount, 2);
+    assertEquals(runtime.size, 0);
+  });
+
+  it("separates identical releases for distinct canonical projects", async () => {
+    const adapter = createAdapter();
+    let loadCount = 0;
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => {
+        const version = ++loadCount;
+        return Promise.resolve([() => new Response(`middleware-${version}`)]);
+      },
+    });
+
+    const projectA = await execute(runtime, createContext(adapter));
+    const projectB = await execute(
+      runtime,
+      createContext(adapter, {
+        projectSlug: "trusted-project-b",
+        projectId: "project-b",
+        releaseId: "release-a",
+      }),
+    );
+
+    assertEquals(await projectA?.text(), "middleware-1");
+    assertEquals(await projectB?.text(), "middleware-2");
+    assertEquals(loadCount, 2);
   });
 
   it("passes through when the project has no root middleware", async () => {

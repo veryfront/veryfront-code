@@ -16,7 +16,6 @@ import { startProductionServer } from "../../../src/server/production-server.ts"
 import { bootstrapProd } from "../../../src/server/bootstrap.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { validateVeryfrontConfig } from "#veryfront/config/schemas/index.ts";
-import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 
 const ROOT_LAYOUT_SOURCE =
   `export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -36,55 +35,7 @@ const PROXY_MODE_CONFIG_SOURCE = `export default {
             }
           };`;
 
-const DISPATCH_PUBLIC_KEY_ENV = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
-const encoder = new TextEncoder();
-
-let trustedSigningKeyPair: CryptoKeyPair | undefined;
-let trustedPublicKeyPem: string | undefined;
-
-function encodePem(label: string, der: ArrayBuffer): string {
-  const base64 = btoa(String.fromCharCode(...new Uint8Array(der)));
-  const lines = base64.match(/.{1,64}/g) ?? [base64];
-  return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----`;
-}
-
-async function ensureTrustedProxyKeyMaterial(): Promise<void> {
-  if (trustedSigningKeyPair && trustedPublicKeyPem) return;
-
-  trustedSigningKeyPair = (await crypto.subtle.generateKey(
-    "Ed25519",
-    true,
-    ["sign", "verify"],
-  )) as CryptoKeyPair;
-  const der = await crypto.subtle.exportKey("spki", trustedSigningKeyPair.publicKey);
-  trustedPublicKeyPem = encodePem("PUBLIC KEY", der);
-}
-
-async function mintTrustedDispatchJws(projectId: string): Promise<string> {
-  await ensureTrustedProxyKeyMaterial();
-
-  const now = Math.floor(Date.now() / 1000);
-  const header = { alg: "EdDSA", typ: "JWT" };
-  const claims = {
-    iss: "veryfront-api",
-    aud: projectId,
-    sub: "rsc-proxy-hydration-test",
-    project_id: projectId,
-    platform: "browser",
-    body_sha256: "n/a",
-    iat: now,
-    exp: now + 60,
-  };
-  const encodedHeader = base64urlEncode(JSON.stringify(header));
-  const encodedPayload = base64urlEncode(JSON.stringify(claims));
-  const signingInput = encoder.encode(`${encodedHeader}.${encodedPayload}`);
-  const signature = await crypto.subtle.sign(
-    "Ed25519",
-    trustedSigningKeyPair!.privateKey,
-    signingInput,
-  );
-  return `${encodedHeader}.${encodedPayload}.${base64urlEncodeBytes(new Uint8Array(signature))}`;
-}
+const TRUST_FORWARDED_HEADERS_ENV = "VERYFRONT_TRUST_FORWARDED_HEADERS";
 
 interface TestProjectContext {
   projectDir: string;
@@ -233,9 +184,8 @@ async function withHostedBrowserPage(
 
   const port = await context.allocatePort();
   const controller = new AbortController();
-  const previousDispatchPublicKey = Deno.env.get(DISPATCH_PUBLIC_KEY_ENV);
-  await ensureTrustedProxyKeyMaterial();
-  Deno.env.set(DISPATCH_PUBLIC_KEY_ENV, trustedPublicKeyPem!);
+  const previousProxyTrust = Deno.env.get(TRUST_FORWARDED_HEADERS_ENV);
+  Deno.env.set(TRUST_FORWARDED_HEADERS_ENV, "1");
 
   let server: Awaited<ReturnType<typeof startProductionServer>> | undefined;
   let disposeBootstrap: (() => void | Promise<void>) | undefined;
@@ -281,13 +231,8 @@ async function withHostedBrowserPage(
 
     // A dedicated runtime gets its environment and project identity from
     // host-owned startup options. Forwarded project headers belong only to the
-    // shared proxy topology, where the dispatch signature establishes trust.
-    const extraHTTPHeaders = topology === "shared"
-      ? {
-        ...headers,
-        "x-veryfront-dispatch-jws": await mintTrustedDispatchJws(context.projectId),
-      }
-      : undefined;
+    // shared topology explicitly trusted by the host-level proxy setting.
+    const extraHTTPHeaders = topology === "shared" ? headers : undefined;
     const browserContext = await browser.newContext({ extraHTTPHeaders });
     await installEsmShCorsShim(browserContext);
 
@@ -305,10 +250,10 @@ async function withHostedBrowserPage(
     controller.abort();
     await server?.stop();
     await disposeBootstrap?.();
-    if (previousDispatchPublicKey === undefined) {
-      Deno.env.delete(DISPATCH_PUBLIC_KEY_ENV);
+    if (previousProxyTrust === undefined) {
+      Deno.env.delete(TRUST_FORWARDED_HEADERS_ENV);
     } else {
-      Deno.env.set(DISPATCH_PUBLIC_KEY_ENV, previousDispatchPublicKey);
+      Deno.env.set(TRUST_FORWARDED_HEADERS_ENV, previousProxyTrust);
     }
   }
 }

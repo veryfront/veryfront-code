@@ -172,6 +172,13 @@ then enforces the framework React mappings.
 - Hosted module requests should carry the request-bound import-map identity.
   Cache entries are scoped by the identities that can change transformed
   output.
+- Request-triggered browser graphs require either a root-bound stable snapshot
+  reader or an own `symlinkSemantics: "none"` declaration paired with a genuine
+  exact bounded byte reader. Browser compilation fails closed when an adapter
+  cannot provide either authority; raw text reads are never a fallback.
+- Browser graph compilation has fixed per-project and isolate-wide admission
+  ceilings, bounded queues, dependency/probe/input/output limits, and a request
+  deadline. Operator overrides may only tighten resource and duration limits.
 - Component, manifest, lookup, response, and transform caches are bounded.
   Use the exported project-specific invalidation functions when project content
   changes.

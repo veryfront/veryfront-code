@@ -449,6 +449,107 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       }
     });
 
+    it("rejects missing and malformed pins before dependency metadata I/O", async () => {
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      let metadataOperations = 0;
+      const dependencyPinningSource: DependencyPinningSource = {
+        projectDir: "/tmp/test-project",
+        cacheNamespace: "rsc-pre-admission-pin-rejection",
+        fs: {
+          readFile: () => {
+            metadataOperations += 1;
+            return Promise.resolve("{}");
+          },
+          stat: () => {
+            metadataOperations += 1;
+            return Promise.resolve({
+              size: 2,
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+              mtime: new Date(1),
+            });
+          },
+        },
+      };
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      clearReactVersionCache();
+
+      try {
+        for (
+          const query of [
+            "rel=app%2FCounter.client.ts",
+            "rel=app%2FCounter.client.ts&pins=on%3A",
+            "rel=app%2FCounter.client.ts&pins=on%3A1&pins=on%3A1",
+          ]
+        ) {
+          const response = await handleRSCEndpoint(
+            makeParams({
+              pathname: "/_veryfront/rsc/module",
+              dependencyPinningSource,
+              req: new Request(`http://localhost/_veryfront/rsc/module?${query}`),
+            }),
+          );
+          assertEquals(response?.status, 409);
+        }
+        assertEquals(metadataOperations, 0);
+      } finally {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
+      }
+    });
+
+    it("hands a valid requested snapshot to the admitted browser builder without pre-reading it", async () => {
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      let metadataOperations = 0;
+      const dependencyPinningSource: DependencyPinningSource = {
+        projectDir: "/tmp/test-project",
+        cacheNamespace: "rsc-admitted-pin-resolution",
+        fs: {
+          readFile: () => {
+            metadataOperations += 1;
+            return Promise.reject(new Error("snapshot resolved before admission"));
+          },
+          stat: () => {
+            metadataOperations += 1;
+            return Promise.reject(new Error("snapshot resolved before admission"));
+          },
+        },
+      };
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      clearReactVersionCache();
+      setBrowserModuleBuilderForTesting((_path, options) => {
+        assertEquals(options.requestedDependencyPinningCacheKey, "on:1");
+        assertEquals(metadataOperations, 0);
+        return Promise.resolve({
+          source: "export default 1;",
+          contentHash: "content",
+          importMapHash: "import-map",
+          dependencyPinningCacheKey: "on:1",
+          dependencyPinningDependencies: Object.freeze({}),
+          dependencies: Object.freeze([]),
+          resolutionProbes: Object.freeze([]),
+        });
+      });
+
+      try {
+        const response = await handleRSCEndpoint(
+          makeParams({
+            pathname: "/_veryfront/rsc/module",
+            dependencyPinningSource,
+            req: new Request(
+              "http://localhost/_veryfront/rsc/module?rel=app%2FCounter.client.ts&pins=on%3A1",
+            ),
+          }),
+        );
+        assertEquals(response?.status, 200);
+        assertEquals(metadataOperations, 0);
+      } finally {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
+      }
+    });
+
     it("rejects unsupported hybrid CommonJS and ESM JSX suffixes", async () => {
       for (const extension of [".mtsx", ".ctsx", ".mjsx", ".cjsx"] as const) {
         const filePath = `/tmp/test-project/app/Unsupported${extension}`;
@@ -513,7 +614,6 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
           }
         },
       });
-
       const result = await handleRSCEndpoint(
         makeParams({
           pathname: "/_veryfront/rsc/module",
@@ -560,6 +660,13 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
           }
         },
       });
+      Object.defineProperty(adapter.fs, "symlinkSemantics", {
+        configurable: true,
+        enumerable: true,
+        value: undefined,
+      });
+      adapter.fs.readFileSnapshotWithinLimit = () =>
+        Promise.reject(new TypeError("snapshot rejected symbolic link"));
 
       const result = await handleRSCEndpoint(
         makeParams({
@@ -578,7 +685,7 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       assertEquals((await result!.text()).includes("OUTSIDE_PROJECT_MARKER"), false);
     });
 
-    it("fails closed when app path metadata cannot be inspected", async () => {
+    it("uses exact no-link reads instead of mutable directory metadata", async () => {
       const modulePath = "/tmp/test-project/app/Counter.ts";
       const reads: string[] = [];
       const adapter = createMockAdapter({
@@ -606,8 +713,8 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
         }),
       );
 
-      assertEquals(result?.status, 404);
-      assertEquals(reads, []);
+      assertEquals(result?.status, 200);
+      assertEquals(reads, [modulePath]);
     });
 
     it("serves declared client modules from the app root", async () => {
@@ -933,6 +1040,72 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       }
     });
 
+    it("rejects protected client entry paths before browser compilation", async () => {
+      const projectDir = "/tmp/rsc-protected-entry";
+      const entryPath = `${projectDir}/app/actions/private.client.ts`;
+      const marker = "PROTECTED_ACTION_ENTRY_MARKER";
+      const adapter = createMockAdapter({
+        knownFiles: [entryPath],
+        readFile: () => Promise.resolve(`"use client"; export const secret = "${marker}";`),
+      });
+      let buildCalls = 0;
+      setBrowserModuleBuilderForTesting(async () => {
+        buildCalls++;
+        throw new Error("protected entry must not reach the browser compiler");
+      });
+
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/module",
+          projectDir,
+          config: rscDisabledConfig,
+          adapter,
+          req: new Request(
+            "http://localhost/_veryfront/rsc/module?rel=app%2Factions%2Fprivate.client.ts",
+          ),
+        }),
+      );
+
+      assertEquals(result?.status, 404);
+      assertEquals((await result!.text()).includes(marker), false);
+      assertEquals(buildCalls, 0);
+    });
+
+    it("rejects bundles containing protected transitive project paths", async () => {
+      const projectDir = "/tmp/rsc-protected-dependency";
+      const entryPath = `${projectDir}/app/Counter.client.ts`;
+      const protectedPath = `${projectDir}/app/actions/private.ts`;
+      const marker = "PROTECTED_TRANSITIVE_ACTION_MARKER";
+      const adapter = createMockAdapter({ knownFiles: [entryPath, protectedPath] });
+      setBrowserModuleBuilderForTesting(() =>
+        Promise.resolve({
+          source: `export default "${marker}";`,
+          contentHash: "protected-transitive",
+          importMapHash: "unused",
+          dependencies: [
+            { path: entryPath, contentHash: "entry", byteLength: 1 },
+            { path: protectedPath, contentHash: "protected", byteLength: 1 },
+          ],
+          resolutionProbes: [],
+        })
+      );
+
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/module",
+          projectDir,
+          config: rscDisabledConfig,
+          adapter,
+          req: new Request(
+            "http://localhost/_veryfront/rsc/module?rel=app%2FCounter.client.ts",
+          ),
+        }),
+      );
+
+      assertEquals(result?.status, 404);
+      assertEquals((await result!.text()).includes(marker), false);
+    });
+
     it("serves client modules from the configured app directory", async () => {
       const filePath = "/tmp/test-project/frontend/Counter.tsx";
       const adapter = createMockAdapter({
@@ -1047,10 +1220,23 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
         'import React from "react";',
         "export default function Counter() { return React.createElement('div'); }",
       ].join("\n");
+      const packagePath = `${projectDir}/package.json`;
+      let packageSource = JSON.stringify({ dependencies: { react: "19.1.0" } });
+      let packageGeneration = 1;
       const adapter = createMockAdapter({
-        knownFiles: [entryPath],
-        exists: (path) => Promise.resolve(path === entryPath),
-        readFile: () => Promise.resolve(source),
+        knownFiles: [entryPath, packagePath],
+        readFile: (path) => Promise.resolve(path === packagePath ? packageSource : source),
+        stat: (path) => {
+          if (path === entryPath || path === packagePath) {
+            return Promise.resolve({
+              isFile: true,
+              isDirectory: false,
+              size: path === packagePath ? packageSource.length : source.length,
+              mtime: path === packagePath ? new Date(packageGeneration) : null,
+            });
+          }
+          return Promise.reject(new Deno.errors.NotFound("not found"));
+        },
       });
       const bundler = tryResolve<Bundler>("Bundler");
       if (!bundler) throw new Error("Bundler test contract is not registered");
@@ -1076,18 +1262,12 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
         );
 
       try {
-        await Deno.writeTextFile(
-          `${projectDir}/package.json`,
-          JSON.stringify({ dependencies: { react: "19.1.0" } }),
-        );
         clearReactVersionCache();
         assertEquals((await request())?.status, 200);
         assertEquals(getBrowserModuleEndpointStatsForTesting().cacheEntries, 1);
 
-        await Deno.writeTextFile(
-          `${projectDir}/package.json`,
-          JSON.stringify({ dependencies: { react: "19.2.0" } }),
-        );
+        packageSource = JSON.stringify({ dependencies: { react: "19.2.0" } });
+        packageGeneration++;
         clearReactVersionCache();
         assertEquals((await request())?.status, 200);
         assertEquals(getBrowserModuleEndpointStatsForTesting().cacheEntries, 1);
@@ -1160,7 +1340,7 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
         knownFiles: Object.keys(files),
         exists: (path) => Promise.resolve(path in files),
         readFile: async (path) => {
-          if (path === firstPath && ++firstReads === 2) {
+          if (path === firstPath && ++firstReads === 1) {
             signalStarted();
             await release;
           }
@@ -1235,7 +1415,7 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       }
 
       const output = logs.join("\n");
-      assertEquals(result?.status, 500);
+      assertEquals(result?.status, 404);
       assertEquals(output.includes("ATTACKER_LOG_PREFIX"), false);
       assertEquals(output.includes("ATTACKER_LOG_SUFFIX"), false);
       assertEquals(output.length < 1000, true);
@@ -2086,6 +2266,8 @@ Deno.test("RSC module endpoint preserves the exact proxy dependency source", asy
         source: "export default null;",
         contentHash: "proxy-source-test",
         importMapHash: await computeHash(options.importMapJson ?? ""),
+        dependencyPinningCacheKey: snapshot.cacheKey,
+        dependencyPinningDependencies: snapshot.dependencies,
         dependencies: [],
         resolutionProbes: [],
       };

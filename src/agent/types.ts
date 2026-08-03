@@ -35,7 +35,6 @@ import type {
   ToolCallPartWithInput,
 } from "./schemas/index.ts";
 import type { RuntimeAgentThinkingConfig } from "./runtime/agent-definition.ts";
-import type { ModelCallRecorder } from "#veryfront/runtime/model-call-context.ts";
 
 /**
  * Model configuration string format: "provider/model-name"
@@ -232,12 +231,6 @@ export interface AgentConfig {
    * provider transport options on a per-call basis.
    */
   resolveModelTransport?: ModelTransportResolver;
-  /**
-   * Record the exact provider-agnostic messages and resolved tools immediately
-   * before each model dispatch. A thrown error or rejected promise prevents
-   * dispatch.
-   */
-  modelCallRecorder?: ModelCallRecorder;
   /**
    * Optional step-boundary hook for refreshing the runtime system prompt and
    * host-owned context during a long-lived run.

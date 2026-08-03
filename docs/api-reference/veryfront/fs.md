@@ -58,7 +58,7 @@ const configPath = resolve(cwd(), "veryfront.config.ts");
 | `dirname` | Return the parent directory path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L29) |
 | `exists` | Return false for a missing path and propagate every other filesystem error. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L511) |
 | `extname` | Return the file extension for a path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L44) |
-| `isFileSnapshotChangedError` | Return whether a value is a framework-created file snapshot change error. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/file-snapshot-error.ts#L14) |
+| `isFileSnapshotChangedError` | Return whether a value is a framework-created file snapshot change error. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/file-snapshot-error.ts#L32) |
 | `isNotFoundError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/not-found-error.ts#L210) |
 | `join` | Join and normalize path segments using their detected path flavor. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L18) |
 | `lstat` | Read file metadata without following a terminal symbolic link. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L521) |
@@ -74,7 +74,7 @@ const configPath = resolve(cwd(), "veryfront.config.ts");
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `FileSnapshotChangedError` | Error raised when a file changes while a stable snapshot is being read. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/file-snapshot-error.ts#L4) |
+| `FileSnapshotChangedError` | Error raised when a file changes while a stable snapshot is being read. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/file-snapshot-error.ts#L22) |
 
 ### Types
 
