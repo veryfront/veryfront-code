@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withTimeoutThrow } from "../../utils/stream-utils.ts";
 import { APICacheStore } from "./api-store.ts";
 
 async function withStoreTtlEnabled(fn: () => Promise<void>): Promise<void> {
@@ -296,9 +297,10 @@ describe("rendering/cache/stores/api-store", () => {
       const globals = globalThis as Record<string, unknown>;
       const originalAdapter = globals.__vf_multi_project_adapter;
 
-      let releaseSet: () => void = () => {};
-      let setStarted = false;
+      const setStarted = Promise.withResolvers<void>();
+      const releaseSet = Promise.withResolvers<void>();
       let setCompleted = false;
+      let setPromise: Promise<void> | undefined;
       const server = Deno.serve(
         { hostname: "127.0.0.1", port: 0, onListen: () => {} },
         async (request) => {
@@ -310,10 +312,8 @@ describe("rendering/cache/stores/api-store", () => {
             return Response.json({ error: "not found" }, { status: 404 });
           }
 
-          setStarted = true;
-          await new Promise<void>((resolve) => {
-            releaseSet = resolve;
-          });
+          setStarted.resolve();
+          await releaseSet.promise;
           setCompleted = true;
           return Response.json({ success: true });
         },
@@ -336,40 +336,47 @@ describe("rendering/cache/stores/api-store", () => {
 
       try {
         let setResolved = false;
-        const setPromise = store.set("distributed-key", payload).then(() => {
+        setPromise = store.set("distributed-key", payload).then(() => {
           setResolved = true;
         });
 
-        for (let attempts = 0; attempts < 50 && !setStarted; attempts++) {
-          await new Promise((resolve) => setTimeout(resolve, 0));
-        }
-        assertEquals(setStarted, true);
+        await withTimeoutThrow(setStarted.promise, 10_000, "distributed cache write to start");
         assertEquals(setResolved, false);
         assertEquals(setCompleted, false);
 
-        releaseSet();
+        releaseSet.resolve();
         await setPromise;
 
         assertEquals(setCompleted, true);
         assertEquals(setResolved, true);
       } finally {
-        releaseSet();
-        await store.destroy();
-        await server.shutdown();
-        if (previousApiBaseUrl === undefined) {
-          Deno.env.delete("VERYFRONT_API_BASE_URL");
-        } else {
-          Deno.env.set("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
-        }
-        if (previousApiToken === undefined) {
-          Deno.env.delete("VERYFRONT_API_TOKEN");
-        } else {
-          Deno.env.set("VERYFRONT_API_TOKEN", previousApiToken);
-        }
-        if (originalAdapter === undefined) {
-          delete globals.__vf_multi_project_adapter;
-        } else {
-          globals.__vf_multi_project_adapter = originalAdapter;
+        releaseSet.resolve();
+        try {
+          await withTimeoutThrow(
+            Promise.all([
+              store.destroy(),
+              server.shutdown(),
+              setPromise ?? Promise.resolve(),
+            ]),
+            10_000,
+            "distributed cache write test cleanup",
+          );
+        } finally {
+          if (previousApiBaseUrl === undefined) {
+            Deno.env.delete("VERYFRONT_API_BASE_URL");
+          } else {
+            Deno.env.set("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
+          }
+          if (previousApiToken === undefined) {
+            Deno.env.delete("VERYFRONT_API_TOKEN");
+          } else {
+            Deno.env.set("VERYFRONT_API_TOKEN", previousApiToken);
+          }
+          if (originalAdapter === undefined) {
+            delete globals.__vf_multi_project_adapter;
+          } else {
+            globals.__vf_multi_project_adapter = originalAdapter;
+          }
         }
       }
     });
