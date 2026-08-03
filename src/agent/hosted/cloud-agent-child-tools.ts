@@ -41,11 +41,16 @@ import type {
   DefaultHostedChildAgentExecutionConfig,
   DefaultHostedInvokeAgentConfig,
   DefaultHostedInvokeAgentContext,
+  DefaultHostedInvokeAgentTraceAttributes,
 } from "./default-invoke-agent-tool.ts";
 import type { HostedChildRunIdentifiers } from "./child-status.ts";
 import { fetchDefaultHostedProjectSteering } from "./default-project-steering-refresh.ts";
 import type { HostedProjectSkillIdsContext } from "./project-steering-adapter.ts";
 import { createLiveStudioMcpTools } from "../project/live-studio-mcp-tools.ts";
+import type {
+  StartedHostedChildForkRuntime,
+  StartHostedChildForkRuntimeWithHostToolsInput,
+} from "./child-fork-runtime-start.ts";
 import {
   getProjectAgentRuntime,
   getProjectSteering,
@@ -378,7 +383,13 @@ export async function resolveHostedChildAgentExecutionConfig(
 export function createInvokeAgentTool(
   context: NodeVeryfrontCloudAgentServiceContext,
   childContext: ChildRunContext,
-  options?: { requireDurable?: boolean },
+  options?: {
+    requireDurable?: boolean;
+    createAgentServiceSandboxTools?: typeof createAgentServiceSandboxTools;
+    startRuntime?: (
+      input: StartHostedChildForkRuntimeWithHostToolsInput<DefaultHostedInvokeAgentTraceAttributes>,
+    ) => StartedHostedChildForkRuntime | Promise<StartedHostedChildForkRuntime>;
+  },
 ) {
   return createDefaultHostedInvokeAgentTool({
     context: childContext,
@@ -410,11 +421,13 @@ export function createInvokeAgentTool(
       resolveHostedChildAgentExecutionConfig(context, childContext, childAgentId, projectId),
     refreshProjectSkillIds: (projectSkillContext) =>
       refreshProjectSkillIds(context, projectSkillContext),
-    createAgentServiceSandboxTools,
+    createAgentServiceSandboxTools: options?.createAgentServiceSandboxTools ??
+      createAgentServiceSandboxTools,
     createLiveStudioTools: createLiveStudioMcpTools,
     createRemoteToolSource: getRemoteToolSourceFactory(context),
     createToolsFromRemoteDefinitions,
     requireDurableInvokeAgent: options?.requireDurable,
+    startRuntime: options?.startRuntime,
   });
 }
 
