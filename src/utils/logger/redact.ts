@@ -720,7 +720,7 @@ function decodeUrlParameterName(value: string): string {
  * Strip credentials from URL-shaped strings so they can be safely emitted in
  * free-form text (error messages, stacks, lifted `request_url` fields). Unlike
  * {@link redactSensitive}, which is key-based, this scrubs secrets embedded in
- * the *value* itself:
+ * the *value* itself.
  *
  * - URL userinfo: `http://user:pass@host` → `http://user:[REDACTED]@host`
  * - sensitive query params: `?access_token=abc` → `?access_token=[REDACTED]`

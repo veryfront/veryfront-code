@@ -87,6 +87,10 @@ class InvalidStoreEncodingError extends Error {
   override readonly name = "InvalidStoreEncodingError";
 }
 
+class OversizedStoreSnapshotError extends Error {
+  override readonly name = "OversizedStoreSnapshotError";
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -316,7 +320,6 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
   function withLock<T>(fn: (lease: LocalJsonStoreLease) => Promise<T>): Promise<T> {
     return withLocalJsonStoreLock(storagePath, async (lease) => {
       await validateStoragePath();
-      await cleanupOrphanedTempFiles();
       return await fn(lease);
     }).catch((error) => {
       if (isVeryfrontError(error)) throw error;
@@ -427,12 +430,20 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
       bytes = await readSnapshot(storagePath, dirname(storagePath), MAX_STORED_BYTES);
     } catch (error) {
       if (isCanonicalNotFoundError(error)) return null;
+      if (error instanceof RangeError) {
+        throw new OversizedStoreSnapshotError("RAG store snapshot exceeds its byte limit", {
+          cause: error,
+        });
+      }
       throw error;
     }
     try {
       return { bytes, text: new TextDecoder("utf-8", { fatal: true }).decode(bytes) };
     } catch (cause) {
-      throw new InvalidStoreEncodingError("RAG store is not valid UTF-8", { cause });
+      if (cause instanceof TypeError) {
+        throw new InvalidStoreEncodingError("RAG store is not valid UTF-8", { cause });
+      }
+      throw cause;
     }
   }
 
@@ -467,7 +478,9 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
 
   function classifyStoreSnapshotError(error: unknown): Error {
     if (isVeryfrontError(error)) return error;
-    if (error instanceof RangeError) return corruptStoreError("file exceeds size limit", error);
+    if (error instanceof OversizedStoreSnapshotError) {
+      return corruptStoreError("file exceeds size limit", error);
+    }
     if (error instanceof InvalidStoreEncodingError) {
       return corruptStoreError("file is not valid UTF-8", error);
     }
@@ -535,11 +548,12 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
     lease: LocalJsonStoreLease,
   ): Promise<void> {
     if (!isRagStoreData(data)) {
-      throw RAG_STORE_UNAVAILABLE.create({
+      throw INVALID_ARGUMENT.create({
         detail: "The RAG store update violated persisted-data limits or relationships.",
         context: { storagePath },
       });
     }
+    await cleanupOrphanedTempFiles();
     const dir = dirname(storagePath);
     if (dir && dir !== ".") {
       await mkdir(dir, { recursive: true });
@@ -547,7 +561,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
     const payload = JSON.stringify(data);
     const payloadBytes = new TextEncoder().encode(payload);
     if (payloadBytes.byteLength > MAX_STORED_BYTES) {
-      throw RAG_STORE_UNAVAILABLE.create({
+      throw INVALID_ARGUMENT.create({
         detail: "The RAG store update exceeds the persisted byte limit.",
         context: { storagePath },
       });

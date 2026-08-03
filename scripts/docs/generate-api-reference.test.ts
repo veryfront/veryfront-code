@@ -124,6 +124,26 @@ describe("generate-api-reference", () => {
         "| `RuntimeMetadata` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L1) |",
         "first-line declarations must keep a source anchor",
       );
+      const providerComponents = markdownSection(providerReference, "Components");
+      const providerConstants = markdownSection(providerReference, "Constants");
+      for (
+        const constantName of [
+          "DEFAULT_VERYFRONT_CLOUD_MODEL_ID",
+          "VERYFRONT_CLOUD_CHAT_MODELS",
+          "VERYFRONT_CLOUD_MODEL_PREFIX",
+        ]
+      ) {
+        assertEquals(
+          providerComponents.includes(`\`${constantName}\``),
+          false,
+          `${constantName} must not be classified as a component`,
+        );
+        assertStringIncludes(
+          providerConstants,
+          `\`${constantName}\``,
+          `${constantName} must be classified as a constant`,
+        );
+      }
       const generateResultIndex = providerTypes.split("\n").findIndex((line) =>
         line.startsWith("export interface ModelRuntimeGenerateResult")
       );
@@ -303,3 +323,12 @@ describe("generate-api-reference", () => {
     }
   });
 });
+
+function markdownSection(markdown: string, heading: string): string {
+  const startMarker = `### ${heading}\n`;
+  const start = markdown.indexOf(startMarker);
+  if (start < 0) return "";
+  const contentStart = start + startMarker.length;
+  const nextHeading = markdown.indexOf("\n### ", contentStart);
+  return markdown.slice(contentStart, nextHeading < 0 ? undefined : nextHeading);
+}

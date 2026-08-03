@@ -183,7 +183,7 @@ describe("ragStore", () => {
     });
   });
 
-  it("cleans an orphaned temp file left by an interrupted process", async () => {
+  it("defers orphaned temp cleanup until the next publication", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");
       await Deno.mkdir(join(tempDir, "data"), { recursive: true });
@@ -194,8 +194,28 @@ describe("ragStore", () => {
 
       const store = ragStore({ model: "local/test-model", storagePath });
       assertEquals(await store.listDocuments(), []);
+      assertEquals(await store.search("read only"), []);
       assertEquals(await readTextFile(storagePath), original);
+      assertEquals(await exists(orphanPath), true);
+
+      await store.ingest("Published", "new content");
       assertEquals(await exists(orphanPath), false);
+    });
+  });
+
+  it("classifies caller-created invalid persisted data as an invalid argument", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const store = ragStore({ model: "local/test-model", storagePath });
+
+      const error = await assertRejects(
+        () => store.ingest(123 as never, "content"),
+        VeryfrontError,
+        "violated persisted-data limits or relationships",
+      );
+      assert(error instanceof VeryfrontError);
+      assertEquals(error.slug, "invalid-argument");
+      assertEquals(await exists(storagePath), false);
     });
   });
 
@@ -998,6 +1018,42 @@ describe("ragStore", () => {
       assertEquals(error.slug, "rag-store-corrupt");
       assertEquals(error.message.includes(storagePath), false);
       assertEquals((await Deno.stat(storagePath)).size, oversizedBytes);
+    });
+  });
+
+  it("classifies an unrelated snapshot RangeError as unavailable", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      await Deno.mkdir(join(tempDir, "data"), { recursive: true });
+      const original = JSON.stringify({ documents: [], chunks: [] });
+      const originalBytes = new TextEncoder().encode(original);
+      await Deno.writeFile(storagePath, originalBytes);
+      const store = ragStore({ model: "local/test-model", storagePath });
+      const decodeDescriptor = Object.getOwnPropertyDescriptor(TextDecoder.prototype, "decode");
+      assert(decodeDescriptor?.value !== undefined);
+      const originalDecode = decodeDescriptor.value as TextDecoder["decode"];
+      Object.defineProperty(TextDecoder.prototype, "decode", {
+        ...decodeDescriptor,
+        value: function (input?: AllowSharedBufferSource, options?: TextDecodeOptions) {
+          if (input !== undefined && input.byteLength === originalBytes.byteLength) {
+            throw new RangeError("simulated allocation failure");
+          }
+          return originalDecode.call(this, input, options);
+        },
+      });
+
+      try {
+        const error = await assertRejects(
+          () => store.listDocuments(),
+          VeryfrontError,
+          "could not be completed safely",
+        );
+        assert(error instanceof VeryfrontError);
+        assertEquals(error.slug, "rag-store-unavailable");
+      } finally {
+        Object.defineProperty(TextDecoder.prototype, "decode", decodeDescriptor);
+      }
+      assertEquals(await readTextFile(storagePath), original);
     });
   });
 

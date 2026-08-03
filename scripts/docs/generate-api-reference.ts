@@ -1407,12 +1407,7 @@ function categorizeNodes(
         pushNodeSummary(result.classes, name, desc, sourceHref);
         break;
       case "variable":
-        pushNodeSummary(
-          isComponentLikeName(name) ? result.components : result.constants,
-          name,
-          desc,
-          sourceHref,
-        );
+        pushNodeSummary(result.constants, name, desc, sourceHref);
         break;
       default:
         break;
