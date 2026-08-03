@@ -5,6 +5,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { startCliProxyModeServer } from "../../cli/shared/server-startup.ts";
 import { createProxyHandler, injectContextHeaders } from "veryfront/proxy/handler";
 import { HMRHandler } from "#veryfront/server/handlers/preview/hmr.handler.ts";
+import { getClientDetails } from "#veryfront/server/handlers/preview/hmr-client-manager.ts";
 
 const MUTATED_ENV_KEYS = [
   "PROXY_MODE",
@@ -90,7 +91,7 @@ describe("CLI start same-process proxy trust", {
     }
   });
 
-  it("retains the native HMR upgrade while using private sanitized proxy context", async () => {
+  it("retains the native HMR upgrade and replaces adversarial query identity", async () => {
     const previousEnv = snapshotEnvironment();
     Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
     Deno.env.delete("NODE_ENV");
@@ -98,7 +99,8 @@ describe("CLI start same-process proxy trust", {
     Deno.env.set("VERYFRONT_API_BASE_URL", "http://127.0.0.1:1");
 
     const projectDir = `${Deno.cwd()}/cli/templates/files/minimal`;
-    const localProjects = { minimal: projectDir };
+    const canonicalProjectSlug = "canonical-local-project";
+    const localProjects = { minimal: projectDir, [canonicalProjectSlug]: projectDir };
     const proxy = createProxyHandler({
       config: {
         apiBaseUrl: "http://127.0.0.1:1",
@@ -113,22 +115,46 @@ describe("CLI start same-process proxy trust", {
     const port = getAvailablePort();
     let server: Awaited<ReturnType<typeof startCliProxyModeServer>> | undefined;
     let socket: WebSocket | undefined;
+    let forwardedWebSocketUrl: URL | undefined;
 
     try {
       server = await startCliProxyModeServer({
         port,
         projectDir,
         signal: abortController.signal,
-        requestInterceptor: async (request) =>
-          injectContextHeaders(request, await proxy.processRequest(request)),
-        defaultProjectId: "local-cli-start-websocket-test",
+        requestInterceptor: async (request) => {
+          const context = await proxy.processRequest(request);
+          const forwarded = injectContextHeaders(request, {
+            ...context,
+            projectSlug: undefined,
+            environment: "preview",
+            contentSourceId: "preview-main",
+            host: "preview.veryfront.com",
+            parsedDomain: {
+              slug: null,
+              isVeryfrontDomain: true,
+              environment: "preview",
+              branch: null,
+              isDraft: true,
+              allowIframeEmbed: true,
+            },
+            isLocalProject: false,
+            localPath: undefined,
+            projectId: undefined,
+          });
+          if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+            forwardedWebSocketUrl = new URL(forwarded.url);
+          }
+          return forwarded;
+        },
+        defaultProjectId: canonicalProjectSlug,
         localProjects,
       });
       await server.ready;
 
       assertEquals(Deno.env.get("VERYFRONT_TRUST_FORWARDED_HEADERS"), undefined);
       socket = new WebSocket(
-        `ws://minimal.localhost:${port}/_ws?x-environment=preview&x-project-slug=minimal`,
+        `ws://minimal.localhost:${port}/_ws?x-environment=production&x-project-slug=attacker-controlled`,
       );
       const message = await new Promise<string>((resolve, reject) => {
         const timeout = setTimeout(
@@ -155,6 +181,13 @@ describe("CLI start same-process proxy trust", {
       });
 
       assertEquals(JSON.parse(message), { type: "connected" });
+      assertEquals(forwardedWebSocketUrl?.searchParams.get("x-project-slug"), "");
+      assertEquals(forwardedWebSocketUrl?.searchParams.get("x-environment"), "preview");
+
+      assertEquals(
+        getClientDetails().map((client) => client.projectSlug),
+        [canonicalProjectSlug],
+      );
     } finally {
       socket?.close();
       abortController.abort();

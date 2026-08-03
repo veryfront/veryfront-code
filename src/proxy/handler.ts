@@ -1330,8 +1330,14 @@ export function createProxyContextHeaders(
 }
 
 export function injectContextHeaders(req: Request, ctx: ProxyContext): Request {
+  const url = new URL(req.url);
+  if (url.pathname === "/_ws") {
+    url.searchParams.set("x-project-slug", ctx.projectSlug ?? "");
+    url.searchParams.set("x-environment", ctx.environment);
+  }
+
   const injected = new Request(
-    req.url,
+    url,
     withProxyStreamingBodyDuplex({
       method: req.method,
       headers: createProxyContextHeaders(req, ctx),
