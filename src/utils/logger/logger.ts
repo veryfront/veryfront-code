@@ -14,7 +14,42 @@ import {
   type SerializedError,
   serializeError,
 } from "./core.ts";
-import { redactSensitive, sanitizeSerializedError, sanitizeUrlCredentials } from "./redact.ts";
+import {
+  REDACTED,
+  redactForSerialization,
+  redactSensitive,
+  sanitizeSerializedError,
+  sanitizeUrlCredentials,
+} from "./redact.ts";
+import { stringifyRedactedJson } from "./serialization.ts";
+
+const apply = Reflect.apply;
+const arrayPush = Array.prototype.push;
+const arrayIsArray = Array.isArray;
+const NativeConsole = console;
+const NativeDate = Date;
+const dateToISOString = Date.prototype.toISOString;
+const NativePerformance = performance;
+const performanceNow = Performance.prototype.now;
+const numberRound = Math.round;
+const objectCreate = Object.create;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const NativeSet = Set;
+const setAdd = Set.prototype.add;
+const setClear = Set.prototype.clear;
+const setDelete = Set.prototype.delete;
+const setValues = Set.prototype.values;
+const setIteratorNext = objectGetPrototypeOf(new NativeSet().values()).next;
+const stringToLowerCase = String.prototype.toLowerCase;
+const stringToUpperCase = String.prototype.toUpperCase;
+
+function readPerformanceNow(): number {
+  try {
+    return apply(performanceNow, NativePerformance, []) as number;
+  } catch {
+    return 0;
+  }
+}
 
 export enum LogLevel {
   DEBUG = 0,
@@ -132,7 +167,7 @@ const LOG_LEVEL_MAP: Readonly<Record<string, LogLevel>> = {
 
 function parseLogLevel(levelString: string | undefined): LogLevel | undefined {
   if (!levelString) return undefined;
-  return LOG_LEVEL_MAP[levelString.toUpperCase()];
+  return LOG_LEVEL_MAP[apply(stringToUpperCase, levelString, []) as string];
 }
 
 /**
@@ -174,7 +209,7 @@ function getDefaultFormat(
 let loggerConfig: LoggerConfig | null = null;
 
 let legacyLogRecordEmitter: LogRecordEmitter | null = null;
-const logRecordSubscribers = new Set<LogRecordEmitter>();
+const logRecordSubscribers = new NativeSet<LogRecordEmitter>();
 
 /**
  * Re-read logger configuration from environment variables.
@@ -220,16 +255,16 @@ export function __registerLogRecordEmitter(emitter: LogRecordEmitter | null): vo
 
 /** Subscribe to process-level structured log records. Returns an unregister function. */
 export function __subscribeLogRecordEmitter(emitter: LogRecordEmitter): () => void {
-  logRecordSubscribers.add(emitter);
+  apply(setAdd, logRecordSubscribers, [emitter]);
   return () => {
-    logRecordSubscribers.delete(emitter);
+    apply(setDelete, logRecordSubscribers, [emitter]);
   };
 }
 
 /** Reset the process-level structured log emitter. Only intended for tests. */
 export function __resetLogRecordEmitterForTests(): void {
   legacyLogRecordEmitter = null;
-  logRecordSubscribers.clear();
+  apply(setClear, logRecordSubscribers, []);
 }
 
 function resolveLoggerConfig(): LoggerConfig {
@@ -243,6 +278,29 @@ function resolveLoggerConfig(): LoggerConfig {
   return loggerConfig;
 }
 
+function sanitizeLogString(value: unknown, fallback: string): string {
+  try {
+    return sanitizeUrlCredentials(typeof value === "string" ? value : String(value));
+  } catch {
+    return fallback;
+  }
+}
+
+function currentIsoTimestamp(): string {
+  return apply(dateToISOString, new NativeDate(), []) as string;
+}
+
+function snapshotLogContext(context: unknown): Record<string, unknown> {
+  try {
+    const snapshot = redactForSerialization(context);
+    return typeof snapshot === "object" && snapshot !== null && !arrayIsArray(snapshot)
+      ? snapshot as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Extract context from variadic args.
  * First object argument becomes context, errors are handled specially.
@@ -254,21 +312,26 @@ function extractContext(
   let error: LogEntry["error"] | undefined;
 
   for (const arg of args) {
-    if (arg instanceof Error) {
-      error = serializeError(arg);
-      continue;
-    }
-    if (typeof arg === "object" && arg !== null && !Array.isArray(arg)) {
-      const contextArg = arg as Record<string, unknown>;
-      if (contextArg.error instanceof Error) {
-        const { error: contextError, ...rest } = contextArg;
-        error = serializeError(contextError);
-        if (Object.keys(rest).length > 0) {
-          context = { ...context, ...rest };
-        }
+    try {
+      if (arg instanceof Error) {
+        error = serializeError(arg);
         continue;
       }
-      context = { ...context, ...contextArg };
+      if (typeof arg === "object" && arg !== null && !arrayIsArray(arg)) {
+        const contextArg = arg as Record<string, unknown>;
+        if (contextArg.error instanceof Error) {
+          const { error: contextError, ...rest } = contextArg;
+          error = serializeError(contextError);
+          if (Object.keys(rest).length > 0) {
+            context = { ...context, ...rest };
+          }
+          continue;
+        }
+        context = { ...context, ...contextArg };
+      }
+    } catch {
+      // Logging accepts application-owned objects. Ignore an unreadable value
+      // rather than allowing proxy traps or getters to break the caller.
     }
   }
 
@@ -342,6 +405,30 @@ function sanitizeStringFieldValue(value: unknown): string {
   return sanitizeUrlCredentials(String(value));
 }
 
+function createFallbackLogEntry(entry: LogEntry): Record<string, unknown> {
+  const fallback = objectCreate(null) as Record<string, unknown>;
+  fallback.timestamp = entry.timestamp;
+  fallback.level = entry.level;
+  fallback.service = entry.service;
+  fallback.veryfrontVersion = entry.veryfrontVersion;
+  fallback.message = entry.message;
+  if (entry.component !== undefined) fallback.component = entry.component;
+  const context = objectCreate(null) as Record<string, string>;
+  context.unserializable_context = REDACTED;
+  fallback.context = context;
+  return fallback;
+}
+
+/**
+ * Serialize a log entry without letting caller-controlled values or inherited
+ * `toJSON` hooks escape the logging boundary. The redacted snapshot normalizes
+ * BigInt and deliberate serializers first, then shadows inherited hooks on
+ * every owned object and array before native JSON serialization.
+ */
+function stringifyLogEntry(entry: LogEntry): string {
+  return stringifyRedactedJson(entry, createFallbackLogEntry(entry));
+}
+
 class ConsoleLogger implements Logger {
   private boundContext: Record<string, unknown>;
   private componentName?: string;
@@ -352,21 +439,46 @@ class ConsoleLogger implements Logger {
     componentName?: string,
     private readonly options: ConsoleLoggerOptions = {},
   ) {
-    this.boundContext = boundContext ?? {};
-    this.componentName = componentName;
+    this.boundContext = snapshotLogContext(boundContext ?? {});
+    this.componentName = componentName === undefined
+      ? undefined
+      : sanitizeLogString(componentName, REDACTED);
   }
 
   child(context: Record<string, unknown>): Logger {
+    const childContext = snapshotLogContext(context);
     return new ConsoleLogger(
       this.prefix,
-      { ...this.boundContext, ...context },
+      { ...this.boundContext, ...childContext },
       this.componentName,
       this.options,
     );
   }
 
   component(name: string): Logger {
-    return new ConsoleLogger(this.prefix, { ...this.boundContext }, name, this.options);
+    return new ConsoleLogger(
+      this.prefix,
+      { ...this.boundContext },
+      name,
+      this.options,
+    );
+  }
+
+  private createEmergencyEntry(level: LogEntry["level"]): LogEntry {
+    const entry: LogEntry = {
+      timestamp: currentIsoTimestamp(),
+      level,
+      service: apply(
+        stringToLowerCase,
+        sanitizeLogString(this.prefix, "veryfront"),
+        [],
+      ) as string,
+      veryfrontVersion: RUNTIME_VERSION,
+      message: REDACTED,
+      context: { unserializable_context: REDACTED },
+    };
+    if (this.componentName) entry.component = this.componentName;
+    return entry;
   }
 
   private createEntry(level: LogEntry["level"], message: string, args: unknown[]): LogEntry {
@@ -374,11 +486,14 @@ class ConsoleLogger implements Logger {
     const mergedContext: Record<string, unknown> = { ...this.boundContext, ...context };
 
     const entry: LogEntry = {
-      timestamp: new Date().toISOString(),
+      timestamp: currentIsoTimestamp(),
       level,
-      service: this.prefix.toLowerCase(),
+      service: apply(stringToLowerCase, this.prefix, []) as string,
       veryfrontVersion: RUNTIME_VERSION,
-      message,
+      // The message string bypasses the key-based context redactor, so scrub
+      // credential-shaped text (URL userinfo, ?access_token=, header dumps)
+      // embedded directly in the message before emission (#1989).
+      message: sanitizeLogString(message, REDACTED),
     };
 
     if (this.componentName) entry.component = this.componentName;
@@ -495,13 +610,16 @@ class ConsoleLogger implements Logger {
 
   private formatJson(level: LogEntry["level"], message: string, args: unknown[]): string {
     const entry = this.createEntry(level, message, args);
-    return JSON.stringify(entry);
+    return stringifyLogEntry(entry);
   }
 
   private formatTextLine(level: LogEntry["level"], message: string, args: unknown[]): string {
     const { context, error } = extractContext(args);
     const mergedContext = { ...this.boundContext, ...context };
     const enableColor = shouldUseColor();
+    // Mirror the JSON path: the message string bypasses the key-based context
+    // redactor, so scrub credential-shaped text before rendering (#1989).
+    const safeMessage = sanitizeLogString(message, REDACTED);
 
     const contextText = formatContextText(
       redactSensitive(mergedContext),
@@ -513,7 +631,7 @@ class ConsoleLogger implements Logger {
     if (preset === "cli") {
       // CLI preset: no timestamp or tag — 2-space indent + glyph only.
       const glyph = colorize(CLI_LEVEL_GLYPHS[level], LEVEL_COLORS[level], enableColor);
-      return `  ${glyph} ${message}${contextText}`;
+      return `  ${glyph} ${safeMessage}${contextText}`;
     }
 
     const timestamp = colorize(formatTimestamp(), ANSI.dim, enableColor);
@@ -522,73 +640,109 @@ class ConsoleLogger implements Logger {
     const componentTag = this.componentName
       ? ` ${colorize(`[${this.componentName}]`, ANSI.dim, enableColor)}`
       : "";
-    return `${timestamp}  ${tag} ${glyph}${componentTag} ${message}${contextText}`;
+    return `${timestamp}  ${tag} ${glyph}${componentTag} ${safeMessage}${contextText}`;
   }
 
   private log(
     level: LogEntry["level"],
     logLevel: LogLevel,
-    consoleFn: (...args: unknown[]) => void,
+    consoleMethod: "debug" | "log" | "warn" | "error",
     message: string,
     args: unknown[],
   ): void {
-    const { level: resolvedLevel, format: resolvedFormat } = resolveLoggerConfig();
-    if (resolvedLevel > logLevel) return;
+    try {
+      const { level: resolvedLevel, format: resolvedFormat } = resolveLoggerConfig();
+      if (resolvedLevel > logLevel) return;
 
-    let entry: LogEntry | undefined;
-    const line = resolvedFormat === "json"
-      ? (() => {
-        entry = this.createEntry(level, message, args);
-        return JSON.stringify(entry);
-      })()
-      : this.formatTextLine(level, message, args);
-
-    const emittedEntry = entry ?? this.createEntry(level, message, args);
-    if (legacyLogRecordEmitter) {
+      let emittedEntry: LogEntry;
+      let line: string;
       try {
-        legacyLogRecordEmitter(emittedEntry);
-      } catch (_) {
-        /* do not let telemetry export failures affect application logging */
+        if (resolvedFormat === "json") {
+          emittedEntry = this.createEntry(level, message, args);
+          line = stringifyLogEntry(emittedEntry);
+        } else {
+          line = this.formatTextLine(level, message, args);
+          emittedEntry = this.createEntry(level, message, args);
+        }
+      } catch {
+        try {
+          emittedEntry = this.createEmergencyEntry(level);
+          line = resolvedFormat === "json"
+            ? stringifyLogEntry(emittedEntry)
+            : `${apply(stringToUpperCase, level, [])}: ${REDACTED}`;
+        } catch {
+          return;
+        }
       }
-    }
-    for (const subscriber of logRecordSubscribers) {
-      if (subscriber === legacyLogRecordEmitter) continue;
-      try {
-        subscriber(emittedEntry);
-      } catch (_) {
-        /* do not let telemetry export failures affect application logging */
-      }
-    }
 
-    consoleFn(line);
+      if (legacyLogRecordEmitter) {
+        try {
+          legacyLogRecordEmitter(emittedEntry);
+        } catch (_) {
+          /* do not let telemetry export failures affect application logging */
+        }
+      }
+
+      // Snapshot before invoking callbacks. Native Set iterators observe values
+      // deleted and reinserted during iteration, which can otherwise invoke one
+      // subscriber repeatedly (or keep a single log call alive indefinitely).
+      const subscribers: LogRecordEmitter[] = [];
+      const iterator = apply(setValues, logRecordSubscribers, []) as SetIterator<LogRecordEmitter>;
+      while (true) {
+        const next = apply(setIteratorNext, iterator, []) as IteratorResult<LogRecordEmitter>;
+        if (next.done) break;
+        apply(arrayPush, subscribers, [next.value]);
+      }
+      for (let index = 0; index < subscribers.length; index++) {
+        const subscriber = subscribers[index]!;
+        if (subscriber === legacyLogRecordEmitter) continue;
+        try {
+          subscriber(emittedEntry);
+        } catch (_) {
+          /* do not let telemetry export failures affect application logging */
+        }
+      }
+
+      const consoleFn = NativeConsole[consoleMethod];
+      if (typeof consoleFn === "function") {
+        try {
+          apply(consoleFn, NativeConsole, [line]);
+        } catch (_) {
+          /* logging sink failures must not affect application control flow */
+        }
+      }
+    } catch (_) {
+      /* every logging concern is contained by this final nonthrowing boundary */
+    }
   }
 
   debug(message: string, ...args: unknown[]): void {
-    this.log("debug", LogLevel.DEBUG, console.debug, message, args);
+    this.log("debug", LogLevel.DEBUG, "debug", message, args);
   }
 
   info(message: string, ...args: unknown[]): void {
-    this.log("info", LogLevel.INFO, console.log, message, args);
+    this.log("info", LogLevel.INFO, "log", message, args);
   }
 
   warn(message: string, ...args: unknown[]): void {
-    this.log("warn", LogLevel.WARN, console.warn, message, args);
+    this.log("warn", LogLevel.WARN, "warn", message, args);
   }
 
   error(message: string, ...args: unknown[]): void {
-    this.log("error", LogLevel.ERROR, console.error, message, args);
+    this.log("error", LogLevel.ERROR, "error", message, args);
   }
 
   async time<T>(label: string, fn: () => Promise<T>): Promise<T> {
-    const start = performance.now();
+    const safeLabel = sanitizeLogString(label, REDACTED);
+    const start = readPerformanceNow();
     try {
       const result = await fn();
-      const durationMs = performance.now() - start;
-      this.debug(`${label} completed`, { durationMs: Math.round(durationMs) });
+      const durationMs = readPerformanceNow() - start;
+      this.debug(`${safeLabel} completed`, { durationMs: numberRound(durationMs) });
       return result;
     } catch (error) {
-      const durationMs = performance.now() - start;
-      this.error(`${label} failed`, { durationMs: Math.round(durationMs) }, error);
+      const durationMs = readPerformanceNow() - start;
+      this.error(`${safeLabel} failed`, { durationMs: numberRound(durationMs) }, error);
       throw error;
     }
   }
@@ -662,8 +816,193 @@ export function __resetTraceContextGetterForTests(): void {
 }
 
 function withRequestLogger(base: Logger): Logger {
-  const ctx = requestContextGetter?.();
-  return ctx?.logger ?? base;
+  try {
+    const ctx = requestContextGetter?.();
+    return ctx?.logger ?? base;
+  } catch {
+    return base;
+  }
+}
+
+type ContextAwareLogMethod = "debug" | "info" | "warn" | "error";
+
+type LoggerSelection = {
+  selected: Logger;
+  fallback: Logger;
+};
+
+function selectContextLogger(base: Logger): LoggerSelection {
+  return { selected: withRequestLogger(base), fallback: base };
+}
+
+function selectComponentLoggers(base: Logger, componentName: string): LoggerSelection {
+  let fallback: Logger = base;
+  try {
+    fallback = base.component(componentName);
+  } catch {
+    // The base logger itself is still a safe final fallback.
+  }
+
+  const requestLogger = withRequestLogger(base);
+  if (requestLogger === base) return { selected: fallback, fallback };
+
+  try {
+    return { selected: requestLogger.component(componentName), fallback };
+  } catch {
+    return { selected: fallback, fallback };
+  }
+}
+
+function invokeLoggerMethod(
+  logger: Logger,
+  method: ContextAwareLogMethod,
+  message: string,
+  args: unknown[],
+): boolean {
+  try {
+    const callback = logger[method];
+    if (typeof callback !== "function") return false;
+    const callArgs: unknown[] = [message];
+    for (let index = 0; index < args.length; index++) callArgs[index + 1] = args[index];
+    apply(callback, logger, callArgs);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function invokeContextAwareLog(
+  base: Logger,
+  method: ContextAwareLogMethod,
+  message: string,
+  args: unknown[],
+): void {
+  invokeSelectedLoggerMethod(selectContextLogger(base), method, message, args);
+}
+
+function invokeSelectedLoggerMethod(
+  selection: LoggerSelection,
+  method: ContextAwareLogMethod,
+  message: string,
+  args: unknown[],
+): void {
+  if (invokeLoggerMethod(selection.selected, method, message, args)) return;
+  if (selection.selected !== selection.fallback) {
+    invokeLoggerMethod(selection.fallback, method, message, args);
+  }
+}
+
+function invokeContextAwareComponentLog(
+  base: Logger,
+  componentName: string,
+  method: ContextAwareLogMethod,
+  message: string,
+  args: unknown[],
+): void {
+  invokeSelectedLoggerMethod(
+    selectComponentLoggers(base, componentName),
+    method,
+    message,
+    args,
+  );
+}
+
+function invokeLoggerChild(
+  logger: Logger,
+  context: Record<string, unknown>,
+): Logger | undefined {
+  try {
+    const callback = logger.child;
+    if (typeof callback !== "function") return undefined;
+    const child = apply(callback, logger, [context]) as unknown;
+    if ((typeof child === "object" && child !== null) || typeof child === "function") {
+      return child as Logger;
+    }
+  } catch {
+    // Request-scoped logger composition must not escape the logging boundary.
+  }
+  return undefined;
+}
+
+function invokeSelectedLoggerChild(
+  selection: LoggerSelection,
+  context: Record<string, unknown>,
+): Logger {
+  const fallback = invokeLoggerChild(selection.fallback, context) ?? selection.fallback;
+  const selected = selection.selected === selection.fallback
+    ? fallback
+    : invokeLoggerChild(selection.selected, context) ?? fallback;
+  return createGuardedLogger({ selected, fallback });
+}
+
+function invokeLoggerComponent(logger: Logger, name: string): Logger | undefined {
+  try {
+    const callback = logger.component;
+    if (typeof callback !== "function") return undefined;
+    const component = apply(callback, logger, [name]) as unknown;
+    if (
+      (typeof component === "object" && component !== null) ||
+      typeof component === "function"
+    ) {
+      return component as Logger;
+    }
+  } catch {
+    // Component composition must remain inside the guarded facade.
+  }
+  return undefined;
+}
+
+function selectLoggerComponents(selection: LoggerSelection, name: string): LoggerSelection {
+  const fallback = invokeLoggerComponent(selection.fallback, name) ?? selection.fallback;
+  const selected = selection.selected === selection.fallback
+    ? fallback
+    : invokeLoggerComponent(selection.selected, name) ?? fallback;
+  return { selected, fallback };
+}
+
+async function invokeSelectedLoggerTime<T>(
+  selection: LoggerSelection,
+  label: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const safeLabel = sanitizeLogString(label, REDACTED);
+  const start = readPerformanceNow();
+  try {
+    const result = await fn();
+    const durationMs = numberRound(readPerformanceNow() - start);
+    invokeSelectedLoggerMethod(selection, "debug", `${safeLabel} completed`, [{ durationMs }]);
+    return result;
+  } catch (error) {
+    const durationMs = numberRound(readPerformanceNow() - start);
+    invokeSelectedLoggerMethod(selection, "error", `${safeLabel} failed`, [{ durationMs }, error]);
+    throw error;
+  }
+}
+
+function createGuardedLogger(selection: LoggerSelection): Logger {
+  return {
+    debug(message: string, ...args: unknown[]): void {
+      invokeSelectedLoggerMethod(selection, "debug", message, args);
+    },
+    info(message: string, ...args: unknown[]): void {
+      invokeSelectedLoggerMethod(selection, "info", message, args);
+    },
+    warn(message: string, ...args: unknown[]): void {
+      invokeSelectedLoggerMethod(selection, "warn", message, args);
+    },
+    error(message: string, ...args: unknown[]): void {
+      invokeSelectedLoggerMethod(selection, "error", message, args);
+    },
+    time<T>(label: string, fn: () => Promise<T>): Promise<T> {
+      return invokeSelectedLoggerTime(selection, label, fn);
+    },
+    child(context: Record<string, unknown>): Logger {
+      return invokeSelectedLoggerChild(selection, context);
+    },
+    component(name: string): Logger {
+      return createGuardedLogger(selectLoggerComponents(selection, name));
+    },
+  };
 }
 
 /**
@@ -673,22 +1012,22 @@ function withRequestLogger(base: Logger): Logger {
 function createContextAwareLogger(base: ConsoleLogger): Logger {
   return {
     debug(message: string, ...args: unknown[]): void {
-      withRequestLogger(base).debug(message, ...args);
+      invokeContextAwareLog(base, "debug", message, args);
     },
     info(message: string, ...args: unknown[]): void {
-      withRequestLogger(base).info(message, ...args);
+      invokeContextAwareLog(base, "info", message, args);
     },
     warn(message: string, ...args: unknown[]): void {
-      withRequestLogger(base).warn(message, ...args);
+      invokeContextAwareLog(base, "warn", message, args);
     },
     error(message: string, ...args: unknown[]): void {
-      withRequestLogger(base).error(message, ...args);
+      invokeContextAwareLog(base, "error", message, args);
     },
     time<T>(label: string, fn: () => Promise<T>): Promise<T> {
-      return withRequestLogger(base).time(label, fn);
+      return invokeSelectedLoggerTime(selectContextLogger(base), label, fn);
     },
     child(context: Record<string, unknown>): Logger {
-      return withRequestLogger(base).child(context);
+      return invokeSelectedLoggerChild(selectContextLogger(base), context);
     },
     component(name: string): Logger {
       return createComponentAwareLogger(base, name);
@@ -705,22 +1044,25 @@ function createContextAwareLogger(base: ConsoleLogger): Logger {
 function createComponentAwareLogger(base: ConsoleLogger, componentName: string): Logger {
   return {
     debug(message: string, ...args: unknown[]): void {
-      withRequestLogger(base).component(componentName).debug(message, ...args);
+      invokeContextAwareComponentLog(base, componentName, "debug", message, args);
     },
     info(message: string, ...args: unknown[]): void {
-      withRequestLogger(base).component(componentName).info(message, ...args);
+      invokeContextAwareComponentLog(base, componentName, "info", message, args);
     },
     warn(message: string, ...args: unknown[]): void {
-      withRequestLogger(base).component(componentName).warn(message, ...args);
+      invokeContextAwareComponentLog(base, componentName, "warn", message, args);
     },
     error(message: string, ...args: unknown[]): void {
-      withRequestLogger(base).component(componentName).error(message, ...args);
+      invokeContextAwareComponentLog(base, componentName, "error", message, args);
     },
     time<T>(label: string, fn: () => Promise<T>): Promise<T> {
-      return withRequestLogger(base).component(componentName).time(label, fn);
+      return invokeSelectedLoggerTime(selectComponentLoggers(base, componentName), label, fn);
     },
     child(context: Record<string, unknown>): Logger {
-      return withRequestLogger(base).component(componentName).child(context);
+      return invokeSelectedLoggerChild(
+        selectComponentLoggers(base, componentName),
+        context,
+      );
     },
     component(name: string): Logger {
       return createComponentAwareLogger(base, name);
@@ -750,7 +1092,7 @@ export function getBaseLogger(
   prefix: string,
   options?: ConsoleLoggerOptions,
 ): ConsoleLogger {
-  const resolvedPrefix = prefix.toUpperCase();
+  const resolvedPrefix = apply(stringToUpperCase, prefix, []) as string;
   const validPrefix = resolvedPrefix in BASE_LOGGER_MAP ? resolvedPrefix : "VERYFRONT";
 
   if (options?.injectTraceContext === false) {
