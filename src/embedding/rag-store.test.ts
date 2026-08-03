@@ -315,6 +315,48 @@ describe("ragStore", () => {
     });
   });
 
+  it("retries when a completed writer removes the lock during observation", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const lockDirectory = `${storagePath}.veryfront-rag.lock`;
+      await Deno.mkdir(lockDirectory, { recursive: true });
+
+      const readDirDescriptor = Object.getOwnPropertyDescriptor(Deno, "readDir");
+      assert(readDirDescriptor !== undefined);
+      const originalReadDir = Deno.readDir.bind(Deno);
+      let releaseObserved = false;
+      Object.defineProperty(Deno, "readDir", {
+        ...readDirDescriptor,
+        value: (path: string | URL) => {
+          if (String(path) !== lockDirectory || releaseObserved) {
+            return originalReadDir(path);
+          }
+          releaseObserved = true;
+          return {
+            [Symbol.asyncIterator]() {
+              return {
+                async next(): Promise<IteratorResult<Deno.DirEntry>> {
+                  await Deno.remove(lockDirectory, { recursive: true });
+                  throw new Deno.errors.NotFound("lock released during observation");
+                },
+              };
+            },
+          } satisfies AsyncIterable<Deno.DirEntry>;
+        },
+      });
+
+      try {
+        const store = ragStore({ model: "local/test-model", storagePath });
+        assertEquals(await store.listDocuments(), []);
+      } finally {
+        Object.defineProperty(Deno, "readDir", readDirDescriptor);
+      }
+
+      assertEquals(releaseObserved, true);
+      assertEquals(await exists(lockDirectory), false);
+    });
+  });
+
   it("recovers an expired adjacent store lock before reading", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");
