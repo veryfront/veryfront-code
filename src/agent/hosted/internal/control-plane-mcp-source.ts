@@ -13,6 +13,8 @@ import type {
 
 // Capture the host transport before project execution can replace global fetch.
 const capturedHostFetch = globalThis.fetch.bind(globalThis);
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectHasOwn = Object.hasOwn;
 
 type TrustedControlPlaneMCPToolSourceFactoryOptions = {
   /** Host-owned test seam. Production composition must omit this field. */
@@ -21,6 +23,19 @@ type TrustedControlPlaneMCPToolSourceFactoryOptions = {
     warn(message: string, metadata: { kind: "veryfront-api" | "veryfront-studio" }): void;
   };
 };
+
+function readOwnHostFetch(
+  options: TrustedControlPlaneMCPToolSourceFactoryOptions,
+): typeof fetch | undefined {
+  const descriptor = ObjectGetOwnPropertyDescriptor(options, "hostFetch");
+  if (!descriptor || !ObjectHasOwn(descriptor, "value")) return undefined;
+
+  const hostFetch = descriptor.value;
+  if (hostFetch !== undefined && typeof hostFetch !== "function") {
+    throw new TypeError("Control-plane host fetch must be a function");
+  }
+  return hostFetch as typeof fetch | undefined;
+}
 
 /**
  * Build a source factory that bypasses tenant egress policy only for the exact
@@ -37,7 +52,7 @@ export function createTrustedControlPlaneMCPToolSourceFactory(
   options: TrustedControlPlaneMCPToolSourceFactoryOptions = {},
 ): AgentServiceRemoteMcpSourceFactory {
   const boundary = createOutboundFetchBoundary({
-    fetch: options.hostFetch ?? capturedHostFetch,
+    fetch: readOwnHostFetch(options) ?? capturedHostFetch,
   });
   const trustedTransports: Array<{
     kind: "veryfront-api" | "veryfront-studio";

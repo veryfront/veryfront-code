@@ -70,7 +70,7 @@ describe("tool/remote-mcp", () => {
     ]);
   });
 
-  it("keeps trusted host transport captured when the ambient fetch changes", async () => {
+  it("keeps trusted host transport captured across ambient and prototype changes", async () => {
     const output = await new Deno.Command(Deno.execPath(), {
       args: [
         "run",
@@ -88,6 +88,7 @@ describe("tool/remote-mcp", () => {
     assertEquals(JSON.parse(new TextDecoder().decode(output.stdout)), {
       attackerCalls: 0,
       capturedCalls: 1,
+      inheritedOptionCalls: 0,
       toolNames: ["captured_transport"],
     });
   });
