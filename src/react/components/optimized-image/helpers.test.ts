@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  cssUrl,
   generateSrcSet,
   getImageExtension,
   getOptimizedImageVariantWidths,
@@ -42,6 +43,24 @@ describe("optimized-image helpers", () => {
       );
     });
 
+    it("normalizes source paths to the build pipeline's NFC form", () => {
+      assertEquals(
+        getOptimizedPath("/images/cafe\u0301.jpg", "webp", 640),
+        "/.veryfront/optimized-images/images/caf%C3%A9-640w.webp",
+      );
+    });
+
+    it("keeps source types without build-emitted variants on the original asset", () => {
+      for (const src of ["/images/photo.gif", "/images/photo.svg", "/images/photo"]) {
+        assertEquals(getOptimizedPath(src, "webp", 640), src);
+        assertEquals(generateSrcSet(src, "webp", [320, 640], 80), "");
+      }
+      assertEquals(
+        getOptimizedPath("/images/photo.JPG", "webp", 640),
+        "/.veryfront/optimized-images/images/photo-640w.webp",
+      );
+    });
+
     it("keeps non-app and boundary-changing paths on the original asset", () => {
       for (
         const src of [
@@ -60,6 +79,15 @@ describe("optimized-image helpers", () => {
         assertEquals(getOptimizedPath(src, "webp", 640), src);
         assertEquals(generateSrcSet(src, "webp", [320, 640], 80), "");
       }
+    });
+  });
+
+  describe("cssUrl", () => {
+    it("quotes delimiters and escapes CSS string control characters", () => {
+      assertEquals(
+        cssUrl('https://cdn.example/photo (1) "hero"\\wide.jpg\n'),
+        'url("https://cdn.example/photo (1) \\"hero\\"\\\\wide.jpg\\a ")',
+      );
     });
   });
 

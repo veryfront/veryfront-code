@@ -1,6 +1,6 @@
 import React from "react";
 import { RESPONSIVE_IMAGE_WIDTH_LG } from "#veryfront/utils/constants/network.ts";
-import { getOptimizedImageFallback, getOptimizedImageVariantWidths } from "./helpers.ts";
+import { cssUrl, getOptimizedImageFallback, getOptimizedImageVariantWidths } from "./helpers.ts";
 import type { OptimizedImageFormat } from "./OptimizedImage.tsx";
 
 export interface OptimizedBackgroundImageProps {
@@ -44,7 +44,7 @@ export function OptimizedBackgroundImage({
     <div
       className={className}
       style={{
-        backgroundImage: `url(${optimizedSrc})`,
+        backgroundImage: cssUrl(optimizedSrc),
         backgroundSize: "cover",
         backgroundPosition: "center",
         backgroundRepeat: "no-repeat",

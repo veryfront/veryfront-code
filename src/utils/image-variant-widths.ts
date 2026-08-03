@@ -12,6 +12,24 @@ const setHas = Set.prototype.has;
 const SetConstructor = Set;
 const DEFAULT_IMAGE_WIDTHS = freeze([...IMAGE_OPTIMIZATION.DEFAULT_SIZES]);
 
+/** Source extensions for which the build pipeline emits optimized variants. */
+export const OPTIMIZABLE_IMAGE_SOURCE_EXTENSIONS = freeze(
+  [
+    "jpg",
+    "jpeg",
+    "png",
+    "webp",
+    "avif",
+  ] as const,
+);
+
+export function isOptimizableImageSourceExtension(extension: string): boolean {
+  for (let index = 0; index < OPTIMIZABLE_IMAGE_SOURCE_EXTENSIONS.length; index++) {
+    if (extension === OPTIMIZABLE_IMAGE_SOURCE_EXTENSIONS[index]) return true;
+  }
+  return false;
+}
+
 export function isValidImageVariantWidth(value: unknown): value is number {
   return typeof value === "number" &&
     isSafeInteger(value) &&

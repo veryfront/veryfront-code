@@ -372,6 +372,12 @@ describe("OptimizedImage", () => {
         assertEquals(hooked, { sources: [], fallback: src });
       }
     });
+
+    it("uses the original asset for source types the build does not optimize", () => {
+      for (const src of ["/images/photo.gif", "/images/photo.svg", "/images/photo"]) {
+        assertPublicImageApisUseOriginalAsset(640, undefined, src);
+      }
+    });
   });
 
   describe("styling", () => {
@@ -450,8 +456,17 @@ describe("OptimizedBackgroundImage", () => {
       }),
     );
 
-    assertStringIncludes(markup, "background-image:url(/images/background.jpg)");
+    assertStringIncludes(markup, "background-image:url(&quot;/images/background.jpg&quot;)");
     assertEquals(markup.includes("-1920w."), false);
+  });
+
+  it("quotes original background URLs that contain CSS delimiters", () => {
+    const src = "https://cdn.example/photo (1).jpg";
+    const markup = renderToStaticMarkup(
+      React.createElement(OptimizedBackgroundImage, { src }),
+    );
+
+    assertStringIncludes(markup, `background-image:url(&quot;${src}&quot;)`);
   });
 
   it("selects an emitted background width for narrow and custom target plans", () => {

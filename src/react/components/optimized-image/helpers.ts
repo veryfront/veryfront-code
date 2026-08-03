@@ -1,6 +1,7 @@
 import { isDevelopment } from "#veryfront/platform/environment.ts";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import {
+  isOptimizableImageSourceExtension,
   isValidImageVariantWidth,
   resolveImageVariantWidths,
 } from "#veryfront/utils/image-variant-widths.ts";
@@ -61,6 +62,7 @@ function encodedAppAssetPath(src: string): string | null {
     } catch {
       return null;
     }
+    decoded = decoded.normalize("NFC");
     if (
       decoded === "." || decoded === ".." || decoded.includes("/") ||
       decoded.includes("\\") || decoded.includes("\0")
@@ -74,7 +76,29 @@ function encodedAppAssetPath(src: string): string | null {
     }
   }
 
+  const sourceExtension = getExtensionName(encodedSegments[encodedSegments.length - 1]!);
+  if (!isOptimizableImageSourceExtension(sourceExtension)) return null;
+
   return `/${encodedSegments.join("/")}`;
+}
+
+/** Serialize a URL as a quoted CSS url() value without changing its identity. */
+export function cssUrl(value: string): string {
+  let escaped = "";
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index]!;
+    const code = value.charCodeAt(index);
+    if (code === 0) {
+      escaped += "\\fffd ";
+    } else if (code <= 0x1f || code === 0x7f) {
+      escaped += `\\${code.toString(16)} `;
+    } else if (character === '"' || character === "\\") {
+      escaped += `\\${character}`;
+    } else {
+      escaped += character;
+    }
+  }
+  return `url("${escaped}")`;
 }
 
 function optimizedPath(src: string, format: string, size: number): string | null {
