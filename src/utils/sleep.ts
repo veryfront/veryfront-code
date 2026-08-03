@@ -1,8 +1,9 @@
 import { normalizeTimerDurationMs } from "./timer.ts";
 
 /**
- * Return a promise that resolves after `ms` milliseconds, or rejects with
- * `abortSignal.reason` if the signal is aborted first.
+ * Return a promise that resolves after `ms` milliseconds. If `abortSignal` is
+ * already aborted, throws `abortSignal.reason` synchronously. If it aborts while
+ * waiting, rejects with `abortSignal.reason`.
  *
  * Throws `RangeError` synchronously when `ms` is negative, non-finite, or
  * exceeds the portable JavaScript timer range.
