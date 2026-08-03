@@ -32,7 +32,10 @@ try {
         authToken: "host-token",
         apiMcpUrl: endpoint,
       });
-      const source = createSource(resolved!.config, resolved!.trustedKind);
+      if (!resolved.config) {
+        throw new Error("Expected generic MCP config");
+      }
+      const source = createSource(resolved.config, resolved.trustedKind);
 
       try {
         await source.listTools();
