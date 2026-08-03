@@ -65,6 +65,13 @@ const targets = [
     profile: "proxy",
   },
   {
+    name: "Linux proxy (ARM64)",
+    target: "aarch64-unknown-linux-gnu",
+    output: "veryfront-proxy-linux-arm64",
+    entrypoint: "cli/proxy-main.ts",
+    profile: "proxy",
+  },
+  {
     name: "Windows (x64)",
     target: "x86_64-pc-windows-msvc",
     output: "veryfront-windows-x64.exe",
