@@ -548,6 +548,8 @@
       "src/**/*.tsx",
       "cli/**/*.ts",
       "cli/**/*.tsx",
+      "extensions/**/*.ts",
+      "extensions/**/*.tsx",
       "react/**/*.ts",
       "react/**/*.tsx"
     ],
