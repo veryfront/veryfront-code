@@ -399,7 +399,12 @@ class ConsoleLogger implements Logger {
   }
 
   component(name: string): Logger {
-    return new ConsoleLogger(this.prefix, { ...this.boundContext }, name, this.options);
+    return new ConsoleLogger(
+      this.prefix,
+      { ...this.boundContext },
+      sanitizeUrlCredentials(name),
+      this.options,
+    );
   }
 
   private createEntry(level: LogEntry["level"], message: string, args: unknown[]): LogEntry {
