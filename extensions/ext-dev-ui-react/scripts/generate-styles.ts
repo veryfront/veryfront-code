@@ -176,8 +176,15 @@ export const DEV_UI_STYLES = ${JSON.stringify(styles)} as const;
 if (checkOnly) {
   const existing = await Deno.readTextFile(OUTPUT_PATH).catch(() => null);
   if (existing !== output) {
+    const existingIdentity = existing === null
+      ? "missing"
+      : `${await sha256(existing)} (${existing.length} characters)`;
     throw new Error(
-      "Extension-owned Dev UI styles are stale; run deno task generate:dev-ui",
+      "Extension-owned Dev UI styles are stale; run deno task generate:dev-ui. " +
+        `Computed ${await sha256(
+          output,
+        )} (${output.length} characters) vs checked-in ${existingIdentity}; ` +
+        `stylesheet sha256:${identity} (${styles.length} characters).`,
     );
   }
   console.log(
