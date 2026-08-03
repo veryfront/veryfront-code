@@ -221,6 +221,7 @@ describe("VeryfrontStrategy", () => {
         assert(
           thrown.message.includes("Private Veryfront host module cannot be imported"),
         );
+        assertEquals(thrown.message.includes(specifier), false);
       }
     });
 

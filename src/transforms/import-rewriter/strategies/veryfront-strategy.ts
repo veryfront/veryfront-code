@@ -93,7 +93,7 @@ export class VeryfrontStrategy implements ImportRewriteStrategy {
     if (specifier.startsWith("#veryfront/")) {
       if (isPrivateFrameworkModulePath(specifier)) {
         throw SECURITY_VIOLATION.create({
-          detail: `Private Veryfront host module cannot be imported: ${specifier}`,
+          detail: "Private Veryfront host module cannot be imported",
         });
       }
       const path = canonicalizeFrameworkModulePath(specifier);
