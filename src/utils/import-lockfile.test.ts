@@ -306,6 +306,21 @@ describe("import-lockfile", () => {
       assertEquals(await mgr.has(specifier), false);
     });
 
+    it("should cache absence after removing the lockfile", async () => {
+      const path = "/project/veryfront.lock";
+      const fs = createMockFS({
+        [path]: JSON.stringify(createEmptyLockfile()),
+      });
+      const mgr = createLockfileManager("/project", fs);
+
+      assertEquals(await mgr.read(), createEmptyLockfile());
+      await mgr.clear();
+
+      assertEquals(await fs.exists(path), false);
+      assertEquals(await mgr.read(), null);
+      assertEquals(await createLockfileManager("/project", fs).read(), null);
+    });
+
     it("should flush dirty data to disk", async () => {
       const fs = createMockFS();
       const mgr = createLockfileManager("/project", fs);

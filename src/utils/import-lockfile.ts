@@ -442,10 +442,13 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
         // Clear is an explicit destructive recovery path. Check access to the
         // path, but do not parse content that the user has chosen to discard.
         const existing = await lockfileExists();
-        const cleared = createInternalLockfile();
+        let cleared: LockfileData | null = null;
         if (existing) {
           if (fs.remove) await fs.remove(lockfilePath);
-          else await writeToDisk(cleared);
+          else {
+            cleared = createInternalLockfile();
+            await writeToDisk(cleared);
+          }
         }
 
         // State changes only after validation and any requested deletion have
