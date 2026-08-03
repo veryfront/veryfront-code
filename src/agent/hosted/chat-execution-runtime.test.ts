@@ -24,7 +24,10 @@ import {
   type HostedChatExecutionRootStreamWatchdog,
   toHostedChatExecutionFinalState,
 } from "./chat-execution-runtime.ts";
-import { getActiveRunEventSink } from "../../runtime/run-event-sink-context.ts";
+import {
+  getActiveRunEventSink,
+  runWithRunEventSink,
+} from "../../runtime/run-event-sink-context.ts";
 import { streamText } from "../../runtime/runtime-bridge.ts";
 import { createStreamModel } from "../../runtime/runtime-bridge.test-helpers.ts";
 import { DurableRunEventPersistenceError } from "./durable-run-event-sink.ts";
@@ -550,9 +553,10 @@ describe("agent/hosted-chat-execution-runtime", () => {
     });
   });
 
-  it("persists one root context before real stream dispatch and keeps lazy consumption scoped", async () => {
+  it("keeps the mandatory root sink when middleware scopes a public observer around next()", async () => {
     const order: string[] = [];
     const persisted: unknown[] = [];
+    const observed: unknown[] = [];
     let providerDispatches = 0;
     let lazyScopeActive = false;
     const mirror = createDurableRunMirror({ chunks: [], flushes: [] });
@@ -576,11 +580,19 @@ describe("agent/hosted-chat-execution-runtime", () => {
     });
     const agent: HostedChatRuntimeAgent = {
       stream: async () => {
-        const result = streamText({
-          model,
-          system: "Hosted root instructions",
-          messages: [{ role: "user", content: "Run root" }],
-        });
+        const next = () =>
+          streamText({
+            model,
+            system: "Hosted root instructions",
+            messages: [{ role: "user", content: "Run root" }],
+          });
+        const result = runWithRunEventSink(
+          (event) => {
+            order.push("observe");
+            observed.push(event);
+          },
+          next,
+        );
         return {
           steps: Promise.resolve([{}]),
           toUIMessageStream: () =>
@@ -623,7 +635,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
       uiChunks.push(chunk);
     }
 
-    assertEquals(order.slice(0, 3), ["append", "flush", "dispatch"]);
+    assertEquals(order.slice(0, 4), ["append", "flush", "observe", "dispatch"]);
     assertEquals(providerDispatches, 1);
     assertEquals(
       persisted.filter((event) =>
@@ -631,6 +643,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
       ).length,
       1,
     );
+    assertEquals(observed, persisted);
     assertEquals(JSON.stringify(uiChunks).includes("AGENT_RUN_MODEL_CALL_CONTEXT"), false);
     assertEquals(lazyScopeActive, true);
   });

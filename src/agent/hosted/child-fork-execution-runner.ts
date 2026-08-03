@@ -65,7 +65,7 @@ import {
   requireConfirmedHostedProjectReference,
   resolveHostedProjectReference,
 } from "./project-reference-resolver.ts";
-import { runWithRunEventSink } from "../../runtime/run-event-sink-context.ts";
+import { runWithMandatoryRunEventSink } from "../../runtime/run-event-sink-context.ts";
 import {
   createDurableRunEventSink,
   DurableRunEventPersistenceError,
@@ -450,8 +450,9 @@ async function executeHostedChildForkWithoutWriterAuthority<
         runStep: input.runStep ?? runAgentRuntimeForkStep,
         traceTools,
       });
-    const started =
-      await (startupRunEventSink ? runWithRunEventSink(startupRunEventSink, start) : start());
+    const started = await (startupRunEventSink
+      ? runWithMandatoryRunEventSink(startupRunEventSink, start)
+      : start());
     childRunMonitorAbortController = started.childRunMonitorAbortController;
     childRunMonitorPromise = started.childRunMonitorPromise;
     const streamAbortSignal = input.abortSignal
@@ -494,7 +495,7 @@ async function executeHostedChildForkWithoutWriterAuthority<
         writeLog: input.writeLog,
         tracePart: input.instrumentation?.tracePart,
       });
-    return await (runEventSink ? runWithRunEventSink(runEventSink, consume) : consume());
+    return await (runEventSink ? runWithMandatoryRunEventSink(runEventSink, consume) : consume());
   } catch (error) {
     return handleHostedChildForkRunContextError({
       error,

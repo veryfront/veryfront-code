@@ -57,8 +57,8 @@ import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifec
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
 import { finalizeHostedChatRun } from "./hosted-chat-finalization.ts";
 import {
-  runWithRunEventSink,
-  scopeAsyncIterableWithRunEventSink,
+  runWithMandatoryRunEventSink,
+  scopeAsyncIterableWithMandatoryRunEventSink,
 } from "../../runtime/run-event-sink-context.ts";
 import type { AgentRunEventSink } from "../../runtime/model-call-context.ts";
 import {
@@ -349,7 +349,7 @@ export async function createHostedChatExecutionRuntimeBootstrap(
       });
     streamResult = await traceHostedChatRuntimeStream(
       input.traceStream,
-      () => runEventSink ? runWithRunEventSink(runEventSink, startStream) : startStream(),
+      () => runEventSink ? runWithMandatoryRunEventSink(runEventSink, startStream) : startStream(),
     );
   } catch (error) {
     rootStreamWatchdog.dispose();
@@ -817,10 +817,10 @@ export function createHostedChatExecutionRuntime(
   }
   const createAgentUiStream = () => input.bootstrap.streamResult.toUIMessageStream(streamOptions);
   const unscopedAgentUIStream = input.bootstrap.runEventSink
-    ? runWithRunEventSink(input.bootstrap.runEventSink, createAgentUiStream)
+    ? runWithMandatoryRunEventSink(input.bootstrap.runEventSink, createAgentUiStream)
     : createAgentUiStream();
   const agentUIStream = input.bootstrap.runEventSink
-    ? scopeAsyncIterableWithRunEventSink(
+    ? scopeAsyncIterableWithMandatoryRunEventSink(
       input.bootstrap.runEventSink,
       unscopedAgentUIStream,
     )

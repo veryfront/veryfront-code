@@ -17,7 +17,10 @@ import {
   getActiveHostedRunEventWriterCapability,
   runWithHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
-import { getActiveRunEventSink } from "../../runtime/run-event-sink-context.ts";
+import {
+  getActiveRunEventSink,
+  runWithRunEventSink,
+} from "../../runtime/run-event-sink-context.ts";
 import { streamText } from "../../runtime/runtime-bridge.ts";
 import { createStreamModel } from "../../runtime/runtime-bridge.test-helpers.ts";
 import type { ForkPart } from "../streaming/fork-runtime-stream.ts";
@@ -359,11 +362,12 @@ for (
   });
 }
 
-Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run context factory", async () => {
+Deno.test("executeHostedChildForkWithPreparedTools preserves the mandatory sink through middleware next()", async () => {
   let createRunContextCalls = 0;
   let activeDuringStart = false;
   let activeDuringIteration = false;
   const persisted: unknown[] = [];
+  const observed: unknown[] = [];
   const order: string[] = [];
   const model = createStreamModel("test", "test/hosted-child", async () => {
     order.push("dispatch");
@@ -440,11 +444,19 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run cont
     startRuntime: (input) => {
       assertEquals(input.authToken, "token");
       activeDuringStart = getActiveRunEventSink() !== undefined;
-      const stream = streamText({
-        model,
-        system: "Hosted child instructions",
-        messages: [{ role: "user", content: "Run child" }],
-      });
+      const next = () =>
+        streamText({
+          model,
+          system: "Hosted child instructions",
+          messages: [{ role: "user", content: "Run child" }],
+        });
+      const stream = runWithRunEventSink(
+        (event) => {
+          order.push("observe");
+          observed.push(event);
+        },
+        next,
+      );
       return {
         forkStreamAbortController: new AbortController(),
         childRunMonitorAbortController: null,
@@ -475,7 +487,7 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run cont
   assertEquals(createRunContextCalls, 1);
   assertEquals(activeDuringStart, true);
   assertEquals(activeDuringIteration, true);
-  assertEquals(order.slice(0, 3), ["append", "flush", "dispatch"]);
+  assertEquals(order.slice(0, 4), ["append", "flush", "observe", "dispatch"]);
   assertEquals(persisted, [{
     type: "AGENT_RUN_MODEL_CALL_CONTEXT",
     messages: [
@@ -483,6 +495,7 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run cont
       { role: "user", content: [{ type: "text", text: "Run child" }] },
     ],
   }]);
+  assertEquals(observed, persisted);
   assertEquals(result.success, true);
   if (result.success) {
     assertEquals(result.summary.text, "Injected context.");

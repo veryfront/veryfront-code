@@ -24,7 +24,7 @@ import type {
   ModelCallMessage,
   ModelCallTool,
 } from "./model-call-context.ts";
-import { getActiveRunEventSink } from "./run-event-sink-context.ts";
+import { getActiveRunEventSinks } from "./run-event-sink-context.ts";
 
 type GenerateTextOptions = {
   model: ModelRuntime;
@@ -481,15 +481,20 @@ function buildDirectModelOptions(
 }
 
 async function emitModelCallContextEvent(directOptions: DirectModelOptions): Promise<void> {
-  const sink = getActiveRunEventSink();
-  if (!sink) return;
+  const sinks = getActiveRunEventSinks();
+  if (!sinks.mandatory && !sinks.public) return;
 
   const event: AgentRunModelCallContextEvent = {
     type: "AGENT_RUN_MODEL_CALL_CONTEXT",
     messages: directOptions.prompt,
     ...(directOptions.tools ? { tools: directOptions.tools } : {}),
   };
-  await sink(structuredClone(event));
+  if (sinks.mandatory) {
+    await sinks.mandatory(structuredClone(event));
+  }
+  if (sinks.public && sinks.public !== sinks.mandatory) {
+    await sinks.public(structuredClone(event));
+  }
 }
 
 function isDirectToolCallPart(

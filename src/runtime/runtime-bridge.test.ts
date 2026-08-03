@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type AgentRunEvent, runWithRunEventSink } from "../agent/index.ts";
+import { runWithMandatoryRunEventSink } from "./run-event-sink-context.ts";
 import { generateText, streamText } from "./runtime-bridge.ts";
 import {
   collectAsync,
@@ -308,6 +309,86 @@ describe("runtime-bridge", () => {
         error.message,
       );
       assertEquals(dispatches, 0);
+    }
+  });
+
+  it("awaits the mandatory sink before the public sink and provider dispatch", async () => {
+    const order: string[] = [];
+    const model = createGenerateModel("test", "test/composed-run-event-sinks", async () => {
+      order.push("dispatch");
+      return { content: [], finishReason: "stop", usage: {} };
+    });
+
+    await runWithMandatoryRunEventSink(
+      async () => {
+        await Promise.resolve();
+        order.push("mandatory");
+      },
+      () =>
+        runWithRunEventSink(
+          async () => {
+            await Promise.resolve();
+            order.push("public");
+          },
+          () => generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
+        ),
+    );
+
+    assertEquals(order, ["mandatory", "public", "dispatch"]);
+  });
+
+  it("calls a sink shared by both lanes only once", async () => {
+    let calls = 0;
+    const sink = () => {
+      calls += 1;
+    };
+    const model = createGenerateModel("test", "test/deduplicated-run-event-sink", async () => ({
+      content: [],
+      finishReason: "stop",
+      usage: {},
+    }));
+
+    await runWithMandatoryRunEventSink(
+      sink,
+      () =>
+        runWithRunEventSink(
+          sink,
+          () => generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
+        ),
+    );
+
+    assertEquals(calls, 1);
+  });
+
+  it("fails closed in either sink lane", async () => {
+    for (const failingLane of ["mandatory", "public"] as const) {
+      let dispatches = 0;
+      let publicCalls = 0;
+      const error = new Error(`${failingLane} sink failed`);
+      const model = createGenerateModel("test", `test/${failingLane}-sink-failure`, async () => {
+        dispatches += 1;
+        return { content: [], finishReason: "stop", usage: {} };
+      });
+
+      await assertRejects(
+        () =>
+          runWithMandatoryRunEventSink(
+            failingLane === "mandatory" ? () => Promise.reject(error) : () => {},
+            () =>
+              runWithRunEventSink(
+                () => {
+                  publicCalls += 1;
+                  return failingLane === "public" ? Promise.reject(error) : undefined;
+                },
+                async () =>
+                  await generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
+              ),
+          ),
+        Error,
+        error.message,
+      );
+      assertEquals(dispatches, 0);
+      assertEquals(publicCalls, failingLane === "mandatory" ? 0 : 1);
     }
   });
 
