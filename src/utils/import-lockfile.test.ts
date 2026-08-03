@@ -378,6 +378,22 @@ describe("import-lockfile", () => {
       assertEquals(await fs.readFile("/project/veryfront.lock"), newerContent);
     });
 
+    it("should write import keys in deterministic code-unit order", async () => {
+      const fs = createMockFS();
+      const mgr = createLockfileManager("/project", fs);
+
+      await mgr.write({
+        version: 1,
+        imports: {
+          a: { resolved: "a", integrity: "sha256-a" },
+          B: { resolved: "B", integrity: "sha256-b" },
+        },
+      });
+
+      const onDisk = JSON.parse(await fs.readFile("/project/veryfront.lock")) as LockfileData;
+      assertEquals(Object.keys(onDisk.imports), ["B", "a"]);
+    });
+
     it("should clear a newer-format lockfile as an explicit recovery operation", async () => {
       const fs = createMockFS();
       const mgr = createLockfileManager("/project", fs);
