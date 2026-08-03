@@ -40,7 +40,6 @@
   "src/platform/adapters/fs/veryfront/adapter-helpers.test.ts",
   "src/platform/adapters/fs/veryfront/directory-operations.test.ts",
   "src/platform/adapters/redis/node.test.ts",
-  "src/rendering/chunk-optimizer.test.ts",
   "src/rendering/client/browser-logger.test.ts",
   "src/rendering/element-validator/validator-core.test.ts",
   "src/rendering/layouts/utils/compiler.test.ts",
