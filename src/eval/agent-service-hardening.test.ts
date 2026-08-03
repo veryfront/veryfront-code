@@ -100,6 +100,27 @@ function createRunSummary(
   };
 }
 
+function createCompletedDurableRunCanaryApiClient(
+  conversationId: string,
+  options: { startError?: Error } = {},
+): DurableRunCanaryApiClient {
+  return {
+    createDurableRootRun: async () => {},
+    getRunSummary: async ({ runId }) => createRunSummary(conversationId, runId),
+    listMessagesForCanary: async () => [],
+    sendUserMessageForCanary: async () => ({
+      id: "33333333-3333-4333-8333-333333333333",
+      role: "user",
+      parts: [],
+    }),
+    startDurableRun: async () => {
+      if (options.startError) {
+        throw options.startError;
+      }
+    },
+  };
+}
+
 describe("eval/agent-service hardening", () => {
   it("does not let explicit case ids bypass write authorization", () => {
     const readCase = createLiveCase("read");
@@ -663,6 +684,237 @@ describe("eval/agent-service hardening", () => {
     assertEquals(cleanupFailure.status, "fail");
     assertStringIncludes(cleanupFailure.details, "sidecar cleanup exploded");
     assertEquals(cleanupOrder, ["sidecar", "prepared"]);
+  });
+
+  it("cleans prepared durable resources exactly once after validation fails", async () => {
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const lifecycle: string[] = [];
+    const runner = createDurableRunCanaryRunner({
+      agentId: "veryfront",
+      apiUrl: "https://api.example.test",
+      authToken: "token",
+      keepSuccessfulEvidence: true,
+      projectId: null,
+      requestTimeoutMs: 1_000,
+    }, createCompletedDurableRunCanaryApiClient(conversationId));
+
+    const result = await runner.runCase({
+      id: "validation-failure-cleanup",
+      label: "Validation failure cleanup",
+      prepare: async () => ({
+        cleanup: async () => {
+          lifecycle.push("prepared:cleanup");
+        },
+        conversationId,
+        prompt: "run",
+        title: "Validation failure cleanup",
+        startSidecar: async () => async () => {
+          lifecycle.push("sidecar:stop");
+        },
+        validate: () => {
+          throw new Error("validation exploded");
+        },
+      }),
+    });
+
+    assertEquals(result.status, "fail");
+    assertStringIncludes(result.details, "validation exploded");
+    assertEquals(lifecycle, ["sidecar:stop", "prepared:cleanup"]);
+  });
+
+  it("cleans prepared durable resources exactly once after execution fails", async () => {
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const lifecycle: string[] = [];
+    const runner = createDurableRunCanaryRunner(
+      {
+        agentId: "veryfront",
+        apiUrl: "https://api.example.test",
+        authToken: "token",
+        keepSuccessfulEvidence: true,
+        projectId: null,
+        requestTimeoutMs: 1_000,
+      },
+      createCompletedDurableRunCanaryApiClient(conversationId, {
+        startError: new Error("start exploded"),
+      }),
+    );
+
+    const result = await runner.runCase({
+      id: "execution-failure-cleanup",
+      label: "Execution failure cleanup",
+      prepare: async () => ({
+        cleanup: async () => {
+          lifecycle.push("prepared:cleanup");
+        },
+        conversationId,
+        prompt: "run",
+        title: "Execution failure cleanup",
+        startSidecar: async () => async () => {
+          lifecycle.push("sidecar:stop");
+        },
+        validate: () => {
+          throw new Error("validation must not run");
+        },
+      }),
+    });
+
+    assertEquals(result.status, "fail");
+    assertStringIncludes(result.details, "start exploded");
+    assertEquals(lifecycle, ["sidecar:stop", "prepared:cleanup"]);
+  });
+
+  it("cleans prepared durable resources exactly once when sidecar startup fails", async () => {
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    let cleanupCalls = 0;
+    const runner = createDurableRunCanaryRunner({
+      agentId: "veryfront",
+      apiUrl: "https://api.example.test",
+      authToken: "token",
+      keepSuccessfulEvidence: true,
+      projectId: null,
+      requestTimeoutMs: 1_000,
+    }, createCompletedDurableRunCanaryApiClient(conversationId));
+
+    const result = await runner.runCase({
+      id: "sidecar-start-failure-cleanup",
+      label: "Sidecar start failure cleanup",
+      prepare: async () => ({
+        cleanup: async () => {
+          cleanupCalls += 1;
+        },
+        conversationId,
+        prompt: "run",
+        title: "Sidecar start failure cleanup",
+        startSidecar: async () => {
+          throw new Error("sidecar startup exploded");
+        },
+        validate: () => {
+          throw new Error("validation must not run");
+        },
+      }),
+    });
+
+    assertEquals(result.status, "fail");
+    assertStringIncludes(result.details, "sidecar startup exploded");
+    assertEquals(cleanupCalls, 1);
+  });
+
+  it("reports cleanup failure after sidecar stop without losing the primary failure", async () => {
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const lifecycle: string[] = [];
+    const runner = createDurableRunCanaryRunner({
+      agentId: "veryfront",
+      apiUrl: "https://api.example.test",
+      authToken: "token",
+      keepSuccessfulEvidence: true,
+      projectId: null,
+      requestTimeoutMs: 1_000,
+    }, createCompletedDurableRunCanaryApiClient(conversationId));
+
+    const result = await runner.runCase({
+      id: "cleanup-failure-reporting",
+      label: "Cleanup failure reporting",
+      prepare: async () => ({
+        cleanup: async () => {
+          lifecycle.push("prepared:cleanup");
+          throw new Error("cleanup exploded");
+        },
+        conversationId,
+        prompt: "run",
+        title: "Cleanup failure reporting",
+        startSidecar: async () => async () => {
+          lifecycle.push("sidecar:stop");
+          throw new Error("sidecar stop exploded");
+        },
+        validate: () => {
+          throw new Error("validation exploded");
+        },
+      }),
+    });
+
+    assertEquals(result.status, "fail");
+    assertStringIncludes(result.details, "validation exploded");
+    assertStringIncludes(result.details, "Sidecar cleanup failed: sidecar stop exploded");
+    assertStringIncludes(result.details, "Prepared input cleanup failed: cleanup exploded");
+    assertEquals(
+      result.details.indexOf("validation exploded") <
+        result.details.indexOf("Sidecar cleanup failed: sidecar stop exploded"),
+      true,
+    );
+    assertEquals(
+      result.details.indexOf("Sidecar cleanup failed: sidecar stop exploded") <
+        result.details.indexOf("Prepared input cleanup failed: cleanup exploded"),
+      true,
+    );
+    assertEquals(lifecycle, ["sidecar:stop", "prepared:cleanup"]);
+  });
+
+  it("cleans prepared resources when sidecar stop turns a successful run into a failure", async () => {
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const lifecycle: string[] = [];
+    const runner = createDurableRunCanaryRunner({
+      agentId: "veryfront",
+      apiUrl: "https://api.example.test",
+      authToken: "token",
+      keepSuccessfulEvidence: true,
+      projectId: null,
+      requestTimeoutMs: 1_000,
+    }, createCompletedDurableRunCanaryApiClient(conversationId));
+
+    const result = await runner.runCase({
+      id: "sidecar-stop-failure-cleanup",
+      label: "Sidecar stop failure cleanup",
+      prepare: async () => ({
+        cleanup: async () => {
+          lifecycle.push("prepared:cleanup");
+        },
+        conversationId,
+        prompt: "run",
+        title: "Sidecar stop failure cleanup",
+        startSidecar: async () => async () => {
+          lifecycle.push("sidecar:stop");
+          throw new Error("sidecar stop exploded");
+        },
+        validate: () => {},
+      }),
+    });
+
+    assertEquals(result.status, "fail");
+    assertStringIncludes(result.details, "Sidecar cleanup failed: sidecar stop exploded");
+    assertEquals(lifecycle, ["sidecar:stop", "prepared:cleanup"]);
+  });
+
+  it("keeps successful durable evidence while still stopping the sidecar", async () => {
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const lifecycle: string[] = [];
+    const runner = createDurableRunCanaryRunner({
+      agentId: "veryfront",
+      apiUrl: "https://api.example.test",
+      authToken: "token",
+      keepSuccessfulEvidence: true,
+      projectId: null,
+      requestTimeoutMs: 1_000,
+    }, createCompletedDurableRunCanaryApiClient(conversationId));
+
+    const result = await runner.runCase({
+      id: "keep-successful-evidence",
+      label: "Keep successful evidence",
+      prepare: async () => ({
+        cleanup: async () => {
+          lifecycle.push("prepared:cleanup");
+        },
+        conversationId,
+        prompt: "run",
+        title: "Keep successful evidence",
+        startSidecar: async () => async () => {
+          lifecycle.push("sidecar:stop");
+        },
+        validate: () => {},
+      }),
+    });
+
+    assertEquals(result.status, "pass");
+    assertEquals(lifecycle, ["sidecar:stop"]);
   });
 
   it("retains durable run identity and cleanup when a hostile value is thrown", async () => {
