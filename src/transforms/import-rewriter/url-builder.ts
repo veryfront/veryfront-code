@@ -368,22 +368,7 @@ export function extractDependencyPinningPathKey(
 
     const modulePath = encodedKeyAndPath.slice(separatorIndex + 1);
     if (modulePath.startsWith(DEPENDENCY_PINNING_PATH_MARKER)) {
-      const nestedKeyEnd = modulePath.indexOf(
-        "/",
-        DEPENDENCY_PINNING_PATH_MARKER.length,
-      );
-      const nestedEncodedKey = nestedKeyEnd === -1
-        ? modulePath.slice(DEPENDENCY_PINNING_PATH_MARKER.length)
-        : modulePath.slice(
-          DEPENDENCY_PINNING_PATH_MARKER.length,
-          nestedKeyEnd,
-        );
-      if (
-        decodeDependencyPinningPathKey(nestedEncodedKey) ||
-        hasMalformedPercentEncoding(nestedEncodedKey)
-      ) {
-        return { pathname, found: true, malformed: true };
-      }
+      return { pathname, found: true, malformed: true };
     }
 
     return {
