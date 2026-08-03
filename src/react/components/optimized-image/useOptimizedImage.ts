@@ -25,7 +25,7 @@ export function useOptimizedImage(
   fallback: string;
 } {
   const { formats = DEFAULT_OPTIMIZED_IMAGE_FORMATS, quality = 80, targetWidths, width } = options;
-  const variantWidths = getOptimizedImageVariantWidths(width, targetWidths);
+  const variantWidths = getOptimizedImageVariantWidths(width, targetWidths, src);
 
   const sources = variantWidths.length === 0 ? [] : formats.map((format) => ({
     format,

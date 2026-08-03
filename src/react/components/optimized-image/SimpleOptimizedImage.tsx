@@ -25,7 +25,7 @@ export function SimpleOptimizedImage({
   /** Must match `assetPipeline.images.formats` when custom build formats are configured. */
   format?: OptimizedImageFormat;
 }): React.JSX.Element {
-  const variantWidths = getOptimizedImageVariantWidths(width, targetWidths);
+  const variantWidths = getOptimizedImageVariantWidths(width, targetWidths, src);
   const srcSet = variantWidths.length > 0
     ? generateSrcSet(src, format, variantWidths, quality)
     : undefined;

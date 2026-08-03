@@ -41,6 +41,23 @@ describe("optimized-image helpers", () => {
         "/.veryfront/optimized-images/images/photo%2C%20hero-640w.webp",
       );
     });
+
+    it("keeps non-app and boundary-changing paths on the original asset", () => {
+      for (
+        const src of [
+          "https://cdn.example/photo.jpg",
+          "//cdn.example/photo.jpg",
+          "/images/../private.jpg",
+          "/images/%2e%2e/private.jpg",
+          "/images/nested%2fprivate.jpg",
+          "/images/bad%2.jpg",
+          "/images\\photo.jpg",
+        ]
+      ) {
+        assertEquals(getOptimizedPath(src, "webp", 640), src);
+        assertEquals(generateSrcSet(src, "webp", [320, 640], 80), "");
+      }
+    });
   });
 
   describe("generateSrcSet", () => {

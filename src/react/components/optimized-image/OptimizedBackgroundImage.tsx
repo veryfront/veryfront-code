@@ -31,7 +31,7 @@ export function OptimizedBackgroundImage({
   className,
   style,
 }: OptimizedBackgroundImageProps): React.JSX.Element {
-  const variantWidths = getOptimizedImageVariantWidths(width, targetWidths);
+  const variantWidths = getOptimizedImageVariantWidths(width, targetWidths, src);
   const optimizedSrc = getOptimizedImageFallback(
     src,
     format,

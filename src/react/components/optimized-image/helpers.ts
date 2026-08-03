@@ -41,12 +41,43 @@ function sourcePath(src: string): string {
   return src.slice(0, suffixIndex).replaceAll("\\", "/");
 }
 
-function encodePathSegment(segment: string): string {
-  try {
-    return encodeURIComponent(decodeURIComponent(segment));
-  } catch {
-    return encodeURIComponent(segment);
+function encodedAppAssetPath(src: string): string | null {
+  if (!src.startsWith("/") || src.startsWith("//") || src.includes("\\")) {
+    return null;
   }
+
+  const path = sourcePath(src);
+  const segments = path.slice(1).split("/");
+  if (segments.length === 0) return null;
+
+  const encodedSegments: string[] = [];
+  for (let index = 0; index < segments.length; index++) {
+    const segment = segments[index]!;
+    if (segment.length === 0) return null;
+
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      return null;
+    }
+    if (
+      decoded === "." || decoded === ".." || decoded.includes("/") ||
+      decoded.includes("\\") || decoded.includes("\0")
+    ) {
+      return null;
+    }
+    encodedSegments.push(encodeURIComponent(decoded));
+  }
+
+  return `/${encodedSegments.join("/")}`;
+}
+
+function optimizedPath(src: string, format: string, size: number): string | null {
+  const encodedPath = encodedAppAssetPath(src);
+  if (encodedPath === null) return null;
+  const basePath = encodedPath.replace(/\.[^./]+$/, "");
+  return `/.veryfront/optimized-images${basePath}-${size}w.${format}`;
 }
 
 export function getOptimizedPath(
@@ -55,19 +86,19 @@ export function getOptimizedPath(
   size: number,
   _quality: number = 80,
 ): string {
-  const basePath = sourcePath(src).replace(/\.[^./]+$/, "");
-  const encodedPath = basePath.split("/").map(encodePathSegment).join("/");
-  return `/.veryfront/optimized-images${encodedPath}-${size}w.${format}`;
+  return optimizedPath(src, format, size) ?? src;
 }
 
 export function generateSrcSet(
   src: string,
   format: string,
   sizes: readonly number[],
-  quality: number,
+  _quality: number,
 ): string {
-  return sizes
-    .map((size) => `${getOptimizedPath(src, format, size, quality)} ${size}w`)
+  const paths = sizes.map((size) => optimizedPath(src, format, size));
+  if (paths.some((path) => path === null)) return "";
+  return paths
+    .map((path, index) => `${path} ${sizes[index]}w`)
     .join(", ");
 }
 
@@ -79,7 +110,9 @@ export function generateSrcSet(
 export function getOptimizedImageVariantWidths(
   sourceWidth: number | undefined,
   targetWidths?: readonly number[],
+  src?: string,
 ): readonly number[] {
+  if (src !== undefined && encodedAppAssetPath(src) === null) return [];
   if (sourceWidth === undefined) return [];
   try {
     if (!isValidImageVariantWidth(sourceWidth)) {

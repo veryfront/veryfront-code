@@ -54,7 +54,7 @@ export function OptimizedImage({
 }: OptimizedImageProps): React.JSX.Element {
   const loadingStrategy = priority ? "eager" : (loading ?? "lazy");
   const originalFormat = getImageExtension(src);
-  const variantWidths = getOptimizedImageVariantWidths(width, targetWidths);
+  const variantWidths = getOptimizedImageVariantWidths(width, targetWidths, src);
 
   const imgStyle: React.CSSProperties = {
     ...style,

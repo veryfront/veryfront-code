@@ -350,6 +350,23 @@ describe("OptimizedImage", () => {
         else Deno.env.set("VERYFRONT_ENV", previousEnvironment);
       }
     });
+
+    it("uses the original asset for non-app and boundary-changing paths", () => {
+      for (const src of ["https://cdn.example/photo.jpg", "/images/%2e%2e/private.jpg"]) {
+        const picture = renderToStaticMarkup(
+          React.createElement(OptimizedImage, {
+            src,
+            alt: "Original",
+            width: 640,
+          }),
+        );
+        const hooked = useOptimizedImage(src, { width: 640 });
+
+        assertStringIncludes(picture, `src="${src.replaceAll("&", "&amp;")}"`);
+        assertEquals(picture.includes("/.veryfront/optimized-images"), false);
+        assertEquals(hooked, { sources: [], fallback: src });
+      }
+    });
   });
 
   describe("styling", () => {
