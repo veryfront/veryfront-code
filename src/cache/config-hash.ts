@@ -8,6 +8,10 @@
 import { computeHash } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version.ts";
 import {
+  primordialArrayJoin as arrayJoin,
+  primordialArrayPush as arrayPush,
+} from "#veryfront/platform/compat/primordials/array.ts";
+import {
   CSSTYPE_VERSION,
   DEFAULT_REACT_VERSION,
   TAILWIND_VERSION,
@@ -16,17 +20,6 @@ import { buildDependencyPinningCacheVariant } from "./keys/dependency-pinning.ts
 
 const JSONStringify = JSON.stringify;
 const ObjectCreate = Object.create;
-const ArrayPrototypeJoin = Array.prototype.join;
-const ArrayPrototypePush = Array.prototype.push;
-const ReflectApply = Reflect.apply;
-
-function arrayPush(values: string[], value: string): void {
-  ReflectApply(ArrayPrototypePush, values, [value]);
-}
-
-function arrayJoin(values: string[], separator: string): string {
-  return ReflectApply(ArrayPrototypeJoin, values, [separator]) as string;
-}
 
 /**
  * Configuration that affects transform output.

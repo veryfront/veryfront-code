@@ -5,6 +5,11 @@
  * Ensures consistent URLs across SSR and browser for hydration parity.
  */
 
+import {
+  primordialArrayJoin as arrayJoin,
+  primordialArrayPush as arrayPush,
+} from "#veryfront/platform/compat/primordials/array.ts";
+
 /**
  * Default React version - used when not specified.
  *
@@ -27,18 +32,7 @@ type EsmShOptions = {
   deps?: Record<string, string>;
 };
 
-const ArrayPrototypeJoin = Array.prototype.join;
-const ArrayPrototypePush = Array.prototype.push;
 const ObjectEntries = Object.entries;
-const ReflectApply = Reflect.apply;
-
-function arrayJoin(values: string[], separator: string): string {
-  return ReflectApply(ArrayPrototypeJoin, values, [separator]) as string;
-}
-
-function arrayPush(values: string[], value: string): void {
-  ReflectApply(ArrayPrototypePush, values, [value]);
-}
 
 function buildEsmShParams(options?: EsmShOptions): string[] {
   const params: string[] = [];

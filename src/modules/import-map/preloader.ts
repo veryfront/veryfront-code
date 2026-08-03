@@ -1,5 +1,9 @@
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import {
+  primordialArrayPush as arrayPush,
+  primordialArraySort as arraySort,
+} from "#veryfront/platform/compat/primordials/array.ts";
 import { snapshotImportMap } from "#veryfront/transforms/pipeline/cache-identity.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/constants/limits.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
@@ -24,8 +28,6 @@ const DEFAULT_IMPORT_MAP_LOAD_TIMEOUT_MS = 30_000;
 // Project code can execute in the same realm before a later request reaches
 // this cache. Capture every primitive used for identity, admission, and
 // settlement so replacing shared built-ins cannot redirect dependency graphs.
-const ArrayPrototypePush = Array.prototype.push;
-const ArrayPrototypeSort = Array.prototype.sort;
 const DateNow = Date.now;
 const IntrinsicMap = Map;
 const IntrinsicPerformance = performance;
@@ -62,17 +64,6 @@ const WeakSetPrototypeAdd = WeakSet.prototype.add;
 const WeakSetPrototypeHas = WeakSet.prototype.has;
 const SetTimeout = setTimeout;
 const ClearTimeout = clearTimeout;
-
-function arraySort<T>(
-  values: T[],
-  compare: (left: T, right: T) => number,
-): T[] {
-  return ReflectApply(ArrayPrototypeSort, values, [compare]) as T[];
-}
-
-function arrayPush<T>(values: T[], value: T): void {
-  ReflectApply(ArrayPrototypePush, values, [value]);
-}
 
 function monotonicNow(): number {
   return ReflectApply(PerformanceNow, IntrinsicPerformance, []) as number;

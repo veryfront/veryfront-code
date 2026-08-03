@@ -1,19 +1,11 @@
 import type { PathObject } from "./types.ts";
-
-const ArrayPrototypeAt = Array.prototype.at;
-const ArrayPrototypeFilter = Array.prototype.filter;
-const ArrayPrototypeJoin = Array.prototype.join;
-const ArrayPrototypePop = Array.prototype.pop;
-const ArrayPrototypePush = Array.prototype.push;
-const ReflectApply = Reflect.apply;
-
-function arrayJoin(values: readonly string[], separator: string): string {
-  return ReflectApply(ArrayPrototypeJoin, values, [separator]) as string;
-}
-
-function arrayPush(values: string[], value: string): void {
-  ReflectApply(ArrayPrototypePush, values, [value]);
-}
+import {
+  primordialArrayAt as arrayAt,
+  primordialArrayFilter as arrayFilter,
+  primordialArrayJoin as arrayJoin,
+  primordialArrayPop as arrayPop,
+  primordialArrayPush as arrayPush,
+} from "../primordials/array.ts";
 
 interface RootInfo {
   absolute: boolean;
@@ -97,9 +89,9 @@ function normalizeTail(rest: string, absolute: boolean): string[] {
       continue;
     }
 
-    const previous = ReflectApply(ArrayPrototypeAt, normalized, [-1]) as string | undefined;
+    const previous = arrayAt(normalized, -1);
     if (previous !== undefined && previous !== "..") {
-      ReflectApply(ArrayPrototypePop, normalized, []);
+      arrayPop(normalized);
     } else if (!absolute) {
       arrayPush(normalized, "..");
     }
@@ -187,11 +179,7 @@ export function portableNormalize(path: string, windows: boolean): string {
 }
 
 export function portableJoin(paths: readonly string[], windows: boolean): string {
-  const nonempty = ReflectApply(
-    ArrayPrototypeFilter,
-    paths,
-    [(path: string) => path.length > 0],
-  ) as string[];
+  const nonempty = arrayFilter(paths, (path) => path.length > 0);
   if (nonempty.length === 0) return "/";
   return portableNormalize(arrayJoin(nonempty, "/"), windows);
 }

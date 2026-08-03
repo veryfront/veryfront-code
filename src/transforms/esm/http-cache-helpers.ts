@@ -6,6 +6,10 @@
 
 import { isAbsolute, join } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
+import {
+  primordialArrayMap as arrayMap,
+  primordialArraySort as arraySort,
+} from "#veryfront/platform/compat/primordials/array.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
@@ -15,11 +19,8 @@ import { DEFAULT_REACT_VERSION, getReactImportMap } from "./react-cdn.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 
 const logger = rendererLogger.component("http-cache");
-const ArrayPrototypeMap = Array.prototype.map;
-const ArrayPrototypeSort = Array.prototype.sort;
 const JSONStringify = JSON.stringify;
 const ObjectEntries = Object.entries;
-const ReflectApply = Reflect.apply;
 
 /**
  * Cache interface for dependency injection (matches LRU essential methods).
@@ -82,28 +83,18 @@ const HTTP_CACHE_FILE_HASH_NAMESPACE = "veryfront:http-module-file:v2";
 
 /** Build an order-independent fingerprint covering imports and scoped imports. */
 export function fingerprintImportMap(importMap: ImportMapConfig): Promise<string> {
-  const imports = ReflectApply(
-    ArrayPrototypeSort,
-    ObjectEntries(importMap.imports ?? {}),
-    [compareImportMapKeys],
-  ) as Array<[string, string]>;
-  const sortedScopes = ReflectApply(
-    ArrayPrototypeSort,
+  const imports = arraySort(ObjectEntries(importMap.imports ?? {}), compareImportMapKeys);
+  const sortedScopes = arraySort(
     ObjectEntries(importMap.scopes ?? {}),
-    [([left]: [string, Record<string, string>], [right]: [string, Record<string, string>]) =>
-      left < right ? -1 : left > right ? 1 : 0],
-  ) as Array<[string, Record<string, string>]>;
-  const scopes = ReflectApply(
-    ArrayPrototypeMap,
+    ([left], [right]) => left < right ? -1 : left > right ? 1 : 0,
+  );
+  const scopes = arrayMap(
     sortedScopes,
-    [([scope, scopedImports]: [string, Record<string, string>]) => [
-      scope,
-      ReflectApply(
-        ArrayPrototypeSort,
-        ObjectEntries(scopedImports),
-        [compareImportMapKeys],
-      ),
-    ]],
+    ([scope, scopedImports]) =>
+      [
+        scope,
+        arraySort(ObjectEntries(scopedImports), compareImportMapKeys),
+      ] as const,
   );
 
   // Serialize only string primitives. JSON.stringify on arrays/objects still
