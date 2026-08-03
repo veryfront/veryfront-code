@@ -2963,10 +2963,9 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
           `/_vf_modules/_pins/${encodedSnapshot}/_pins/project-dir/bar.js`,
         ]
       ) {
-        assertEquals(
-          (await serve(new Request(`http://localhost:3000${path}`), projectDir)).status,
-          200,
-        );
+        const response = await serve(new Request(`http://localhost:3000${path}`), projectDir);
+        assertEquals(response.status, 409);
+        assertEquals(response.headers.get("cache-control"), "no-store");
       }
 
       const unknown = await serve(
