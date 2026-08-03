@@ -29,6 +29,7 @@ import {
 } from "#veryfront/utils/constants/index.ts";
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import { isHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 
 const logger = serverLogger.component("ssr-service");
 
@@ -185,9 +186,9 @@ export class SSRService implements SSRServiceLike {
   }
 
   async getRenderer(ctx: HandlerContext): Promise<RendererAdapter> {
-    if (ctx.isLocalProject !== true) {
+    if (!isHostProjectCodeExecutionAllowed(ctx)) {
       throw new Error(
-        "Remote project renderers require generation-owned isolated renderer admission",
+        "Project renderers without host execution capability require generation-owned isolated renderer admission",
       );
     }
     return this.rendererProvider.getRenderer(ctx);
@@ -197,12 +198,10 @@ export class SSRService implements SSRServiceLike {
     const { request, url, slug, nonce, studioEmbed, projectId, pageId, noHmr, useNoCache } =
       options;
 
-    // Remote project source is not trusted to execute in the shared host
-    // process. The worker protocol and extension-owned renderer admission are
-    // available, but the renderer pipeline does not yet produce an isolated
-    // page/layout module graph. Fail closed until that graph is wired end to
-    // end instead of silently falling back to host-realm SSR.
-    if (ctx.isLocalProject !== true) {
+    // Project source without an explicit host capability is not trusted to
+    // execute in the server process. Dedicated single-project runtimes may
+    // grant the capability; all other projects require isolated admission.
+    if (!isHostProjectCodeExecutionAllowed(ctx)) {
       return {
         status: HTTP_UNAVAILABLE,
         html: ErrorPages.serverError("Isolated rendering is temporarily unavailable."),

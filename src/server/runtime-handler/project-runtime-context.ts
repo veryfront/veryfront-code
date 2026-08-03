@@ -84,6 +84,8 @@ export interface ResolveProjectRuntimeContextInput {
   headers: ProjectRequestHeaders;
   requestContext: ProjectRequestContext;
   isProxyMode: boolean;
+  /** Host-owned capability for dedicated single-project runtime execution. */
+  allowHostProjectCodeExecution?: boolean;
   proxyTrust: {
     proxyTrusted: boolean | undefined;
   };
@@ -311,6 +313,7 @@ export async function resolveProjectRuntimeContext(
     requestContext: reqCtx,
     routeRegistry: input.routeRegistry,
     isLocalProject: adapterRes.isLocalProject,
+    allowHostProjectCodeExecution: input.allowHostProjectCodeExecution,
     moduleServerUrl: input.moduleServerUrl,
     environmentId: input.environmentId ?? input.headers.environmentId,
     skipEnrichedContext: input.skipEnrichedContext ?? shouldSkipEnrichedContext(input.url.pathname),

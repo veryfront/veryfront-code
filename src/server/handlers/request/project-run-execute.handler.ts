@@ -123,6 +123,7 @@ export interface ProjectRunExecuteHandlerDeps {
       adapter: RuntimeAdapter;
       config?: VeryfrontConfig;
       debug?: boolean;
+      allowHostProjectCodeExecution?: boolean;
     },
   ): Promise<DiscoveredWorkflow | null>;
   findEvalById(
@@ -132,6 +133,7 @@ export interface ProjectRunExecuteHandlerDeps {
       adapter: RuntimeAdapter;
       config?: VeryfrontConfig;
       debug?: boolean;
+      allowHostProjectCodeExecution?: boolean;
     },
   ): Promise<DiscoveredEval | null>;
   createWorkflowClient(
@@ -421,6 +423,7 @@ async function executeWorkflowRun(
     adapter: ctx.adapter,
     config: ctx.config,
     debug: ctx.debug,
+    allowHostProjectCodeExecution: ctx.allowHostProjectCodeExecution,
   });
 
   if (!workflow) {
@@ -1020,6 +1023,7 @@ async function executeEvalRun(
     adapter: ctx.adapter,
     config: ctx.config,
     debug: ctx.debug,
+    allowHostProjectCodeExecution: ctx.allowHostProjectCodeExecution,
   });
 
   if (!evalItem) {

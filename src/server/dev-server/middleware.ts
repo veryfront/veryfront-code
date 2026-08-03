@@ -105,17 +105,19 @@ export async function loadMiddlewareFile(
   adapter: RuntimeAdapter,
   options: MiddlewareLoadOptions = {},
 ): Promise<MiddlewareFunction[]> {
-  if (!isExplicitHostProjectCodeExecutionAllowed(options)) {
-    throw new TypeError(
-      "Project middleware host loading requires explicit trusted-local execution",
-    );
-  }
-
   const middlewareFiles = ["middleware.ts", "middleware.js", "middleware.mjs"];
 
   for (const middlewareFile of middlewareFiles) {
     const middlewarePath = join(projectDir, middlewareFile);
     if (!(await adapter.fs.exists(middlewarePath))) continue;
+    // Shared runtimes may inspect project-scoped metadata to determine that no
+    // middleware exists, but they must never read or evaluate a discovered
+    // middleware module in the host process.
+    if (!isExplicitHostProjectCodeExecutionAllowed(options)) {
+      throw new TypeError(
+        "Project middleware host loading requires explicit trusted-local execution",
+      );
+    }
 
     try {
       logger.debug(`Loading ${middlewareFile}`);

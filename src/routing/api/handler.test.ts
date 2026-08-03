@@ -301,6 +301,46 @@ describe("APIRouteHandler", () => {
       assertEquals(preparations, 0);
     });
 
+    it("allows an explicitly capable dedicated runtime to use the host route path", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/dedicated.ts",
+        "export function GET() { return new Response('dedicated'); }",
+      );
+      let hostLoads = 0;
+      let preparations = 0;
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          hostLoads++;
+          return Promise.resolve({
+            GET: () => new Response("dedicated"),
+          });
+        },
+        prepareHandlerModule: () => {
+          preparations++;
+          throw new Error("dedicated runtime should not prepare a worker module");
+        },
+      });
+
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const response = await handler.handle(
+        new Request("http://localhost/api/dedicated"),
+        {
+          projectDir: "/test/project",
+          adapter,
+          securityConfig: null,
+          cspUserHeader: null,
+          isLocalProject: false,
+          allowHostProjectCodeExecution: true,
+        },
+      );
+
+      assertEquals(response?.status, 200);
+      assertEquals(await response?.text(), "dedicated");
+      assertEquals(hostLoads, 1);
+      assertEquals(preparations, 0);
+    });
+
     it("prepares local routes before execution when API isolation is enabled", async () => {
       const adapter = createMockAdapter();
       adapter.fs.files.set(

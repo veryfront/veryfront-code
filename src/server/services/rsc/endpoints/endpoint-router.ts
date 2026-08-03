@@ -88,6 +88,7 @@ export async function handleRSCEndpoint(
     adapter,
     config,
     isLocalProject,
+    allowHostProjectCodeExecution,
     mode,
     nonce,
   }: RSCEndpointParams,
@@ -117,14 +118,15 @@ export async function handleRSCEndpoint(
     return new Response("Flight endpoint removed. Use custom RSC endpoints.", { status: 410 });
   }
 
-  // These transports import or evaluate tenant-owned server modules. Until the
-  // generation-owned isolated RSC graph is connected to the worker renderer,
-  // remote projects must not fall back to the shared host realm.
-  if (!isLocalProject && isRscServerExecutionEndpoint(sub)) {
+  // These transports import or evaluate project-owned server modules. Until
+  // the generation-owned isolated RSC graph is connected to the worker
+  // renderer, requests without an explicit host capability must not fall back
+  // to the host realm.
+  if (!allowHostProjectCodeExecution && isRscServerExecutionEndpoint(sub)) {
     const unavailable = createErrorResponseFromDefinition(
       PROJECT_EXECUTION_UNAVAILABLE,
       {
-        detail: "Shared runtimes require a dedicated isolated project runtime for RSC execution",
+        detail: "RSC server execution requires a dedicated isolated project runtime",
         instance: pathname,
       },
     );

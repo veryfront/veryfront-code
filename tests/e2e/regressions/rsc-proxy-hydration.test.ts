@@ -198,7 +198,7 @@ export default function Page() {
   );
 }
 
-function getProxyHeaders(
+function getHostedHeaders(
   environment: "preview" | "production",
 ): Record<string, string> {
   return {
@@ -211,15 +211,26 @@ function getProxyHeaders(
   };
 }
 
-async function withProxyBrowserPage(
+async function withHostedBrowserPage(
   browser: import("npm:playwright").Browser,
   context: TestProjectContext,
+  topology: "dedicated" | "shared",
   headers: Record<string, string>,
   run: (
     page: import("npm:playwright").Page,
     diagnostics: import("../../_helpers/playwright.ts").BrowserDiagnostics,
+    response: import("npm:playwright").Response,
   ) => Promise<void>,
 ): Promise<void> {
+  const environment = headers["x-environment"];
+  let dedicatedEnvironment: "preview" | "production" | undefined;
+  if (topology === "dedicated") {
+    if (environment !== "preview" && environment !== "production") {
+      throw new TypeError("Dedicated test runtimes require an explicit environment");
+    }
+    dedicatedEnvironment = environment;
+  }
+
   const port = await context.allocatePort();
   const controller = new AbortController();
   const previousDispatchPublicKey = Deno.env.get(DISPATCH_PUBLIC_KEY_ENV);
@@ -237,20 +248,22 @@ async function withProxyBrowserPage(
     const adapter = await runtime.get();
     const bootstrap = await bootstrapProd(context.projectDir, adapter);
     disposeBootstrap = bootstrap.dispose;
-    bootstrap.config = validateVeryfrontConfig({
-      experimental: { rsc: true },
-      fs: {
-        type: "veryfront-api",
-        veryfront: {
-          proxyMode: true,
-          apiBaseUrl: "https://api.veryfront.com",
+    if (topology === "shared") {
+      bootstrap.config = validateVeryfrontConfig({
+        experimental: { rsc: true },
+        fs: {
+          type: "veryfront-api",
+          veryfront: {
+            proxyMode: true,
+            apiBaseUrl: "https://api.veryfront.com",
+          },
         },
-      },
-    });
-    await writeTextFile(
-      join(context.projectDir, "veryfront.config.js"),
-      PROXY_MODE_CONFIG_SOURCE,
-    );
+      });
+      await writeTextFile(
+        join(context.projectDir, "veryfront.config.js"),
+        PROXY_MODE_CONFIG_SOURCE,
+      );
+    }
 
     server = await startProductionServer({
       projectDir: context.projectDir,
@@ -259,26 +272,31 @@ async function withProxyBrowserPage(
       signal: controller.signal,
       defaultProjectSlug: context.projectId,
       defaultProjectId: context.projectId,
+      defaultEnvironment: dedicatedEnvironment,
       bootstrapResult: bootstrap,
     });
     await server.ready;
     await registerTailwindExtension();
     await waitForReady(port);
 
-    const browserContext = await browser.newContext({
-      extraHTTPHeaders: {
+    // A dedicated runtime gets its environment and project identity from
+    // host-owned startup options. Forwarded project headers belong only to the
+    // shared proxy topology, where the dispatch signature establishes trust.
+    const extraHTTPHeaders = topology === "shared"
+      ? {
         ...headers,
         "x-veryfront-dispatch-jws": await mintTrustedDispatchJws(context.projectId),
-      },
-    });
+      }
+      : undefined;
+    const browserContext = await browser.newContext({ extraHTTPHeaders });
     await installEsmShCorsShim(browserContext);
 
     try {
       const page = await browserContext.newPage();
       const diagnostics = captureBrowserDiagnostics(page);
       const response = await page.goto(`http://127.0.0.1:${port}/`);
-      assertEquals(response?.status(), 200);
-      await run(page, diagnostics);
+      if (!response) throw new Error("Browser navigation did not produce an HTTP response");
+      await run(page, diagnostics, response);
     } finally {
       await browserContext.unrouteAll({ behavior: "ignoreErrors" });
       await browserContext.close();
@@ -293,6 +311,25 @@ async function withProxyBrowserPage(
       Deno.env.set(DISPATCH_PUBLIC_KEY_ENV, previousDispatchPublicKey);
     }
   }
+}
+
+async function assertSharedRuntimeExecutionUnavailable(
+  response: import("npm:playwright").Response,
+): Promise<void> {
+  assertEquals(response.status(), 503);
+  assertEquals(response.headers()["cache-control"], "no-store");
+
+  const problem = await response.json() as {
+    type?: string;
+    status?: number;
+    detail?: string;
+  };
+  assertEquals(
+    problem.type,
+    "https://veryfront.com/docs/errors/project-execution-unavailable",
+  );
+  assertEquals(problem.status, 503);
+  assertEquals(problem.detail?.startsWith("Shared runtimes"), true);
 }
 
 async function installEsmShCorsShim(
@@ -511,22 +548,50 @@ describe(
       }
     });
 
-    it("hydrates a remote-production client page and becomes interactive", async () => {
+    it("fails closed for production rendering in a shared runtime", async () => {
       const browser = await launchChromium();
       if (!browser) return;
 
       try {
-        await withTestContext("rsc-proxy-browser-hydration", async (context) => {
+        await withTestContext("rsc-shared-browser-boundary", async (context) => {
           await writeClientCounterApp(
             context.projectDir,
             PROXY_MODE_CONFIG_SOURCE,
           );
 
-          await withProxyBrowserPage(
+          await withHostedBrowserPage(
             browser,
             context,
-            getProxyHeaders("production"),
-            async (page, diagnostics) => {
+            "shared",
+            getHostedHeaders("production"),
+            async (_page, _diagnostics, response) => {
+              await assertSharedRuntimeExecutionUnavailable(response);
+            },
+          );
+        });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    it("hydrates a dedicated production client page and becomes interactive", async () => {
+      const browser = await launchChromium();
+      if (!browser) return;
+
+      try {
+        await withTestContext("rsc-dedicated-browser-hydration", async (context) => {
+          await writeClientCounterApp(
+            context.projectDir,
+            LOCAL_RSC_CONFIG_SOURCE,
+          );
+
+          await withHostedBrowserPage(
+            browser,
+            context,
+            "dedicated",
+            getHostedHeaders("production"),
+            async (page, diagnostics, response) => {
+              assertEquals(response.status(), 200);
               await assertCounterHydration(page, diagnostics, {
                 expectedStrategy: "rsc-module",
                 expectedModulePath: "/_veryfront/rsc/module?",
@@ -544,27 +609,24 @@ describe(
       }
     });
 
-    it("hydrates a preview client page and becomes interactive", async () => {
+    it("hydrates a dedicated preview client page and becomes interactive", async () => {
       const browser = await launchChromium();
       if (!browser) return;
 
       try {
-        await withTestContext("rsc-preview-browser-hydration", async (context) => {
+        await withTestContext("rsc-dedicated-preview-hydration", async (context) => {
           await writeClientCounterApp(
             context.projectDir,
-            PROXY_MODE_CONFIG_SOURCE,
+            LOCAL_RSC_CONFIG_SOURCE,
           );
 
-          await withProxyBrowserPage(
+          await withHostedBrowserPage(
             browser,
             context,
-            getProxyHeaders("preview"),
-            async (page, diagnostics) => {
-              // Preview pods hydrate via the RSC module endpoint, same as
-              // production. The `fs` strategy + `/_veryfront/fs/` module
-              // loader are dev-only surfaces gated on `isLocalProject` under
-              // VULN-SRV-1/2 — a trusted `x-environment: preview` header
-              // cannot unlock them because they serve raw project source.
+            "dedicated",
+            getHostedHeaders("preview"),
+            async (page, diagnostics, response) => {
+              assertEquals(response.status(), 200);
               await assertCounterHydration(page, diagnostics, {
                 expectedStrategy: "rsc-module",
                 expectedModulePath: "/_veryfront/rsc/module?",
@@ -582,7 +644,7 @@ describe(
       }
     });
 
-    it("keeps preview chat pages styled after hydration", async () => {
+    it("keeps dedicated preview chat pages styled after hydration", async () => {
       const browser = await launchChromium();
       if (!browser) return;
 
@@ -590,14 +652,16 @@ describe(
         await withTestContext("rsc-preview-chat-browser-styling", async (context) => {
           await writePreviewChatApp(
             context.projectDir,
-            PROXY_MODE_CONFIG_SOURCE,
+            LOCAL_RSC_CONFIG_SOURCE,
           );
 
-          await withProxyBrowserPage(
+          await withHostedBrowserPage(
             browser,
             context,
-            getProxyHeaders("preview"),
-            async (page, diagnostics) => {
+            "dedicated",
+            getHostedHeaders("preview"),
+            async (page, diagnostics, response) => {
+              assertEquals(response.status(), 200);
               await assertPreviewChatStyling(page);
 
               const hydrationErrors = findHydrationOrCspFailures(

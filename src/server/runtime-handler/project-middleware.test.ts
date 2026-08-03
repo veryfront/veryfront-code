@@ -28,6 +28,7 @@ function createAdapter(
   options: {
     requireContextForFileAccess?: boolean;
     onFileAccess?: () => void;
+    onFileRead?: () => void;
   } = {},
 ): RuntimeAdapter {
   const assertContext = () => {
@@ -48,6 +49,7 @@ function createAdapter(
     },
     readFile: () => {
       assertContext();
+      options.onFileRead?.();
       return Promise.resolve(middlewareSource ?? "");
     },
     runWithContext: <T>(
@@ -436,11 +438,11 @@ describe("ProjectMiddlewareRuntime", () => {
   it("rejects shared production middleware before reading or evaluating it", async () => {
     const marker = `__vf_project_middleware_${crypto.randomUUID().replaceAll("-", "")}`;
     const host = globalThis as unknown as Record<string, unknown>;
-    let fileAccesses = 0;
+    let sourceReads = 0;
     const adapter = createAdapter(
       undefined,
       `globalThis.${marker} = Deno.env.get("HOST_SECRET"); export default [];`,
-      { onFileAccess: () => fileAccesses++ },
+      { onFileRead: () => sourceReads++ },
     );
     const runtime = new ProjectMiddlewareRuntime();
     let routeCalls = 0;
@@ -456,12 +458,30 @@ describe("ProjectMiddlewareRuntime", () => {
         "requires explicit trusted-local execution",
       );
 
-      assertEquals(fileAccesses, 0);
+      assertEquals(sourceReads, 0);
       assertEquals(host[marker], undefined);
       assertEquals(routeCalls, 0);
     } finally {
       delete host[marker];
     }
+  });
+
+  it("passes through shared requests when no root middleware exists", async () => {
+    const runtime = new ProjectMiddlewareRuntime();
+    let routeCalls = 0;
+
+    const response = await execute(
+      runtime,
+      createContext(createAdapter()),
+      undefined,
+      () => {
+        routeCalls++;
+        return Promise.resolve(new Response("route"));
+      },
+    );
+
+    assertEquals(routeCalls, 1);
+    assertEquals(await response?.text(), "route");
   });
 
   it("keeps the compiled middleware cache bounded", async () => {

@@ -1226,6 +1226,7 @@ export class Renderer {
       mode: ctx.mode,
       projectDir: ctx.projectDir,
       isLocalProject: ctx.isLocalProject === true,
+      allowHostProjectCodeExecution: ctx.allowHostProjectCodeExecution,
       projectId: ctx.projectId,
       contentSourceId: ctx.contentSourceId,
       config: ctx.config,

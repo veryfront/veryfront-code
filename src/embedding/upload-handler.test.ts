@@ -416,10 +416,13 @@ describe("createUploadHandler", () => {
 
       assertEquals(response.status, 200);
       assertEquals(removed, ["doc-123"]);
-      assertEquals(deleteCalls, [
-        "DELETE https://api.test/projects/demo-project/uploads/.veryfront%2Frag%2Fuploads%2Fdoc-123.meta.json",
-        "DELETE https://api.test/projects/demo-project/uploads/.veryfront%2Frag%2Fuploads%2Fdoc-123.blob",
-      ]);
+      assertEquals(
+        deleteCalls.toSorted(),
+        [
+          "DELETE https://api.test/projects/demo-project/uploads/.veryfront%2Frag%2Fuploads%2Fdoc-123.meta.json",
+          "DELETE https://api.test/projects/demo-project/uploads/.veryfront%2Frag%2Fuploads%2Fdoc-123.blob",
+        ].toSorted(),
+      );
     });
   });
 

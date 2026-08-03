@@ -141,6 +141,8 @@ export interface RenderPipelineConfig {
   projectDir: string;
   /** Whether browser module URLs may use the local filesystem endpoint. */
   isLocalProject: boolean;
+  /** Narrow host-owned capability for project-code execution. */
+  allowHostProjectCodeExecution?: boolean;
   /** Stable project identity used to isolate transformed module caches. */
   projectId?: string;
   /** Release or preview source used to isolate transformed module caches. */
@@ -181,6 +183,7 @@ interface FetchedDataResult {
 
 interface DataWorkerIdentity {
   readonly isLocalProject: boolean;
+  readonly allowHostProjectCodeExecution: boolean;
   readonly workerScope?: string;
   readonly sourceGeneration?: string;
 }
@@ -581,13 +584,17 @@ export class RenderPipeline {
     options: RenderOptions | undefined,
   ): Promise<DataWorkerIdentity> {
     const isLocalProject = this.config.isLocalProject === true;
-    if (!isLocalProject) return { isLocalProject };
+    const allowHostProjectCodeExecution = isLocalProject ||
+      this.config.allowHostProjectCodeExecution === true;
+    if (!isLocalProject) {
+      return { isLocalProject, allowHostProjectCodeExecution };
+    }
 
     const sourceSnapshotVersion = await this.config.adapter.fs
       .getSourceSnapshotVersion?.();
     const releaseId = options?.releaseId;
     if (!releaseId && sourceSnapshotVersion === undefined) {
-      return { isLocalProject };
+      return { isLocalProject, allowHostProjectCodeExecution };
     }
 
     const workerScope = this.config.projectId ?? this.config.projectDir;
@@ -598,7 +605,12 @@ export class RenderPipeline {
       environment: options?.environment ?? null,
       dependencyPinningCacheKey: options?.dependencyPinningCacheKey ?? null,
     });
-    return { isLocalProject, workerScope, sourceGeneration };
+    return {
+      isLocalProject,
+      allowHostProjectCodeExecution,
+      workerScope,
+      sourceGeneration,
+    };
   }
 
   private applyFetchedDataResults(

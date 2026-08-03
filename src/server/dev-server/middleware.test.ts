@@ -9,19 +9,22 @@ import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { loadMiddlewareFile } from "./middleware.ts";
 
-function createVirtualAdapter(source: string, onFileAccess?: () => void): RuntimeAdapter {
+function createVirtualAdapter(
+  source: string | undefined,
+  onFileAccess?: (operation: "exists" | "read") => void,
+): RuntimeAdapter {
   const fs = {
     getUnderlyingAdapter: () => fs,
     getAdapterType: () => "MultiProjectFSAdapter",
     isVeryfrontAdapter: () => true,
     isMultiProjectMode: () => true,
     exists: (path: string) => {
-      onFileAccess?.();
-      return Promise.resolve(path.endsWith("/middleware.ts"));
+      onFileAccess?.("exists");
+      return Promise.resolve(source !== undefined && path.endsWith("/middleware.ts"));
     },
     readFile: () => {
-      onFileAccess?.();
-      return Promise.resolve(source);
+      onFileAccess?.("read");
+      return Promise.resolve(source ?? "");
     },
   } as unknown as RuntimeAdapter["fs"];
 
@@ -51,10 +54,12 @@ describe("loadMiddlewareFile", () => {
   it("rejects remote middleware before reading or evaluating project source", async () => {
     const marker = `__vf_middleware_isolation_${crypto.randomUUID().replaceAll("-", "")}`;
     const host = globalThis as unknown as Record<string, unknown>;
-    let fileAccesses = 0;
+    let sourceReads = 0;
     const adapter = createVirtualAdapter(
       `globalThis.${marker} = Deno.env.get("HOST_SECRET"); export default [];`,
-      () => fileAccesses++,
+      (operation) => {
+        if (operation === "read") sourceReads++;
+      },
     );
 
     try {
@@ -63,11 +68,21 @@ describe("loadMiddlewareFile", () => {
         TypeError,
         "requires explicit trusted-local execution",
       );
-      assertEquals(fileAccesses, 0);
+      assertEquals(sourceReads, 0);
       assertEquals(host[marker], undefined);
     } finally {
       delete host[marker];
     }
+  });
+
+  it("allows shared runtimes to establish that no middleware exists", async () => {
+    let sourceReads = 0;
+    const adapter = createVirtualAdapter(undefined, (operation) => {
+      if (operation === "read") sourceReads++;
+    });
+
+    assertEquals(await loadMiddlewareFile("/app", adapter), []);
+    assertEquals(sourceReads, 0);
   });
 
   it("fails closed for invalid production middleware", async () => {

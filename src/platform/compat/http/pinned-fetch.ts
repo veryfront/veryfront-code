@@ -113,7 +113,9 @@ async function writeRequestBody(request: ClientRequest, body: BodyInit | null): 
 
   const { Readable } = await import("node:stream");
   const webStream = body instanceof Blob ? body.stream() : body;
-  const source = Readable.fromWeb(webStream as globalThis.ReadableStream<Uint8Array>);
+  const source = Readable.fromWeb(
+    webStream as unknown as import("node:stream/web").ReadableStream<Uint8Array>,
+  );
   await new Promise<void>((resolve, reject) => {
     source.once("error", reject);
     request.once("error", reject);

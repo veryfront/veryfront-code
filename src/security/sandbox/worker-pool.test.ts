@@ -3,6 +3,7 @@ import {
   assert,
   assertEquals,
   assertExists,
+  assertInstanceOf,
   assertRejects,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
@@ -1071,6 +1072,7 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
       "outside the allowed project boundary",
     );
 
+    assertInstanceOf(error, VeryfrontError);
     assert(!error.message.includes(escapedLayout));
     assert(!error.message.includes("scope-a"));
     assertEquals(pool.getStats().poolSize, 0);

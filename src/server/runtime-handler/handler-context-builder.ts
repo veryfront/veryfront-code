@@ -52,6 +52,8 @@ export interface HandlerContextOptions {
   routeRegistry: RouteRegistry;
   /** Whether this is a local project */
   isLocalProject: boolean;
+  /** Narrow host-owned capability for project-code execution. */
+  allowHostProjectCodeExecution?: boolean;
   /** Module server URL */
   moduleServerUrl: string | undefined;
   /** Environment ID for env var resolution (from proxy x-environment-id header) */
@@ -87,6 +89,7 @@ export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext
       environment: opts.resolvedEnvironment,
       branch: opts.requestContext.branch,
       isLocalProject: opts.isLocalProject,
+      allowHostProjectCodeExecution: opts.allowHostProjectCodeExecution,
       contentSourceId,
       parsedDomain: opts.parsedDomain,
       adapter: opts.adapter,
@@ -116,6 +119,7 @@ export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext
     requestContext: { ...opts.requestContext, mode: opts.resolvedEnvironment },
     routeRegistry: opts.routeRegistry,
     isLocalProject: opts.isLocalProject,
+    allowHostProjectCodeExecution: opts.allowHostProjectCodeExecution,
     environmentId: opts.environmentId,
     prepareHostedConfigContext: opts.prepareHostedConfigContext,
     enriched: enrichedContext,

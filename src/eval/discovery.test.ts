@@ -149,23 +149,29 @@ describe("eval/discovery", () => {
     const adapter = createRuntimeAdapter({
       "/project/evals/deep-research.eval.ts": "",
     });
+    let receivedHostExecutionCapability: boolean | undefined;
 
     const result = await discoverEvals({
       projectDir: "/project",
       adapter,
       config: { fs: { type: "veryfront-api" } } as never,
-      moduleLoader: async () => ({
-        default: evalAgent({
-          id: "eval:deep-research",
-          name: "Deep research eval",
-          target: "agent:researcher",
-          dataset: datasets.inline([{ id: "q1", input: "capital", reference: "Paris" }]),
-          metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
-        }),
-      }),
+      allowHostProjectCodeExecution: true,
+      moduleLoader: async (_filePath, options) => {
+        receivedHostExecutionCapability = options.allowHostProjectCodeExecution;
+        return {
+          default: evalAgent({
+            id: "eval:deep-research",
+            name: "Deep research eval",
+            target: "agent:researcher",
+            dataset: datasets.inline([{ id: "q1", input: "capital", reference: "Paris" }]),
+            metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+          }),
+        };
+      },
     });
 
     assertEquals(result.errors, []);
+    assertEquals(receivedHostExecutionCapability, true);
     assertEquals(
       result.evals.map((item) => ({
         id: item.id,

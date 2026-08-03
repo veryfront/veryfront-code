@@ -126,6 +126,7 @@ describe("rendering/context/render-context", () => {
         token: "tok-123",
         moduleServerUrl: "http://modules.local",
         nonce: "abc",
+        allowHostProjectCodeExecution: true,
       });
 
       const ctx = createRenderContextFromEnriched(enriched as any);
@@ -138,6 +139,15 @@ describe("rendering/context/render-context", () => {
       assertEquals(ctx.releaseId, "r1");
       assertEquals(ctx.proxyToken, "tok-123");
       assertEquals(ctx.nonce, "abc");
+      assertEquals(ctx.allowHostProjectCodeExecution, true);
+    });
+
+    it("should not infer host execution from a non-local enriched context", () => {
+      const ctx = createRenderContextFromEnriched(
+        makeEnrichedContext({ isLocalProject: false }) as any,
+      );
+
+      assertEquals(ctx.allowHostProjectCodeExecution, false);
     });
 
     it("should apply options overrides", () => {

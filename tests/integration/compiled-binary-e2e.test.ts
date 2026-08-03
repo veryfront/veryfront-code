@@ -663,7 +663,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       const response = await fetch(`http://127.0.0.1:${server.port}/`);
       const html = await response.text();
 
-      assertEquals(response.status, 200, "Should return 200");
+      assertEquals(
+        response.status,
+        200,
+        `Should return 200\n${server.logs.join("").slice(-16000)}`,
+      );
       const normalizedHtml = stripReactSSRMarkers(html);
       // The layout rendered the page's getServerData value at SSR — proving
       // server data reaches a layout via usePageContext().data without drilling.
@@ -695,14 +699,19 @@ export function GET() {
 
     await withServer(projectDir, async (server) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/api/hello`);
-      const json = await response.json();
+      const body = await response.text();
 
-      assertEquals(response.status, 200, "Should return 200");
+      assertEquals(
+        response.status,
+        200,
+        `Should return 200\nResponse body: ${body}\n${server.logs.join("").slice(-16000)}`,
+      );
       assertEquals(
         response.headers.get("content-type")?.includes("application/json"),
         true,
         "Should be JSON",
       );
+      const json = JSON.parse(body);
       assertEquals(json.message, "Hello from API", "Should return correct message");
       assert(json.timestamp > 0, "Should have timestamp");
     });
@@ -739,7 +748,11 @@ export function GET() {
 
     await withServer(projectDir, async (server) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/api/events`);
-      assertEquals(response.status, 200, "Should start the SSE response");
+      assertEquals(
+        response.status,
+        200,
+        `Should start the SSE response\n${server.logs.join("").slice(-16000)}`,
+      );
 
       const reader = response.body?.getReader();
       assert(reader, "Should expose the SSE response body");
@@ -815,7 +828,11 @@ export function GET() {
 
     await withServer(projectDir, async (server) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/api/users/list`);
-      assertEquals(response.status, 200, "Should return 200");
+      assertEquals(
+        response.status,
+        200,
+        `Should return 200\n${server.logs.join("").slice(-16000)}`,
+      );
 
       const json = await response.json();
       assertEquals(json.count, 2, "Should return user count");
@@ -2275,7 +2292,11 @@ export function GET() {
 
     await withServer(projectDir, async (server) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/api/status`);
-      assertEquals(response.status, 201, "Should return custom status 201");
+      assertEquals(
+        response.status,
+        201,
+        `Should return custom status 201\n${server.logs.join("").slice(-16000)}`,
+      );
 
       const json = await response.json();
       assertEquals(json.status, "ok", "Should return ok status");

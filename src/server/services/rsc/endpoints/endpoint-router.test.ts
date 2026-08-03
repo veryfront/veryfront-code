@@ -213,14 +213,15 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
     });
   });
 
-  describe("remote execution isolation", () => {
+  describe("shared runtime execution isolation", () => {
     for (const endpoint of ["render", "render/page", "stream", "stream/page", "payload"]) {
-      it(`fails closed for remote ${endpoint} execution`, async () => {
+      it(`fails closed for shared ${endpoint} execution`, async () => {
         const result = await handleRSCEndpoint(
           makeParams({
             pathname: `/_veryfront/rsc/${endpoint}`,
             config: rscEnabledConfig,
             isLocalProject: false,
+            allowHostProjectCodeExecution: false,
           }),
         );
 
@@ -234,12 +235,13 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       });
     }
 
-    it("fails closed for remote server actions before authorization or import", async () => {
+    it("fails closed for shared server actions before authorization or import", async () => {
       const result = await handleRSCEndpoint(
         makeParams({
           pathname: "/_veryfront/rsc/action",
           config: rscEnabledConfig,
           isLocalProject: false,
+          allowHostProjectCodeExecution: false,
           req: new Request("http://localhost/_veryfront/rsc/action", {
             method: "POST",
             body: "{}",
@@ -249,6 +251,22 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
 
       assertEquals(result?.status, 503);
       assertEquals(result?.headers.get("cache-control"), "no-store");
+    });
+
+    it("does not conflate a dedicated production runtime with a shared runtime", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/action",
+          config: rscEnabledConfig,
+          isLocalProject: false,
+          allowHostProjectCodeExecution: true,
+          req: new Request("http://localhost/_veryfront/rsc/action", {
+            method: "GET",
+          }),
+        }),
+      );
+
+      assertEquals(result?.status, 405);
     });
   });
 
@@ -1848,6 +1866,7 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
             adapter: branchAAdapter,
             config: rscEnabledConfig,
             isLocalProject: false,
+            allowHostProjectCodeExecution: false,
             mode: "development",
           }),
         );
@@ -1861,6 +1880,7 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
             adapter: branchBAdapter,
             config: rscEnabledConfig,
             isLocalProject: false,
+            allowHostProjectCodeExecution: false,
             mode: "development",
           }),
         );
@@ -1894,6 +1914,7 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
             adapter: branchBAdapter,
             config: rscEnabledConfig,
             isLocalProject: false,
+            allowHostProjectCodeExecution: false,
             mode: "development",
           }),
         );

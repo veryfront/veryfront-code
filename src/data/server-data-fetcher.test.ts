@@ -55,6 +55,26 @@ describe("ServerDataFetcher", () => {
       assertEquals(executed, false);
     });
 
+    it("allows server-data execution in an explicitly capable dedicated runtime", async () => {
+      const fetcher = new ServerDataFetcher();
+      let executed = false;
+      const pageModule: PageWithData = {
+        default: () => null,
+        getServerData: () => {
+          executed = true;
+          return { props: { source: "dedicated" } };
+        },
+      };
+
+      const result = await fetcher.fetch(pageModule, createContext(), {
+        isLocalProject: false,
+        allowHostProjectCodeExecution: true,
+      });
+
+      assertEquals(result.props, { source: "dedicated" });
+      assertEquals(executed, true);
+    });
+
     it("binds reusable data workers to tenant, source, policy, and project env", async () => {
       const identity = (
         workerScope: string,

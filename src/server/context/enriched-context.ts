@@ -37,6 +37,8 @@ export function buildEnrichedContext(options: BuildEnrichedContextOptions): Enri
     environment: options.environment,
     branch: options.branch,
     isLocalProject: options.isLocalProject,
+    allowHostProjectCodeExecution: options.isLocalProject ||
+      options.allowHostProjectCodeExecution === true,
     mode: options.isLocalProject ? "development" : "production",
 
     contentSourceId: options.contentSourceId,

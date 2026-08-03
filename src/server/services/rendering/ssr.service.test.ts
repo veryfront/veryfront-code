@@ -57,6 +57,15 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
   };
 }
 
+function makeSharedCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
+  return makeCtx({
+    isLocalProject: false,
+    prepareHostedConfigContext: () =>
+      Promise.reject(new Error("Shared context preparation is not used by this unit test")),
+    ...overrides,
+  });
+}
+
 function makeRenderOptions(overrides: Partial<SSRRenderOptions> = {}): SSRRenderOptions {
   const url = new URL("http://localhost/test-page");
   return {
@@ -234,7 +243,7 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(receivedProjectSlug, "my-project");
       });
 
-      it("rejects direct remote renderer access before invoking the provider", async () => {
+      it("rejects direct shared renderer access before invoking the provider", async () => {
         let called = false;
         const service = new SSRService({
           rendererProvider: {
@@ -246,16 +255,34 @@ describe("server/services/rendering/ssr.service", () => {
         });
 
         await assertRejects(
-          () => service.getRenderer(makeCtx({ isLocalProject: false })),
+          () => service.getRenderer(makeSharedCtx()),
           Error,
           "generation-owned isolated renderer admission",
         );
         assertEquals(called, false);
       });
+
+      it("allows a dedicated non-local runtime to use its renderer", async () => {
+        let called = false;
+        const service = new SSRService({
+          rendererProvider: {
+            getRenderer: () => {
+              called = true;
+              return Promise.resolve(createMockRendererAdapter());
+            },
+          },
+        });
+
+        await service.getRenderer(makeCtx({
+          isLocalProject: false,
+          allowHostProjectCodeExecution: true,
+        }));
+        assertEquals(called, true);
+      });
     });
 
     describe("renderPage (with mock renderer)", () => {
-      it("fails closed before resolving a renderer for a remote project", async () => {
+      it("fails closed before resolving a renderer in a shared runtime", async () => {
         let rendererRequests = 0;
         const service = new SSRService({
           rendererProvider: {
@@ -267,7 +294,7 @@ describe("server/services/rendering/ssr.service", () => {
         });
 
         const result = await service.renderPage(
-          makeCtx({ isLocalProject: false }),
+          makeSharedCtx(),
           makeRenderOptions(),
         );
 

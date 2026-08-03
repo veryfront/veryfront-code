@@ -32,6 +32,10 @@ import {
   isWorkerIsolationEnabled,
 } from "#veryfront/security/sandbox/worker-pool.ts";
 import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
+import {
+  isHostProjectCodeExecutionAllowed,
+  isSharedProjectRuntime,
+} from "#veryfront/security/project-locality.ts";
 
 /** Max entries in the loaded-handler LRU cache */
 const HANDLER_CACHE_MAX_ENTRIES = 256;
@@ -243,7 +247,8 @@ export class APIRouteHandler {
         });
 
         const isLocalProject = ctx?.isLocalProject === true;
-        if (!isLocalProject && ctx?.prepareHostedConfigContext) {
+        const allowHostProjectCodeExecution = isHostProjectCodeExecutionAllowed(ctx);
+        if (!allowHostProjectCodeExecution && isSharedProjectRuntime(ctx)) {
           const unavailable = createErrorResponseFromDefinition(
             PROJECT_EXECUTION_UNAVAILABLE,
             {
@@ -259,7 +264,7 @@ export class APIRouteHandler {
             config: this.corsConfig ?? undefined,
           }) ?? unavailable;
         }
-        const useHostRealm = isLocalProject && !isWorkerIsolationEnabled();
+        const useHostRealm = allowHostProjectCodeExecution && !isWorkerIsolationEnabled();
         const { route, errorMessage } = await this.loadRoute(match, useHostRealm);
         if (!route) {
           const msg = errorMessage ?? "Handler not found";
@@ -294,7 +299,7 @@ export class APIRouteHandler {
         const isolationOptions: ExecuteRouteOptions = {
           modulePath: match.route.page,
           projectDir: this.projectDir,
-          isLocalProject: useHostRealm,
+          isLocalProject,
           allowHostProjectCodeExecution: useHostRealm,
         };
 

@@ -29,8 +29,10 @@ export interface ServerDataFetchOptions {
   modulePath?: string;
   /** Project directory for worker scoping */
   projectDir?: string;
-  /** Host-owned locality decision. Raw-path worker loading is local-only. */
+  /** Host-owned locality decision for development-only behavior. */
   isLocalProject?: boolean;
+  /** Narrow host-owned capability for project-code execution. */
+  allowHostProjectCodeExecution?: boolean;
   /** Stable host-owned tenant/project scope for reusable workers. */
   workerScope?: string;
   /** Immutable release or source-snapshot identity for reusable workers. */
@@ -113,7 +115,10 @@ export class ServerDataFetcher {
     context: DataContext,
     options?: ServerDataFetchOptions,
   ): Promise<DataResult> {
-    if (options?.isLocalProject === false) {
+    if (
+      options?.isLocalProject === false &&
+      options.allowHostProjectCodeExecution !== true
+    ) {
       return Promise.reject(
         INITIALIZATION_ERROR.create({
           detail: "Remote server-data execution requires a generation-owned prepared module graph",

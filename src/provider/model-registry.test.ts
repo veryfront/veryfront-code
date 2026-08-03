@@ -235,9 +235,11 @@ describe("provider/model-registry", () => {
 
     await assertRejects(
       () =>
-        runtime.doGenerate({
-          prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
-        }),
+        Promise.resolve(
+          runtime.doGenerate({
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+          }),
+        ),
       Error,
       "unexpected redirect",
     );
