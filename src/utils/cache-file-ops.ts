@@ -6,7 +6,16 @@
  */
 
 import { type FileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { redactPathFromText } from "#veryfront/utils/logger/redact.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
+
+function describeCacheError(error: unknown, ...paths: string[]): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  return paths.reduce(
+    (message, path) => redactPathFromText(message, path, "[path]"),
+    raw,
+  );
+}
 
 /**
  * Safely write a cache file: mkdir parent dir → write file → verify file exists.
@@ -29,7 +38,7 @@ export async function writeCacheFile(
     logger.debug(`[${label}] mkdir failed for cache file parent`, {
       path: path.slice(-80),
       dir: parentDir.slice(-80),
-      error: mkdirError instanceof Error ? mkdirError.message : String(mkdirError),
+      error: describeCacheError(mkdirError, path, parentDir),
     });
     throw mkdirError;
   }
@@ -46,7 +55,7 @@ export async function writeCacheFile(
     }
     logger.debug(`[${label}] Failed to write cache file`, {
       path: path.slice(-80),
-      error: writeError instanceof Error ? writeError.message : String(writeError),
+      error: describeCacheError(writeError, path, parentDir),
     });
     throw writeError;
   }
@@ -63,7 +72,7 @@ export async function writeCacheFile(
   } catch (verifyError) {
     logger.debug(`[${label}] Cache file verification failed: cannot stat after write`, {
       path: path.slice(-80),
-      error: verifyError instanceof Error ? verifyError.message : String(verifyError),
+      error: describeCacheError(verifyError, path, parentDir),
     });
     return false;
   }
@@ -91,7 +100,7 @@ export async function verifyCacheFileExists(
     if (isNotFoundError(error)) return false;
     logger.debug(`[${label}] Cache file existence check failed`, {
       path: path.slice(-80),
-      error: error instanceof Error ? error.message : String(error),
+      error: describeCacheError(error, path),
     });
     throw error;
   }

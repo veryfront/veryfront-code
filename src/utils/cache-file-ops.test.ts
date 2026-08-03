@@ -2,6 +2,14 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { isCacheWriteRaceError, verifyCacheFileExists, writeCacheFile } from "./cache-file-ops.ts";
+import {
+  __resetLoggerConfigForTests,
+  __resetLogRecordEmitterForTests,
+  __subscribeLogRecordEmitter,
+  type LogEntry,
+  LogLevel,
+  setLogLevel,
+} from "./logger/logger.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 
@@ -153,6 +161,40 @@ describe("cache-file-ops", () => {
         Error,
         "permission denied",
       );
+    });
+
+    it("redacts the cache path from operational failure logs", async () => {
+      const originalDebug = console.debug;
+      const records: LogEntry[] = [];
+      const path = "/srv/private workspace/cache/file.js";
+      const fs = createMockFs({
+        stat: () =>
+          Promise.reject(filesystemError(`EACCES: permission denied, stat '${path}'`, "EACCES")),
+      });
+
+      console.debug = () => {};
+      __resetLogRecordEmitterForTests();
+      setLogLevel(LogLevel.DEBUG);
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+        records.push(entry);
+      });
+
+      try {
+        await assertRejects(
+          () => verifyCacheFileExists(fs, path, "TEST"),
+          Error,
+          "permission denied",
+        );
+      } finally {
+        unsubscribe();
+        __resetLogRecordEmitterForTests();
+        __resetLoggerConfigForTests();
+        console.debug = originalDebug;
+      }
+
+      assertEquals(records.length, 1);
+      assertEquals(records[0]?.context?.error, "EACCES: permission denied, stat '[path]'");
+      assertEquals(String(records[0]?.context?.error).includes("private workspace"), false);
     });
 
     it("propagates I/O failures instead of reporting a cache miss", async () => {
