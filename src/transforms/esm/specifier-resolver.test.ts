@@ -117,8 +117,27 @@ describe("transforms/esm/specifier-resolver", () => {
         },
       );
 
-      assertEquals(cacheCalls, ["http://cdn.example/child.js"]);
+      // A foreign host must never inherit the plaintext scheme of a
+      // local-dev module-server origin.
+      assertEquals(cacheCalls, ["https://cdn.example/child.js"]);
       assertEquals(result.replacements.get(specifier), "./http-child.mjs");
+    });
+
+    it("keeps the module server's own scheme for same-origin protocol-relative imports", async () => {
+      const specifier = "//app.example/child.js";
+      const cacheCalls: string[] = [];
+      const result = await buildReplacements(
+        `export { value } from "${specifier}";`,
+        undefined,
+        { ...defaultOptions, moduleServerOrigin: "http://app.example" },
+        async (url) => {
+          cacheCalls.push(url);
+          return "/tmp/cache/http-child.mjs";
+        },
+      );
+
+      assertEquals(cacheCalls, ["http://app.example/child.js"]);
+      assertEquals(result.replacements.get(specifier), "file:///tmp/cache/http-child.mjs");
     });
 
     it("rewrites mapped esm.sh veryfront URLs to local framework modules without caching", async () => {

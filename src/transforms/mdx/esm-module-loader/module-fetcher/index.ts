@@ -117,6 +117,10 @@ function unwrapDependencyPinningPath(
     throw new TypeError("Dependency snapshot module path does not match the request snapshot");
   }
 
+  // Deliberately asymmetric with the unpinned branch above: a pinned path's
+  // query/fragment (`?ssr=true`, hashes) is dropped because this loader
+  // implies SSR and the cache variant comes from the context's snapshot key,
+  // not from the URL. An unpinned path keeps its query untouched.
   return extracted.pathname;
 }
 

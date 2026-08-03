@@ -23,6 +23,21 @@ export interface MDXRenderOptions {
   children?: React.ReactNode;
 }
 
+/** Options for {@link MDXRenderer.loadModuleESM}. */
+export interface MDXLoadModuleOptions {
+  adapter?: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter;
+  projectId?: string;
+  projectDir?: string;
+  projectSlug?: string;
+  contentSourceId?: string;
+  reactVersion?: string;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningSource?: DependencyPinningSourceInput;
+  moduleServerOrigin?: string;
+  isLocalProject?: boolean;
+}
+
 export class MDXRenderer {
   private moduleCache: LRUCache<string, MDXModule> = new LRUCache({
     maxEntries: MDX_RENDERER_MAX_ENTRIES,
@@ -35,18 +50,21 @@ export class MDXRenderer {
 
   async loadModuleESM(
     compiledProgramCode: string,
-    adapter?: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter,
-    projectId?: string,
-    projectDir?: string,
-    projectSlug?: string,
-    contentSourceId?: string,
-    reactVersion?: string,
-    dependencyPinningCacheKey?: string,
-    dependencyPinningDependencies?: Readonly<Record<string, string>>,
-    dependencyPinningSource?: DependencyPinningSourceInput,
-    moduleServerOrigin?: string,
-    isLocalProject?: boolean,
+    options: MDXLoadModuleOptions = {},
   ): Promise<MDXModule> {
+    const {
+      adapter,
+      projectId,
+      projectDir,
+      projectSlug,
+      contentSourceId,
+      reactVersion,
+      dependencyPinningCacheKey,
+      dependencyPinningDependencies,
+      dependencyPinningSource,
+      moduleServerOrigin,
+      isLocalProject,
+    } = options;
     const resolvedDependencyPinningSource = dependencyPinningSource ?? projectDir;
     const dependencySnapshot = await resolveDependencyPinningSnapshot(
       resolvedDependencyPinningSource,

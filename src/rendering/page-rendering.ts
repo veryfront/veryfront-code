@@ -172,20 +172,19 @@ export function handleMDXPage(
       const loadPageElement = async (): Promise<MDXPageResult> => {
         let collectedMetadata: Record<string, unknown> = {};
 
-        const mod = (await mdxRenderer.loadModuleESM(
-          serverModuleCode,
+        const mod = (await mdxRenderer.loadModuleESM(serverModuleCode, {
           adapter,
-          options?.projectId,
+          projectId: options?.projectId,
           projectDir,
-          options?.projectSlug,
-          options?.contentSourceId,
-          options?.reactVersion,
-          options?.dependencyPinningCacheKey,
-          options?.dependencyPinningDependencies,
-          options?.dependencyPinningSource,
-          options?.url?.origin,
-          options?.isLocalProject,
-        )) as MDXModule;
+          projectSlug: options?.projectSlug,
+          contentSourceId: options?.contentSourceId,
+          reactVersion: options?.reactVersion,
+          dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
+          dependencyPinningDependencies: options?.dependencyPinningDependencies,
+          dependencyPinningSource: options?.dependencyPinningSource,
+          moduleServerOrigin: options?.url?.origin,
+          isLocalProject: options?.isLocalProject,
+        })) as MDXModule;
 
         const MDXComp = mod.MDXContent || mod.default;
         if (!MDXComp) {

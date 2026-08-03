@@ -131,17 +131,19 @@ describe("MDX root module cache identity", () => {
         () =>
           mdxRenderer.loadModuleESM(
             `import child from "${origin}${modulePath}";\nexport default child;`,
-            denoAdapter,
-            `project-${crypto.randomUUID()}`,
-            projectDir,
-            "strict-origin",
-            `source-${crypto.randomUUID()}`,
-            "19.1.1",
-            snapshotPinKey,
-            dependencies,
-            projectDir,
-            origin,
-            true,
+            {
+              adapter: denoAdapter,
+              projectId: `project-${crypto.randomUUID()}`,
+              projectDir,
+              projectSlug: "strict-origin",
+              contentSourceId: `source-${crypto.randomUUID()}`,
+              reactVersion: "19.1.1",
+              dependencyPinningCacheKey: snapshotPinKey,
+              dependencyPinningDependencies: dependencies,
+              dependencyPinningSource: projectDir,
+              moduleServerOrigin: origin,
+              isLocalProject: true,
+            },
           ),
       );
 

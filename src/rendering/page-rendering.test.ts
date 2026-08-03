@@ -160,10 +160,10 @@ describe("rendering/page-rendering", () => {
     const mutableRenderer = mdxRenderer as unknown as {
       loadModuleESM: typeof mdxRenderer.loadModuleESM;
     };
-    mutableRenderer.loadModuleESM = ((...args: unknown[]) => {
-      moduleReactVersion = args[6];
+    mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
+      moduleReactVersion = options?.reactVersion;
       return Promise.resolve({ default: () => null });
-    }) as typeof mdxRenderer.loadModuleESM;
+    };
 
     try {
       await handleMDXPage(
@@ -198,21 +198,8 @@ describe("rendering/page-rendering", () => {
       loadModuleESM: typeof mdxRenderer.loadModuleESM;
     };
     let observedIsLocalProject: unknown;
-    mutableRenderer.loadModuleESM = (
-      _compiledProgramCode,
-      _adapter,
-      _projectId,
-      _projectDir,
-      _projectSlug,
-      _contentSourceId,
-      _reactVersion,
-      _dependencyPinningCacheKey,
-      _dependencyPinningDependencies,
-      _dependencyPinningSource,
-      _moduleServerOrigin,
-      isLocalProject,
-    ) => {
-      observedIsLocalProject = isLocalProject;
+    mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
+      observedIsLocalProject = options?.isLocalProject;
       return Promise.resolve({ default: () => null });
     };
 

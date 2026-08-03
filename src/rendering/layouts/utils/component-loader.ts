@@ -367,8 +367,7 @@ export function loadMDXLayout(
         codeLength: code.length,
       });
 
-      const mod = (await mdxRenderer.loadModuleESM(
-        code,
+      const mod = (await mdxRenderer.loadModuleESM(code, {
         adapter,
         projectId,
         projectDir,
@@ -380,7 +379,7 @@ export function loadMDXLayout(
         dependencyPinningSource,
         moduleServerOrigin,
         isLocalProject,
-      )) as MDXModule;
+      })) as MDXModule;
 
       loadMdxLayoutLog.debug("loadModuleESM DONE", {
         projectSlug,

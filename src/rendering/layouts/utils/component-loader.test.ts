@@ -490,12 +490,12 @@ describe("rendering/layouts/utils/component-loader", () => {
     let moduleReactVersion: unknown;
     let modulePinKey: unknown;
     let moduleDependencies: unknown;
-    mutableRenderer.loadModuleESM = ((...args: unknown[]) => {
-      moduleReactVersion = args[6];
-      modulePinKey = args[7];
-      moduleDependencies = args[8];
+    mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
+      moduleReactVersion = options?.reactVersion;
+      modulePinKey = options?.dependencyPinningCacheKey;
+      moduleDependencies = options?.dependencyPinningDependencies;
       return Promise.resolve({ default: () => null });
-    }) as typeof mdxRenderer.loadModuleESM;
+    };
 
     try {
       await loadMDXLayout(

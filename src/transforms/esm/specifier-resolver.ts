@@ -51,12 +51,15 @@ function canonicalizeHttpSpecifier(
   if (!resolutionBase) {
     throw new Error(`Cannot resolve protocol-relative HTTP module ${specifier}`);
   }
-  return new URL(specifier, resolutionBase).toString();
-}
-
-function toCacheableHttpSpecifier(specifier: string, moduleServerOrigin?: string): string {
-  if (!specifier.startsWith("/") || !moduleServerOrigin) return specifier;
-  return new URL(specifier, moduleServerOrigin).toString();
+  const resolved = new URL(specifier, resolutionBase);
+  // A protocol-relative specifier inherits the resolution base's scheme, and
+  // the base may be a plaintext local-dev module-server origin. Only the
+  // base's own host may keep that scheme; executable code from any other
+  // host must never be fetched over plaintext because of a dev-origin scheme.
+  if (resolved.protocol === "http:" && resolved.host !== resolutionBase.host) {
+    resolved.protocol = "https:";
+  }
+  return resolved.toString();
 }
 
 function isLocalMappedSpecifier(specifier: string): boolean {
@@ -130,10 +133,7 @@ async function resolveSpecifier(
       options.dependencyPinningCacheKey,
       options.moduleServerOrigin,
     );
-    const cached = await cacheHttpModule(
-      toCacheableHttpSpecifier(effectiveSpecifier, options.moduleServerOrigin),
-      options,
-    );
+    const cached = await cacheHttpModule(effectiveSpecifier, options);
     if (!cached) {
       throw new Error(`Failed to cache absolute HTTP module ${effectiveSpecifier}`);
     }
