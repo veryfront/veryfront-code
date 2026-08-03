@@ -3,9 +3,22 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "../types.ts";
 import { MetricsHandler } from "./metrics.handler.ts";
+import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 function createHandler(): MetricsHandler {
   return new MetricsHandler();
+}
+
+function createLoopbackRequest(input: string | URL, init?: RequestInit): Request {
+  const headers = new Headers(init?.headers);
+  headers.set("host", new URL(input).host);
+  const request = new Request(input, { ...init, headers });
+  recordRequestPeerFromTransport(request, {
+    runtime: "deno",
+    transport: "tcp",
+    hostname: "127.0.0.1",
+  });
+  return request;
 }
 
 const localCtx = { securityConfig: undefined, isLocalProject: true } as unknown as HandlerContext;
@@ -45,7 +58,7 @@ describe("server/handlers/monitoring/metrics", () => {
   describe("MetricsHandler.handle", () => {
     it("should return continue for remote projects", async () => {
       const handler = createHandler();
-      const req = new Request("http://localhost/_metrics");
+      const req = createLoopbackRequest("http://localhost/_metrics");
       const result = await handler.handle(req, remoteCtx);
       assertEquals(result.continue, true);
       assertEquals(result.response, undefined);
@@ -53,7 +66,7 @@ describe("server/handlers/monitoring/metrics", () => {
 
     it("should return continue for non-matching pathname", async () => {
       const handler = createHandler();
-      const req = new Request("http://localhost/other-path");
+      const req = createLoopbackRequest("http://localhost/other-path");
       const result = await handler.handle(req, localCtx);
       assertEquals(result.continue, true);
       assertEquals(result.response, undefined);
@@ -61,7 +74,7 @@ describe("server/handlers/monitoring/metrics", () => {
 
     it("should return metrics for local projects", async () => {
       const handler = createHandler();
-      const req = new Request("http://localhost/_metrics");
+      const req = createLoopbackRequest("http://localhost/_metrics");
       const result = await handler.handle(req, localCtx);
 
       assertExists(result.response);

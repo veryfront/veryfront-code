@@ -16,6 +16,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
+import { PROJECT_STYLESHEET_IDS } from "#veryfront/html";
 import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
@@ -507,7 +508,11 @@ title: Stream Test
 
             assertStringIncludes(html, "<title>Production Stream Layout Title</title>");
             assertMatch(html, /<link rel="stylesheet" href="\/_vf\/css\/[^"]+\.css">/);
-            assertEquals(html.includes('id="vf-tailwind-css"'), false);
+            // Neither the current dev stylesheet id nor any legacy id may leak
+            // into production output.
+            for (const stylesheetId of PROJECT_STYLESHEET_IDS) {
+              assertEquals(html.includes(`id="${stylesheetId}"`), false, stylesheetId);
+            }
             assertStringIncludes(html, "Production Streaming Layout Content");
           },
         );

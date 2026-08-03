@@ -239,7 +239,9 @@ export async function resolveVerifiedControlPlaneBranchBinding(
     maxAgeSeconds: MAX_SIGNATURE_AGE_SECONDS,
     audience: binding.audience,
     expectedProjectId: binding.expectedProjectId,
-    requestMethod: req.method,
+    // The route gate above admits only POST (case-insensitively); verify the
+    // canonical method the control plane signs rather than the raw casing.
+    requestMethod: "POST",
     requestPath: url.pathname,
   });
   if (!verified) {
