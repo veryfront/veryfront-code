@@ -116,6 +116,30 @@ describe("integration.ts", () => {
       assertEquals(rejection.slug, "config-validation-failed");
     });
 
+    it("should preserve invalid project scoping instead of falling back to local files", async () => {
+      const error = await assertRejects(
+        () =>
+          enhanceAdapterWithFS(
+            denoAdapter,
+            {
+              fs: {
+                type: "veryfront-api",
+                veryfront: {
+                  apiBaseUrl: "https://api.example.com",
+                  apiToken: "token",
+                  projectSlug: "project",
+                },
+              },
+            },
+            "/project/../etc",
+          ),
+        VeryfrontError,
+        "project directory must not contain",
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "config-validation-failed");
+    });
+
     it("should fall back to original adapter for unsupported type", async () => {
       const adapter = await enhanceAdapterWithFS(denoAdapter, {
         fs: { type: "unsupported-type" as any },
