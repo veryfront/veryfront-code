@@ -1,8 +1,10 @@
-import { assertEquals } from "#std/assert";
 import { walk } from "#std/fs/walk";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import { createCompileArgs, DEFAULT_INCLUDES } from "./compile-binary.ts";
+import { FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES } from "#veryfront/extensions/first-party-defaults.ts";
 
-Deno.test("compiled CLI embeds the explicit Node WebSocket extension for opt-in activation", () => {
+it("compiled CLI embeds the default Node WebSocket extension for HMR", () => {
   const args = createCompileArgs({
     entrypoint: "cli/main.ts",
     extraIncludes: [],
@@ -15,7 +17,7 @@ Deno.test("compiled CLI embeds the explicit Node WebSocket extension for opt-in 
   );
 });
 
-Deno.test("compiled CLI embeds the explicit Redis extension for opt-in activation", () => {
+it("compiled CLI embeds the explicit Redis extension for opt-in activation", () => {
   const args = createCompileArgs({
     entrypoint: "cli/main.ts",
     extraIncludes: [],
@@ -28,16 +30,10 @@ Deno.test("compiled CLI embeds the explicit Redis extension for opt-in activatio
   );
 });
 
-Deno.test("compiled CLI embeds optional builtin extension source files", async () => {
-  const source = await Deno.readTextFile(
-    "src/extensions/builtin-extensions.ts",
-  );
-  const sourceDirectories = Array.from(
-    source.matchAll(/sourceDirectory:\s*"([^"]+)"/g),
-    (match) => match[1]!,
-  );
-
-  for (const sourceDirectory of sourceDirectories) {
+it("compiled CLI embeds optional builtin extension source files", () => {
+  for (
+    const { sourceDirectory } of FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES
+  ) {
     assertEquals(
       DEFAULT_INCLUDES.includes(`extensions/${sourceDirectory}/src/index.ts`),
       true,
@@ -46,7 +42,7 @@ Deno.test("compiled CLI embeds optional builtin extension source files", async (
   }
 });
 
-Deno.test("compiled CLI embeds every runtime-resolved sibling module", async () => {
+it("compiled CLI embeds every runtime-resolved sibling module", async () => {
   // Modules picked through a `.ts`/`.js` distribution-format ternary are
   // resolved from a computed URL, so `deno compile` never sees them in the
   // static graph and only DEFAULT_INCLUDES can embed them.
@@ -85,7 +81,7 @@ Deno.test("compiled CLI embeds every runtime-resolved sibling module", async () 
   );
 });
 
-Deno.test("compiled CLI embeds the permissionless parser entry", () => {
+it("compiled CLI embeds the permissionless parser entry", () => {
   assertEquals(
     DEFAULT_INCLUDES.includes(
       "extensions/ext-parser-babel/src/parser-only.ts",
@@ -94,7 +90,7 @@ Deno.test("compiled CLI embeds the permissionless parser entry", () => {
   );
 });
 
-Deno.test("compiled CLI embeds the auto-loaded Sentry reporter", () => {
+it("compiled CLI embeds the auto-loaded Sentry reporter", () => {
   assertEquals(
     DEFAULT_INCLUDES.includes(
       "extensions/ext-observability-sentry/src/index.ts",
