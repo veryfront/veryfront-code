@@ -459,7 +459,7 @@ class ConsoleLogger implements Logger {
     return new ConsoleLogger(
       this.prefix,
       { ...this.boundContext },
-      sanitizeLogString(name, REDACTED),
+      name,
       this.options,
     );
   }
