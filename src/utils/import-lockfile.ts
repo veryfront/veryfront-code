@@ -137,9 +137,11 @@ export async function verifyIntegrity(content: string, integrity: string): Promi
 /**
  * Public API contract for lockfile manager.
  *
- * Reads and mutations fail closed with `lockfile-format-mismatch` for an
+ * Reads and updates fail closed with `lockfile-format-mismatch` for an
  * unsupported format and `lockfile-read-error` for unreadable or malformed
- * data, so an older Veryfront build cannot destroy unrecognized lockfile data.
+ * data, so an older Veryfront build cannot overwrite unrecognized lockfile
+ * data. `clear()` is the explicit destructive recovery operation and does not
+ * parse the file before removing it.
  */
 export interface LockfileManager {
   read(): Promise<LockfileData | null>;
@@ -153,15 +155,16 @@ export interface LockfileManager {
 
 export type FSAdapter = {
   /**
-   * Stable identity for adapters that access the same backing filesystem.
-   * Separate adapter objects must share this key to coordinate lockfile writes.
+   * Authoritative queue identity for adapters that access the same backing
+   * filesystem. Separate adapter objects must share this key to coordinate all
+   * lockfile access, regardless of their optional canonicalization support.
    */
   readonly coordinationKey?: string;
   readFile(path: string): Promise<string>;
   writeFile(path: string, content: string): Promise<void>;
   exists(path: string): Promise<boolean>;
   remove?(path: string): Promise<void>;
-  /** Resolve an existing path to its canonical backing path when supported. */
+  /** Resolve an existing path when no shared coordinationKey is available. */
   realPath?(path: string): Promise<string>;
 };
 
@@ -170,9 +173,7 @@ const adapterIdentityByInstance = new WeakMap<FSAdapter, number>();
 const lockfileAccessTails = new Map<string, Promise<void>>();
 let nextAdapterIdentity = 1;
 
-function getAdapterCoordinationIdentity(fs: FSAdapter): string {
-  if (fs.coordinationKey !== undefined) return `shared:${fs.coordinationKey}`;
-
+function getAdapterInstanceIdentity(fs: FSAdapter): string {
   let identity = adapterIdentityByInstance.get(fs);
   if (identity === undefined) {
     identity = nextAdapterIdentity++;
@@ -186,7 +187,14 @@ async function resolveLockfileAccessKey(
   projectDir: string,
   lockfilePath: string,
 ): Promise<string> {
-  const adapterIdentity = getAdapterCoordinationIdentity(fs);
+  // A declared coordination key is the complete shared lock domain. Including
+  // a canonical path here would split adapters that share a backing store when
+  // only some of them implement realPath, recreating a read-merge-write race.
+  if (fs.coordinationKey !== undefined) {
+    return JSON.stringify([`shared:${fs.coordinationKey}`]);
+  }
+
+  const adapterIdentity = getAdapterInstanceIdentity(fs);
   if (!fs.realPath) return JSON.stringify([adapterIdentity]);
 
   try {
@@ -272,11 +280,19 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     return accessKeyPromise.then((accessKey) => serializeLockfileAccess(accessKey, operation));
   }
 
+  async function lockfileExists(): Promise<boolean> {
+    try {
+      return await fs.exists(lockfilePath);
+    } catch (cause) {
+      throw lockfileReadError(lockfilePath, "access-failed", cause);
+    }
+  }
+
   async function readFromDisk(): Promise<LockfileData | null> {
+    if (!(await lockfileExists())) return null;
+
     let content: string;
     try {
-      const exists = await fs.exists(lockfilePath);
-      if (!exists) return null;
       content = await fs.readFile(lockfilePath);
     } catch (cause) {
       throw lockfileReadError(lockfilePath, "access-failed", cause);
@@ -357,9 +373,11 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   function clear(): Promise<void> {
     return serializeManagerOperation(() =>
       withLockfileAccess(async () => {
-        const existing = await readFromDisk();
+        // Clear is an explicit destructive recovery path. Check access to the
+        // path, but do not parse content that the user has chosen to discard.
+        const existing = await lockfileExists();
         const cleared = createEmptyLockfile();
-        if (existing !== null) {
+        if (existing) {
           if (fs.remove) await fs.remove(lockfilePath);
           else await writeToDisk(cleared);
         }

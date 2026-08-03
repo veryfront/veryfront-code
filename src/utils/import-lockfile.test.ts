@@ -330,7 +330,7 @@ describe("import-lockfile", () => {
       assertEquals(await fs.readFile("/project/veryfront.lock"), newerContent);
     });
 
-    it("should preserve disk and pending state when clear sees a newer-format lockfile", async () => {
+    it("should clear a newer-format lockfile as an explicit recovery operation", async () => {
       const fs = createMockFS();
       const mgr = createLockfileManager("/project", fs);
       const pendingUrl = "https://cdn.com/pending.ts";
@@ -346,12 +346,10 @@ describe("import-lockfile", () => {
       });
       await fs.writeFile("/project/veryfront.lock", newerContent);
 
-      const error = await assertRejects(() => mgr.clear(), VeryfrontError);
-      assertExists(error);
-      if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
-      assertEquals(error.slug, "lockfile-format-mismatch");
-      assertEquals(await fs.readFile("/project/veryfront.lock"), newerContent);
-      assertEquals(await mgr.get(pendingUrl), pendingEntry);
+      await mgr.clear();
+
+      assertEquals(await fs.exists("/project/veryfront.lock"), false);
+      assertEquals(await mgr.get(pendingUrl), null);
     });
 
     it("should preserve disk and cached state when lockfile removal fails", async () => {
@@ -367,6 +365,22 @@ describe("import-lockfile", () => {
       await assertRejects(() => mgr.clear(), Error, "remove failed");
 
       assertEquals(await fs.readFile("/project/veryfront.lock"), before);
+      assertEquals(await mgr.get(url), entry);
+    });
+
+    it("should preserve pending state when clear cannot inspect the lockfile path", async () => {
+      const fs = createMockFS();
+      const mgr = createLockfileManager("/project", fs);
+      const url = "https://cdn.com/pending.ts";
+      const entry = { resolved: url, integrity: "sha256-pending" };
+      await mgr.set(url, entry);
+      fs.exists = () => Promise.reject(new Error("permission denied"));
+
+      const error = await assertRejects(() => mgr.clear(), VeryfrontError);
+
+      assertExists(error);
+      if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
+      assertEquals(error.slug, "lockfile-read-error");
       assertEquals(await mgr.get(url), entry);
     });
 
@@ -477,7 +491,7 @@ describe("import-lockfile", () => {
       assertEquals(result.value, createEmptyLockfile());
     });
 
-    it("should fail closed when an existing lockfile contains malformed JSON", async () => {
+    it("should fail closed on write but allow clear to remove malformed JSON", async () => {
       const malformed = "{not-json";
       const fs = createMockFS({ "/project/veryfront.lock": malformed });
       const mgr = createLockfileManager("/project", fs);
@@ -490,11 +504,14 @@ describe("import-lockfile", () => {
       if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
       assertEquals(error.slug, "lockfile-read-error");
       assertEquals(error.title, "Lockfile could not be read safely");
-      await assertRejects(() => mgr.clear(), VeryfrontError);
       assertEquals(await fs.readFile("/project/veryfront.lock"), malformed);
+
+      await mgr.clear();
+
+      assertEquals(await fs.exists("/project/veryfront.lock"), false);
     });
 
-    it("should not write or remove a lockfile that cannot be read", async () => {
+    it("should fail closed on write but allow clear to remove an unreadable lockfile", async () => {
       let writes = 0;
       let removals = 0;
       const fs: FSAdapter = {
@@ -513,10 +530,13 @@ describe("import-lockfile", () => {
       const mgr = createLockfileManager("/project", fs);
 
       await assertRejects(() => mgr.write(createEmptyLockfile()), VeryfrontError);
-      await assertRejects(() => mgr.clear(), VeryfrontError);
-
       assertEquals(writes, 0);
       assertEquals(removals, 0);
+
+      await mgr.clear();
+
+      assertEquals(writes, 0);
+      assertEquals(removals, 1);
     });
 
     it("should serialize path aliases across adapters with a shared coordination identity", async () => {
@@ -562,6 +582,65 @@ describe("import-lockfile", () => {
       ]);
     });
 
+    it("should use coordinationKey across adapters with mixed realPath support", async () => {
+      const path = "/project/veryfront.lock";
+      const baseUrl = "https://cdn.com/base.ts";
+      const aUrl = "https://cdn.com/a.ts";
+      const bUrl = "https://cdn.com/b.ts";
+      const backingFS = createMockFS({
+        [path]: JSON.stringify({
+          version: 1,
+          imports: {
+            [baseUrl]: { resolved: baseUrl, integrity: "sha256-base" },
+          },
+        }),
+      });
+      const firstWriteStarted = Promise.withResolvers<void>();
+      const secondWriteStarted = Promise.withResolvers<void>();
+      const releaseFirstWrite = Promise.withResolvers<void>();
+      const writeFile = backingFS.writeFile;
+      let writes = 0;
+      const coordinatedWrite = async (filePath: string, content: string): Promise<void> => {
+        writes++;
+        if (writes === 1) {
+          firstWriteStarted.resolve();
+          await releaseFirstWrite.promise;
+        } else if (writes === 2) {
+          secondWriteStarted.resolve();
+        }
+        await writeFile(filePath, content);
+      };
+      const coordinationKey = "mixed-realpath-test-store";
+      const fsWithoutRealPath: FSAdapter = {
+        ...backingFS,
+        coordinationKey,
+        writeFile: coordinatedWrite,
+      };
+      const fsWithRealPath: FSAdapter = {
+        ...backingFS,
+        coordinationKey,
+        writeFile: coordinatedWrite,
+        realPath: (filePath: string) => Promise.resolve(filePath),
+      };
+      const managerA = createLockfileManager("/project", fsWithoutRealPath);
+      const managerB = createLockfileManager("/project", fsWithRealPath);
+      await managerA.set(aUrl, { resolved: aUrl, integrity: "sha256-a" });
+      await managerB.set(bUrl, { resolved: bUrl, integrity: "sha256-b" });
+
+      const flushA = managerA.flush();
+      await firstWriteStarted.promise;
+      const flushB = managerB.flush();
+      const secondWriteBeforeRelease = await resolvesWithin(secondWriteStarted.promise);
+      releaseFirstWrite.resolve();
+      await Promise.all([flushA, flushB]);
+
+      assertEquals(secondWriteBeforeRelease, false);
+      const onDisk = JSON.parse(await backingFS.readFile(path)) as {
+        imports: Record<string, unknown>;
+      };
+      assertEquals(Object.keys(onDisk.imports).sort(), [aUrl, bUrl, baseUrl]);
+    });
+
     it("should serialize real symlink aliases by canonical backing path", async () => {
       const root = await Deno.makeTempDir({ prefix: "veryfront-lockfile-alias-" });
       const projectDir = `${root}/project`;
@@ -600,7 +679,6 @@ describe("import-lockfile", () => {
         let blocked = false;
         let observeAliasRead = false;
         const fs: FSAdapter = {
-          coordinationKey: `real-fs:${root}`,
           async exists(path: string): Promise<boolean> {
             try {
               await Deno.stat(path);
@@ -676,7 +754,6 @@ describe("import-lockfile", () => {
       }
 
       const fs: FSAdapter = {
-        coordinationKey: "late-created-aliased-lockfile-store",
         exists(path: string): Promise<boolean> {
           if (observeAliasAccess && path === aliasLockfilePath) aliasAccess.resolve();
           return Promise.resolve(store.has(backingPath(path)));
