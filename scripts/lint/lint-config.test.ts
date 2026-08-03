@@ -1,5 +1,6 @@
 import { assert, assertEquals } from "#std/assert";
-import { join } from "#std/path";
+import { globToRegExp, join } from "#std/path";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 
 interface DenoConfig {
   lint?: {
@@ -20,15 +21,10 @@ function isExtensionSource(path: string): boolean {
   );
 }
 
-function globPrefix(pattern: string): string {
-  return pattern.slice(0, pattern.indexOf("**"));
-}
-
 function isCoveredByGlob(path: string, pattern: string): boolean {
-  if (!pattern.includes("**")) return path === pattern;
-  const prefix = globPrefix(pattern);
-  const suffix = pattern.slice(pattern.lastIndexOf("*") + 1);
-  return path.startsWith(prefix) && path.endsWith(suffix);
+  return globToRegExp(pattern, { globstar: true }).test(
+    path.replaceAll("\\", "/"),
+  );
 }
 
 async function collectExtensionSources(root = "extensions"): Promise<string[]> {
@@ -49,22 +45,48 @@ async function collectExtensionSources(root = "extensions"): Promise<string[]> {
   return files.sort();
 }
 
-Deno.test("root lint configuration covers extension sources", async () => {
+async function readLintConfig(): Promise<
+  Required<NonNullable<DenoConfig["lint"]>>
+> {
   const config = JSON.parse(await Deno.readTextFile("deno.json")) as DenoConfig;
-  const include = config.lint?.include ?? [];
-  const exclude = config.lint?.exclude ?? [];
-  const extensionSources = await collectExtensionSources();
+  return {
+    include: config.lint?.include ?? [],
+    exclude: config.lint?.exclude ?? [],
+  };
+}
 
-  assert(extensionSources.length > 0);
-  assertEquals(
-    EXTENSION_LINT_PATTERNS.every((pattern) => include.includes(pattern)),
-    true,
-  );
-  assertEquals(
-    extensionSources.filter((source) =>
-      !include.some((pattern) => isCoveredByGlob(source, pattern)) ||
-      exclude.some((pattern) => isCoveredByGlob(source, pattern))
-    ),
-    [],
-  );
+describe("root lint configuration", () => {
+  it("covers extension sources", async () => {
+    const { include, exclude } = await readLintConfig();
+    const extensionSources = await collectExtensionSources();
+
+    assert(extensionSources.length > 0);
+    assertEquals(
+      EXTENSION_LINT_PATTERNS.every((pattern) => include.includes(pattern)),
+      true,
+    );
+    assertEquals(
+      extensionSources.filter((source) =>
+        !include.some((pattern) => isCoveredByGlob(source, pattern)) ||
+        exclude.some((pattern) => isCoveredByGlob(source, pattern))
+      ),
+      [],
+    );
+  });
+
+  it("keeps production-build JavaScript templates inside the lint gate", async () => {
+    const { include, exclude } = await readLintConfig();
+    const templates = [
+      "src/build/production-build/templates/fallback-prefetch.js",
+      "src/build/production-build/templates/fallback-router.js",
+    ];
+
+    assertEquals(
+      templates.filter((template) =>
+        !include.some((pattern) => isCoveredByGlob(template, pattern)) ||
+        exclude.some((pattern) => isCoveredByGlob(template, pattern))
+      ),
+      [],
+    );
+  });
 });
