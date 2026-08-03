@@ -485,6 +485,23 @@ describe("cli/templates", () => {
     );
   });
 
+  it("keeps Gmail on the shared refresh-capable token store", async () => {
+    const gmailClient = await Deno.readTextFile(
+      new URL("./integrations/gmail/files/lib/gmail-client.ts", import.meta.url),
+    );
+
+    assertEquals(
+      gmailClient.includes("new OAuthService(gmailConfig, tokenStore)"),
+      true,
+      "Gmail must preserve the shared store's refresh lock and revisioned CAS methods",
+    );
+    assertEquals(
+      gmailClient.includes("tokenStoreAdapter"),
+      false,
+      "Gmail must not narrow the refresh-capable token store contract",
+    );
+  });
+
   it("OAuth route templates use the central shared token store", async () => {
     const integrationTemplates = new URL("./integrations/", import.meta.url);
     const offenders: string[] = [];

@@ -46,8 +46,12 @@ const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1_000;
 
 function runtimeMode(): string | undefined {
   if (typeof process !== "undefined" && process.env) return process.env.NODE_ENV;
-  return (globalThis as { Deno?: { env?: { get?: (name: string) => string | undefined } } }).Deno
-    ?.env?.get?.("NODE_ENV");
+  try {
+    return (globalThis as { Deno?: { env?: { get?: (name: string) => string | undefined } } })
+      .Deno?.env?.get?.("NODE_ENV");
+  } catch {
+    return undefined;
+  }
 }
 
 function allowsProcessLocalStorage(): boolean {

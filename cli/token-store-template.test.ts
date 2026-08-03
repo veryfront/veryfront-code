@@ -139,6 +139,38 @@ describe("generated OAuth token store", () => {
     }
   });
 
+  it("treats denied Deno environment access as an unset runtime mode", () => {
+    const processDescriptor = Object.getOwnPropertyDescriptor(globalThis, "process");
+    const denoDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Deno");
+    Object.defineProperty(globalThis, "process", {
+      configurable: true,
+      value: {},
+    });
+    Object.defineProperty(globalThis, "Deno", {
+      configurable: true,
+      value: {
+        env: {
+          get() {
+            throw new Error("PermissionDenied");
+          },
+        },
+      },
+    });
+
+    try {
+      assertThrows(
+        () => createDefaultTokenStore(),
+        Error,
+        "NODE_ENV is explicitly development or test",
+      );
+    } finally {
+      if (processDescriptor) Object.defineProperty(globalThis, "process", processDescriptor);
+      else Reflect.deleteProperty(globalThis, "process");
+      if (denoDescriptor) Object.defineProperty(globalThis, "Deno", denoDescriptor);
+      else Reflect.deleteProperty(globalThis, "Deno");
+    }
+  });
+
   it("serializes concurrent refresh and persists it with compare-and-set", async () => {
     const store = createTokenStore(new MemoryTokenStore("refresh-concurrency"));
     await store.setTokens("github", "alice", {
