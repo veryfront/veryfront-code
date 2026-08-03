@@ -116,7 +116,11 @@ Deno.test("proxy binary embeds only the runtime-resolved proxy entrypoint", asyn
   });
 
   for (const include of PROXY_INCLUDES) {
-    assertEquals(args.includes(include), true, `missing proxy include ${include}`);
+    assertEquals(
+      args.includes(include),
+      true,
+      `missing proxy include ${include}`,
+    );
   }
 
   assertEquals(args.includes("--node-modules-dir=none"), true);
@@ -149,7 +153,9 @@ Deno.test("proxy binary embeds only the runtime-resolved proxy entrypoint", asyn
   const packages = Object.keys(lock.npm ?? {});
   for (const unrelated of ["@huggingface/transformers", "esbuild", "sharp"]) {
     assertEquals(
-      packages.some((name) => name === unrelated || name.startsWith(`${unrelated}@`)),
+      packages.some((name) =>
+        name === unrelated || name.startsWith(`${unrelated}@`)
+      ),
       false,
       `proxy lock must not contain ${unrelated}`,
     );
@@ -173,15 +179,21 @@ Deno.test("proxy release verifies lock freshness and publishes an exact SBOM", a
 Deno.test("compiled proxy smoke covers cache and observability providers", async () => {
   const smoke = await Deno.readTextFile("scripts/build/smoke-proxy-binary.sh");
 
-  for (const contract of [
-    "CACHE_TYPE=memory",
-    "CACHE_TYPE=redis",
-    "TokenCacheStore registered",
-    "OTEL_TRACES_EXPORTER=otlp",
-    "[otel] Initialized",
-    "SENTRY_DSN=https://public@example.com/1",
-  ]) {
-    assertEquals(smoke.includes(contract), true, `missing smoke contract ${contract}`);
+  for (
+    const contract of [
+      "CACHE_TYPE=memory",
+      "CACHE_TYPE=redis",
+      "TokenCacheStore registered",
+      "OTEL_TRACES_EXPORTER=otlp",
+      "[otel] Initialized",
+      "SENTRY_DSN=https://public@example.com/1",
+    ]
+  ) {
+    assertEquals(
+      smoke.includes(contract),
+      true,
+      `missing smoke contract ${contract}`,
+    );
   }
 
   assertEquals(
@@ -196,7 +208,7 @@ Deno.test("proxy binary smoke runs only for same-repository pull requests", asyn
 
   assertEquals(
     workflow.includes(
-      "if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}",
+      "if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.event_name == 'pull_request' }}",
     ),
     true,
   );
