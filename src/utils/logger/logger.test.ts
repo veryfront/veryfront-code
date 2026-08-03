@@ -599,6 +599,35 @@ describe("logger", () => {
       assertEquals(entry.context?.values, ["one", "two"]);
     });
 
+    it("ignores hooks added through the intrinsic array prototype chain", () => {
+      const { getOutput, restore } = captureConsoleLog();
+      const originalArrayPrototypeParent = Object.getPrototypeOf(Array.prototype);
+      let hookCalls = 0;
+      const hostileParent = Object.create(originalArrayPrototypeParent) as {
+        toJSON?: () => unknown;
+      };
+      hostileParent.toJSON = () => {
+        hookCalls += 1;
+        return "polluted-array";
+      };
+
+      Object.setPrototypeOf(Array.prototype, hostileParent);
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info("Routes", {
+            values: [{ apiKey: "secret", ok: true }],
+          });
+        });
+      } finally {
+        Object.setPrototypeOf(Array.prototype, originalArrayPrototypeParent);
+        restore();
+      }
+
+      assertEquals(hookCalls, 0);
+      const entry = JSON.parse(getOutput()) as LogEntry;
+      assertEquals(entry.context?.values, [{ apiKey: "[REDACTED]", ok: true }]);
+    });
+
     it("preserves non-callable own toJSON fields", () => {
       const { getOutput, restore } = captureConsoleLog();
 

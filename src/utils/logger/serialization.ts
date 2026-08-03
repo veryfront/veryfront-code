@@ -8,13 +8,20 @@ const arrayPrototype = Array.prototype;
 const jsonStringify = JSON.stringify;
 const objectDefineProperty = Object.defineProperty;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetPrototypeOf = Object.getPrototypeOf;
 const objectHasOwn = Object.hasOwn;
 const objectPrototype = Object.prototype;
 const objectValues = Object.values;
+const arrayPrototypeParent = objectGetPrototypeOf(arrayPrototype);
+const objectPrototypeParent = objectGetPrototypeOf(objectPrototype);
 
-function intrinsicSerializationHookPresent(): boolean {
+function intrinsicSerializationHookMayBePresent(): boolean {
   return objectGetOwnPropertyDescriptor(objectPrototype, "toJSON") !== undefined ||
-    objectGetOwnPropertyDescriptor(arrayPrototype, "toJSON") !== undefined;
+    objectGetOwnPropertyDescriptor(arrayPrototype, "toJSON") !== undefined ||
+    // A new parent can contribute an inherited hook without changing either
+    // intrinsic prototype's own descriptor. Treat any chain mutation as hostile.
+    objectGetPrototypeOf(objectPrototype) !== objectPrototypeParent ||
+    objectGetPrototypeOf(arrayPrototype) !== arrayPrototypeParent;
 }
 
 function blockInheritedSerializationHooks(value: unknown): void {
@@ -57,7 +64,7 @@ export function stringifyRedactedJson(
 ): string {
   try {
     const snapshot = redactForSerialization(value);
-    if (intrinsicSerializationHookPresent()) {
+    if (intrinsicSerializationHookMayBePresent()) {
       blockInheritedSerializationHooks(snapshot);
     }
     return jsonStringify(snapshot) ?? REDACTED;
@@ -73,7 +80,7 @@ export function stringifyRedactedAttributeValue(
   try {
     const snapshot = redactForSerialization(value);
     if (typeof snapshot === "string") return snapshot;
-    if (intrinsicSerializationHookPresent()) {
+    if (intrinsicSerializationHookMayBePresent()) {
       blockInheritedSerializationHooks(snapshot);
     }
     return jsonStringify(snapshot) ?? REDACTED;
