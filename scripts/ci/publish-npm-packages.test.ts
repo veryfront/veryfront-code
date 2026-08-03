@@ -222,9 +222,12 @@ describe("npm package publishing", () => {
           '  printf "%s\\n" "npm error 503 Service Unavailable" >&2',
           '  printf "%s\\n" "npm error auth Bearer fixture-token_~-/+=" >&2',
           '  printf "%s\\n" "npm error cache=/tmp/npm-private/cache.log" >&2',
+          '  printf "%s\\n" "npm error quoted=\\"/tmp/npm-private/quoted.log\\"" >&2',
           '  printf "%s\\n" "npm error config C:\\\\Users\\\\runner\\\\.npmrc" >&2',
+          '  printf "%s\\n" "npm error quoted-win=\\"C:\\\\Users\\\\runner\\\\quoted.log\\"" >&2',
           '  printf "%s\\n" "npm error workspace D:/build/private/package" >&2',
           '  printf "%s\\n" "npm error share \\\\\\\\server\\\\private\\\\debug.log" >&2',
+          '  printf "%s\\n" "npm error quoted-share=\\"\\\\\\\\server\\\\private\\\\quoted.log\\"" >&2',
           '  printf "%s\\n" "npm error A complete log of this run can be found in: /Users/runner/.npm/_logs/debug.log" >&2',
           "  return 42",
           "}",
@@ -246,7 +249,10 @@ describe("npm package publishing", () => {
       assertStringIncludes(stderr, "npm error code E503");
       assertStringIncludes(stderr, "Bearer <REDACTED>");
       assertStringIncludes(stderr, "cache=<path>");
+      assertStringIncludes(stderr, 'quoted="<path>"');
       assertStringIncludes(stderr, "config <path>");
+      assertStringIncludes(stderr, 'quoted-win="<path>"');
+      assertStringIncludes(stderr, 'quoted-share="<path>"');
       assertEquals(stderr.includes("fixture-token"), false);
       assertEquals(stderr.includes("/tmp/"), false);
       assertEquals(stderr.includes("C:\\"), false);
