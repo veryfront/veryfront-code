@@ -1122,6 +1122,43 @@ describe("modules/import-map/preloader", () => {
       assertEquals((await sameProjectRecovered).imports?.source, "hung-recovered");
     });
 
+    it("reserves project capacity before an invalidated load times out", async () => {
+      const adapter = createMinimalAdapter();
+      const loads: Array<ReturnType<typeof createDeferred<ImportMapConfig>>> = [];
+      const preloader = new ImportMapPreloader({
+        maxProjects: 2,
+        maxVariantsPerProject: 2,
+        ttlMs: 1_000,
+        loadTimeoutMs: 1_000,
+        loadImportMap: () => {
+          const load = createDeferred<ImportMapConfig>();
+          loads.push(load);
+          return load.promise;
+        },
+      });
+
+      const invalidated = preloader.preload("/project-a", adapter, "project-a");
+      await waitForLoadCount(loads, 1);
+      preloader.clear("project-a");
+
+      const second = preloader.preload("/project-b", adapter, "project-b");
+      await waitForLoadCount(loads, 2);
+      const queued = preloader.preload("/project-c", adapter, "project-c");
+      for (let attempt = 0; attempt < 10; attempt++) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+      assertEquals(loads.length, 2);
+
+      loads[1]!.resolve({ imports: { source: "b" } });
+      assertEquals((await second).imports?.source, "b");
+      await waitForLoadCount(loads, 3);
+      loads[2]!.resolve({ imports: { source: "c" } });
+      assertEquals((await queued).imports?.source, "c");
+
+      loads[0]!.resolve({ imports: { source: "a" } });
+      assertEquals((await invalidated).imports?.source, "a");
+    });
+
     it("keeps variant identity and capacity deterministic after primordial poisoning", async () => {
       const worker = new Worker(
         new URL("./preloader-primordial-poisoning.worker.ts", import.meta.url),
