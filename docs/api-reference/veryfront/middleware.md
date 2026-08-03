@@ -110,12 +110,12 @@ Options accepted by rate limit.
 
 | Property | Type | Description | Source |
 |----------|------|-------------|--------|
-| `maxRequests?` | `number` | Max requests per window | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L144) |
-| `windowMs?` | `number` | Time window (ms) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L145) |
-| `store?` | `RateLimitStore` | Storage backend | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L146) |
-| `maxEntries?` | `number` | Maximum active identities retained by the default in-memory store. Defaults to 10,000. At capacity, requests for identities without an active entry receive HTTP 503. Active entries are not evicted because doing so would let identity floods reset quotas. Capacity failures are logged with `failureKind`, `stage`, and `capacity` fields. Incompatible with a caller-provided `store`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L155) |
-| `keyGenerator?` | <code>(req: Request) =&gt; string</code> | Function to derive rate limit key from request | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L156) |
-| `trustProxy?` | `boolean` | Trust proxy-set forwarding headers (X-Forwarded-For) for keying. Defaults to false so forwarded headers are ignored and cannot be used to evade limits. Enable only when a trusted proxy that appends the real client IP sits in front of this middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L163) |
+| `maxRequests?` | `number` | Max requests per window | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L147) |
+| `windowMs?` | `number` | Time window (ms) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L148) |
+| `store?` | `RateLimitStore` | Storage backend | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L149) |
+| `maxEntries?` | `number` | Maximum active identities retained by the default in-memory store. Defaults to 10,000. At capacity, requests for identities without an active entry receive HTTP 503. Active entries are not evicted because doing so would let identity floods reset quotas. Capacity failures log `stage=store-increment`, `failureKind=capacity-exhausted`, and the configured `capacity`. Incompatible with a caller-provided `store`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L158) |
+| `keyGenerator?` | <code>(req: Request) =&gt; string</code> | Function to derive rate limit key from request | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L159) |
+| `trustProxy?` | `boolean` | Trust proxy-set forwarding headers (X-Forwarded-For) for keying. Defaults to false so forwarded headers are ignored and cannot be used to evade limits. Enable only when a trusted proxy that appends the real client IP sits in front of this middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L166) |
 
 ### `MemoryRateLimitStoreOptions`
 
@@ -123,7 +123,7 @@ Options accepted by the in-memory rate limit store.
 
 | Property | Type | Description | Source |
 |----------|------|-------------|--------|
-| `maxEntries?` | `number` | Maximum number of active identities retained by the store. Defaults to 10,000. At capacity, increments for identities without an active entry fail; active entries remain until expiration or reset so identity floods cannot evict active quotas and reset them. Capacity failures are logged with `failureKind`, `stage`, and `capacity` fields. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L139) |
+| `maxEntries?` | `number` | Maximum number of active identities retained by the store. Defaults to 10,000. Size this above the peak number of distinct identities expected during one complete rate-limit window, including burst headroom. At capacity, increments for identities without an active entry fail. Active entries are never evicted because identity flooding could otherwise reset an attacker's quota. When used through `rateLimit()`, capacity exhaustion logs `stage=store-increment`, `failureKind=capacity-exhausted`, and the configured `capacity`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L142) |
 
 ### `LoggerOptions`
 
@@ -151,13 +151,13 @@ Options accepted by timeout.
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `authRateLimit` | Pre-configured rate limiter for authentication endpoints (5 req/15min). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L338) |
+| `authRateLimit` | Pre-configured rate limiter for authentication endpoints (5 req/15min). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L341) |
 | `cors` | Create CORS middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/middleware.ts#L10) |
 | `devLogger` | Create development request logging middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/logger.ts#L244) |
 | `getTimeoutFromEnv` | Gets timeout from environment variable REQUEST_TIMEOUT_MS | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/timeout.ts#L94) |
 | `logger` | Create request logging middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/logger.ts#L191) |
 | `prodLogger` | Create production request logging middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/logger.ts#L249) |
-| `rateLimit` | Create rate-limit middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L235) |
+| `rateLimit` | Create rate-limit middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L238) |
 | `timeout` | Creates a middleware that enforces request timeouts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/timeout.ts#L52) |
 | `timeoutFromEnv` | Creates a timeout middleware with configuration from environment | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/timeout.ts#L102) |
 
@@ -174,7 +174,7 @@ Options accepted by timeout.
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `AuthRateLimitOptions` | Options accepted by the authentication rate-limit preset. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L167) |
+| `AuthRateLimitOptions` | Options accepted by the authentication rate-limit preset. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L170) |
 | `Context` | Context for context. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/types.ts#L8) |
 | `CorsOptions` | Options accepted by cors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/types.ts#L26) |
 | `ExecutionContext` | Context for execution. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/types.ts#L2) |
@@ -185,7 +185,7 @@ Options accepted by timeout.
 | `MiddlewareHandler` | Handler for middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/types.ts#L26) |
 | `MiddlewarePipelineOptions` | Options accepted by middleware pipeline. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/pipeline/types.ts#L2) |
 | `Next` | Public API contract for next. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/types.ts#L23) |
-| `RateLimitOptions` | Options accepted by rate limit. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L143) |
+| `RateLimitOptions` | Options accepted by rate limit. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L146) |
 | `RateLimitStore` | Public API contract for rate limit store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/types.ts#L32) |
 | `RedisRateLimitOptions` | Options accepted by the provider-backed Redis rate-limit store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/redis-rate-limit.ts#L16) |
 | `TimeoutOptions` | Options accepted by timeout. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/timeout.ts#L17) |

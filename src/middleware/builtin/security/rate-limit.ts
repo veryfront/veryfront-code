@@ -131,10 +131,13 @@ export class MemoryRateLimitStore implements RateLimitStore {
 export interface MemoryRateLimitStoreOptions {
   /**
    * Maximum number of active identities retained by the store.
-   * Defaults to 10,000. At capacity, increments for identities without an
-   * active entry fail; active entries remain until expiration or reset so
-   * identity floods cannot evict active quotas and reset them. Capacity
-   * failures are logged with `failureKind`, `stage`, and `capacity` fields.
+   * Defaults to 10,000. Size this above the peak number of distinct identities
+   * expected during one complete rate-limit window, including burst headroom.
+   * At capacity, increments for identities without an active entry fail.
+   * Active entries are never evicted because identity flooding could otherwise
+   * reset an attacker's quota. When used through `rateLimit()`, capacity
+   * exhaustion logs `stage=store-increment`,
+   * `failureKind=capacity-exhausted`, and the configured `capacity`.
    */
   maxEntries?: number;
 }
@@ -148,9 +151,9 @@ export interface RateLimitOptions {
    * Maximum active identities retained by the default in-memory store.
    * Defaults to 10,000. At capacity, requests for identities without an active
    * entry receive HTTP 503. Active entries are not evicted because doing so
-   * would let identity floods reset quotas. Capacity failures are logged with
-   * `failureKind`, `stage`, and `capacity` fields. Incompatible with a
-   * caller-provided `store`.
+   * would let identity floods reset quotas. Capacity failures log
+   * `stage=store-increment`, `failureKind=capacity-exhausted`, and the
+   * configured `capacity`. Incompatible with a caller-provided `store`.
    */
   maxEntries?: number;
   keyGenerator?: (req: Request) => string;

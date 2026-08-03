@@ -66,11 +66,11 @@ const url = releaseAssetUrl("a".repeat(64), "js");
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `clearCachedReleaseAssetManifests` | Clear cached manifest bodies while keeping registered fetchers intact. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L544) |
-| `clearReleaseAssetManifestCache` | Clear the cache and fetcher registry (tests / adapter teardown). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L554) |
+| `clearCachedReleaseAssetManifests` | Clear cached manifest bodies while keeping registered fetchers intact. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L567) |
+| `clearReleaseAssetManifestCache` | Clear the cache and fetcher registry (tests / adapter teardown). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L577) |
 | `contentTypeForExtension` | Resolve the content type for an extension, or null if not allowed. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L96) |
 | `getReadyManifestForRender` | Return a ready manifest for `releaseId` if one is cached, else null. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L257) |
-| `getReadyManifestForRenderAsync` | Await a ready manifest for `releaseId`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L310) |
+| `getReadyManifestForRenderAsync` | Await a ready manifest for rendering when release-manifest consumption is enabled. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L358) |
 | `hasImmutableReleaseAssetDependencies` | True only when manifest dependency entries are safe immutable rewrite targets. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L279) |
 | `isAllowedReleaseAssetContentType` | True when the value is a valid allowlisted release asset content type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L105) |
 | `isReleaseAssetManifestEnabled` | True when production manifest consumption is enabled via env flag. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L202) |

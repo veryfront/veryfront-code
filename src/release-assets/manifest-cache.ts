@@ -351,6 +351,10 @@ async function getReadyManifestAsync(
   return await fetchManifest(releaseId);
 }
 
+/**
+ * Await a ready manifest for rendering when release-manifest consumption is
+ * enabled.
+ */
 export async function getReadyManifestForRenderAsync(
   releaseId: string | null | undefined,
   options: ReadyManifestReadOptions = {},
