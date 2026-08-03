@@ -28,6 +28,10 @@ export interface LockfileData {
 
 const LOCKFILE_NAME = "veryfront.lock";
 const LOCKFILE_VERSION = 1;
+const LOCKFILE_CANONICALIZATION_TIMEOUT_MS = 1_000;
+const objectCreate = Object.create;
+const objectDefineProperty = Object.defineProperty;
+const objectEntries = Object.entries;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectHasOwn = Object.hasOwn;
 
@@ -49,7 +53,7 @@ function defineImportEntry(
   url: string,
   entry: LockfileEntry,
 ): void {
-  Object.defineProperty(imports, url, {
+  objectDefineProperty(imports, url, {
     value: entry,
     enumerable: true,
     configurable: true,
@@ -62,7 +66,7 @@ function createImportDictionary(
   prototype: "internal" | "public" = "internal",
 ): Record<string, LockfileEntry> {
   const imports = prototype === "internal"
-    ? Object.create(null) as Record<string, LockfileEntry>
+    ? objectCreate(null) as Record<string, LockfileEntry>
     : {};
   for (const [url, entry] of entries) defineImportEntry(imports, url, entry);
   return imports;
@@ -75,7 +79,7 @@ function cloneLockfileData(
   return {
     version: LOCKFILE_VERSION,
     imports: createImportDictionary(
-      Object.entries(data.imports).map(([url, entry]) => [url, cloneLockfileEntry(entry)]),
+      objectEntries(data.imports).map(([url, entry]) => [url, cloneLockfileEntry(entry)]),
       prototype,
     ),
   };
@@ -176,7 +180,7 @@ function parseLockfile(content: string, lockfilePath: string): LockfileData {
   }
 
   const imports: Array<[string, LockfileEntry]> = [];
-  for (const [url, entry] of Object.entries(parsedImports)) {
+  for (const [url, entry] of objectEntries(parsedImports)) {
     const sanitizedEntry = sanitizeLockfileEntry(entry);
     if (sanitizedEntry === null) {
       throw lockfileReadError(lockfilePath, "invalid-structure");
@@ -231,14 +235,120 @@ export type FSAdapter = {
   writeFile(path: string, content: string): Promise<void>;
   exists(path: string): Promise<boolean>;
   remove?(path: string): Promise<void>;
-  /** Resolve an existing path when no shared coordinationKey is available. */
+  /** Resolve an existing project path to its stable backing identity. */
   realPath?(path: string): Promise<string>;
 };
 
 const PLATFORM_FS_COORDINATION_KEY = "veryfront-platform-filesystem";
 const adapterIdentityByInstance = new WeakMap<FSAdapter, number>();
 const lockfileAccessTails = new Map<string, Promise<void>>();
+interface LockfileSharedState {
+  parent?: LockfileSharedState;
+  revision: number;
+  lastClearSequence: number;
+}
+
+interface PendingLockfileEntry {
+  entry: LockfileEntry;
+  sequence: number;
+}
+
+interface LockfileCoordinationRecord {
+  recordKey: string;
+  projectDir: string;
+  logicalStateKey: string;
+  state?: WeakRef<LockfileSharedState>;
+  retainedState?: LockfileSharedState;
+}
+
+interface LockfileCoordinationDomain {
+  records: Map<string, LockfileCoordinationRecord>;
+}
+
+interface LockfileCoordinationDomainReference {
+  generation: number;
+  reference: WeakRef<LockfileCoordinationDomain>;
+}
+
+interface LockfileSharedStateReference {
+  generation: number;
+  reference: WeakRef<LockfileSharedState>;
+}
+
+const lockfileSharedStateReferences = new Map<string, LockfileSharedStateReference>();
+const lockfileCoordinationDomainByAdapter = new WeakMap<FSAdapter, LockfileCoordinationDomain>();
+const sharedLockfileCoordinationDomains = new Map<
+  string,
+  LockfileCoordinationDomainReference
+>();
+let nextLockfileCoordinationDomainGeneration = 1;
+const sharedLockfileCoordinationRegistry = new FinalizationRegistry<{
+  accessKey: string;
+  generation: number;
+}>(({ accessKey, generation }) => {
+  const current = sharedLockfileCoordinationDomains.get(accessKey);
+  if (current?.generation === generation && current.reference.deref() === undefined) {
+    sharedLockfileCoordinationDomains.delete(accessKey);
+  }
+});
+let nextLockfileSharedStateGeneration = 1;
+let nextLockfileMutationSequence = 1;
+const lockfileSharedStateRegistry = new FinalizationRegistry<{
+  stateKey: string;
+  generation: number;
+}>(({ stateKey, generation }) => {
+  const current = lockfileSharedStateReferences.get(stateKey);
+  if (current?.generation === generation && current.reference.deref() === undefined) {
+    lockfileSharedStateReferences.delete(stateKey);
+  }
+});
 let nextAdapterIdentity = 1;
+
+function resolveLockfileSharedState(state: LockfileSharedState): LockfileSharedState {
+  let root = state;
+  while (root.parent) root = root.parent;
+  let current = state;
+  while (current.parent && current.parent !== root) {
+    const parent = current.parent;
+    current.parent = root;
+    current = parent;
+  }
+  return root;
+}
+
+function registerLockfileSharedState(
+  stateKey: string,
+  state: LockfileSharedState,
+): void {
+  const generation = nextLockfileSharedStateGeneration++;
+  lockfileSharedStateReferences.set(stateKey, {
+    generation,
+    reference: new WeakRef(state),
+  });
+  lockfileSharedStateRegistry.register(state, { stateKey, generation });
+}
+
+function getLockfileSharedState(stateKeys: readonly string[]): LockfileSharedState {
+  const roots: LockfileSharedState[] = [];
+  for (const stateKey of stateKeys) {
+    const referenced = lockfileSharedStateReferences.get(stateKey)?.reference.deref();
+    if (!referenced) continue;
+    const root = resolveLockfileSharedState(referenced);
+    if (!roots.includes(root)) roots.push(root);
+  }
+
+  const state = roots.shift() ?? { revision: 0, lastClearSequence: 0 };
+  for (const other of roots) {
+    other.parent = state;
+    state.revision = Math.max(state.revision, other.revision) + 1;
+    state.lastClearSequence = Math.max(
+      state.lastClearSequence,
+      other.lastClearSequence,
+    );
+  }
+  for (const stateKey of stateKeys) registerLockfileSharedState(stateKey, state);
+  return state;
+}
 
 function getAdapterInstanceIdentity(fs: FSAdapter): string {
   let identity = adapterIdentityByInstance.get(fs);
@@ -249,31 +359,179 @@ function getAdapterInstanceIdentity(fs: FSAdapter): string {
   return `instance:${identity}`;
 }
 
-async function resolveLockfileAccessKey(
+function getLockfileCoordinationDomain(
+  fs: FSAdapter,
+  accessKey: string,
+  hasSharedCoordinationKey: boolean,
+  managerDomain?: LockfileCoordinationDomain,
+): LockfileCoordinationDomain {
+  if (hasSharedCoordinationKey) {
+    if (managerDomain) return managerDomain;
+    let domain = sharedLockfileCoordinationDomains.get(accessKey)?.reference.deref();
+    if (!domain) {
+      domain = { records: new Map() };
+      const generation = nextLockfileCoordinationDomainGeneration++;
+      sharedLockfileCoordinationDomains.set(accessKey, {
+        generation,
+        reference: new WeakRef(domain),
+      });
+      sharedLockfileCoordinationRegistry.register(domain, {
+        accessKey,
+        generation,
+      });
+    }
+    return domain;
+  }
+
+  let domain = lockfileCoordinationDomainByAdapter.get(fs);
+  if (!domain) {
+    domain = { records: new Map() };
+    lockfileCoordinationDomainByAdapter.set(fs, domain);
+  }
+  return domain;
+}
+
+async function resolveCanonicalLockfilePath(
   fs: FSAdapter,
   projectDir: string,
-): Promise<string> {
+): Promise<string | undefined> {
+  if (!fs.realPath) return undefined;
+  const timedOut = Symbol("lockfile canonicalization timed out");
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const canonicalProjectDirResult = await Promise.race([
+      Promise.resolve().then(() => fs.realPath!(projectDir)),
+      new Promise<typeof timedOut>((resolve) => {
+        timeoutId = setTimeout(
+          () => resolve(timedOut),
+          LOCKFILE_CANONICALIZATION_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    if (canonicalProjectDirResult === timedOut) return undefined;
+    const canonicalProjectDir = normalize(canonicalProjectDirResult);
+    return normalize(`${canonicalProjectDir}/${LOCKFILE_NAME}`);
+  } catch {
+    return undefined;
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  }
+}
+
+async function resolveLockfileCoordinationIdentity(
+  fs: FSAdapter,
+  projectDir: string,
+  lockfilePath: string,
+  adapterIdentity: string,
+  accessKey: string,
+  hasSharedCoordinationKey: boolean,
+  managerDomain?: LockfileCoordinationDomain,
+): Promise<{
+  coordinationDomain: LockfileCoordinationDomain;
+  stateKeys: string[];
+  unresolvedRecord?: LockfileCoordinationRecord;
+  resolvedRecordKey?: string;
+}> {
   // A declared coordination key is the complete shared lock domain. Including
   // a canonical path here would split adapters that share a backing store when
   // only some of them implement realPath, recreating a read-merge-write race.
-  if (fs.coordinationKey !== undefined) {
-    return JSON.stringify([`shared:${fs.coordinationKey}`]);
+  const logicalStateKey = JSON.stringify([accessKey, lockfilePath]);
+  const domain = getLockfileCoordinationDomain(
+    fs,
+    accessKey,
+    hasSharedCoordinationKey,
+    managerDomain,
+  );
+  if (!fs.realPath) {
+    if (!hasSharedCoordinationKey) {
+      return { coordinationDomain: domain, stateKeys: [logicalStateKey] };
+    }
+    const recordKey = JSON.stringify([adapterIdentity, lockfilePath]);
+    const unresolvedRecord = domain.records.get(recordKey) ?? {
+      recordKey,
+      projectDir,
+      logicalStateKey,
+    };
+    return {
+      coordinationDomain: domain,
+      stateKeys: [logicalStateKey],
+      unresolvedRecord,
+    };
   }
 
-  const adapterIdentity = getAdapterInstanceIdentity(fs);
-  if (!fs.realPath) return JSON.stringify([adapterIdentity]);
+  const recordKey = JSON.stringify([adapterIdentity, lockfilePath]);
+  const canonicalLockfilePath = await resolveCanonicalLockfilePath(fs, projectDir);
+  if (canonicalLockfilePath === undefined) {
+    const unresolvedRecord = domain.records.get(recordKey) ?? {
+      recordKey,
+      projectDir,
+      logicalStateKey,
+    };
+    return {
+      coordinationDomain: domain,
+      stateKeys: [logicalStateKey],
+      unresolvedRecord,
+    };
+  }
+  // A successful resolution can also attach mutation-bearing logical states
+  // whose earlier canonicalization attempts failed. Resolve their paths
+  // through the current adapter: a shared coordination key promises one
+  // backing filesystem, and retaining or calling a discarded peer adapter
+  // would let one failed implementation poison the whole shared queue.
+  const resolvedRecords: Array<{
+    canonicalPath: string;
+    record: LockfileCoordinationRecord;
+    recordKey: string;
+    state: LockfileSharedState;
+  }> = [];
+  for (const [knownRecordKey, knownRecord] of domain.records) {
+    // Keep the current record, including any strongly retained completed
+    // mutation history, until the caller has attached its logical state to the
+    // canonical state. A failed historical lookup must leave it retryable.
+    if (knownRecordKey === recordKey) continue;
+    const knownState = knownRecord.retainedState ?? knownRecord.state?.deref();
+    if (!knownState) {
+      domain.records.delete(knownRecordKey);
+      continue;
+    }
+    const knownCanonicalPath = await resolveCanonicalLockfilePath(
+      fs,
+      knownRecord.projectDir,
+    );
+    if (knownCanonicalPath === undefined) {
+      throw lockfileReadError(
+        normalize(`${knownRecord.projectDir}/${LOCKFILE_NAME}`),
+        "access-failed",
+        new Error("Canonical lockfile identity could not be resolved"),
+      );
+    }
+    resolvedRecords.push({
+      canonicalPath: knownCanonicalPath,
+      record: knownRecord,
+      recordKey: knownRecordKey,
+      state: knownState,
+    });
+  }
 
-  try {
-    const canonicalProjectDir = normalize(await fs.realPath(projectDir));
-    return JSON.stringify([
-      adapterIdentity,
-      normalize(`${canonicalProjectDir}/${LOCKFILE_NAME}`),
+  // Commit historical reconciliations only after every live record resolves.
+  // Retaining the states here prevents completed clear or write history from
+  // disappearing between resolution and canonical attachment.
+  for (const resolved of resolvedRecords) {
+    domain.records.delete(resolved.recordKey);
+    getLockfileSharedState([
+      resolved.record.logicalStateKey,
+      JSON.stringify([accessKey, resolved.canonicalPath]),
     ]);
-  } catch {
-    // Without a trustworthy canonical project path, serialize conservatively
-    // across the whole backing adapter so symlink and case aliases cannot race.
-    return JSON.stringify([adapterIdentity]);
   }
+
+  return {
+    coordinationDomain: domain,
+    resolvedRecordKey: recordKey,
+    stateKeys: [
+      logicalStateKey,
+      JSON.stringify([accessKey, canonicalLockfilePath]),
+    ],
+  };
 }
 
 function compareLockfileImportKeys(left: string, right: string): number {
@@ -327,10 +585,19 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   const fs = fsAdapter ?? createPlatformFSAdapter();
   const normalizedProjectDir = normalize(projectDir);
   const lockfilePath = normalize(`${normalizedProjectDir}/${LOCKFILE_NAME}`);
+  const adapterIdentity = getAdapterInstanceIdentity(fs);
+  const coordinationKey = fs.coordinationKey;
+  const hasSharedCoordinationKey = coordinationKey !== undefined;
+  const accessKey = hasSharedCoordinationKey
+    ? JSON.stringify([`shared:${coordinationKey}`])
+    : JSON.stringify([adapterIdentity]);
   let cache: LockfileData | null = null;
+  let cacheRevision = -1;
   let managerOperationTail: Promise<void> = Promise.resolve();
-  let accessKeyPromise: Promise<string> | undefined;
-  const pendingEntries = new Map<string, LockfileEntry>();
+  let managerCoordinationDomain: LockfileCoordinationDomain | undefined;
+  let managerUnresolvedRecord: LockfileCoordinationRecord | undefined;
+  let managerSharedState: LockfileSharedState | undefined;
+  const pendingEntries = new Map<string, PendingLockfileEntry>();
 
   function serializeManagerOperation<T>(operation: () => Promise<T>): Promise<T> {
     const result = managerOperationTail.then(operation);
@@ -341,9 +608,59 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     return result;
   }
 
-  function withLockfileAccess<T>(operation: () => Promise<T>): Promise<T> {
-    accessKeyPromise ??= resolveLockfileAccessKey(fs, normalizedProjectDir);
-    return accessKeyPromise.then((accessKey) => serializeLockfileAccess(accessKey, operation));
+  async function resolveStateUnderAccess(): Promise<LockfileSharedState> {
+    // Retry canonicalization for every serialized manager operation. A
+    // project path may not exist on the first access, and a later successful
+    // resolution must bridge the earlier logical state to canonical aliases.
+    const { coordinationDomain, stateKeys, unresolvedRecord, resolvedRecordKey } =
+      await resolveLockfileCoordinationIdentity(
+        fs,
+        normalizedProjectDir,
+        lockfilePath,
+        adapterIdentity,
+        accessKey,
+        hasSharedCoordinationKey,
+        managerCoordinationDomain,
+      );
+    managerCoordinationDomain = coordinationDomain;
+    // A coordinationKey deliberately serializes the whole backing store.
+    // Canonicalize the per-lockfile cache state independently so aliases
+    // invalidate each other without coupling separate projects.
+    managerSharedState = getLockfileSharedState(stateKeys);
+    if (resolvedRecordKey !== undefined) {
+      coordinationDomain.records.delete(resolvedRecordKey);
+    }
+    managerUnresolvedRecord = unresolvedRecord;
+    if (unresolvedRecord) {
+      // A live warmed reader must be discoverable by a healthy alias so a
+      // later clear can invalidate its cache. Keep only the state weakly: dead
+      // readers and their adapters remain collectible.
+      unresolvedRecord.state = new WeakRef(managerSharedState);
+      coordinationDomain.records.set(unresolvedRecord.recordKey, unresolvedRecord);
+    }
+    return resolveLockfileSharedState(managerSharedState);
+  }
+
+  function retainUnresolvedMutation(
+    state: LockfileSharedState,
+    durable: boolean,
+  ): void {
+    if (!managerCoordinationDomain || !managerUnresolvedRecord) return;
+    managerUnresolvedRecord.state = new WeakRef(state);
+    if (durable) managerUnresolvedRecord.retainedState = state;
+    managerCoordinationDomain.records.set(
+      managerUnresolvedRecord.recordKey,
+      managerUnresolvedRecord,
+    );
+  }
+
+  function withLockfileAccess<T>(
+    operation: (state: LockfileSharedState) => Promise<T>,
+  ): Promise<T> {
+    return serializeLockfileAccess(
+      accessKey,
+      async () => operation(await resolveStateUnderAccess()),
+    );
   }
 
   async function lockfileExists(): Promise<boolean> {
@@ -367,14 +684,31 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     return parseLockfile(content, lockfilePath);
   }
 
-  async function readCurrent(): Promise<LockfileData | null> {
-    if (cache) return cache;
+  async function readCurrentUnderAccess(
+    state: LockfileSharedState,
+  ): Promise<LockfileData | null> {
+    for (const [url, pending] of pendingEntries) {
+      if (pending.sequence < state.lastClearSequence) pendingEntries.delete(url);
+    }
+    if (cacheRevision === state.revision) return cache;
 
-    // Cold reads share the same access turn as write/remove operations. This
-    // prevents a second manager from parsing a partially replaced lockfile.
-    const data = await withLockfileAccess(readFromDisk);
-    if (data) cache = data;
-    return data;
+    const data = await readFromDisk();
+    if (pendingEntries.size === 0) {
+      cache = data;
+    } else {
+      cache = data ?? createInternalLockfile();
+      for (const [url, pending] of pendingEntries) {
+        defineImportEntry(cache.imports, url, cloneLockfileEntry(pending.entry));
+      }
+    }
+    cacheRevision = state.revision;
+    return cache;
+  }
+
+  async function readCurrent(): Promise<LockfileData | null> {
+    // Cold and invalidated reads share the same access turn as write/remove
+    // operations, so peer managers cannot observe a partially replaced file.
+    return withLockfileAccess((state) => readCurrentUnderAccess(state));
   }
 
   function read(): Promise<LockfileData | null> {
@@ -388,7 +722,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     const sorted: LockfileData = {
       version: LOCKFILE_VERSION,
       imports: createImportDictionary(
-        Object.entries(data.imports)
+        objectEntries(data.imports)
           .sort(([a], [b]) => compareLockfileImportKeys(a, b))
           .map(([url, entry]) => [url, cloneLockfileEntry(entry)]),
       ),
@@ -401,13 +735,15 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   function write(data: LockfileData): Promise<void> {
     const snapshot = cloneLockfileData(data);
     return serializeManagerOperation(() =>
-      withLockfileAccess(async () => {
+      withLockfileAccess(async (state) => {
         // Revalidate the existing file before replacing it. Unsupported,
         // unreadable, and malformed files are always preserved.
         await readFromDisk();
         await writeToDisk(snapshot);
         cache = snapshot;
         pendingEntries.clear();
+        cacheRevision = ++state.revision;
+        retainUnresolvedMutation(state, true);
       })
     );
   }
@@ -421,12 +757,18 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
 
   function set(url: string, entry: LockfileEntry): Promise<void> {
     const snapshot = cloneLockfileEntry(entry);
-    return serializeManagerOperation(async () => {
-      const data = (await readCurrent()) ?? createInternalLockfile();
-      defineImportEntry(data.imports, url, snapshot);
-      cache = data;
-      pendingEntries.set(url, snapshot);
-    });
+    return serializeManagerOperation(() =>
+      withLockfileAccess(async (state) => {
+        const data = (await readCurrentUnderAccess(state)) ?? createInternalLockfile();
+        defineImportEntry(data.imports, url, snapshot);
+        cache = data;
+        pendingEntries.set(url, {
+          entry: snapshot,
+          sequence: nextLockfileMutationSequence++,
+        });
+        retainUnresolvedMutation(state, false);
+      })
+    );
   }
 
   function has(url: string): Promise<boolean> {
@@ -438,7 +780,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
 
   function clear(): Promise<void> {
     return serializeManagerOperation(() =>
-      withLockfileAccess(async () => {
+      withLockfileAccess(async (state) => {
         // Clear is an explicit destructive recovery path. Check access to the
         // path, but do not parse content that the user has chosen to discard.
         const existing = await lockfileExists();
@@ -455,6 +797,9 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
         // succeeded, so a failed clear leaves both memory and disk untouched.
         cache = cleared;
         pendingEntries.clear();
+        state.lastClearSequence = nextLockfileMutationSequence++;
+        cacheRevision = ++state.revision;
+        retainUnresolvedMutation(state, true);
       })
     );
   }
@@ -463,25 +808,36 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     return serializeManagerOperation(async () => {
       if (pendingEntries.size === 0) return;
 
-      await withLockfileAccess(async () => {
+      await withLockfileAccess(async (state) => {
+        for (const [url, pending] of pendingEntries) {
+          if (pending.sequence < state.lastClearSequence) pendingEntries.delete(url);
+        }
+        if (pendingEntries.size === 0) {
+          cache = await readFromDisk();
+          cacheRevision = state.revision;
+          return;
+        }
+
         // Merge only this manager's pending entries onto the latest on-disk
         // state while holding the canonical backing-store access turn. This
         // makes the whole read-merge-write sequence atomic relative to other
         // in-process managers, including managers using path aliases.
         const snapshot = new Map(pendingEntries);
         const merged = (await readFromDisk()) ?? createInternalLockfile();
-        for (const [url, entry] of snapshot) {
-          defineImportEntry(merged.imports, url, cloneLockfileEntry(entry));
+        for (const [url, pending] of snapshot) {
+          defineImportEntry(merged.imports, url, cloneLockfileEntry(pending.entry));
         }
 
         await writeToDisk(merged);
-        for (const [url, entry] of snapshot) {
-          if (pendingEntries.get(url) === entry) pendingEntries.delete(url);
+        for (const [url, pending] of snapshot) {
+          if (pendingEntries.get(url) === pending) pendingEntries.delete(url);
         }
-        for (const [url, entry] of pendingEntries) {
-          defineImportEntry(merged.imports, url, cloneLockfileEntry(entry));
+        for (const [url, pending] of pendingEntries) {
+          defineImportEntry(merged.imports, url, cloneLockfileEntry(pending.entry));
         }
         cache = merged;
+        cacheRevision = ++state.revision;
+        retainUnresolvedMutation(state, true);
       });
     });
   }

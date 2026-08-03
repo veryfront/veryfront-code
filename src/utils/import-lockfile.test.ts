@@ -45,6 +45,52 @@ function createMockFS(
   };
 }
 
+function createDeferredCanonicalAliasFS(initialContent?: string): {
+  fs: FSAdapter;
+  store: Map<string, string>;
+  backingLockfilePath: string;
+  enableCanonicalization(): void;
+} {
+  const backingProjectDir = "/backing/project";
+  const backingLockfilePath = `${backingProjectDir}/veryfront.lock`;
+  const store = new Map<string, string>();
+  if (initialContent !== undefined) store.set(backingLockfilePath, initialContent);
+  let canonicalizationEnabled = false;
+  const backingPath = (path: string): string =>
+    path === "/project/veryfront.lock" || path === "/alias/veryfront.lock"
+      ? backingLockfilePath
+      : path;
+
+  return {
+    backingLockfilePath,
+    store,
+    enableCanonicalization(): void {
+      canonicalizationEnabled = true;
+    },
+    fs: {
+      exists: (path) => Promise.resolve(store.has(backingPath(path))),
+      readFile: (path) => {
+        const content = store.get(backingPath(path));
+        return content === undefined
+          ? Promise.reject(new Error("ENOENT"))
+          : Promise.resolve(content);
+      },
+      writeFile: (path, content) => {
+        store.set(backingPath(path), content);
+        return Promise.resolve();
+      },
+      remove: (path) => {
+        store.delete(backingPath(path));
+        return Promise.resolve();
+      },
+      realPath: (path) =>
+        canonicalizationEnabled && (path === "/project" || path === "/alias")
+          ? Promise.resolve(backingProjectDir)
+          : Promise.reject(new Error("canonical path unavailable")),
+    },
+  };
+}
+
 function blockNextWrite(fs: FSAdapter): {
   started: Promise<void>;
   release: () => void;
@@ -264,9 +310,17 @@ describe("import-lockfile", () => {
       const specifier = "https://cdn.com/mod.ts";
 
       assertEquals(await mgr.has(specifier), false);
+      for (const inheritedName of ["constructor", "toString", "__proto__"]) {
+        assertEquals(await mgr.has(inheritedName), false);
+      }
 
       await mgr.set(specifier, { resolved: specifier, integrity: "sha256-abc" });
       assertEquals(await mgr.has(specifier), true);
+
+      for (const specialName of ["constructor", "toString", "__proto__"]) {
+        await mgr.set(specialName, { resolved: specialName, integrity: "sha256-special" });
+        assertEquals(await mgr.has(specialName), true);
+      }
     });
 
     it("should report inherited names as absent when no lockfile exists", async () => {
@@ -319,6 +373,459 @@ describe("import-lockfile", () => {
       assertEquals(await fs.exists(path), false);
       assertEquals(await mgr.read(), null);
       assertEquals(await createLockfileManager("/project", fs).read(), null);
+    });
+
+    it("should invalidate a peer manager's warmed cache after clear", async () => {
+      const path = "/project/veryfront.lock";
+      const url = "https://cdn.com/mod.ts";
+      const fs = createMockFS({
+        [path]: JSON.stringify({
+          version: 1,
+          imports: { [url]: { resolved: url, integrity: "sha256-abc" } },
+        }),
+      });
+      const clearingManager = createLockfileManager("/project", fs);
+      const warmedManager = createLockfileManager("/project", fs);
+
+      assertEquals(await warmedManager.has(url), true);
+      await clearingManager.clear();
+
+      assertEquals(await warmedManager.has(url), false);
+      assertEquals(await warmedManager.get(url), null);
+    });
+
+    it("should discard peer pending entries created before clear", async () => {
+      const path = "/project/veryfront.lock";
+      const url = "https://cdn.com/pending.ts";
+      const fs = createMockFS();
+      const clearingManager = createLockfileManager("/project", fs);
+      const pendingManager = createLockfileManager("/project", fs);
+
+      await pendingManager.set(url, { resolved: url, integrity: "sha256-pending" });
+      await clearingManager.clear();
+      await pendingManager.flush();
+
+      assertEquals(await fs.exists(path), false);
+      assertEquals(await pendingManager.has(url), false);
+    });
+
+    it("should keep shared-store clear invalidation scoped to one lockfile", async () => {
+      const coordinationKey = "multi-project-test-store";
+      const fs = createMockFS({}, coordinationKey);
+      const url = "https://cdn.com/pending.ts";
+      const projectAManager = createLockfileManager("/project-a", fs);
+      const projectBManager = createLockfileManager("/project-b", fs);
+
+      await projectBManager.set(url, { resolved: url, integrity: "sha256-pending" });
+      await projectAManager.clear();
+      await projectBManager.flush();
+
+      assertEquals(await projectBManager.has(url), true);
+      assertEquals(await fs.exists("/project-b/veryfront.lock"), true);
+    });
+
+    it("should keep adapter-wide queue invalidation scoped to one lockfile", async () => {
+      const fs = createMockFS();
+      const url = "https://cdn.com/pending.ts";
+      const projectAManager = createLockfileManager("/project-a", fs);
+      const projectBManager = createLockfileManager("/project-b", fs);
+
+      await projectBManager.set(url, { resolved: url, integrity: "sha256-pending" });
+      await projectAManager.clear();
+      await projectBManager.flush();
+
+      assertEquals(await projectBManager.has(url), true);
+      assertEquals(await fs.exists("/project-b/veryfront.lock"), true);
+    });
+
+    it("should share clear invalidation across canonical project aliases", async () => {
+      const backingProjectDir = "/backing/project";
+      const backingLockfilePath = `${backingProjectDir}/veryfront.lock`;
+      const originalUrl = "https://cdn.com/original.ts";
+      const pendingUrl = "https://cdn.com/pending.ts";
+      const store = new Map<string, string>([[
+        backingLockfilePath,
+        JSON.stringify({
+          version: 1,
+          imports: {
+            [originalUrl]: { resolved: originalUrl, integrity: "sha256-original" },
+          },
+        }),
+      ]]);
+      const backingPath = (path: string): string =>
+        path === "/project/veryfront.lock" || path === "/alias/veryfront.lock"
+          ? backingLockfilePath
+          : path;
+      const fs: FSAdapter = {
+        coordinationKey: "aliased-clear-test-store",
+        exists: (path) => Promise.resolve(store.has(backingPath(path))),
+        readFile: (path) => {
+          const content = store.get(backingPath(path));
+          return content === undefined
+            ? Promise.reject(new Error("ENOENT"))
+            : Promise.resolve(content);
+        },
+        writeFile: (path, content) => {
+          store.set(backingPath(path), content);
+          return Promise.resolve();
+        },
+        remove: (path) => {
+          store.delete(backingPath(path));
+          return Promise.resolve();
+        },
+        realPath: (path) => {
+          if (path === "/project" || path === "/alias") {
+            return Promise.resolve(backingProjectDir);
+          }
+          return Promise.reject(new Error("ENOENT"));
+        },
+      };
+      const projectManager = createLockfileManager("/project", fs);
+      const aliasManager = createLockfileManager("/alias", fs);
+
+      assertEquals(await projectManager.has(originalUrl), true);
+      await aliasManager.clear();
+      assertEquals(await projectManager.has(originalUrl), false);
+
+      await projectManager.set(pendingUrl, {
+        resolved: pendingUrl,
+        integrity: "sha256-pending",
+      });
+      await aliasManager.clear();
+      await projectManager.flush();
+
+      assertEquals(store.has(backingLockfilePath), false);
+      assertEquals(await projectManager.has(pendingUrl), false);
+    });
+
+    it("should retry canonical identity after a transient resolution failure", async () => {
+      const originalUrl = "https://cdn.com/original.ts";
+      const pendingUrl = "https://cdn.com/pending.ts";
+      const { fs, store, backingLockfilePath, enableCanonicalization } =
+        createDeferredCanonicalAliasFS(JSON.stringify({
+          version: 1,
+          imports: {
+            [originalUrl]: { resolved: originalUrl, integrity: "sha256-original" },
+          },
+        }));
+      const earlyManager = createLockfileManager("/project", fs);
+
+      assertEquals(await earlyManager.has(originalUrl), true);
+      await earlyManager.set(pendingUrl, {
+        resolved: pendingUrl,
+        integrity: "sha256-pending",
+      });
+
+      enableCanonicalization();
+      await createLockfileManager("/alias", fs).clear();
+
+      assertEquals(await earlyManager.has(originalUrl), false);
+      assertEquals(await earlyManager.has(pendingUrl), false);
+      await earlyManager.flush();
+      assertEquals(store.has(backingLockfilePath), false);
+    });
+
+    it("should not retain or retry a read-only adapter after canonicalization fails", async () => {
+      const coordinationKey = "read-only-canonical-failure-test-store";
+      const backingFS = createMockFS();
+      let failedAdapterRealPathCalls = 0;
+      const failedAdapter: FSAdapter = {
+        ...backingFS,
+        coordinationKey,
+        realPath: () => {
+          failedAdapterRealPathCalls++;
+          return failedAdapterRealPathCalls === 1
+            ? Promise.reject(new Error("canonical path unavailable"))
+            : new Promise<string>(() => {});
+        },
+      };
+      const healthyAdapter: FSAdapter = {
+        ...backingFS,
+        coordinationKey,
+        realPath: (path) => Promise.resolve(path),
+      };
+
+      assertEquals(await createLockfileManager("/failed", failedAdapter).read(), null);
+      assertEquals(
+        await resolvesWithin(createLockfileManager("/healthy", healthyAdapter).read()),
+        true,
+      );
+      assertEquals(failedAdapterRealPathCalls, 1);
+    });
+
+    it("should invalidate a warmed unresolved reader through a healthy alias", async () => {
+      const originalUrl = "https://cdn.com/original.ts";
+      const coordinationKey = "warmed-unresolved-reader-test-store";
+      const { fs, store, backingLockfilePath } = createDeferredCanonicalAliasFS(
+        JSON.stringify({
+          version: 1,
+          imports: {
+            [originalUrl]: {
+              resolved: originalUrl,
+              integrity: "sha256-original",
+            },
+          },
+        }),
+      );
+      const failedAdapter: FSAdapter = {
+        ...fs,
+        coordinationKey,
+        realPath: () => Promise.reject(new Error("canonical path unavailable")),
+      };
+      const healthyAdapter: FSAdapter = {
+        ...fs,
+        coordinationKey,
+        realPath: () => Promise.resolve("/backing/project"),
+      };
+      const warmedManager = createLockfileManager("/project", failedAdapter);
+
+      assertEquals(await warmedManager.has(originalUrl), true);
+      await createLockfileManager("/alias", healthyAdapter).clear();
+
+      assertEquals(store.has(backingLockfilePath), false);
+      assertEquals(await warmedManager.read(), null);
+      assertEquals(await warmedManager.get(originalUrl), null);
+      assertEquals(await warmedManager.has(originalUrl), false);
+    });
+
+    it("should invalidate a warmed reader without realPath through a healthy alias", async () => {
+      const originalUrl = "https://cdn.com/original.ts";
+      const coordinationKey = "warmed-no-realpath-reader-test-store";
+      const { fs, store, backingLockfilePath } = createDeferredCanonicalAliasFS(
+        JSON.stringify({
+          version: 1,
+          imports: {
+            [originalUrl]: {
+              resolved: originalUrl,
+              integrity: "sha256-original",
+            },
+          },
+        }),
+      );
+      const readerAdapter: FSAdapter = { ...fs, coordinationKey, realPath: undefined };
+      const healthyAdapter: FSAdapter = {
+        ...fs,
+        coordinationKey,
+        realPath: () => Promise.resolve("/backing/project"),
+      };
+      const warmedManager = createLockfileManager("/project", readerAdapter);
+
+      assertEquals(await warmedManager.has(originalUrl), true);
+      await createLockfileManager("/alias", healthyAdapter).clear();
+
+      assertEquals(store.has(backingLockfilePath), false);
+      assertEquals(await warmedManager.read(), null);
+      assertEquals(await warmedManager.get(originalUrl), null);
+      assertEquals(await warmedManager.has(originalUrl), false);
+    });
+
+    it("should bound historical canonicalization and release the shared queue", async () => {
+      const coordinationKey = "bounded-historical-canonicalization-test-store";
+      const backingFS = createMockFS();
+      const unresolvedAdapter: FSAdapter = {
+        ...backingFS,
+        coordinationKey,
+        realPath: () => Promise.reject(new Error("canonical path unavailable")),
+      };
+      const unresolvedManager = createLockfileManager("/failed", unresolvedAdapter);
+      assertEquals(await unresolvedManager.read(), null);
+
+      let historicalCalls = 0;
+      const healthyAdapter: FSAdapter = {
+        ...backingFS,
+        coordinationKey,
+        realPath: (path) => {
+          if (path !== "/failed") return Promise.resolve(path);
+          historicalCalls++;
+          return historicalCalls === 1 ? new Promise<string>(() => {}) : Promise.resolve(path);
+        },
+      };
+      const blockedManager = createLockfileManager("/first", healthyAdapter);
+      const queuedManager = createLockfileManager("/second", healthyAdapter);
+      const blockedRead = blockedManager.read();
+      const queuedRead = queuedManager.read();
+
+      const error = await assertRejects(() => blockedRead, VeryfrontError);
+      if (!(error instanceof VeryfrontError)) throw new Error("expected VeryfrontError");
+      const context = error.context as { reason?: string };
+      assertEquals(context.reason, "access-failed");
+      assertEquals(await queuedRead, null);
+      assertEquals(historicalCalls, 2);
+    });
+
+    it("should reconcile mutation state through the current healthy adapter", async () => {
+      const pendingUrl = "https://cdn.com/pending.ts";
+      const coordinationKey = "healthy-canonical-reconciliation-test-store";
+      const { fs, store, backingLockfilePath } = createDeferredCanonicalAliasFS();
+      let failedAdapterRealPathCalls = 0;
+      const failedAdapter: FSAdapter = {
+        ...fs,
+        coordinationKey,
+        realPath: () => {
+          failedAdapterRealPathCalls++;
+          return failedAdapterRealPathCalls === 1
+            ? Promise.reject(new Error("canonical path unavailable"))
+            : new Promise<string>(() => {});
+        },
+      };
+      const healthyAdapter: FSAdapter = {
+        ...fs,
+        coordinationKey,
+        realPath: () => Promise.resolve("/backing/project"),
+      };
+      const pendingManager = createLockfileManager("/project", failedAdapter);
+
+      await pendingManager.set(pendingUrl, {
+        resolved: pendingUrl,
+        integrity: "sha256-pending",
+      });
+      assertEquals(
+        await resolvesWithin(createLockfileManager("/alias", healthyAdapter).clear()),
+        true,
+      );
+      assertEquals(failedAdapterRealPathCalls, 1);
+      assertEquals(store.has(backingLockfilePath), false);
+    });
+
+    it("should order clears across shared states that are canonicalized later", async () => {
+      const pendingUrl = "https://cdn.com/pending.ts";
+      const { fs, store, backingLockfilePath, enableCanonicalization } =
+        createDeferredCanonicalAliasFS();
+      const projectManager = createLockfileManager("/project", fs);
+      const aliasManager = createLockfileManager("/alias", fs);
+
+      await projectManager.clear();
+      await projectManager.set(pendingUrl, {
+        resolved: pendingUrl,
+        integrity: "sha256-pending",
+      });
+      await aliasManager.clear();
+
+      enableCanonicalization();
+      await projectManager.flush();
+
+      assertEquals(store.has(backingLockfilePath), false);
+      assertEquals(await projectManager.has(pendingUrl), false);
+    });
+
+    it("should not reparent state during an in-flight clear", async () => {
+      const pendingUrl = "https://cdn.com/pending.ts";
+      const { fs, store, backingLockfilePath, enableCanonicalization } =
+        createDeferredCanonicalAliasFS(JSON.stringify({ version: 1, imports: {} }));
+      const projectManager = createLockfileManager("/project", fs);
+      const aliasManager = createLockfileManager("/alias", fs);
+      const removeStarted = Promise.withResolvers<void>();
+      const releaseRemove = Promise.withResolvers<void>();
+      const remove = fs.remove;
+      assertExists(remove);
+      fs.remove = async (path): Promise<void> => {
+        removeStarted.resolve();
+        await releaseRemove.promise;
+        await remove(path);
+      };
+
+      await projectManager.set(pendingUrl, {
+        resolved: pendingUrl,
+        integrity: "sha256-pending",
+      });
+      const clear = aliasManager.clear();
+      await removeStarted.promise;
+
+      enableCanonicalization();
+      const bridgeRead = createLockfileManager("/project", fs).has(pendingUrl);
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      releaseRemove.resolve();
+
+      await clear;
+      assertEquals(await bridgeRead, false);
+      await projectManager.flush();
+      assertEquals(store.has(backingLockfilePath), false);
+      assertEquals(await projectManager.has(pendingUrl), false);
+    });
+
+    it("should retain entries set after a disconnected clear when states merge", async () => {
+      const pendingUrl = "https://cdn.com/pending.ts";
+      const { fs, store, backingLockfilePath, enableCanonicalization } =
+        createDeferredCanonicalAliasFS();
+      const projectManager = createLockfileManager("/project", fs);
+      const aliasManager = createLockfileManager("/alias", fs);
+
+      await projectManager.clear();
+      await aliasManager.set(pendingUrl, {
+        resolved: pendingUrl,
+        integrity: "sha256-pending",
+      });
+
+      enableCanonicalization();
+      assertEquals(await projectManager.has(pendingUrl), false);
+      await aliasManager.flush();
+
+      assertEquals(store.has(backingLockfilePath), true);
+      assertEquals(await aliasManager.has(pendingUrl), true);
+    });
+
+    it("should share clear invalidation with mixed realPath support", async () => {
+      const path = "/project/veryfront.lock";
+      const originalUrl = "https://cdn.com/original.ts";
+      const pendingUrl = "https://cdn.com/pending.ts";
+      const backingFS = createMockFS({
+        [path]: JSON.stringify({
+          version: 1,
+          imports: {
+            [originalUrl]: { resolved: originalUrl, integrity: "sha256-original" },
+          },
+        }),
+      });
+      const coordinationKey = "mixed-realpath-clear-test-store";
+      const fsWithoutRealPath: FSAdapter = { ...backingFS, coordinationKey };
+      const fsWithRealPath: FSAdapter = {
+        ...backingFS,
+        coordinationKey,
+        realPath: (projectDir) => Promise.resolve(`/backing${projectDir}`),
+      };
+      const logicalManager = createLockfileManager("/project", fsWithoutRealPath);
+      const canonicalManager = createLockfileManager("/project", fsWithRealPath);
+
+      assertEquals(await logicalManager.has(originalUrl), true);
+      await canonicalManager.clear();
+      assertEquals(await logicalManager.has(originalUrl), false);
+
+      await logicalManager.set(pendingUrl, {
+        resolved: pendingUrl,
+        integrity: "sha256-pending",
+      });
+      await canonicalManager.clear();
+      await logicalManager.flush();
+
+      assertEquals(await backingFS.exists(path), false);
+      assertEquals(await logicalManager.has(pendingUrl), false);
+    });
+
+    it("should refresh a peer manager's warmed cache after a write", async () => {
+      const path = "/project/veryfront.lock";
+      const originalUrl = "https://cdn.com/original.ts";
+      const replacementUrl = "https://cdn.com/replacement.ts";
+      const fs = createMockFS({
+        [path]: JSON.stringify({
+          version: 1,
+          imports: {
+            [originalUrl]: { resolved: originalUrl, integrity: "sha256-original" },
+          },
+        }),
+      });
+      const writingManager = createLockfileManager("/project", fs);
+      const warmedManager = createLockfileManager("/project", fs);
+      assertEquals(await warmedManager.has(originalUrl), true);
+
+      await writingManager.write({
+        version: 1,
+        imports: {
+          [replacementUrl]: { resolved: replacementUrl, integrity: "sha256-replacement" },
+        },
+      });
+
+      assertEquals(await warmedManager.has(originalUrl), false);
+      assertEquals(await warmedManager.has(replacementUrl), true);
     });
 
     it("should flush dirty data to disk", async () => {

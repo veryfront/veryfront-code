@@ -101,6 +101,8 @@ throw INVALID_WIDGET.create({ detail: "The widget id is malformed." });
 | `INVALID_USE_CLIENT` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/boundary.ts#L27) |
 | `INVALID_USE_SERVER` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/boundary.ts#L35) |
 | `LAYOUT_NOT_FOUND` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/runtime.ts#L27) |
+| `LOCKFILE_FORMAT_MISMATCH` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L51) |
+| `LOCKFILE_READ_ERROR` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L59) |
 | `MDX_COMPILE_ERROR` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/build.ts#L27) |
 | `MIDDLEWARE_ERROR` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/runtime.ts#L51) |
 | `MODULE_ERROR_CATALOG` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/catalog/module-errors.ts#L4) |
@@ -277,6 +279,8 @@ import { CIRCULAR_DEPENDENCY, DEPENDENCY_MISSING, IMPORT_RESOLUTION_ERROR } from
 | `DEPENDENCY_MISSING` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L35) |
 | `IMPORT_RESOLUTION_ERROR` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L11) |
 | `INVALID_IMPORT` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L27) |
+| `LOCKFILE_FORMAT_MISMATCH` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L51) |
+| `LOCKFILE_READ_ERROR` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L59) |
 | `MODULE_NOT_FOUND` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L3) |
-| `MODULE_REGISTRY` | Registry fragment for MODULE errors (slug → definition). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L52) |
+| `MODULE_REGISTRY` | Registry fragment for MODULE errors (slug → definition). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L68) |
 | `VERSION_MISMATCH` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L43) |
