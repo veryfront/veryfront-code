@@ -65,8 +65,8 @@ describe("API Context Builder", () => {
     it("should handle cookies with spaces around name and value", () => {
       const cookies = parseCookies(" session = abc123 ; theme = dark ");
 
-      assertEquals(cookies.session, " abc123");
-      assertEquals(cookies.theme, " dark");
+      assertEquals(cookies.session, "abc123");
+      assertEquals(cookies.theme, "dark");
     });
 
     it("should handle cookies with equals signs in value", () => {

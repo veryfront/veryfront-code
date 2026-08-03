@@ -101,6 +101,8 @@ throw INVALID_WIDGET.create({ detail: "The widget id is malformed." });
 | `INVALID_USE_CLIENT` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/boundary.ts#L27) |
 | `INVALID_USE_SERVER` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/boundary.ts#L35) |
 | `LAYOUT_NOT_FOUND` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/runtime.ts#L27) |
+| `LOCKFILE_FORMAT_MISMATCH` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L51) |
+| `LOCKFILE_READ_ERROR` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L59) |
 | `MDX_COMPILE_ERROR` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/build.ts#L27) |
 | `MIDDLEWARE_ERROR` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/runtime.ts#L51) |
 | `MODULE_ERROR_CATALOG` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/catalog/module-errors.ts#L4) |
@@ -173,7 +175,7 @@ throw INVALID_WIDGET.create({ detail: "The widget id is malformed." });
 | `createErrorSolution` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/catalog/factory.ts#L11) |
 | `createProblemResponse` | Create an RFC 9457 error Response from raw parameters | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/http-error.ts#L70) |
 | `createSimpleError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/catalog/factory.ts#L29) |
-| `defineError` | Define an error in the registry | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L95) |
+| `defineError` | Define an error in the registry | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L98) |
 | `ensureError` | Ensure a value is an Error while preserving the established identity contract for ordinary Error instances. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/veryfront-error.ts#L837) |
 | `errorToResponse` | Convert any error to an RFC 9457 Response | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/http-error.ts#L106) |
 | `errorToRFC9457Response` | Convert any error to an RFC 9457 Response with environment-aware filtering | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/http-error-boundary.ts#L98) |
@@ -210,7 +212,7 @@ throw INVALID_WIDGET.create({ detail: "The widget id is malformed." });
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `VeryfrontError` | Veryfront Error class with slug-based error identity | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L158) |
+| `VeryfrontError` | Veryfront Error class with slug-based error identity | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L161) |
 
 ### Types
 
@@ -218,22 +220,22 @@ throw INVALID_WIDGET.create({ detail: "The widget id is malformed." });
 |------|-------------|--------|
 | `ConfigContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/veryfront-error.ts#L62) |
 | `ErrorCatalog` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/catalog/types.ts#L14) |
-| `ErrorCategory` | Error categories for domain-based grouping and handling | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L11) |
+| `ErrorCategory` | Error categories for domain-based grouping and handling | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L14) |
 | `ErrorContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-context.ts#L16) |
-| `ErrorCreateOptions` | Options for creating an error instance | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L54) |
-| `ErrorDefinition` | Error definition for the registry | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L41) |
+| `ErrorCreateOptions` | Options for creating an error instance | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L57) |
+| `ErrorDefinition` | Error definition for the registry | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L44) |
 | `ErrorHandlingOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-context.ts#L25) |
 | `ErrorLogEntry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/logging.ts#L24) |
 | `ErrorSlug` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry.ts#L53) |
 | `ErrorSolution` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/catalog/types.ts#L3) |
 | `LogLevel` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-context.ts#L23) |
 | `PartialErrorCatalog` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/catalog/types.ts#L15) |
-| `RegisteredError` | Registered error with factory method | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L68) |
+| `RegisteredError` | Registered error with factory method | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L71) |
 | `RetryWithBackoffOptions` | Options for `retryWithBackoff`. Every `attempt` value passed to `fn` and the hooks below is 0-based (first try = 0), including `wrapFinalError`'s `lastAttempt`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-handlers.ts#L72) |
-| `RFC9457Response` | RFC 9457 Problem Details response shape | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L27) |
+| `RFC9457Response` | RFC 9457 Problem Details response shape | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L30) |
 | `UserFriendlyErrorSolution` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/user-friendly/error-catalog.ts#L3) |
 | `VeryfrontErrorData` | Discriminated union for serializable error data. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/veryfront-error.ts#L93) |
-| `VeryfrontErrorOptions` | Options for VeryfrontError constructor | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L129) |
+| `VeryfrontErrorOptions` | Options for VeryfrontError constructor | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L132) |
 
 ## Deep imports
 
@@ -277,6 +279,8 @@ import { CIRCULAR_DEPENDENCY, DEPENDENCY_MISSING, IMPORT_RESOLUTION_ERROR } from
 | `DEPENDENCY_MISSING` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L35) |
 | `IMPORT_RESOLUTION_ERROR` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L11) |
 | `INVALID_IMPORT` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L27) |
+| `LOCKFILE_FORMAT_MISMATCH` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L51) |
+| `LOCKFILE_READ_ERROR` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L59) |
 | `MODULE_NOT_FOUND` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L3) |
-| `MODULE_REGISTRY` | Registry fragment for MODULE errors (slug → definition). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L52) |
+| `MODULE_REGISTRY` | Registry fragment for MODULE errors (slug → definition). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L68) |
 | `VERSION_MISMATCH` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/module.ts#L43) |

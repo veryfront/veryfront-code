@@ -66,6 +66,18 @@ describe("LRUCache", () => {
       assertEquals(cache.delete("exists"), false);
     });
 
+    it("tracks membership for an undefined value", (): void => {
+      const cache = createCache<string, undefined>({ maxEntries: 3 });
+
+      cache.set("present", undefined);
+
+      assertEquals(cache.get("present"), undefined);
+      assertEquals(cache.has("present"), true);
+      assertEquals(cache.delete("present"), true);
+      assertEquals(cache.has("present"), false);
+      assertEquals(cache.delete("present"), false);
+    });
+
     it("clear and size", (): void => {
       const cache = createCache<number, string>({ maxEntries: 3, ttlMs: 1000 });
 

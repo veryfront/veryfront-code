@@ -11,6 +11,7 @@ import { JSDOM } from "npm:jsdom@28.0.0";
 import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import type { ChatMessage } from "#veryfront/agent/react";
 import {
   conversationSummary,
@@ -2270,7 +2271,10 @@ describe("react/components/chat/hooks/useConversations — save", () => {
           </React.Suspense>,
         );
       });
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await waitFor(() => attemptedSuspendedRender, {
+        interval: 1,
+        message: "Concurrent conversations render did not start",
+      });
       assertEquals(attemptedSuspendedRender, true);
 
       const failure = new Error("committed list failed");

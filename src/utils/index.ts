@@ -146,7 +146,9 @@ export { isCompiledBinary } from "./platform.ts";
 export {
   computeIntegrity,
   createLockfileManager,
+  getLockfileEntryForBuild,
   type LockfileManager,
+  setLockfileEntryForBuild,
 } from "./import-lockfile.ts";
 
 export { endRequest, isEnabled, startRequest, startTimer, timeAsync } from "./perf-timer.ts";

@@ -1,5 +1,6 @@
 /** Default provider bootstrap (schema / auth / telemetry / bash) for the cloud agent service. */
 import type { AgentServiceSandboxToolsOptions } from "#veryfront/sandbox";
+import type { RemoteMCPToolSourceConfig, RemoteToolSource } from "#veryfront/tool";
 import { register, tryResolve } from "#veryfront/extensions/contracts.ts";
 import { MISSING_EXTENSION_ERROR } from "#veryfront/extensions/errors.ts";
 import {
@@ -63,6 +64,7 @@ export type ResolvedNodeVeryfrontCloudAgentServiceOptions = {
   mcpServers?: readonly AgentServiceMcpServerConfig[];
   forwardedConfigNamespace?: string;
   hostToolPolicy?: HostedHostToolPolicy;
+  createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
   createBashTool: AgentServiceSandboxToolsOptions["createBashTool"];
   env?: CreateNodeAgentServiceRuntimeInfrastructureOptions["env"];
   processTarget?:

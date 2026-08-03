@@ -20,6 +20,7 @@ import { handleWebhookCommand, toWebhookAgentOptions } from "./handler.ts";
 const originalCwd = new URL("../../../", import.meta.url);
 const originalExit = Deno.exit;
 const originalConsoleLog = console.log;
+let cwdCommandTail: Promise<void> = Promise.resolve();
 
 class ExitSentinel extends Error {
   constructor(readonly code: number) {
@@ -47,6 +48,31 @@ async function runCommand(args: ParsedArgs): Promise<{
     exitCode = error.code;
   }
   return { exitCode, output };
+}
+
+async function runCommandInProjectCwd(
+  projectDir: string,
+  args: ParsedArgs,
+): Promise<{
+  exitCode: number | undefined;
+  output: string[];
+}> {
+  const previousTail = cwdCommandTail.catch(() => {});
+  let release!: () => void;
+  cwdCommandTail = previousTail.then(() =>
+    new Promise<void>((resolve) => {
+      release = resolve;
+    })
+  );
+  await previousTail;
+
+  try {
+    Deno.chdir(projectDir);
+    return await runCommand(args);
+  } finally {
+    Deno.chdir(originalCwd);
+    release();
+  }
 }
 
 describe("webhook command", () => {
@@ -96,8 +122,7 @@ describe("webhook command", () => {
         JSON.stringify({ action: "closed" }),
       );
 
-      Deno.chdir(projectDir);
-      const result = await runCommand({
+      const result = await runCommandInProjectCwd(projectDir, {
         _: ["webhook", "run", "pull-request"],
         payload: "closed.json",
         json: true,
@@ -175,8 +200,7 @@ describe("webhook command", () => {
         }),
       );
 
-      Deno.chdir(projectDir);
-      const result = await runCommand({
+      const result = await runCommandInProjectCwd(projectDir, {
         _: ["webhook", "run", "pull-request"],
         payload: "opened.json",
         json: true,

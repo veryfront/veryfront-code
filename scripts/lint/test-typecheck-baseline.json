@@ -32,7 +32,6 @@
   "src/mcp/server.test.ts",
   "src/middleware/builtin/security/security-headers.test.ts",
   "src/middleware/core/pipeline/composer.test.ts",
-  "src/modules/import-map/preloader.test.ts",
   "src/modules/react-loader/ssr-module-loader.stress.test.ts",
   "src/platform/adapters/fs/veryfront/directory-operations.test.ts",
   "src/platform/adapters/redis/node.test.ts",
@@ -50,6 +49,5 @@
   "src/transforms/md/compiler/md-compiler.test.ts",
   "src/transforms/mdx/compiler/index.test.ts",
   "src/transforms/mdx/esm-module-loader/loader.test.ts",
-  "src/utils/cache/stores/memory/lru-list-manager.test.ts",
   "src/workflow/api/workflow-client.test.ts"
 ]

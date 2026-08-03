@@ -1,9 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   createRemoteMCPToolSource,
+  createRemoteMCPToolSourceFactoryWithTransport,
   MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
   MAX_REMOTE_MCP_TOOL_DEFINITIONS,
   MAX_REMOTE_MCP_TOOL_LIST_PAGES,
@@ -11,6 +17,111 @@ import {
 } from "./remote-mcp.ts";
 
 describe("tool/remote-mcp", () => {
+  it("uses host transport only for an exact trusted endpoint", async () => {
+    let transportCalls = 0;
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints: ["http://veryfront-api/mcp"],
+      requestFetch: async (_input, init) => {
+        transportCalls++;
+        const body = JSON.parse(String(init?.body)) as { id: string };
+        return Response.json({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { tools: [] },
+        });
+      },
+    });
+    const source = createSource({
+      id: "control-plane",
+      endpoint: "http://veryfront-api/mcp",
+    });
+
+    assertEquals(await source.listTools(), []);
+    assertEquals(transportCalls, 1);
+  });
+
+  it("normalizes default ports before matching exact trusted endpoints", async () => {
+    let transportCalls = 0;
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints: ["http://veryfront-api:80/mcp"],
+      requestFetch: async (_input, init) => {
+        transportCalls++;
+        const body = JSON.parse(String(init?.body)) as { id: string };
+        return Response.json({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { tools: [] },
+        });
+      },
+    });
+
+    await createSource({ endpoint: "http://veryfront-api/mcp" }).listTools();
+    assertEquals(transportCalls, 1);
+  });
+
+  it("keeps trailing-slash mismatches guarded and snapshots the allowlist", async () => {
+    let transportCalls = 0;
+    const trustedEndpoints = ["http://169.254.169.254/latest/meta-data/"];
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints,
+      requestFetch: async () => {
+        transportCalls++;
+        return Response.json({});
+      },
+    });
+    trustedEndpoints.push("http://169.254.169.254/latest/meta-data");
+
+    const source = createSource({
+      endpoint: "http://169.254.169.254/latest/meta-data",
+    });
+    await assertRejects(
+      () => source.listTools(),
+      Error,
+      "Outbound network egress blocked",
+    );
+    assertEquals(transportCalls, 0);
+  });
+
+  it("keeps unmatched and dynamic endpoints on guarded transport", async () => {
+    let transportCalls = 0;
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints: ["http://veryfront-api/mcp"],
+      requestFetch: async () => {
+        transportCalls++;
+        return Response.json({});
+      },
+    });
+
+    for (
+      const endpoint of [
+        "http://169.254.169.254/latest/meta-data",
+        () => "http://veryfront-api/mcp",
+      ]
+    ) {
+      const source = createSource({ id: "untrusted", endpoint });
+      await assertRejects(
+        () => source.listTools(),
+        Error,
+        "Outbound network egress blocked",
+      );
+    }
+    assertEquals(transportCalls, 0);
+  });
+
+  it("rejects invalid trusted endpoints when the factory is created", () => {
+    const error = assertThrows(
+      () =>
+        createRemoteMCPToolSourceFactoryWithTransport({
+          trustedEndpoints: ["https://user:secret@example.com/mcp"],
+          requestFetch: fetch,
+        }),
+      TypeError,
+      "trusted endpoint",
+    );
+    assertInstanceOf(error, TypeError);
+    assertEquals(error.message, "Invalid trusted endpoint");
+  });
+
   it("normalizes non-Error caller abort reasons", async () => {
     const controller = new AbortController();
     controller.abort("caller stopped");

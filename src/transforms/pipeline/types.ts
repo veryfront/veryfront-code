@@ -6,6 +6,9 @@
  */
 
 import type { DependencyHashCache } from "#veryfront/cache/dependency-graph.ts";
+import type { PreloadImportMapContext } from "#veryfront/modules/import-map/preloader.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
 import type { DependencyPinningSourceInput } from "../esm/package-registry.ts";
 import type { DependencyResolutionObservation } from "../import-rewriter/dependency-resolution.ts";
@@ -62,6 +65,12 @@ export interface TransformOptions {
   studioEmbed?: boolean;
   /** React version to use (detected from project package.json if not provided) */
   reactVersion?: string;
+  /** Immutable import-map snapshot already selected for this render. */
+  preloadedImportMap?: ImportMapConfig;
+  /** Adapter used to load and cache the project import map before SSR cache identity. */
+  importMapAdapter?: RuntimeAdapter;
+  /** Content-source/config identity for the import-map preloader. */
+  importMapPreloadContext?: PreloadImportMapContext;
   /** File reader for dependency hash computation. When provided, enables dependency-aware cache invalidation. */
   readFile?: (path: string) => Promise<string>;
   /** Internal per-render dependency hash cache. */
@@ -141,8 +150,17 @@ export interface TransformContext {
 export interface TransformPlugin {
   /** Plugin name for logging/debugging */
   name: string;
-  /** Stage this plugin runs at */
+  /**
+   * Numeric ordering coordinate for this plugin.
+   * TransformStage values are phase anchors; finite fractional values may run
+   * between anchors when a plugin needs a stable intermediate position.
+   */
   stage: TransformStage;
+  /**
+   * Stable, versioned identity for output-affecting custom plugin behavior.
+   * Custom plugins without an identity still run, but disable persistent caching.
+   */
+  cacheIdentity?: string;
   /** Optional condition - if false, plugin is skipped */
   condition?: (ctx: TransformContext) => boolean;
   /** Transform function - returns new code */

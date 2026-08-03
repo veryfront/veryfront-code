@@ -251,11 +251,35 @@ export class SSRModuleLoader {
     cacheEntry: ModuleCacheEntry,
   ): Promise<Record<string, unknown>> {
     // Verify the cache file exists before attempting dynamic import
-    const fileExists = await verifyCacheFileExists(
-      this.cache.getFs(),
-      cacheEntry.tempPath,
-      "SSR-MODULE-LOADER",
-    );
+    let fileExists: boolean;
+    try {
+      fileExists = await verifyCacheFileExists(
+        this.cache.getFs(),
+        cacheEntry.tempPath,
+        "SSR-MODULE-LOADER",
+      );
+    } catch (error) {
+      // An unreadable cache entry cannot be trusted on a later attempt. Keep
+      // the original operational error, but remove both indexes so a repaired
+      // filesystem does not keep routing requests back to stale metadata.
+      try {
+        await this.invalidateMdxEsmCacheEntry(filePath, cacheEntry);
+      } catch (invalidationError) {
+        logger.warn("Failed to invalidate unreadable MDX cache entry", {
+          file: filePath.slice(-40),
+          error: invalidationError,
+        });
+      }
+      try {
+        this.cache.invalidateFilePathCacheEntry(filePath, cacheEntry);
+      } catch (invalidationError) {
+        logger.warn("Failed to invalidate unreadable file-path cache entry", {
+          file: filePath.slice(-40),
+          error: invalidationError,
+        });
+      }
+      throw error;
+    }
     if (!fileExists) {
       logger.debug("Cache file missing before import, invalidating", {
         file: filePath.slice(-40),

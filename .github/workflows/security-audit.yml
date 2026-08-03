@@ -8,6 +8,8 @@ on:
       - "cli/deno.json"
       - "react/deno.json"
       - "extensions/**/deno.json"
+      - "storybook/package.json"
+      - "storybook/package-lock.json"
       - "scripts/build/generate-sbom.ts"
       - "scripts/lib/deno-lock.ts"
       - "scripts/lint/audit-core-deps.ts"

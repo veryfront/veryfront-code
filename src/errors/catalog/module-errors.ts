@@ -83,4 +83,26 @@ resolve: {
       "Update dependencies to compatible versions",
     ],
   ),
+
+  "lockfile-format-mismatch": createSimpleError(
+    "lockfile-format-mismatch",
+    "Lockfile format is not supported",
+    "This Veryfront version cannot safely read or modify the lockfile format.",
+    [
+      "Upgrade Veryfront to a version that supports this lockfile",
+      "Migrate the lockfile with a compatible Veryfront version",
+      "If the contents are no longer needed, run 'veryfront lock --clear' to reset it",
+    ],
+  ),
+
+  "lockfile-read-error": createSimpleError(
+    "lockfile-read-error",
+    "Lockfile could not be read safely",
+    "Veryfront could not safely read or validate the existing lockfile.",
+    [
+      "Check that the lockfile is readable",
+      "Restore valid JSON from version control or a backup",
+      "Run 'veryfront lock --clear' to discard the unreadable lockfile and regenerate it",
+    ],
+  ),
 });

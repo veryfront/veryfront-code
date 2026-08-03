@@ -1,4 +1,5 @@
 import { IMAGE_OPTIMIZATION } from "#veryfront/utils";
+import { OPTIMIZABLE_IMAGE_SOURCE_EXTENSIONS } from "#veryfront/utils/image-variant-widths.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import type { ImageOptimizationOptions } from "./types.ts";
 
@@ -13,7 +14,9 @@ export const DEFAULT_OPTIONS: Required<ImageOptimizationOptions> = {
   preserveOriginal: false,
 };
 
-export const SUPPORTED_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp", ".avif"];
+export const SUPPORTED_EXTENSIONS = OPTIMIZABLE_IMAGE_SOURCE_EXTENSIONS.map((extension) =>
+  `.${extension}`
+);
 export const SUPPORTED_FORMATS = ["webp", "avif", "jpeg", "png"] as const;
 
 export const MANIFEST_FILENAME = "image-manifest.json";
