@@ -2,7 +2,9 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
+import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/cache/backends/ttl.ts";
 import type { RenderResult } from "../orchestrator/types.ts";
+import { withTimeoutThrow } from "../utils/stream-utils.ts";
 import { CacheCoordinator } from "./cache-coordinator.ts";
 import { wrapInHTMLShell } from "#veryfront/html/html-shell-generator.ts";
 import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
@@ -55,12 +57,51 @@ async function withStoreTtlEnabled(fn: () => Promise<void>): Promise<void> {
 
 describe("CacheCoordinator", () => {
   it("rejects invalid TTL/stale durations", () => {
-    for (const ttlMs of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    for (
+      const ttlMs of [
+        -1,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        MAX_CACHE_TTL_MILLISECONDS + 1,
+      ]
+    ) {
       assertThrows(() => new CacheCoordinator({ ttlMs }), RangeError, "ttlMs");
     }
-    for (const staleMs of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    for (
+      const staleMs of [
+        -1,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        MAX_CACHE_TTL_MILLISECONDS + 1,
+      ]
+    ) {
       assertThrows(() => new CacheCoordinator({ staleMs }), RangeError, "staleMs");
     }
+  });
+
+  it("rounds fractional TTL and stale windows up to whole milliseconds", async () => {
+    let stored: CachePayload | undefined;
+    const store: CacheStore = {
+      get: () => Promise.resolve(stored),
+      set: (_key, value) => {
+        stored = value;
+        return Promise.resolve();
+      },
+      delete: () => Promise.resolve(),
+      clear: () => Promise.resolve(),
+      destroy: () => Promise.resolve(),
+    };
+    const coordinator = new CacheCoordinator({
+      store,
+      projectId: "fractional",
+      ttlMs: 1_000.25,
+      staleMs: 500.25,
+    });
+
+    await coordinator.persistResult(makeResult("fractional"), "entry");
+
+    assertEquals(stored?.expiresAt, (stored?.storedAt ?? 0) + 1_001);
+    assertEquals(stored?.staleUntil, (stored?.expiresAt ?? 0) + 501);
   });
 
   it("evicts malformed store values and treats them as misses", async () => {
@@ -85,10 +126,15 @@ describe("CacheCoordinator", () => {
   });
 
   it("treats malformed store values as misses when eviction fails", async () => {
+    const evictionAttempted = Promise.withResolvers<void>();
     const store: CacheStore = {
       get: () => Promise.resolve({} as CachePayload),
       set: () => Promise.resolve(),
-      delete: () => Promise.reject(new Error("delete unavailable")),
+      delete: () => Promise.reject(new Error("unsafe unconditional delete")),
+      deleteIfUnchanged: () => {
+        evictionAttempted.resolve();
+        return Promise.reject(new Error("delete unavailable"));
+      },
       clear: () => Promise.resolve(),
       destroy: () => Promise.resolve(),
     };
@@ -98,6 +144,86 @@ describe("CacheCoordinator", () => {
 
     assertEquals(lookup.cacheStatus, "miss");
     assertEquals(lookup.cachedResult, undefined);
+    await withTimeoutThrow(evictionAttempted.promise, 1_000, "cache eviction attempt");
+  });
+
+  it("does not block on a hung eviction or delete a replacement", async () => {
+    const malformed = {} as CachePayload;
+    const replacement: CachePayload = {
+      result: makeResult("replacement"),
+      storedAt: 1,
+    };
+    let current: CachePayload | undefined = malformed;
+    const evictionStarted = Promise.withResolvers<void>();
+    const releaseEviction = Promise.withResolvers<void>();
+    const evictionFinished = Promise.withResolvers<boolean>();
+    const store: CacheStore = {
+      get: () => Promise.resolve(current),
+      set: (_key, value) => {
+        current = value;
+        return Promise.resolve();
+      },
+      delete: () => Promise.reject(new Error("unsafe unconditional delete")),
+      deleteIfUnchanged: async (_key, expected) => {
+        evictionStarted.resolve();
+        await releaseEviction.promise;
+        if (current !== expected) {
+          evictionFinished.resolve(false);
+          return false;
+        }
+        current = undefined;
+        evictionFinished.resolve(true);
+        return true;
+      },
+      clear: () => Promise.resolve(),
+      destroy: () => Promise.resolve(),
+    };
+    const coordinator = new CacheCoordinator({ store, projectId: "project" });
+
+    const lookup = await withTimeoutThrow(
+      coordinator.checkCache("malformed"),
+      1_000,
+      "non-blocking corrupt-cache lookup",
+    );
+    await withTimeoutThrow(evictionStarted.promise, 1_000, "cache eviction start");
+    current = replacement;
+    releaseEviction.resolve();
+
+    assertEquals(lookup.cacheStatus, "miss");
+    assertEquals(
+      await withTimeoutThrow(evictionFinished.promise, 1_000, "cache eviction completion"),
+      false,
+    );
+    assertEquals(current, replacement);
+  });
+
+  it("deduplicates hung evictions without delaying cache misses", async () => {
+    let evictionCalls = 0;
+    const store: CacheStore = {
+      get: () => Promise.resolve({} as CachePayload),
+      set: () => Promise.resolve(),
+      delete: () => Promise.reject(new Error("unsafe unconditional delete")),
+      deleteIfUnchanged: () => {
+        evictionCalls++;
+        return new Promise<boolean>(() => {});
+      },
+      clear: () => Promise.resolve(),
+      destroy: () => Promise.resolve(),
+    };
+    const coordinator = new CacheCoordinator({ store, projectId: "project" });
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      assertEquals(
+        (await withTimeoutThrow(
+          coordinator.checkCache("malformed"),
+          1_000,
+          "deduplicated corrupt-cache lookup",
+        )).cacheStatus,
+        "miss",
+      );
+    }
+
+    assertEquals(evictionCalls, 1);
   });
 
   it("skips caching when a result cannot be snapshotted", async () => {
@@ -149,6 +275,24 @@ describe("CacheCoordinator", () => {
     await coordinator.persistResult(makeResult("<html>ok</html>"), "written");
 
     assertEquals((await coordinator.checkCache("written")).cacheStatus, "miss");
+  });
+
+  it("keeps rendering when a cache failure cannot be stringified", async () => {
+    const hostileFailure = {
+      toString(): string {
+        throw new Error("stringification trap");
+      },
+    };
+    const store: CacheStore = {
+      get: () => Promise.resolve(undefined),
+      set: () => Promise.reject(hostileFailure),
+      delete: () => Promise.resolve(),
+      clear: () => Promise.resolve(),
+      destroy: () => Promise.resolve(),
+    };
+    const coordinator = new CacheCoordinator({ store, projectId: "hostile" });
+
+    await coordinator.persistResult(makeResult("<html>ok</html>"), "written");
   });
 
   it("preserves Date frontmatter across a serializing store round-trip", async () => {
@@ -299,18 +443,19 @@ describe("CacheCoordinator", () => {
     await coordinator.destroy();
   });
 
-  it("treats a zero TTL as immediate expiry", async () => {
-    const coordinator = new CacheCoordinator({ ttlMs: 0, projectId: "immediate" });
+  it("preserves the public zero-TTL non-expiring contract", async () => {
+    const coordinator = new CacheCoordinator({ ttlMs: 0, projectId: "non-expiring" });
 
-    await coordinator.persistResult(makeResult("never fresh"), "zero-ttl");
+    await coordinator.persistResult(makeResult("still fresh"), "zero-ttl");
     const lookup = await coordinator.checkCache("zero-ttl");
 
-    assertEquals(lookup.cachedResult, undefined);
-    assertEquals(lookup.cacheStatus, "expired");
+    assertEquals(lookup.cachedResult?.html, "still fresh");
+    assertEquals(lookup.cacheStatus, "hit");
     await coordinator.destroy();
   });
 
   it("reports an expired entry when eviction fails", async () => {
+    const evictionAttempted = Promise.withResolvers<void>();
     const payload: CachePayload = {
       result: makeResult("expired"),
       storedAt: 0,
@@ -319,7 +464,11 @@ describe("CacheCoordinator", () => {
     const store: CacheStore = {
       get: () => Promise.resolve(payload),
       set: () => Promise.resolve(),
-      delete: () => Promise.reject(new Error("delete unavailable")),
+      delete: () => Promise.reject(new Error("unsafe unconditional delete")),
+      deleteIfUnchanged: () => {
+        evictionAttempted.resolve();
+        return Promise.reject(new Error("delete unavailable"));
+      },
       clear: () => Promise.resolve(),
       destroy: () => Promise.resolve(),
     };
@@ -329,6 +478,7 @@ describe("CacheCoordinator", () => {
 
     assertEquals(lookup.cachedResult, undefined);
     assertEquals(lookup.cacheStatus, "expired");
+    await withTimeoutThrow(evictionAttempted.promise, 1_000, "expired cache eviction attempt");
   });
 
   it("serves recently expired entries as stale while refresh can run", async () => {
