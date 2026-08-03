@@ -50,7 +50,6 @@
   "src/rendering/orchestrator/config.test.ts",
   "src/rendering/utils/react-helpers.test.ts",
   "src/resource/registry.test.ts",
-  "src/routing/api/module-loader/security-config.test.ts",
   "src/routing/api/openapi/mcp-resource.test.ts",
   "src/runs/schemas.test.ts",
   "src/server/build-service-worker.test.ts",
