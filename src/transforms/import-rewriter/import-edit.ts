@@ -132,33 +132,47 @@ function buildComputedDynamicImportHelper(
   name: string,
   isSSR: boolean,
   guardFrameworkImports: boolean,
+  privateFrameworkRoot?: string,
 ): string {
   const frameworkImportGuard = guardFrameworkImports
     ? `
-  if (typeof value !== "string") value = \`\${value}\`;
+  const specifier = typeof value === "string" ? value : \`\${value}\`;
   const frameworkPrefix = "#veryfront";
-  let isFrameworkImport = value.length >= frameworkPrefix.length;
+  let isFrameworkImport = specifier.length >= frameworkPrefix.length;
   for (let index = 0; isFrameworkImport && index < frameworkPrefix.length; index++) {
-    if (value[index] !== frameworkPrefix[index]) isFrameworkImport = false;
+    if (specifier[index] !== frameworkPrefix[index]) isFrameworkImport = false;
   }
   if (isFrameworkImport) {
-    const separator = value[frameworkPrefix.length];
+    const separator = specifier[frameworkPrefix.length];
     isFrameworkImport = separator === undefined || separator === "/" || separator === "\\\\" || separator === "%";
   }
   if (isFrameworkImport) {
     throw new TypeError("Computed #veryfront imports must use a string literal");
+  }
+  const privateFrameworkRoot = ${
+      privateFrameworkRoot ? JSON.stringify(privateFrameworkRoot) : "undefined"
+    };
+  if (privateFrameworkRoot && ${name}HasPrefix(specifier, privateFrameworkRoot)) {
+    throw new TypeError("Computed framework imports must use a string literal");
   }`
     : `
-  if (typeof value !== "string") return value;`;
-
+  const specifier = value;
+  if (typeof specifier !== "string") return specifier;`;
   return `
+function ${name}HasPrefix(value, prefix) {
+  if (value.length < prefix.length) return false;
+  for (let index = 0; index < prefix.length; index++) {
+    if (value[index] !== prefix[index]) return false;
+  }
+  return true;
+}
 function ${name}(value, parentUrl, modulePath) {
   ${frameworkImportGuard}
-  const isRelative = value.startsWith("./") || value.startsWith("../");
-  const isProjectAlias = value.startsWith("@/");
-  const isRootModule = value.startsWith("/_vf_modules/");
-  const isAbsoluteUrl = /^https?:\\/\\//i.test(value) || value.startsWith("//");
-  if (!isRelative && !isProjectAlias && !isRootModule && !isAbsoluteUrl) return value;
+  const isRelative = specifier.startsWith("./") || specifier.startsWith("../");
+  const isProjectAlias = specifier.startsWith("@/");
+  const isRootModule = specifier.startsWith("/_vf_modules/");
+  const isAbsoluteUrl = /^https?:\\/\\//i.test(specifier) || specifier.startsWith("//");
+  if (!isRelative && !isProjectAlias && !isRootModule && !isAbsoluteUrl) return specifier;
 
   try {
     const parent = new URL(parentUrl);
@@ -170,7 +184,7 @@ function ${name}(value, parentUrl, modulePath) {
       : queryPins.length === 1
       ? queryPins[0]
       : undefined;
-    if (!cacheKey || !/^on:[A-Za-z0-9._-]+$/.test(cacheKey)) return value;
+    if (!cacheKey || !/^on:[A-Za-z0-9._-]+$/.test(cacheKey)) return specifier;
 
     const modulePrefix = "/_vf_modules/";
     const anchor = modulePrefix + "_pins/" + encodeURIComponent(cacheKey) + "/";
@@ -181,17 +195,17 @@ function ${name}(value, parentUrl, modulePath) {
       ? anchor + crossProjectMatch[1]
       : undefined;
     if (isProjectAlias) {
-      if (!crossProjectRoot) return value;
-      const target = new URL(crossProjectRoot + value.slice(2), parent.origin);
+      if (!crossProjectRoot) return specifier;
+      const target = new URL(crossProjectRoot + specifier.slice(2), parent.origin);
       ${isSSR ? 'target.searchParams.set("ssr", "true");' : ""}
       return target.pathname.startsWith(crossProjectRoot)
         ? target.pathname + target.search + target.hash
         : modulePrefix + "_pins/invalid";
     }
 
-    const target = new URL(value, isRelative ? base : parent);
-    if (target.origin !== parent.origin) return value;
-    if (!target.pathname.startsWith(modulePrefix)) return value;
+    const target = new URL(specifier, isRelative ? base : parent);
+    if (target.origin !== parent.origin) return specifier;
+    if (!target.pathname.startsWith(modulePrefix)) return specifier;
 
     if (isRelative) {
       const requiredRoot = crossProjectRoot ?? anchor;
@@ -223,22 +237,27 @@ function ${name}(value, parentUrl, modulePath) {
     ${isSSR ? 'target.searchParams.set("ssr", "true");' : ""}
     return target.pathname + target.search + target.hash;
   } catch {
-    return value;
+    return specifier;
   }
 }`.trim();
 }
 
 /**
- * Wrap computed browser imports without changing native import options.
+ * Guard computed framework imports and apply dependency pinning when enabled.
  *
  * es-module-lexer 2.3 exposes `s..e` as the first-argument expression even
- * when a second import-options argument exists. Non-string values are returned
- * untouched so the native import operation retains responsibility for coercion.
+ * when a second import-options argument exists. Values are coerced exactly once
+ * so a caller-controlled coercion cannot present a public value to the guard and
+ * a private value to the native import operation.
  */
 export function applyComputedDynamicImportPinning(
   parsed: ParsedImportEdits,
   modulePath?: string,
-  options: { ssr?: boolean; guardFrameworkImports?: boolean } = {},
+  options: {
+    ssr?: boolean;
+    guardFrameworkImports?: boolean;
+    privateFrameworkRoot?: string;
+  } = {},
 ): string {
   // A project can write the marker itself, so it is not proof that the
   // security guard came from this transformer. Re-wrap guarded imports on
@@ -267,6 +286,7 @@ export function applyComputedDynamicImportPinning(
       helperName,
       options.ssr === true,
       options.guardFrameworkImports === true,
+      options.privateFrameworkRoot,
     )
   }\n`;
   return restoreMaskedUrls(result, parsed.urlMap);

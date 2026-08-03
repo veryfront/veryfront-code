@@ -23,6 +23,8 @@ export interface TransformCoreInput {
   strategies: ImportRewriteStrategy[];
 }
 
+const FRAMEWORK_SOURCE_URL = new URL("../../", import.meta.url).href;
+
 function pinSameOriginModuleUrl(
   specifier: string,
   ctx: RewriteContext,
@@ -98,6 +100,9 @@ export async function rewriteWithImportRewriteCore(input: TransformCoreInput): P
   return applyComputedDynamicImportPinning(computedParsed, modulePath, {
     ssr: isCrossProjectSSRPinning,
     guardFrameworkImports,
+    privateFrameworkRoot: guardFrameworkImports && input.context.target === "ssr"
+      ? FRAMEWORK_SOURCE_URL
+      : undefined,
   });
 }
 

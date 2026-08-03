@@ -6,6 +6,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join, toFileUrl } from "#veryfront/compat/path/index.ts";
 import { rewriteImports, UnifiedImportRewriter } from "./unified-rewriter.ts";
 import type { ImportRewriteStrategy, RewriteContext } from "./types.ts";
 
@@ -109,6 +110,22 @@ describe("rewriteImports with the default strategies", () => {
     return createCtx({ filePath: "/test/pages/index.tsx", ...overrides });
   }
 
+  async function loadTransformedProjectModule(
+    source: string,
+    suffix: string,
+  ): Promise<{ load(): Promise<{ default?: unknown }> }> {
+    const transformed = await rewriteImports(source, defaultCtx({ target: "ssr" }));
+    const directory = await Deno.makeTempDir({ prefix: "vf-computed-import-" });
+    const modulePath = join(directory, "project-module.mjs");
+
+    try {
+      await Deno.writeTextFile(modulePath, transformed);
+      return await import(`${toFileUrl(modulePath).href}?${suffix}`);
+    } finally {
+      await Deno.remove(directory, { recursive: true });
+    }
+  }
+
   it("rejects a static asset import", async () => {
     const error = await assertRejects(
       () =>
@@ -138,6 +155,69 @@ describe("rewriteImports with the default strategies", () => {
     const result = await rewriteImports(code, defaultCtx({ target: "ssr" }));
 
     assertEquals(result, code);
+  });
+
+  it("rejects a computed internal framework import before native resolution", async () => {
+    const projectModule = await loadTransformedProjectModule(
+      [
+        `const target = "#veryfront/agent/hosted/internal/control-plane-mcp-source.ts";`,
+        `export const load = () => import(target);`,
+      ].join("\n"),
+      "internal-alias",
+    );
+    const error = await assertRejects(
+      () => Promise.resolve().then(() => projectModule.load()),
+      Error,
+    );
+
+    assertInstanceOf(error, Error);
+    assertStringIncludes(error.message, "Computed #veryfront imports must use a string literal");
+  });
+
+  it("rejects a concatenated internal transport import before native resolution", async () => {
+    const projectModule = await loadTransformedProjectModule(
+      [
+        `const target = "#veryfront/tool/" + "internal/remote-mcp-transport.ts";`,
+        `export const load = () => import(target);`,
+      ].join("\n"),
+      "concatenated-alias",
+    );
+    const error = await assertRejects(
+      () => Promise.resolve().then(() => projectModule.load()),
+      Error,
+    );
+
+    assertInstanceOf(error, Error);
+    assertStringIncludes(error.message, "Computed #veryfront imports must use a string literal");
+  });
+
+  it("rejects a computed framework file URL before native resolution", async () => {
+    const projectModule = await loadTransformedProjectModule(
+      [
+        `const target = import.meta.resolve("#veryfront/agent/hosted/internal/control-plane-mcp-source.ts");`,
+        `export const load = () => import(target);`,
+      ].join("\n"),
+      "resolved-file-url",
+    );
+    const error = await assertRejects(
+      () => Promise.resolve().then(() => projectModule.load()),
+      Error,
+    );
+
+    assertInstanceOf(error, Error);
+    assertStringIncludes(error.message, "Computed framework imports must use a string literal");
+  });
+
+  it("preserves ordinary computed dynamic imports", async () => {
+    const projectModule = await loadTransformedProjectModule(
+      [
+        `const target = "data:text/javascript,export default 42";`,
+        `export const load = () => import(target);`,
+      ].join("\n"),
+      "computed-public",
+    );
+
+    assertEquals((await projectModule.load()).default, 42);
   });
 
   it("leaves an asset inside a dependency to the bare strategy", async () => {
