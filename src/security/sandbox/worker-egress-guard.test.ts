@@ -197,6 +197,22 @@ describe("worker-egress-guard", () => {
     });
   });
 
+  it("normalizes explicit allowlist entries for case and whitespace", async () => {
+    await assertWorkerHostEgressAllowed("api.veryfront.org", {
+      allowedInternalHosts: [" API.VERYFRONT.ORG "],
+      resolveHost: () => Promise.resolve(["10.255.128.3"]),
+    });
+    await assertRejects(
+      () =>
+        assertWorkerHostEgressAllowed("db.veryfront.org", {
+          allowedInternalHosts: [" API.VERYFRONT.ORG "],
+          resolveHost: () => Promise.resolve(["10.255.128.3"]),
+        }),
+      WorkerEgressBlockedError,
+      "blocked for host",
+    );
+  });
+
   it("requires hostname resolution by default", async () => {
     await assertRejects(
       () =>

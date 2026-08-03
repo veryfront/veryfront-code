@@ -4,6 +4,17 @@
  * Project workers need outbound network access for public API calls, but user
  * code must not reach host-internal networks or cloud metadata endpoints.
  *
+ * Self-hosted deployments can open narrow exceptions:
+ *
+ * - `VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS` (or the `allowedInternalHosts`
+ *   option, which takes precedence) holds a comma-separated list of hostnames
+ *   that may resolve to internal addresses. Entries and the requested host are
+ *   both normalized (trimmed, lowercased, IPv6 brackets stripped) before an
+ *   exact-match comparison; only the listed hosts bypass the guard.
+ * - `VERYFRONT_WORKER_ALLOW_INTERNAL_EGRESS` (or the `allowInternalEgress`
+ *   option) disables internal-address blocking entirely and should be reserved
+ *   for fully trusted self-hosted environments.
+ *
  * @module security/sandbox/worker-egress-guard
  */
 
@@ -247,7 +258,10 @@ function getAllowedInternalHosts(): string[] {
 }
 
 function isAllowedInternalHost(hostname: string, options: WorkerEgressGuardOptions): boolean {
-  const allowlist = options.allowedInternalHosts ?? getAllowedInternalHosts();
+  const entries = options.allowedInternalHosts ?? getAllowedInternalHosts();
+  const allowlist = entries.map((host) => normalizeInternalHost(host)).filter((host) =>
+    host.length > 0
+  );
   if (allowlist.length === 0) return false;
   return allowlist.includes(normalizeInternalHost(hostname));
 }
