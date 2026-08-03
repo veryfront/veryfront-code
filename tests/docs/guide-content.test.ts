@@ -128,6 +128,11 @@ describe("guide content contracts", () => {
 
     assertStringIncludes(guide, "exact allowed endpoints once at startup");
     assertStringIncludes(guide, "createRemoteMCPToolSourceWithTransport");
+    assertStringIncludes(
+      guide,
+      "function normalizeEndpoint(value: string): string | undefined",
+    );
+    assertStringIncludes(guide, "normalizeEndpoint(config.endpoint)");
     assertStringIncludes(guide, "return createRemoteMCPToolSource(config)");
     assertStringIncludes(guide, "complete normalized URL");
     assertStringIncludes(guide, "Never route a callback endpoint");

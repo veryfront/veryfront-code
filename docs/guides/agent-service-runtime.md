@@ -203,10 +203,22 @@ import {
   type RemoteMCPToolSourceConfig,
 } from "veryfront/tool";
 
+function normalizeEndpoint(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return;
+    if (url.username || url.password || url.search || url.hash) return;
+    return url.toString();
+  } catch {
+    return;
+  }
+}
+
 function requiredUrl(name: string): string {
   const value = process.env[name];
-  if (!value) throw new Error(`Missing ${name}`);
-  return new URL(value).toString();
+  const endpoint = value ? normalizeEndpoint(value) : undefined;
+  if (!endpoint) throw new Error(`Missing or invalid ${name}`);
+  return endpoint;
 }
 
 const hostFetch = globalThis.fetch.bind(globalThis);
@@ -217,11 +229,14 @@ const trustedEndpoints = new Set([
 
 await startAgentService({
   createRemoteToolSource(config: RemoteMCPToolSourceConfig) {
-    if (
-      typeof config.endpoint === "string" &&
-      trustedEndpoints.has(new URL(config.endpoint).toString())
-    ) {
-      return createRemoteMCPToolSourceWithTransport(config, hostFetch);
+    const endpoint = typeof config.endpoint === "string"
+      ? normalizeEndpoint(config.endpoint)
+      : undefined;
+    if (endpoint && trustedEndpoints.has(endpoint)) {
+      return createRemoteMCPToolSourceWithTransport(
+        { ...config, endpoint },
+        hostFetch,
+      );
     }
     return createRemoteMCPToolSource(config);
   },
