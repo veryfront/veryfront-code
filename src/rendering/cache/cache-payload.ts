@@ -714,10 +714,13 @@ function applyCacheDatePaths(
       fail("cache codec nodeMap Date path does not resolve");
     }
     const valuePath = path.slice(2);
-    entry[1] = replaceDateAtPath(entry[1], valuePath);
+    const serializedValue = entry[1];
+    const mapValue = payload.result.nodeMap.get(nodeId);
+    const hydratedValue = replaceDateAtPath(serializedValue, valuePath);
+    entry[1] = hydratedValue;
     payload.result.nodeMap.set(
       nodeId,
-      replaceDateAtPath(payload.result.nodeMap.get(nodeId), valuePath),
+      mapValue === serializedValue ? hydratedValue : replaceDateAtPath(mapValue, valuePath),
     );
   }
   return payload;
@@ -855,13 +858,9 @@ function buildCachePayload(value: unknown): CachePayload {
     fail("staleUntil cannot precede expiry");
   }
 
-  const resultNodeMap = nodeMapEntries === undefined ? undefined : new Map<number, unknown>(
-    nodeMapEntries.map(([key, entry]) => {
-      const cloned = cloneJsonValue(entry, state, 1);
-      if (cloned === undefined) fail("nodeMap values cannot be undefined");
-      return [key, cloned];
-    }),
-  );
+  const resultNodeMap = nodeMapEntries === undefined
+    ? undefined
+    : new Map<number, unknown>(nodeMapEntries);
 
   return {
     result: {
@@ -878,9 +877,7 @@ function buildCachePayload(value: unknown): CachePayload {
     storedAt,
     ...(expiresAt === undefined ? {} : { expiresAt }),
     ...(staleUntil === undefined ? {} : { staleUntil }),
-    ...(nodeMapEntries === undefined
-      ? {}
-      : { nodeMapEntries: nodeMapEntries.map(([key, entry]) => [key, entry]) }),
+    ...(nodeMapEntries === undefined ? {} : { nodeMapEntries }),
   };
 }
 

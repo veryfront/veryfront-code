@@ -3,6 +3,7 @@ import { OwnedRedisClientConnection } from "#veryfront/extensions/distributed/ow
 import type { RedisClient } from "#veryfront/extensions/distributed";
 import { rendererLogger } from "#veryfront/utils";
 import { MemoryCacheStore } from "./memory-store.ts";
+import { parseSerializedCachePayload, serializeCachePayload } from "../cache-payload.ts";
 
 const logger = rendererLogger.component("redis");
 
@@ -14,6 +15,8 @@ const FALLBACK_MAX_ENTRIES = 100;
 const REDIS_SCAN_COUNT = 100;
 /** Smaller scan batch size for clear operations (deletes each key inline) */
 const REDIS_CLEAR_SCAN_COUNT = 50;
+const COMPARE_AND_DELETE_SCRIPT =
+  'if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) else return 0 end';
 
 export interface RedisCacheStoreOptions {
   url?: string;
@@ -100,12 +103,7 @@ export class RedisCacheStore implements CacheStore {
       const raw = await client.get(this.storageKey(key));
       if (!raw) return undefined;
 
-      try {
-        return JSON.parse(raw) as CachePayload;
-      } catch (_) {
-        /* expected: cached data may be corrupted or malformed JSON */
-        return undefined;
-      }
+      return parseSerializedCachePayload(raw);
     } catch (error) {
       this.markRedisUnavailable();
 
@@ -126,7 +124,9 @@ export class RedisCacheStore implements CacheStore {
     try {
       const client = await this.ensureClient();
       // Apply TTL to prevent unbounded Redis growth
-      await client.set(this.storageKey(key), JSON.stringify(value), { EX: this.ttlSeconds });
+      await client.set(this.storageKey(key), serializeCachePayload(value), {
+        EX: this.ttlSeconds,
+      });
     } catch (error) {
       this.markRedisUnavailable();
 
@@ -157,6 +157,26 @@ export class RedisCacheStore implements CacheStore {
 
       logger.warn("delete failed, using fallback", { key, error });
       await this.getFallbackStore().delete(key);
+    }
+  }
+
+  async deleteIfUnchanged(key: string, expected: CachePayload): Promise<boolean> {
+    if (this.shouldUseFallback()) {
+      return await this.getFallbackStore().deleteIfUnchanged(key, expected);
+    }
+    if (this.shouldSkipRedis()) return false;
+
+    try {
+      const client = await this.ensureClient();
+      const deleted = await client.eval(COMPARE_AND_DELETE_SCRIPT, {
+        keys: [this.storageKey(key)],
+        arguments: [serializeCachePayload(expected)],
+      });
+      return deleted === 1;
+    } catch (error) {
+      this.markRedisUnavailable();
+      logger.warn("compare-and-delete failed", { key, error });
+      return false;
     }
   }
 

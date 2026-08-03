@@ -4,7 +4,8 @@ import type { RedisClient, RedisRuntimeProvider } from "#veryfront/extensions/di
 import { RedisRuntimeProviderName } from "#veryfront/extensions/distributed";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RedisCacheStore } from "./redis-store.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import type { CachePayload } from "../types.ts";
 
 async function withStoreTtlEnabled(fn: () => Promise<void>): Promise<void> {
   const previousGlobal = (globalThis as Record<string, unknown>).__vfDisableLruInterval;
@@ -134,6 +135,67 @@ describe("RedisCacheStore", () => {
   });
 
   describe("extension-owned Redis connection", () => {
+    it("preserves Dates and compare-deletes only the observed value", async () => {
+      let raw: string | null = null;
+      const client: RedisClient = {
+        ...createRedisClient(),
+        get: () => Promise.resolve(raw),
+        set: (_key, value) => {
+          raw = value;
+          return Promise.resolve("OK");
+        },
+        eval: (_script, options) => {
+          if (raw === options.arguments[0]) {
+            raw = null;
+            return Promise.resolve(1);
+          }
+          return Promise.resolve(0);
+        },
+      };
+      register(
+        RedisRuntimeProviderName,
+        createRedisProvider(client, () => Promise.resolve()),
+      );
+      const store = createStore({ keyPrefix: "render:" });
+      const observed: CachePayload = {
+        result: {
+          html: "<p>dated</p>",
+          frontmatter: {
+            publishedAt: new Date("2026-07-24T08:30:00.000Z"),
+          } as unknown as CachePayload["result"]["frontmatter"],
+          stream: null,
+        },
+        storedAt: Date.now(),
+      };
+      const replacement: CachePayload = {
+        result: { html: "<p>replacement</p>", frontmatter: {}, stream: null },
+        storedAt: Date.now() + 1,
+      };
+
+      try {
+        await store.set("dated-key", observed);
+        const roundTripped = await store.get("dated-key");
+        assertEquals(roundTripped?.result.frontmatter as unknown, {
+          publishedAt: new Date("2026-07-24T08:30:00.000Z"),
+        });
+
+        await store.set("dated-key", replacement);
+        assertExists(roundTripped);
+        assertEquals(
+          await store.deleteIfUnchanged("dated-key", roundTripped),
+          false,
+        );
+        const current = await store.get("dated-key");
+        assertEquals(current?.result.html, "<p>replacement</p>");
+        assertExists(current);
+        assertEquals(await store.deleteIfUnchanged("dated-key", current), true);
+        assertEquals(await store.get("dated-key"), undefined);
+      } finally {
+        await store.destroy();
+        unregister(RedisRuntimeProviderName);
+      }
+    });
+
     it("uses object-shaped SCAN results and closes its owned connection", async () => {
       const scanResults = [
         { cursor: 3, keys: ["render:a"] },

@@ -109,9 +109,10 @@ describe("CacheCoordinator", () => {
     const store: CacheStore = {
       get: () => Promise.resolve({} as CachePayload),
       set: () => Promise.resolve(),
-      delete: (key) => {
+      delete: () => Promise.reject(new Error("unsafe unconditional delete")),
+      deleteIfUnchanged: (key) => {
         deletedKey = key;
-        return Promise.resolve();
+        return Promise.resolve(true);
       },
       clear: () => Promise.resolve(),
       destroy: () => Promise.resolve(),
@@ -226,6 +227,39 @@ describe("CacheCoordinator", () => {
     assertEquals(evictionCalls, 1);
   });
 
+  it("bounds distinct hung evictions", async () => {
+    let evictionCalls = 0;
+    const capacityReached = Promise.withResolvers<void>();
+    const store: CacheStore = {
+      get: () => Promise.resolve({} as CachePayload),
+      set: () => Promise.resolve(),
+      delete: () => Promise.reject(new Error("unsafe unconditional delete")),
+      deleteIfUnchanged: () => {
+        evictionCalls++;
+        if (evictionCalls === 128) capacityReached.resolve();
+        return new Promise<boolean>(() => {});
+      },
+      clear: () => Promise.resolve(),
+      destroy: () => Promise.resolve(),
+    };
+    const coordinator = new CacheCoordinator({ store, projectId: "project" });
+
+    const lookups = await withTimeoutThrow(
+      Promise.all(
+        Array.from(
+          { length: 129 },
+          (_, index) => coordinator.checkCache(`malformed-${index}`),
+        ),
+      ),
+      1_000,
+      "bounded corrupt-cache lookups",
+    );
+    await withTimeoutThrow(capacityReached.promise, 1_000, "eviction capacity");
+
+    assertEquals(lookups.every((lookup) => lookup.cacheStatus === "miss"), true);
+    assertEquals(evictionCalls, 128);
+  });
+
   it("skips caching when a result cannot be snapshotted", async () => {
     let setCalls = 0;
     const data = new Map<string, CachePayload>();
@@ -293,6 +327,30 @@ describe("CacheCoordinator", () => {
     const coordinator = new CacheCoordinator({ store, projectId: "hostile" });
 
     await coordinator.persistResult(makeResult("<html>ok</html>"), "written");
+  });
+
+  it("contains a revoked-proxy eviction failure", async () => {
+    const attempted = Promise.withResolvers<void>();
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+    const store: CacheStore = {
+      get: () => Promise.resolve({} as CachePayload),
+      set: () => Promise.resolve(),
+      delete: () => Promise.reject(new Error("unsafe unconditional delete")),
+      deleteIfUnchanged: () => {
+        attempted.resolve();
+        return Promise.reject(revoked.proxy);
+      },
+      clear: () => Promise.resolve(),
+      destroy: () => Promise.resolve(),
+    };
+    const coordinator = new CacheCoordinator({ store, projectId: "hostile-eviction" });
+
+    const lookup = await coordinator.checkCache("malformed");
+    await withTimeoutThrow(attempted.promise, 1_000, "revoked-proxy eviction attempt");
+    await delay(0);
+
+    assertEquals(lookup.cacheStatus, "miss");
   });
 
   it("preserves Date frontmatter across a serializing store round-trip", async () => {
@@ -444,7 +502,11 @@ describe("CacheCoordinator", () => {
   });
 
   it("preserves the public zero-TTL non-expiring contract", async () => {
-    const coordinator = new CacheCoordinator({ ttlMs: 0, projectId: "non-expiring" });
+    const coordinator = new CacheCoordinator({
+      ttlMs: 0,
+      staleMs: 500,
+      projectId: "non-expiring",
+    });
 
     await coordinator.persistResult(makeResult("still fresh"), "zero-ttl");
     const lookup = await coordinator.checkCache("zero-ttl");
