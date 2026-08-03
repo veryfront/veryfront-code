@@ -40,6 +40,16 @@ const expectedRuntimeExports = [
   "useToolCall",
   "useReasoning",
   "ChatInput",
+  "ChatInputAttach",
+  "ChatInputExport",
+  "ChatInputField",
+  "ChatInputModel",
+  "ChatInputRoot",
+  "ChatInputSend",
+  "ChatInputStop",
+  "ChatInputSubmit",
+  "ChatInputToolbar",
+  "ChatInputVoice",
   "AgentAvatar",
   "AgentPicker",
   "ChatActions",
@@ -161,6 +171,15 @@ const expectedRuntimeExports = [
   "useModelSelector",
   "useStepIndicator",
   "useAttachmentsPanel",
+  // RFC 2980 canonical hook + context surface (additive).
+  "ChatInputContextProvider",
+  "mergeProps",
+  "useChatInput",
+  "useChatInputContext",
+  "useChatInputContextOptional",
+  "useChatScroll",
+  "useChatSidebarItem",
+  "useMessageBranches",
 ].sort();
 
 describe("chat/index.ts exports", () => {
@@ -195,9 +214,44 @@ describe("chat/index.ts exports", () => {
     );
   });
 
-  it("exports conversation chat through both component chat aliases", () => {
+  it("exports each ChatInput leaf as the same function through every chat barrel", () => {
+    const parts = [
+      ["ChatInputRoot", "Root"],
+      ["ChatInputField", "Field"],
+      ["ChatInputSend", "Send"],
+      ["ChatInputStop", "Stop"],
+      ["ChatInputSubmit", "Submit"],
+      ["ChatInputVoice", "Voice"],
+      ["ChatInputModel", "Model"],
+      ["ChatInputAttach", "Attach"],
+      ["ChatInputExport", "Export"],
+      ["ChatInputToolbar", "Toolbar"],
+    ] as const;
+    for (const [flatName, partName] of parts) {
+      assertEquals(chatModule[flatName], chatModule.ChatInput[partName]);
+      assertEquals(chatModule[flatName], chatUI[flatName]);
+      assertEquals(chatModule[flatName], componentsChatModule[flatName]);
+      assertEquals(chatModule[flatName], reactComponentsChatModule[flatName]);
+    }
+  });
+
+  it("exports conversation chat and canonical hooks through both component aliases", () => {
     assertEquals(componentsChatModule.useConversationChat, chatUI.useConversationChat);
     assertEquals(reactComponentsChatModule.useConversationChat, chatUI.useConversationChat);
+    for (
+      const name of [
+        "ChatInputContextProvider",
+        "mergeProps",
+        "useChatInput",
+        "useChatInputContext",
+        "useChatInputContextOptional",
+        "useChatScroll",
+        "useMessageBranches",
+      ] as const
+    ) {
+      assertEquals(componentsChatModule[name], chatUI[name]);
+      assertEquals(reactComponentsChatModule[name], chatUI[name]);
+    }
   });
 
   it("exposes only canonical render-or-compose component names", () => {

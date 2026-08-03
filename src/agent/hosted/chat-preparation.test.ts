@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
+import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import type { HistoricalToolInputCompactionDiagnostic } from "#veryfront/chat/message-prep.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
@@ -978,7 +979,7 @@ Deno.test("prepareHostedChatExecution compacts oversized context and appends a d
   const appendedBodies: unknown[] = [];
   globalThis.fetch = (input, init): Promise<Response> => {
     if (input.toString().endsWith("/events")) {
-      appendedBodies.push(JSON.parse(String(init?.body ?? "{}")));
+      appendedBodies.push(JSON.parse(String(observeFetchRequestInit(init).body ?? "{}")));
       return Promise.resolve(
         new Response(
           JSON.stringify({
@@ -1280,7 +1281,7 @@ Deno.test("prepareHostedChatExecution aborts stalled signed attachment fetch bef
     }
     if (url === "https://signed.example.com/notes.txt") {
       resolveSignedFetchStarted?.();
-      return pendingResponseUntilAbort(init?.signal);
+      return pendingResponseUntilAbort(observeFetchRequestInit(init).signal);
     }
 
     return Promise.reject(new Error(`unexpected fetch ${url}`));

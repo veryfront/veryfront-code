@@ -210,12 +210,6 @@ export {
   type UseAttachmentsStorageState,
 } from "./hooks/use-uploads-registry.ts";
 export {
-  useStickToBottom,
-  type UseStickToBottomOptions,
-  type UseStickToBottomResult,
-} from "./hooks/use-stick-to-bottom.ts";
-
-export {
   extractSourcesFromParts,
   getTextContent,
   groupPartsInOrder,
@@ -240,8 +234,6 @@ export {
   ChatIf,
   type ChatIfProps,
   ChatInput,
-  type ChatInputExportProps,
-  type ChatInputProps,
   ChatMessageList,
   type ChatMessageListContentProps,
   type ChatMessageListProps,
@@ -257,10 +249,13 @@ export {
   type ModelAvatarProps,
   type TokenRowProps,
 } from "./composition/api.tsx";
+export type * from "./composition/chat-composer.types.ts";
 
 export {
   ChatContextProvider,
   type ChatContextValue,
+  ChatInputContextProvider,
+  type ChatInputContextValue,
   ComposerContextProvider,
   type ComposerContextValue,
   MessageContextProvider,
@@ -268,13 +263,16 @@ export {
   type MessagePartsData,
   useChatContext,
   useChatContextOptional,
+  useChatInputContext,
+  useChatInputContextOptional,
   useComposerContext,
   useComposerContextOptional,
+  useMessageBranches,
+  type UseMessageBranchesResult,
   useMessageContext,
   useMessageContextOptional,
   useMessageParts,
 } from "./contexts/index.ts";
 
-// ChatProps: preset interface, re-exported here to preserve the public surface.
 export type { ChatAgentInfo, ChatProps } from "./chat-props.ts";
 export { Chat } from "./chat-preset.tsx";

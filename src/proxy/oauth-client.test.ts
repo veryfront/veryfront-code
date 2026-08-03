@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
+import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import { stub } from "#std/testing/mock";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
 
@@ -264,7 +265,7 @@ describe("OAuth Client", () => {
       using _fetch = stub(
         globalThis,
         "fetch",
-        (_input, init) => Promise.reject(init?.signal?.reason),
+        (_input, init) => Promise.reject(observeFetchRequestInit(init).signal?.reason),
       );
       const { fetchOAuthToken } = await import("./oauth-client.ts");
       const controller = new AbortController();
@@ -335,7 +336,7 @@ describe("OAuth Client", () => {
         "fetch",
         (_input, init) =>
           new Promise<Response>((_resolve, reject) => {
-            const signal = init?.signal;
+            const signal = observeFetchRequestInit(init).signal;
             if (!signal) throw new Error("Expected an OAuth request abort signal");
             signal.addEventListener(
               "abort",

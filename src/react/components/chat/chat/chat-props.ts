@@ -65,10 +65,14 @@ export interface ChatProps {
    */
   chat?: UseChatResult;
 
+  /** Placeholder text for the composer's input field. */
   placeholder?: string;
+  /** Max height of the chat surface, as a CSS length (e.g. `"80vh"`). */
   maxHeight?: string;
   className?: string;
+  /** Partial overrides for the chat theme (per-slot class names). */
   theme?: Partial<ChatTheme>;
+  /** Custom renderer for a message; falls back to the default message rendering. */
   renderMessage?: (message: ChatMessage) => React.ReactNode;
   /**
    * Prompt suggestions for an empty thread. Also fillable via
@@ -107,6 +111,7 @@ export interface ChatProps {
    * in app mode (`agentId`) it's filled from agent metadata automatically.
    */
   agent?: ChatAgentInfo;
+  /** Called when a source citation is clicked (the source + its index). */
   onSourceClick?: (source: Source, index: number) => void;
   /**
    * The composer's `+` menu and drag-to-attach are on by default — `<Chat>`
@@ -119,15 +124,23 @@ export interface ChatProps {
    * required); set this to store files durably (e.g. `"/api/uploads"`).
    */
   uploadApi?: string;
+  /** Handle files chosen via the composer's `+` menu. */
   onAttach?: (files: FileList) => void;
+  /** Open a document picker (the composer's "Select document" menu item). */
   onSelectAttachment?: () => void;
+  /** Handle files dropped onto the composer. Defaults to `onAttach`. */
   onDrop?: (files: FileList) => void;
+  /** `accept` filter for the composer's file input (e.g. `"image/*"`). */
   attachAccept?: string;
+  /** Controlled list of pending attachments shown above the composer. */
   attachments?: AttachmentInfo[];
+  /** Remove a pending attachment by id. */
   onRemoveAttachment?: (id: string) => void;
+  /** Called when the user rates an assistant message (thumbs up/down). */
   onFeedback?: (messageId: string, feedback: FeedbackValue) => void;
   /** Leading composer-toolbar slot (e.g. an `<AgentPicker>`). */
   toolbarStart?: React.ReactNode;
+  /** Extra content rendered inside the chat surface. */
   children?: React.ReactNode;
 
   /** React 19: ref is a regular prop. */

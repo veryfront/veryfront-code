@@ -11,7 +11,14 @@
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
-import { type ReactElement, useState } from "react";
+import {
+  type AnchorHTMLAttributes,
+  type ButtonHTMLAttributes,
+  createElement,
+  forwardRef,
+  type ReactElement,
+  useState,
+} from "react";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
@@ -101,8 +108,8 @@ describe("ChatActions — render-or-compose", () => {
   it("recompose: a custom Trigger renders in place of the default", () => {
     const html = renderToString(
       <ChatActions.Root>
-        <ChatActions.Trigger>
-          <button type="button">custom-trigger</button>
+        <ChatActions.Trigger className="vf-custom-trigger">
+          <button type="button" className="consumer-trigger">custom-trigger</button>
         </ChatActions.Trigger>
         <ChatActions.Content>
           <ChatActions.Item onSelect={() => {}}>Row</ChatActions.Item>
@@ -111,10 +118,107 @@ describe("ChatActions — render-or-compose", () => {
     );
     // The composed trigger renders; the default `+` button does not.
     assertStringIncludes(html, "custom-trigger");
+    assertStringIncludes(html, "vf-custom-trigger");
+    assertStringIncludes(html, "consumer-trigger");
     assert(
       !html.includes("Add attachments and settings"),
       "custom Trigger must replace the default `+` button",
     );
+  });
+
+  it("defaults only native button triggers and leaves opaque semantics to the child", () => {
+    const OpaqueAnchor = forwardRef<
+      HTMLAnchorElement,
+      AnchorHTMLAttributes<HTMLAnchorElement>
+    >((props, ref) => <a {...props} ref={ref} />);
+    const OpaqueButton = forwardRef<
+      HTMLButtonElement,
+      ButtonHTMLAttributes<HTMLButtonElement>
+    >((props, ref) => <button {...props} ref={ref} />);
+
+    const intrinsicButton = renderToString(
+      <ChatActions.Root>
+        <ChatActions.Trigger>
+          {createElement("button", null, "intrinsic")}
+        </ChatActions.Trigger>
+        <ChatActions.Content />
+      </ChatActions.Root>,
+    );
+    const opaqueButton = renderToString(
+      <ChatActions.Root>
+        <ChatActions.Trigger>
+          <OpaqueButton>opaque</OpaqueButton>
+        </ChatActions.Trigger>
+        <ChatActions.Content />
+      </ChatActions.Root>,
+    );
+    const ownedOpaqueButton = renderToString(
+      <ChatActions.Root>
+        <ChatActions.Trigger>
+          <OpaqueButton type="button">owned opaque</OpaqueButton>
+        </ChatActions.Trigger>
+        <ChatActions.Content />
+      </ChatActions.Root>,
+    );
+    const anchor = renderToString(
+      <ChatActions.Root>
+        <ChatActions.Trigger>
+          <a href="#actions">anchor</a>
+        </ChatActions.Trigger>
+        <ChatActions.Content />
+      </ChatActions.Root>,
+    );
+    const opaqueAnchor = renderToString(
+      <ChatActions.Root>
+        <ChatActions.Trigger>
+          <OpaqueAnchor href="#actions">opaque anchor</OpaqueAnchor>
+        </ChatActions.Trigger>
+        <ChatActions.Content />
+      </ChatActions.Root>,
+    );
+
+    assertStringIncludes(intrinsicButton, 'type="button"');
+    assert(!/<button\b[^>]*\btype=/.test(opaqueButton));
+    assertStringIncludes(ownedOpaqueButton, 'type="button"');
+    assert(!/<a\b[^>]*\btype=/.test(anchor), "anchor triggers must not receive button type");
+    assert(
+      !/<a\b[^>]*\btype=/.test(opaqueAnchor),
+      "opaque anchor triggers must not receive button type",
+    );
+  });
+
+  it("keeps a custom button trigger from submitting its containing form", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { pretendToBeVisual: true, url: "https://example.com/" },
+    );
+    const restore = installDom(dom);
+    const root = createRoot(document.getElementById("root")!);
+    let submissions = 0;
+
+    try {
+      flushSync(() => {
+        root.render(
+          <form onSubmit={() => submissions += 1}>
+            <ChatActions.Root>
+              <ChatActions.Trigger>
+                {createElement("button", null, "Open actions")}
+              </ChatActions.Trigger>
+              <ChatActions.Content />
+            </ChatActions.Root>
+          </form>,
+        );
+      });
+      const trigger = document.querySelector<HTMLButtonElement>("button");
+      assert(trigger);
+      trigger.click();
+
+      assertEquals(trigger.type, "button");
+      assertEquals(submissions, 0);
+    } finally {
+      await unmount(root);
+      restore();
+    }
   });
 
   it("Trigger className merges onto the default `+` button", () => {

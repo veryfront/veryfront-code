@@ -7,7 +7,11 @@
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
-import { createAnchoredSurfaceParts } from "./anchored-surface.tsx";
+import {
+  type AnchoredSlottedTriggerProps,
+  type AnchoredTriggerPublicProps,
+  createAnchoredSurfaceParts,
+} from "./anchored-surface.tsx";
 
 // Per-skin context + machinery -- distinct from DropdownMenu's instance so
 // a DropdownMenu nested inside a Popover cannot accidentally close the Popover.
@@ -31,10 +35,18 @@ export function Popover(props: PopoverProps): React.ReactElement {
  * Trigger — toggles the popover; the positioning anchor. `asChild` merges onto
  * the child element, which must forward `ref` to its DOM node.
  */
-export function PopoverTrigger(
-  props:
-    & React.ButtonHTMLAttributes<HTMLButtonElement>
-    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> },
+export interface PopoverTriggerProps extends AnchoredTriggerPublicProps {}
+
+/** Literal slotted trigger contract with an element-specific ref. */
+export type PopoverSlottedTriggerProps<T extends HTMLElement = HTMLElement> =
+  AnchoredSlottedTriggerProps<T>;
+
+export function PopoverTrigger<T extends HTMLElement = HTMLElement>(
+  props: PopoverSlottedTriggerProps<T>,
+): React.ReactElement;
+export function PopoverTrigger(props: PopoverTriggerProps): React.ReactElement;
+export function PopoverTrigger<T extends HTMLElement = HTMLElement>(
+  props: PopoverTriggerProps | PopoverSlottedTriggerProps<T>,
 ): React.ReactElement {
   return <_Trigger {...props} haspopup="dialog" />;
 }
@@ -43,6 +55,8 @@ export function PopoverTrigger(
 export interface PopoverContentProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Horizontal alignment relative to the trigger. */
   align?: "start" | "end";
+  /** Consumer ref for the rendered popover surface. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** Popover surface — rendered below the trigger while open. */
