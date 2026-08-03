@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { validateDevFilePath } from "./path-validator.ts";
 import { toBase64Url } from "#veryfront/utils/path-utils.ts";
@@ -108,17 +108,18 @@ describe("server/handlers/dev/files/path-validator", () => {
       ["a plain ENOENT-shaped rejection", Object.freeze({ code: "ENOENT" })],
     ] as const
   ) {
-    it(`should propagate ${label} from stat unchanged`, async () => {
+    it(`should fail closed on ${label} from stat`, async () => {
       const encoded = toBase64Url("src/foo.ts");
       const ctx = makeCtx("/project", () => Promise.reject(failure));
 
-      const actual = await assertRejects(() => validateDevFilePath(encoded, ctx));
+      const result = await validateDevFilePath(encoded, ctx);
 
-      assertStrictEquals(actual, failure);
+      assertEquals(result, { kind: "rejected", message: "File not accessible" });
+      assertEquals(Object.isFrozen(result), true);
     });
   }
 
-  it("should propagate a hostile stat rejection without invoking its hooks", async () => {
+  it("should fail closed on a hostile stat rejection without invoking its hooks", async () => {
     const failure = new Proxy({}, {
       get() {
         throw new Error("stat rejection must not be read");
@@ -130,13 +131,8 @@ describe("server/handlers/dev/files/path-validator", () => {
     const encoded = toBase64Url("src/foo.ts");
     const ctx = makeCtx("/project", () => Promise.reject(failure));
 
-    let actual: unknown;
-    try {
-      await validateDevFilePath(encoded, ctx);
-    } catch (error) {
-      actual = error;
-    }
+    const result = await validateDevFilePath(encoded, ctx);
 
-    assertEquals(Object.is(actual, failure), true);
+    assertEquals(result, { kind: "rejected", message: "File not accessible" });
   });
 });

@@ -15,5 +15,9 @@ describe("development UI shells", () => {
     }
     assertStringIncludes(DASHBOARD_SHELL_HTML, `${DEV_UI_KIND_ATTRIBUTE}="dashboard"`);
     assertStringIncludes(PROJECTS_SHELL_HTML, `${DEV_UI_KIND_ATTRIBUTE}="projects"`);
+    // Each shell must delegate to its exact extension-owned bundle endpoint,
+    // not merely avoid the blacklisted asset sources above.
+    assertStringIncludes(DASHBOARD_SHELL_HTML, 'src="/_dev/ui/index.js"');
+    assertStringIncludes(PROJECTS_SHELL_HTML, 'src="/_projects/ui/index.js"');
   });
 });

@@ -27,12 +27,22 @@ import {
 } from "#veryfront/release-assets/route-path.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
+function escapeRegExpLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Presence checks are scoped to real stylesheet markup: a token-bounded `id`
+// attribute on a <link>/<style> element and stylesheet hrefs on <link>
+// elements. Bare substrings such as `data-id="..."`, `data-href="..."`, or a
+// CSS URL in ordinary text must not suppress the required injection. The
+// configured ids are regex-escaped before interpolation.
 const PROJECT_STYLESHEET_ID_PATTERNS = PROJECT_STYLESHEET_IDS.map((id) =>
-  new RegExp(`id=["']${id}["']`, "i")
+  new RegExp(`<(?:link|style)\\b[^>]*\\sid=["']${escapeRegExpLiteral(id)}["']`, "i")
 );
 const PREVIEW_PROJECT_STYLESHEET_PATTERN =
-  /href=["'][^"']*\/_vf_styles\/styles\.css(?:\?[^"']*)?["']/i;
-const PRODUCTION_PROJECT_STYLESHEET_PATTERN = /href=["'][^"']*\/_vf\/css\/[^"']+\.css["']/i;
+  /<link\b[^>]*\shref=["'][^"']*\/_vf_styles\/styles\.css(?:\?[^"']*)?["']/i;
+const PRODUCTION_PROJECT_STYLESHEET_PATTERN =
+  /<link\b[^>]*\shref=["'][^"']*\/_vf\/css\/[^"']+\.css["']/i;
 
 export interface InjectHTMLContentOptions {
   mode: string;

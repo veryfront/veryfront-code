@@ -65,8 +65,13 @@ export async function validateDevFilePath(
     const info = await ctx.adapter.fs.stat(absPath);
     if (!info.isFile) return rejected("Not a file");
   } catch (error) {
-    if (!isCanonicalNotFoundError(error)) throw error;
-    return rejected("File not found");
+    if (isCanonicalNotFoundError(error)) return rejected("File not found");
+    // Fail closed: a stat fault (EACCES, EIO, hostile rejections, ...) makes
+    // the path just as unreadable as canonical absence. Mapping it to a
+    // rejection keeps the handler on its no-store 404 error-module path
+    // instead of letting infrastructure faults escape to a generic 500 that
+    // would distinguish inaccessible paths from absent ones.
+    return rejected("File not accessible");
   }
 
   return ready(absPath);

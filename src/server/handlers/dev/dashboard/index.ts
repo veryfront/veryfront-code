@@ -129,7 +129,13 @@ export class DevDashboardHandler extends BaseHandler {
     }
 
     if (pathname.startsWith("/_dev/api/")) {
-      if (req.method === "POST" && !hasValidDashboardMutationSession(req)) {
+      // Gate every method that is not a plain read. Only POST routes exist
+      // today, but keying the session check to "not GET/HEAD" (rather than
+      // "is POST") makes the fail-closed property structural: a future
+      // PUT/PATCH/DELETE route — and unrouted methods such as OPTIONS —
+      // cannot silently bypass the double-submit mutation session.
+      const isReadMethod = req.method === "GET" || req.method === "HEAD";
+      if (!isReadMethod && !hasValidDashboardMutationSession(req)) {
         cancelRejectedLocalControlRequestBody(req, "Dashboard mutation session rejected");
         const response = errorResponse("Dashboard mutation requires a valid session", 403);
         response.headers.set("Cache-Control", "no-store");

@@ -69,6 +69,24 @@ Ambiguous environment configuration fails closed. Unauthorized responses are
 non-cacheable and receive the resolved CORS and security policy. Credential
 verification uses constant-time comparison.
 
+### Local development control surfaces
+
+The `/_dev` dashboard and its API form a privileged local-only surface. A
+request is admitted only from a transport-authenticated loopback peer with no
+forwarding headers and an untrusted proxy topology, addressed by literal
+loopback or a canonical local-development hostname (see
+[`http/local-control-request.ts`](./http/local-control-request.ts)); mutations
+additionally require a port-scoped double-submit session issued to the trusted
+shell.
+
+When Fetch Metadata is present, only `sec-fetch-site: none` (address bar or
+bookmark navigation) and `same-origin` requests pass. A link from a rendered
+project site such as `project.lvh.me:3000` to `lvh.me:3000/_dev` is same-site
+but cross-origin and is rejected with `403` by design: sibling local origins
+execute untrusted project code and must not be able to drive the privileged
+dashboard. Open the dashboard directly instead; this is intended behavior,
+not a lockout bug.
+
 ### Shared proxy identity and project environments
 
 Production shared-proxy mode requires an operator-owned, private edge and

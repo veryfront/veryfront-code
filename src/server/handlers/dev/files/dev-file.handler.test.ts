@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
-import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { base64urlEncode } from "#veryfront/utils/base64url.ts";
@@ -404,7 +404,7 @@ describe("server/handlers/dev/files/dev-file.handler operational failures", () =
       ["a plain ENOENT-shaped rejection", Object.freeze({ code: "ENOENT" })],
     ] as const
   ) {
-    it(`propagates ${label} from stat before snapshot or bundling`, async () => {
+    it(`fails closed on ${label} from stat before snapshot or bundling`, async () => {
       setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
       const events: string[] = [];
       const adapter = createMockAdapter();
@@ -419,14 +419,20 @@ describe("server/handlers/dev/files/dev-file.handler operational failures", () =
         return Promise.resolve("export default null;");
       });
 
-      const actual = await assertRejects(() => handler.handle(devFileRequest(), ctx));
+      const result = await handler.handle(devFileRequest(), ctx);
 
-      assertStrictEquals(actual, failure);
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 404);
+      assertEquals(result.response?.headers.get("cache-control"), "no-store");
+      assertEquals(
+        await result.response?.text(),
+        "export default null; // File not accessible",
+      );
       assertEquals(events, []);
     });
   }
 
-  it("propagates a hostile stat rejection without hooks, snapshot, or bundling", async () => {
+  it("fails closed on a hostile stat rejection without hooks, snapshot, or bundling", async () => {
     setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
     const failure = new Proxy({}, {
       get() {
@@ -449,14 +455,14 @@ describe("server/handlers/dev/files/dev-file.handler operational failures", () =
       return Promise.resolve("export default null;");
     });
 
-    let actual: unknown;
-    try {
-      await handler.handle(devFileRequest(), ctx);
-    } catch (error) {
-      actual = error;
-    }
+    const result = await handler.handle(devFileRequest(), ctx);
 
-    assertEquals(Object.is(actual, failure), true);
+    assertEquals(result.continue, false);
+    assertEquals(result.response?.status, 404);
+    assertEquals(
+      await result.response?.text(),
+      "export default null; // File not accessible",
+    );
     assertEquals(events, []);
   });
 

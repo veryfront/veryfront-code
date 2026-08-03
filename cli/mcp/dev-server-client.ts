@@ -102,23 +102,52 @@ export class DevServerClient {
     return this.pull("/_dev/api/stats");
   }
 
-  async triggerHmr(path?: string): Promise<unknown> {
-    const session = await this.ensureDashboardMutationSession();
-    return await this.pull("/_dev/api/hmr-trigger", {
+  triggerHmr(path?: string): Promise<unknown> {
+    return this.mutate("/_dev/api/hmr-trigger", JSON.stringify(path ? { path } : {}));
+  }
+
+  private async mutate(path: string, body: string): Promise<unknown> {
+    const buildInit = (
+      session: { cookieHeader: string; csrfToken: string },
+    ): RequestInit => ({
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Cookie": session.cookieHeader,
         [DASHBOARD_CSRF_HEADER_NAME]: session.csrfToken,
       },
-      body: JSON.stringify(path ? { path } : {}),
+      body,
     });
+
+    const session = await this.ensureDashboardMutationSession();
+    let response = await this.fetchWithRetries(path, buildInit(session));
+
+    // The server's dashboard session token lives for its process lifetime, so
+    // a dev-server restart while this MCP process stays up invalidates the
+    // cached credential and yields HTTP 403. Discard the stale session,
+    // re-bootstrap once, and retry the mutation exactly once.
+    if (response.status === 403) {
+      try {
+        await response.body?.cancel();
+      } catch {
+        // Response-stream cancellation is best-effort cleanup.
+      }
+      this.dashboardSession = undefined;
+      const freshSession = await this.ensureDashboardMutationSession();
+      response = await this.fetchWithRetries(path, buildInit(freshSession));
+    }
+
+    await this.throwForHttpError(path, response);
+    return await this.readSuccessBody(response);
   }
 
   private async pull(path: string, init?: RequestInit): Promise<unknown> {
     const response = await this.fetchWithRetries(path, init);
     await this.throwForHttpError(path, response);
+    return await this.readSuccessBody(response);
+  }
 
+  private async readSuccessBody(response: Response): Promise<unknown> {
     const mediaType = response.headers.get("content-type")
       ?.split(";", 1)[0]
       ?.trim()

@@ -164,6 +164,90 @@ describe("mcp/dev-server-client", () => {
           await server.finished;
         }
       });
+
+      it("re-bootstraps the session once and retries after a restart-invalidated 403", async () => {
+        let serverToken = "token-before-restart";
+        let sessionBootstraps = 0;
+        const mutationTokens: Array<string | null> = [];
+
+        await withLocalServer(
+          async (request) => {
+            const { pathname } = new URL(request.url);
+            if (pathname === DASHBOARD_SESSION_PATH) {
+              sessionBootstraps++;
+              return new Response(null, {
+                status: 204,
+                headers: { "set-cookie": `vf_dashboard_session_test=${serverToken}; Path=/_dev` },
+              });
+            }
+            if (pathname === "/_dev/api/hmr-trigger") {
+              await request.body?.cancel();
+              const presented = request.headers.get("x-veryfront-dashboard-csrf");
+              mutationTokens.push(presented);
+              if (presented !== serverToken) {
+                return new Response("Dashboard mutation requires a valid session", {
+                  status: 403,
+                });
+              }
+              return Response.json({ success: true, token: presented });
+            }
+            return Response.json({ error: "not found" }, { status: 404 });
+          },
+          async (port) => {
+            const client = new DevServerClient({ port });
+
+            assertEquals(await client.triggerHmr("app/page.tsx"), {
+              success: true,
+              token: "token-before-restart",
+            });
+            assertEquals(sessionBootstraps, 1);
+
+            // Simulate a dev-server restart: the process-lifetime session
+            // token changes while the MCP client keeps its cached session.
+            serverToken = "token-after-restart";
+
+            assertEquals(await client.triggerHmr("app/page.tsx"), {
+              success: true,
+              token: "token-after-restart",
+            });
+            assertEquals(sessionBootstraps, 2);
+            assertEquals(mutationTokens, [
+              "token-before-restart",
+              "token-before-restart",
+              "token-after-restart",
+            ]);
+          },
+        );
+      });
+
+      it("retries a rejected mutation exactly once before surfacing the 403", async () => {
+        let sessionBootstraps = 0;
+        let mutationAttempts = 0;
+
+        await withLocalServer(
+          async (request) => {
+            const { pathname } = new URL(request.url);
+            if (pathname === DASHBOARD_SESSION_PATH) {
+              sessionBootstraps++;
+              return new Response(null, {
+                status: 204,
+                headers: { "set-cookie": `vf_dashboard_session_test=denied; Path=/_dev` },
+              });
+            }
+            await request.body?.cancel();
+            mutationAttempts++;
+            return new Response("Dashboard mutation requires a valid session", { status: 403 });
+          },
+          async (port) => {
+            const client = new DevServerClient({ port });
+
+            await assertRejects(() => client.triggerHmr(), Error, "HTTP 403");
+
+            assertEquals(sessionBootstraps, 2);
+            assertEquals(mutationAttempts, 2);
+          },
+        );
+      });
     });
 
     describe("DevServerClientOptions interface", () => {

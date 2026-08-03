@@ -249,6 +249,58 @@ describe("DevDashboardHandler admission", () => {
     assertEquals(validSession.status, 200);
   });
 
+  it("requires the mutation session for every non-read API method", async () => {
+    const handler = new DevDashboardHandler(DEV_UI_PROVIDER);
+
+    for (const method of ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"]) {
+      const response = (await handler.handle(
+        requestFromPeer(
+          new Request("http://localhost/_dev/api/hmr-trigger", {
+            method,
+            headers: { host: "localhost" },
+            ...(method === "OPTIONS" ? {} : { body: "{}" }),
+          }),
+        ),
+        localContext(),
+      )).response!;
+
+      assertEquals(response.status, 403, method);
+      assertEquals(response.headers.get("cache-control"), "no-store", method);
+    }
+
+    const sessionResponse = (await handler.handle(
+      dashboardRequest(`http://localhost${DASHBOARD_SESSION_PATH}`),
+      localContext(),
+    )).response!;
+    const cookiePair = (sessionResponse.headers.get("set-cookie") ?? "").split(";", 1)[0] ?? "";
+    const token = cookiePair.slice(cookiePair.indexOf("=") + 1);
+
+    // With a valid session, unrouted mutation methods fall through to the
+    // API router's 404 rather than being rejected by the session gate.
+    const unroutedMethod = (await handler.handle(
+      requestFromPeer(
+        new Request("http://localhost/_dev/api/hmr-trigger", {
+          method: "PUT",
+          headers: {
+            host: "localhost",
+            cookie: cookiePair,
+            [DASHBOARD_CSRF_HEADER_NAME]: token,
+          },
+          body: "{}",
+        }),
+      ),
+      localContext(),
+    )).response!;
+    assertEquals(unroutedMethod.status, 404);
+
+    // Reads remain admitted without the mutation session.
+    const readWithoutSession = (await handler.handle(
+      dashboardRequest("http://localhost/_dev/api/stats"),
+      localContext(),
+    )).response!;
+    assertEquals(readWithoutSession.status, 200);
+  });
+
   it("serves only the captured local bundle and fails closed without it", async () => {
     const handler = new DevDashboardHandler(DEV_UI_PROVIDER);
     const getResponse = (await handler.handle(
