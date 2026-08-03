@@ -1,4 +1,8 @@
-import { type JsonSnapshotValue, readRecord, snapshotJsonValue } from "veryfront/provider/shared";
+import {
+  type JsonSnapshotValue,
+  readRecord,
+  snapshotProviderJsonValue,
+} from "veryfront/provider/shared";
 import {
   createGoogleToolCallCorrelationRegistry,
   type GoogleSupportedPartDataField,
@@ -19,7 +23,7 @@ const GOOGLE_PROVIDER_METADATA_SNAPSHOT_OPTIONS = {
 } as const;
 
 function snapshotGoogleProviderMetadata(value: unknown): JsonSnapshotValue {
-  return snapshotJsonValue(value, GOOGLE_PROVIDER_METADATA_SNAPSHOT_OPTIONS);
+  return snapshotProviderJsonValue(value, GOOGLE_PROVIDER_METADATA_SNAPSHOT_OPTIONS);
 }
 
 function asSnapshotRecord(value: JsonSnapshotValue): Record<string, unknown> | undefined {
