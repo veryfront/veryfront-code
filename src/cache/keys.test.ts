@@ -339,6 +339,36 @@ describe("cache/keys", () => {
       assertEquals(environment.includes("environment:Production:release-1"), true);
       assertEquals(release.includes("release:release-1"), true);
     });
+
+    it("separates canonical projects and credential principals", () => {
+      const first = buildProxyManagerCacheKey(
+        "reusable-slug",
+        false,
+        null,
+        "main",
+        null,
+        { projectId: "project-one", credentialPrincipal: "principal-one" },
+      );
+      const reassigned = buildProxyManagerCacheKey(
+        "reusable-slug",
+        false,
+        null,
+        "main",
+        null,
+        { projectId: "project-two", credentialPrincipal: "principal-one" },
+      );
+      const rotatedCredential = buildProxyManagerCacheKey(
+        "reusable-slug",
+        false,
+        null,
+        "main",
+        null,
+        { projectId: "project-one", credentialPrincipal: "principal-two" },
+      );
+
+      assertNotEquals(first, reassigned);
+      assertNotEquals(first, rotatedCredential);
+    });
   });
 
   describe("computeContentSourceId", () => {

@@ -2020,32 +2020,39 @@ export default function HomePage() {
           `style-src should not mix unsafe-inline with a nonce, got: ${csp}`,
         );
 
-        await assertCounterHydration(page, {
-          assertBeforeClick: async () => {
-            const initialBackground = await page.$eval(
-              "#counter",
-              (element) => globalThis.getComputedStyle(element).backgroundColor,
-            );
-            const initialPadding = await page.$eval(
-              "#counter",
-              (element) => globalThis.getComputedStyle(element).paddingTop,
-            );
-            assertEquals(initialBackground, "rgb(37, 99, 235)");
-            assertEquals(initialPadding, "12px");
-          },
-          assertAfterClick: async () => {
-            const clickedBackground = await page.$eval(
-              "#counter",
-              (element) => globalThis.getComputedStyle(element).backgroundColor,
-            );
-            const clickedPadding = await page.$eval(
-              "#counter",
-              (element) => globalThis.getComputedStyle(element).paddingTop,
-            );
-            assertEquals(clickedBackground, "rgb(22, 101, 52)");
-            assertEquals(clickedPadding, "13px");
-          },
-        });
+        try {
+          await assertCounterHydration(page, {
+            assertBeforeClick: async () => {
+              const initialBackground = await page.$eval(
+                "#counter",
+                (element) => globalThis.getComputedStyle(element).backgroundColor,
+              );
+              const initialPadding = await page.$eval(
+                "#counter",
+                (element) => globalThis.getComputedStyle(element).paddingTop,
+              );
+              assertEquals(initialBackground, "rgb(37, 99, 235)");
+              assertEquals(initialPadding, "12px");
+            },
+            assertAfterClick: async () => {
+              const clickedBackground = await page.$eval(
+                "#counter",
+                (element) => globalThis.getComputedStyle(element).backgroundColor,
+              );
+              const clickedPadding = await page.$eval(
+                "#counter",
+                (element) => globalThis.getComputedStyle(element).paddingTop,
+              );
+              assertEquals(clickedBackground, "rgb(22, 101, 52)");
+              assertEquals(clickedPadding, "13px");
+            },
+          });
+        } catch (error) {
+          throw new Error(
+            `${String(error)}\nBrowser diagnostics:\n${JSON.stringify(diagnostics, null, 2)}`,
+            { cause: error },
+          );
+        }
 
         assertNoBrowserHydrationErrors(diagnostics);
         assertNoServerLogErrors(
@@ -2092,7 +2099,14 @@ export default function HomePage() {
 
     await withServer(projectDir, async (server) => {
       await withBrowserPageAgainstServer(server, async ({ page, response, diagnostics }) => {
-        await page.waitForSelector('#styled-box[data-hydrated="yes"]');
+        try {
+          await page.waitForSelector('#styled-box[data-hydrated="yes"]');
+        } catch (error) {
+          throw new Error(
+            `${String(error)}\nBrowser diagnostics:\n${JSON.stringify(diagnostics, null, 2)}`,
+            { cause: error },
+          );
+        }
 
         const csp = response?.headers()["content-security-policy"] ?? "";
         const styleSources = getDirectiveSources(csp, "style-src");
@@ -3191,6 +3205,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       {
         PROXY_MODE: "1",
         PRODUCTION_MODE: "1",
+        VERYFRONT_TRUST_FORWARDED_HEADERS: "1",
         VERYFRONT_API_BASE_URL: UNREACHABLE_LOCAL_PROXY_API_BASE_URL,
         VERYFRONT_API_TOKEN: "",
       },
@@ -3261,6 +3276,7 @@ export default function Home() {
       {
         PROXY_MODE: "1",
         PRODUCTION_MODE: "1",
+        VERYFRONT_TRUST_FORWARDED_HEADERS: "1",
         VERYFRONT_API_BASE_URL: UNREACHABLE_LOCAL_PROXY_API_BASE_URL,
         VERYFRONT_API_TOKEN: "",
       },

@@ -33,7 +33,8 @@ export function isWithinDirectory(root: string, target: string): boolean {
  */
 export function getExtension(path: string): string {
   const lastDot = path.lastIndexOf(".");
-  if (lastDot === -1 || lastDot === path.length - 1) return "";
+  const lastSeparator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  if (lastDot <= lastSeparator || lastDot === path.length - 1) return "";
   return path.slice(lastDot);
 }
 
@@ -43,7 +44,8 @@ export function getExtension(path: string): string {
  */
 export function getExtensionName(path: string): string {
   const lastDot = path.lastIndexOf(".");
-  if (lastDot === -1 || lastDot === path.length - 1) return "";
+  const lastSeparator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  if (lastDot <= lastSeparator || lastDot === path.length - 1) return "";
   return path.slice(lastDot + 1).toLowerCase();
 }
 

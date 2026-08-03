@@ -102,6 +102,10 @@ describe("agent/runtime-agent-invocation-contract", () => {
     }));
 
     assertEquals(parsed.run.project.runtimeTargetKind, "main_branch");
+    const nonMainDefault = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      agentSource: { type: "branch", branch: "trunk" },
+    }));
+    assertEquals(nonMainDefault.agentSource, { type: "branch", branch: "trunk" });
     assertThrows(() =>
       RuntimeAgentRunInvocationSchema.parse(createInvocation({
         run: {
@@ -134,6 +138,15 @@ describe("agent/runtime-agent-invocation-contract", () => {
     );
 
     const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      run: {
+        ...createInvocation().run,
+        project: {
+          projectId,
+          projectSlug: "demo-project",
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: environmentId,
+        },
+      },
       agentSource: {
         type: "environment",
         environmentName: "Production",
@@ -146,6 +159,26 @@ describe("agent/runtime-agent-invocation-contract", () => {
       environmentName: "Production",
       releaseId: "release-1",
     });
+  });
+
+  it("rejects agent sources that do not match the selected runtime target", () => {
+    assertThrows(
+      () =>
+        RuntimeAgentRunInvocationSchema.parse(createInvocation({
+          run: {
+            ...createInvocation().run,
+            project: {
+              projectId,
+              projectSlug: "demo-project",
+              runtimeTargetKind: "environment",
+              runtimeTargetEnvironmentId: environmentId,
+            },
+          },
+          agentSource: { type: "branch", branch: "main" },
+        })),
+      Error,
+      "environment runtime target requires an environment agent source",
+    );
   });
 
   it("requires an exact source for every runtime invocation", () => {
@@ -268,6 +301,8 @@ describe("agent/runtime-agent-invocation-contract", () => {
       messages: parsed.messages,
       tools: parsed.tools,
       context: parsed.context,
+      runtimeTargetKind: "preview_branch",
+      runtimeTargetEnvironmentId: null,
       runtimeTargetBranchId: branchId,
       credentials: parsed.credentials,
       agentSource: parsed.agentSource,
@@ -291,6 +326,11 @@ describe("agent/runtime-agent-invocation-contract", () => {
           runtimeTargetKind: "environment",
           runtimeTargetEnvironmentId: environmentId,
         },
+      },
+      agentSource: {
+        type: "environment",
+        environmentName: "Production",
+        releaseId: "release-1",
       },
     }));
 

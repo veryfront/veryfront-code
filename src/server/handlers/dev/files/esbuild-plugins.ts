@@ -1,5 +1,6 @@
 import type { OnLoadArgs, OnResolveArgs, Plugin, PluginBuild } from "veryfront/extensions/bundler";
 import { NETWORK_ERROR } from "#veryfront/errors";
+import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 // Direct import from base.ts to avoid circular dependency through barrel
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
@@ -55,6 +56,11 @@ interface ProjectFsPluginData {
 
 export interface RelativeFsPluginOptions {
   enforceBrowserBoundaries?: boolean;
+  /**
+   * Root-bound, symlink-safe, bounded read authority for browser builds. When
+   * supplied, the read itself replaces mutable directory-walk admission.
+   */
+  readBrowserModule?: (path: string) => Promise<string>;
 }
 
 function getLoaderForPath(path: string): EsbuildLoader {
@@ -184,11 +190,13 @@ export function createRelativeFsPlugin(
               const st = await adapter.fs.stat(f);
               if (st.isFile) {
                 if (options.enforceBrowserBoundaries) {
-                  const pathStatus = await inspectBrowserModulePath(projectDir, f, adapter);
-                  if (pathStatus !== "trusted") {
-                    return {
-                      errors: [{ text: dependencyPathError(pathStatus), location: null }],
-                    };
+                  if (!options.readBrowserModule) {
+                    const pathStatus = await inspectBrowserModulePath(projectDir, f, adapter);
+                    if (pathStatus !== "trusted") {
+                      return {
+                        errors: [{ text: dependencyPathError(pathStatus), location: null }],
+                      };
+                    }
                   }
                   return {
                     path: getProjectModuleIdentity(projectDir, f),
@@ -198,8 +206,9 @@ export function createRelativeFsPlugin(
                 }
                 return { path: f };
               }
-            } catch (_) {
-              // expected: candidate path doesn't exist, try next
+            } catch (error) {
+              // Only a genuine missing candidate is a resolution miss.
+              if (!isCanonicalNotFoundError(error)) throw error;
             }
           }
 
@@ -235,7 +244,7 @@ export function createRelativeFsPlugin(
             }],
           };
         }
-        if (enforceBrowserBoundaries) {
+        if (enforceBrowserBoundaries && !options.readBrowserModule) {
           const pathStatus = await inspectBrowserModulePath(projectDir, filePath, adapter);
           if (pathStatus !== "trusted") {
             return {
@@ -244,7 +253,9 @@ export function createRelativeFsPlugin(
           }
         }
         try {
-          const contents = await adapter.fs.readFile(filePath);
+          const contents = enforceBrowserBoundaries && options.readBrowserModule
+            ? await options.readBrowserModule(filePath)
+            : await adapter.fs.readFile(filePath);
           if (enforceBrowserBoundaries) {
             const violation = await inspectBrowserModuleBoundary(contents, filePath);
             if (violation) {

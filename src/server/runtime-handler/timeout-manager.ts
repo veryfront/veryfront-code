@@ -7,6 +7,7 @@
  */
 
 import { getBaseLogger } from "#veryfront/utils";
+import { errorToResponse, isVeryfrontError } from "#veryfront/errors";
 import { getRequestTimeout, HTTP_GATEWAY_TIMEOUT, TIMEOUT_SENTINEL } from "./request-utils.ts";
 import { ErrorPages } from "../utils/error-html.ts";
 
@@ -107,10 +108,16 @@ export async function withRequestTimeout(
       stack: error.stack,
     });
     return {
-      response: new Response(ErrorPages.serverError(), {
-        status: 500,
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      }),
+      // Errors raised while resolving the hosted project context happen
+      // outside the route registry's error boundary. Preserve registered HTTP
+      // semantics here (for example env authorization 403 and upstream 502)
+      // while retaining the legacy opaque 500 page for unknown exceptions.
+      response: isVeryfrontError(e)
+        ? errorToResponse(e, pathname)
+        : new Response(ErrorPages.serverError(), {
+          status: 500,
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        }),
       error,
       settled,
     };

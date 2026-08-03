@@ -701,7 +701,10 @@ export class RenderPipeline {
               () =>
                 withSpan(
                   "render.resolve_page",
-                  () => this.config.pageResolver.resolvePage(slug),
+                  () =>
+                    this.config.pageResolver.resolvePage(slug, {
+                      signal: options?.abortSignal,
+                    }),
                   { "render.slug": slug },
                 ),
             );
@@ -1027,7 +1030,10 @@ export class RenderPipeline {
 
     const pageInfo = await profilePhase(
       "page_data.resolve_page",
-      () => this.config.pageResolver.resolvePage(slug),
+      () =>
+        this.config.pageResolver.resolvePage(slug, {
+          signal: options?.abortSignal,
+        }),
     );
 
     const skipLayouts = isDotPath({

@@ -1,4 +1,5 @@
 import { env as getProcessEnv } from "#veryfront/compat/process.ts";
+import { sanitizeTerminalDiagnosticText } from "#veryfront/errors/safe-diagnostics.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
@@ -99,26 +100,43 @@ export function getFinalRunExitCode(
   finalRun: WorkflowRun | null,
   debug = false,
 ): number {
+  const sanitizedRunId = sanitizeTerminalDiagnosticText(runId);
+
   switch (finalRun?.status) {
     case "completed":
       if (debug) {
-        logger.info(`Workflow completed successfully: ${runId}`);
+        logger.info(`Workflow completed successfully: ${sanitizedRunId}`);
       }
       return exitCodes.SUCCESS;
 
     case "failed":
-      logger.error(`Workflow failed: ${runId}`, finalRun.error);
+      logger.error(`Workflow failed: ${sanitizedRunId}`, finalRun.error);
       return exitCodes.WORKFLOW_FAILED;
 
     case "waiting":
       if (debug) {
-        logger.info(`Workflow paused (waiting): ${runId}`);
+        logger.info(`Workflow paused (waiting): ${sanitizedRunId}`);
       }
       return exitCodes.SUCCESS;
 
+    case "cancelled":
+      logger.warn(`Workflow was cancelled: ${sanitizedRunId}`);
+      return exitCodes.WORKFLOW_FAILED;
+
+    case "pending":
+    case "running":
+      logger.warn(
+        `Workflow did not reach a durable final state: ${finalRun.status} (runId: ${sanitizedRunId})`,
+      );
+      return exitCodes.WORKFLOW_FAILED;
+
     default:
-      logger.warn(`Unexpected final status: ${finalRun?.status}`);
-      return exitCodes.SUCCESS;
+      logger.warn(
+        finalRun
+          ? `Unexpected final status: ${finalRun.status} (runId: ${sanitizedRunId})`
+          : `Workflow run was not found after execution: ${sanitizedRunId}`,
+      );
+      return exitCodes.WORKFLOW_FAILED;
   }
 }
 

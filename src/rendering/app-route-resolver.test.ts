@@ -12,12 +12,24 @@ function createMockAdapter(
 
   return {
     fs: {
+      symlinkSemantics: "none",
       readFile: (path: string) => {
         const content = files.get(path);
         if (content === undefined) {
-          return Promise.reject(new Error(`ENOENT: ${path}`));
+          return Promise.reject(Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" }));
         }
         return Promise.resolve(content);
+      },
+      readFileBytesWithinLimit: (path: string, byteLimit: number) => {
+        const content = files.get(path);
+        if (content === undefined) {
+          return Promise.reject(Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" }));
+        }
+        const bytes = new TextEncoder().encode(content);
+        if (bytes.byteLength > byteLimit) {
+          return Promise.reject(new RangeError(`File exceeds ${byteLimit} bytes`));
+        }
+        return Promise.resolve(bytes);
       },
       stat: (path: string) => {
         if (files.has(path)) {
@@ -156,6 +168,146 @@ describe("rendering/app-route-resolver", () => {
       const result = await getAppRouteEntity("/project", "blog/hello-world", adapter);
       assertEquals(result !== null, true);
       assertEquals(result?.entity.slug, "blog/hello-world");
+    });
+
+    it("resolves a nested optional catch-all page at its terminal directory", async () => {
+      const files = new Map([
+        ["/project/app/docs/[[...slug]]/page.mdx", "---\ntitle: Docs\n---\nDocs page"],
+      ]);
+      const dirs = new Set([
+        "/project/app",
+        "/project/app/docs",
+        "/project/app/docs/[[...slug]]",
+      ]);
+      const adapter = createMockAdapter(files, dirs);
+
+      const docs = await getAppRouteEntity("/project", "docs", adapter);
+      const nestedDocs = await getAppRouteEntity("/project", "docs/a", adapter);
+
+      assertEquals(docs?.entity.slug, "docs");
+      assertEquals(nestedDocs?.entity.slug, "docs/a");
+    });
+
+    it("rejects traversal slugs before consulting the filesystem", async () => {
+      const adapter = createMockAdapter(new Map());
+      let resolveCalls = 0;
+      adapter.fs.resolveFile = () => {
+        resolveCalls++;
+        return Promise.resolve("/outside/page.mdx");
+      };
+
+      assertEquals(
+        await getAppRouteEntity("/project", "../../outside", adapter),
+        null,
+      );
+      assertEquals(resolveCalls, 0);
+    });
+
+    it("does not read an adapter-resolved page outside the App Router root", async () => {
+      const adapter = createMockAdapter(new Map());
+      let reads = 0;
+      adapter.fs.resolveFile = () => Promise.resolve("/outside/page.mdx");
+      adapter.fs.readFileBytesWithinLimit = () => {
+        reads++;
+        return Promise.resolve(new TextEncoder().encode("# Secret"));
+      };
+
+      assertEquals(await getAppRouteEntity("/project", "about", adapter), null);
+      assertEquals(reads, 0);
+    });
+
+    it("preserves adapter read failures instead of reporting a missing page", async () => {
+      const outage = Object.freeze({ code: "ENOENT", detail: "remote source unavailable" });
+      const adapter = createMockAdapter(new Map());
+      adapter.fs.resolveFile = (path: string) =>
+        Promise.resolve(path.endsWith("/page") ? `${path}.mdx` : null);
+      adapter.fs.readFileBytesWithinLimit = () => Promise.reject(outage);
+
+      let caught: unknown;
+      try {
+        await getAppRouteEntity("/project", "about", adapter);
+      } catch (error) {
+        caught = error;
+      }
+      assertEquals(caught === outage, true);
+    });
+
+    it("preserves adapter directory failures during dynamic discovery", async () => {
+      const outage = Object.freeze({ code: "ENOENT", detail: "directory service unavailable" });
+      const adapter = createMockAdapter(new Map());
+      adapter.fs.readDir = () => ({
+        [Symbol.asyncIterator]() {
+          return {
+            next: () => Promise.reject(outage),
+          };
+        },
+      });
+
+      let caught: unknown;
+      try {
+        await getAppRouteEntity("/project", "article", adapter);
+      } catch (error) {
+        caught = error;
+      }
+      assertEquals(caught === outage, true);
+    });
+
+    it("does not treat file-suffixed names as dynamic route directories", async () => {
+      const files = new Map([
+        ["/project/app/[id].tsx/page.tsx", "export default function Page() {}"],
+      ]);
+      const dirs = new Set(["/project/app", "/project/app/[id].tsx"]);
+
+      assertEquals(
+        await getAppRouteEntity("/project", "article", createMockAdapter(files, dirs)),
+        null,
+      );
+    });
+
+    it("uses the bounded reader and never the raw text reader", async () => {
+      const adapter = createMockAdapter(
+        new Map([
+          ["/project/app/page.mdx", "# Page"],
+        ]),
+      );
+      let rawReads = 0;
+      adapter.fs.readFile = () => {
+        rawReads++;
+        return Promise.resolve("# Unbounded page");
+      };
+
+      const result = await getAppRouteEntity("/project", "", adapter);
+
+      assertEquals(result?.entity.content, "# Page");
+      assertEquals(rawReads, 0);
+    });
+
+    it("binds link-resolving App Router reads to the App root snapshot", async () => {
+      const adapter = createMockAdapter(new Map());
+      Reflect.deleteProperty(adapter.fs, "symlinkSemantics");
+      let boundedReads = 0;
+      const snapshotCalls: Array<[string, string, number]> = [];
+      adapter.fs.readFileBytesWithinLimit = () => {
+        boundedReads++;
+        return Promise.resolve(new TextEncoder().encode("# Unbound"));
+      };
+      adapter.fs.readFileSnapshotWithinLimit = (
+        path: string,
+        root: string,
+        byteLimit: number,
+      ) => {
+        snapshotCalls.push([path, root, byteLimit]);
+        return Promise.resolve(new TextEncoder().encode("# Bound"));
+      };
+
+      const result = await getAppRouteEntity("/project", "", adapter);
+
+      assertEquals(result?.entity.content, "# Bound");
+      assertEquals(boundedReads, 0);
+      assertEquals(snapshotCalls.length, 1);
+      assertEquals(snapshotCalls[0]?.[0], "/project/app/page.mdx");
+      assertEquals(snapshotCalls[0]?.[1], "/project/app");
+      assertEquals(Number(snapshotCalls[0]?.[2]) > 0, true);
     });
 
     it("should convert boolean layout frontmatter to string", async () => {

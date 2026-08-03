@@ -44,8 +44,13 @@ export interface OutboundFetchBoundary {
 
 // Capture the host transport before tenant code can replace globalThis.fetch.
 const capturedHostFetch = globalThis.fetch.bind(globalThis);
+let outboundFetchTransportForTests: Readonly<OutboundFetchTransport> | undefined;
 
 function getTrustedHostTransport(): OutboundFetchTransport {
+  if (outboundFetchTransportForTests !== undefined) {
+    return outboundFetchTransportForTests;
+  }
+
   if (getHostEnv("DENO_TESTING") !== "1") {
     // Omitting pinnedFetch is deliberate: Node and Bun then use the native
     // address-pinned transport, while Deno uses its pinned SOCKS client.
@@ -183,6 +188,19 @@ export function createOutboundFetchBoundary(
       return createOriginBoundFetchWithTransport(baseUrl, captured);
     },
   });
+}
+
+export async function __runWithOutboundFetchTransportForTests<T>(
+  transport: OutboundFetchTransport,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const previous = outboundFetchTransportForTests;
+  outboundFetchTransportForTests = snapshotOutboundFetchTransport(transport);
+  try {
+    return await fn();
+  } finally {
+    outboundFetchTransportForTests = previous;
+  }
 }
 
 /**

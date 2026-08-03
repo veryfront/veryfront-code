@@ -217,7 +217,7 @@ describe("BaseHandler.withProxyContext", () => {
     }
   });
 
-  it("runs fn() when requireToken is true and token is present", async () => {
+  it("does not treat the host token as a request credential", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_token");
     const handler = new TestHandler();
     let called = false;
@@ -231,7 +231,9 @@ describe("BaseHandler.withProxyContext", () => {
       { requireToken: true },
     );
 
-    assertEquals(called, true, "fn should run with valid token");
+    // This standalone test adapter is not credentialed, so direct execution is
+    // still valid. Contextual adapters below must reject without ctx.proxyToken.
+    assertEquals(called, true);
   });
 
   it("runs fn() when requireToken is false even without token", async () => {
@@ -286,6 +288,7 @@ describe("BaseHandler.withProxyContext", () => {
 
   for (const mode of ["multi-project", "contextual"] as const) {
     it(`rejects missing required credentials before ${mode} filesystem work`, async () => {
+      setEnv("VERYFRONT_API_TOKEN", "must-not-be-used-for-request-identity");
       const handler = new TestHandler();
       let callbackCalled = false;
       const fs = mode === "multi-project"

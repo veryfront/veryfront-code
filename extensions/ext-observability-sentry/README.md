@@ -2,6 +2,11 @@
 
 First-party Sentry application error reporter for Veryfront runtimes.
 
+This package is service-conditional rather than an auto-activated application
+extension. The server or agent service imports the matching reporter only after
+its enablement policy passes; adding the package to `node_modules` alone does
+not initialize Sentry or enable network egress.
+
 Enable the adapter explicitly and provide its credential:
 
 ```sh

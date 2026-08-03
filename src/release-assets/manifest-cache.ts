@@ -307,7 +307,7 @@ export function getReadyManifestForRender(
  * falls back to null when the flag is off, no fetcher is registered, the
  * manifest is unavailable, or the fetch fails.
  */
-export async function getReadyManifestForRenderAsync(
+async function getReadyManifestAsync(
   releaseId: string | null | undefined,
   options: ReadyManifestReadOptions = {},
 ): Promise<ReleaseAssetManifest | null> {
@@ -317,10 +317,6 @@ export async function getReadyManifestForRenderAsync(
   }
   if (!isValidReleaseId(releaseId)) {
     markManifestDecision("invalid_release_id");
-    return null;
-  }
-  if (!isReleaseAssetManifestEnabled()) {
-    markManifestDecision("disabled");
     return null;
   }
   const activeFetcher = fetcherRegistry.get(releaseId);
@@ -353,6 +349,29 @@ export async function getReadyManifestForRenderAsync(
   }
 
   return await fetchManifest(releaseId);
+}
+
+export async function getReadyManifestForRenderAsync(
+  releaseId: string | null | undefined,
+  options: ReadyManifestReadOptions = {},
+): Promise<ReleaseAssetManifest | null> {
+  if (!isReleaseAssetManifestEnabled()) {
+    markManifestDecision("disabled");
+    return null;
+  }
+  return await getReadyManifestAsync(releaseId, options);
+}
+
+/**
+ * Resolve the release manifest used as the production browser-module admission
+ * boundary. Unlike rendering optimizations, this security decision is never
+ * controlled by the release-manifest rollout flag.
+ */
+export async function getReadyManifestForBrowserModuleAdmission(
+  releaseId: string | null | undefined,
+  options: ReadyManifestReadOptions = {},
+): Promise<ReleaseAssetManifest | null> {
+  return await getReadyManifestAsync(releaseId, options);
 }
 
 function scheduleFetch(releaseId: string): void {
