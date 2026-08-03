@@ -37,6 +37,8 @@ jobs:
         check: [format, lint, typecheck]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
       - name: Run ${{ matrix.check }}
@@ -58,6 +60,8 @@ jobs:
     name: tests (integration)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 10
         with:
@@ -87,6 +91,8 @@ jobs:
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
       - name: Run unit coverage shard
@@ -123,7 +129,7 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     name: coverage gate
     needs: [coverage-shards]
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
@@ -137,6 +143,8 @@ jobs:
             exit 1
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
       - name: Download unit coverage lcov files
@@ -160,6 +168,8 @@ jobs:
     name: tests (rsc browser e2e)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
       - name: Configure apt retries and mirrors
@@ -227,6 +237,8 @@ jobs:
     name: tests (binary e2e)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
       - name: Configure apt retries and mirrors
@@ -298,6 +310,8 @@ jobs:
     name: tests (npm install smoke)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
         with:
@@ -320,6 +334,8 @@ jobs:
     name: tests (sentry runtime packages)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
         with:
@@ -338,11 +354,13 @@ jobs:
   tests-split-mode:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.RUN_SPLIT_MODE_TEST == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     name: tests (split mode)
     continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
 
@@ -403,6 +421,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Detect release type
         id: check
@@ -568,6 +587,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
@@ -699,6 +720,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Read version
         id: version
@@ -771,10 +794,12 @@ jobs:
       - name: Create git tag
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="v${VERSION}"
           git tag "${TAG}"
-          git push origin "${TAG}"
+          # Checkout does not persist credentials; authenticate only this push.
+          git push "https://x-access-token:${SOURCE_REPO_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "${TAG}"
           echo "Created tag ${TAG}"
 
       - name: Create GitHub releases
@@ -862,6 +887,8 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Create Homebrew tap GitHub App token
         id: homebrew-app-token

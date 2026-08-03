@@ -291,23 +291,26 @@ jobs:
         for (const step of setupSteps) {
           setupCalls++;
           const inputs = asRecord(step.with ?? {}, "setup inputs");
-          const warmsDependencies = inputs["warm-cache"] === "true" ||
+          // Only the job that warms BOTH the dependency graph and the Redis
+          // cache is the complete cache producer; other jobs may warm the
+          // dependency cache alone as consumers.
+          const isCompleteCacheProducer = inputs["warm-cache"] === "true" &&
             inputs["warm-redis-cache"] === "true";
 
-          if (warmsDependencies) {
+          if (isCompleteCacheProducer) {
             cacheProducerCalls++;
             assertEquals(path, `${WORKFLOWS_DIR}/cicd.yml`);
             assertEquals(jobName, CACHE_PRODUCER_JOB);
-            assertEquals(inputs["warm-cache"], "true");
-            assertEquals(inputs["warm-redis-cache"], "true");
           }
 
           assertEquals(
             step["timeout-minutes"],
-            warmsDependencies ? MAX_CACHE_SETUP_MINUTES : MAX_SETUP_MINUTES,
+            isCompleteCacheProducer
+              ? MAX_CACHE_SETUP_MINUTES
+              : MAX_SETUP_MINUTES,
             `${path} ${jobName} setup-deno must leave time for job work`,
           );
-          if (warmsDependencies) {
+          if (isCompleteCacheProducer) {
             assertEquals(
               job["runs-on"],
               "ubuntu-latest",
