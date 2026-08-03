@@ -13,6 +13,7 @@ import type { DeploymentRoutingConvergence } from "../../shared/deployment/contr
 import { FakeTime } from "#std/testing/time";
 import { stripAnsi } from "../../ui/ansi.ts";
 import { setVerboseMode } from "../../utils/index.ts";
+import { RELEASE_ASSET_MANIFEST_SCHEMA_VERSION } from "veryfront/release-assets";
 
 /**
  * The real Deploy Execution module with test-bounded polling: these suites
@@ -209,7 +210,7 @@ function createDeployFetchHandler(options: {
         state: "ready",
         manifest_version: 1,
         manifest: {
-          schemaVersion: 2,
+          schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
           projectId: PROJECT_ID,
           releaseId: RELEASE_ID,
           releaseVersion: 41,
@@ -838,7 +839,7 @@ it("uses canonical production read-back in human and JSON modes", async () => {
           state: "ready",
           manifest_version: 1,
           manifest: {
-            schemaVersion: 2,
+            schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
             projectId: PROJECT_ID,
             releaseId: RELEASE_ID,
             releaseVersion: 41,
@@ -1209,7 +1210,7 @@ it("deploys production from a dirty worktree when the pushed digest matches the 
           state: "ready",
           manifest_version: 1,
           manifest: {
-            schemaVersion: 2,
+            schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
             projectId: PROJECT_ID,
             releaseId: RELEASE_ID,
             releaseVersion: 41,
@@ -1571,7 +1572,7 @@ it("uses an alternative slug when inferred first deploy project creation conflic
           state: "ready",
           manifest_version: 1,
           manifest: {
-            schemaVersion: 2,
+            schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
             projectId: PROJECT_ID,
             releaseId: RELEASE_ID,
             releaseVersion: 41,
@@ -1756,7 +1757,7 @@ it("collects configured app and pages routes when projectDir has a trailing slas
           state: "ready",
           manifest_version: 1,
           manifest: {
-            schemaVersion: 2,
+            schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
             projectId: PROJECT_ID,
             releaseId: RELEASE_ID,
             releaseVersion: 41,

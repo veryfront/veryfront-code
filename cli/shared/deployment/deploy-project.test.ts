@@ -7,6 +7,7 @@ import {
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import {
   DEPLOYMENT_ERROR,
   ENVIRONMENT_NOT_FOUND,
@@ -439,6 +440,7 @@ describe("DeployProject", () => {
         await assertRejects(
           () => executeApply(projectDir, controlPlane),
           TypeError,
+          "unexpected NUL byte",
         );
         assertEquals(controlPlane.createdReleases, []);
         assertEquals(controlPlane.createdDeployments, []);
@@ -1257,6 +1259,61 @@ describe("release asset manifest", () => {
 
     assertEquals(result.state, "ready");
     assertEquals(result.manifest.releaseId, "release-1");
+  });
+
+  it("continues polling through a missing manifest and building state", async () => {
+    using time = new FakeTime();
+    const responses = [null, { state: "building" }, readyManifest()];
+    let reads = 0;
+    const controlPlane = helperControlPlane({
+      getReleaseAssetManifest: () => {
+        const response = responses[Math.min(reads, responses.length - 1)]!;
+        reads++;
+        return Promise.resolve(response);
+      },
+    });
+
+    const pending = waitForReleaseAssetManifest(
+      controlPlane,
+      PROJECT_SLUG,
+      "release-1",
+      { ...polling, timeoutMs: 500 },
+    );
+    await time.tickAsync(0);
+    await time.tickAsync(100);
+    await time.tickAsync(100);
+
+    const result = await pending;
+    assertEquals(result.state, "ready");
+    assertEquals(reads, 3);
+  });
+
+  it("reports the last state after the polling deadline", async () => {
+    using time = new FakeTime();
+    let reads = 0;
+    const controlPlane = helperControlPlane({
+      getReleaseAssetManifest: () => {
+        reads++;
+        return Promise.resolve({ state: "building" });
+      },
+    });
+
+    const rejection = assertRejects(
+      () =>
+        waitForReleaseAssetManifest(controlPlane, PROJECT_SLUG, "release-1", {
+          ...polling,
+          timeoutMs: 250,
+        }),
+      Error,
+      "last state: building",
+    );
+    await time.tickAsync(0);
+    await time.tickAsync(100);
+    await time.tickAsync(100);
+    await time.tickAsync(50);
+
+    await rejection;
+    assertEquals(reads, 4);
   });
 
   it("rejects legacy ready manifests", async () => {

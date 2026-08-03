@@ -61,10 +61,11 @@ export interface DeployControlPlane {
     reference: string,
     releaseId: string,
   ): AsyncIterable<DeployReleaseFile>;
+  /** Returns null only while the release asset manifest does not exist. */
   getReleaseAssetManifest(
     projectSlug: string,
     releaseId: string,
-  ): Promise<unknown | null>;
+  ): Promise<unknown>;
   createDeployment(
     reference: string,
     input: { releaseId: string; environmentId: string },
