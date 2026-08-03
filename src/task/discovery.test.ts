@@ -6,10 +6,28 @@ import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
 import { clearConfigCache } from "#veryfront/config";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
-import { deriveTaskId, discoverTasks, findTaskById } from "./discovery.ts";
-import { discoverProjectTaskRuntime } from "./project-runtime.ts";
+import {
+  deriveTaskId,
+  discoverTasks as discoverTasksRaw,
+  findTaskById as findTaskByIdRaw,
+} from "./discovery.ts";
+import {
+  discoverProjectTaskRuntime as discoverProjectTaskRuntimeRaw,
+  listProjectRuntimeTasks,
+} from "./project-runtime.ts";
 import { runTriggerTarget } from "../trigger/local-runner.ts";
 import { isTaskDefinition } from "./types.ts";
+import type { DiscoveryResult } from "#veryfront/discovery";
+
+const discoverTasks: typeof discoverTasksRaw = (options) =>
+  discoverTasksRaw({ ...options, allowHostProjectCodeExecution: true });
+const findTaskById: typeof findTaskByIdRaw = (taskId, options) =>
+  findTaskByIdRaw(taskId, { ...options, allowHostProjectCodeExecution: true });
+const discoverProjectTaskRuntime: typeof discoverProjectTaskRuntimeRaw = (options) =>
+  discoverProjectTaskRuntimeRaw({
+    ...options,
+    allowHostProjectCodeExecution: true,
+  });
 
 function createMockAdapter(files: Record<string, string>): FileSystemAdapter {
   const normalize = (path: string): string => path.replace(/^\/project\/?/, "").replace(/^\/+/, "");
@@ -20,7 +38,9 @@ function createMockAdapter(files: Record<string, string>): FileSystemAdapter {
   return {
     async readFile(path: string): Promise<string> {
       const content = normalizedFiles[normalize(path)];
-      if (content === undefined) throw new Error(`File not found: ${path}`);
+      if (content === undefined) {
+        throw new Deno.errors.NotFound(`File not found: ${path}`);
+      }
       return content;
     },
     async exists(path: string): Promise<boolean> {
@@ -113,12 +133,13 @@ function makeTaskSource(name: string): string {
   ].join("\n");
 }
 
-function markAdapterAsVirtual(adapter: RuntimeAdapter): void {
+/** Present the adapter as the trusted single-project virtual filesystem used by discovery. */
+function markAdapterAsSingleProjectVirtual(adapter: RuntimeAdapter): void {
   Object.assign(adapter.fs, {
     getUnderlyingAdapter: () => adapter.fs,
     getAdapterType: () => "VeryfrontFSAdapter",
     isVeryfrontAdapter: () => true,
-    isMultiProjectMode: () => true,
+    isMultiProjectMode: () => false,
   });
 }
 
@@ -158,6 +179,30 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       assertEquals(deriveTaskId("/project/tasks/cleanup.ts", "/project/tasks"), "cleanup");
     });
 
+    it("normalizes Windows separators and file URLs", () => {
+      assertEquals(
+        deriveTaskId(
+          String.raw`C:\project\tasks\reports\daily.ts`,
+          String.raw`C:\project\tasks`,
+        ),
+        "reports/daily",
+      );
+      assertEquals(
+        deriveTaskId(
+          "file:///C:/project/tasks/reports/daily.ts",
+          String.raw`C:\project\tasks`,
+        ),
+        "reports/daily",
+      );
+      assertEquals(
+        deriveTaskId(
+          "file:///project/tasks/report%20daily.ts",
+          "/project/tasks",
+        ),
+        "report daily",
+      );
+    });
+
     it("returns the input path when the prefix does not match", () => {
       assertEquals(deriveTaskId("other/cleanup.ts", "tasks"), "other/cleanup");
     });
@@ -184,6 +229,83 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       assertEquals(isTaskDefinition({ name: "no run" }), false);
       assertEquals(isTaskDefinition({ run: "not a function" }), false);
     });
+
+    it("rejects malformed optional metadata instead of poisoning typed consumers", () => {
+      assertEquals(isTaskDefinition({ run() {}, name: 42 }), false);
+      assertEquals(isTaskDefinition({ run() {}, description: false }), false);
+      assertEquals(isTaskDefinition({ run() {}, inputSchema: [] }), false);
+      assertEquals(isTaskDefinition({ run() {}, outputSchema: null }), false);
+      assertEquals(isTaskDefinition({ run() {}, schedulable: "true" }), false);
+      assertEquals(
+        isTaskDefinition({
+          run() {},
+          name: "Valid task",
+          description: "Valid metadata",
+          inputSchema: { type: "object" },
+          outputSchema: { type: "object" },
+          schedulable: true,
+        }),
+        true,
+      );
+    });
+  });
+
+  it("returns legacy discovery results in deterministic id order", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/z-last.ts": makeTaskSource("Last"),
+      "/project/tasks/a-first.ts": makeTaskSource("First"),
+    });
+
+    const result = await discoverTasks({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+
+    assertEquals(result.errors, []);
+    assertEquals(result.tasks.map((task) => task.id), ["a-first", "z-last"]);
+  });
+
+  it("rejects ambiguous legacy task ids across supported extensions", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/sync.js": makeTaskSource("JavaScript sync"),
+      "/project/tasks/sync.ts": makeTaskSource("TypeScript sync"),
+    });
+
+    const result = await discoverTasks({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+    const found = await findTaskById("sync", {
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+
+    assertEquals(result.tasks, []);
+    assertEquals(result.errors.length, 2);
+    assertEquals(
+      result.errors.every((error) => error.error.includes('Duplicate task id "sync"')),
+      true,
+    );
+    assertEquals(found, null);
+  });
+
+  it("sorts project runtime task listings independently of map insertion order", () => {
+    const first = { name: "First", run() {} };
+    const last = { name: "Last", run() {} };
+    const discovery = {
+      tasks: new Map([
+        ["z-last", last],
+        ["a-first", first],
+      ]),
+    } as Pick<DiscoveryResult, "tasks"> as DiscoveryResult;
+
+    assertEquals(
+      listProjectRuntimeTasks(discovery).map((task) => task.id),
+      ["a-first", "z-last"],
+    );
   });
 
   it("discovers default-exported tasks through the discovery module loader", async () => {
@@ -332,21 +454,21 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
     assertEquals([...discovery.tasks.keys()], ["sync"]);
   });
 
-  it("isolates virtual project runtime config by cache key", async () => {
+  it("isolates single-project virtual runtime config by cache key", async () => {
     const firstAdapter = createRuntimeAdapter({
       "/veryfront.config.ts": [
         "export default {",
-        '  fs: { type: "veryfront-api" },',
+        '  fs: { type: "veryfront-api", veryfront: { projectSlug: "project-a" } },',
         '  ai: { tasks: { discovery: { paths: ["first-tasks"] } } },',
         "};",
         "",
       ].join("\n"),
       "/project/first-tasks/first.ts": makeTaskSource("First"),
     });
-    markAdapterAsVirtual(firstAdapter);
+    markAdapterAsSingleProjectVirtual(firstAdapter);
 
     const first = await discoverProjectTaskRuntime({
-      projectDir: "/same-local-dir",
+      projectDir: "/project",
       adapter: firstAdapter,
       fsAdapter: firstAdapter.fs,
       cacheKey: "project-a",
@@ -356,17 +478,17 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
     const secondAdapter = createRuntimeAdapter({
       "/veryfront.config.ts": [
         "export default {",
-        '  fs: { type: "veryfront-api" },',
+        '  fs: { type: "veryfront-api", veryfront: { projectSlug: "project-b" } },',
         '  ai: { tasks: { discovery: { paths: ["second-tasks"] } } },',
         "};",
         "",
       ].join("\n"),
       "/project/second-tasks/second.ts": makeTaskSource("Second"),
     });
-    markAdapterAsVirtual(secondAdapter);
+    markAdapterAsSingleProjectVirtual(secondAdapter);
 
     const second = await discoverProjectTaskRuntime({
-      projectDir: "/same-local-dir",
+      projectDir: "/project",
       adapter: secondAdapter,
       fsAdapter: secondAdapter.fs,
       cacheKey: "project-b",
@@ -449,5 +571,121 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
     assertEquals(result.kind, "task");
     assertEquals(result.id, "probe-runtime");
     assertEquals(result.output, { hasRuntimeTool: true });
+  });
+
+  it("propagates trigger cancellation into task execution", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/cancelled.ts": makeTaskSource("Cancelled"),
+    });
+    const controller = new AbortController();
+    controller.abort(new Error("cancelled trigger execution"));
+
+    await assertRejects(
+      () =>
+        runTriggerTarget({
+          projectDir: "/project",
+          adapter,
+          config: { fs: { type: "veryfront-api" } },
+          target: { kind: "task", id: "cancelled" },
+          signal: controller.signal,
+        }),
+      Error,
+      "cancelled trigger execution",
+    );
+  });
+
+  it("runs agent targets after project runtime discovery", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/agents/scheduled-agent.ts": [
+        "export default {",
+        '  id: "scheduled-agent",',
+        '  config: { id: "scheduled-agent", model: "auto" },',
+        "  async generate({ input, context }) {",
+        '    return { text: `ran:${input}:${context.schedule_name}`, status: "completed", toolCalls: [] };',
+        "  },",
+        '  async stream() { throw new Error("not used"); },',
+        '  async respond() { throw new Error("not used"); },',
+        '  getMemory() { throw new Error("not used"); },',
+        '  async getMemoryStats() { return { totalMessages: 0, estimatedTokens: 0, type: "test" }; },',
+        "  async clearMemory() {},",
+        "};",
+        "",
+      ].join("\n"),
+    });
+
+    const result = await runTriggerTarget({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } },
+      target: { kind: "agent", id: "scheduled-agent" },
+      agentInput: "Run the fixture.",
+      agentContext: { schedule_name: "Fixture schedule" },
+    });
+
+    assertEquals(result.kind, "agent");
+    assertEquals(result.id, "scheduled-agent");
+    assertEquals(result.output, {
+      text: "ran:Run the fixture.:Fixture schedule",
+      status: "completed",
+      toolCalls: 0,
+    });
+
+    await assertRejects(
+      () =>
+        runTriggerTarget({
+          projectDir: "/project",
+          adapter,
+          config: { fs: { type: "veryfront-api" } },
+          target: { kind: "agent", id: "scheduled-agent" },
+        }),
+      Error,
+      "Local agent trigger runs require an explicit agent input.",
+    );
+
+    await assertRejects(
+      () =>
+        runTriggerTarget({
+          projectDir: "/project",
+          adapter,
+          config: { fs: { type: "veryfront-api" } },
+          target: { kind: "agent", id: "missing-agent" },
+          agentInput: "Run the fixture.",
+        }),
+      Error,
+      'Agent target "missing-agent" not found.',
+    );
+  });
+
+  it("fails when an agent target returns an error status", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/agents/failing-agent.ts": [
+        "export default {",
+        '  id: "failing-agent",',
+        '  config: { id: "failing-agent", model: "auto" },',
+        "  async generate() {",
+        '    return { text: "failure", status: "error", toolCalls: [] };',
+        "  },",
+        '  async stream() { throw new Error("not used"); },',
+        '  async respond() { throw new Error("not used"); },',
+        '  getMemory() { throw new Error("not used"); },',
+        '  async getMemoryStats() { return { totalMessages: 0, estimatedTokens: 0, type: "test" }; },',
+        "  async clearMemory() {},",
+        "};",
+        "",
+      ].join("\n"),
+    });
+
+    await assertRejects(
+      () =>
+        runTriggerTarget({
+          projectDir: "/project",
+          adapter,
+          config: { fs: { type: "veryfront-api" } },
+          target: { kind: "agent", id: "failing-agent" },
+          agentInput: "Run the fixture.",
+        }),
+      Error,
+      'Agent target "failing-agent" failed.',
+    );
   });
 });

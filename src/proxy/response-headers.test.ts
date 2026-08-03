@@ -60,4 +60,44 @@ describe("proxy response headers", () => {
 
     assertEquals(getSetCookies(response.headers), ["lb=server-a; Path=/; HttpOnly"]);
   });
+
+  it("treats malformed or ambiguous cache lifetimes as non-cacheable", () => {
+    for (
+      const cacheControl of [
+        "public, max-age=+60",
+        "public, max-age=1e3",
+        "public, max-age=0x10",
+        "public, max-age=60, max-age=120",
+        'public, max-age="60',
+        "public=yes, max-age=60",
+      ]
+    ) {
+      const response = removeStickyCookieFromPublicCacheableResponse(
+        new Response("html", {
+          headers: {
+            "Cache-Control": cacheControl,
+            "Set-Cookie": "lb=server-a; Path=/; HttpOnly",
+          },
+        }),
+      );
+      assertEquals(
+        getSetCookies(response.headers),
+        ["lb=server-a; Path=/; HttpOnly"],
+        cacheControl,
+      );
+    }
+  });
+
+  it("parses quoted commas without inventing cache-control directives", () => {
+    const response = removeStickyCookieFromPublicCacheableResponse(
+      new Response("html", {
+        headers: {
+          "Cache-Control": 'extension="one,two", public, max-age="60"',
+          "Set-Cookie": "lb=server-a; Path=/; HttpOnly",
+        },
+      }),
+    );
+
+    assertEquals(getSetCookies(response.headers), []);
+  });
 });

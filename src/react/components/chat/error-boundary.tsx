@@ -25,7 +25,6 @@ export class ChatErrorBoundary extends React.Component<
   }
 
   override componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
-    console.error("[ChatErrorBoundary] Caught error:", error, errorInfo);
     this.props.onError?.(error, errorInfo);
   }
 
@@ -99,7 +98,6 @@ export function useChatErrorHandler(): {
   const [error, setError] = React.useState<Error | null>(null);
 
   const handleError = React.useCallback((err: Error) => {
-    console.error("[useChatErrorHandler] Error:", err);
     setError(err);
   }, []);
 

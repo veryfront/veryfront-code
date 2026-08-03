@@ -17,6 +17,7 @@ interface LcovLineRecord {
 
 const UNIT_COVERAGE_ROOTS = ["src", "cli"];
 const UNIT_COVERAGE_ENV = {
+  DENO_TESTING: "1",
   VF_DISABLE_LRU_INTERVAL: "1",
   SSR_TRANSFORM_PER_PROJECT_LIMIT: "0",
   REVALIDATION_PER_PROJECT_LIMIT: "0",
@@ -56,7 +57,7 @@ export async function collectUnitCoverageTestFiles(): Promise<string[]> {
     for await (
       const entry of walk(root, {
         includeDirs: false,
-        exts: [".ts"],
+        exts: [".ts", ".tsx"],
       })
     ) {
       const normalizedPath = entry.path.replaceAll("\\", "/");
@@ -76,7 +77,6 @@ export function buildDenoTestCommandArgs(
     "--preload=src/schemas/_test-setup.ts",
     "--no-check",
     "--parallel",
-    "--fail-fast",
     "--allow-all",
     "--v8-flags=--max-old-space-size=8192",
     `--coverage=${options.coverageDir}`,
@@ -174,7 +174,7 @@ async function runShard(args: string[]): Promise<void> {
 }
 
 async function runMerge(args: string[]): Promise<void> {
-  const threshold = Number(readOption(args, "--threshold") ?? "68");
+  const threshold = Number(readOption(args, "--threshold") ?? "80");
   const coveragePaths = args.filter((arg) => !arg.startsWith("--"));
 
   if (!Number.isFinite(threshold)) {
@@ -217,9 +217,10 @@ function parseLcovLine(line: string): LcovLineRecord | undefined {
   return { line: lineNumber, covered };
 }
 
-function isUnitCoverageTestFile(path: string): boolean {
-  return path.endsWith(".test.ts") &&
+export function isUnitCoverageTestFile(path: string): boolean {
+  return (path.endsWith(".test.ts") || path.endsWith(".test.tsx")) &&
     !path.endsWith(".integration.test.ts") &&
+    !path.endsWith(".integration.test.tsx") &&
     !path.startsWith("src/workflow/__tests__/");
 }
 

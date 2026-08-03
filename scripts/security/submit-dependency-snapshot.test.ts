@@ -1,8 +1,10 @@
-import { assertEquals } from "#std/assert";
+import { assertEquals, assertRejects } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import {
   manifestsFromLock,
+  type Snapshot,
   snapshotFromLock,
+  submitDependencySnapshot,
 } from "./submit-dependency-snapshot.ts";
 
 const ctx = {
@@ -11,6 +13,125 @@ const ctx = {
   correlator: "ci/deps",
   runId: "1",
 };
+
+const emptySnapshot: Snapshot = {
+  version: 0,
+  sha: ctx.sha,
+  ref: ctx.ref,
+  job: { correlator: ctx.correlator, id: ctx.runId },
+  detector: {
+    name: "veryfront-deno-lock",
+    version: "1.0.0",
+    url: "https://github.com/veryfront/veryfront-code",
+  },
+  scanned: "2026-07-15T00:00:00.000Z",
+  manifests: {},
+};
+
+describe("submitDependencySnapshot", () => {
+  it("retries 5xx, 429, and network failures with bounded backoff", async () => {
+    const outcomes: Array<Response | Error> = [
+      new Response("gateway unavailable", { status: 502 }),
+      new Response("rate limited", { status: 429 }),
+      new TypeError("network unavailable"),
+      new Response("accepted", { status: 201 }),
+    ];
+    const delays: number[] = [];
+    let calls = 0;
+
+    const response = await submitDependencySnapshot(emptySnapshot, {
+      repository: "veryfront/veryfront-code",
+      token: "<TOKEN>",
+      retryDelaysMs: [10, 20, 40],
+      fetch: () => {
+        const outcome = outcomes[calls++];
+        return outcome instanceof Error
+          ? Promise.reject(outcome)
+          : Promise.resolve(outcome);
+      },
+      sleep: (delayMs) => {
+        delays.push(delayMs);
+        return Promise.resolve();
+      },
+    });
+
+    assertEquals(response.status, 201);
+    assertEquals(calls, 4);
+    assertEquals(delays, [10, 20, 40]);
+  });
+
+  it("stops retrying 5xx responses after the default retry bound", async () => {
+    const delays: number[] = [];
+    let calls = 0;
+
+    const response = await submitDependencySnapshot(emptySnapshot, {
+      repository: "veryfront/veryfront-code",
+      token: "<TOKEN>",
+      fetch: () => {
+        calls++;
+        return Promise.resolve(new Response("unavailable", { status: 503 }));
+      },
+      sleep: (delayMs) => {
+        delays.push(delayMs);
+        return Promise.resolve();
+      },
+    });
+
+    assertEquals(response.status, 503);
+    assertEquals(calls, 4);
+    assertEquals(delays, [1_000, 2_000, 4_000]);
+  });
+
+  it("stops retrying network failures after the default retry bound", async () => {
+    const delays: number[] = [];
+    let calls = 0;
+
+    await assertRejects(
+      () =>
+        submitDependencySnapshot(emptySnapshot, {
+          repository: "veryfront/veryfront-code",
+          token: "<TOKEN>",
+          fetch: () => {
+            calls++;
+            return Promise.reject(new TypeError("network unavailable"));
+          },
+          sleep: (delayMs) => {
+            delays.push(delayMs);
+            return Promise.resolve();
+          },
+        }),
+      TypeError,
+      "network unavailable",
+    );
+
+    assertEquals(calls, 4);
+    assertEquals(delays, [1_000, 2_000, 4_000]);
+  });
+
+  it("does not retry permanent 4xx responses", async () => {
+    const delays: number[] = [];
+    let calls = 0;
+
+    const response = await submitDependencySnapshot(emptySnapshot, {
+      repository: "veryfront/veryfront-code",
+      token: "<TOKEN>",
+      fetch: () => {
+        calls++;
+        return Promise.resolve(
+          new Response("invalid snapshot", { status: 422 }),
+        );
+      },
+      sleep: (delayMs) => {
+        delays.push(delayMs);
+        return Promise.resolve();
+      },
+    });
+
+    assertEquals(response.status, 422);
+    assertEquals(calls, 1);
+    assertEquals(delays, []);
+  });
+});
 
 describe("manifestsFromLock", () => {
   it("separates core and extension dependency closures", () => {
@@ -136,7 +257,8 @@ describe("manifestsFromLock", () => {
     ]);
     assertEquals(snapshot.manifests["cli/deno.json"].resolved, {});
     assertEquals(
-      snapshot.manifests["extensions/ext-sandbox-shell-tools/deno.json"].resolved,
+      snapshot.manifests["extensions/ext-sandbox-shell-tools/deno.json"]
+        .resolved,
       {},
     );
   });

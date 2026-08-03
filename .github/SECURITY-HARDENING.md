@@ -43,6 +43,7 @@ Recent npm compromises have used maintainer account takeover, malicious pull req
 Required controls:
 
 - Configure npm trusted publishing for package `veryfront` and every generated `@veryfront/ext-*` package: GitHub Actions publisher, owner `veryfront`, repository `veryfront-code`, workflow filename `cicd.yml`, environment `production`, action `npm publish`.
+- Before merging a new publishable package into a stable release, an npm organization owner must bootstrap its name by publishing the package once with a prerelease version and a non-`latest` dist-tag, then configure the trusted publisher above. Never use the intended stable release version for this bootstrap: npm versions are immutable, and a manual publish does not carry the GitHub release commit provenance required by CI.
 - Keep `.github/workflows/cicd.yml` release jobs on `permissions: id-token: write` and publish with `npm publish --provenance --access public`.
 - Do not reference `secrets.NPM_TOKEN` or `NODE_AUTH_TOKEN` in npm publish steps.
 - Remove the repository or organization `NPM_TOKEN` secret after trusted publishing is configured and one dry release check confirms npm accepts OIDC authentication.

@@ -1,4 +1,8 @@
-import { estimateTokens } from "../../chat/message-prep.ts";
+import {
+  estimateMessageTokenBreakdown,
+  estimateTokens,
+  type MessageTokenBreakdown,
+} from "../../chat/message-prep.ts";
 import { defineSchema } from "../../schemas/index.ts";
 import type { InferSchema } from "../../extensions/schema/index.ts";
 import type { AgentRuntimeMessage } from "../runtime/message-adapter.ts";
@@ -79,6 +83,8 @@ export type ContextBudgetDiagnostics = {
   compacted: boolean;
   tokensBefore: number;
   tokensAfter: number;
+  beforeBreakdown: MessageTokenBreakdown;
+  afterBreakdown: MessageTokenBreakdown;
   tokenBudget: number;
   reserveTokens: number;
   summaryTokens: number;
@@ -313,15 +319,20 @@ export async function applyContextBudget(
   assertValidContextBudgetOptions(options);
   const reason = options.reason ?? "context_window";
   const tokensBefore = getMessageListTokens(messages);
+  const beforeBreakdown = estimateMessageTokenBreakdown(messages);
   const usableBudget = getUsableTokenBudget(options);
 
   if (tokensBefore <= usableBudget) {
+    const retainedMessages = [...messages];
+    const afterBreakdown = estimateMessageTokenBreakdown(retainedMessages);
     return {
-      messages: [...messages],
+      messages: retainedMessages,
       diagnostics: {
         compacted: false,
         tokensBefore,
         tokensAfter: tokensBefore,
+        beforeBreakdown,
+        afterBreakdown,
         tokenBudget: options.tokenBudget,
         reserveTokens: options.reserveTokens,
         summaryTokens: 0,
@@ -375,6 +386,7 @@ export async function applyContextBudget(
   });
   const compactedMessages = [summaryMessage, ...retainedMessages];
   const tokensAfter = getMessageListTokens(compactedMessages);
+  const afterBreakdown = estimateMessageTokenBreakdown(compactedMessages);
   if (tokensAfter > usableBudget) {
     throw new ContextCompactionError("Context compaction result exceeded usable token budget");
   }
@@ -397,6 +409,8 @@ export async function applyContextBudget(
       compacted: true,
       tokensBefore,
       tokensAfter,
+      beforeBreakdown,
+      afterBreakdown,
       tokenBudget: options.tokenBudget,
       reserveTokens: options.reserveTokens,
       summaryTokens: estimateTokens(summary.text),

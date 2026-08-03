@@ -5,6 +5,7 @@ import {
 import type { CacheBackend } from "../types.ts";
 import { buildBatchResults } from "../batch-results.ts";
 import { type CacheGlob, compileCacheGlob } from "./glob.ts";
+import { assertCacheReadMaximumBytes, assertCacheValueWithinLimit } from "../bounded-read.ts";
 
 const DEFAULT_TTL_SECONDS = 300;
 const MAX_GLOB_CACHE_SIZE = 100;
@@ -45,6 +46,28 @@ export class MemoryCacheBackend implements CacheBackend {
     }
 
     return Promise.resolve(entry.value);
+  }
+
+  async getWithinLimit(key: string, maximumBytes: number): Promise<string | null> {
+    const admittedMaximum = assertCacheReadMaximumBytes(maximumBytes);
+    const value = await this.get(key);
+    if (value === null) return null;
+    assertCacheValueWithinLimit(value, admittedMaximum);
+    return value;
+  }
+
+  getRemainingTtlSeconds(key: string): Promise<number | null> {
+    const entry = this.store.get(key);
+    if (!entry) return Promise.resolve(null);
+
+    const remainingMs = entry.expiresAt - Date.now();
+    if (remainingMs <= 0) {
+      this.currentSizeBytes -= entry.sizeBytes;
+      this.store.delete(key);
+      return Promise.resolve(null);
+    }
+
+    return Promise.resolve(remainingMs / 1000);
   }
 
   getBatch(keys: string[]): Promise<Map<string, string | null>> {

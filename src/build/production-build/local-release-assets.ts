@@ -16,9 +16,16 @@ import {
   type ReleaseAssetTransform,
 } from "#veryfront/release-assets/build-executor.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
-import { sha256HexBytes } from "#veryfront/release-assets/hash.ts";
-import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import { computeHashBytes } from "#veryfront/utils";
+import {
+  createDependencyPinningSource,
+  type DependencyPinningSnapshot,
+  type DependencyPinningSourceInput,
+  resolveDependencyPinningSnapshot,
+  resolveProjectReactVersion,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 
 export const LOCAL_RELEASE_ASSET_MANIFEST_PATH = "_veryfront/release-asset-manifest.json";
 
@@ -27,10 +34,17 @@ export interface LocalReleaseAssetOptions {
   projectDir: string;
   outputDir: string;
   dryRun: boolean;
+  config?: VeryfrontConfig;
   projectId?: string;
   releaseId?: string;
   vendorHttpImports?: ReleaseAssetHttpDependencyVendor;
   frameworkTransform?: ReleaseAssetTransform;
+  /** React version derived from the build-wide dependency snapshot. */
+  reactVersion?: string;
+  /** Immutable dependency state shared by the production build. */
+  dependencyPinningSnapshot?: DependencyPinningSnapshot;
+  /** Package source paired with dependencyPinningSnapshot. */
+  dependencyPinningSource?: DependencyPinningSourceInput;
 }
 
 function shouldBuildLocalDependencyAssets(): boolean {
@@ -55,16 +69,39 @@ export async function generateLocalReleaseAssetManifest(
   options: LocalReleaseAssetOptions,
 ): Promise<ReleaseAssetManifest | null> {
   if (!shouldBuildLocalDependencyAssets()) return null;
+  if (!options.vendorHttpImports || !options.frameworkTransform) {
+    throw new Error(
+      "Local immutable release assets require explicit HTTP vendoring and framework transform providers",
+    );
+  }
+  const vendorHttpImports = options.vendorHttpImports;
+  const frameworkTransform = options.frameworkTransform;
 
   const tempDir = await options.adapter.fs.makeTempDir("vf-local-release-assets-");
 
   try {
     try {
-      const reactVersion = await resolveProjectReactVersion({ projectDir: options.projectDir });
+      const dependencyPinningSource = options.dependencyPinningSource ??
+        createDependencyPinningSource({
+          projectDir: options.projectDir,
+          adapter: options.adapter,
+          contentSourceId: "local-release-assets",
+          config: options.config,
+        });
+      const dependencyPinningSnapshot = options.dependencyPinningSnapshot ??
+        await resolveDependencyPinningSnapshot(dependencyPinningSource);
+      const reactVersion = options.reactVersion ??
+        await resolveProjectReactVersion({
+          projectDir: options.projectDir,
+          config: options.config,
+          dependencyPinningSource,
+          dependencyPinningCacheKey: dependencyPinningSnapshot.cacheKey,
+          dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
+        });
       const built = await buildReactImportMapDependencyAssets({
         tempDir,
         reactVersion,
-        vendorHttpImports: options.vendorHttpImports,
+        vendorHttpImports,
       });
       const cached = await buildCachedHttpDependencyAssets({
         cacheDir: join(options.projectDir, ".cache", "veryfront-http-bundle"),
@@ -76,8 +113,10 @@ export async function generateLocalReleaseAssetManifest(
         adapter: options.adapter,
         reactVersion,
         projectId: options.projectId ?? "local",
-        transform: options.frameworkTransform,
+        transform: frameworkTransform,
         dependencyUrls,
+        dependencyPinningSource,
+        dependencyPinningSnapshot,
       });
       dependencies = { ...dependencies, ...framework.dependencies };
       const assetsByHash = new Map<string, PreparedReleaseAsset>();
@@ -85,7 +124,12 @@ export async function generateLocalReleaseAssetManifest(
         assetsByHash.set(asset.contentHash, asset);
       }
       const gaps = [...cached.gaps, ...built.gaps, ...framework.gaps];
-      const sourceContentHash = await sha256HexBytes(
+      if (gaps.length > 0) {
+        throw new Error(
+          `Local release asset coverage is incomplete: ${gaps.slice(0, 20).join(", ")}`,
+        );
+      }
+      const sourceContentHash = await computeHashBytes(
         new TextEncoder().encode(
           [
             options.projectDir,
@@ -107,6 +151,7 @@ export async function generateLocalReleaseAssetManifest(
         sourceContentHash,
         createdAt: new Date().toISOString(),
         assetBasePath: RELEASE_ASSET_BASE_PATH,
+        dependencyMode: "immutable",
         modules: {},
         css: [],
         routes: {},
@@ -117,7 +162,6 @@ export async function generateLocalReleaseAssetManifest(
             contentType: entry.contentType,
           }]),
         ),
-        fallback: { mode: "jit", gaps },
       };
 
       if (options.dryRun) return manifest;

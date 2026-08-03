@@ -12,19 +12,45 @@ import {
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { rendererLogger } from "#veryfront/utils";
+import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { UNRESOLVED_VF_MODULES_RE } from "./module-transform-cache.ts";
+import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
 
 const logger = rendererLogger.component("module-loader");
+
+export function buildModuleTransformCacheVariant(
+  dependencyPinningCacheKey?: string,
+  moduleServerOrigin?: string,
+): string | undefined {
+  return buildDependencyPinningCacheVariant(
+    dependencyPinningCacheKey,
+    moduleServerOrigin,
+  );
+}
 
 export function getModuleCacheKey(
   filePath: string,
   projectId?: string,
   projectDir?: string,
   contentSourceId?: string,
+  reactVersion?: string,
+  mode?: "development" | "production",
+  dependencyPinningCacheKey?: string,
+  moduleServerOrigin?: string,
 ): string {
   const base = projectId ?? projectDir ?? "default";
   const source = contentSourceId ?? "default";
-  return `${base}:${source}:${filePath}`;
+  const fields = [
+    base,
+    source,
+    reactVersion ?? REACT_DEFAULT_VERSION,
+    mode ?? "default",
+  ];
+  const cacheVariant = buildModuleTransformCacheVariant(
+    dependencyPinningCacheKey,
+    moduleServerOrigin,
+  );
+  return JSON.stringify(cacheVariant ? [...fields, cacheVariant, filePath] : [...fields, filePath]);
 }
 
 type LookupMdxCache = typeof lookupMdxEsmCache;
@@ -37,6 +63,8 @@ export interface ResolveCachedModulePathInput {
   projectId?: string;
   contentSourceId?: string;
   reactVersion?: string;
+  dependencyPinningCacheKey?: string;
+  moduleServerOrigin?: string;
   moduleCache: Map<string, string>;
   readTextFile?: (path: string) => Promise<string>;
   fileSystem?: FileSystemReader;
@@ -95,6 +123,10 @@ async function resolveMdxEsmCachedPath(
       contentSourceId: input.contentSourceId,
     },
     input.reactVersion,
+    buildModuleTransformCacheVariant(
+      input.dependencyPinningCacheKey,
+      input.moduleServerOrigin,
+    ),
   );
 
   if (mdxCacheResult.status === "hit") {

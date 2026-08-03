@@ -1,10 +1,20 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isWebSocketUpgradeResponse } from "../../base.ts";
 import { EventEmitter } from "node:events";
 import { Buffer } from "node:buffer";
-import { resolveWebSocketUpgrade } from "./http-server.ts";
+import {
+  NODE_WEBSOCKET_UPGRADE_ID_HEADER,
+  registerWebSocketUpgrade,
+  rejectWebSocketUpgrade,
+  resolveWebSocketUpgrade,
+} from "./http-server.ts";
 import { NodeServerAdapter, NodeWebSocket } from "./websocket-adapter.ts";
 import type { WSWebSocket } from "./types.ts";
 
@@ -32,20 +42,29 @@ function attach(): { socket: NodeWebSocket; ws: WSWebSocket & EventEmitter } {
   return { socket, ws };
 }
 
+function websocketRequest(
+  key = "dGhlIHNhbXBsZSBub25jZQ==",
+  protocols?: string,
+  transportId?: string,
+): Request {
+  return new Request("http://localhost/_ws", {
+    headers: {
+      connection: "Upgrade",
+      upgrade: "websocket",
+      "sec-websocket-key": key,
+      "sec-websocket-version": "13",
+      ...(protocols ? { "sec-websocket-protocol": protocols } : {}),
+      ...(transportId ? { [NODE_WEBSOCKET_UPGRADE_ID_HEADER]: transportId } : {}),
+    },
+  });
+}
+
 describe("NodeServerAdapter WebSocket upgrade", () => {
   it("returns an explicit non-DOM upgrade response signal", () => {
     const requestId = "dGhlIHNhbXBsZSBub25jZQ==";
     const adapter = new NodeServerAdapter();
 
-    const { response } = adapter.upgradeWebSocket(
-      new Request("http://localhost/_ws", {
-        headers: {
-          connection: "Upgrade",
-          upgrade: "websocket",
-          "sec-websocket-key": requestId,
-        },
-      }),
-    );
+    const { response } = adapter.upgradeWebSocket(websocketRequest(requestId));
 
     assertEquals(isWebSocketUpgradeResponse(response), true);
     assertEquals(response.status, 101);
@@ -54,6 +73,192 @@ describe("NodeServerAdapter WebSocket upgrade", () => {
     assertEquals(response instanceof Response, false);
 
     assertEquals(resolveWebSocketUpgrade(requestId, createMockWs()), true);
+  });
+
+  it("uses the transport correlation id instead of the client handshake key", () => {
+    const handshakeKey = "YWJjZGVmZ2hpamtsbW5vcA==";
+    const transportId = "unique-transport-id";
+    const adapter = new NodeServerAdapter();
+
+    adapter.upgradeWebSocket(
+      websocketRequest(handshakeKey, undefined, transportId),
+    );
+
+    assertEquals(resolveWebSocketUpgrade(handshakeKey, createMockWs()), false);
+    assertEquals(resolveWebSocketUpgrade(transportId, createMockWs()), true);
+  });
+
+  it("selects exactly one offered protocol and preserves application headers", () => {
+    const requestId = "MDEyMzQ1Njc4OWFiY2RlZg==";
+    const adapter = new NodeServerAdapter();
+
+    const { response } = adapter.upgradeWebSocket(
+      websocketRequest(requestId, "chat, hmr"),
+      {
+        protocol: "hmr",
+        headers: { "x-veryfront-handshake": "accepted" },
+        idleTimeout: 0,
+      },
+    );
+
+    assertEquals(response.headers.get("sec-websocket-protocol"), "hmr");
+    assertEquals(response.headers.get("x-veryfront-handshake"), "accepted");
+    assertEquals(resolveWebSocketUpgrade(requestId, createMockWs()), true);
+  });
+
+  it("does not silently select a client protocol when the application selected none", () => {
+    const requestId = "YWJjZGVmZ2hpamtsbW5vcA==";
+    const adapter = new NodeServerAdapter();
+
+    const { response } = adapter.upgradeWebSocket(
+      websocketRequest(requestId, "chat, hmr"),
+    );
+
+    assertEquals(response.headers.get("sec-websocket-protocol"), null);
+    assertEquals(resolveWebSocketUpgrade(requestId, createMockWs()), true);
+  });
+
+  it("rejects malformed or unsupported upgrade options before registering transport state", () => {
+    const adapter = new NodeServerAdapter();
+    const request = websocketRequest(
+      "MDEyMzQ1Njc4OWFiY2RlZg==",
+      "chat, hmr",
+    );
+
+    assertThrows(
+      () => adapter.upgradeWebSocket(request, { protocol: "not offered" }),
+      Error,
+      "valid HTTP token",
+    );
+    assertThrows(
+      () => adapter.upgradeWebSocket(request, { protocol: "other" }),
+      Error,
+      "not offered",
+    );
+    assertThrows(
+      () =>
+        adapter.upgradeWebSocket(request, {
+          headers: { Upgrade: "different" },
+        }),
+      Error,
+      "manages the upgrade",
+    );
+    assertThrows(
+      () => adapter.upgradeWebSocket(request, { idleTimeout: Number.NaN }),
+      Error,
+      "non-negative finite",
+    );
+    assertThrows(
+      () => adapter.upgradeWebSocket(request, { idleTimeout: 30 }),
+      Error,
+      "does not support",
+    );
+
+    assertEquals(
+      resolveWebSocketUpgrade("MDEyMzQ1Njc4OWFiY2RlZg==", createMockWs()),
+      false,
+    );
+  });
+
+  it("rejects requests that are not valid RFC 6455 handshakes", () => {
+    const adapter = new NodeServerAdapter();
+
+    assertThrows(
+      () =>
+        adapter.upgradeWebSocket(
+          new Request("http://localhost/_ws", {
+            headers: {
+              "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+              "sec-websocket-version": "13",
+            },
+          }),
+        ),
+      Error,
+      "Upgrade: websocket",
+    );
+    assertThrows(
+      () =>
+        adapter.upgradeWebSocket(
+          websocketRequest("not-a-valid-websocket-key"),
+        ),
+      Error,
+      "Sec-WebSocket-Key",
+    );
+    assertThrows(
+      () =>
+        adapter.upgradeWebSocket(
+          new Request("http://localhost/_ws", {
+            headers: {
+              connection: "Upgrade",
+              upgrade: "websocket",
+              "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+              "sec-websocket-version": "12",
+            },
+          }),
+        ),
+      Error,
+      "Sec-WebSocket-Version",
+    );
+  });
+
+  it("rejects duplicate pending ids without replacing the original owner", async () => {
+    const requestId = "duplicate-upgrade-id";
+    const original = registerWebSocketUpgrade(requestId);
+
+    await assertRejects(
+      () => registerWebSocketUpgrade(requestId),
+      Error,
+      "already pending",
+    );
+    const ws = createMockWs();
+    assertEquals(resolveWebSocketUpgrade(requestId, ws), true);
+    assertEquals(await original, ws);
+  });
+
+  it("explicitly rejects and removes an abandoned pending upgrade", async () => {
+    const requestId = "abandoned-upgrade-id";
+    const pending = registerWebSocketUpgrade(requestId);
+
+    assertEquals(
+      rejectWebSocketUpgrade(requestId, new Error("upgrade abandoned")),
+      true,
+    );
+    await assertRejects(() => pending, Error, "upgrade abandoned");
+    assertEquals(rejectWebSocketUpgrade(requestId, new Error("again")), false);
+  });
+});
+
+describe("NodeWebSocket message handling", () => {
+  it("decodes text frames as strings", () => {
+    const { socket, ws } = attach();
+    let received: unknown;
+    socket.onmessage = (event) => {
+      received = event.data;
+    };
+
+    ws.emit("message", Buffer.from("hello"), false);
+
+    assertEquals(received, "hello");
+  });
+
+  it("preserves binary frames as exact ArrayBuffer copies", () => {
+    const { socket, ws } = attach();
+    let received: unknown;
+    socket.onmessage = (event) => {
+      received = event.data;
+    };
+
+    ws.emit(
+      "message",
+      [Buffer.from([0, 1]), Buffer.from([254, 255])],
+      true,
+    );
+
+    assertEquals(received instanceof ArrayBuffer, true);
+    assertEquals(
+      [...new Uint8Array(received as ArrayBuffer)],
+      [0, 1, 254, 255],
+    );
   });
 });
 
@@ -146,5 +351,86 @@ describe("NodeWebSocket close handling", () => {
     const { ws } = attach();
     // onclose left null — emitting should be a no-op, not a crash.
     ws.emit("close", 1000, Buffer.from("ok"));
+  });
+});
+
+describe("NodeWebSocket error handling", () => {
+  it("emits an ErrorEvent-shaped object without relying on the global constructor", () => {
+    const socket = new NodeWebSocket();
+    let received: ErrorEvent | null = null;
+    socket.onerror = (event) => {
+      received = event as ErrorEvent;
+    };
+
+    socket._emitError(new Error("transport failed"));
+
+    assertExists(received);
+    const event = received as unknown as ErrorEvent;
+    assertEquals(event.type, "error");
+    assertEquals(event.message, "transport failed");
+    assertEquals(event.error instanceof Error, true);
+    assertEquals(socket.readyState, NodeWebSocket.CLOSED);
+  });
+});
+
+describe("NodeWebSocket EventTarget compatibility", () => {
+  it("supports multiple listeners and removes only the matching callback", () => {
+    const socket = new NodeWebSocket();
+    const calls: string[] = [];
+    const first = () => calls.push("first");
+    const second = () => calls.push("second");
+    socket.addEventListener("open", first);
+    socket.addEventListener("open", second);
+    socket.removeEventListener("open", first);
+
+    socket._attachRealSocket(createMockWs());
+
+    assertEquals(calls, ["second"]);
+  });
+
+  it("honors once and AbortSignal listener options", () => {
+    const socket = new NodeWebSocket();
+    const ws = createMockWs();
+    let onceCalls = 0;
+    let abortedCalls = 0;
+    const controller = new AbortController();
+    socket.addEventListener("message", () => onceCalls++, { once: true });
+    socket.addEventListener("message", () => abortedCalls++, {
+      signal: controller.signal,
+    });
+    controller.abort();
+    socket._attachRealSocket(ws);
+
+    ws.emit("message", Buffer.from("one"), false);
+    ws.emit("message", Buffer.from("two"), false);
+
+    assertEquals(onceCalls, 1);
+    assertEquals(abortedCalls, 0);
+  });
+
+  it("honors close requested while the transport is still connecting", () => {
+    const socket = new NodeWebSocket();
+    const ws = createMockWs();
+    const closeCalls: Array<[number | undefined, string | undefined]> = [];
+    ws.close = (code?: number, reason?: string) => {
+      closeCalls.push([code, reason]);
+    };
+    let openCalls = 0;
+    socket.addEventListener("open", () => openCalls++);
+    assertThrows(
+      () => socket.send("before-open"),
+      DOMException,
+      "not open",
+    );
+
+    socket.close(1000, "done");
+    socket._attachRealSocket(ws);
+
+    assertEquals(socket.readyState, NodeWebSocket.CLOSING);
+    assertEquals(closeCalls, [[1000, "done"]]);
+    assertEquals(openCalls, 0);
+
+    ws.emit("close", 1000, Buffer.from("done"));
+    assertEquals(socket.readyState, NodeWebSocket.CLOSED);
   });
 });

@@ -4,10 +4,11 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertMatch } from "#veryfront/testing/assert";
+import { assert, assertEquals, assertExists, assertMatch } from "#veryfront/testing/assert";
 import { formatCLIError } from "./cli-error-boundary.ts";
 import { VeryfrontError } from "../types.ts";
 import { CONFIG_NOT_FOUND, UNKNOWN_ERROR } from "../error-registry.ts";
+import { ERROR_OUTPUT_MAX_LENGTH_CHARS } from "../safe-diagnostics.ts";
 
 describe("cli-error-boundary", () => {
   describe("formatCLIError", () => {
@@ -42,16 +43,45 @@ describe("cli-error-boundary", () => {
 
       // CONFIG_NOT_FOUND has a suggestion
       assertMatch(output, /Suggestion:/);
-      assertMatch(output, /vf init/);
+      assertMatch(output, /veryfront\.config\.js/);
+      assertMatch(output, /veryfront\.config\.ts/);
+      assertMatch(output, /veryfront\.config\.mjs/);
     });
 
     it("should include docs URL", () => {
       const error = CONFIG_NOT_FOUND.create();
 
-      const output = formatCLIError(error);
+      const output = formatCLIError(error, { color: false });
 
       assertMatch(output, /Docs:/);
-      assertMatch(output, /https:\/\/veryfront\.com\/docs\/errors\/config-not-found/);
+      const docsLine = output.split("\n").find((line) => line.trimStart().startsWith("Docs:"));
+      assertEquals(docsLine?.trim(), "Docs: https://veryfront.com/docs/errors/config-not-found");
+    });
+
+    it("should honor color-related environment variables by default", () => {
+      const keys = ["FORCE_COLOR", "NO_COLOR", "TERM"] as const;
+      const original = new Map(keys.map((key) => [key, Deno.env.get(key)] as const));
+      const error = CONFIG_NOT_FOUND.create();
+
+      try {
+        Deno.env.delete("NO_COLOR");
+        Deno.env.delete("TERM");
+        Deno.env.set("FORCE_COLOR", "1");
+        assert(formatCLIError(error).includes("\x1b["));
+
+        Deno.env.delete("FORCE_COLOR");
+        Deno.env.set("NO_COLOR", "1");
+        assertEquals(formatCLIError(error).includes("\x1b["), false);
+
+        Deno.env.delete("NO_COLOR");
+        Deno.env.set("TERM", "dumb");
+        assertEquals(formatCLIError(error).includes("\x1b["), false);
+      } finally {
+        for (const [key, value] of original) {
+          if (value === undefined) Deno.env.delete(key);
+          else Deno.env.set(key, value);
+        }
+      }
     });
 
     it("should wrap plain Error as unknown-error", () => {
@@ -96,8 +126,10 @@ describe("cli-error-boundary", () => {
       assertEquals(lines[0], "");
 
       // Should have slug and title on second line (with ANSI codes stripped for testing)
+      const header = lines[1];
+      assertExists(header);
       // deno-lint-ignore no-control-regex
-      const headerLine = lines[1].replace(/\x1b\[\d+m/g, ""); // Strip ANSI codes
+      const headerLine = header.replace(/\x1b\[\d+m/g, ""); // Strip ANSI codes
       assertMatch(headerLine, /\[test-error\]/);
       assertMatch(headerLine, /Test Error Title/);
 
@@ -172,6 +204,69 @@ describe("cli-error-boundary", () => {
       assertEquals(output1.endsWith("\n"), true);
       assertEquals(output2.startsWith("\n"), true);
       assertEquals(output2.endsWith("\n"), true);
+    });
+
+    it("should fail closed for proxies around real errors and redact diagnostics", () => {
+      const source = new VeryfrontError("secret", {
+        slug: "custom",
+        category: "GENERAL",
+        status: 500,
+        title: "Authorization: Bearer title-secret",
+        detail: "apiKey=detail-secret cookie=cookie-secret",
+      });
+      const hostile = new Proxy(source, {
+        get(target, property, receiver) {
+          if (property === "slug") throw new Error("blocked");
+          return Reflect.get(target, property, receiver);
+        },
+      });
+
+      const output = formatCLIError(hostile);
+
+      assertMatch(output, /\[unknown-error\]/);
+      for (const secret of ["title-secret", "detail-secret", "cookie-secret"]) {
+        assertEquals(output.includes(secret), false);
+      }
+    });
+
+    it("should neutralize terminal and line injection in untrusted fields", () => {
+      const injection = "\x1b]2;owned\x07\x1b[2J\nFAKE SUCCESS";
+      const error = new VeryfrontError(`message ${injection}`, {
+        slug: `custom-${injection}`,
+        category: "GENERAL",
+        status: 500,
+        title: `title ${injection}`,
+        detail: `detail ${injection}`,
+        suggestion: `suggestion ${injection}`,
+      });
+
+      const output = formatCLIError(error);
+
+      for (const forbidden of ["\x1b]2;owned", "\x1b[2J", "\x07", "\nFAKE SUCCESS"]) {
+        assertEquals(output.includes(forbidden), false);
+      }
+    });
+
+    it("should bound actual CLI output for oversized diagnostics", () => {
+      const error = new VeryfrontError("Vendor error", {
+        slug: "vendor/path?token=slug-secret#fragment",
+        category: "GENERAL",
+        status: 500,
+        title: "t".repeat(ERROR_OUTPUT_MAX_LENGTH_CHARS * 2),
+        detail: "d".repeat(ERROR_OUTPUT_MAX_LENGTH_CHARS * 2),
+        suggestion: "s".repeat(ERROR_OUTPUT_MAX_LENGTH_CHARS * 2),
+      });
+      error.stack = `Error: vendor\n${
+        "    at frame (file:///app/main.ts:1:1)\n".repeat(
+          ERROR_OUTPUT_MAX_LENGTH_CHARS,
+        )
+      }`;
+
+      const output = formatCLIError(error);
+
+      assert(output.length <= ERROR_OUTPUT_MAX_LENGTH_CHARS);
+      assert(output.includes("...[truncated]"));
+      assertEquals(output.includes("slug-secret"), false);
     });
   });
 });

@@ -1,372 +1,222 @@
-# Modules System
+# Modules
 
-## Purpose
+`src/modules` owns Veryfront's project-module boundary: component source
+discovery, import-map resolution, source-to-module loading, SSR module caching,
+browser module serving, and route module manifests.
 
-The modules system handles dynamic module loading, resolution, and React component discovery in Veryfront. It provides import map management, component registry, and module transformation for seamless integration of user code with the framework.
-
-## Scope
-
-### What this module does:
-
-- Load and resolve React components dynamically
-- Manage import map configuration
-- Register and track loaded components
-- Transform module paths for different environments
-- Handle JSX/TSX compilation on-the-fly
-- Resolve npm packages via CDN (esm.sh)
-- Support both file-based and in-memory modules
-
-### What this module does NOT do:
-
-- Build-time bundling (see `build/`)
-- Static analysis (see `rendering/`)
-- HTTP serving (see `server/`)
+It does not own the complete transform pipeline, MDX compilation, render
+orchestration, API-route execution, or production bundling. Those concerns live
+under `transforms/`, `rendering/`, `routing/`, and `build/`.
 
 ## Architecture
 
-```
-modules/
-├── index.ts                # Public API exports
-├── module-resolver.ts      # Main module resolution logic
-├── component-registry/     # Component tracking
-│   ├── index.ts
-│   ├── registry.ts         # Component registration
-│   └── types.ts
-├── import-map/             # Import map management
-│   ├── index.ts
-│   ├── loader.ts           # Load import maps
-│   ├── merger.ts           # Merge multiple maps
-│   ├── resolver.ts         # Resolve imports
-│   ├── transformer.ts      # Transform paths
-│   ├── default-import-map.ts
-│   └── types.ts
-└── react-loader/           # React component loading
-    ├── index.ts
-    ├── unified-loader.ts   # Main component loader
-    ├── component-loader.ts # Load individual components
-    ├── path-resolver.ts    # Resolve component paths
-    ├── temp-directory.ts   # Temp file handling
-    └── types.ts
-```
+| Area                              | Responsibility                                                                                                           |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `component-registry/`             | Discover `.tsx` and `.jsx` component sources, retain immutable metadata, and load source text through a runtime adapter. |
+| `import-map/`                     | Load, validate, merge, snapshot, resolve, and apply project import maps.                                                 |
+| `module-resolver.ts`              | Resolve virtual, local, external, and npm module identities while containing filesystem access to a project root.        |
+| `react-loader/`                   | Transform source strings into executable React modules or materialize a bounded batch of components.                     |
+| `react-loader/ssr-module-loader/` | Transform dependency graphs for SSR and manage memory, disk, and optional distributed caches.                            |
+| `server/`                         | Classify and serve browser/SSR module requests, data requests, and WebSocket traffic.                                    |
+| `manifest/`                       | Track bounded route dependency graphs and generate escaped module-preload hints.                                         |
+| `loader-shared/`                  | Shared path validation and narrow compatibility patterns used by loader implementations.                                 |
 
-## Key Exports
+The normal hosted flow resolves an import-map snapshot for the authenticated
+project and content source, binds that snapshot to a cache identity, transforms
+the requested graph, and only then publishes reusable cache entries. Standalone
+callers may omit an identity where the relevant option explicitly permits
+ambient import-map resolution, but hosted request paths should not.
 
-### Module Resolution
+## Entry points
 
-- `ModuleResolver` - Main resolver class
-- `resolveModule(specifier, options)` - Resolve module path
+### Root API
 
-### Component Registry
+`#veryfront/modules` exports the stable, general-purpose surface:
 
-- `ComponentRegistry` - Track loaded components
-- `registerComponent(path, component)` - Register component
-- `getComponent(path)` - Retrieve component
-- `clearRegistry()` - Clear all components
+| Export                                                                         | Contract                                                                                                                             |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `ComponentRegistry`                                                            | Discovers and reads component source metadata. It does not compile discovered files or populate React exports automatically.         |
+| `ModuleResolver`                                                               | Resolves one specifier to a contained file, virtual module, external URL, or esm.sh npm URL. Missing or blocked paths return `null`. |
+| `loadImportMap`, `mergeImportMaps`, `resolveImport`, `transformImportsWithMap` | Import-map loading and resolution.                                                                                                   |
+| `loadComponentFromSource`                                                      | Transforms and imports one source string, returning its React component export.                                                      |
+| `loadComponentsUnified`                                                        | Transforms and imports a bounded batch of named component sources.                                                                   |
+| `clearSSRModuleCache`, `clearSSRModuleCacheForProject`                         | Explicit SSR cache invalidation.                                                                                                     |
+| Path and temp-directory helpers                                                | Module-path normalization and project-scoped materialization support.                                                                |
 
-### Import Map
+Consult [`index.ts`](./index.ts) for the exact root exports. The following
+specialized entry points are intentionally separate:
 
-- `loadImportMap(projectDir)` - Load import map config
-- `mergeImportMaps(maps)` - Merge multiple maps
-- `resolveImport(specifier, map)` - Resolve import specifier
-- `transformModulePath(path, options)` - Transform path
+| Entry point                                                  | Primary exports                                                                     |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `#veryfront/modules/import-map/index.ts`                     | Import-map identity creation and validation in addition to the root import-map API. |
+| `#veryfront/modules/react-loader/index.ts`                   | `loadModuleFromSource` and the React loader surface.                                |
+| `#veryfront/modules/react-loader/ssr-module-loader/index.ts` | `SSRModuleLoader`, SSR import-map identities, cache controls, and cache statistics. |
+| `#veryfront/modules/server/index.ts`                         | `serveModule`, `APIServer`, `RateLimiter`, and WebSocket lifecycle functions.       |
+| `#veryfront/modules/manifest/index.ts`                       | Route module collection, lookup, invalidation, and preload hints.                   |
+| `#veryfront/modules/loader-shared/index.ts`                  | Cross-project request validation and low-level compatibility patterns.              |
 
-### React Loader
+## Examples
 
-- `loadComponent(path, options)` - Load React component
-- `UnifiedComponentLoader` - Unified loading interface
-- `resolveComponentPath(path)` - Resolve component location
+### Resolve a project module
 
-## Dependencies
-
-### Internal
-
-- `core/utils` - Path utilities, logging
-- `core/config` - Configuration loading
-- `platform/` - File system adapters
-
-### External
-
-- `esbuild` - JSX/TSX compilation
-- `react` - React component loading
-
-## Usage Examples
-
-### Load React Component
+Every filesystem-facing API requires a runtime adapter. The caller owns the
+adapter and project identity.
 
 ```typescript
-import { loadComponent } from "#veryfront/modules";
+import { ModuleResolver } from "#veryfront/modules";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
-// Load a page component
-const PageComponent = await loadComponent("/pages/index.tsx", {
-  projectDir: "/path/to/project",
-  mode: "development",
-});
-
-// Load with custom import map
-const Component = await loadComponent("/components/Button.tsx", {
-  projectDir: "/path/to/project",
-  importMap: {
-    imports: {
-      "react": "https://esm.sh/react@18.3.1",
+export async function resolveButton(adapter: RuntimeAdapter) {
+  const resolver = new ModuleResolver({
+    projectDir: "/workspace/site",
+    adapter,
+    importMap: {
+      "analytics": "https://esm.sh/@example/analytics@1.2.3",
     },
-  },
-});
+  });
+
+  return await resolver.resolve(
+    "./Button",
+    "components/index.ts",
+  );
+}
 ```
 
-### Component Registry
+Relative and absolute project paths are checked lexically and, when the adapter
+supports `realPath`, canonically. A path that escapes the project through `..`
+or a symlink resolves to `null`.
+
+### Discover and read component source
 
 ```typescript
 import { ComponentRegistry } from "#veryfront/modules";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
-const registry = new ComponentRegistry();
+export async function readButtonSource(adapter: RuntimeAdapter) {
+  const registry = new ComponentRegistry({
+    projectDir: "/workspace/site",
+    adapter,
+    componentDirs: ["components", "islands"],
+  });
 
-// Register component
-await registry.registerComponent("/pages/index.tsx", IndexPage);
-
-// Retrieve component
-const Component = registry.getComponent("/pages/index.tsx");
-
-// Check if exists
-if (registry.has("/pages/about.tsx")) {
-  const AboutPage = registry.getComponent("/pages/about.tsx");
+  await registry.discover();
+  const button = await registry.loadComponent("Button");
+  return button?.content;
 }
-
-// Clear registry (useful for HMR)
-registry.clearRegistry();
 ```
 
-### Import Map Management
+Discovery ignores test/spec files, `node_modules`, directory indexes, and
+non-JSX/TSX files. Duplicate basenames are rejected because the registry key is
+the basename, not the relative path.
+
+### Load a component from source
+
+```typescript
+import { loadComponentFromSource } from "#veryfront/modules";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+
+export async function loadPage(
+  source: string,
+  adapter: RuntimeAdapter,
+) {
+  return await loadComponentFromSource(
+    source,
+    "/workspace/site/pages/index.tsx",
+    "/workspace/site",
+    adapter,
+    {
+      projectId: "project-uuid",
+      contentSourceId: "preview-main",
+      reactVersion: "19.1.1",
+      ssr: true,
+    },
+  );
+}
+```
+
+SSR loading resolves or accepts an import-map snapshot for the complete
+dependency graph. Browser loading transforms and materializes a content-hashed
+module before importing it.
+
+### Merge and resolve import maps
 
 ```typescript
 import { loadImportMap, mergeImportMaps, resolveImport } from "#veryfront/modules";
+import type { VeryfrontConfig } from "#veryfront/config";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
-// Load project import map
-const projectMap = await loadImportMap("/path/to/project");
+export async function resolveReact(
+  adapter: RuntimeAdapter,
+  validatedConfig?: VeryfrontConfig,
+) {
+  const projectMap = await loadImportMap("/workspace/site", adapter, validatedConfig);
+  const overrides = {
+    imports: {
+      "@app/": "/_vf_modules/app/",
+    },
+  };
+  const importMap = mergeImportMaps(projectMap, overrides);
 
-// Merge with framework defaults
-const defaultMap = {
-  imports: {
-    "react": "https://esm.sh/react@18.3.1",
-    "react-dom": "https://esm.sh/react-dom@18.3.1",
-  },
-};
-const merged = mergeImportMaps([defaultMap, projectMap]);
-
-// Resolve import specifier
-const resolved = resolveImport("react", merged);
-// Result: 'https://esm.sh/react@18.3.1'
-
-const aliased = resolveImport("@/components/Button", merged);
-// Result: '/src/components/Button.tsx'
-```
-
-### Module Resolver
-
-```typescript
-import { ModuleResolver } from "#veryfront/modules";
-
-const resolver = new ModuleResolver({
-  projectDir: "/path/to/project",
-  importMap: customImportMap,
-});
-
-// Resolve relative import
-const resolved = await resolver.resolve("./Button", "/components/index.tsx");
-// Result: '/components/Button.tsx'
-
-// Resolve npm package
-const pkg = await resolver.resolve("lodash", "/pages/index.tsx");
-// Result: 'https://esm.sh/lodash@4.17.21'
-
-// Resolve with alias
-const aliased = await resolver.resolve("@/utils/helpers", "/pages/index.tsx");
-// Result: '/src/utils/helpers.ts'
-```
-
-### Transform Module Path
-
-```typescript
-import { transformModulePath } from "#veryfront/modules";
-
-// Transform for browser
-const browserPath = transformModulePath("/src/components/Button.tsx", {
-  mode: "browser",
-  baseUrl: "http://localhost:3000",
-});
-// Result: 'http://localhost:3000/src/components/Button.tsx'
-
-// Transform for build
-const buildPath = transformModulePath("/src/components/Button.tsx", {
-  mode: "build",
-  outDir: "./dist",
-});
-// Result: './dist/_veryfront/components/Button.js'
-```
-
-## Import Map Configuration
-
-### deno.json / import_map.json
-
-```json
-{
-  "imports": {
-    // Path aliases
-    "@/": "./src/",
-    "@components/": "./src/components/",
-    "@utils/": "./src/utils/",
-
-    // npm packages (via CDN)
-    "react": "https://esm.sh/react@18.3.1",
-    "react-dom": "https://esm.sh/react-dom@18.3.1",
-    "lodash": "https://esm.sh/lodash@4.17.21",
-
-    // Local packages
-    "~lib/": "./lib/",
-
-    // Specific remapping
-    "old-package": "./node_modules/new-package/index.js"
-  },
-  "scopes": {
-    "https://esm.sh/": {
-      "react": "https://esm.sh/react@18.3.1"
-    }
-  }
+  return resolveImport("@app/page.js", importMap);
 }
 ```
 
-## Module Resolution Algorithm
+`mergeImportMaps` accepts maps as separate arguments. Later maps win for exact
+keys, while scoped maps are merged per scope. `loadImportMap` applies framework
+defaults, project `deno.json`, and Veryfront configuration in that order and
+then enforces the framework React mappings. Its optional third argument accepts
+an already validated request configuration; without it, the loader discovers
+the project configuration from the project path.
 
-1. **Check Import Map Imports**
-   - Exact match in `imports`
-   - Prefix match for paths ending with `/`
+## Operational contracts
 
-2. **Check Import Map Scopes**
-   - Match based on parent URL
-   - Apply scoped imports
+- Project and cross-project paths are bounded and must remain inside their
+  admitted roots. Encoded separators, traversal, and canonical symlink escapes
+  are rejected at their respective request boundaries.
+- Hosted module requests should carry the request-bound import-map identity.
+  Cache entries are scoped by the identities that can change transformed
+  output.
+- Request-triggered browser graphs require either a root-bound stable snapshot
+  reader or an own `symlinkSemantics: "none"` declaration paired with a genuine
+  exact bounded byte reader. Browser compilation fails closed when an adapter
+  cannot provide either authority; raw text reads are never a fallback.
+- Browser graph compilation has fixed per-project and isolate-wide admission
+  ceilings, bounded queues, dependency/probe/input/output limits, and a request
+  deadline. Operator overrides may only tighten resource and duration limits.
+- Component, manifest, lookup, response, and transform caches are bounded.
+  Use the exported project-specific invalidation functions when project content
+  changes.
+- Missing project files generally return `null` or a not-found response.
+  Malformed identities, unsafe paths, invalid source, and operational adapter
+  failures are not converted into alternate dependency graphs.
+- The regex constants in `loader-shared/patterns.ts` exist for narrow legacy
+  consumers. New source rewrites should use the module lexer/import-rewriter
+  primitives so comments and strings cannot be mistaken for imports.
 
-3. **Relative Path Resolution**
-   - Resolve `./` and `../` relative to parent
-   - Add file extensions if missing
+For guidance on selecting between the source, SSR, MDX, render, API, and HTTP
+loaders, see [`LOADER_GUIDE.md`](./LOADER_GUIDE.md).
 
-4. **Bare Specifier Resolution**
-   - Check node_modules (Node.js)
-   - Check npm: URLs (Deno)
-   - Fallback to esm.sh CDN
+## Verification
 
-5. **File System Check**
-   - Try with extensions: `.ts`, `.tsx`, `.js`, `.jsx`
-   - Try index files: `index.ts`, `index.tsx`
-
-## Performance
-
-### Component Loading
-
-- First load: ~10-20ms (includes compilation)
-- Cached load: ~1-2ms (from registry)
-- Memory usage: ~50KB per component
-
-### Import Map Resolution
-
-- Resolution: <1ms (hash map lookup)
-- Merge: ~2ms per map
-- Transform: ~0.5ms per path
-
-### Registry
-
-- Registration: O(1)
-- Lookup: O(1)
-- Memory: ~10KB overhead + components
-
-## Testing
+The repository's canonical tasks are:
 
 ```bash
-# Run all module tests
-deno task test src/modules/
-
-# Test component registry
-deno task test src/modules/component-registry/
-
-# Test import maps
-deno task test src/modules/import-map/
-
-# Test React loader
-deno task test src/modules/react-loader/
+deno task test:unit
+deno task lint
+deno task fmt:check
+deno task lint:module-boundaries
 ```
 
-## Related Modules
+During focused development, run the relevant files under `src/modules` with
+the same preload, environment, and permissions used by the `test` task. Do not
+omit the broader unit gate before merging a loader or cache change.
 
-- [`rendering/`](../rendering/README.md) - Uses modules for component loading
-- [`build/`](../build/README.md) - Bundles modules for production
-- [`platform/`](../platform/README.md) - File system access
-- [`config/`](../config/README.md) - Configuration management
+## Related areas
 
-## Troubleshooting
-
-### Module Not Found
-
-```typescript
-// Enable verbose logging
-import { ModuleResolver } from "#veryfront/modules";
-import { logger } from "#veryfront/utils";
-
-logger.level = "debug";
-
-const resolver = new ModuleResolver({ projectDir });
-try {
-  const resolved = await resolver.resolve("./Button", parent);
-} catch (error) {
-  console.error("Resolution failed:", error);
-  console.error("Search paths:", resolver.getSearchPaths());
-}
-```
-
-### Import Map Not Applied
-
-```typescript
-// Verify import map loaded correctly
-import { loadImportMap } from "#veryfront/modules";
-
-const map = await loadImportMap(projectDir);
-console.log("Loaded import map:", map);
-
-// Check for syntax errors in import_map.json
-```
-
-### Component Registry Stale
-
-```typescript
-// Clear registry on file changes (HMR)
-import { ComponentRegistry } from "#veryfront/modules";
-
-const registry = ComponentRegistry.getInstance();
-
-// On file change
-registry.remove("/components/Button.tsx");
-// Or clear all
-registry.clearRegistry();
-```
-
-### JSX Compilation Errors
-
-```typescript
-// Check esbuild configuration
-import { loadComponent } from "#veryfront/modules";
-
-try {
-  const Component = await loadComponent(path, {
-    projectDir,
-    jsx: "react-jsx", // or 'react' for classic runtime
-    jsxImportSource: "react",
-  });
-} catch (error) {
-  console.error("Compilation failed:", error);
-}
-```
-
-## Maintainer Notes
-
-**Team:** Core Infrastructure Team
-**Stability:** Stable (v0.1.0+)
-**Performance Critical:** Yes (runs on every page render)
-
-This module is critical for dynamic loading - optimize for speed and caching.
+- [`build/`](../build/README.md): production compilation and artifacts
+- [`config/`](../config/README.md): project configuration
+- [`platform/`](../platform/README.md): runtime adapters and filesystem
+  contracts
+- [`rendering/`](../rendering/README.md): render orchestration
+- [`routing/`](../routing/README.md): API and application routes
+- [`transforms/`](../transforms/README.md): source transformation pipelines

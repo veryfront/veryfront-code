@@ -1,7 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { NodeBasedShellAdapter } from "./node-based-shell-adapter.ts";
+
+function captureNodeError(operation: () => unknown): NodeJS.ErrnoException {
+  let captured: unknown;
+  try {
+    operation();
+  } catch (error) {
+    captured = error;
+  }
+  if (!(captured instanceof Error)) throw new TypeError("Expected operation to throw");
+  return captured as NodeJS.ErrnoException;
+}
 
 function createAdapter(): NodeBasedShellAdapter {
   return new NodeBasedShellAdapter();
@@ -37,7 +48,10 @@ describe("NodeBasedShellAdapter", () => {
     });
 
     it("should throw for non-existent path", () => {
-      assertThrows(() => createAdapter().statSync("./non-existent-file-12345.txt"), Error);
+      const error = captureNodeError(
+        () => createAdapter().statSync("./non-existent-file-12345.txt"),
+      );
+      assertEquals(error.code, "ENOENT");
     });
   });
 
@@ -55,7 +69,10 @@ describe("NodeBasedShellAdapter", () => {
     });
 
     it("should throw for non-existent file", () => {
-      assertThrows(() => createAdapter().readFileSync("./non-existent-file-12345.txt"), Error);
+      const error = captureNodeError(
+        () => createAdapter().readFileSync("./non-existent-file-12345.txt"),
+      );
+      assertEquals(error.code, "ENOENT");
     });
   });
 });

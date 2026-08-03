@@ -40,7 +40,7 @@
   ],
   "tools": [
     {
-      "id": "list_channels",
+      "id": "slack__list_channels",
       "name": "List Channels",
       "description": "Get list of Slack channels",
       "requiresWrite": false,
@@ -98,7 +98,7 @@
       }
     },
     {
-      "id": "send_message",
+      "id": "slack__send_message",
       "name": "Send Message",
       "description": "Send a message to a Slack channel",
       "requiresWrite": true,
@@ -114,7 +114,7 @@
       }
     },
     {
-      "id": "update_message",
+      "id": "slack__update_message",
       "name": "Update Message",
       "description": "Update a message previously sent by this integration",
       "requiresWrite": true,
@@ -129,7 +129,7 @@
       }
     },
     {
-      "id": "delete_message",
+      "id": "slack__delete_message",
       "name": "Delete Message",
       "description": "Delete a message previously sent by this integration",
       "requiresWrite": true,
@@ -143,7 +143,7 @@
       }
     },
     {
-      "id": "get_messages",
+      "id": "slack__get_messages",
       "name": "Get Messages",
       "description": "Get recent messages from a channel",
       "requiresWrite": false,
@@ -159,7 +159,7 @@
       }
     },
     {
-      "id": "get_thread",
+      "id": "slack__get_thread",
       "name": "Get Thread",
       "description": "Get all replies in a Slack message thread",
       "requiresWrite": false,
@@ -175,7 +175,7 @@
       }
     },
     {
-      "id": "list_users",
+      "id": "slack__list_users",
       "name": "List Users",
       "description": "List members of the Slack workspace",
       "requiresWrite": false,

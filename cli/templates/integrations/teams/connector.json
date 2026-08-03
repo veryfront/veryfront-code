@@ -43,7 +43,7 @@
   ],
   "tools": [
     {
-      "id": "list_chats",
+      "id": "teams__list_chats",
       "name": "List Chats",
       "description": "List recent Teams chats",
       "requiresWrite": false,
@@ -64,7 +64,7 @@
       }
     },
     {
-      "id": "get_messages",
+      "id": "teams__get_messages",
       "name": "Get Messages",
       "description": "Get messages from a specific chat",
       "requiresWrite": false,
@@ -91,7 +91,7 @@
       }
     },
     {
-      "id": "send_message",
+      "id": "teams__send_message",
       "name": "Send Channel Message",
       "description": "Send a message to a Teams channel",
       "requiresWrite": true,
@@ -122,7 +122,7 @@
       }
     },
     {
-      "id": "send_chat_message",
+      "id": "teams__send_chat_message",
       "name": "Send Chat Message",
       "description": "Send a message to a Teams 1:1 or group chat",
       "requiresWrite": true,
@@ -147,7 +147,7 @@
       }
     },
     {
-      "id": "list_teams",
+      "id": "teams__list_teams",
       "name": "List Teams",
       "description": "List all joined Teams",
       "requiresWrite": false,
@@ -168,7 +168,7 @@
       }
     },
     {
-      "id": "list_channels",
+      "id": "teams__list_channels",
       "name": "List Channels",
       "description": "List channels in a specific Team",
       "requiresWrite": false,
@@ -189,7 +189,7 @@
       }
     },
     {
-      "id": "create_chat",
+      "id": "teams__create_chat",
       "name": "Create Chat",
       "description": "Create a new 1:1 or group chat so a message can be sent to someone without an existing chat",
       "requiresWrite": true,

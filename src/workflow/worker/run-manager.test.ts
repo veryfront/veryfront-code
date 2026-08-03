@@ -5,6 +5,10 @@ import { MemoryBackend } from "../backends/memory.ts";
 import type { WorkflowRun } from "../types.ts";
 import type { RunExecutionConfig, RunExecutionInfo, RunExecutor } from "./executors/types.ts";
 import { createWorkflowRunManager, WorkflowRunManager } from "./run-manager.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+
+const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
 /**
  * Minimal in-memory RunExecutor. Records initialize/destroy/create calls so
@@ -14,10 +18,12 @@ class FakeRunExecutor implements RunExecutor {
   initializeCalls = 0;
   destroyCalls = 0;
   created: RunExecutionConfig[] = [];
+  observedSourceIntegrationPolicies: unknown[] = [];
   private executions = new Map<string, RunExecutionInfo>();
 
   createRunExecution(config: RunExecutionConfig): Promise<string> {
     this.created.push(config);
+    this.observedSourceIntegrationPolicies.push(getActiveSourceIntegrationPolicy());
     this.executions.set(config.executionId, {
       executionId: config.executionId,
       runId: config.run.id,
@@ -52,6 +58,24 @@ class FailingRunExecutor extends FakeRunExecutor {
   }
 }
 
+class MissingPolicyOnListBackend extends MemoryBackend {
+  override async getRun(runId: string): Promise<WorkflowRun | null> {
+    const run = await super.getRun(runId);
+    return run ? this.withoutSourcePolicy(run) : null;
+  }
+
+  override async listRuns(
+    filter: Parameters<MemoryBackend["listRuns"]>[0],
+  ): Promise<WorkflowRun[]> {
+    return (await super.listRuns(filter)).map((run) => this.withoutSourcePolicy(run));
+  }
+
+  private withoutSourcePolicy(run: WorkflowRun): WorkflowRun {
+    const { sourceIntegrationPolicy: _sourceIntegrationPolicy, ...missingSnapshot } = run;
+    return missingSnapshot as unknown as WorkflowRun;
+  }
+}
+
 // A poll interval large enough that the first scheduled poll never fires during
 // a test; stop() clears the pending timer, so no work runs and no timer leaks.
 const NO_POLL = 1_000_000;
@@ -74,6 +98,7 @@ function createPendingRun(id: string): WorkflowRun {
     checkpoints: [],
     pendingApprovals: [],
     createdAt: new Date(),
+    sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
   };
 }
 
@@ -208,6 +233,47 @@ describe("workflow/worker/run-manager", () => {
     assertEquals(await backend.isLocked(run.id), false);
     assertEquals(manager.getActiveExecutions().length, 1);
     assertEquals(manager.getStats().executionsCreated, 1);
+  });
+
+  it("restores the persisted source policy while creating an isolated execution", async () => {
+    const executor = new FakeRunExecutor();
+    const { backend, manager } = makeManager(executor);
+    track(manager);
+    const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy({
+      allow: { confluence: { allowedTools: ["get_page"] } },
+    });
+    const run = {
+      ...createPendingRun("run-source-policy"),
+      sourceIntegrationPolicy,
+    };
+    await backend.createRun(run);
+    await manager.start();
+
+    await pollOnce(manager);
+
+    assertEquals(executor.created.length, 1);
+    assertEquals(executor.observedSourceIntegrationPolicies, [sourceIntegrationPolicy]);
+  });
+
+  it("fails a run with no source policy snapshot before creating an isolated execution", async () => {
+    const executor = new FakeRunExecutor();
+    const backend = new MissingPolicyOnListBackend();
+    const manager = new WorkflowRunManager({ backend, executor, pollInterval: NO_POLL });
+    track(manager);
+    const run = createPendingRun("run-missing-source-policy");
+    await backend.createRun(run);
+    await manager.start();
+
+    await pollOnce(manager);
+
+    const storedRun = await backend.getRun(run.id);
+    assertEquals(executor.created.length, 0);
+    assertExists(storedRun);
+    assertEquals(storedRun.status, "failed");
+    assertEquals(
+      storedRun.error?.message.includes("source integration policy snapshot"),
+      true,
+    );
   });
 
   it("poll() records execution creation failures in manager stats and failed run state", async () => {

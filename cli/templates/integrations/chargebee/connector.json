@@ -41,7 +41,7 @@
   ],
   "tools": [
     {
-      "id": "list_subscriptions",
+      "id": "chargebee__list_subscriptions",
       "name": "List Subscriptions",
       "description": "List subscriptions with optional status or customer filtering",
       "requiresWrite": false,
@@ -89,7 +89,7 @@
       }
     },
     {
-      "id": "get_subscription",
+      "id": "chargebee__get_subscription",
       "name": "Get Subscription",
       "description": "Retrieve a single subscription with its plan, status, and billing details",
       "requiresWrite": false,
@@ -113,7 +113,7 @@
       }
     },
     {
-      "id": "list_customers",
+      "id": "chargebee__list_customers",
       "name": "List Customers",
       "description": "List customers with optional email filtering",
       "requiresWrite": false,
@@ -156,7 +156,7 @@
       }
     },
     {
-      "id": "list_invoices",
+      "id": "chargebee__list_invoices",
       "name": "List Invoices",
       "description": "List invoices with optional status, customer, or subscription filtering",
       "requiresWrite": false,
@@ -209,7 +209,7 @@
       }
     },
     {
-      "id": "list_item_prices",
+      "id": "chargebee__list_item_prices",
       "name": "List Item Prices",
       "description": "List item prices (plans, addons, charges) in the catalog to find IDs and pricing for subscriptions",
       "requiresWrite": false,
@@ -267,7 +267,7 @@
       }
     },
     {
-      "id": "get_invoice",
+      "id": "chargebee__get_invoice",
       "name": "Get Invoice",
       "description": "Retrieve a single invoice with its line items, amounts due, and linked payments",
       "requiresWrite": false,
@@ -291,7 +291,7 @@
       }
     },
     {
-      "id": "list_transactions",
+      "id": "chargebee__list_transactions",
       "name": "List Transactions",
       "description": "List payment-level transactions (payments, refunds, authorizations) behind invoices, e.g. to review failed payments",
       "requiresWrite": false,
@@ -349,7 +349,7 @@
       }
     },
     {
-      "id": "create_customer",
+      "id": "chargebee__create_customer",
       "name": "Create Customer",
       "description": "Create a new customer record in Chargebee",
       "requiresWrite": true,

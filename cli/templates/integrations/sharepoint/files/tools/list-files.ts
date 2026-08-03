@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listFiles, searchFiles } from "../../lib/sharepoint-client.ts";
+import { listFiles, searchFiles } from "../lib/sharepoint-client.ts";
 
 export default tool({
-  id: "list-files",
+  id: "sharepoint-list-files",
   description:
     "List files and folders in a SharePoint document library. Can list root level or a specific folder, or search across the entire library.",
   inputSchema: defineSchema((v) => v.object({

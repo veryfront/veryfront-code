@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "search_web",
+      "id": "perplexity__search_web",
       "name": "Search Web",
       "description": "Search the web with Perplexity's Search API and get ranked results",
       "requiresWrite": false,
@@ -61,7 +61,7 @@
       }
     },
     {
-      "id": "create_chat_completion",
+      "id": "perplexity__create_chat_completion",
       "name": "Create Chat Completion",
       "description": "Generate a web-grounded chat completion with citations using a Sonar model",
       "requiresWrite": true,
@@ -100,7 +100,7 @@
       }
     },
     {
-      "id": "create_agent_response",
+      "id": "perplexity__create_agent_response",
       "name": "Create Agent Response",
       "description": "Generate a response with Perplexity's Agent API using optional web search and reasoning",
       "requiresWrite": true,

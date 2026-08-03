@@ -2,6 +2,7 @@ import type { Embedding, EmbeddingConfig } from "./types.ts";
 import { resolveEmbeddingModel } from "./resolve.ts";
 import { resolveConfiguredEmbeddingModel } from "./model-resolution.ts";
 import { embed, embedMany } from "#veryfront/runtime/runtime-bridge.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 const DEFAULT_BATCH_SIZE = 100;
 
@@ -36,7 +37,7 @@ export function embedding(config: EmbeddingConfig): Embedding {
 
     async embed(text: string): Promise<number[]> {
       if (!text.trim()) {
-        throw new Error("Cannot embed an empty string");
+        throw INVALID_ARGUMENT.create({ detail: "Cannot embed an empty string" });
       }
       const value = queryPrefix + text;
       const result = await embed({ model, value });

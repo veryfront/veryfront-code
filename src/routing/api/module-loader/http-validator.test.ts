@@ -5,8 +5,12 @@ import { validateHTTPImports } from "./http-validator.ts";
 
 describe("routing/api/module-loader/http-validator", () => {
   describe("validateHTTPImports", () => {
-    it("should do nothing when allowedHosts is empty", () => {
-      validateHTTPImports('import foo from "https://evil.com/lib.js";', []);
+    it("should block all remote imports when allowedHosts is empty", () => {
+      assertThrows(
+        () => validateHTTPImports('import foo from "https://evil.com/lib.js";', []),
+        Error,
+        "Remote import blocked",
+      );
     });
 
     it("should allow imports from allowed hosts", () => {

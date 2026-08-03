@@ -3,13 +3,12 @@ import "#veryfront/schemas/_test-setup.ts";
  * Tests for CSS Optimizer Utilities
  */
 
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { join } from "#veryfront/compat/path";
+import { join, resolve } from "#veryfront/compat/path";
 import { remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { ensureDir } from "#veryfront/compat/std/fs.ts";
 import {
-  basicMinify,
   calculateSavings,
   extractSelectors,
   findCSSFiles,
@@ -46,6 +45,12 @@ describe("CSS Optimizer Utils", () => {
 
       await cleanupTestDir();
     });
+
+    it("rejects a missing directory", async () => {
+      await assertRejects(
+        () => findCSSFiles(`${TEST_DIR}-${crypto.randomUUID()}`),
+      );
+    });
   });
 
   describe("matchPattern", () => {
@@ -60,12 +65,38 @@ describe("CSS Optimizer Utils", () => {
       assert(matchPattern("test.ts", "*.{ts,tsx}"));
       assert(!matchPattern("test.js", "*.{ts,tsx}"));
     });
+
+    it("keeps wildcards inside segments unless globstar spans directories", () => {
+      assert(matchPattern("src/page.tsx", "src/*.tsx"));
+      assert(!matchPattern("src/nested/page.tsx", "src/*.tsx"));
+      assert(matchPattern("src/nested/page.tsx", "src/**/*.tsx"));
+      assert(matchPattern("src/page.tsx", "src/**/*.tsx"));
+    });
+
+    it("normalizes separators and supports literal glob characters", () => {
+      assert(matchPattern("src\\nested\\page.tsx", "src\\**\\*.tsx"));
+      assert(matchPattern("file?.tsx", "file[?].tsx"));
+      assert(!matchPattern("file1.tsx", "file[?].tsx"));
+    });
+
+    it("rejects invalid glob syntax", () => {
+      assertThrows(() => matchPattern("page.tsx", "*.{ts,tsx"), TypeError, "Invalid path glob");
+      assertThrows(() => matchPattern("page.tsx", "file[abc"), TypeError, "Invalid path glob");
+    });
   });
 
   describe("getOutputPath", () => {
     it("generates correct output path with .min suffix", () => {
       const result = getOutputPath("styles/main.css", ".output");
       assertEquals(result, ".output/styles/main.min.css");
+    });
+
+    it("rejects paths that could escape output", () => {
+      assertThrows(
+        () => getOutputPath("../main.css", ".output"),
+        TypeError,
+        "Invalid relative",
+      );
     });
   });
 
@@ -133,34 +164,12 @@ describe("CSS Optimizer Utils", () => {
     });
   });
 
-  describe("basicMinify", () => {
-    it("removes comments", () => {
-      const css = "/* Comment */ .button { color: red; }";
-      const minified = basicMinify(css);
-
-      assertEquals(minified.includes("/*"), false);
-    });
-
-    it("removes whitespace", () => {
-      const css = ".button   {   color:   red;   }";
-      const minified = basicMinify(css);
-
-      assertEquals(minified, ".button{color:red}");
-    });
-
-    it("removes semicolons before braces", () => {
-      const css = ".button { color: red; }";
-      const minified = basicMinify(css);
-
-      assertEquals(minified, ".button{color:red}");
-    });
-  });
-
   describe("calculateSavings", () => {
     it("calculates percentage savings correctly", () => {
       assertEquals(calculateSavings(1000, 500), 50);
       assertEquals(calculateSavings(1000, 750), 25);
       assertEquals(calculateSavings(0, 0), 0);
+      assertThrows(() => calculateSavings(-1, 0), TypeError);
     });
   });
 
@@ -180,6 +189,88 @@ describe("CSS Optimizer Utils", () => {
       assert(files.some((f) => f.includes("test.ts")));
 
       await cleanupTestDir();
+    });
+
+    it("uses the static prefix before an extended group as the scan root", async () => {
+      await cleanupTestDir();
+      try {
+        await ensureDir(join(TEST_DIR, "app"));
+        await ensureDir(join(TEST_DIR, "pages"));
+        await ensureDir(join(TEST_DIR, "components"));
+        await writeTextFile(join(TEST_DIR, "app", "page.tsx"), "content");
+        await writeTextFile(join(TEST_DIR, "pages", "page.tsx"), "content");
+        await writeTextFile(join(TEST_DIR, "components", "page.tsx"), "content");
+
+        const files = await globFiles(`${TEST_DIR}/@(app|pages)/**/*.tsx`);
+
+        assertEquals(files.map((file) => file.replaceAll("\\", "/")).sort(), [
+          resolve(TEST_DIR, "app", "page.tsx").replaceAll("\\", "/"),
+          resolve(TEST_DIR, "pages", "page.tsx").replaceAll("\\", "/"),
+        ]);
+      } finally {
+        await cleanupTestDir();
+      }
+    });
+
+    it("applies negative extglobs to complete CSS discovery segments", async () => {
+      await cleanupTestDir();
+      try {
+        await ensureDir(join(TEST_DIR, "src", "app"));
+        await ensureDir(join(TEST_DIR, "src", "generated"));
+        await ensureDir(join(TEST_DIR, "src", "generated-extra"));
+        await ensureDir(join(TEST_DIR, "src", "vendor"));
+        await writeTextFile(join(TEST_DIR, "src", "app", "page.tsx"), "content");
+        await writeTextFile(join(TEST_DIR, "src", "generated", "page.tsx"), "content");
+        await writeTextFile(join(TEST_DIR, "src", "generated-extra", "page.tsx"), "content");
+        await writeTextFile(join(TEST_DIR, "src", "vendor", "page.tsx"), "content");
+
+        const files = await globFiles(
+          `${TEST_DIR}/src/!(generated|vendor)/**/*.tsx`,
+        );
+
+        assertEquals(files.map((file) => file.replaceAll("\\", "/")), [
+          resolve(TEST_DIR, "src", "app", "page.tsx").replaceAll("\\", "/"),
+        ]);
+      } finally {
+        await cleanupTestDir();
+      }
+    });
+
+    it("rejects patterns outside the project boundary", async () => {
+      const baseDir = await Deno.makeTempDir();
+      try {
+        await assertRejects(
+          () => globFiles("../outside/**/*.ts", { baseDir }),
+          TypeError,
+          "outside the project",
+        );
+      } finally {
+        await Deno.remove(baseDir, { recursive: true });
+      }
+    });
+
+    it("treats only a missing static glob root as no matches", async () => {
+      const baseDir = await Deno.makeTempDir();
+      try {
+        assertEquals(
+          await globFiles("optional/**/*.tsx", { baseDir }),
+          [],
+        );
+        await assertRejects(
+          () =>
+            globFiles("blocked/**/*.tsx", {
+              baseDir,
+              fs: {
+                readDir() {
+                  throw new Deno.errors.PermissionDenied("blocked");
+                },
+              },
+            }),
+          Deno.errors.PermissionDenied,
+        );
+      } finally {
+        await Deno.remove(baseDir, { recursive: true });
+      }
     });
   });
 });

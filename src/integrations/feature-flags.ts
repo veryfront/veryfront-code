@@ -1,7 +1,13 @@
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { ALL_INTEGRATION_NAMES } from "./schema.ts";
 
 export const EXPERIMENTAL_INTEGRATIONS_ENV = "VERYFRONT_EXPERIMENTAL_INTEGRATIONS";
 
+/**
+ * The subset of {@link ALL_INTEGRATION_NAMES} that ships visible by default.
+ * This is a deliberate curation, not the full registry — every entry must stay
+ * a canonical integration name, which feature-flags.test.ts enforces.
+ */
 export const SUPPORTED_INTEGRATION_NAMES = [
   "airtable",
   "asana",
@@ -27,216 +33,38 @@ export const SUPPORTED_INTEGRATION_NAMES = [
   "teams",
 ] as const;
 
-export const DECLARED_INTEGRATION_NAMES = [
-  "gmail",
-  "slack",
-  "github",
-  "calendar",
-  "jira",
-  "notion",
-  "servicenow",
-  "confluence",
-  "linear",
-  "gitlab",
-  "outlook",
-  "teams",
-  "figma",
-  "sap",
-  "sheets",
-  "airtable",
-  "supabase",
-  "neon",
-  "sharepoint",
-  "stripe",
-  "salesforce",
-  "twitter",
-  "onedrive",
-  "bitbucket",
-  "sentry",
-  "posthog",
-  "persona",
-  "zendesk",
-  "asana",
-  "harvest",
-  "monday",
-  "zoom",
-  "trello",
+/**
+ * Declared connectors whose OAuth wire protocol is not implemented by the
+ * generic runtime. A feature flag must not make these scaffoldable: doing so
+ * would generate routes that fail as soon as their provider config is loaded.
+ */
+export const INTEGRATIONS_REQUIRING_PROVIDER_ADAPTER = [
   "box",
-  "shopify",
   "clickup",
-  "intercom",
-  "pipedrive",
-  "mailchimp",
-  "webex",
   "freshdesk",
+  "intercom",
+  "mailchimp",
+  "monday",
+  "pipedrive",
   "quickbooks",
+  "salesforce",
+  "shopify",
+  "trello",
   "xero",
-  "drive",
-  "docs-google",
-  "snowflake",
-  "mixpanel",
-  "twilio",
-  "anthropic",
-  "aws",
-  "hubspot",
-  "openai",
-  "todoist",
-  "calendly",
-  "google-analytics",
-  "klaviyo",
-  "datadog",
-  "paypal",
-  "activecampaign",
-  "algolia",
-  "amplitude",
-  "apollo",
-  "ashby",
-  "attio",
-  "basecamp",
-  "brevo",
-  "circleci",
-  "close",
-  "cloudflare",
-  "coda",
-  "dialpad",
-  "digitalocean",
-  "exa",
-  "fathom",
-  "firecrawl",
-  "fireflies",
-  "folk",
-  "gemini",
-  "gong",
-  "google-chat",
-  "gusto",
-  "jotform",
-  "lever",
-  "metabase",
-  "mistral",
-  "pagerduty",
-  "perplexity",
-  "productboard",
-  "razorpay",
-  "resend",
-  "salesflare",
-  "segment",
-  "sendgrid",
-  "shortcut",
-  "square",
-  "tavily",
-  "typeform",
-  "apify",
-  "assemblyai",
-  "axiom",
-  "betterstack",
-  "browserbase",
-  "buildkite",
-  "checkly",
-  "clickhouse",
-  "cohere",
-  "deepgram",
-  "elevenlabs",
-  "fal",
-  "fireworks-ai",
-  "fly-io",
-  "grafana-cloud",
-  "groq",
-  "heroku",
-  "huggingface",
-  "langfuse",
-  "langsmith",
-  "launchdarkly",
-  "mongodb-atlas",
-  "netlify",
-  "new-relic",
-  "openrouter",
-  "pinecone",
-  "planetscale",
-  "qdrant",
-  "railway",
-  "redis-cloud",
-  "render",
-  "replicate",
-  "snyk",
-  "stability-ai",
-  "together-ai",
-  "vercel",
-  "weaviate",
-  "bamboohr",
-  "cal-com",
-  "customer-io",
-  "discord",
-  "docusign",
-  "gocardless",
-  "google-bigquery",
-  "google-contacts",
-  "help-scout",
-  "telegram",
-  "whatsapp",
-  "woocommerce",
-  "zoho-crm",
-  "adyen",
-  "azure-blob-storage",
-  "bigcommerce",
-  "brave-search",
-  "chargebee",
-  "databricks",
-  "deel",
-  "front",
-  "google-cloud-storage",
-  "google-forms",
-  "gorgias",
-  "greenhouse",
-  "guru",
-  "mollie",
-  "paddle",
-  "pandadoc",
-  "personio",
-  "portkey",
-  "power-bi",
-  "ramp",
-  "rippling",
-  "serpapi",
-  "shopware",
-  "surveymonkey",
-  "tally",
-  "wix",
-  "workable",
-  "azure",
-  "azure-document-intelligence",
-  "billbee",
-  "cleverreach",
-  "datev",
-  "factorial",
-  "finapi",
-  "gcp",
-  "hetzner",
-  "ionos",
-  "klarna",
-  "lexoffice",
-  "mindee",
-  "moss",
-  "neo4j",
-  "north-data",
-  "qonto",
-  "sendcloud",
-  "sevdesk",
-  "skribble",
-  "stackit",
-  "trusted-shops",
-  "unstructured",
-  "unzer",
-  "voyage-ai",
-  "xentral",
-  "alphavantage",
-  "daytona",
-  "e2b",
-  "polygon",
-  "sprites",
 ] as const;
+
+/**
+ * Every integration the framework recognizes. Declared === registered: this is
+ * the full catalog, so it derives from the canonical {@link ALL_INTEGRATION_NAMES}
+ * registry rather than maintaining a parallel copy that can drift out of sync.
+ */
+export const DECLARED_INTEGRATION_NAMES = ALL_INTEGRATION_NAMES;
 
 const supportedIntegrations = new Set<string>(SUPPORTED_INTEGRATION_NAMES);
 const declaredIntegrations = new Set<string>(DECLARED_INTEGRATION_NAMES);
+const providerAdapterRequiredIntegrations = new Set<string>(
+  INTEGRATIONS_REQUIRING_PROVIDER_ADAPTER,
+);
 
 function normalizeIntegrationName(name: string): string {
   return name.trim().toLowerCase();
@@ -254,8 +82,15 @@ export function isSupportedIntegration(name: string | null | undefined): boolean
   return typeof name === "string" && supportedIntegrations.has(normalizeIntegrationName(name));
 }
 
+export function requiresProviderAdapter(name: string | null | undefined): boolean {
+  return typeof name === "string" &&
+    providerAdapterRequiredIntegrations.has(normalizeIntegrationName(name));
+}
+
 export function isExperimentalIntegrationEnabled(name: string | null | undefined): boolean {
-  if (typeof name !== "string" || !isDeclaredIntegration(name)) return false;
+  if (
+    typeof name !== "string" || !isDeclaredIntegration(name) || requiresProviderAdapter(name)
+  ) return false;
 
   const value = readEnv(EXPERIMENTAL_INTEGRATIONS_ENV);
   if (!value) return false;

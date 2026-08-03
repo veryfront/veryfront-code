@@ -15,7 +15,6 @@ import { OPAQUE_DEPENDENCY_VERSIONS } from "../../src/platform/compat/opaque-dep
 
 export const ROOT_OPTIONAL_RUNTIME_PEERS = [
 	"@huggingface/transformers",
-	"redis",
 ] as const;
 
 // Opaque imports (src/platform/compat/opaque-deps.ts) are invisible to dnt, so
@@ -27,6 +26,8 @@ const ROOT_OPTIONAL_RUNTIME_PEER_FALLBACK_RANGES: Record<string, string> = {
 };
 
 export const EXTENSION_OWNED_DEPENDENCIES = [
+	"@aws-sdk/client-s3",
+	"@aws-sdk/lib-storage",
 	"@babel/generator",
 	"@babel/parser",
 	"@babel/traverse",
@@ -35,31 +36,50 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"@types/hast",
 	"@types/mdast",
 	"@types/unist",
+	"@types/ws",
 	"better-sqlite3",
+	"brace-expansion",
 	"@kreuzberg/node",
 	"@kreuzberg/wasm",
 	"@mdx-js/mdx",
 	"@mdx-js/react",
 	"@opentelemetry/api",
+	"@opentelemetry/api-logs",
 	"@opentelemetry/auto-instrumentations-node",
 	"@opentelemetry/context-async-hooks",
 	"@opentelemetry/core",
+	"@opentelemetry/exporter-logs-otlp-http",
 	"@opentelemetry/exporter-metrics-otlp-http",
 	"@opentelemetry/exporter-trace-otlp-http",
 	"@opentelemetry/resources",
+	"@opentelemetry/sdk-logs",
 	"@opentelemetry/sdk-metrics",
 	"@opentelemetry/sdk-node",
 	"@opentelemetry/sdk-trace-base",
 	"@opentelemetry/semantic-conventions",
+	"@redis/client",
+	"redis",
+	"@sentry/deno",
+	"@sentry/node",
+	"@tailwindcss/forms",
+	"@tailwindcss/typography",
+	"ai",
 	"bash-tool",
+	"browserslist",
+	"daisyui",
 	"es-module-lexer",
 	"jszip",
 	"pdf-lib",
 	"esbuild",
+	"gaxios",
+	"gcp-metadata",
 	"github-slugger",
 	"jose",
 	"just-bash",
+	"lightningcss",
 	"mdast-util-to-string",
+	"protobufjs",
+	"purgecss",
 	"rehype-highlight",
 	"rehype-raw",
 	"rehype-sanitize",
@@ -70,14 +90,14 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"remark-gfm",
 	"remark-parse",
 	"remark-rehype",
+	"sharp",
+	"tailwind-scrollbar-hide",
 	"tailwindcss",
+	"tailwindcss-animate",
 	"unified",
 	"unist-util-visit",
 	"vfile",
-] as const;
-
-const STALE_DIRECT_DEPENDENCIES = [
-	"ai",
+	"ws",
 ] as const;
 
 const STALE_DEV_DEPENDENCIES = [
@@ -100,11 +120,6 @@ export function normalizeNpmPackageMetadata(pkg: PackageJson): PackageJson {
 	}
 
 	for (const name of EXTENSION_OWNED_DEPENDENCIES) {
-		delete pkg.dependencies?.[name];
-		delete pkg.optionalDependencies?.[name];
-	}
-
-	for (const name of STALE_DIRECT_DEPENDENCIES) {
 		delete pkg.dependencies?.[name];
 		delete pkg.optionalDependencies?.[name];
 	}

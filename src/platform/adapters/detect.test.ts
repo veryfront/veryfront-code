@@ -1,8 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { getAdapter } from "./detect.ts";
+import { createMockAdapter } from "./mock.ts";
+import { runtime } from "./registry.ts";
 import type { RuntimeId } from "./base.ts";
 
 function getExpectedRuntime(): RuntimeId {
@@ -15,6 +17,10 @@ function getExpectedRuntime(): RuntimeId {
 const expectedRuntime = getExpectedRuntime();
 
 describe("detect.ts", () => {
+  afterEach(async () => {
+    await runtime.reset();
+  });
+
   describe("getAdapter", () => {
     it("should return a valid RuntimeAdapter", async () => {
       const adapter = await getAdapter();
@@ -42,6 +48,13 @@ describe("detect.ts", () => {
       assertEquals(typeof capabilities.http2, "boolean");
       assertEquals(typeof capabilities.websocket, "boolean");
       assertEquals(typeof capabilities.workers, "boolean");
+    });
+
+    it("uses the adapter explicitly configured in the lifecycle registry", async () => {
+      const configured = createMockAdapter();
+      await runtime.set(configured);
+
+      assertEquals(await getAdapter(), configured);
     });
   });
 

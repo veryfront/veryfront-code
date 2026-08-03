@@ -1,6 +1,8 @@
 import { dynamicTool, tool } from "./factory.ts";
+import { agentLogger } from "#veryfront/utils";
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import type { Tool, ToolConfig, ToolExecutionContext, ToolSet } from "./types.ts";
+import { getRemoteToolProvenance, markRemoteToolProvenance } from "./remote-tool-provenance.ts";
 
 type HostToolExecute = {
   bivarianceHack: (input: unknown, options?: ToolExecutionContext) => Promise<unknown> | unknown;
@@ -10,6 +12,10 @@ type HostToolExecute = {
 export type HostToolDefinition = {
   id?: string;
   type?: Tool["type"];
+  /** Owning agent id retained for owner-aware hosted tool selection. */
+  ownerAgentId?: string;
+  /** Short selector accepted by the owning agent's `tools:` configuration. */
+  shortName?: string;
   title?: string;
   description?: string;
   inputSchema?: unknown;
@@ -25,7 +31,6 @@ export type HostToolSet = Record<string, HostToolDefinition>;
 
 type RunnableHostToolDefinition = HostToolDefinition & {
   description: string;
-  inputSchema: Schema<unknown>;
   execute: HostToolExecute;
 };
 
@@ -48,11 +53,22 @@ function isSchemaLike(value: unknown): value is Schema<unknown> {
   return "_output" in value && typeof value.safeParse === "function";
 }
 
+function hasPrecomputedSchema(input: {
+  inputSchema?: unknown;
+  inputSchemaJson?: unknown;
+}): boolean {
+  return isRecord(input.inputSchemaJson) &&
+    (input.inputSchema === undefined || isRecord(input.inputSchema));
+}
+
 function isHostToolDefinition(value: unknown): value is RunnableHostToolDefinition {
   return (
     isRecord(value) &&
     typeof value.description === "string" &&
-    isSchemaLike(value.inputSchema) &&
+    (
+      isSchemaLike(value.inputSchema) ||
+      hasPrecomputedSchema(value)
+    ) &&
     typeof value.execute === "function"
   );
 }
@@ -100,23 +116,36 @@ export function createToolsFromHostDefinitions(
       await definition.execute(input, normalizeExecutionContext(toolName, context, options));
 
     try {
-      tools[toolName] = definition.inputSchemaJson
-        ? dynamicTool({
+      let materializedTool: Tool | undefined;
+      if (definition.inputSchemaJson) {
+        materializedTool = dynamicTool({
           id: toolName,
           description: definition.description,
           inputSchema: definition.inputSchema,
           inputSchemaJson: definition.inputSchemaJson,
           execute,
           mcp: definition.mcp,
-        })
-        : tool({
+        });
+      } else if (isSchemaLike(definition.inputSchema)) {
+        materializedTool = tool({
           id: toolName,
           description: definition.description,
           inputSchema: definition.inputSchema,
           execute,
           mcp: definition.mcp,
         });
-    } catch {
+      }
+      if (materializedTool) {
+        const canonicalRemoteToolName = getRemoteToolProvenance(definition);
+        tools[toolName] = canonicalRemoteToolName
+          ? markRemoteToolProvenance(materializedTool, canonicalRemoteToolName)
+          : materializedTool;
+      }
+    } catch (error) {
+      agentLogger.warn("Skipping host tool: schema conversion failed", {
+        toolName,
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
       continue;
     }
   }

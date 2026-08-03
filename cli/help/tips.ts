@@ -26,21 +26,8 @@ export function getInitTemplates(): string {
     `  • ${green("minimal")}       - Blank canvas\n`;
 }
 
-export function getPostBuildTips(): string {
-  return `\n  ${dim("Next steps:")}\n` +
-    `    ${dim("•")} ${cyan("veryfront serve")}     Preview locally\n` +
-    `    ${dim("•")} ${cyan("veryfront deploy")}    Deploy to production\n`;
-}
-
 export function getPostDeployTips(): string {
-  return `\n  ${dim("Next steps:")}\n` +
-    `    ${dim("•")} ${cyan("veryfront open")}      Open in browser\n`;
-}
-
-export function getPostInitTips(projectName: string): string {
-  return `\n  ${dim("Next steps:")}\n` +
-    `    ${dim("•")} cd ${cyan(projectName)}\n` +
-    `    ${dim("•")} ${cyan("veryfront dev")}       Start development\n`;
+  return `\n  ${dim("Open:")} ${cyan("veryfront open")}\n`;
 }
 
 const COMMAND_TIPS: Record<string, () => string> = {

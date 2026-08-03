@@ -31,6 +31,7 @@ export interface HostedAgentRunSpanFinalState {
   usage?: {
     inputTokens?: number;
     outputTokens?: number;
+    totalTokens?: number;
     cachedInputTokens?: number;
     cacheCreationInputTokens?: number;
     cacheReadInputTokens?: number;
@@ -57,17 +58,24 @@ export interface CreateHostedAgentRunSpanControllerInput {
   projectId: string | null;
   userId: string;
   agentId: string;
+  agentName?: string;
+  modelId?: string;
   rootRun?: Pick<HostedConversationRootRunState, "runId" | "messageId"> | null;
   upstreamParentConversationId?: string;
   upstreamParentRunId?: string;
   spawnedFromToolCallId?: string;
+  traceAttributes?: AgentTraceAttributes;
 }
 
 /** Create hosted agent run span controller. */
 export function createHostedAgentRunSpanController(
   input: CreateHostedAgentRunSpanControllerInput,
 ): HostedAgentRunSpanController {
-  const span = input.tracer.startSpan(input.spanName ?? "agent.run");
+  const spanName = input.spanName ??
+    (input.operationName === "invoke_agent"
+      ? `invoke_agent ${input.agentName ?? input.agentId}`
+      : "agent.run");
+  const span = input.tracer.startSpan(spanName);
   let finalized = false;
 
   span.setAttributes(
@@ -77,13 +85,24 @@ export function createHostedAgentRunSpanController(
       projectId: input.projectId,
       userId: input.userId,
       agentId: input.agentId,
+      agentName: input.agentName,
+      modelId: input.modelId,
       runId: input.rootRun?.runId,
       parentConversationId: input.upstreamParentConversationId,
       parentRunId: input.upstreamParentRunId,
       messageId: input.rootRun?.messageId,
       toolCallId: input.spawnedFromToolCallId,
+      scheduleId: typeof input.traceAttributes?.["schedule.id"] === "string"
+        ? input.traceAttributes["schedule.id"]
+        : null,
+      scheduleName: typeof input.traceAttributes?.["schedule.name"] === "string"
+        ? input.traceAttributes["schedule.name"]
+        : null,
     }),
   );
+  if (input.traceAttributes) {
+    span.setAttributes(input.traceAttributes);
+  }
 
   return {
     withContext: (fn) => span.withContext(fn),
@@ -157,6 +176,7 @@ export function createHostedRootRunLifecycleRuntimeAdapter(
           waitingToolCallId: null,
           waitingToolName: null,
           status: "running",
+          streamProtocolVersion: 1,
         }
         : null,
       fallbackModelId: input.modelId,

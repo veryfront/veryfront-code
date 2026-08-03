@@ -2,7 +2,9 @@
 
 > **Category:** Storage | **Contract:** `TokenCacheStore` | **Optional**
 
-Provides Redis-backed token and cache persistence for Veryfront. Used by the proxy to persist OAuth tokens across processes — the in-memory fallback works for a single-process dev server but loses tokens on restart and doesn't share across workers.
+Provides Redis-backed token-cache persistence for Veryfront. The proxy uses it
+to share OAuth tokens across processes. Explicit Redis selection is fail-closed:
+startup and operations surface missing configuration or service failures.
 
 ## Installation
 
@@ -18,10 +20,12 @@ export default defineConfig({
 
 ## Environment Variables
 
-| Variable       | Required                       | Description                                                                  |
-| -------------- | ------------------------------ | ---------------------------------------------------------------------------- |
-| `REDIS_URL`    | Yes (if explicit config unset) | Redis connection URL — e.g. `redis://localhost:6379` or `rediss://...` (TLS) |
-| `REDIS_PREFIX` | No                             | Key prefix for all stored entries (default: none)                            |
+| Variable         | Required                       | Description                                                                                        |
+| ---------------- | ------------------------------ | -------------------------------------------------------------------------------------------------- |
+| `REDIS_URL`      | Yes (if explicit config unset) | Redis connection URL, for example `redis://localhost:6379` or `rediss://...` (TLS)                 |
+| `REDIS_PREFIX`   | No                             | Token-key prefix (default: `vf:token:`); see prefix constraints below                              |
+| `REDIS_PASSWORD` | No                             | Password override when credentials are not embedded in the connection URL                          |
+| `CACHE_TYPE`     | Standalone proxy only          | Set to `extension` so the CLI activates this extension before importing the provider-neutral proxy |
 
 Explicit config under `ctx.config.proxy.cache.redis` wins over env vars.
 
@@ -49,9 +53,28 @@ config = {
 
 `url` is required; the rest are optional.
 
+For the standalone CLI proxy, select and configure the extension before
+startup:
+
+```bash
+CACHE_TYPE=extension \
+REDIS_URL=redis://localhost:6379 \
+veryfront serve --mode=proxy
+```
+
+The CLI activates `@veryfront/ext-cache-redis` through the extension loader
+before it imports the proxy runtime. Missing packages, missing Redis
+configuration, or a missing `TokenCacheStore` contract stop startup. The
+loader retains ownership of the store; the proxy borrows it and does not close
+it independently. `REDIS_PREFIX` in this path must contain 1 to 256 visible
+ASCII characters and cannot contain Redis glob metacharacters (`*`, `?`, `[`,
+`]`, or `\`).
+
 ## Provided contract
 
-`TokenCacheStore` — `get(key)`, `set(key, value, ttlMs?)`, `delete(key)`. Used by the proxy's OAuth flow to cache access and refresh tokens.
+`TokenCacheStore`: `get(key)`, `set(key, entry)`, `delete(key)`, `clear()`,
+`has(key)`, `stats()`, and `close()`. Entry expiry is carried in
+`entry.expiresAt`. The proxy uses the contract for OAuth service-token caching.
 
 ## Capabilities
 

@@ -1,8 +1,21 @@
-import { logger as baseLogger } from "#veryfront/utils";
-import { type RequestOptions, requestWithRetry, type RetryConfig } from "./retry-handler.ts";
-import { API_CLIENT_ERROR } from "./types.ts";
+import { computeHashBytes, logger as baseLogger } from "#veryfront/utils";
+import type {
+  DependencyArtifactBuildResultBody,
+  DependencyArtifactContentType,
+} from "#veryfront/release-assets/dependency-artifact-contracts.ts";
 import {
+  createCanonicalVeryfrontApiTransport,
+  type TransportRequestInit,
+  type TransportRetryConfig,
+  type VeryfrontApiTransport,
+} from "../veryfront-api-transport.ts";
+import { API_CLIENT_ERROR, VeryfrontError } from "./types.ts";
+import {
+  type DependencyArtifactAssetUploadResponse,
+  type DependencyArtifactBuildResultResponse,
   getBranchFileDetailSchema,
+  getDependencyArtifactAssetUploadResponseSchema,
+  getDependencyArtifactBuildResultResponseSchema,
   getEnvironmentFileDetailSchema,
   getListBranchFilesResponseSchema,
   getListEnvironmentFilesResponseSchema,
@@ -27,10 +40,22 @@ import {
 } from "./schemas/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
+import { copyFixedUint8ArrayWithinLimit } from "../file-system-capabilities.ts";
 
 const logger = baseLogger.component("api");
 
 const DEFAULT_PAGE_LIMIT = 100;
+
+function requireBoundedFileContentLimit(maximumBytes: number): number {
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes <= 0) {
+    throw new RangeError("File content maximumBytes must be a positive safe integer");
+  }
+  return maximumBytes;
+}
+
+function requireBoundedFileContentBytes(raw: unknown, maximumBytes: number): Uint8Array {
+  return copyFixedUint8ArrayWithinLimit(raw, maximumBytes, "Veryfront API file content");
+}
 
 export type TokenProvider = () => string;
 
@@ -61,6 +86,11 @@ export interface FileDetail {
   size?: number;
   release_id?: string;
   release_version?: string | null;
+}
+
+export interface GetFileOptions {
+  /** True when the caller is probing an optional candidate and expects a possible 404. */
+  expectedMissing?: boolean;
 }
 
 export interface StyleArtifactSelector {
@@ -181,16 +211,22 @@ async function listAllFiles(
 
 export class VeryfrontAPIOperations {
   private tokenProvider: TokenProvider;
+  private transport: VeryfrontApiTransport<unknown>;
 
   constructor(
     private apiBaseUrl: string,
     tokenOrProvider: string | TokenProvider,
-    private retryConfig: RetryConfig,
+    retryConfig: TransportRetryConfig,
     private projectId?: string,
   ) {
     this.tokenProvider = typeof tokenOrProvider === "string"
       ? () => tokenOrProvider
       : tokenOrProvider;
+    this.transport = createCanonicalVeryfrontApiTransport(
+      apiBaseUrl,
+      () => this.tokenProvider(),
+      retryConfig,
+    );
   }
 
   setTokenProvider(provider: TokenProvider): void {
@@ -276,7 +312,12 @@ export class VeryfrontAPIOperations {
     return allFiles;
   }
 
-  getBranchFile(projectRef: string, branchRef: string, pathOrId: string): Promise<FileDetail> {
+  getBranchFile(
+    projectRef: string,
+    branchRef: string,
+    pathOrId: string,
+    options: GetFileOptions = {},
+  ): Promise<FileDetail> {
     return withSpan(
       SpanNames.API_GET_FILE,
       async () => {
@@ -286,7 +327,7 @@ export class VeryfrontAPIOperations {
         }?${params}`;
         logger.debug("getBranchFile", { projectRef, branchRef, pathOrId });
 
-        const raw = await this.request(url);
+        const raw = await this.request(url, { expected404: options.expectedMissing === true });
         const response = getBranchFileDetailSchema().parse(raw);
 
         return {
@@ -299,6 +340,36 @@ export class VeryfrontAPIOperations {
       },
       {
         "api.operation": "getBranchFile",
+        "api.project": projectRef,
+        "api.branch": branchRef,
+        "api.path": pathOrId,
+      },
+    );
+  }
+
+  getBranchFileContentBytesWithinLimit(
+    projectRef: string,
+    branchRef: string,
+    pathOrId: string,
+    maximumBytes: number,
+    options: GetFileOptions = {},
+  ): Promise<Uint8Array> {
+    const admittedMaximum = requireBoundedFileContentLimit(maximumBytes);
+    return withSpan(
+      SpanNames.API_GET_FILE,
+      async () => {
+        const params = addRuntimeServerFunctionAccess(new URLSearchParams({ branch: branchRef }));
+        const url = `/projects/${encodeURIComponent(projectRef)}/files/${
+          encodeURIComponent(pathOrId)
+        }?${params}`;
+        const raw = await this.request(url, {
+          expected404: options.expectedMissing === true,
+          jsonStringFieldWithinLimit: { fieldName: "content", maximumBytes: admittedMaximum },
+        });
+        return requireBoundedFileContentBytes(raw, admittedMaximum);
+      },
+      {
+        "api.operation": "getBranchFileContentBytesWithinLimit",
         "api.project": projectRef,
         "api.branch": branchRef,
         "api.path": pathOrId,
@@ -360,6 +431,7 @@ export class VeryfrontAPIOperations {
     projectRef: string,
     environmentName: string,
     pathOrId: string,
+    options: GetFileOptions = {},
   ): Promise<FileDetail> {
     return withSpan(
       SpanNames.API_GET_FILE,
@@ -370,7 +442,7 @@ export class VeryfrontAPIOperations {
         }/files/${encodeURIComponent(pathOrId)}?${params}`;
         logger.debug("getEnvironmentFile", { projectRef, environmentName, pathOrId });
 
-        const raw = await this.request(url);
+        const raw = await this.request(url, { expected404: options.expectedMissing === true });
         const response = getEnvironmentFileDetailSchema().parse(raw);
 
         return {
@@ -384,6 +456,36 @@ export class VeryfrontAPIOperations {
       },
       {
         "api.operation": "getEnvironmentFile",
+        "api.project": projectRef,
+        "api.environment": environmentName,
+        "api.path": pathOrId,
+      },
+    );
+  }
+
+  getEnvironmentFileContentBytesWithinLimit(
+    projectRef: string,
+    environmentName: string,
+    pathOrId: string,
+    maximumBytes: number,
+    options: GetFileOptions = {},
+  ): Promise<Uint8Array> {
+    const admittedMaximum = requireBoundedFileContentLimit(maximumBytes);
+    return withSpan(
+      SpanNames.API_GET_FILE,
+      async () => {
+        const params = addRuntimeServerFunctionAccess(new URLSearchParams());
+        const url = `/projects/${encodeURIComponent(projectRef)}/environments/${
+          encodeURIComponent(environmentName)
+        }/files/${encodeURIComponent(pathOrId)}?${params}`;
+        const raw = await this.request(url, {
+          expected404: options.expectedMissing === true,
+          jsonStringFieldWithinLimit: { fieldName: "content", maximumBytes: admittedMaximum },
+        });
+        return requireBoundedFileContentBytes(raw, admittedMaximum);
+      },
+      {
+        "api.operation": "getEnvironmentFileContentBytesWithinLimit",
         "api.project": projectRef,
         "api.environment": environmentName,
         "api.path": pathOrId,
@@ -423,7 +525,12 @@ export class VeryfrontAPIOperations {
     );
   }
 
-  getReleaseFile(projectRef: string, version: string, pathOrId: string): Promise<FileDetail> {
+  getReleaseFile(
+    projectRef: string,
+    version: string,
+    pathOrId: string,
+    options: GetFileOptions = {},
+  ): Promise<FileDetail> {
     return withSpan(
       SpanNames.API_GET_FILE,
       async () => {
@@ -433,7 +540,7 @@ export class VeryfrontAPIOperations {
         }/files/${encodeURIComponent(pathOrId)}?${params}`;
         logger.debug("getReleaseFile", { projectRef, version, pathOrId });
 
-        const raw = await this.request(url);
+        const raw = await this.request(url, { expected404: options.expectedMissing === true });
         const response = getReleaseFileDetailSchema().parse(raw);
 
         return {
@@ -447,6 +554,36 @@ export class VeryfrontAPIOperations {
       },
       {
         "api.operation": "getReleaseFile",
+        "api.project": projectRef,
+        "api.version": version,
+        "api.path": pathOrId,
+      },
+    );
+  }
+
+  getReleaseFileContentBytesWithinLimit(
+    projectRef: string,
+    version: string,
+    pathOrId: string,
+    maximumBytes: number,
+    options: GetFileOptions = {},
+  ): Promise<Uint8Array> {
+    const admittedMaximum = requireBoundedFileContentLimit(maximumBytes);
+    return withSpan(
+      SpanNames.API_GET_FILE,
+      async () => {
+        const params = addRuntimeServerFunctionAccess(new URLSearchParams());
+        const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
+          encodeURIComponent(version)
+        }/files/${encodeURIComponent(pathOrId)}?${params}`;
+        const raw = await this.request(url, {
+          expected404: options.expectedMissing === true,
+          jsonStringFieldWithinLimit: { fieldName: "content", maximumBytes: admittedMaximum },
+        });
+        return requireBoundedFileContentBytes(raw, admittedMaximum);
+      },
+      {
+        "api.operation": "getReleaseFileContentBytesWithinLimit",
         "api.project": projectRef,
         "api.version": version,
         "api.path": pathOrId,
@@ -486,7 +623,7 @@ export class VeryfrontAPIOperations {
 
           return response;
         } catch (error) {
-          if (error instanceof Error && error.message.includes("404")) {
+          if (error instanceof VeryfrontError && error.status === 404) {
             logger.debug("No project found for domain", { domain });
             return null;
           }
@@ -584,6 +721,60 @@ export class VeryfrontAPIOperations {
   }
 
   // ===========================================================================
+  // Dependency artifact build operations
+  // ===========================================================================
+
+  async uploadDependencyArtifactAsset(
+    artifactId: string,
+    attemptCount: number,
+    contentHash: string,
+    contentType: DependencyArtifactContentType,
+    bytes: Uint8Array<ArrayBuffer>,
+  ): Promise<DependencyArtifactAssetUploadResponse> {
+    if (await computeHashBytes(bytes) !== contentHash) {
+      throw API_CLIENT_ERROR.create({
+        detail: "Dependency artifact content hash does not match the upload body",
+        status: 400,
+      });
+    }
+    const url = `/dependency-artifacts/${
+      encodeURIComponent(artifactId)
+    }/attempts/${attemptCount}/assets/${contentHash}`;
+    logger.debug("uploadDependencyArtifactAsset", {
+      attemptCount,
+      contentHash,
+      contentType,
+      size: bytes.byteLength,
+    });
+    const raw = await this.request(url, {
+      method: "PUT",
+      headers: { "Content-Type": contentType },
+      body: bytes as BodyInit,
+    });
+    return getDependencyArtifactAssetUploadResponseSchema().parse(raw);
+  }
+
+  async reportDependencyArtifactBuildResult(
+    artifactId: string,
+    attemptCount: number,
+    result: DependencyArtifactBuildResultBody,
+  ): Promise<DependencyArtifactBuildResultResponse> {
+    const url = `/dependency-artifacts/${
+      encodeURIComponent(artifactId)
+    }/attempts/${attemptCount}/result`;
+    logger.debug("reportDependencyArtifactBuildResult", {
+      attemptCount,
+      outcome: result.outcome,
+    });
+    const raw = await this.request(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(result),
+    });
+    return getDependencyArtifactBuildResultResponseSchema().parse(raw);
+  }
+
+  // ===========================================================================
   // Release Asset Manifest operations
   // ===========================================================================
 
@@ -673,26 +864,21 @@ export class VeryfrontAPIOperations {
   async getReleaseAssetManifest(
     projectRef: string,
     version: string,
+    signal?: AbortSignal,
   ): Promise<ReleaseAssetManifestApiResponse> {
     const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
       encodeURIComponent(version)
     }/asset-manifest`;
     logger.debug("getReleaseAssetManifest", { projectRef, version });
 
-    const raw = await this.request(url);
+    const raw = await this.request(url, { signal });
     return getReleaseAssetManifestResponseSchema().parse(raw);
   }
 
-  private request(endpoint: string, options: RequestOptions = {}): Promise<unknown> {
+  private request(endpoint: string, options: TransportRequestInit = {}): Promise<unknown> {
     return withSpan(
       SpanNames.API_REQUEST,
-      () =>
-        requestWithRetry(
-          `${this.apiBaseUrl}${endpoint}`,
-          this.tokenProvider(),
-          this.retryConfig,
-          options,
-        ),
+      () => this.transport.request(`${this.apiBaseUrl}${endpoint}`, options),
       { "api.endpoint": endpoint, "api.base_url": this.apiBaseUrl },
     );
   }

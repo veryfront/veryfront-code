@@ -43,7 +43,7 @@
   ],
   "tools": [
     {
-      "id": "list_contacts",
+      "id": "google-contacts__list_contacts",
       "name": "List Contacts",
       "description": "List the authenticated user's contacts (connections) with the requested person fields",
       "requiresWrite": false,
@@ -81,7 +81,7 @@
       }
     },
     {
-      "id": "search_contacts",
+      "id": "google-contacts__search_contacts",
       "name": "Search Contacts",
       "description": "Search the user's contacts by prefix match on names, nicknames, email addresses, and phone numbers. For best results send a warmup request with an empty query first, then search.",
       "requiresWrite": false,
@@ -115,7 +115,7 @@
       }
     },
     {
-      "id": "get_contact",
+      "id": "google-contacts__get_contact",
       "name": "Get Contact",
       "description": "Get a single contact by person ID, including the etag needed for updates",
       "requiresWrite": false,
@@ -140,7 +140,7 @@
       }
     },
     {
-      "id": "list_contact_groups",
+      "id": "google-contacts__list_contact_groups",
       "name": "List Contact Groups",
       "description": "List the user's contact groups (labels), including system groups and member counts, e.g. to organize or filter contacts",
       "requiresWrite": false,
@@ -171,7 +171,7 @@
       }
     },
     {
-      "id": "create_contact",
+      "id": "google-contacts__create_contact",
       "name": "Create Contact",
       "description": "Create a new contact in the user's Google Contacts (requires the full contacts scope)",
       "requiresWrite": true,
@@ -212,7 +212,7 @@
       }
     },
     {
-      "id": "update_contact",
+      "id": "google-contacts__update_contact",
       "name": "Update Contact",
       "description": "Update an existing contact (requires the full contacts scope). You must pass updatePersonFields naming the fields you are changing, and the body must include the contact's current etag (fetch it with Get Contact including metadata first); a stale etag fails with a 400 failedPrecondition error.",
       "requiresWrite": true,

@@ -52,7 +52,7 @@
   ],
   "tools": [
     {
-      "id": "list_compute_instances",
+      "id": "gcp__list_compute_instances",
       "name": "List Compute Instances",
       "description": "List Compute Engine VM instances in a specific zone of a project",
       "requiresWrite": false,
@@ -95,7 +95,7 @@
       }
     },
     {
-      "id": "list_all_compute_instances",
+      "id": "gcp__list_all_compute_instances",
       "name": "List All Compute Instances",
       "description": "List Compute Engine VM instances across all zones of a project (aggregated list), useful when you don't know which zones are in use",
       "requiresWrite": false,
@@ -138,7 +138,7 @@
       }
     },
     {
-      "id": "get_compute_instance",
+      "id": "gcp__get_compute_instance",
       "name": "Get Compute Instance",
       "description": "Get one Compute Engine VM instance's details - machine type, status, IPs, and disks - e.g. to confirm a start or stop completed",
       "requiresWrite": false,
@@ -168,7 +168,7 @@
       }
     },
     {
-      "id": "list_zones",
+      "id": "gcp__list_zones",
       "name": "List Zones",
       "description": "List the Compute Engine zones available in a project, so agents can discover valid zone names for the zone-scoped tools",
       "requiresWrite": false,
@@ -205,7 +205,7 @@
       }
     },
     {
-      "id": "start_compute_instance",
+      "id": "gcp__start_compute_instance",
       "name": "Start Compute Instance",
       "description": "Start a stopped Compute Engine VM instance (returns a zone operation that completes asynchronously) — requires the full cloud-platform scope",
       "requiresWrite": true,
@@ -235,7 +235,7 @@
       }
     },
     {
-      "id": "stop_compute_instance",
+      "id": "gcp__stop_compute_instance",
       "name": "Stop Compute Instance",
       "description": "Stop a running Compute Engine VM instance so it stops incurring compute charges (returns a zone operation that completes asynchronously) — requires the full cloud-platform scope",
       "requiresWrite": true,
@@ -265,7 +265,7 @@
       }
     },
     {
-      "id": "list_cloud_run_services",
+      "id": "gcp__list_cloud_run_services",
       "name": "List Cloud Run Services",
       "description": "List Cloud Run services in a project location (region)",
       "requiresWrite": false,
@@ -309,7 +309,7 @@
       }
     },
     {
-      "id": "get_cloud_run_service",
+      "id": "gcp__get_cloud_run_service",
       "name": "Get Cloud Run Service",
       "description": "Get one Cloud Run service's details - URL, container image, environment, and traffic split",
       "requiresWrite": false,
@@ -339,7 +339,7 @@
       }
     },
     {
-      "id": "list_cloud_functions",
+      "id": "gcp__list_cloud_functions",
       "name": "List Cloud Functions",
       "description": "List Cloud Functions (2nd gen API) in a project location — requires the optional cloud-platform scope (the only scope the Cloud Functions API accepts)",
       "requiresWrite": false,

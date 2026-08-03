@@ -2,57 +2,116 @@ import {
   createWebSocketUpgradeResponse,
   type ServerAdapter,
   type WebSocketUpgrade,
+  type WebSocketUpgradeOptions,
 } from "../../base.ts";
+import { DeferredWebSocket } from "../shared/deferred-websocket.ts";
+import { resolvePortableWebSocketUpgradeHeaders } from "../../../compat/http/websocket-upgrade-options.ts";
 import type { WSMessageData, WSWebSocket } from "./types.ts";
-import { createError, toError } from "#veryfront/errors";
-import { serverLogger } from "#veryfront/utils";
-import { registerWebSocketUpgrade } from "./http-server.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry/general.ts";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import { NODE_WEBSOCKET_UPGRADE_ID_HEADER, registerWebSocketUpgrade } from "./http-server.ts";
 import * as crypto from "node:crypto";
-import { Buffer } from "node:buffer";
 
-/**
- * Build a structurally-compatible `CloseEvent` without relying on the
- * `CloseEvent` constructor, which is not exposed as a global in Node.js
- * before 23.0.0 (the framework supports Node 18+). Uses a plain `Event`
- * decorated with the standard `code`/`reason`/`wasClean` fields.
- *
- * `wasClean` follows the `ws` library convention: any code other than
- * `1006` (abnormal closure — no close frame received) is considered
- * clean, because a received close frame implies the closing handshake
- * completed. Code `1006` is what `ws` substitutes when the peer
- * disappears without sending a close frame.
- */
-function createCloseEvent(
-  code?: number,
-  reason?: Buffer | string,
-): CloseEvent {
-  const resolvedCode = typeof code === "number" ? code : 1006;
-  const resolvedReason = typeof reason === "string" ? reason : reason?.toString() ?? "";
-  return Object.assign(new Event("close"), {
-    code: resolvedCode,
-    reason: resolvedReason,
-    wasClean: resolvedCode !== 1006,
-  }) as CloseEvent;
+const WEBSOCKET_KEY_PATTERN = /^[+/0-9A-Za-z]{22}==$/;
+
+function decodeMessageBytes(data: WSMessageData): Uint8Array<ArrayBuffer> {
+  const chunks = Array.isArray(data) ? data : [data];
+  let byteLength = 0;
+  for (const chunk of chunks) {
+    byteLength += chunk.byteLength;
+  }
+
+  const bytes = new Uint8Array(new ArrayBuffer(byteLength));
+  let offset = 0;
+  for (const chunk of chunks) {
+    const view = chunk instanceof ArrayBuffer
+      ? new Uint8Array(chunk)
+      : new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+    bytes.set(view, offset);
+    offset += view.byteLength;
+  }
+  return bytes;
+}
+
+function normalizeMessageData(
+  data: WSMessageData,
+  isBinary: boolean,
+): string | ArrayBuffer {
+  const bytes = decodeMessageBytes(data);
+  return isBinary ? bytes.buffer : new TextDecoder().decode(bytes);
+}
+
+export function resolveNodeWebSocketUpgradeHeaders(
+  request: Request,
+  options: WebSocketUpgradeOptions = {},
+): Headers {
+  const headers = resolvePortableWebSocketUpgradeHeaders(request, options, {
+    platform: "node",
+    runtimeName: "Node",
+    unsupportedIdleTimeoutDetail:
+      "The Node WebSocket provider contract does not support a per-connection transport idle timeout; use application-level heartbeats",
+  });
+
+  const connectionTokens = request.headers.get("connection")
+    ?.split(",")
+    .map((value) => value.trim().toLowerCase()) ?? [];
+  if (!connectionTokens.includes("upgrade")) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Node WebSocket upgrade requires a Connection: Upgrade request",
+      context: { platform: "node", operation: "upgradeWebSocket" },
+    });
+  }
+
+  const key = request.headers.get("sec-websocket-key");
+  if (!key || !WEBSOCKET_KEY_PATTERN.test(key)) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Missing or invalid Sec-WebSocket-Key header",
+      context: { platform: "node", operation: "upgradeWebSocket" },
+    });
+  }
+
+  const version = request.headers.get("sec-websocket-version");
+  if (version !== "13" && version !== "8") {
+    throw INVALID_ARGUMENT.create({
+      detail: "Missing or invalid Sec-WebSocket-Version header",
+      context: { platform: "node", operation: "upgradeWebSocket" },
+    });
+  }
+
+  headers.set("Upgrade", "websocket");
+  headers.set("Connection", "Upgrade");
+  headers.set(
+    "Sec-WebSocket-Accept",
+    crypto.createHash("sha1")
+      .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+      .digest("base64"),
+  );
+  return headers;
 }
 
 export class NodeServerAdapter implements ServerAdapter {
-  upgradeWebSocket(request: Request): WebSocketUpgrade {
-    const key = request.headers.get("sec-websocket-key");
-    if (!key) {
-      throw toError(
-        createError({
-          type: "network",
-          message: "Missing Sec-WebSocket-Key header",
-        }),
-      );
+  private readonly upgradedRequests = new WeakSet<Request>();
+
+  upgradeWebSocket(
+    request: Request,
+    options?: WebSocketUpgradeOptions,
+  ): WebSocketUpgrade {
+    const headers = resolveNodeWebSocketUpgradeHeaders(request, options);
+    if (this.upgradedRequests.has(request)) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Node Request has already been upgraded",
+        context: { platform: "node", operation: "upgradeWebSocket" },
+      });
     }
 
-    const protocol = request.headers.get("sec-websocket-protocol");
+    const key = request.headers.get("sec-websocket-key")!;
+    const requestId = request.headers.get(NODE_WEBSOCKET_UPGRADE_ID_HEADER) ?? key;
     const socket = new NodeWebSocket();
+    this.upgradedRequests.add(request);
 
     void (async () => {
       try {
-        const ws = await registerWebSocketUpgrade(key);
+        const ws = await registerWebSocketUpgrade(requestId);
         socket._attachRealSocket(ws);
       } catch (error) {
         serverLogger.error("WebSocket upgrade failed:", error);
@@ -60,128 +119,40 @@ export class NodeServerAdapter implements ServerAdapter {
       }
     })();
 
-    const headers: Record<string, string> = {
-      Upgrade: "websocket",
-      Connection: "Upgrade",
-      "Sec-WebSocket-Accept": this.generateAcceptKey(key),
-      ...(protocol ? { "Sec-WebSocket-Protocol": protocol } : {}),
+    return {
+      socket,
+      response: createWebSocketUpgradeResponse({ headers }),
     };
-
-    const response = createWebSocketUpgradeResponse({ headers });
-
-    return { socket, response };
-  }
-
-  private generateAcceptKey(key: string): string {
-    const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-    return crypto.createHash("sha1").update(key + GUID).digest("base64");
   }
 }
 
-export class NodeWebSocket {
-  private ws: WSWebSocket | null = null;
-  readyState = 0; // CONNECTING
-
-  onopen: ((event: Event) => void) | null = null;
-  onclose: ((event: CloseEvent) => void) | null = null;
-  onerror: ((event: Event) => void) | null = null;
-  onmessage: ((event: MessageEvent) => void) | null = null;
-
-  static readonly CONNECTING = 0;
-  static readonly OPEN = 1;
-  static readonly CLOSING = 2;
-  static readonly CLOSED = 3;
-
-  private pendingMessages: Array<string | ArrayBuffer> = [];
+export class NodeWebSocket extends DeferredWebSocket {
+  constructor() {
+    super("Node");
+  }
 
   _attachRealSocket(ws: WSWebSocket): void {
-    this.ws = ws;
-    this.readyState = 1; // OPEN
-
-    ws.on("open", () => {
-      this.readyState = 1;
-      this.onopen?.(new Event("open"));
+    ws.on("message", (data: WSMessageData, isBinary: boolean) => {
+      this.emitMessage(normalizeMessageData(data, isBinary));
     });
-
-    ws.on("message", (data: WSMessageData) => {
-      this.onmessage?.(new MessageEvent("message", { data: data.toString() }));
+    ws.on("close", (code?: number, reason?: ArrayBufferView | string) => {
+      this.emitClose(
+        typeof code === "number" ? code : 1006,
+        typeof reason === "string" ? reason : reason
+          ? new TextDecoder().decode(
+            new Uint8Array(reason.buffer, reason.byteOffset, reason.byteLength),
+          )
+          : "",
+      );
     });
-
-    ws.on("close", (code?: number, reason?: Buffer | string) => {
-      this.readyState = 3;
-      this.onclose?.(createCloseEvent(code, reason));
-    });
-
     ws.on("error", (error: Error) => {
-      this.onerror?.(new ErrorEvent("error", { error }));
+      this.emitTransportError(error);
     });
 
-    for (const msg of this.pendingMessages) ws.send(msg);
-    this.pendingMessages = [];
-
-    this.onopen?.(new Event("open"));
+    this.attachTransport(ws);
   }
 
   _emitError(error: Error): void {
-    this.readyState = 3; // CLOSED
-    this.onerror?.(new ErrorEvent("error", { error }));
-  }
-
-  send(data: string | ArrayBuffer): void {
-    if (this.ws && this.readyState === 1) {
-      this.ws.send(data);
-      return;
-    }
-
-    if (this.readyState === 0) {
-      this.pendingMessages.push(data);
-      return;
-    }
-
-    throw toError(
-      createError({
-        type: "network",
-        message: "WebSocket is not open",
-      }),
-    );
-  }
-
-  close(code?: number, reason?: string): void {
-    this.ws?.close(code, reason);
-    this.readyState = 2; // CLOSING
-  }
-
-  addEventListener(type: string, listener: EventListener): void {
-    switch (type) {
-      case "open":
-        this.onopen = listener as (event: Event) => void;
-        return;
-      case "close":
-        this.onclose = listener as (event: CloseEvent) => void;
-        return;
-      case "error":
-        this.onerror = listener as (event: Event) => void;
-        return;
-      case "message":
-        this.onmessage = listener as (event: MessageEvent) => void;
-        return;
-    }
-  }
-
-  removeEventListener(type: string, _listener: EventListener): void {
-    switch (type) {
-      case "open":
-        this.onopen = null;
-        return;
-      case "close":
-        this.onclose = null;
-        return;
-      case "error":
-        this.onerror = null;
-        return;
-      case "message":
-        this.onmessage = null;
-        return;
-    }
+    this.fail(error);
   }
 }

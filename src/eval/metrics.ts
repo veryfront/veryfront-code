@@ -1,5 +1,6 @@
 import type {
   EvalAnswerGroundednessMetricOptions,
+  EvalKnowledgeCitationMetricOptions,
   EvalKnowledgeExpectedSource,
   EvalKnowledgeMrrMetricOptions,
   EvalKnowledgeRetrievalMetricOptions,
@@ -18,7 +19,15 @@ import {
   evaluateToolCallCount,
   findEvalToolCalls,
   isEvalToolFailed,
+  validateEvalToolCallCountOptions,
+  validateEvalToolCallMatchOptions,
 } from "./tool-behavior.ts";
+import {
+  assertFiniteEvalNumber,
+  createEvalValidationError,
+  isEvalRecord,
+  normalizeEvalString,
+} from "./validation.ts";
 
 type MetricEvaluator = (record: EvalRecord) => EvalMetricResult | Promise<EvalMetricResult>;
 
@@ -27,6 +36,18 @@ type KnowledgeEntry = {
   sourceCandidates: string[];
   contentCandidates: string[];
   evidenceCandidates: string[];
+};
+
+type CitationEntry = {
+  source: string;
+  sourceCandidates: string[];
+  textCandidates: string[];
+};
+
+type CitationReferenceSet = {
+  expected?: EvalKnowledgeExpectedSource[];
+  expectedFrom?: string;
+  retrieved: KnowledgeEntry[];
 };
 
 type JudgeRubricInput = {
@@ -45,6 +66,7 @@ const DEFAULT_EXPECTED_KNOWLEDGE_PATH = "metadata.expectedKnowledge";
 const DEFAULT_GROUNDEDNESS_RUBRIC =
   "Rate whether the answer is grounded in the retrieved evidence and avoids unsupported claims.";
 const KNOWLEDGE_COLLECTION_KEYS = ["data", "matches", "results", "items", "chunks", "documents"];
+const CITATION_COLLECTION_KEYS = ["citations", "sources", "references"];
 const KNOWLEDGE_SOURCE_KEYS = [
   "path",
   "source",
@@ -56,6 +78,7 @@ const KNOWLEDGE_SOURCE_KEYS = [
   "url",
   "href",
 ];
+const CITATION_TEXT_KEYS = ["text", "quote", "marker", "label", "content", "snippet", "excerpt"];
 const KNOWLEDGE_CONTENT_KEYS = [
   "content",
   "text",
@@ -105,11 +128,25 @@ function getOutputText(output: unknown): string {
   return stableStringify(output);
 }
 
-function getOutputJson(output: unknown): unknown {
-  if (output && typeof output === "object" && "json" in output) {
-    return (output as { json: unknown }).json;
+const INVALID_JSON_TEXT = Symbol("invalid-json-text");
+
+function getOutputJson(output: unknown): { fromText: boolean; value: unknown } {
+  if (output && typeof output === "object") {
+    const record = output as Record<string, unknown>;
+    if (Object.hasOwn(record, "json")) return { fromText: false, value: record.json };
+    if (Object.hasOwn(record, "text") && typeof record.text === "string") {
+      return { fromText: true, value: parseJsonText(record.text) };
+    }
   }
-  return output;
+  return { fromText: false, value: output };
+}
+
+function parseJsonText(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return INVALID_JSON_TEXT;
+  }
 }
 
 function stableStringify(value: unknown): string {
@@ -119,7 +156,7 @@ function stableStringify(value: unknown): string {
 function sortJsonValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortJsonValue);
   if (!value || typeof value !== "object") return value;
-  const sorted: Record<string, unknown> = {};
+  const sorted = Object.create(null) as Record<string, unknown>;
   for (const key of Object.keys(value).sort()) {
     sorted[key] = sortJsonValue((value as Record<string, unknown>)[key]);
   }
@@ -260,11 +297,74 @@ function createKnowledgeEntry(item: unknown): KnowledgeEntry | null {
 }
 
 function getKnowledgeEntries(record: EvalRecord, tool = DEFAULT_KNOWLEDGE_TOOL): KnowledgeEntry[] {
+  const explicitEntries = (record.retrievedContext ?? [])
+    .map(createKnowledgeEntry)
+    .filter((entry): entry is KnowledgeEntry => entry !== null);
+  if (explicitEntries.length > 0) return explicitEntries;
+
   return findEvalToolCalls(record, tool)
     .filter((call) => !isEvalToolFailed(call))
     .flatMap((call) => extractKnowledgeItems(call.output))
     .map(createKnowledgeEntry)
     .filter((entry): entry is KnowledgeEntry => entry !== null);
+}
+
+function extractCitationItems(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (!isRecord(value)) return [];
+
+  for (const key of CITATION_COLLECTION_KEYS) {
+    const citations = value[key];
+    if (Array.isArray(citations)) return citations;
+  }
+
+  return KNOWLEDGE_SOURCE_KEYS.some((key) => typeof value[key] === "string") ? [value] : [];
+}
+
+function createCitationEntry(item: unknown): CitationEntry | null {
+  if (!isRecord(item)) {
+    if (typeof item === "string" && item.trim()) {
+      return {
+        source: item,
+        sourceCandidates: [item],
+        textCandidates: [item],
+      };
+    }
+    return null;
+  }
+
+  const sourceCandidates = uniqueStrings(
+    KNOWLEDGE_SOURCE_KEYS.flatMap((key) => collectStringField(item, key)),
+  );
+  const textCandidates = uniqueStrings(
+    CITATION_TEXT_KEYS.flatMap((key) => collectStringField(item, key)),
+  );
+  const source = sourceCandidates[0] ?? textCandidates[0] ?? stableStringify(item);
+  return {
+    source,
+    sourceCandidates: sourceCandidates.length === 0 ? [source] : sourceCandidates,
+    textCandidates,
+  };
+}
+
+function getCitationEntries(
+  record: EvalRecord,
+  options: EvalKnowledgeCitationMetricOptions,
+): CitationEntry[] {
+  if (options.citationsFrom) {
+    return extractCitationItems(getPathValue(record, options.citationsFrom))
+      .map(createCitationEntry)
+      .filter((entry): entry is CitationEntry => entry !== null);
+  }
+
+  const explicitCitations = (record.citations ?? [])
+    .map(createCitationEntry)
+    .filter((entry): entry is CitationEntry => entry !== null);
+  if (explicitCitations.length > 0) return explicitCitations;
+
+  return extractCitationItems(record.output)
+    .map(createCitationEntry)
+    .filter((entry): entry is CitationEntry => entry !== null);
 }
 
 function expectedSourceLabel(expected: EvalKnowledgeExpectedSource): string {
@@ -300,13 +400,136 @@ function resolveExpectedKnowledgeSources(
 }
 
 function createKnowledgeMetricConfig(
-  options: EvalKnowledgeRetrievalMetricOptions | EvalKnowledgeMrrMetricOptions,
+  options:
+    | EvalKnowledgeRetrievalMetricOptions
+    | EvalKnowledgeMrrMetricOptions
+    | EvalKnowledgeCitationMetricOptions,
 ): Record<string, unknown> {
   return {
     ...options,
     ...(!options.expected
       ? { expectedFrom: options.expectedFrom ?? DEFAULT_EXPECTED_KNOWLEDGE_PATH }
       : {}),
+  };
+}
+
+function resolveCitationReferenceSet(
+  record: EvalRecord,
+  options: EvalKnowledgeCitationMetricOptions,
+): CitationReferenceSet {
+  const expectedResult = resolveExpectedKnowledgeSources(record, options);
+  if (expectedResult.expected.length > 0) {
+    return {
+      expected: expectedResult.expected,
+      ...(expectedResult.expectedFrom ? { expectedFrom: expectedResult.expectedFrom } : {}),
+      retrieved: [],
+    };
+  }
+
+  const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
+  const allEntries = getKnowledgeEntries(record, tool);
+  const retrieved = options.k === undefined ? allEntries : allEntries.slice(0, options.k);
+  return { retrieved };
+}
+
+function citationLabels(citations: CitationEntry[]): string[] {
+  return citations.map((citation) => citation.source);
+}
+
+function citationMatchesExpected(
+  expected: EvalKnowledgeExpectedSource,
+  citation: CitationEntry,
+): boolean {
+  if (typeof expected === "string") {
+    return matchesStringCandidate(expected, citation.sourceCandidates);
+  }
+
+  const sourceExpectations = [
+    expected.path,
+    expected.source,
+    expected.id,
+    expected.title,
+    expected.documentCode,
+    expected.document_code,
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  if (sourceExpectations.length > 0) {
+    return sourceExpectations.some((value) =>
+      matchesStringCandidate(value, citation.sourceCandidates)
+    );
+  }
+
+  const contentExpectations = [
+    expected.contentMatch,
+    expected.verificationQuote,
+    expected.content,
+    expected.text,
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  return contentExpectations.some((value) => matchesContent(value, citation.textCandidates));
+}
+
+function citationMatchesKnowledgeEntry(citation: CitationEntry, entry: KnowledgeEntry): boolean {
+  return citation.sourceCandidates.some((candidate) =>
+    matchesStringCandidate(candidate, entry.sourceCandidates)
+  );
+}
+
+function citationIsSupported(
+  citation: CitationEntry,
+  references: CitationReferenceSet,
+): boolean {
+  if (references.expected && references.expected.length > 0) {
+    return references.expected.some((expected) => citationMatchesExpected(expected, citation));
+  }
+  return references.retrieved.some((entry) => citationMatchesKnowledgeEntry(citation, entry));
+}
+
+function referenceLabels(references: CitationReferenceSet): string[] {
+  if (references.expected && references.expected.length > 0) {
+    return references.expected.map(expectedSourceLabel);
+  }
+  return retrievedSources(references.retrieved);
+}
+
+function missingCitationReferencesResult(
+  name: string,
+  tool: string,
+  citations: CitationEntry[],
+): EvalMetricResult {
+  return {
+    name,
+    family: "knowledge",
+    severity: "gate",
+    skipped: true,
+    explanation: "No expected or retrieved knowledge sources were available for citation scoring.",
+    evidence: {
+      tool,
+      citations: citationLabels(citations),
+    },
+  };
+}
+
+function missingCitationResult(
+  name: string,
+  tool: string,
+  references: CitationReferenceSet,
+): EvalMetricResult {
+  return {
+    name,
+    family: "knowledge",
+    severity: "gate",
+    score: 0,
+    pass: false,
+    explanation: "No structured citations were found on the eval record.",
+    evidence: {
+      tool,
+      citations: [],
+      ...(references.expected && references.expected.length > 0
+        ? {
+          expected: references.expected.map(expectedSourceLabel),
+          ...(references.expectedFrom ? { expectedFrom: references.expectedFrom } : {}),
+        }
+        : { retrieved: retrievedSources(references.retrieved) }),
+    },
   };
 }
 
@@ -408,7 +631,12 @@ function withSeverity(
   severity: EvalSeverity,
   threshold?: EvalMetricThreshold,
 ): EvalMetric {
-  const base = { ...metric, severity, ...(threshold ? { threshold } : {}) };
+  const normalizedThreshold = normalizeMetricThreshold(threshold);
+  const base = {
+    ...metric,
+    severity,
+    ...(normalizedThreshold ? { threshold: normalizedThreshold } : {}),
+  };
   return {
     ...base,
     async evaluate(record, context) {
@@ -419,12 +647,14 @@ function withSeverity(
         family: metric.family,
         severity,
       };
-      if (!threshold || result.skipped || typeof next.score !== "number") {
+      if (!normalizedThreshold || result.skipped || typeof next.score !== "number") {
         return next;
       }
 
-      const minPass = threshold.min === undefined || next.score >= threshold.min;
-      const maxPass = threshold.max === undefined || next.score <= threshold.max;
+      const minPass = normalizedThreshold.min === undefined ||
+        next.score >= normalizedThreshold.min;
+      const maxPass = normalizedThreshold.max === undefined ||
+        next.score <= normalizedThreshold.max;
       const thresholdPass = minPass && maxPass;
       return {
         ...next,
@@ -432,15 +662,57 @@ function withSeverity(
       };
     },
     gate(nextThreshold?: EvalMetricThreshold) {
-      return withSeverity(base, "gate", nextThreshold ?? threshold);
+      return withSeverity(base, "gate", nextThreshold ?? normalizedThreshold);
     },
     soft(nextThreshold?: EvalMetricThreshold) {
-      return withSeverity(base, "soft", nextThreshold ?? threshold);
+      return withSeverity(base, "soft", nextThreshold ?? normalizedThreshold);
     },
     budget(nextThreshold?: EvalMetricThreshold) {
-      return withSeverity(base, "budget", nextThreshold ?? threshold);
+      return withSeverity(base, "budget", nextThreshold ?? normalizedThreshold);
     },
   };
+}
+
+function normalizeMetricThreshold(
+  threshold: EvalMetricThreshold | undefined,
+): EvalMetricThreshold | undefined {
+  if (threshold === undefined) return undefined;
+  if (!isEvalRecord(threshold)) {
+    throw createEvalValidationError("Eval metric threshold must be an object");
+  }
+  if (threshold.min === undefined && threshold.max === undefined) {
+    throw createEvalValidationError("Eval metric threshold requires min or max");
+  }
+  if (threshold.min !== undefined) {
+    assertFiniteEvalNumber(threshold.min, "Eval metric threshold min");
+  }
+  if (threshold.max !== undefined) {
+    assertFiniteEvalNumber(threshold.max, "Eval metric threshold max");
+  }
+  if (
+    threshold.min !== undefined && threshold.max !== undefined &&
+    threshold.min > threshold.max
+  ) {
+    throw createEvalValidationError("Eval metric threshold min cannot exceed max");
+  }
+  return { ...threshold };
+}
+
+function normalizeKnowledgeK(value: number, label: string): number {
+  assertFiniteEvalNumber(value, label, { integer: true, min: 1 });
+  return value;
+}
+
+function normalizeOptionalKnowledgeK(
+  value: number | undefined,
+  label: string,
+): number | undefined {
+  return value === undefined ? undefined : normalizeKnowledgeK(value, label);
+}
+
+function normalizeBudgetLimit(value: number, label: string): number {
+  assertFiniteEvalNumber(value, label, { min: 0 });
+  return value;
 }
 
 function createMetric(
@@ -497,45 +769,91 @@ export const metrics = {
     },
 
     contains(options: { text: string; caseSensitive?: boolean }): EvalMetric {
+      const text = normalizeEvalString(options?.text, "answer.contains text");
+      if (
+        options.caseSensitive !== undefined &&
+        typeof options.caseSensitive !== "boolean"
+      ) {
+        throw createEvalValidationError("answer.contains caseSensitive must be a boolean");
+      }
+      const config = { ...options, text };
       return createMetric("answer.contains", "answer", (record) => {
         const actual = getOutputText(record.output);
-        const expected = options.text;
-        const pass = options.caseSensitive
-          ? actual.includes(expected)
-          : actual.toLowerCase().includes(expected.toLowerCase());
+        const pass = config.caseSensitive
+          ? actual.includes(text)
+          : actual.toLowerCase().includes(text.toLowerCase());
         return scoreResult("answer.contains", "answer", "gate", pass);
-      }, options);
+      }, config);
     },
 
     regex(options: { pattern: string; flags?: string }): EvalMetric {
+      const pattern = normalizeEvalString(options?.pattern, "answer.regex pattern");
+      if (options.flags !== undefined && typeof options.flags !== "string") {
+        throw createEvalValidationError("answer.regex flags must be a string");
+      }
+      try {
+        new RegExp(pattern, options.flags);
+      } catch (error) {
+        throw createEvalValidationError(
+          `answer.regex pattern is invalid: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+      const config = { pattern, ...(options.flags ? { flags: options.flags } : {}) };
       return createMetric("answer.regex", "answer", (record) => {
-        const pattern = new RegExp(options.pattern, options.flags);
+        const compiled = new RegExp(pattern, options.flags);
         return scoreResult(
           "answer.regex",
           "answer",
           "gate",
-          pattern.test(getOutputText(record.output)),
+          compiled.test(getOutputText(record.output)),
         );
-      }, options);
+      }, config);
     },
 
-    jsonMatch(options: { expected?: unknown }): EvalMetric {
+    jsonMatch(options: { expected?: unknown } = {}): EvalMetric {
+      if (!isEvalRecord(options)) {
+        throw createEvalValidationError("answer.jsonMatch options must be an object");
+      }
       return createMetric("answer.jsonMatch", "answer", (record) => {
-        const expected = Object.hasOwn(options, "expected") ? options.expected : record.reference;
+        const hasExpectedOption = Object.hasOwn(options, "expected");
+        const expectedInput = hasExpectedOption ? options.expected : record.reference;
         const actual = getOutputJson(record.output);
-        const pass = stableStringify(actual) === stableStringify(expected);
+        let expected = expectedInput;
+        if (actual.fromText && !hasExpectedOption && typeof expectedInput === "string") {
+          const parsedReference = parseJsonText(expectedInput);
+          if (parsedReference !== INVALID_JSON_TEXT) expected = parsedReference;
+        }
+        const pass = actual.value !== INVALID_JSON_TEXT && expected !== INVALID_JSON_TEXT &&
+          stableStringify(actual.value) === stableStringify(expected);
         return scoreResult("answer.jsonMatch", "answer", "gate", pass);
       }, options as Record<string, unknown>);
     },
 
     groundedness(options: EvalAnswerGroundednessMetricOptions = {}): EvalMetric {
+      if (!isEvalRecord(options)) {
+        throw createEvalValidationError("answer.groundedness options must be an object");
+      }
+      const groundednessOptions = options as EvalAnswerGroundednessMetricOptions;
+      const tool = groundednessOptions.tool === undefined
+        ? DEFAULT_KNOWLEDGE_TOOL
+        : normalizeEvalString(groundednessOptions.tool, "answer.groundedness tool");
+      const rubric = groundednessOptions.rubric === undefined
+        ? DEFAULT_GROUNDEDNESS_RUBRIC
+        : normalizeEvalString(groundednessOptions.rubric, "answer.groundedness rubric");
+      if (
+        groundednessOptions.judge !== undefined &&
+        typeof groundednessOptions.judge !== "function"
+      ) {
+        throw createEvalValidationError("answer.groundedness judge must be a function");
+      }
       return createMetric("answer.groundedness", "answer", async (record) => {
-        const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
         const entries = getKnowledgeEntries(record, tool);
         const evidence = uniqueStrings(entries.flatMap((entry) => entry.evidenceCandidates));
         const sources = uniqueStrings(retrievedSources(entries));
 
-        if (!options.judge) {
+        if (!groundednessOptions.judge) {
           return {
             name: "answer.groundedness",
             family: "answer",
@@ -549,14 +867,18 @@ export const metrics = {
         const output = record.output && typeof record.output === "object"
           ? record.output as Record<string, unknown>
           : { text: getOutputText(record.output) };
-        const judged = await options.judge({
-          rubric: options.rubric ?? DEFAULT_GROUNDEDNESS_RUBRIC,
+        const judged = await groundednessOptions.judge({
+          rubric,
           input: record.input,
           output,
           reference: record.reference,
           metadata: record.metadata,
           evidence,
           sources,
+        });
+        assertFiniteEvalNumber(judged.score, "answer.groundedness judge score", {
+          min: 0,
+          max: 1,
         });
 
         return {
@@ -569,8 +891,8 @@ export const metrics = {
           evidence: { tool, evidenceCount: evidence.length, sources },
         };
       }, {
-        ...(options.tool ? { tool: options.tool } : {}),
-        rubric: options.rubric ?? DEFAULT_GROUNDEDNESS_RUBRIC,
+        ...(groundednessOptions.tool ? { tool } : {}),
+        rubric,
       });
     },
   },
@@ -593,6 +915,9 @@ export const metrics = {
     },
 
     calledTool(name: string, options?: EvalToolCallMatchOptions): EvalMetric {
+      const tool = normalizeEvalString(name, "agent.calledTool name");
+      const matchOptions = options ?? {};
+      validateEvalToolCallMatchOptions(matchOptions);
       return createMetric(
         "agent.calledTool",
         "agent",
@@ -600,13 +925,14 @@ export const metrics = {
           name: "agent.calledTool",
           family: "agent",
           severity: "gate",
-          ...evaluateCalledTool(record, name, options),
+          ...evaluateCalledTool(record, tool, matchOptions),
         }),
-        { tool: name, ...(options ?? {}) },
+        { tool, ...matchOptions },
       );
     },
 
     notCalledTool(name: string): EvalMetric {
+      const tool = normalizeEvalString(name, "agent.notCalledTool name");
       return createMetric(
         "agent.notCalledTool",
         "agent",
@@ -614,13 +940,15 @@ export const metrics = {
           name: "agent.notCalledTool",
           family: "agent",
           severity: "gate",
-          ...evaluateNotCalledTool(record, name),
+          ...evaluateNotCalledTool(record, tool),
         }),
-        { tool: name },
+        { tool },
       );
     },
 
     toolCallCount(name: string, options: EvalToolCallCountOptions): EvalMetric {
+      const tool = normalizeEvalString(name, "agent.toolCallCount name");
+      validateEvalToolCallCountOptions(options);
       return createMetric(
         "agent.toolCallCount",
         "agent",
@@ -628,18 +956,19 @@ export const metrics = {
           name: "agent.toolCallCount",
           family: "agent",
           severity: "gate",
-          ...evaluateToolCallCount(record, name, options),
+          ...evaluateToolCallCount(record, tool, options),
         }),
-        { tool: name, ...options },
+        { tool, ...options },
       );
     },
   },
 
   knowledge: {
     recallAtK(options: EvalKnowledgeRetrievalMetricOptions): EvalMetric {
+      const k = normalizeKnowledgeK(options?.k, "knowledge.recallAtK k");
       return createKnowledgeMetric("knowledge.recallAtK", (record) => {
         const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
-        const entries = getKnowledgeEntries(record, tool).slice(0, options.k);
+        const entries = getKnowledgeEntries(record, tool).slice(0, k);
         const { expected, expectedFrom } = resolveExpectedKnowledgeSources(record, options);
         if (expected.length === 0) {
           return missingExpectedKnowledgeResult(
@@ -647,7 +976,7 @@ export const metrics = {
             tool,
             expectedFrom,
             entries,
-            options.k,
+            k,
           );
         }
 
@@ -660,7 +989,7 @@ export const metrics = {
           score,
           evidence: {
             tool,
-            k: options.k,
+            k,
             retrieved: retrievedSources(entries),
             expected: expected.map(expectedSourceLabel),
             ...(expectedFrom ? { expectedFrom } : {}),
@@ -669,13 +998,14 @@ export const metrics = {
             expectedCount: expected.length,
           },
         };
-      }, createKnowledgeMetricConfig(options));
+      }, createKnowledgeMetricConfig({ ...options, k }));
     },
 
     precisionAtK(options: EvalKnowledgeRetrievalMetricOptions): EvalMetric {
+      const k = normalizeKnowledgeK(options?.k, "knowledge.precisionAtK k");
       return createKnowledgeMetric("knowledge.precisionAtK", (record) => {
         const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
-        const entries = getKnowledgeEntries(record, tool).slice(0, options.k);
+        const entries = getKnowledgeEntries(record, tool).slice(0, k);
         const { expected, expectedFrom } = resolveExpectedKnowledgeSources(record, options);
         if (expected.length === 0) {
           return missingExpectedKnowledgeResult(
@@ -683,7 +1013,7 @@ export const metrics = {
             tool,
             expectedFrom,
             entries,
-            options.k,
+            k,
           );
         }
 
@@ -699,7 +1029,7 @@ export const metrics = {
           score,
           evidence: {
             tool,
-            k: options.k,
+            k,
             retrieved: retrievedSources(entries),
             expected: expected.map(expectedSourceLabel),
             ...(expectedFrom ? { expectedFrom } : {}),
@@ -708,75 +1038,215 @@ export const metrics = {
             retrievedCount,
           },
         };
-      }, createKnowledgeMetricConfig(options));
+      }, createKnowledgeMetricConfig({ ...options, k }));
     },
 
     mrr(options: EvalKnowledgeMrrMetricOptions): EvalMetric {
-      return createKnowledgeMetric("knowledge.mrr", (record) => {
-        const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
-        const allEntries = getKnowledgeEntries(record, tool);
-        const k = options.k ?? allEntries.length;
-        const entries = allEntries.slice(0, k);
-        const { expected, expectedFrom } = resolveExpectedKnowledgeSources(record, options);
-        if (expected.length === 0) {
-          return missingExpectedKnowledgeResult(
-            "knowledge.mrr",
-            tool,
-            expectedFrom,
-            entries,
-            k,
+      const configuredK = normalizeOptionalKnowledgeK(options?.k, "knowledge.mrr k");
+      return createKnowledgeMetric(
+        "knowledge.mrr",
+        (record) => {
+          const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
+          const allEntries = getKnowledgeEntries(record, tool);
+          const k = configuredK ?? allEntries.length;
+          const entries = allEntries.slice(0, k);
+          const { expected, expectedFrom } = resolveExpectedKnowledgeSources(record, options);
+          if (expected.length === 0) {
+            return missingExpectedKnowledgeResult(
+              "knowledge.mrr",
+              tool,
+              expectedFrom,
+              entries,
+              k,
+            );
+          }
+
+          const index = entries.findIndex((entry) =>
+            expected.some((source) => expectedMatchesEntry(source, entry))
           );
+          const rank = index === -1 ? null : index + 1;
+          const score = rank === null ? 0 : 1 / rank;
+          return {
+            name: "knowledge.mrr",
+            family: "knowledge",
+            severity: "gate",
+            score,
+            evidence: {
+              tool,
+              k,
+              retrieved: retrievedSources(entries),
+              expected: expected.map(expectedSourceLabel),
+              ...(expectedFrom ? { expectedFrom } : {}),
+              ...(rank === null ? {} : {
+                rank,
+                match: entries[index]?.source,
+              }),
+            },
+          };
+        },
+        createKnowledgeMetricConfig({
+          ...options,
+          ...(configuredK === undefined ? {} : { k: configuredK }),
+        }),
+      );
+    },
+
+    citationPrecision(options: EvalKnowledgeCitationMetricOptions = {}): EvalMetric {
+      const k = normalizeOptionalKnowledgeK(options.k, "knowledge.citationPrecision k");
+      const normalizedOptions = { ...options, ...(k === undefined ? {} : { k }) };
+      return createKnowledgeMetric("knowledge.citationPrecision", (record) => {
+        const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
+        const citations = getCitationEntries(record, normalizedOptions);
+        const references = resolveCitationReferenceSet(record, normalizedOptions);
+        const labels = referenceLabels(references);
+        if (labels.length === 0) {
+          return missingCitationReferencesResult("knowledge.citationPrecision", tool, citations);
+        }
+        if (citations.length === 0) {
+          return missingCitationResult("knowledge.citationPrecision", tool, references);
         }
 
-        const index = entries.findIndex((entry) =>
-          expected.some((source) => expectedMatchesEntry(source, entry))
+        const supportedCitations = citations.filter((citation) =>
+          citationIsSupported(citation, references)
         );
-        const rank = index === -1 ? null : index + 1;
-        const score = rank === null ? 0 : 1 / rank;
+        const unsupportedCitations = citations.filter((citation) =>
+          !citationIsSupported(citation, references)
+        );
         return {
-          name: "knowledge.mrr",
+          name: "knowledge.citationPrecision",
           family: "knowledge",
           severity: "gate",
-          score,
+          score: supportedCitations.length / citations.length,
           evidence: {
             tool,
-            k,
-            retrieved: retrievedSources(entries),
-            expected: expected.map(expectedSourceLabel),
-            ...(expectedFrom ? { expectedFrom } : {}),
-            ...(rank === null ? {} : {
-              rank,
-              match: entries[index]?.source,
-            }),
+            citations: citationLabels(citations),
+            ...(references.expected && references.expected.length > 0
+              ? {
+                expected: references.expected.map(expectedSourceLabel),
+                ...(references.expectedFrom ? { expectedFrom: references.expectedFrom } : {}),
+              }
+              : { retrieved: retrievedSources(references.retrieved) }),
+            supported: citationLabels(supportedCitations),
+            unsupported: citationLabels(unsupportedCitations),
+            supportedCount: supportedCitations.length,
+            citationCount: citations.length,
           },
         };
-      }, createKnowledgeMetricConfig(options));
+      }, createKnowledgeMetricConfig(normalizedOptions));
+    },
+
+    citationRecall(options: EvalKnowledgeCitationMetricOptions = {}): EvalMetric {
+      const k = normalizeOptionalKnowledgeK(options.k, "knowledge.citationRecall k");
+      const normalizedOptions = { ...options, ...(k === undefined ? {} : { k }) };
+      return createKnowledgeMetric("knowledge.citationRecall", (record) => {
+        const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
+        const citations = getCitationEntries(record, normalizedOptions);
+        const references = resolveCitationReferenceSet(record, normalizedOptions);
+        const labels = referenceLabels(references);
+        if (labels.length === 0) {
+          return missingCitationReferencesResult("knowledge.citationRecall", tool, citations);
+        }
+        if (citations.length === 0) {
+          return missingCitationResult("knowledge.citationRecall", tool, references);
+        }
+
+        const cited = references.expected && references.expected.length > 0
+          ? references.expected
+            .filter((expected) =>
+              citations.some((citation) => citationMatchesExpected(expected, citation))
+            )
+            .map(expectedSourceLabel)
+          : references.retrieved
+            .filter((entry) =>
+              citations.some((citation) => citationMatchesKnowledgeEntry(citation, entry))
+            )
+            .map((entry) => entry.source);
+        const missing = labels.filter((label) =>
+          !cited.some((citedLabel) =>
+            normalizeComparable(citedLabel) === normalizeComparable(label)
+          )
+        );
+
+        return {
+          name: "knowledge.citationRecall",
+          family: "knowledge",
+          severity: "gate",
+          score: cited.length / labels.length,
+          evidence: {
+            tool,
+            citations: citationLabels(citations),
+            ...(references.expected && references.expected.length > 0
+              ? {
+                expected: references.expected.map(expectedSourceLabel),
+                ...(references.expectedFrom ? { expectedFrom: references.expectedFrom } : {}),
+              }
+              : { retrieved: retrievedSources(references.retrieved) }),
+            cited,
+            missing,
+            citedCount: cited.length,
+            expectedCount: labels.length,
+          },
+        };
+      }, createKnowledgeMetricConfig(normalizedOptions));
     },
   },
 
   ops: {
     latency(options: { maxMs: number }): EvalMetric {
+      const maxMs = normalizeBudgetLimit(options?.maxMs, "ops.latency maxMs");
       return createMetric("ops.latency", "ops", (record) => {
-        const pass = record.durationMs <= options.maxMs;
+        const measured = Number.isFinite(record.durationMs) && record.durationMs >= 0;
+        const pass = measured && record.durationMs <= maxMs;
         return {
           name: "ops.latency",
           family: "ops",
           severity: "budget",
           score: pass ? 1 : 0,
           pass,
-          evidence: { durationMs: record.durationMs, maxMs: options.maxMs },
+          ...(!measured ? { explanation: "Eval duration was not measured." } : {}),
+          evidence: { durationMs: record.durationMs, maxMs },
         };
-      }, options);
+      }, { maxMs });
     },
 
     tokens(options: { maxTotal?: number; maxInput?: number; maxOutput?: number }): EvalMetric {
+      if (!isEvalRecord(options)) {
+        throw createEvalValidationError("ops.tokens options must be an object");
+      }
+      const limits = {
+        ...(options.maxTotal === undefined
+          ? {}
+          : { maxTotal: normalizeBudgetLimit(options.maxTotal, "ops.tokens maxTotal") }),
+        ...(options.maxInput === undefined
+          ? {}
+          : { maxInput: normalizeBudgetLimit(options.maxInput, "ops.tokens maxInput") }),
+        ...(options.maxOutput === undefined
+          ? {}
+          : { maxOutput: normalizeBudgetLimit(options.maxOutput, "ops.tokens maxOutput") }),
+      };
+      if (Object.keys(limits).length === 0) {
+        throw createEvalValidationError(
+          "ops.tokens requires maxTotal, maxInput, or maxOutput",
+        );
+      }
       return createMetric("ops.tokens", "ops", (record) => {
-        const inputOk = options.maxInput === undefined ||
-          (record.usage.inputTokens ?? 0) <= options.maxInput;
-        const outputOk = options.maxOutput === undefined ||
-          (record.usage.outputTokens ?? 0) <= options.maxOutput;
-        const totalOk = options.maxTotal === undefined ||
-          (record.usage.totalTokens ?? 0) <= options.maxTotal;
+        const inputTokens = record.usage.inputTokens;
+        const outputTokens = record.usage.outputTokens;
+        const totalTokens = record.usage.totalTokens ??
+          (inputTokens !== undefined && outputTokens !== undefined
+            ? inputTokens + outputTokens
+            : undefined);
+        const missing = [
+          ...(limits.maxInput !== undefined && inputTokens === undefined ? ["inputTokens"] : []),
+          ...(limits.maxOutput !== undefined && outputTokens === undefined ? ["outputTokens"] : []),
+          ...(limits.maxTotal !== undefined && totalTokens === undefined ? ["totalTokens"] : []),
+        ];
+        const inputOk = limits.maxInput === undefined ||
+          (inputTokens !== undefined && inputTokens <= limits.maxInput);
+        const outputOk = limits.maxOutput === undefined ||
+          (outputTokens !== undefined && outputTokens <= limits.maxOutput);
+        const totalOk = limits.maxTotal === undefined ||
+          (totalTokens !== undefined && totalTokens <= limits.maxTotal);
         const pass = inputOk && outputOk && totalOk;
         return {
           name: "ops.tokens",
@@ -784,36 +1254,50 @@ export const metrics = {
           severity: "budget",
           score: pass ? 1 : 0,
           pass,
-          evidence: { usage: record.usage, limits: options },
+          ...(missing.length > 0
+            ? { explanation: `Eval token usage was not measured: ${missing.join(", ")}.` }
+            : {}),
+          evidence: { usage: record.usage, limits },
         };
-      }, options as Record<string, unknown>);
+      }, limits);
     },
 
     cost(options: { maxUsd: number }): EvalMetric {
+      const maxUsd = normalizeBudgetLimit(options?.maxUsd, "ops.cost maxUsd");
       return createMetric("ops.cost", "ops", (record) => {
         const costUsd = record.usage.veryfrontBilledUsd ?? record.usage.veryfrontChargeUsd ??
-          record.usage.costUsd ?? record.usage.providerCostUsd ?? 0;
-        const pass = costUsd <= options.maxUsd;
+          record.usage.costUsd ?? record.usage.providerCostUsd;
+        const measured = costUsd !== undefined && Number.isFinite(costUsd) && costUsd >= 0;
+        const pass = measured && costUsd <= maxUsd;
         return {
           name: "ops.cost",
           family: "ops",
           severity: "budget",
           score: pass ? 1 : 0,
           pass,
+          ...(!measured ? { explanation: "Eval cost was not measured." } : {}),
           evidence: {
-            costUsd,
-            maxUsd: options.maxUsd,
+            ...(costUsd === undefined ? {} : { costUsd }),
+            maxUsd,
             ...(record.usage.costSource ? { costSource: record.usage.costSource } : {}),
           },
         };
-      }, options);
+      }, { maxUsd });
     },
   },
 
   judge: {
     rubric(options: JudgeRubricInput): EvalMetric {
+      if (!isEvalRecord(options)) {
+        throw createEvalValidationError("judge.rubric options must be an object");
+      }
+      const rubricOptions = options as JudgeRubricInput;
+      const rubric = normalizeEvalString(rubricOptions.rubric, "judge.rubric rubric");
+      if (rubricOptions.judge !== undefined && typeof rubricOptions.judge !== "function") {
+        throw createEvalValidationError("judge.rubric judge must be a function");
+      }
       return createMetric("judge.rubric", "judge", async (record) => {
-        if (!options.judge) {
+        if (!rubricOptions.judge) {
           return {
             name: "judge.rubric",
             family: "judge",
@@ -826,13 +1310,14 @@ export const metrics = {
         const output = record.output && typeof record.output === "object"
           ? record.output as Record<string, unknown>
           : { text: getOutputText(record.output) };
-        const judged = await options.judge({
-          rubric: options.rubric,
+        const judged = await rubricOptions.judge({
+          rubric,
           input: record.input,
           output,
           reference: record.reference,
           metadata: record.metadata,
         });
+        assertFiniteEvalNumber(judged.score, "judge.rubric score", { min: 0, max: 1 });
         const min = 0;
 
         return {
@@ -843,7 +1328,7 @@ export const metrics = {
           pass: judged.pass ?? judged.score > min,
           ...(judged.explanation ? { explanation: judged.explanation } : {}),
         };
-      }, { rubric: options.rubric });
+      }, { rubric });
     },
   },
 } as const;

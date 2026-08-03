@@ -1,4 +1,4 @@
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 
 export function isAllowedRemoteHost(url: URL, allowedHosts: string[]): boolean {
   return allowedHosts.some((host) => {
@@ -11,8 +11,6 @@ export function isAllowedRemoteHost(url: URL, allowedHosts: string[]): boolean {
 }
 
 export function validateHTTPImports(source: string, allowedHosts: string[]): void {
-  if (!allowedHosts?.length) return;
-
   const importRegex = /import\s+(?:[\w\s{},*]+\s+from\s+)?['"]https?:\/\/[^'"]+['"]/g;
   const dynamicImportRegex = /import\s*\(['"]https?:\/\/[^'"]+['"]\)/g;
 

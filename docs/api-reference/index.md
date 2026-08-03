@@ -15,11 +15,13 @@ order: 1
 | [`veryfront/cli`](./veryfront/cli.md) | CLI runtime helpers. |
 | [`veryfront/context`](./veryfront/context.md) | Page context. |
 | [`veryfront/embedding`](./veryfront/embedding.md) | Embedding and retrieval helpers. |
+| [`veryfront/errors`](./veryfront/errors.md) | Structured error system with slug-based registry, RFC 9457 HTTP problem details, error boundaries for HTTP and CLI, and user-friendly formatting. |
 | [`veryfront/eval`](./veryfront/eval.md) | First-class eval primitives for agent quality checks. |
 | [`veryfront/extensions`](./veryfront/extensions.md) | Extension contracts and loader helpers. |
 | [`veryfront/fonts`](./veryfront/fonts.md) | Font components. |
 | [`veryfront/fs`](./veryfront/fs.md) | Filesystem and path utilities. |
 | [`veryfront/head`](./veryfront/head.md) | Document metadata components. |
+| [`veryfront/index.client`](./veryfront/index.client.md) | Client and SSR-safe root helpers. |
 | [`veryfront/integrations`](./veryfront/integrations.md) | Connector metadata and remote tools. |
 | [`veryfront/knowledge`](./veryfront/knowledge.md) | Project knowledge retrieval helpers. |
 | [`veryfront/markdown`](./veryfront/markdown.md) | Markdown rendering. |
@@ -31,19 +33,21 @@ order: 1
 | [`veryfront/observability`](./veryfront/observability.md) | Tracing, metrics, errors, and logs. |
 | [`veryfront/prompt`](./veryfront/prompt.md) | MCP prompt definitions. |
 | [`veryfront/provider`](./veryfront/provider.md) | Model provider registry. |
+| [`veryfront/release-assets`](./veryfront/release-assets.md) | Content-addressed release asset build, schema, cache, and consumption contracts. |
 | [`veryfront/resource`](./veryfront/resource.md) | MCP resource definitions. |
 | [`veryfront/router`](./veryfront/router.md) | Client navigation and route context. |
 | [`veryfront/runs`](./veryfront/runs.md) | Canonical durable task and workflow runs. |
 | [`veryfront/sandbox`](./veryfront/sandbox.md) | Isolated execution. |
-| [`veryfront/schedule`](./veryfront/schedule.md) | Source-defined schedules for Veryfront projects. |
+| [`veryfront/schedule`](./veryfront/schedule.md) | Source-defined recurring schedules for Veryfront projects. |
 | [`veryfront/schemas`](./veryfront/schemas.md) | Validation schemas. |
+| [`veryfront/security`](./veryfront/security.md) | Security layer - input validation with size limits, CORS configuration, CSP and security headers, path traversal prevention, and secure filesystem access. |
 | [`veryfront/server`](./veryfront/server.md) | Server runtime helpers. |
 | [`veryfront/skill`](./veryfront/skill.md) | Agent skills. Public API for the agent skills system. Skills are project-level capabilities defined as SKILL.md files following the agentskills.io specification. |
 | [`veryfront/task`](./veryfront/task.md) | Source-defined tasks for Veryfront projects. |
 | [`veryfront/testing`](./veryfront/testing.md) | Test utilities. |
 | [`veryfront/tool`](./veryfront/tool.md) | Tool definitions and execution. |
 | [`veryfront/trigger`](./veryfront/trigger.md) | Shared source-trigger discovery and local execution primitives. |
+| [`veryfront/ui`](./veryfront/ui.md) | UI primitives - the base layer for veryfront/chat components. |
 | [`veryfront/utils`](./veryfront/utils.md) | Runtime utilities. |
 | [`veryfront/webhook`](./veryfront/webhook.md) | Source-defined webhooks for Veryfront projects. |
-| [`veryfront/work`](./veryfront/work.md) | Business process outcome definitions. |
 | [`veryfront/workflow`](./veryfront/workflow.md) | Workflows. |

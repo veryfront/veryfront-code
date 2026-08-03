@@ -1,7 +1,7 @@
 import type { PartialErrorCatalog } from "./types.ts";
 import { createErrorSolution, createSimpleError } from "./factory.ts";
 
-export const RUNTIME_ERROR_CATALOG: PartialErrorCatalog = {
+export const RUNTIME_ERROR_CATALOG: PartialErrorCatalog = Object.freeze({
   "hydration-mismatch": createErrorSolution("hydration-mismatch", {
     title: "Hydration mismatch",
     message: "Client-side HTML does not match server-rendered HTML.",
@@ -48,7 +48,7 @@ useEffect(() => setRandom(Math.random()), [])
     message: "Required layout file is missing.",
     steps: [
       "Create app/layout.tsx in App Router",
-      "Or create layouts/default.mdx for Pages Router",
+      "Or create pages/layout.tsx or pages/layout.mdx for Pages Router",
       "Check file path and name are correct",
     ],
     example: `// app/layout.tsx
@@ -93,4 +93,4 @@ export default function RootLayout({ children }) {
       "Verify middleware is properly exported",
     ],
   ),
-};
+});

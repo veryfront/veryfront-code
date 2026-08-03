@@ -19,6 +19,7 @@ import {
   normalizeChatMessageMetadata,
   normalizeChatUiMessageStream,
 } from "../../chat/chat-ui-message-helpers.ts";
+import { deriveKnowledgeSourceDocumentChunk } from "../../chat/knowledge-source-document.ts";
 
 /** Public API contract for chat UI message stream finish part. */
 export type ChatUiMessageStreamFinishPart = {
@@ -89,6 +90,7 @@ type ToolPart = {
   inputText: string;
   input: Record<string, unknown>;
   state: "input-available" | "output-available" | "output-error";
+  providerExecuted?: boolean;
   output?: unknown;
   errorText?: string;
 };
@@ -99,6 +101,20 @@ type DataPart = {
   value: unknown;
 };
 
+type OrderedSourceDocumentPart =
+  & Extract<
+    ChatUiMessage["parts"][number],
+    { type: "source-document" }
+  >
+  & { order: number };
+
+type OrderedSourceUrlPart =
+  & Extract<
+    ChatUiMessage["parts"][number],
+    { type: "source-url" }
+  >
+  & { order: number };
+
 type PendingToolDelta = {
   inputText: string;
   chunks: string[];
@@ -108,6 +124,8 @@ type FrameworkUiMessageState = {
   textBlocks: Map<string, OrderedTextBlock>;
   reasoningBlocks: Map<string, OrderedTextBlock>;
   toolParts: Map<string, ToolPart>;
+  sourceDocumentParts: Map<string, OrderedSourceDocumentPart>;
+  sourceUrlParts: Map<string, OrderedSourceUrlPart>;
   dataParts: DataPart[];
   pendingToolDeltas: Map<string, PendingToolDelta>;
   nextOrder: number;
@@ -118,6 +136,8 @@ function createFrameworkUiMessageState(): FrameworkUiMessageState {
     textBlocks: new Map(),
     reasoningBlocks: new Map(),
     toolParts: new Map(),
+    sourceDocumentParts: new Map(),
+    sourceUrlParts: new Map(),
     dataParts: [],
     pendingToolDeltas: new Map(),
     nextOrder: 0,
@@ -197,12 +217,13 @@ function observeChatStreamEvent(input: {
   event: ChatStreamEvent;
   responseMessageId: string;
   state: FrameworkUiMessageState;
+  replaceExistingSourceDocument?: boolean;
 }): void {
-  const { event, responseMessageId, state } = input;
+  const { event, responseMessageId, state, replaceExistingSourceDocument = false } = input;
 
   switch (event.type) {
     case "text-start": {
-      const id = event.id || responseMessageId;
+      const id = event.contentId || event.id || responseMessageId;
       if (!state.textBlocks.has(id)) {
         state.textBlocks.set(id, { id, order: state.nextOrder, text: "" });
         state.nextOrder += 1;
@@ -210,7 +231,7 @@ function observeChatStreamEvent(input: {
       return;
     }
     case "text-delta": {
-      const id = event.id || responseMessageId;
+      const id = event.contentId || event.id || responseMessageId;
       const existingBlock = state.textBlocks.get(id);
       if (existingBlock) {
         existingBlock.text += event.delta;
@@ -250,8 +271,13 @@ function observeChatStreamEvent(input: {
           inputText: "",
           input: {},
           state: "input-available",
+          ...(event.providerExecuted !== undefined
+            ? { providerExecuted: event.providerExecuted }
+            : {}),
         });
         state.nextOrder += 1;
+      } else if (event.providerExecuted !== undefined) {
+        state.toolParts.get(event.toolCallId)!.providerExecuted = event.providerExecuted;
       }
 
       const pendingToolDelta = state.pendingToolDeltas.get(event.toolCallId);
@@ -292,6 +318,9 @@ function observeChatStreamEvent(input: {
         toolPart.toolName = event.toolName;
         toolPart.input = input;
         toolPart.state = "input-available";
+        if (event.providerExecuted !== undefined) {
+          toolPart.providerExecuted = event.providerExecuted;
+        }
       } else {
         state.toolParts.set(event.toolCallId, {
           toolCallId: event.toolCallId,
@@ -300,6 +329,9 @@ function observeChatStreamEvent(input: {
           inputText: "",
           input,
           state: "input-available",
+          ...(event.providerExecuted !== undefined
+            ? { providerExecuted: event.providerExecuted }
+            : {}),
         });
         state.nextOrder += 1;
       }
@@ -313,6 +345,9 @@ function observeChatStreamEvent(input: {
       }
       toolPart.state = "output-available";
       toolPart.output = event.output;
+      if (event.providerExecuted !== undefined) {
+        toolPart.providerExecuted = event.providerExecuted;
+      }
       return;
     }
     case "tool-output-error":
@@ -321,6 +356,9 @@ function observeChatStreamEvent(input: {
       if (toolPart) {
         toolPart.state = "output-error";
         toolPart.errorText = event.errorText;
+        if (event.providerExecuted !== undefined) {
+          toolPart.providerExecuted = event.providerExecuted;
+        }
         if ("input" in event && event.input !== undefined) {
           toolPart.input = parseToolInputObject(event.input);
         }
@@ -335,7 +373,42 @@ function observeChatStreamEvent(input: {
           ? parseToolInputObject(event.input)
           : {},
         state: "output-error",
+        ...(event.providerExecuted !== undefined
+          ? { providerExecuted: event.providerExecuted }
+          : {}),
         errorText: event.errorText,
+      });
+      state.nextOrder += 1;
+      return;
+    }
+    case "source-document": {
+      const existingSource = state.sourceDocumentParts.get(event.sourceId);
+      if (existingSource && !replaceExistingSourceDocument) {
+        return;
+      }
+      state.sourceDocumentParts.set(event.sourceId, {
+        type: "source-document",
+        sourceId: event.sourceId,
+        mediaType: event.mediaType,
+        title: event.title,
+        ...(event.filename ? { filename: event.filename } : {}),
+        order: existingSource?.order ?? state.nextOrder,
+      });
+      if (!existingSource) {
+        state.nextOrder += 1;
+      }
+      return;
+    }
+    case "source-url": {
+      if (state.sourceUrlParts.has(event.sourceId)) {
+        return;
+      }
+      state.sourceUrlParts.set(event.sourceId, {
+        type: "source-url",
+        sourceId: event.sourceId,
+        url: event.url,
+        ...(event.title ? { title: event.title } : {}),
+        order: state.nextOrder,
       });
       state.nextOrder += 1;
       return;
@@ -421,12 +494,15 @@ function buildResponseMessageParts(state: FrameworkUiMessageState): ChatUiMessag
   for (const toolPart of state.toolParts.values()) {
     const basePart: Pick<
       ChatDynamicToolUiPart,
-      "type" | "toolName" | "toolCallId" | "input"
+      "type" | "toolName" | "toolCallId" | "input" | "providerExecuted"
     > = {
       type: "dynamic-tool",
       toolName: toolPart.toolName,
       toolCallId: toolPart.toolCallId,
       input: toolPart.input,
+      ...(toolPart.providerExecuted !== undefined
+        ? { providerExecuted: toolPart.providerExecuted }
+        : {}),
     };
 
     const part: ChatUiMessage["parts"][number] = toolPart.state === "output-available"
@@ -450,6 +526,16 @@ function buildResponseMessageParts(state: FrameworkUiMessageState): ChatUiMessag
       order: toolPart.order,
       part,
     });
+  }
+
+  for (const sourceDocumentPart of state.sourceDocumentParts.values()) {
+    const { order, ...part } = sourceDocumentPart;
+    orderedParts.push({ order, part });
+  }
+
+  for (const sourceUrlPart of state.sourceUrlParts.values()) {
+    const { order, ...part } = sourceUrlPart;
+    orderedParts.push({ order, part });
   }
 
   for (const dataPart of state.dataParts) {
@@ -531,6 +617,7 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
     onError: options.onError,
   });
   const materializedToolCallIds = new Set<string>();
+  const derivedSourceDocumentIds = new Set<string>();
   let finishReason: ChatFinishReason = "stop";
 
   return normalizeChatUiMessageStream(
@@ -555,15 +642,42 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
         const chatEvents = chatEventEncoder.encode(event);
         finishReason = chatEventEncoder.state.finishReason;
         for (const chatEvent of chatEvents) {
+          const replacesDerivedSourceDocument = chatEvent.type === "source-document" &&
+            state.sourceDocumentParts.has(chatEvent.sourceId) &&
+            derivedSourceDocumentIds.delete(chatEvent.sourceId);
+          const isDuplicateSourceDocument = chatEvent.type === "source-document" &&
+            state.sourceDocumentParts.has(chatEvent.sourceId) &&
+            !replacesDerivedSourceDocument;
+          const isDuplicateSourceUrl = chatEvent.type === "source-url" &&
+            state.sourceUrlParts.has(chatEvent.sourceId);
           observeChatStreamEvent({
             event: chatEvent,
             responseMessageId,
             state,
+            replaceExistingSourceDocument: replacesDerivedSourceDocument,
           });
           const chunk = toUiChunk(chatEvent);
-          if (chunk) {
+          if (chunk && !isDuplicateSourceDocument && !isDuplicateSourceUrl) {
             yield chunk;
           }
+
+          if (chatEvent.type !== "tool-output-available") {
+            continue;
+          }
+          const sourceChunk = deriveKnowledgeSourceDocumentChunk({
+            toolName: state.toolParts.get(chatEvent.toolCallId)?.toolName,
+            output: chatEvent.output,
+          });
+          if (!sourceChunk || state.sourceDocumentParts.has(sourceChunk.sourceId)) {
+            continue;
+          }
+          derivedSourceDocumentIds.add(sourceChunk.sourceId);
+          observeChatStreamEvent({
+            event: sourceChunk,
+            responseMessageId,
+            state,
+          });
+          yield sourceChunk;
         }
       }
 

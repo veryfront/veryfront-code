@@ -1,7 +1,18 @@
+import { fromError } from "#veryfront/errors";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimePromptMessage } from "veryfront/provider/shared";
 import { buildOpenAIChatRequest } from "./openai-chat-request-builder.ts";
+
+function captureThrownError(fn: () => unknown): Error {
+  try {
+    fn();
+  } catch (error) {
+    if (error instanceof Error) return error;
+    throw error;
+  }
+  throw new Error("Expected function to throw");
+}
 
 function createWarningCollector() {
   const warnings: Array<{
@@ -174,6 +185,49 @@ describe("ext-llm-openai/openai-chat-request-builder", () => {
     assertEquals(body.max_tokens, undefined);
   });
 
+  it("protects runtime-owned Chat transport fields during provider-option merges", () => {
+    const providerBucket: Record<string, unknown> = {
+      model: "attacker-model",
+      messages: [{ role: "user", content: "replaced" }],
+      stream: false,
+      stream_options: { include_usage: false },
+      custom_option: true,
+    };
+    Object.defineProperty(providerBucket, "__proto__", {
+      value: { polluted: true },
+      enumerable: true,
+    });
+    const prompt: RuntimePromptMessage[] = [{
+      role: "user",
+      content: [{ type: "text", text: "Original" }],
+    }];
+
+    const streamed = buildOpenAIChatRequest(
+      "gpt-4o-mini",
+      "openai",
+      { prompt, providerOptions: { openai: providerBucket } },
+      true,
+      createWarningCollector(),
+    );
+    assertEquals(streamed.model, "gpt-4o-mini");
+    assertEquals(streamed.messages, [{ role: "user", content: "Original" }]);
+    assertEquals(streamed.stream, true);
+    assertEquals(streamed.stream_options, { include_usage: true });
+    assertEquals(streamed.custom_option, true);
+    assertEquals(Object.getPrototypeOf(streamed), Object.prototype);
+    assertEquals((streamed as Record<string, unknown>).polluted, undefined);
+
+    const generated = buildOpenAIChatRequest(
+      "gpt-4o-mini",
+      "openai",
+      { prompt, providerOptions: { openai: { stream: true, stream_options: {} } } },
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(Object.hasOwn(generated, "stream"), false);
+    assertEquals(Object.hasOwn(generated, "stream_options"), false);
+  });
+
   it("preserves chat request shaping, provider option merge order, and warnings", () => {
     const prompt: RuntimePromptMessage[] = [
       { role: "system", content: "You are concise." },
@@ -283,5 +337,61 @@ describe("ext-llm-openai/openai-chat-request-builder", () => {
       "presencePenalty",
       "frequencyPenalty",
     ]);
+  });
+
+  it("rejects hosted-tool results that Chat Completions cannot replay", () => {
+    const callMessage =
+      "OpenAI-compatible provider-executed assistant tool calls cannot be replayed through Chat Completions";
+    const callError = captureThrownError(() =>
+      buildOpenAIChatRequest(
+        "gpt-4o-mini",
+        "openai",
+        {
+          prompt: [{
+            role: "assistant",
+            content: [{
+              type: "tool-call",
+              toolCallId: "ws_1",
+              toolName: "web_search",
+              input: { query: "Veryfront" },
+              providerExecuted: true,
+            }],
+          }],
+        },
+        false,
+        createWarningCollector(),
+      )
+    );
+    assertEquals(callError instanceof TypeError, true);
+    assertEquals(callError.message, callMessage);
+    assertEquals(callError.name, "VeryfrontError[config]");
+    assertEquals(fromError(callError), { type: "config", message: callMessage });
+
+    const resultMessage =
+      "OpenAI-compatible provider-executed assistant tool results cannot be replayed through Chat Completions";
+    const resultError = captureThrownError(() =>
+      buildOpenAIChatRequest(
+        "gpt-4o-mini",
+        "openai",
+        {
+          prompt: [{
+            role: "assistant",
+            content: [{
+              type: "tool-result",
+              toolCallId: "ws_1",
+              toolName: "web_search",
+              result: { status: "completed" },
+              providerExecuted: true,
+            }],
+          }],
+        },
+        false,
+        createWarningCollector(),
+      )
+    );
+    assertEquals(resultError instanceof TypeError, true);
+    assertEquals(resultError.message, resultMessage);
+    assertEquals(resultError.name, "VeryfrontError[config]");
+    assertEquals(fromError(resultError), { type: "config", message: resultMessage });
   });
 });

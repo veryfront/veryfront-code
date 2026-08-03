@@ -1,13 +1,15 @@
-import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert";
+import { ensureTestSchemaValidator } from "#veryfront/schemas/_test-setup.ts";
+import {
+  assertEquals,
+  assertNotEquals,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
-import {
-  __resetCachedAuthProviderForTests,
-  createProxyHandler,
-  injectContextHeaders,
-  type ProxyContext,
-} from "./handler.ts";
+import { createProxyHandler, injectContextHeaders, type ProxyContext } from "./handler.ts";
+import { extractRequestHeaders } from "#veryfront/server/runtime-handler/project-resolution.ts";
+import { parseRuntimeAgentRunInvocation } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 import { register, reset } from "../extensions/contracts.ts";
 import type { AuthProvider, TokenHeader, TokenPayload } from "../extensions/auth/index.ts";
 
@@ -77,6 +79,112 @@ export async function signTestJwt(
   return `${h}.${b}.${sig}`;
 }
 
+function encodePem(label: string, der: ArrayBuffer): string {
+  const base64 = btoa(String.fromCharCode(...new Uint8Array(der)));
+  const lines = base64.match(/.{1,64}/g) ?? [base64];
+  return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----`;
+}
+
+function base64urlBytes(bytes: Uint8Array): string {
+  return base64url(String.fromCharCode(...bytes));
+}
+
+/**
+ * Mint a valid, freshly-signed control-plane JWS and export the matching
+ * public key PEM. Used to exercise the proxy's cryptographic verification of
+ * internal control-plane requests (isVerifiedInternalControlPlaneRequest).
+ */
+async function mintControlPlaneJws(
+  overrides: Partial<{
+    body: string;
+    iss: string;
+    aud: string;
+    projectId: string;
+    requestMethod: string;
+    requestPath: string;
+    iat: number;
+    exp: number;
+  }> = {},
+): Promise<{ jws: string; publicKeyPem: string }> {
+  const keyPair = await crypto.subtle.generateKey("Ed25519", true, [
+    "sign",
+    "verify",
+  ]) as CryptoKeyPair;
+  const der = await crypto.subtle.exportKey("spki", keyPair.publicKey);
+  const publicKeyPem = encodePem("PUBLIC KEY", der);
+
+  const now = Math.floor(Date.now() / 1000);
+  const body = overrides.body ?? "";
+  const requestHash = base64urlBytes(
+    new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body))),
+  );
+  const header = { alg: "EdDSA", typ: "JWT" };
+  const claims = {
+    iss: overrides.iss ?? "veryfront-api",
+    aud: overrides.aud ?? "protected-project",
+    sub: "control-plane",
+    surface: "channels",
+    project_id: overrides.projectId ?? "proj-123",
+    request_hash: requestHash,
+    request_method: overrides.requestMethod ?? "POST",
+    request_path: overrides.requestPath ??
+      "/api/control-plane/runs/run_1/stream",
+    iat: overrides.iat ?? now,
+    exp: overrides.exp ?? now + 60,
+  };
+  const encodedHeader = base64url(JSON.stringify(header));
+  const encodedPayload = base64url(JSON.stringify(claims));
+  const signingInput = new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`);
+  const signature = await crypto.subtle.sign("Ed25519", keyPair.privateKey, signingInput);
+  return {
+    publicKeyPem,
+    jws: `${encodedHeader}.${encodedPayload}.${base64urlBytes(new Uint8Array(signature))}`,
+  };
+}
+
+function createSignedPreviewTargetBody(
+  branchId = "10000000-1000-4000-8000-100000000006",
+  branchName = "feature-branch",
+): string {
+  return JSON.stringify({
+    run: {
+      agentServiceId: "veryfront-platform-agent",
+      agentId: "assistant-1",
+      conversationId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      messageId: "10000000-1000-4000-8000-100000000002",
+      inputAnchorMessageId: "10000000-1000-4000-8000-100000000003",
+      requestedByUserId: "10000000-1000-4000-8000-100000000004",
+      project: {
+        projectId: "10000000-1000-4000-8000-100000000005",
+        projectSlug: "protected-project",
+        runtimeTargetKind: "preview_branch",
+        runtimeTargetBranchId: branchId,
+      },
+    },
+    agentSource: { type: "branch", branch: branchName },
+  });
+}
+
+function createSignedDefaultBranchTargetBody(branchName = "trunk"): string {
+  return JSON.stringify({
+    run: {
+      agentServiceId: "veryfront-platform-agent",
+      agentId: "assistant-1",
+      conversationId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      messageId: "10000000-1000-4000-8000-100000000002",
+      inputAnchorMessageId: "10000000-1000-4000-8000-100000000003",
+      requestedByUserId: "10000000-1000-4000-8000-100000000004",
+      project: {
+        projectId: "10000000-1000-4000-8000-100000000005",
+        projectSlug: "protected-project",
+      },
+    },
+    agentSource: { type: "branch", branch: branchName },
+  });
+}
+
 function createMockAuthProvider(options: MockAuthOptions = {}): AuthProvider {
   const secret = options.secret ?? TEST_JWT_SECRET;
   const jwksVerifiers = options.jwksVerifiers ?? new Map();
@@ -144,7 +252,11 @@ function createNotFoundResponse(): Response {
   return new Response("Not found", { status: 404 });
 }
 
-function createHandler(port: number, apiBasePath = "") {
+function createHandler(
+  port: number,
+  apiBasePath = "",
+  logger?: Parameters<typeof createProxyHandler>[0]["logger"],
+) {
   return createProxyHandler({
     config: {
       apiBaseUrl: `http://127.0.0.1:${port}${apiBasePath}`,
@@ -153,6 +265,7 @@ function createHandler(port: number, apiBasePath = "") {
       previewApiClientId: "test-client",
       previewApiClientSecret: "test-secret",
     },
+    logger,
   });
 }
 
@@ -175,7 +288,7 @@ function createRecordingLogger() {
       warn(message: string, extra?: Record<string, unknown>) {
         entries.push({ level: "warn", message, extra });
       },
-      error(message: string, _error?: Error, extra?: Record<string, unknown>) {
+      error(message: string, _error?: unknown, extra?: Record<string, unknown>) {
         entries.push({ level: "error", message, extra });
       },
     },
@@ -209,17 +322,42 @@ function forgeRs256Token(kid: string, userId: string): string {
 
 beforeEach(() => {
   reset();
-  __resetCachedAuthProviderForTests();
   jwksVerifiers.clear();
   register<AuthProvider>("AuthProvider", createMockAuthProvider({ jwksVerifiers }));
 });
 
 afterEach(() => {
   reset();
-  __resetCachedAuthProviderForTests();
 });
 
 describe("Proxy Handler", () => {
+  it("rejects invalid routing cache configuration at construction", () => {
+    const previous = Deno.env.get("VERYFRONT_PROXY_ROUTING_CACHE_MAX_ENTRIES");
+    Deno.env.set("VERYFRONT_PROXY_ROUTING_CACHE_MAX_ENTRIES", "10001");
+    try {
+      assertThrows(
+        () =>
+          createProxyHandler({
+            config: {
+              apiBaseUrl: "https://api.example.com",
+              apiClientId: "",
+              apiClientSecret: "",
+              previewApiClientId: "",
+              previewApiClientSecret: "",
+            },
+          }),
+        RangeError,
+        "cannot exceed 10000",
+      );
+    } finally {
+      if (previous === undefined) {
+        Deno.env.delete("VERYFRONT_PROXY_ROUTING_CACHE_MAX_ENTRIES");
+      } else {
+        Deno.env.set("VERYFRONT_PROXY_ROUTING_CACHE_MAX_ENTRIES", previous);
+      }
+    }
+  });
+
   it("uses a pre-parsed request URL when provided", async () => {
     const handler = createProxyHandler({
       config: {
@@ -265,6 +403,7 @@ describe("Proxy Handler", () => {
         const { pathname } = new URL(req.url);
 
         if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/-/")) return createNotFoundResponse();
 
         if (pathname.startsWith("/projects/")) {
           return Response.json({
@@ -302,10 +441,106 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("fails closed when routing metadata has an operational failure", async () => {
+      let fullProjectLookups = 0;
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          return new Response("Unavailable", { status: 503 });
+        }
+        if (pathname.startsWith("/projects/")) {
+          fullProjectLookups++;
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              active_release_id: "rel-123",
+            }],
+          });
+        }
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+        const ctx = await handler.processRequest(
+          new Request("http://example.com/page", {
+            headers: { host: "example.com" },
+          }),
+        );
+
+        assertEquals(ctx.error?.status, 502);
+        assertEquals(ctx.error?.message, "Proxy routing metadata request was rejected");
+        assertEquals(fullProjectLookups, 0);
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("fails closed when access metadata omits its protection decision", async () => {
+      let fullProjectLookups = 0;
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              active_release_id: "rel-123",
+            }],
+          });
+        }
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+            }],
+          });
+        }
+        if (pathname.startsWith("/projects/")) {
+          fullProjectLookups++;
+          return createNotFoundResponse();
+        }
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+        const ctx = await handler.processRequest(
+          new Request("http://example.com/page", {
+            headers: { host: "example.com" },
+          }),
+        );
+
+        assertEquals(ctx.error?.status, 502);
+        assertEquals(ctx.error?.message, "Proxy access metadata returned an invalid response");
+        assertEquals(fullProjectLookups, 0);
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
     it("caches custom domain routing metadata but fetches access metadata on each request", async () => {
       let routingLookups = 0;
       let accessLookups = 0;
       let fullProjectLookups = 0;
+      let activeReleaseId = "rel-123";
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
@@ -321,7 +556,7 @@ describe("Proxy Handler", () => {
               id: "env-1",
               name: "production",
               domains: ["example.com"],
-              active_release_id: "rel-123",
+              active_release_id: activeReleaseId,
             }],
           });
         }
@@ -368,16 +603,1007 @@ describe("Proxy Handler", () => {
         const first = await handler.processRequest(req());
         const second = await handler.processRequest(req());
 
+        activeReleaseId = "rel-456";
+        await handler.invalidateAndConfirmRoutingLookup({
+          projectId: "proj-123",
+          projectSlug: "my-project",
+          deploymentId: "deployment-456",
+          environmentId: "env-1",
+          environmentName: "production",
+          releaseId: activeReleaseId,
+        });
+        const third = await handler.processRequest(req());
+
         assertEquals(first.error, undefined);
         assertEquals(second.error, undefined);
+        assertEquals(third.error, undefined);
         assertEquals(first.projectSlug, "my-project");
         assertEquals(second.projectSlug, "my-project");
-        assertEquals(routingLookups, 1);
-        assertEquals(accessLookups, 2);
+        assertEquals(third.releaseId, "rel-456");
+        assertEquals(routingLookups, 3);
+        assertEquals(accessLookups, 3);
         assertEquals(fullProjectLookups, 0);
 
         await handler.close();
       } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("refreshes cached routing metadata without an active release", async () => {
+      let routingLookups = 0;
+      let activeReleaseId: string | null = null;
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              active_release_id: activeReleaseId,
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              protected: false,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+        const req = () =>
+          new Request("http://my-project.staging.veryfront.com/page", {
+            headers: { host: "my-project.staging.veryfront.com" },
+          });
+
+        const beforeActivation = await handler.processRequest(req());
+        activeReleaseId = "rel-456";
+        const afterActivation = await handler.processRequest(req());
+
+        assertEquals(beforeActivation.error?.status, 404);
+        assertEquals(afterActivation.error, undefined);
+        assertEquals(afterActivation.releaseId, "rel-456");
+        assertEquals(afterActivation.environmentId, "env-1");
+        assertEquals(afterActivation.environmentName, "staging");
+        assertEquals(routingLookups, 2);
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("single-flights refreshes after an in-flight result without an active release", async () => {
+      let routingLookups = 0;
+      let activeReleaseId: string | null = null;
+      let releaseFirstLookup!: () => void;
+      let markFirstLookupStarted!: () => void;
+      let markLookupsJoined!: () => void;
+      let joinedLookups = 0;
+      const firstLookupStarted = new Promise<void>((resolve) => {
+        markFirstLookupStarted = resolve;
+      });
+      const lookupsJoined = new Promise<void>((resolve) => {
+        markLookupsJoined = resolve;
+      });
+      const firstLookupRelease = new Promise<void>((resolve) => {
+        releaseFirstLookup = resolve;
+      });
+      const { logger } = createRecordingLogger();
+      const recordDebug = logger.debug;
+      logger.debug = (message, extra) => {
+        recordDebug(message, extra);
+        if (message === "Proxy routing metadata lookup joined in-flight request") {
+          joinedLookups++;
+          if (joinedLookups === 2) markLookupsJoined();
+        }
+      };
+
+      const { server, port } = createMockServer(async (req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
+          const releaseIdAtLookupStart = activeReleaseId;
+          if (routingLookups === 1) {
+            markFirstLookupStarted();
+            await firstLookupRelease;
+          }
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              active_release_id: releaseIdAtLookupStart,
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              protected: false,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port, "", logger);
+        const req = () =>
+          new Request("http://my-project.staging.veryfront.com/page", {
+            headers: { host: "my-project.staging.veryfront.com" },
+          });
+
+        const beforeActivation = handler.processRequest(req());
+        await firstLookupStarted;
+        activeReleaseId = "rel-456";
+        const afterActivationA = handler.processRequest(req());
+        const afterActivationB = handler.processRequest(req());
+        await lookupsJoined;
+        releaseFirstLookup();
+
+        assertEquals((await beforeActivation).error?.status, 404);
+        const [afterActivationResultA, afterActivationResultB] = await Promise.all([
+          afterActivationA,
+          afterActivationB,
+        ]);
+        assertEquals(afterActivationResultA.error, undefined);
+        assertEquals(afterActivationResultA.releaseId, "rel-456");
+        assertEquals(afterActivationResultB.error, undefined);
+        assertEquals(afterActivationResultB.releaseId, "rel-456");
+
+        const cachedResult = await handler.processRequest(req());
+        assertEquals(cachedResult.error, undefined);
+        assertEquals(cachedResult.releaseId, "rel-456");
+        assertEquals(routingLookups, 2);
+
+        await handler.close();
+      } finally {
+        releaseFirstLookup();
+        await server.shutdown();
+      }
+    });
+
+    it("bounds an in-flight refresh when no release becomes active", async () => {
+      let routingLookups = 0;
+      let releaseFirstLookup!: () => void;
+      let markFirstLookupStarted!: () => void;
+      let markLookupsJoined!: () => void;
+      let joinedLookups = 0;
+      const firstLookupStarted = new Promise<void>((resolve) => {
+        markFirstLookupStarted = resolve;
+      });
+      const lookupsJoined = new Promise<void>((resolve) => {
+        markLookupsJoined = resolve;
+      });
+      const firstLookupRelease = new Promise<void>((resolve) => {
+        releaseFirstLookup = resolve;
+      });
+      const { logger } = createRecordingLogger();
+      const recordDebug = logger.debug;
+      logger.debug = (message, extra) => {
+        recordDebug(message, extra);
+        if (message === "Proxy routing metadata lookup joined in-flight request") {
+          joinedLookups++;
+          if (joinedLookups === 2) markLookupsJoined();
+        }
+      };
+
+      const { server, port } = createMockServer(async (req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
+          if (routingLookups === 1) {
+            markFirstLookupStarted();
+            await firstLookupRelease;
+          }
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              active_release_id: null,
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              protected: false,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port, "", logger);
+        const req = () =>
+          new Request("http://my-project.staging.veryfront.com/page", {
+            headers: { host: "my-project.staging.veryfront.com" },
+          });
+
+        const first = handler.processRequest(req());
+        await firstLookupStarted;
+        const second = handler.processRequest(req());
+        const third = handler.processRequest(req());
+        await lookupsJoined;
+        releaseFirstLookup();
+
+        const results = await Promise.all([first, second, third]);
+        assertEquals(results.map((result) => result.error?.status), [404, 404, 404]);
+        assertEquals(routingLookups, 2);
+
+        await handler.close();
+      } finally {
+        releaseFirstLookup();
+        await server.shutdown();
+      }
+    });
+
+    it("detaches an aborted caller without cancelling its shared routing lookup", async () => {
+      let routingLookups = 0;
+      let releaseLookup!: () => void;
+      let markLookupStarted!: () => void;
+      let markLookupJoined!: () => void;
+      const lookupStarted = new Promise<void>((resolve) => {
+        markLookupStarted = resolve;
+      });
+      const lookupJoined = new Promise<void>((resolve) => {
+        markLookupJoined = resolve;
+      });
+      const lookupRelease = new Promise<void>((resolve) => {
+        releaseLookup = resolve;
+      });
+      const { logger } = createRecordingLogger();
+      const recordDebug = logger.debug;
+      logger.debug = (message, extra) => {
+        recordDebug(message, extra);
+        if (message === "Proxy routing metadata lookup joined in-flight request") {
+          markLookupJoined();
+        }
+      };
+
+      const { server, port } = createMockServer(async (req: Request) => {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
+          markLookupStarted();
+          await lookupRelease;
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              active_release_id: null,
+            }],
+          });
+        }
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              protected: false,
+            }],
+          });
+        }
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port, "", logger);
+        const url = "http://my-project.staging.veryfront.com/page";
+        const headers = { host: "my-project.staging.veryfront.com" };
+        const owner = handler.processRequest(new Request(url, { headers }));
+        await lookupStarted;
+
+        const controller = new AbortController();
+        const joined = handler.processRequest(
+          new Request(url, { headers, signal: controller.signal }),
+        );
+        await lookupJoined;
+        controller.abort(new Error("joined request aborted"));
+
+        const error = await assertRejects(
+          () => joined,
+          Error,
+          "joined request aborted",
+        );
+        assertEquals(error, controller.signal.reason);
+        assertEquals(routingLookups, 1);
+
+        releaseLookup();
+        assertEquals((await owner).error?.status, 404);
+        assertEquals(routingLookups, 1);
+        await handler.close();
+      } finally {
+        releaseLookup();
+        await server.shutdown();
+      }
+    });
+
+    it("refreshes for a caller arriving after activation during an incomplete refresh", async () => {
+      let routingLookups = 0;
+      let activeReleaseId: string | null = null;
+      let releaseIncompleteRefresh!: () => void;
+      let markIncompleteRefreshStarted!: () => void;
+      let markLookupJoined!: () => void;
+      const incompleteRefreshStarted = new Promise<void>((resolve) => {
+        markIncompleteRefreshStarted = resolve;
+      });
+      const lookupJoined = new Promise<void>((resolve) => {
+        markLookupJoined = resolve;
+      });
+      const incompleteRefreshRelease = new Promise<void>((resolve) => {
+        releaseIncompleteRefresh = resolve;
+      });
+      const { logger } = createRecordingLogger();
+      const recordDebug = logger.debug;
+      logger.debug = (message, extra) => {
+        recordDebug(message, extra);
+        if (message === "Proxy routing metadata lookup joined in-flight request") {
+          markLookupJoined();
+        }
+      };
+
+      const { server, port } = createMockServer(async (req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
+          const releaseIdAtLookupStart = activeReleaseId;
+          if (routingLookups === 2) {
+            markIncompleteRefreshStarted();
+            await incompleteRefreshRelease;
+          }
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              active_release_id: releaseIdAtLookupStart,
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              protected: false,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port, "", logger);
+        const req = () =>
+          new Request("http://my-project.staging.veryfront.com/page", {
+            headers: { host: "my-project.staging.veryfront.com" },
+          });
+
+        assertEquals((await handler.processRequest(req())).error?.status, 404);
+
+        const beforeActivation = handler.processRequest(req());
+        await incompleteRefreshStarted;
+        activeReleaseId = "rel-456";
+        const afterActivation = handler.processRequest(req());
+        await lookupJoined;
+        releaseIncompleteRefresh();
+
+        assertEquals((await beforeActivation).error?.status, 404);
+        const afterActivationResult = await afterActivation;
+        assertEquals(afterActivationResult.error, undefined);
+        assertEquals(afterActivationResult.releaseId, "rel-456");
+        assertEquals(routingLookups, 3);
+
+        await handler.close();
+      } finally {
+        releaseIncompleteRefresh();
+        await server.shutdown();
+      }
+    });
+
+    it("invalidates routing metadata only for the targeted project", async () => {
+      const routingLookups = new Map<string, number>();
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        const routingPrefix = "/projects/-/proxy-routing/";
+        const accessPrefix = "/projects/-/proxy-access/";
+        const lookupKey = decodeURIComponent(
+          pathname.slice(
+            pathname.startsWith(routingPrefix) ? routingPrefix.length : accessPrefix.length,
+          ),
+        );
+        const isAlpha = lookupKey === "alpha.example.com";
+        const projectId = isAlpha ? "proj-alpha" : "proj-beta";
+        const projectSlug = isAlpha ? "alpha" : "beta";
+        const domain = isAlpha ? "alpha.example.com" : "beta.example.com";
+
+        if (pathname.startsWith(routingPrefix)) {
+          routingLookups.set(lookupKey, (routingLookups.get(lookupKey) ?? 0) + 1);
+          return Response.json({
+            id: projectId,
+            slug: projectSlug,
+            name: projectSlug,
+            environments: [{
+              id: `env-${projectSlug}`,
+              name: "production",
+              domains: [domain],
+              active_release_id: `rel-${projectSlug}`,
+            }],
+          });
+        }
+
+        if (pathname.startsWith(accessPrefix)) {
+          return Response.json({
+            id: projectId,
+            slug: projectSlug,
+            environments: [{
+              id: `env-${projectSlug}`,
+              name: "production",
+              domains: [domain],
+              protected: false,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+        const request = (host: string) =>
+          new Request(`http://${host}/page`, {
+            headers: { host },
+          });
+
+        await handler.processRequest(request("alpha.example.com"));
+        await handler.processRequest(request("beta.example.com"));
+
+        handler.invalidateRoutingLookup({
+          projectId: "proj-alpha",
+          projectSlug: "alpha",
+          environmentId: "env-alpha",
+          releaseId: "rel-alpha-next",
+        });
+
+        await handler.processRequest(request("alpha.example.com"));
+        await handler.processRequest(request("beta.example.com"));
+
+        assertEquals(routingLookups.get("alpha.example.com"), 2);
+        assertEquals(routingLookups.get("beta.example.com"), 1);
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("retries a routing lookup invalidated before its stale response completes", async () => {
+      let routingLookups = 0;
+      let releaseFirstLookup!: () => void;
+      let markFirstLookupStarted!: () => void;
+      const firstLookupStarted = new Promise<void>((resolve) => {
+        markFirstLookupStarted = resolve;
+      });
+      const firstLookupRelease = new Promise<void>((resolve) => {
+        releaseFirstLookup = resolve;
+      });
+
+      const { server, port } = createMockServer(async (req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
+          const currentLookup = routingLookups;
+          if (currentLookup === 1) {
+            markFirstLookupStarted();
+            await firstLookupRelease;
+          }
+
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              active_release_id: currentLookup === 1 ? "rel-stale" : "rel-current",
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              protected: false,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+        const req = new Request("http://example.com/page", {
+          headers: { host: "example.com" },
+        });
+        const request = handler.processRequest(req);
+
+        await firstLookupStarted;
+        handler.invalidateRoutingLookup({
+          projectId: "proj-123",
+          projectSlug: "my-project",
+          environmentId: "env-1",
+          releaseId: "rel-current",
+        });
+        handler.invalidateRoutingLookup({
+          projectId: "proj-123",
+          projectSlug: "my-project",
+          environmentId: "env-1",
+          releaseId: "rel-current",
+        });
+        releaseFirstLookup();
+
+        const result = await request;
+
+        assertEquals(result.error, undefined);
+        assertEquals(result.releaseId, "rel-current");
+        assertEquals(routingLookups, 2);
+
+        await handler.close();
+      } finally {
+        releaseFirstLookup?.();
+        await server.shutdown();
+      }
+    });
+
+    it("returns a retryable error instead of stale routing when every lookup is invalidated", async () => {
+      let routingLookups = 0;
+      let invalidateRouting: (() => void) | undefined;
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
+          invalidateRouting?.();
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              active_release_id: `rel-stale-${routingLookups}`,
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              protected: false,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+        invalidateRouting = () => {
+          handler.invalidateRoutingLookup({
+            projectId: "proj-123",
+            projectSlug: "my-project",
+            environmentId: "env-1",
+            releaseId: "rel-current",
+          });
+        };
+
+        const result = await handler.processRequest(
+          new Request("http://example.com/page", { headers: { host: "example.com" } }),
+        );
+
+        assertEquals(result.error?.status, 503);
+        assertEquals(result.error?.message, "Project routing changed during request; retry");
+        assertEquals(routingLookups, 3);
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("refreshes cached service token and retries when proxy metadata rejects it", async () => {
+      const { entries, logger } = createRecordingLogger();
+      let tokenRequests = 0;
+      let routingLookups = 0;
+      let accessLookups = 0;
+      let fullProjectLookups = 0;
+      const authorizationHeaders: string[] = [];
+
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          tokenRequests++;
+          return Response.json({
+            access_token: tokenRequests === 1 ? "stale-token" : "fresh-token",
+            token_type: "Bearer",
+            expires_in: 3600,
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
+          authorizationHeaders.push(req.headers.get("authorization") ?? "");
+          if (req.headers.get("authorization") === "Bearer stale-token") {
+            return new Response("Unauthorized", { status: 401 });
+          }
+
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              active_release_id: "rel-123",
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          accessLookups++;
+          authorizationHeaders.push(req.headers.get("authorization") ?? "");
+          if (req.headers.get("authorization") === "Bearer stale-token") {
+            return new Response("Unauthorized", { status: 401 });
+          }
+
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              protected: false,
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/")) {
+          fullProjectLookups++;
+          authorizationHeaders.push(req.headers.get("authorization") ?? "");
+          if (req.headers.get("authorization") === "Bearer stale-token") {
+            return new Response("Unauthorized", { status: 401 });
+          }
+
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              active_release_id: "rel-123",
+              protected: false,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      let handler: ReturnType<typeof createProxyHandler> | undefined;
+      try {
+        handler = createProxyHandler({
+          config: {
+            apiBaseUrl: `http://127.0.0.1:${port}`,
+            apiClientId: "test-client",
+            apiClientSecret: "test-secret",
+            previewApiClientId: "test-client",
+            previewApiClientSecret: "test-secret",
+          },
+          logger,
+        });
+
+        const ctx = await handler.processRequest(
+          new Request("http://example.com/page", {
+            headers: { host: "example.com" },
+          }),
+        );
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.projectSlug, "my-project");
+        assertEquals(ctx.releaseId, "rel-123");
+        assertEquals(ctx.token, "fresh-token");
+        assertEquals(tokenRequests, 2);
+        assertEquals(routingLookups, 2);
+        assertEquals(accessLookups, 1);
+        assertEquals(fullProjectLookups, 0);
+        assertEquals(authorizationHeaders, [
+          "Bearer stale-token",
+          "Bearer fresh-token",
+          "Bearer fresh-token",
+        ]);
+        assertEquals(
+          entries.some((entry) =>
+            entry.level === "warn" &&
+            entry.message === "Proxy API token rejected during metadata lookup; refreshing token"
+          ),
+          true,
+        );
+      } finally {
+        await handler?.close();
+        await server.shutdown();
+      }
+    });
+
+    it("refreshes cached service token when proxy access metadata rejects it", async () => {
+      let tokenRequests = 0;
+      let routingLookups = 0;
+      let accessLookups = 0;
+
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          tokenRequests++;
+          return Response.json({
+            access_token: tokenRequests === 1 ? "stale-token" : "fresh-token",
+            token_type: "Bearer",
+            expires_in: 3600,
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              active_release_id: "rel-123",
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          accessLookups++;
+          if (req.headers.get("authorization") === "Bearer stale-token") {
+            return new Response("Unauthorized", { status: 401 });
+          }
+
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              protected: false,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      let handler: ReturnType<typeof createProxyHandler> | undefined;
+      try {
+        handler = createHandler(port);
+
+        const ctx = await handler.processRequest(
+          new Request("http://example.com/page", {
+            headers: { host: "example.com" },
+          }),
+        );
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.projectSlug, "my-project");
+        assertEquals(ctx.releaseId, "rel-123");
+        assertEquals(ctx.token, "fresh-token");
+        assertEquals(tokenRequests, 2);
+        assertEquals(routingLookups, 2);
+        assertEquals(accessLookups, 2);
+      } finally {
+        await handler?.close();
+        await server.shutdown();
+      }
+    });
+
+    it("refreshes cached service token when fallback domain lookup rejects it", async () => {
+      let tokenRequests = 0;
+      let routingLookups = 0;
+      let fullProjectLookups = 0;
+
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          tokenRequests++;
+          return Response.json({
+            access_token: tokenRequests === 1 ? "stale-token" : "fresh-token",
+            token_type: "Bearer",
+            expires_in: 3600,
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
+          return createNotFoundResponse();
+        }
+
+        if (pathname.startsWith("/projects/")) {
+          fullProjectLookups++;
+          if (req.headers.get("authorization") === "Bearer stale-token") {
+            return new Response("Unauthorized", { status: 401 });
+          }
+
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              active_release_id: "rel-123",
+              protected: false,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      let handler: ReturnType<typeof createProxyHandler> | undefined;
+      try {
+        handler = createHandler(port);
+
+        const ctx = await handler.processRequest(
+          new Request("http://example.com/page", {
+            headers: { host: "example.com" },
+          }),
+        );
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.projectSlug, "my-project");
+        assertEquals(ctx.releaseId, "rel-123");
+        assertEquals(ctx.token, "fresh-token");
+        assertEquals(tokenRequests, 2);
+        assertEquals(routingLookups, 2);
+        assertEquals(fullProjectLookups, 2);
+      } finally {
+        await handler?.close();
+        await server.shutdown();
+      }
+    });
+
+    it("returns 502 when refreshed service token is still rejected by metadata", async () => {
+      let tokenRequests = 0;
+      let routingLookups = 0;
+
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          tokenRequests++;
+          return Response.json({
+            access_token: tokenRequests === 1 ? "stale-token" : "fresh-token",
+            token_type: "Bearer",
+            expires_in: 3600,
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
+          return new Response("Unauthorized", { status: 401 });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      let handler: ReturnType<typeof createProxyHandler> | undefined;
+      try {
+        handler = createHandler(port);
+
+        const ctx = await handler.processRequest(
+          new Request("http://example.com/page", {
+            headers: { host: "example.com" },
+          }),
+        );
+
+        assertEquals(ctx.error?.status, 502);
+        assertEquals(ctx.error?.message, "Proxy API token rejected by API");
+        assertEquals(ctx.token, "fresh-token");
+        assertEquals(tokenRequests, 2);
+        assertEquals(routingLookups, 2);
+      } finally {
+        await handler?.close();
         await server.shutdown();
       }
     });
@@ -520,6 +1746,53 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("returns 404 for managed production hosts when token mint reports no project for domain", async () => {
+      const { entries, logger } = createRecordingLogger();
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          return new Response('{"error":"Project not found for domain"}', {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      let handler: ReturnType<typeof createProxyHandler> | undefined;
+      try {
+        handler = createProxyHandler({
+          config: {
+            apiBaseUrl: `http://127.0.0.1:${port}`,
+            apiClientId: "test-client",
+            apiClientSecret: "test-secret",
+            previewApiClientId: "test-client",
+            previewApiClientSecret: "test-secret",
+          },
+          logger,
+        });
+
+        const req = new Request("http://stripe.production.veryfront.com/", {
+          headers: { host: "stripe.production.veryfront.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.projectSlug, undefined);
+        assertEquals(ctx.error?.status, 404);
+        assertEquals(ctx.error?.message, "Project not found");
+        assertEquals(
+          entries.filter((entry) => entry.level === "error").map((entry) => entry.message),
+          [],
+        );
+      } finally {
+        await handler?.close();
+        await server.shutdown();
+      }
+    });
+
     it("logs expected custom domain token-mint misses below error level", async () => {
       const { entries, logger } = createRecordingLogger();
       const { server, port } = createMockServer((req: Request) => {
@@ -632,6 +1905,8 @@ describe("Proxy Handler", () => {
           return createTokenResponse();
         }
 
+        if (pathname.startsWith("/projects/-/")) return createNotFoundResponse();
+
         if (pathname.startsWith("/projects/")) {
           return Response.json({
             id: "proj-123",
@@ -721,6 +1996,7 @@ describe("Proxy Handler", () => {
     });
 
     it("falls back to the request URL host when the Host header is absent", async () => {
+      const localPath = Deno.cwd();
       const handler = createProxyHandler({
         config: {
           apiBaseUrl: "http://localhost:9999",
@@ -729,7 +2005,7 @@ describe("Proxy Handler", () => {
           previewApiClientId: "",
           previewApiClientSecret: "",
           localProjects: {
-            "my-project": ".",
+            "my-project": localPath,
           },
         },
       });
@@ -740,7 +2016,7 @@ describe("Proxy Handler", () => {
 
       assertEquals(ctx.projectSlug, "my-project");
       assertEquals(ctx.environment, "preview");
-      assertEquals(ctx.localPath, ".");
+      assertEquals(ctx.localPath, localPath);
       assertEquals(ctx.error, undefined);
 
       await handler.close();
@@ -748,6 +2024,131 @@ describe("Proxy Handler", () => {
   });
 
   describe("protected environments", () => {
+    it("uses a service token for preview metadata when the request has a user cookie", async () => {
+      let tokenRequests = 0;
+      const metadataAuthorizationHeaders: string[] = [];
+
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          tokenRequests++;
+          return Response.json({
+            access_token: "preview-service-token",
+            token_type: "Bearer",
+            expires_in: 3600,
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          metadataAuthorizationHeaders.push(req.headers.get("authorization") ?? "");
+          if (req.headers.get("authorization") === "Bearer user-cookie-token") {
+            return new Response("Unauthorized", { status: 401 });
+          }
+
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "preview",
+              active_release_id: null,
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          metadataAuthorizationHeaders.push(req.headers.get("authorization") ?? "");
+          if (req.headers.get("authorization") === "Bearer user-cookie-token") {
+            return new Response("Unauthorized", { status: 401 });
+          }
+
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "preview",
+              protected: false,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      let handler: ReturnType<typeof createProxyHandler> | undefined;
+      try {
+        handler = createHandler(port);
+
+        const ctx = await handler.processRequest(
+          new Request("http://my-project.preview.veryfront.com/page", {
+            headers: {
+              host: "my-project.preview.veryfront.com",
+              cookie: "authToken=user-cookie-token",
+            },
+          }),
+        );
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.projectSlug, "my-project");
+        assertEquals(ctx.projectId, "proj-123");
+        assertEquals(ctx.token, "user-cookie-token");
+        assertEquals(tokenRequests, 1);
+        assertEquals(metadataAuthorizationHeaders, [
+          "Bearer preview-service-token",
+          "Bearer preview-service-token",
+        ]);
+      } finally {
+        await handler?.close();
+        await server.shutdown();
+      }
+    });
+
+    it("does not use a preview user cookie for metadata when service token minting fails", async () => {
+      let metadataRequests = 0;
+
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          return new Response("service token unavailable", { status: 500 });
+        }
+
+        if (pathname.startsWith("/projects/")) {
+          metadataRequests++;
+          if (req.headers.get("authorization") === "Bearer user-cookie-token") {
+            return new Response("Unauthorized", { status: 401 });
+          }
+        }
+
+        return createNotFoundResponse();
+      });
+
+      let handler: ReturnType<typeof createProxyHandler> | undefined;
+      try {
+        handler = createHandler(port);
+
+        const ctx = await handler.processRequest(
+          new Request("http://my-project.preview.veryfront.com/page", {
+            headers: {
+              host: "my-project.preview.veryfront.com",
+              cookie: "authToken=user-cookie-token",
+            },
+          }),
+        );
+
+        assertEquals(ctx.error?.status, 502);
+        assertEquals(ctx.error?.message, "Proxy API token unavailable");
+        assertEquals(ctx.token, "user-cookie-token");
+        assertEquals(metadataRequests, 0);
+      } finally {
+        await handler?.close();
+        await server.shutdown();
+      }
+    });
+
     it("redirects to sign-in for protected custom domain without auth token", async () => {
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
@@ -790,6 +2191,107 @@ describe("Proxy Handler", () => {
 
         await handler.close();
       } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("binds signed custom-domain control-plane requests after project lookup", async () => {
+      let tokenEndpointHits = 0;
+      const metadataAuthorization = new Set<string | null>();
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          tokenEndpointHits += 1;
+          return createTokenResponse();
+        }
+
+        if (pathname.startsWith("/projects/")) {
+          metadataAuthorization.add(req.headers.get("authorization"));
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["protected.example.com"],
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+      let handler: ReturnType<typeof createHandler> | undefined;
+      try {
+        const body = createSignedDefaultBranchTargetBody();
+        const { jws, publicKeyPem } = await mintControlPlaneJws({ body });
+        Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
+        handler = createHandler(port);
+        const req = new Request(
+          "http://protected.example.com/api/control-plane/runs/run_1/stream",
+          {
+            method: "POST",
+            headers: {
+              host: "protected.example.com",
+              "x-token": "project-agent-token",
+              "x-veryfront-control-plane-jws": jws,
+            },
+            body,
+          },
+        );
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.projectSlug, "protected-project");
+        assertEquals(ctx.projectId, "proj-123");
+        assertEquals(ctx.releaseId, "rel-123");
+        assertEquals(ctx.defaultBranchName, "trunk");
+        const forwarded = injectContextHeaders(req, ctx);
+        const runtimeHeaders = extractRequestHeaders(
+          forwarded,
+          new URL(forwarded.url),
+          true,
+          true,
+        );
+        assertEquals(runtimeHeaders.defaultBranchName, "trunk");
+        assertEquals(runtimeHeaders.branchId, undefined);
+        assertEquals(runtimeHeaders.branchName, undefined);
+        assertEquals(ctx.token, "project-agent-token");
+        assertEquals(metadataAuthorization, new Set(["Bearer project-agent-token"]));
+        assertEquals(tokenEndpointHits, 0);
+
+        const mismatched = await mintControlPlaneJws({ projectId: "another-project" });
+        Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", mismatched.publicKeyPem);
+        const rejected = await handler.processRequest(
+          new Request(
+            "http://protected.example.com/api/control-plane/runs/run_1/stream",
+            {
+              method: "POST",
+              headers: {
+                host: "protected.example.com",
+                "x-token": "wrong-project-token",
+                "x-veryfront-control-plane-jws": mismatched.jws,
+              },
+            },
+          ),
+        );
+        assertEquals(rejected.error?.status, 401);
+        assertEquals(rejected.token, undefined);
+
+        await handler.close();
+        handler = undefined;
+      } finally {
+        await handler?.close();
+        if (previousKey === undefined) {
+          Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+        } else {
+          Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);
+        }
         await server.shutdown();
       }
     });
@@ -1468,6 +2970,42 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("returns 404 when a project has no preview environment", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "production-only",
+            environments: [{
+              id: "env-production",
+              name: "production",
+              active_release_id: "rel-123",
+              protected: false,
+            }],
+          });
+        }
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+        const ctx = await handler.processRequest(
+          new Request("http://production-only.preview.veryfront.com/page", {
+            headers: { host: "production-only.preview.veryfront.com" },
+          }),
+        );
+
+        assertEquals(ctx.error?.status, 404);
+        assertEquals(ctx.error?.message, "Preview project not found");
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
     it("allows access to protected preview domain with auth token for project member", async () => {
       const memberToken = await signTestJwt({ userId: "user-123", sub: "user-123" });
       const { server, port } = createMockServer((req: Request) => {
@@ -1511,14 +3049,14 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.error, undefined);
         assertEquals(ctx.projectSlug, "protected-project");
         assertEquals(ctx.environmentId, "env-1");
-
+        assertEquals(ctx.environmentName, "preview");
         await handler.close();
       } finally {
         await server.shutdown();
       }
     });
 
-    it("allows signed control-plane run stream requests through protected preview using inbound token", async () => {
+    it("forwards one canonical signed preview invocation through proxy and runtime parsing", async () => {
       let tokenEndpointHits = 0;
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
@@ -1545,17 +3083,23 @@ describe("Proxy Handler", () => {
         return createNotFoundResponse();
       });
 
+      const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
       try {
+        const body = createSignedPreviewTargetBody();
+        const { jws, publicKeyPem } = await mintControlPlaneJws({ body });
+        Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
         const handler = createHandler(port);
 
         const req = new Request(
           "http://protected-project.preview.veryfront.com/api/control-plane/runs/run_1/stream",
           {
+            method: "POST",
             headers: {
               host: "protected-project.preview.veryfront.com",
               "x-token": "project-agent-token",
-              "x-veryfront-control-plane-jws": "signed-request",
+              "x-veryfront-control-plane-jws": jws,
             },
+            body,
           },
         );
 
@@ -1564,11 +3108,270 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.error, undefined);
         assertEquals(ctx.projectSlug, "protected-project");
         assertEquals(ctx.environmentId, "env-1");
+        assertEquals(ctx.environmentName, "preview");
+        assertEquals(ctx.branchId, "10000000-1000-4000-8000-100000000006");
+        assertEquals(ctx.branchName, "feature-branch");
+        const forwarded = injectContextHeaders(req, ctx);
+        ensureTestSchemaValidator();
+        const invocation = await parseRuntimeAgentRunInvocation(forwarded.clone());
+        assertEquals(invocation.run.project.runtimeTargetKind, "preview_branch");
+        assertEquals(
+          invocation.run.project.runtimeTargetBranchId,
+          "10000000-1000-4000-8000-100000000006",
+        );
+        assertEquals(invocation.agentSource, {
+          type: "branch",
+          branch: "feature-branch",
+        });
+        const runtimeHeaders = extractRequestHeaders(
+          forwarded,
+          new URL(forwarded.url),
+          true,
+          true,
+        );
+        assertEquals(runtimeHeaders.branchId, ctx.branchId);
+        assertEquals(runtimeHeaders.branchName, ctx.branchName);
+        assertEquals(runtimeHeaders.defaultBranchName, undefined);
         assertEquals(ctx.token, "project-agent-token");
         assertEquals(tokenEndpointHits, 0);
 
         await handler.close();
       } finally {
+        if (previousKey === undefined) {
+          Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+        } else {
+          Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);
+        }
+        await server.shutdown();
+      }
+    });
+
+    it("forwards signed unicode preview branch names through proxy and runtime parsing", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            environments: [{
+              id: "env-1",
+              name: "preview",
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+      try {
+        const branchName = "功能/新";
+        const body = createSignedPreviewTargetBody(
+          "10000000-1000-4000-8000-100000000006",
+          branchName,
+        );
+        const { jws, publicKeyPem } = await mintControlPlaneJws({ body });
+        Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
+        const handler = createHandler(port);
+
+        const req = new Request(
+          "http://protected-project.preview.veryfront.com/api/control-plane/runs/run_1/stream",
+          {
+            method: "POST",
+            headers: {
+              host: "protected-project.preview.veryfront.com",
+              "x-token": "project-agent-token",
+              "x-veryfront-control-plane-jws": jws,
+            },
+            body,
+          },
+        );
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.branchName, branchName);
+        const forwarded = injectContextHeaders(req, ctx);
+        const runtimeHeaders = extractRequestHeaders(
+          forwarded,
+          new URL(forwarded.url),
+          true,
+          true,
+        );
+        assertEquals(runtimeHeaders.branchName, branchName);
+        assertEquals(runtimeHeaders.defaultBranchName, undefined);
+
+        await handler.close();
+      } finally {
+        if (previousKey === undefined) {
+          Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+        } else {
+          Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);
+        }
+        await server.shutdown();
+      }
+    });
+
+    it("fails closed when an authentic control-plane signature names another project id", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            environments: [{
+              id: "env-1",
+              name: "preview",
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+        return createNotFoundResponse();
+      });
+
+      const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+      try {
+        const { jws, publicKeyPem } = await mintControlPlaneJws({
+          projectId: "another-project",
+        });
+        Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
+        const handler = createHandler(port);
+        const ctx = await handler.processRequest(
+          new Request(
+            "http://protected-project.preview.veryfront.com/api/control-plane/runs/run_1/stream",
+            {
+              method: "POST",
+              headers: {
+                host: "protected-project.preview.veryfront.com",
+                "x-token": "wrong-project-token",
+                "x-veryfront-control-plane-jws": jws,
+              },
+            },
+          ),
+        );
+
+        assertEquals(ctx.error?.status, 401);
+        assertEquals(ctx.token, undefined);
+        await handler.close();
+      } finally {
+        if (previousKey === undefined) {
+          Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+        } else {
+          Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);
+        }
+        await server.shutdown();
+      }
+    });
+
+    it("reserves unrecognized internal namespaces before token or metadata resolution", async () => {
+      let upstreamHits = 0;
+      const { server, port } = createMockServer((_req: Request) => {
+        upstreamHits += 1;
+        return createNotFoundResponse();
+      });
+      const handler = createHandler(port);
+
+      try {
+        for (
+          const [method, pathname] of [
+            ["POST", "/api/control-plane/application-route"],
+            ["POST", "/internal/tasks/application-route"],
+            ["POST", "/internal/workflows/application-route"],
+            ["GET", "/channels/invoke"],
+            ["POST", "/channels/invoke/application-route"],
+          ] as const
+        ) {
+          const ctx = await handler.processRequest(
+            new Request(`http://protected-project.preview.veryfront.com${pathname}`, {
+              method,
+              headers: {
+                host: "protected-project.preview.veryfront.com",
+                "x-token": "attacker-token",
+                "x-veryfront-control-plane-jws": "present-but-untrusted",
+              },
+            }),
+          );
+          assertEquals(ctx.error?.status, 404, pathname);
+          assertEquals(ctx.token, undefined, pathname);
+        }
+        assertEquals(upstreamHits, 0);
+      } finally {
+        await handler.close();
+        await server.shutdown();
+      }
+    });
+
+    it("rejects control-plane requests with a forged (unverifiable) signature on a protected environment", async () => {
+      let tokenEndpointHits = 0;
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          tokenEndpointHits += 1;
+          return createTokenResponse();
+        }
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            environments: [{
+              id: "env-1",
+              name: "preview",
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      // Configure a real key, then present a JWS whose signature was NOT minted
+      // by the corresponding private key. Header presence must no longer grant
+      // the internal bypass.
+      const { publicKeyPem } = await mintControlPlaneJws();
+      const forged = await mintControlPlaneJws(); // different, unrelated keypair
+      const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+      try {
+        Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
+        const handler = createHandler(port);
+
+        const req = new Request(
+          "http://protected-project.preview.veryfront.com/api/control-plane/runs/run_1/stream",
+          {
+            method: "POST",
+            headers: {
+              host: "protected-project.preview.veryfront.com",
+              "x-token": "attacker-supplied-token",
+              "x-veryfront-control-plane-jws": forged.jws,
+            },
+          },
+        );
+
+        const ctx = await handler.processRequest(req);
+
+        // Protected environment with no user cookie and an unverifiable
+        // signature must be redirected to auth, not allowed through, and the
+        // attacker-supplied x-token must not be adopted as the upstream bearer.
+        assertEquals(ctx.error?.status, 302);
+        assertNotEquals(ctx.token, "attacker-supplied-token");
+
+        await handler.close();
+      } finally {
+        if (previousKey === undefined) {
+          Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+        } else {
+          Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);
+        }
         await server.shutdown();
       }
     });
@@ -2037,14 +3840,20 @@ describe("Proxy Handler", () => {
   });
 
   describe("injectContextHeaders", () => {
-    it("includes x-environment-id when environmentId is present", () => {
-      const req = new Request("http://example.com/api/test");
+    it("replaces client environment identity with the canonical proxy pair", () => {
+      const req = new Request("http://example.com/api/test", {
+        headers: {
+          "x-environment-id": "attacker-environment",
+          "x-environment-name": "attacker-name",
+        },
+      });
       const ctx: ProxyContext = {
         token: "test-token",
         projectSlug: "my-project",
         projectId: "proj-123",
         releaseId: "rel-456",
         environmentId: "env-789",
+        environmentName: "staging",
         environment: "production",
         contentSourceId: "cs-123",
         host: "example.com",
@@ -2061,6 +3870,7 @@ describe("Proxy Handler", () => {
 
       const injected = injectContextHeaders(req, ctx);
       assertEquals(injected.headers.get("x-environment-id"), "env-789");
+      assertEquals(injected.headers.get("x-environment-name"), "staging");
       assertEquals(injected.headers.get("x-project-id"), "proj-123");
       assertEquals(injected.headers.get("x-release-id"), "rel-456");
     });
@@ -2086,6 +3896,69 @@ describe("Proxy Handler", () => {
 
       const injected = injectContextHeaders(req, ctx);
       assertEquals(injected.headers.get("x-environment-id"), null);
+      assertEquals(injected.headers.get("x-environment-name"), null);
+    });
+
+    it("refuses to forward a partial environment identity", () => {
+      const req = new Request("http://example.com/api/test");
+      const ctx: ProxyContext = {
+        projectSlug: "my-project",
+        environmentId: "env-789",
+        environment: "production",
+        contentSourceId: "cs-123",
+        host: "example.com",
+        parsedDomain: {
+          slug: "my-project",
+          branch: null,
+          environment: "production",
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        isLocalProject: false,
+      };
+
+      assertThrows(
+        () => injectContextHeaders(req, ctx),
+        TypeError,
+        "requires both environmentId and environmentName",
+      );
+    });
+
+    it("refuses partial or ambiguous branch identity", () => {
+      const req = new Request("http://example.com/api/test");
+      const base: ProxyContext = {
+        projectSlug: "my-project",
+        environment: "preview",
+        contentSourceId: "cs-123",
+        host: "example.com",
+        parsedDomain: {
+          slug: "my-project",
+          branch: null,
+          environment: "preview",
+          isVeryfrontDomain: true,
+          isDraft: true,
+          allowIframeEmbed: true,
+        },
+        isLocalProject: false,
+      };
+
+      assertThrows(
+        () => injectContextHeaders(req, { ...base, branchId: "branch-1" }),
+        TypeError,
+        "requires both branchId and branchName",
+      );
+      assertThrows(
+        () =>
+          injectContextHeaders(req, {
+            ...base,
+            branchId: "branch-1",
+            branchName: "feature",
+            defaultBranchName: "trunk",
+          }),
+        TypeError,
+        "cannot be both preview and default",
+      );
     });
   });
 });

@@ -5,7 +5,7 @@ import {
   TagButton,
   TagGroup,
   TagLink,
-} from "../../../src/react/components/chat/ui/index.ts";
+} from "../../../src/react/components/ui/index.ts";
 import {
   DocsCode,
   DocsComposition,
@@ -17,7 +17,7 @@ import {
 } from "../../.storybook/docs";
 
 const importCode =
-  `import { Tag, TagLink, TagButton, TagGroup } from "veryfront/chat/ui"`;
+  `import { Tag, TagLink, TagButton, TagGroup } from "veryfront/ui"`;
 
 const compositionTree = `Tag              <- Static pill label
 TagLink          <- Anchor pill with hover state
@@ -116,7 +116,7 @@ function TagDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/Tag",
+  title: "UI/Tag",
   component: Tag,
   subcomponents: { TagLink, TagButton, TagGroup },
   tags: ["autodocs"],

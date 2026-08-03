@@ -7,6 +7,7 @@
  */
 
 import type { Schema } from "veryfront/extensions/schema";
+import { COMMANDS } from "../help/command-definitions.ts";
 import type { ParsedArgs } from "./types.ts";
 
 /** Compat type for safeParse result (SafeParseReturnType removed in zod v4). */
@@ -37,9 +38,9 @@ function coerceValue(
   value: unknown,
   type: ArgSpec["type"],
 ): string | boolean | number | string[] {
-  if (type === "boolean") return Boolean(value);
+  if (type === "boolean") return parseBooleanValue(value) ?? String(value);
   if (type === "number") {
-    return typeof value === "number" ? value : parseInt(String(value), 10);
+    return typeof value === "number" ? value : Number(String(value));
   }
   if (type === "array") {
     if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -104,7 +105,7 @@ export function extractArgs<T>(
  * const PullArgsSchema = getPullArgsSchema();
  *
  * const parsePullArgs = createArgParser(PullArgsSchema, {
- *   projectSlug: { keys: ["project-slug", "p"], type: "string", positional: 0 },
+ *   projectSlug: { keys: ["project", "p"], type: "string", positional: 0 },
  *   projectDir: { keys: ["project-dir", "dir", "d"], type: "string" },
  *   force: { keys: ["force", "f"], type: "boolean" },
  * });
@@ -155,9 +156,9 @@ export const CommonArgs = {
   force: { keys: ["force", "f"], type: "boolean" },
   dryRun: { keys: ["dry-run"], type: "boolean" },
   branch: { keys: ["branch", "b"], type: "string" },
-  env: { keys: ["env"], type: "string" },
+  env: { keys: ["environment", "env", "e"], type: "string" },
   projectDir: { keys: ["project-dir", "dir", "d"], type: "string" },
-  projectSlug: { keys: ["project-slug", "project", "p"], type: "string" },
+  projectSlug: { keys: ["project", "project-slug", "p"], type: "string" },
   quiet: { keys: ["quiet", "q"], type: "boolean" },
   releaseName: { keys: ["release-name"], type: "string" },
   into: { keys: ["into"], type: "string" },
@@ -171,14 +172,123 @@ export const CommonArgs = {
 // Used once in cli/main.ts before routing to individual command handlers.
 
 const ARRAY_FLAGS = new Set(["with", "candidate-model"]);
+const GLOBAL_BOOLEAN_FLAGS = new Set([
+  "help",
+  "version",
+  "json",
+  "yes",
+  "quiet",
+  "verbose",
+  "no-input",
+  "no-color",
+  "color",
+  "no-animation",
+]);
 
-function maybeNumber(val: unknown): unknown {
-  if (typeof val === "string" && /^\d+$/.test(val)) return parseInt(val, 10);
-  return val;
+function getDocumentedFlagKind(
+  key: string,
+  positionalArgs: string[],
+): "boolean" | "value" | undefined {
+  if (GLOBAL_BOOLEAN_FLAGS.has(key)) return "boolean";
+
+  const command = positionalArgs[0];
+  if (!command) return undefined;
+
+  for (const option of COMMANDS[command]?.options ?? []) {
+    const names = option.flag.match(/--?[a-z0-9-]+/gi) ?? [];
+    if (names.some((name) => name.replace(/^-+/, "") === key)) {
+      return option.flag.includes("<") ? "value" : "boolean";
+    }
+  }
+
+  return undefined;
+}
+
+const BOOLEAN_FLAGS = new Set([
+  "all",
+  "auto",
+  "binary",
+  "build",
+  "cache",
+  "check",
+  "clear",
+  "color",
+  "compress",
+  "debug",
+  "delete",
+  "deploy",
+  "dry-run",
+  "force",
+  "github",
+  "global",
+  "google",
+  "headless",
+  "help",
+  "hmr",
+  "json",
+  "list",
+  "microsoft",
+  "no-animation",
+  "no-color",
+  "no-compress",
+  "no-gpg-sign",
+  "no-hmr",
+  "no-input",
+  "no-split",
+  "no-ssg",
+  "no-tui",
+  "open",
+  "parallel",
+  "prefetch",
+  "quiet",
+  "recursive",
+  "skip-env-prompt",
+  "skip-install",
+  "split",
+  "ssg",
+  "strict",
+  "studio",
+  "update",
+  "verbose",
+  "verify",
+  "version",
+  "yes",
+]);
+
+function isBooleanFlag(key: string, positionalArgs: string[]): boolean {
+  const documentedKind = getDocumentedFlagKind(key, positionalArgs);
+  if (documentedKind !== undefined) return documentedKind === "boolean";
+  return BOOLEAN_FLAGS.has(key);
+}
+
+function parseBooleanValue(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+    return undefined;
+  }
+  if (typeof value !== "string") return undefined;
+
+  switch (value.trim().toLowerCase()) {
+    case "true":
+    case "1":
+    case "yes":
+    case "on":
+      return true;
+    case "false":
+    case "0":
+    case "no":
+    case "off":
+    case "":
+      return false;
+    default:
+      return undefined;
+  }
 }
 
 function isValue(arg: string | undefined): boolean {
-  return arg !== undefined && !arg.startsWith("-");
+  return arg !== undefined && (!arg.startsWith("-") || /^-\d/.test(arg));
 }
 
 function parse(
@@ -191,7 +301,9 @@ function parse(
 
   function setValue(key: string, value: unknown): void {
     explicit[key] = true;
-    const converted = maybeNumber(value);
+    const converted = isBooleanFlag(key, result._ as string[])
+      ? parseBooleanValue(value) ?? value
+      : value;
 
     if (!ARRAY_FLAGS.has(key)) {
       result[key] = converted;
@@ -206,6 +318,11 @@ function parse(
     const arg = args[i];
     if (!arg) continue;
 
+    if (arg === "--") {
+      (result._ as string[]).push(...args.slice(i + 1));
+      break;
+    }
+
     if (arg.startsWith("--")) {
       const eqIdx = arg.indexOf("=");
 
@@ -217,7 +334,7 @@ function parse(
       const key = arg.slice(2);
       const next = args[i + 1];
 
-      if (isValue(next)) {
+      if (!isBooleanFlag(key, result._ as string[]) && isValue(next)) {
         setValue(key, next);
         i++;
         continue;
@@ -232,13 +349,17 @@ function parse(
       const key = aliasMap.get(short) ?? short;
       const next = args[i + 1];
 
-      if (isValue(next)) {
+      const isBoolean = isBooleanFlag(key, result._ as string[]) ||
+        isBooleanFlag(short, result._ as string[]);
+      if (!isBoolean && isValue(next)) {
         setValue(key, next);
+        if (key !== short) setValue(short, next);
         i++;
         continue;
       }
 
       setValue(key, true);
+      if (key !== short) setValue(short, true);
       continue;
     }
 
@@ -253,13 +374,11 @@ function parse(
 export function parseCliArgs(args: string[]): ParsedArgs {
   return parse(args, {
     alias: {
-      p: "port",
       h: "help",
       v: "version",
       q: "quiet",
       f: "force",
       s: "strict",
-      t: "template",
       j: "json",
       y: "yes",
       w: "with",

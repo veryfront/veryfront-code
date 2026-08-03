@@ -1,11 +1,14 @@
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createChatStreamWatchdog } from "#veryfront/chat/stream-watchdog.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import type { AgentTraceAttributes } from "./trace-attributes.ts";
 import type { HostedAgentRunTracer } from "./agent-run-lifecycle.ts";
 import {
   createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions,
   resolveVeryfrontCloudChatStreamWatchdogOptions,
+  VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_ENV,
+  VERYFRONT_CHAT_STREAM_TOOL_TIMEOUT_ENV,
 } from "./cloud-prepared-chat-execution-runtime.ts";
 
 function createTracer(): HostedAgentRunTracer {
@@ -16,6 +19,15 @@ function createTracer(): HostedAgentRunTracer {
       withContext: (fn) => fn(),
     }),
   };
+}
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    deleteEnv(key);
+    return;
+  }
+
+  setEnv(key, value);
 }
 
 describe("agent/veryfront-cloud-prepared-hosted-chat-execution-runtime", () => {
@@ -85,5 +97,26 @@ describe("agent/veryfront-cloud-prepared-hosted-chat-execution-runtime", () => {
       }),
       {},
     );
+  });
+
+  it("derives bootstrap watchdog timing from cloud stream timeout environment values", () => {
+    const previousIdleTimeout = getEnv(VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_ENV);
+    const previousToolTimeout = getEnv(VERYFRONT_CHAT_STREAM_TOOL_TIMEOUT_ENV);
+
+    try {
+      setEnv(VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_ENV, "30000");
+      setEnv(VERYFRONT_CHAT_STREAM_TOOL_TIMEOUT_ENV, "600000");
+
+      const options = createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions({
+        apiUrl: "https://api.example.com",
+        tracer: createTracer(),
+      });
+
+      assertEquals(options.streamBootstrapKeepaliveIntervalMs, 15_000);
+      assertEquals(options.streamBootstrapTimeoutMs, 600_000);
+    } finally {
+      restoreEnv(VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_ENV, previousIdleTimeout);
+      restoreEnv(VERYFRONT_CHAT_STREAM_TOOL_TIMEOUT_ENV, previousToolTimeout);
+    }
   });
 });

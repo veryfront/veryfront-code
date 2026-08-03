@@ -22,6 +22,49 @@ describe("skill delegation overrides", () => {
     );
   });
 
+  it("bounds overrides and never invokes accessors", () => {
+    let reads = 0;
+    const hostile = Object.defineProperties({}, {
+      model: {
+        enumerable: true,
+        get() {
+          reads += 1;
+          return "unsafe";
+        },
+      },
+      thinking: {
+        enumerable: true,
+        value: 1_000_001,
+      },
+      maxSteps: {
+        enumerable: true,
+        value: 1_001,
+      },
+    });
+
+    assertEquals(extractSkillDelegationOverrides(hostile), {});
+    assertEquals(reads, 0);
+    assertEquals(
+      extractSkillDelegationOverrides({
+        model: "openai/gpt-5.1",
+        thinking: 1_000_000,
+        maxSteps: 1_000,
+      }),
+      {
+        model: "openai/gpt-5.1",
+        thinking: 1_000_000,
+        maxSteps: 1_000,
+      },
+    );
+  });
+
+  it("fails closed for revoked proxy results", () => {
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+
+    assertEquals(extractSkillDelegationOverrides(revoked.proxy), {});
+  });
+
   it("raises invoke_agent max_steps to the active skill maxSteps floor", () => {
     assertEquals(
       applySkillDelegationOverridesToToolInput(

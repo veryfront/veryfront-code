@@ -35,6 +35,7 @@ import {
   startNodeAgentServiceServer,
 } from "./server.ts";
 import type { VeryfrontServiceServerLogger } from "../../server/service-server.ts";
+import type { HostedRuntimeSourceIdentity } from "../hosted/runtime-source-binding.ts";
 
 /** Configuration used by hosted agent service runtime. */
 export type HostedAgentServiceRuntimeConfig = AgentServiceAuthConfig & {
@@ -69,6 +70,8 @@ export type CreateHostedAgentServiceRuntimeOptions<
   TConfig extends HostedAgentServiceRuntimeConfig = HostedAgentServiceRuntimeConfig,
 > = {
   serviceName: string;
+  /** Exact immutable source snapshot served by control-plane runtime invocations. */
+  runtimeSource?: HostedRuntimeSourceIdentity;
   getConfig: () => TConfig;
   getAgentConfig: () => RuntimeAgentMarkdownDefinition;
   forwardedConfigNamespace?: string;
@@ -182,7 +185,7 @@ function normalizeAgentServiceTools(
   return Object.fromEntries(tools.map((toolId) => [toolId, true]));
 }
 
-function combineAgentServiceLifecycle(
+export function combineAgentServiceLifecycle(
   primary: AgentServiceServerLifecycle,
   secondary: AgentServiceServerLifecycle | undefined,
 ): AgentServiceServerLifecycle {
@@ -192,12 +195,36 @@ function combineAgentServiceLifecycle(
 
   return {
     setShuttingDown: () => {
-      primary.setShuttingDown?.();
-      secondary.setShuttingDown?.();
+      let failure: unknown;
+      try {
+        primary.setShuttingDown?.();
+      } catch (error) {
+        failure = error;
+      }
+      try {
+        secondary.setShuttingDown?.();
+      } catch (error) {
+        failure ??= error;
+      }
+      if (failure !== undefined) {
+        throw failure;
+      }
     },
     stop: async () => {
-      await primary.stop?.();
-      await secondary.stop?.();
+      let failure: unknown;
+      try {
+        await primary.stop?.();
+      } catch (error) {
+        failure = error;
+      }
+      try {
+        await secondary.stop?.();
+      } catch (error) {
+        failure ??= error;
+      }
+      if (failure !== undefined) {
+        throw failure;
+      }
     },
   };
 }
@@ -219,8 +246,10 @@ export function createAgentServiceRuntime<
   });
   const routeSet = createAgentServiceRouteSet({
     forwardedConfigNamespace: options.forwardedConfigNamespace,
+    runtimeSource: options.runtimeSource,
     authenticateRequest: auth.authenticateRequest,
     verifyProjectAccess: (projectId, authToken) => auth.verifyProjectAccess(projectId, authToken),
+    verifyRunEventAppendToken: auth.verifyRunEventAppendToken,
     tracker,
     prepareExecution: options.prepareExecution,
     streamExecutionToAgUiResponse: options.streamExecutionToAgUiResponse,

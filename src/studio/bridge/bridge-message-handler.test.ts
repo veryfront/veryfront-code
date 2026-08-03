@@ -10,6 +10,7 @@ import {
   isSafeNavigationUrl,
   sanitizeNavigationUrl,
 } from "./bridge-message-handler.ts";
+import { _resetForTest } from "./bridge-messaging.ts";
 import { state } from "./bridge-state.ts";
 
 // ---------------------------------------------------------------------------
@@ -33,12 +34,14 @@ if (typeof globalThis.location === "undefined") {
 // ---------------------------------------------------------------------------
 
 function resetState(pagePath = "test.md"): void {
+  _resetForTest();
   (globalThis as any).location.reload = () => {};
   setConfigForTest({ pagePath, pageId: "test-id", projectId: "proj-id" });
 }
 
 // Fake parent window reference so isFromStudio accepts the event
-const fakeParentWindow = {} as Window;
+const fakeParentWindow = { postMessage(): void {} } as unknown as Window;
+(globalThis as any).window.parent = fakeParentWindow;
 
 function makeEvent(data: Record<string, unknown>): MessageEvent {
   return {

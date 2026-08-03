@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { ScrollFade } from "../../../src/react/components/chat/ui/index.ts";
+import { ScrollFade } from "../../../src/react/components/ui/index.ts";
 import {
   DocsCode,
   DocsExampleAuto,
@@ -29,7 +29,7 @@ function ScrollFadeDocsPage() {
         <DocsExampleAuto of={Bottom} />
       </DocsSection>
       <DocsSection title="Import">
-        <DocsCode code={`import { ScrollFade } from "veryfront/chat/ui"`} />
+        <DocsCode code={`import { ScrollFade } from "veryfront/ui"`} />
       </DocsSection>
       <DocsSection title="API Reference">
         <DocsPropsTable
@@ -45,7 +45,7 @@ function ScrollFadeDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/ScrollFade",
+  title: "UI/ScrollFade",
   component: ScrollFade,
   tags: ["autodocs"],
   parameters: { layout: "centered", docs: { page: ScrollFadeDocsPage } },

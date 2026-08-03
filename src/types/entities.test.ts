@@ -21,6 +21,14 @@ describe("detectEntityType", () => {
     assertEquals(result.isComponent, false);
   });
 
+  it("treats routes that start with non-letters as pages", () => {
+    const result = detectEntityType("2024-01-01.mdx");
+
+    assertEquals(result.type, "page");
+    assertEquals(result.isPage, true);
+    assertEquals(result.isComponent, false);
+  });
+
   it("normalizes supported script extensions to tsx kind", () => {
     assertEquals(detectEntityType("Button.tsx").kind, "tsx");
     assertEquals(detectEntityType("Button.ts").kind, "tsx");

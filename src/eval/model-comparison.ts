@@ -1,4 +1,5 @@
 import { compareEvalReports } from "./baseline.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type {
   EvalMetricResult,
   EvalModelCandidateComparison,
@@ -8,6 +9,12 @@ import type {
   EvalModelReportSummary,
   EvalReport,
 } from "./types.ts";
+import {
+  assertFiniteEvalNumber,
+  createEvalValidationError,
+  isEvalRecord,
+  normalizeEvalString,
+} from "./validation.ts";
 
 const DEFAULT_MIN_GROUNDEDNESS = 0.8;
 const DEFAULT_MIN_EFFICIENCY_IMPROVEMENT = 0.1;
@@ -44,9 +51,15 @@ const LOWER_IS_BETTER = new Set<EvalModelComparisonMetricName>([
   "costCredits",
   "p95Ms",
 ]);
+const MODEL_COMPARISON_METRICS = new Set<EvalModelComparisonMetricName>([
+  "passRate",
+  "groundednessScore",
+  ...LOWER_IS_BETTER,
+]);
 
 function reportModel(report: EvalReport): string {
-  return report.metadata?.model ?? report.runId;
+  const model = report.metadata?.model?.trim();
+  return model || report.runId;
 }
 
 function failedExampleIds(report: EvalReport): string[] {
@@ -58,12 +71,14 @@ function allMetricResults(report: EvalReport): EvalMetricResult[] {
 }
 
 function average(values: number[]): number | undefined {
-  if (values.length === 0) return undefined;
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
+  const finiteValues = values.filter(Number.isFinite);
+  if (finiteValues.length === 0) return undefined;
+  return finiteValues.reduce((sum, value) => sum + value, 0) / finiteValues.length;
 }
 
 function metricPassRate(report: EvalReport, metricName: string): number | undefined {
-  return report.summary.metrics.find((metric) => metric.name === metricName)?.passRate;
+  const value = report.summary.metrics.find((metric) => metric.name === metricName)?.passRate;
+  return value !== undefined && Number.isFinite(value) ? value : undefined;
 }
 
 function groundednessScore(report: EvalReport): number | undefined {
@@ -159,46 +174,67 @@ function metricValue(
   summary: EvalModelReportSummary,
   metric: EvalModelComparisonMetricName,
 ): number | undefined {
+  let value: number | undefined;
   switch (metric) {
     case "passRate":
-      return summary.passRate;
+      value = summary.passRate;
+      break;
     case "failed":
-      return summary.failed;
+      value = summary.failed;
+      break;
     case "gateFailures":
-      return summary.gateFailures;
+      value = summary.gateFailures;
+      break;
     case "groundednessScore":
-      return summary.groundednessScore;
+      value = summary.groundednessScore;
+      break;
     case "inputTokens":
-      return summary.inputTokens;
+      value = summary.inputTokens;
+      break;
     case "outputTokens":
-      return summary.outputTokens;
+      value = summary.outputTokens;
+      break;
     case "totalTokens":
-      return summary.totalTokens;
+      value = summary.totalTokens;
+      break;
     case "billableInputTokens":
-      return summary.billableInputTokens;
+      value = summary.billableInputTokens;
+      break;
     case "billableOutputTokens":
-      return summary.billableOutputTokens;
+      value = summary.billableOutputTokens;
+      break;
     case "costUsd":
-      return comparisonCost(summary);
+      value = comparisonCost(summary);
+      break;
     case "providerInputCostUsd":
-      return summary.providerInputCostUsd;
+      value = summary.providerInputCostUsd;
+      break;
     case "providerOutputCostUsd":
-      return summary.providerOutputCostUsd;
+      value = summary.providerOutputCostUsd;
+      break;
     case "providerCostUsd":
-      return summary.providerCostUsd;
+      value = summary.providerCostUsd;
+      break;
     case "veryfrontInputChargeUsd":
-      return summary.veryfrontInputChargeUsd;
+      value = summary.veryfrontInputChargeUsd;
+      break;
     case "veryfrontOutputChargeUsd":
-      return summary.veryfrontOutputChargeUsd;
+      value = summary.veryfrontOutputChargeUsd;
+      break;
     case "veryfrontChargeUsd":
-      return summary.veryfrontChargeUsd;
+      value = summary.veryfrontChargeUsd;
+      break;
     case "veryfrontBilledUsd":
-      return summary.veryfrontBilledUsd;
+      value = summary.veryfrontBilledUsd;
+      break;
     case "costCredits":
-      return summary.costCredits;
+      value = summary.costCredits;
+      break;
     case "p95Ms":
-      return summary.p95Ms;
+      value = summary.p95Ms;
+      break;
   }
+  return value !== undefined && Number.isFinite(value) ? value : undefined;
 }
 
 function regressionPct(input: {
@@ -596,16 +632,124 @@ function pickRecommendation(
 function normalizeOptions(
   options: EvalModelComparisonOptions,
 ): NormalizedEvalModelComparisonOptions {
+  if (!isEvalRecord(options)) {
+    throw createEvalValidationError("Eval model comparison options must be an object");
+  }
+  const normalizedOptions = options as EvalModelComparisonOptions;
+  const baselineModel = normalizeEvalString(
+    normalizedOptions.baselineModel,
+    "Eval model comparison baselineModel",
+  );
+  const minGroundedness = normalizedOptions.minGroundedness ?? DEFAULT_MIN_GROUNDEDNESS;
+  const minCostImprovementPct = normalizedOptions.minCostImprovementPct ??
+    DEFAULT_MIN_EFFICIENCY_IMPROVEMENT;
+  const minTokenImprovementPct = normalizedOptions.minTokenImprovementPct ??
+    DEFAULT_MIN_EFFICIENCY_IMPROVEMENT;
+  const minLatencyImprovementPct = normalizedOptions.minLatencyImprovementPct ??
+    DEFAULT_MIN_EFFICIENCY_IMPROVEMENT;
+  assertFiniteEvalNumber(minGroundedness, "Eval model comparison minGroundedness", {
+    min: 0,
+    max: 1,
+  });
+  for (
+    const [label, value] of [
+      ["minCostImprovementPct", minCostImprovementPct],
+      ["minTokenImprovementPct", minTokenImprovementPct],
+      ["minLatencyImprovementPct", minLatencyImprovementPct],
+    ] as const
+  ) {
+    assertFiniteEvalNumber(value, `Eval model comparison ${label}`, { min: 0, max: 1 });
+  }
+
+  const constraints = normalizeConstraints(normalizedOptions.constraints);
+  const objectives = normalizeObjectives(normalizedOptions.objectives);
   return {
-    baselineModel: options.baselineModel,
-    minGroundedness: options.minGroundedness ?? DEFAULT_MIN_GROUNDEDNESS,
-    minCostImprovementPct: options.minCostImprovementPct ?? DEFAULT_MIN_EFFICIENCY_IMPROVEMENT,
-    minTokenImprovementPct: options.minTokenImprovementPct ?? DEFAULT_MIN_EFFICIENCY_IMPROVEMENT,
-    minLatencyImprovementPct: options.minLatencyImprovementPct ??
-      DEFAULT_MIN_EFFICIENCY_IMPROVEMENT,
-    ...(options.constraints ? { constraints: options.constraints } : {}),
-    ...(options.objectives ? { objectives: options.objectives } : {}),
+    baselineModel,
+    minGroundedness,
+    minCostImprovementPct,
+    minTokenImprovementPct,
+    minLatencyImprovementPct,
+    ...(constraints ? { constraints } : {}),
+    ...(objectives ? { objectives } : {}),
   };
+}
+
+function normalizeConstraints(
+  constraints: EvalModelComparisonOptions["constraints"],
+): EvalModelComparisonOptions["constraints"] {
+  if (constraints === undefined) return undefined;
+  if (!isEvalRecord(constraints)) {
+    throw createEvalValidationError("Eval model comparison constraints must be an object");
+  }
+  const normalized: NonNullable<EvalModelComparisonOptions["constraints"]> = {};
+  for (const [metric, rawConstraint] of Object.entries(constraints)) {
+    if (!MODEL_COMPARISON_METRICS.has(metric as EvalModelComparisonMetricName)) {
+      throw createEvalValidationError(`Unknown eval model comparison constraint "${metric}"`);
+    }
+    if (!isEvalRecord(rawConstraint)) {
+      throw createEvalValidationError(
+        `Eval model comparison constraint "${metric}" must be an object`,
+      );
+    }
+    const constraint = rawConstraint as {
+      min?: number;
+      max?: number;
+      maxRegressionPct?: number;
+    };
+    if (constraint.min !== undefined) {
+      assertFiniteEvalNumber(constraint.min, `${metric} constraint min`);
+    }
+    if (constraint.max !== undefined) {
+      assertFiniteEvalNumber(constraint.max, `${metric} constraint max`);
+    }
+    if (constraint.maxRegressionPct !== undefined) {
+      assertFiniteEvalNumber(
+        constraint.maxRegressionPct,
+        `${metric} constraint maxRegressionPct`,
+        { min: 0 },
+      );
+    }
+    if (
+      constraint.min !== undefined && constraint.max !== undefined &&
+      constraint.min > constraint.max
+    ) {
+      throw createEvalValidationError(`${metric} constraint min cannot exceed max`);
+    }
+    normalized[metric as EvalModelComparisonMetricName] = { ...constraint };
+  }
+  return normalized;
+}
+
+function normalizeObjectives(
+  objectives: EvalModelComparisonOptions["objectives"],
+): EvalModelComparisonOptions["objectives"] {
+  if (objectives === undefined) return undefined;
+  if (!isEvalRecord(objectives)) {
+    throw createEvalValidationError("Eval model comparison objectives must be an object");
+  }
+  const normalized: NonNullable<EvalModelComparisonOptions["objectives"]> = {};
+  for (const [metric, rawObjective] of Object.entries(objectives)) {
+    if (!MODEL_COMPARISON_METRICS.has(metric as EvalModelComparisonMetricName)) {
+      throw createEvalValidationError(`Unknown eval model comparison objective "${metric}"`);
+    }
+    if (!isEvalRecord(rawObjective)) {
+      throw createEvalValidationError(
+        `Eval model comparison objective "${metric}" must be an object`,
+      );
+    }
+    const objective = rawObjective as { weight?: number; direction?: unknown };
+    assertFiniteEvalNumber(objective.weight, `${metric} objective weight`, { min: 0 });
+    if (objective.direction !== "minimize" && objective.direction !== "maximize") {
+      throw createEvalValidationError(
+        `${metric} objective direction must be "minimize" or "maximize"`,
+      );
+    }
+    normalized[metric as EvalModelComparisonMetricName] = {
+      weight: objective.weight,
+      direction: objective.direction,
+    };
+  }
+  return normalized;
 }
 
 /** Compare eval reports from multiple models using conservative promotion rules. */
@@ -614,16 +758,37 @@ export function compareEvalModelReports(
   options: EvalModelComparisonOptions,
 ): EvalModelComparison {
   const normalized = normalizeOptions(options);
-  const baseline = reports.find((report) => reportModel(report) === normalized.baselineModel);
+  const reportsByModel = new Map<string, EvalReport[]>();
+  for (const report of reports) {
+    const model = reportModel(report);
+    const matches = reportsByModel.get(model) ?? [];
+    matches.push(report);
+    reportsByModel.set(model, matches);
+  }
+  const duplicates = [...reportsByModel.entries()]
+    .filter(([, matches]) => matches.length > 1)
+    .map(([model]) => model)
+    .sort();
+  if (duplicates.length > 0) {
+    throw INVALID_ARGUMENT.create({
+      detail: `Duplicate eval model report(s): ${duplicates.join(", ")}`,
+    });
+  }
+  const baseline = reportsByModel.get(normalized.baselineModel)?.[0];
   if (!baseline) {
-    throw new Error(
-      `Baseline model "${normalized.baselineModel}" was not present in eval reports.`,
-    );
+    throw INVALID_ARGUMENT.create({
+      detail: `Baseline model "${normalized.baselineModel}" was not present in eval reports.`,
+    });
   }
 
   const candidates = reports
     .filter((report) => reportModel(report) !== normalized.baselineModel)
     .map((report) => compareCandidate(report, baseline, normalized));
+  if (candidates.length === 0) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Eval model comparison requires at least one candidate model report.",
+    });
+  }
 
   return {
     kind: "eval-model-comparison",

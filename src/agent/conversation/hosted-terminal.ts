@@ -148,18 +148,20 @@ function buildConversationHostedLifecycleUsage(
 
 function buildConversationAgentRunUsage(
   usage: HostedLifecycleUsage | undefined,
+  usageCaptureStatus: NonNullable<HostedLifecycleTerminalState["metadata"]>["usageCaptureStatus"],
 ): ConversationAgentRunUsage | undefined {
-  if (!usage) {
+  if (!usage && usageCaptureStatus === undefined) {
     return undefined;
   }
 
-  const inputTokens = usage.inputTokens ?? 0;
-  const outputTokens = usage.outputTokens ?? 0;
+  const inputTokens = usage?.inputTokens ?? 0;
+  const outputTokens = usage?.outputTokens ?? 0;
 
   return {
     inputTokens,
     outputTokens,
     totalTokens: inputTokens + outputTokens,
+    ...(usageCaptureStatus !== undefined ? { usageCaptureStatus } : {}),
   };
 }
 
@@ -170,14 +172,16 @@ export function toConversationHostedTerminalState(input: {
 }): HostedLifecycleTerminalState {
   const modelId = input.state.metadata?.modelId ?? input.fallbackModelId;
   const usage = buildConversationHostedLifecycleUsage(input.state.metadata?.usage);
+  const usageCaptureStatus = input.state.metadata?.usageCaptureStatus;
 
   return {
     status: input.state.status,
-    ...(modelId || usage
+    ...(modelId || usage || usageCaptureStatus
       ? {
         metadata: {
           ...(modelId ? { modelId } : {}),
           ...(usage ? { usage } : {}),
+          ...(usageCaptureStatus ? { usageCaptureStatus } : {}),
         },
       }
       : {}),
@@ -207,18 +211,28 @@ export function createConversationHostedTerminalAdapter(
     durableRunFinalized = true;
     const modelId = terminalState.metadata?.modelId ?? options.fallbackModelId;
 
-    await finalizeConversationAgentRun({
-      authToken: options.authToken,
-      apiUrl: options.apiUrl,
-      conversationId: options.run.conversationId,
-      runId: options.run.runId,
-      status,
-      model: modelId,
-      provider: options.resolveProvider(modelId),
-      usage: buildConversationAgentRunUsage(terminalState.metadata?.usage),
-      terminalErrorCode: terminalState.terminalErrorCode,
-      terminalErrorMessage: terminalState.terminalErrorMessage,
-    });
+    try {
+      await finalizeConversationAgentRun({
+        authToken: options.authToken,
+        apiUrl: options.apiUrl,
+        conversationId: options.run.conversationId,
+        runId: options.run.runId,
+        status,
+        model: modelId,
+        provider: options.resolveProvider(modelId),
+        usage: buildConversationAgentRunUsage(
+          terminalState.metadata?.usage,
+          terminalState.metadata?.usageCaptureStatus,
+        ),
+        terminalErrorCode: terminalState.terminalErrorCode,
+        terminalErrorMessage: terminalState.terminalErrorMessage,
+      });
+    } catch (error) {
+      // Allow a later dispatch to retry; keeping the flag set on failure would
+      // leave the durable run active forever with no way to complete it.
+      durableRunFinalized = false;
+      throw error;
+    }
   };
 
   return {

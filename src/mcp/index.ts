@@ -44,7 +44,7 @@ export {
   registerTool,
 } from "./registry.ts";
 
-export { createMCPServer, type IntegrationLoaderConfig, MCPServer } from "./server.ts";
+export { createMCPServer, MCPServer } from "./server.ts";
 
 export {
   buildFormElicitation,

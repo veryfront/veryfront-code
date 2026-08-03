@@ -5,6 +5,11 @@
  * Ensures consistent URLs across SSR and browser for hydration parity.
  */
 
+import {
+  primordialArrayJoin as arrayJoin,
+  primordialArrayPush as arrayPush,
+} from "#veryfront/platform/compat/primordials/array.ts";
+
 /**
  * Default React version - used when not specified.
  *
@@ -27,6 +32,30 @@ type EsmShOptions = {
   deps?: Record<string, string>;
 };
 
+const ObjectEntries = Object.entries;
+
+function buildEsmShParams(options?: EsmShOptions): string[] {
+  const params: string[] = [];
+
+  if (options?.external?.length) {
+    arrayPush(params, `external=${arrayJoin(options.external, ",")}`);
+  }
+
+  arrayPush(params, `target=${options?.target ?? "es2022"}`);
+
+  if (options?.deps) {
+    const deps: string[] = [];
+    const entries = ObjectEntries(options.deps);
+    for (let index = 0; index < entries.length; index++) {
+      const [key, value] = entries[index]!;
+      arrayPush(deps, `${key}@${value}`);
+    }
+    arrayPush(params, `deps=${arrayJoin(deps, ",")}`);
+  }
+
+  return params;
+}
+
 /**
  * Build esm.sh URL with proper configuration.
  *
@@ -41,26 +70,27 @@ export function buildEsmShUrl(
   subpath?: string,
   options?: EsmShOptions,
 ): string {
-  const params: string[] = [];
-
-  if (options?.external?.length) {
-    params.push(`external=${options.external.join(",")}`);
-  }
-
-  params.push(`target=${options?.target ?? "es2022"}`);
-
-  if (options?.deps) {
-    const depsStr = Object.entries(options.deps)
-      .map(([k, v]) => `${k}@${v}`)
-      .join(",");
-    params.push(`deps=${depsStr}`);
-  }
+  const params = buildEsmShParams(options);
 
   const versionStr = version ? `@${version}` : "";
   const pathStr = subpath ?? "";
-  const queryStr = params.length ? `?${params.join("&")}` : "";
+  const queryStr = params.length ? `?${arrayJoin(params, "&")}` : "";
 
   return `https://esm.sh/${pkg}${versionStr}${pathStr}${queryStr}`;
+}
+
+/**
+ * Build an esm.sh package-prefix URL. esm.sh's `&option/` form keeps the
+ * trailing slash required by the import-map prefix-matching algorithm.
+ */
+function buildEsmShPrefixUrl(
+  pkg: string,
+  version: string,
+  options?: EsmShOptions,
+): string {
+  const params = buildEsmShParams(options);
+  const optionStr = params.length ? `&${arrayJoin(params, "&")}` : "";
+  return `https://esm.sh/${pkg}@${version}${optionStr}/`;
 }
 
 /**
@@ -79,6 +109,16 @@ export function buildReactUrl(
   });
 }
 
+function buildReactPrefixUrl(
+  pkg: "react" | "react-dom",
+  version: string,
+): string {
+  return buildEsmShPrefixUrl(pkg, version, {
+    external: ["react"],
+    deps: { csstype: CSSTYPE_VERSION },
+  });
+}
+
 /**
  * Get complete React import map for a specific version.
  */
@@ -90,8 +130,10 @@ export function getReactImportMap(version: string): Record<string, string> {
     "react-dom/server": buildReactUrl("react-dom", version, "/server", true),
     "react/jsx-runtime": buildReactUrl("react", version, "/jsx-runtime", true),
     "react/jsx-dev-runtime": buildReactUrl("react", version, "/jsx-dev-runtime", true),
-    // Prefix match for any react/* subpath imports
-    "react/": buildReactUrl("react", version, "/", true),
+    // Prefix matches cover future package exports without allowing a project
+    // import map to redirect React or ReactDOM subpaths.
+    "react/": buildReactPrefixUrl("react", version),
+    "react-dom/": buildReactPrefixUrl("react-dom", version),
   };
 }
 
@@ -102,6 +144,231 @@ export function buildModuleServerUrl(baseUrl: string, path: string): string {
   const normalizedBase = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   return `${normalizedBase}${normalizedPath}`;
+}
+
+/**
+ * Bind an internal module URL to the immutable dependency snapshot that
+ * produced it. Flag-off keys intentionally preserve the historical URL shape.
+ */
+export function appendDependencyPinningKey(
+  url: string,
+  dependencyPinningCacheKey?: string,
+): string {
+  if (!dependencyPinningCacheKey?.startsWith("on:")) return url;
+
+  const hashIndex = url.indexOf("#");
+  const hash = hashIndex === -1 ? "" : url.slice(hashIndex);
+  const urlWithoutHash = hashIndex === -1 ? url : url.slice(0, hashIndex);
+  const queryIndex = urlWithoutHash.indexOf("?");
+  const path = queryIndex === -1 ? urlWithoutHash : urlWithoutHash.slice(0, queryIndex);
+  const params = new URLSearchParams(
+    queryIndex === -1 ? "" : urlWithoutHash.slice(queryIndex + 1),
+  );
+
+  params.set("pins", dependencyPinningCacheKey);
+  return `${path}?${params.toString()}${hash}`;
+}
+
+const DEPENDENCY_PINNING_PATH_MARKER = "_pins/";
+const MODULE_SERVER_PATH_PREFIXES = ["/_vf_modules/"] as const;
+const DEPENDENCY_PINNING_PATH_KEY_PATTERN = /^on:[A-Za-z0-9._-]+$/;
+
+function decodeDependencyPinningPathKey(encodedKey: string): string | undefined {
+  try {
+    const cacheKey = decodeURIComponent(encodedKey);
+    return DEPENDENCY_PINNING_PATH_KEY_PATTERN.test(cacheKey) ? cacheKey : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Bind an import-map prefix target to a dependency snapshot without adding a
+ * query string. Import-map prefix targets must end in `/`; placing the token in
+ * a reserved path segment keeps that invariant when the browser appends the
+ * concrete module suffix.
+ */
+export function appendDependencyPinningPathKey(
+  url: string,
+  dependencyPinningCacheKey?: string,
+): string {
+  if (!dependencyPinningCacheKey?.startsWith("on:")) return url;
+
+  const hashIndex = url.indexOf("#");
+  const hash = hashIndex === -1 ? "" : url.slice(hashIndex);
+  const urlWithoutHash = hashIndex === -1 ? url : url.slice(0, hashIndex);
+  const queryIndex = urlWithoutHash.indexOf("?");
+  const path = queryIndex === -1 ? urlWithoutHash : urlWithoutHash.slice(0, queryIndex);
+  const params = new URLSearchParams(
+    queryIndex === -1 ? "" : urlWithoutHash.slice(queryIndex + 1),
+  );
+
+  for (const prefix of MODULE_SERVER_PATH_PREFIXES) {
+    const prefixIndex = path.indexOf(prefix);
+    if (prefixIndex === -1) continue;
+
+    const origin = path.slice(0, prefixIndex);
+    if (origin !== "" && !/^https?:\/\/[^/]+$/i.test(origin)) continue;
+
+    let modulePath = path.slice(prefixIndex + prefix.length);
+    if (modulePath.startsWith(DEPENDENCY_PINNING_PATH_MARKER)) {
+      const existingKeyEnd = modulePath.indexOf(
+        "/",
+        DEPENDENCY_PINNING_PATH_MARKER.length,
+      );
+      const encodedExistingKey = existingKeyEnd === -1
+        ? modulePath.slice(DEPENDENCY_PINNING_PATH_MARKER.length)
+        : modulePath.slice(
+          DEPENDENCY_PINNING_PATH_MARKER.length,
+          existingKeyEnd,
+        );
+      if (decodeDependencyPinningPathKey(encodedExistingKey)) {
+        if (existingKeyEnd === -1) return url;
+        modulePath = modulePath.slice(existingKeyEnd + 1);
+      }
+    }
+
+    params.delete("pins");
+    const query = params.size > 0 ? `?${params.toString()}` : "";
+    return `${origin}${prefix}${DEPENDENCY_PINNING_PATH_MARKER}${
+      encodeURIComponent(dependencyPinningCacheKey)
+    }/${modulePath}${query}${hash}`;
+  }
+  return url;
+}
+
+/**
+ * Bind a same-origin module-server URL to a dependency snapshot and canonicalize
+ * it to a root-relative URL. Foreign origins are preserved byte-for-byte.
+ */
+export function appendSameOriginDependencyPinningPathKey(
+  url: string,
+  dependencyPinningCacheKey?: string,
+  moduleServerOrigin?: string,
+): string {
+  if (!dependencyPinningCacheKey?.startsWith("on:")) return url;
+
+  if (url.startsWith("/_vf_modules/")) {
+    return appendDependencyPinningPathKey(url, dependencyPinningCacheKey);
+  }
+  if (
+    !moduleServerOrigin ||
+    (!/^https?:\/\//i.test(url) && !url.startsWith("//"))
+  ) {
+    return url;
+  }
+
+  try {
+    const requestOrigin = new URL(moduleServerOrigin);
+    const target = new URL(url, requestOrigin);
+    if (
+      target.origin !== requestOrigin.origin ||
+      !target.pathname.startsWith("/_vf_modules/")
+    ) {
+      return url;
+    }
+
+    return appendDependencyPinningPathKey(
+      `${target.pathname}${target.search}${target.hash}`,
+      dependencyPinningCacheKey,
+    );
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Bind a same-origin absolute module URL to an SSR dependency snapshot.
+ * Foreign origins and flag-off requests are preserved byte-for-byte.
+ */
+export function appendSameOriginSSRDependencyPinningKey(
+  url: string,
+  dependencyPinningCacheKey?: string,
+  moduleServerOrigin?: string,
+): string {
+  if (
+    !dependencyPinningCacheKey?.startsWith("on:") ||
+    !moduleServerOrigin ||
+    (!/^https?:\/\//i.test(url) && !url.startsWith("//"))
+  ) {
+    return url;
+  }
+
+  try {
+    const requestOrigin = new URL(moduleServerOrigin);
+    const target = new URL(url, requestOrigin);
+    if (
+      target.origin !== requestOrigin.origin ||
+      !target.pathname.startsWith("/_vf_modules/")
+    ) {
+      return url;
+    }
+
+    target.searchParams.set("ssr", "true");
+    return appendDependencyPinningKey(target.href, dependencyPinningCacheKey);
+  } catch {
+    return url;
+  }
+}
+
+export interface ExtractedDependencyPinningPath {
+  pathname: string;
+  cacheKey?: string;
+  found: boolean;
+  malformed: boolean;
+}
+
+/**
+ * Remove a dependency snapshot path segment before module classification and
+ * source lookup. The decoded key is validated by the request handler alongside
+ * query-based tokens.
+ */
+export function extractDependencyPinningPathKey(
+  pathname: string,
+): ExtractedDependencyPinningPath {
+  for (const prefix of MODULE_SERVER_PATH_PREFIXES) {
+    const markerPrefix = `${prefix}${DEPENDENCY_PINNING_PATH_MARKER}`;
+    if (!pathname.startsWith(markerPrefix)) continue;
+
+    const encodedKeyAndPath = pathname.slice(markerPrefix.length);
+    const separatorIndex = encodedKeyAndPath.indexOf("/");
+    const encodedKey = separatorIndex === -1
+      ? encodedKeyAndPath
+      : encodedKeyAndPath.slice(0, separatorIndex);
+    const cacheKey = decodeDependencyPinningPathKey(encodedKey);
+    if (!cacheKey) {
+      return { pathname, found: false, malformed: false };
+    }
+    if (separatorIndex === -1) {
+      return { pathname, found: true, malformed: true };
+    }
+
+    const modulePath = encodedKeyAndPath.slice(separatorIndex + 1);
+    if (modulePath.startsWith(DEPENDENCY_PINNING_PATH_MARKER)) {
+      const nestedKeyEnd = modulePath.indexOf(
+        "/",
+        DEPENDENCY_PINNING_PATH_MARKER.length,
+      );
+      const nestedEncodedKey = nestedKeyEnd === -1
+        ? modulePath.slice(DEPENDENCY_PINNING_PATH_MARKER.length)
+        : modulePath.slice(
+          DEPENDENCY_PINNING_PATH_MARKER.length,
+          nestedKeyEnd,
+        );
+      if (decodeDependencyPinningPathKey(nestedEncodedKey)) {
+        return { pathname, found: true, malformed: true };
+      }
+    }
+
+    return {
+      pathname: `${prefix}${modulePath}`,
+      cacheKey,
+      found: true,
+      malformed: false,
+    };
+  }
+
+  return { pathname, found: false, malformed: false };
 }
 
 /**

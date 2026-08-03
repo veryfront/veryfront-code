@@ -71,6 +71,20 @@ describe("DependencyGraph", () => {
     });
   });
 
+  describe("removeModule", () => {
+    it("removes outgoing edges without dropping other modules' incoming edges", () => {
+      const graph = new DependencyGraph();
+      graph.addModule("/entry.ts", ["/shared.ts"]);
+      graph.addModule("/other.ts", ["/entry.ts"]);
+
+      graph.removeModule("/entry.ts");
+
+      expect(graph.getDirectDependencies("/entry.ts")).toEqual([]);
+      expect(graph.getDependents("/shared.ts")).not.toContain("/entry.ts");
+      expect(graph.getDependents("/entry.ts")).toContain("/other.ts");
+    });
+  });
+
   describe("wouldCreateCycle", () => {
     it("should detect potential cycles", () => {
       const graph = new DependencyGraph();

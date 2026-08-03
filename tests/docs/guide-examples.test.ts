@@ -332,7 +332,7 @@ describe("Guide: runs.mdx", () => {
 
     await withMockedFetch(responses, async (calls) => {
       const runs = createRunsClient({
-        apiUrl: "https://api.test.com",
+        apiUrl: "https://93.184.216.34",
         authToken: "test-token",
         projectReference: "dreamy-haven",
       });
@@ -588,10 +588,20 @@ describe("Guide: oauth.mdx", () => {
     // Auth-scoped handlers require a getUserId resolver. In real apps the
     // resolver reads session/JWT; for docs purposes a simple stub suffices.
     const getUserId = () => "user-1";
-    const initHandler = createOAuthInitHandler(githubConfig, { getUserId });
-    const callbackHandler = createOAuthCallbackHandler(githubConfig);
-    const statusHandler = createOAuthStatusHandler(githubConfig, { getUserId });
-    const disconnectHandler = createOAuthDisconnectHandler(githubConfig, { getUserId });
+    const tokenStore = new MemoryTokenStore();
+    const baseUrl = "https://app.example.com";
+    const initHandler = createOAuthInitHandler(githubConfig, {
+      baseUrl,
+      getUserId,
+      tokenStore,
+    });
+    const callbackHandler = createOAuthCallbackHandler(githubConfig, { baseUrl, tokenStore });
+    const statusHandler = createOAuthStatusHandler(githubConfig, { getUserId, tokenStore });
+    const disconnectHandler = createOAuthDisconnectHandler(githubConfig, {
+      baseUrl,
+      getUserId,
+      tokenStore,
+    });
 
     assert(typeof initHandler === "function");
     assert(typeof callbackHandler === "function");
@@ -634,7 +644,11 @@ describe("Guide: oauth.mdx", () => {
       apiBaseUrl: "https://api.provider.com",
     };
 
-    const handler = createOAuthInitHandler(myProvider, { getUserId: () => "user-1" });
+    const handler = createOAuthInitHandler(myProvider, {
+      baseUrl: "https://app.example.com",
+      getUserId: () => "user-1",
+      tokenStore: new MemoryTokenStore(),
+    });
     assert(typeof handler === "function");
   });
 });

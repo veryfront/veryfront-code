@@ -1,4 +1,4 @@
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { isESMModule, loadESMModule } from "./esm-loader.ts";

@@ -7,7 +7,7 @@
  * @module provider/local
  */
 
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const LOCAL_AI_DISABLED_MESSAGE =

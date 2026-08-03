@@ -22,7 +22,7 @@ function hasIncompatibleFilePaths(code: string, localCacheDir: string): boolean 
 
   let match: RegExpExecArray | null;
   while ((match = filePathPattern.exec(code)) !== null) {
-    const path = match[1];
+    const path = match[1]!;
     if (!path.includes("veryfront-http-bundle")) continue;
     if (!path.startsWith(localCacheDir)) return true;
   }
@@ -374,7 +374,7 @@ describe("http-cache utilities", { sanitizeResources: false, sanitizeOps: false 
       const keys = [...url.searchParams.keys()];
 
       for (let i = 1; i < keys.length; i++) {
-        assert(keys[i] >= keys[i - 1]);
+        assert(keys[i]! >= keys[i - 1]!);
       }
     });
 

@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handlePullCommand } from "./handler.ts";
 import { parsePullArgs } from "./command.ts";
+import { parseCliArgs } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
 function createArgs(flags: Record<string, unknown> = {}): ParsedArgs {
@@ -38,11 +39,18 @@ describe("Pull Handler", () => {
       assertEquals(result.data.release, undefined);
       assertEquals(result.data.force, false);
       assertEquals(result.data.dryRun, false);
+      assertEquals(result.data.prune, false);
       assertEquals(result.data.quiet, false);
     });
 
     it("should parse positional project slug", () => {
       const result = parsePullArgs({ _: ["pull", "my-project"] } as ParsedArgs);
+      assertSuccess(result);
+      assertEquals(result.data.projectSlug, "my-project");
+    });
+
+    it("should parse -p as project slug from raw pull argv", () => {
+      const result = parsePullArgs(parseCliArgs(["pull", "-p", "my-project"]));
       assertSuccess(result);
       assertEquals(result.data.projectSlug, "my-project");
     });
@@ -87,6 +95,12 @@ describe("Pull Handler", () => {
       const result = parsePullArgs(createArgs({ "dry-run": true }));
       assertSuccess(result);
       assertEquals(result.data.dryRun, true);
+    });
+
+    it("should parse --prune flag", () => {
+      const result = parsePullArgs(createArgs({ prune: true }));
+      assertSuccess(result);
+      assertEquals(result.data.prune, true);
     });
 
     it("should parse --quiet flag", () => {
@@ -137,6 +151,7 @@ describe("Pull Handler", () => {
         env: "preview",
         force: true,
         "dry-run": true,
+        prune: true,
         quiet: true,
       }));
       assertSuccess(result);
@@ -144,6 +159,7 @@ describe("Pull Handler", () => {
       assertEquals(result.data.env, "preview");
       assertEquals(result.data.force, true);
       assertEquals(result.data.dryRun, true);
+      assertEquals(result.data.prune, true);
       assertEquals(result.data.quiet, true);
     });
 

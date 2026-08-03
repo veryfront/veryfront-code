@@ -41,6 +41,7 @@ one runtime concern. Architecture pages do not duplicate the user guides in
 | [19-integration-runtime.md](./19-integration-runtime.md)                                     | Integration catalog and remote tools           |
 | [20-support-matrix.md](./20-support-matrix.md)                                               | Runtime and capability support matrix          |
 | [21-agent-tool-registration-current-state.md](./21-agent-tool-registration-current-state.md) | Current agent tool and MCP registration review |
+| [22-chat-collection-composition-contract.md](./22-chat-collection-composition-contract.md)   | Chat collection composition and conformance    |
 | [24-context-compaction-current-state.md](./24-context-compaction-current-state.md)           | Current Code and API compaction review         |
 | [27-agent-message-stream-dataflow.md](./27-agent-message-stream-dataflow.md)                 | Agent prompt, stream, tool, and replay flow    |
 

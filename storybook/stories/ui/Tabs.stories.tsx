@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
-import { Tabs, TabsItem } from "../../../src/react/components/chat/ui/index.ts";
+import { Tabs, TabsItem } from "../../../src/react/components/ui/index.ts";
 import {
   DocsCode,
   DocsComposition,
@@ -11,7 +11,7 @@ import {
   DocsSection,
 } from "../../.storybook/docs";
 
-const importCode = `import { Tabs } from "veryfront/chat/ui"`;
+const importCode = `import { Tabs } from "veryfront/ui"`;
 
 const compositionTree = `Tabs              <- Tablist container, manages active state
 +-- TabsItem          <- Individual tab (button or anchor)`;
@@ -115,7 +115,7 @@ function TabsDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/Tabs",
+  title: "UI/Tabs",
   component: Tabs,
   tags: ["autodocs"],
   parameters: {

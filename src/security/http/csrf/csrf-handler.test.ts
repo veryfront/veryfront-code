@@ -17,6 +17,22 @@ function createCtx(csrf?: boolean | Record<string, unknown>): HandlerContext {
 describe("security/http/csrf/csrf-handler", () => {
   const handler = new CsrfHandler();
 
+  describe("Server Actions documentation", () => {
+    it("binds dependency snapshots with the transport header, not application query state", async () => {
+      const source = await Deno.readTextFile(new URL("./csrf-handler.ts", import.meta.url));
+      const exampleStart = source.indexOf("* Example (client-side fetch wrapper):");
+      const exampleEnd = source.indexOf("* @module security/http/csrf/csrf-handler");
+      const example = source.slice(exampleStart, exampleEnd);
+
+      assertEquals(exampleStart >= 0 && exampleEnd > exampleStart, true);
+      assertEquals(
+        example.includes('headers["x-veryfront-dependency-pins"] = pinKey;'),
+        true,
+      );
+      assertEquals(example.includes('searchParams.set("pins"'), false);
+    });
+  });
+
   describe("when CSRF is not configured", () => {
     it("should pass through all requests when securityConfig is null", async () => {
       const ctx = createCtx();
@@ -64,11 +80,12 @@ describe("security/http/csrf/csrf-handler", () => {
       assertEquals(result.continue, true);
     });
 
-    it("should exempt /_veryfront/log", async () => {
+    it("should protect /_veryfront/log", async () => {
       const ctx = createCtx(true);
       const req = new Request("http://localhost/_veryfront/log", { method: "POST" });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, true);
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 403);
     });
 
     it("should NOT exempt /_veryfront/log/subpath", async () => {
@@ -79,11 +96,12 @@ describe("security/http/csrf/csrf-handler", () => {
       assertEquals(result.response?.status, 403);
     });
 
-    it("should exempt /_veryfront/modules/ asset paths", async () => {
+    it("should protect unsafe methods even on internal asset paths", async () => {
       const ctx = createCtx(true);
       const req = new Request("http://localhost/_veryfront/modules/client.js", { method: "POST" });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, true);
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 403);
     });
 
     it("should NOT exempt /_veryfront/rsc/action (Server Actions need CSRF)", async () => {
@@ -100,6 +118,32 @@ describe("security/http/csrf/csrf-handler", () => {
       const result = await handler.handle(req, ctx);
       assertEquals(result.continue, false);
       assertEquals(result.response?.status, 403);
+    });
+
+    it("should apply the resolved CORS and security policy to rejections", async () => {
+      const ctx = createCtx(true);
+      ctx.securityConfig = {
+        csrf: true,
+        cors: {
+          origin: "https://client.example",
+          credentials: true,
+        },
+      };
+      const req = new Request("http://localhost/submit", {
+        method: "POST",
+        headers: { origin: "https://client.example" },
+      });
+
+      const result = await handler.handle(req, ctx);
+
+      assertEquals(result.response?.status, 403);
+      assertEquals(
+        result.response?.headers.get("Access-Control-Allow-Origin"),
+        "https://client.example",
+      );
+      assertEquals(result.response?.headers.get("Access-Control-Allow-Credentials"), "true");
+      assertEquals(result.response?.headers.get("X-Content-Type-Options"), "nosniff");
+      assertEquals(result.response?.headers.get("Cache-Control"), "no-store");
     });
 
     it("should reject PUT without CSRF token", async () => {
@@ -120,6 +164,14 @@ describe("security/http/csrf/csrf-handler", () => {
       const ctx = createCtx(true);
       const req = new Request("http://localhost/resource", { method: "DELETE" });
       const result = await handler.handle(req, ctx);
+      assertEquals(result.response?.status, 403);
+    });
+
+    it("should reject custom methods without CSRF token", async () => {
+      const ctx = createCtx(true);
+      const req = new Request("http://localhost/cache", { method: "PURGE" });
+      const result = await handler.handle(req, ctx);
+      assertEquals(result.continue, false);
       assertEquals(result.response?.status, 403);
     });
 

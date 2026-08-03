@@ -1,59 +1,110 @@
 import { PAGE_TRANSITION_DELAY_MS } from "#veryfront/config";
+import { retireClientHeadOwnership } from "#veryfront/html/client-head-manager.ts";
+import {
+  applyPreparedClientRouteHeadDescriptors,
+  prepareClientRouteHeadEntries,
+  updateRouteMetaTags,
+  updateRouteTitle,
+} from "#veryfront/html/client-route-head.ts";
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 import { rendererLogger } from "#veryfront/utils";
-import { applyHeadDirectives, executeScripts, manageFocus, updateMetaTags } from "./dom-utils.ts";
+import { applyHeadDirectives, manageFocus, routeRequiresDocumentNavigation } from "./dom-utils.ts";
 import type { RouteData } from "./page-loader.ts";
 
 const logger = rendererLogger.component("veryfront");
 
 export class PageTransition {
   private pendingTransitionTimeout?: number;
+  private pendingRoot?: HTMLElement;
 
   constructor(private setupViewportPrefetch: (root: Document | HTMLElement) => void) {}
 
   destroy(): void {
-    if (this.pendingTransitionTimeout === undefined) return;
-    clearTimeout(this.pendingTransitionTimeout);
-    this.pendingTransitionTimeout = undefined;
+    this.cancelPendingTransition();
+  }
+
+  cancelPendingTransition(): void {
+    if (this.pendingTransitionTimeout !== undefined) {
+      clearTimeout(this.pendingTransitionTimeout);
+      this.pendingTransitionTimeout = undefined;
+    }
+    if (this.pendingRoot) {
+      this.pendingRoot.style.opacity = "1";
+      this.pendingRoot = undefined;
+    }
   }
 
   updatePage(data: RouteData, isPopState: boolean, scrollY: number): void {
-    const title = data.frontmatter?.title;
-    if (title) document.title = title;
-
-    updateMetaTags(data.frontmatter ?? {});
+    this.cancelPendingTransition();
+    // A backstop: the loader classifies scripted destinations so the router
+    // hands them to the document loader before reaching a soft transition.
+    if (routeRequiresDocumentNavigation(data)) {
+      throw new TypeError("Scripted routes require a full document navigation");
+    }
 
     const rootElement = document.getElementById("root");
-    if (!rootElement || !data.html) return;
+    const preparedHead = prepareClientRouteHeadEntries(data.managedHead, document);
+    const retainedTitle = document.title;
+    if (!rootElement || data.html === undefined) {
+      retireClientHeadOwnership(document);
+      applyPreparedClientRouteHeadDescriptors(preparedHead, document);
+      this.updateDocumentMetadata(document, data, retainedTitle);
+      return;
+    }
 
-    this.performTransition(rootElement, data, isPopState, scrollY);
+    const trustedHtml = validateTrustedHtml(String(data.html));
+    this.performTransition(
+      rootElement,
+      data,
+      trustedHtml,
+      preparedHead,
+      retainedTitle,
+      isPopState,
+      scrollY,
+    );
+  }
+
+  private updateDocumentMetadata(
+    targetDocument: Document,
+    data: RouteData,
+    retainedTitle: string,
+  ): void {
+    updateRouteTitle(data.frontmatter?.title || retainedTitle, targetDocument);
+    updateRouteMetaTags(data.frontmatter ?? {}, targetDocument);
   }
 
   private performTransition(
     rootElement: HTMLElement,
     data: RouteData,
+    trustedHtml: string,
+    preparedHead: ReturnType<typeof prepareClientRouteHeadEntries>,
+    retainedTitle: string,
     isPopState: boolean,
     scrollY: number,
   ): void {
-    if (this.pendingTransitionTimeout !== undefined) {
-      clearTimeout(this.pendingTransitionTimeout);
-      this.pendingTransitionTimeout = undefined;
-    }
-
     rootElement.style.opacity = "0";
+    this.pendingRoot = rootElement;
 
     this.pendingTransitionTimeout = setTimeout(() => {
       this.pendingTransitionTimeout = undefined;
-
-      // Server-rendered navigation HTML may include framework-managed scripts.
-      rootElement.innerHTML = validateTrustedHtml(String(data.html), { allowInlineScripts: true });
-      rootElement.style.opacity = "1";
-
-      executeScripts(rootElement);
-      applyHeadDirectives(rootElement);
-      this.setupViewportPrefetch(rootElement);
-      manageFocus(rootElement);
-      this.handleScroll(isPopState, scrollY);
+      this.pendingRoot = undefined;
+      try {
+        // Every fallible payload check completed before the old route is
+        // mutated. Scripted routes never enter this soft-transition path.
+        retireClientHeadOwnership(rootElement.ownerDocument);
+        rootElement.innerHTML = trustedHtml;
+        applyHeadDirectives(rootElement);
+        applyPreparedClientRouteHeadDescriptors(preparedHead, rootElement.ownerDocument);
+        this.updateDocumentMetadata(rootElement.ownerDocument, data, retainedTitle);
+        this.setupViewportPrefetch(rootElement);
+        manageFocus(rootElement);
+        this.handleScroll(isPopState, scrollY);
+      } catch (error) {
+        logger.error("Route transition commit failed; reloading the document", error);
+        globalThis.location?.reload();
+      } finally {
+        rootElement.style.opacity = "1";
+      }
     }, PAGE_TRANSITION_DELAY_MS);
   }
 
@@ -85,6 +136,7 @@ export class PageTransition {
 
     errorDiv.append(heading, message, button);
 
+    retireClientHeadOwnership(rootElement.ownerDocument);
     rootElement.innerHTML = "";
     rootElement.appendChild(errorDiv);
   }

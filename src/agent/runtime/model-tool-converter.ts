@@ -7,7 +7,10 @@
  * @module agent/runtime/model-tool-converter
  */
 import type { ToolDefinition } from "#veryfront/tool";
-import { getProviderNativeToolNames } from "./provider-native-tool-inventory.ts";
+import {
+  getProviderNativeToolNames,
+  resolveProviderNativeToolProvider,
+} from "./provider-native-tool-inventory.ts";
 import type { RuntimeToolSet } from "./runtime-tool-types.ts";
 import {
   addRuntimeTool,
@@ -17,6 +20,7 @@ import {
 import {
   createAnthropicWebFetchToolSet,
   createAnthropicWebSearchToolSet,
+  createOpenAIWebSearchToolSet,
 } from "./provider-native-tools.ts";
 import {
   normalizeProviderToolInputSchema,
@@ -47,10 +51,15 @@ function resolveProviderNativeTools(
   }
 
   const toolSet: RuntimeToolSet = {};
+  const provider = resolveProviderNativeToolProvider({ model: options?.model });
   if (allowedProviderNativeToolNames.includes("web_search")) {
-    Object.assign(toolSet, createAnthropicWebSearchToolSet());
+    if (provider === "anthropic") {
+      Object.assign(toolSet, createAnthropicWebSearchToolSet());
+    } else if (provider === "openai") {
+      Object.assign(toolSet, createOpenAIWebSearchToolSet());
+    }
   }
-  if (allowedProviderNativeToolNames.includes("web_fetch")) {
+  if (provider === "anthropic" && allowedProviderNativeToolNames.includes("web_fetch")) {
     Object.assign(toolSet, createAnthropicWebFetchToolSet());
   }
 

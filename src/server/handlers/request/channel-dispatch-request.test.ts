@@ -22,6 +22,11 @@ async function sha256Base64url(body: string): Promise<string> {
 
 async function createDispatchSignature(
   body: string,
+  overrides: Partial<{
+    sub: string;
+    project_id: string;
+    platform: string;
+  }> = {},
 ): Promise<{ jws: string; publicKeyPem: string }> {
   const keyPair = await crypto.subtle.generateKey("Ed25519", true, [
     "sign",
@@ -40,6 +45,7 @@ async function createDispatchSignature(
     body_sha256: await sha256Base64url(body),
     iat: now,
     exp: now + 60,
+    ...overrides,
   }));
   const signingInput = encoder.encode(`${header}.${payload}`);
   const signature = await crypto.subtle.sign("Ed25519", keyPair.privateKey, signingInput);
@@ -66,7 +72,13 @@ function createCtx(publicKeyPem?: string): HandlerContext {
   } as unknown as HandlerContext;
 }
 
-function createValidBody(): string {
+function createValidBody(
+  overrides: Partial<{
+    dispatchId: string;
+    projectId: string;
+    platform: "slack";
+  }> = {},
+): string {
   return JSON.stringify({
     dispatchId: "dispatch-1",
     conversationId: "conversation-1",
@@ -80,6 +92,7 @@ function createValidBody(): string {
       isDirectMessage: false,
     },
     conversationHistory: [],
+    ...overrides,
   });
 }
 
@@ -114,6 +127,46 @@ describe("server/handlers/request/channel-dispatch-request", () => {
       assertEquals(result.claims.sub, "dispatch-1");
     }
   });
+
+  for (
+    const mismatch of [
+      {
+        label: "dispatch subject",
+        body: {},
+        claims: { sub: "different-dispatch" },
+      },
+      {
+        label: "project identity",
+        body: { projectId: "different-project" },
+        claims: {},
+      },
+      {
+        label: "platform",
+        body: {},
+        claims: { platform: "different-platform" },
+      },
+    ] as const
+  ) {
+    it(`rejects a signed body whose ${mismatch.label} disagrees with its claims`, async () => {
+      const body = createValidBody(mismatch.body);
+      const { jws, publicKeyPem } = await createDispatchSignature(body, mismatch.claims);
+
+      const result = await readFixture(
+        new Request("https://example.com/channels/invoke", {
+          method: "POST",
+          headers: { "x-veryfront-dispatch-jws": jws },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+
+      assertEquals(result.ok, false);
+      if (!result.ok) {
+        assertEquals(result.response.status, 401);
+        assertEquals(await result.response.json(), { error: "Invalid dispatch signature" });
+      }
+    });
+  }
 
   it("preserves the shared setup error responses", async () => {
     const missingKey = await readFixture(

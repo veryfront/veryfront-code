@@ -1,5 +1,5 @@
 /**
- * Source-defined schedules for Veryfront projects.
+ * Source-defined recurring schedules for Veryfront projects.
  *
  * @module schedule
  *
@@ -13,12 +13,22 @@
  *   timezone: "Europe/Stockholm",
  *   target: { kind: "workflow", id: "escalate-ticket" },
  *   input: { severity: "high" },
+ *   health: { maxStalenessSeconds: 1800 },
  * });
  * ```
  */
 
 export { schedule } from "./factory.ts";
-export type { ScheduleConcurrencyPolicy, ScheduleConfig, ScheduleDefinition } from "./types.ts";
+export type {
+  ScheduleConcurrencyPolicy,
+  ScheduleConfig,
+  ScheduleDefinition,
+  ScheduleHealth,
+  ScheduleIntegrationRequirement,
+  ScheduleIntegrationRequirementConfig,
+  ScheduleIntegrationResource,
+  ScheduleIntegrationResourceIdentity,
+} from "./types.ts";
 export { isScheduleDefinition } from "./types.ts";
 export { discoverSchedules } from "./discovery.ts";
 export type { ScheduleDiscoveryOptions, ScheduleDiscoveryResult } from "./discovery.ts";

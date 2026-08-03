@@ -6,6 +6,7 @@
  ******************/
 
 import { RESET } from "./ansi.ts";
+import { BRAND_TRUECOLOR } from "./colors.ts";
 
 export const AGENT_FACE: number[][] = [
   [0, 0, 0, 0, 0, 0, 0],
@@ -63,10 +64,10 @@ const COMPACT_OPTIONS: Partial<DotMatrixOptions> = {
 };
 
 const SPIN_COLORS = {
-  bright: "\x1b[38;2;255;165;120m",
-  orange: "\x1b[38;2;252;143;93m",
-  mid: "\x1b[38;2;200;110;70m",
-  dim: "\x1b[38;2;140;80;50m",
+  bright: "\x1b[38;2;255;211;188m",
+  orange: BRAND_TRUECOLOR,
+  mid: "\x1b[38;2;196;133;100m",
+  dim: "\x1b[38;2;140;91;68m",
 };
 
 function resolveOptions(options: DotMatrixOptions): Required<DotMatrixOptions> {

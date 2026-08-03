@@ -1,16 +1,36 @@
 import type { Route } from "./types.ts";
 
+const ROUTE_PARAMETER_PATTERN = /\[\[\.\.\.(\w+)\]\]|\[\.\.\.(\w+)\]|\[(\w+)\]/g;
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export function parseRoute(pattern: string, page: string): Route {
   const paramNames: string[] = [];
   let isCatchAll = false;
   let isOptionalCatchAll = false;
+  let regexPattern = "";
+  let cursor = 0;
 
-  for (const match of pattern.matchAll(/\[\[\.\.\.(\w+)\]\]|\[\.\.\.(\w+)\]|\[(\w+)\]/g)) {
+  for (const match of pattern.matchAll(ROUTE_PARAMETER_PATTERN)) {
+    const matchIndex = match.index;
+    const matchedText = match[0];
+    let literal = pattern.slice(cursor, matchIndex);
     const optionalCatchAll = match[1];
     if (optionalCatchAll) {
       paramNames.push(optionalCatchAll);
       isOptionalCatchAll = true;
       isCatchAll = true;
+      const isTrailingSegment = matchIndex + matchedText.length === pattern.length &&
+        literal.endsWith("/");
+      if (isTrailingSegment) {
+        literal = literal.slice(0, -1);
+        regexPattern += `${escapeRegex(literal)}(?:/(.*))?`;
+      } else {
+        regexPattern += `${escapeRegex(literal)}(.*)`;
+      }
+      cursor = matchIndex + matchedText.length;
       continue;
     }
 
@@ -18,25 +38,20 @@ export function parseRoute(pattern: string, page: string): Route {
     if (catchAll) {
       paramNames.push(catchAll);
       isCatchAll = true;
+      regexPattern += `${escapeRegex(literal)}(.+)`;
+      cursor = matchIndex + matchedText.length;
       continue;
     }
 
     const param = match[3];
-    if (param) paramNames.push(param);
+    if (param) {
+      paramNames.push(param);
+      regexPattern += `${escapeRegex(literal)}([^/]+)`;
+      cursor = matchIndex + matchedText.length;
+    }
   }
 
-  let regexPattern = pattern
-    .replace(/\[\[\.\.\.(\w+)\]\]/g, "___OPTIONAL_CATCHALL___")
-    .replace(/\[\.\.\.(\w+)\]/g, "___CATCHALL___")
-    .replace(/\[(\w+)\]/g, "___PARAM___")
-    .replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")
-    .replace(/___OPTIONAL_CATCHALL___/g, "(.*)")
-    .replace(/___CATCHALL___/g, "(.+)")
-    .replace(/___PARAM___/g, "([^/]+)");
-
-  if (isOptionalCatchAll) {
-    regexPattern = regexPattern.replace(/\\\/\(\.\*\)$/, "(?:\\/(.*))?");
-  }
+  regexPattern += escapeRegex(pattern.slice(cursor));
 
   return {
     pattern,

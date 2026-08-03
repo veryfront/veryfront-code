@@ -287,7 +287,6 @@ const IMPORT_PRIORITY: Record<string, string[]> = {
     "waitForApproval",
     "createWorkflowClient",
   ],
-  "veryfront/work": ["work", "workRegistry"],
   "veryfront/prompt": ["prompt", "promptRegistry"],
   "veryfront/resource": ["resource", "resourceRegistry"],
   "veryfront/mcp": [
@@ -407,14 +406,12 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
 
   "veryfront/chat": {
     Chat: "Full chat UI (messages + input)",
-    ChatComponents: "Compound components for custom layouts",
     ChatHeader: "Chat header section",
     ChatMessages: "Scrollable message list",
     ModelSelector: "Dropdown for switching models at runtime",
     ChatInput: "Text input with send button",
     ChatFooter: "Chat footer section",
     Message: "Chat message bubble",
-    StreamingMessage: "Incrementally rendered message",
     AgentCard: "Agent status, tool calls, and messages",
     AIErrorBoundary: "Error boundary with retry",
     useChat:
@@ -426,7 +423,6 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     useAIErrorHandler: "Programmatic AI error handler",
     ChatProps: "`<Chat>` props",
     MessageProps: "`<Message>` props",
-    StreamingMessageProps: "`<StreamingMessage>` props",
     AgentCardProps: "`<AgentCard>` props",
     AIErrorBoundaryProps: "`<AIErrorBoundary>` props",
     ChatTheme: "Theme System for Styled Components",
@@ -588,16 +584,6 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     WorkflowContext: "Step runtime context",
   },
 
-  "veryfront/work": {
-    work: "Define source-backed Work outcome",
-    workRegistry: "Project-scoped Work registry",
-    WorkDefinition: "`work()` return type",
-    WorkConfig: "`work()` config",
-    WorkExpectation: "Outcome expectation",
-    WorkAcceptanceCriterion: "Deprecated alias for WorkExpectation",
-    WorkReference: "Agent Work reference",
-  },
-
   "veryfront/prompt": {
     prompt: "Create MCP-discoverable prompt",
     promptRegistry: "Global prompt registry",
@@ -624,8 +610,6 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     MCPServerConfig: "`createMCPServer()` config",
     MCPStats: "Registry statistics",
     MCPTool: "MCP-exposed tool",
-    IntegrationLoaderConfig:
-      "Configuration for loading integration tools into MCP",
   },
 
   "veryfront/middleware": {
@@ -767,8 +751,6 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     IntegrationMCPConfig: "Configuration for registering integrations into MCP",
     IntegrationName: "Union type of valid integration name literals",
     IntegrationPrompt: "Predefined prompt template for integration use",
-    IntegrationRuntimeConfig:
-      "Per-user settings and tool allowlist for integration",
     IntegrationTool: "Integration tool with endpoint execution spec",
     IntegrationToolMeta: "Tool metadata: name, description, write requirements",
     OAuthConfig: "OAuth/API key authentication type and parameters",
@@ -814,6 +796,7 @@ const API_REFERENCE_INDEX_DESCRIPTIONS: Record<string, string> = {
   "veryfront/fonts": "Font components.",
   "veryfront/fs": "Filesystem and path utilities.",
   "veryfront/head": "Document metadata components.",
+  "veryfront/index.client": "Client and SSR-safe root helpers.",
   "veryfront/integrations": "Connector metadata and remote tools.",
   "veryfront/knowledge": "Project knowledge retrieval helpers.",
   "veryfront/runs": "Canonical durable task and workflow runs.",
@@ -832,8 +815,9 @@ const API_REFERENCE_INDEX_DESCRIPTIONS: Record<string, string> = {
   "veryfront/server": "Server runtime helpers.",
   "veryfront/testing": "Test utilities.",
   "veryfront/tool": "Tool definitions and execution.",
+  "veryfront/ui":
+    "UI primitives - the base layer for veryfront/chat components.",
   "veryfront/utils": "Runtime utilities.",
-  "veryfront/work": "Business process outcome definitions.",
   "veryfront/workflow": "Workflows.",
 };
 
@@ -1001,7 +985,23 @@ function parseBarrelJSDoc(content: string): BarrelJSDoc {
 }
 
 function normalizePublicDocText(text: string): string {
-  return text
+  const withoutInlineJsDocLinks = text.replace(
+    /\{@(?:link|linkcode|linkplain)\s+([^}]+)\}/g,
+    (_match, rawTarget: string) => {
+      const target = rawTarget.trim();
+      const pipeIndex = target.indexOf("|");
+      const display = pipeIndex >= 0
+        ? target.slice(pipeIndex + 1).trim()
+        : target.match(/^\S+\s+(.+)$/)?.[1]?.trim() || target;
+      return `\`${display.replace(/`/g, "\\`")}\``;
+    },
+  );
+
+  return withoutInlineJsDocLinks
+    .replace(/`[^`]*`|[<>]/g, (token) => {
+      if (token.startsWith("`")) return token;
+      return token === "<" ? "&lt;" : "&gt;";
+    })
     .replace(/[\u2013\u2014]/g, "-")
     .replace(/\s+/g, " ")
     .trim();
@@ -1439,7 +1439,8 @@ function getSourceHref(location: DenoDocLocation | undefined): string {
   if (!relativePath) return "";
 
   const lineNumber = location?.line;
-  const line = typeof lineNumber === "number" && lineNumber > 0
+  // `deno doc --json` reports one-based source lines, matching GitHub anchors.
+  const line = typeof lineNumber === "number" && lineNumber >= 1
     ? `#L${lineNumber}`
     : "";
   return `${SOURCE_BASE_URL}/${relativePath}${line}`;
@@ -1502,6 +1503,20 @@ function pushNodeSummary(
   description: string,
   sourceHref: string,
 ): void {
+  const existing = target.find((summary) => summary.name === name);
+  if (existing) {
+    if (!existing.description && description) {
+      existing.description = description;
+    }
+    if (
+      sourceHref &&
+      (!existing.sourceHref ||
+        (!existing.sourceHref.includes("#L") && sourceHref.includes("#L")))
+    ) {
+      existing.sourceHref = sourceHref;
+    }
+    return;
+  }
   target.push({ name, description, sourceHref });
 }
 
@@ -1646,9 +1661,27 @@ interface APIDocs {
 
 const API_DOCS: Record<string, APIDocs> = {
   "veryfront/agent": {
-    functions: { agent: { configType: "AgentConfig" } },
-    methods: { Agent: "Agent instance" },
-    expandTypes: ["AgentConfig", "MemoryConfig", "EdgeConfig"],
+    functions: {
+      agent: { configType: "AgentConfig" },
+      createHostedRunEventWriterCapability: {},
+    },
+    methods: {
+      Agent: "Agent instance",
+      HostedRunEventWriterCapability: "Exact-run event-writer authority",
+    },
+    expandTypes: [
+      "AgentConfig",
+      "MemoryConfig",
+      "EdgeConfig",
+      "ParsedHostedChatRequest",
+      "PrepareHostedConversationRootRunContextInput",
+      "HostedDurableChildForkRunContextInput",
+      "ExecuteHostedChildForkWithPreparedToolsInput",
+      "ExecuteHostedDurableChildForkInput",
+      "DefaultHostedInvokeAgentToolOptions",
+      "HostedDurableRunStartExecutionInput",
+      "HostedAgentServiceDetachedExecutionInput",
+    ],
   },
   "veryfront/tool": {
     functions: { tool: { configType: "ToolConfig" } },
@@ -1665,10 +1698,6 @@ const API_DOCS: Record<string, APIDocs> = {
   "veryfront/workflow": {
     functions: { workflow: { configType: "WorkflowOptions" } },
     expandTypes: ["StepOptions", "BranchOptions", "ParallelOptions"],
-  },
-  "veryfront/work": {
-    functions: { work: { configType: "WorkConfig" } },
-    expandTypes: ["WorkConfig", "WorkExpectation", "WorkAcceptanceCriterion"],
   },
   "veryfront/middleware": {
     methods: { MiddlewarePipeline: "Composable middleware chain" },
@@ -1774,11 +1803,13 @@ const METHOD_DESCRIPTIONS: Record<
       },
     },
     executeCommand: {
-      desc: "Execute a command and return buffered stdout/stderr + exit code.",
+      desc:
+        "Execute a bash command in the sandbox and return buffered stdout/stderr plus the exit code.",
       params: { command: "Bash command string to execute in the sandbox." },
     },
     executeStream: {
-      desc: "Execute a command and stream output events as they arrive.",
+      desc:
+        "Execute a bash command in the sandbox and stream newline-delimited JSON (NDJSON) output events as they arrive.",
       params: { command: "Bash command string to execute in the sandbox." },
     },
     readFile: {
@@ -1807,7 +1838,8 @@ const METHOD_DESCRIPTIONS: Record<
       params: { pattern: "URL pattern to match", "": "Middleware handler" },
     },
     onTeardown: {
-      desc: "Register a cleanup callback that runs after the response is sent.",
+      desc:
+        "Register a cleanup callback that runs once per request after each `execute()`/`handle()` response body closes, is canceled, or errors. Bodyless, locked, or already-read responses and handler/middleware exceptions clean up before the call resolves.",
       params: { cb: "Cleanup callback" },
     },
     compose: {
@@ -1823,7 +1855,8 @@ const METHOD_DESCRIPTIONS: Record<
       },
     },
     teardown: {
-      desc: "Run all registered teardown callbacks.",
+      desc:
+        "Drain and discard all registered teardown callbacks. Unlike the per-request cleanup run by `execute()` / `handle()`, this clears callbacks so they never run again.",
     },
     getMiddleware: {
       desc: "List registered middleware with metadata.",
@@ -1846,7 +1879,7 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     allowedModels:
       'Restrict runtime model overrides to these "provider/model" strings',
     skills:
-      "Enable all discovered skills (`true`) or only selected skill IDs (`string[]`)",
+      "Select visible skill IDs or this agent's own short names for prompts and `load_skill`",
   },
   SandboxOptions: {
     apiUrl:
@@ -2091,10 +2124,7 @@ function oneLineDoc(doc: string): string {
     lines.push(line);
   }
 
-  return lines.join(" ")
-    .replace(/[\u2014\u2013]/g, "-")
-    .replace(/\s+/g, " ")
-    .trim();
+  return normalizePublicDocText(lines.join(" "));
 }
 
 function renderPropertyTable(
@@ -2200,10 +2230,9 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
           );
           lines.push("");
 
-          // Method description: upstream JSDoc first, then curated fallback
-          const methodDesc = method.jsDoc?.doc
-            ? oneLineDoc(method.jsDoc.doc)
-            : methodMeta[method.name]?.desc ?? "";
+          // Method description: curated public copy first, then upstream JSDoc.
+          const methodDesc = methodMeta[method.name]?.desc ??
+            (method.jsDoc?.doc ? oneLineDoc(method.jsDoc.doc) : "");
           if (methodDesc) {
             lines.push(methodDesc);
             lines.push("");
@@ -2275,9 +2304,8 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
           lines.push(`### \`${signature}\``);
           lines.push("");
 
-          const methodDesc = method.jsDoc?.doc
-            ? oneLineDoc(method.jsDoc.doc)
-            : methodMeta[method.name]?.desc ?? "";
+          const methodDesc = methodMeta[method.name]?.desc ??
+            (method.jsDoc?.doc ? oneLineDoc(method.jsDoc.doc) : "");
           if (methodDesc) {
             lines.push(methodDesc);
             lines.push("");
@@ -2557,7 +2585,11 @@ function generateMD(
       lines.push("| Name | Description | Source |");
       lines.push("|------|-------------|--------|");
       for (const e of items) {
-        lines.push(`| \`${e.name}\` | ${e.description} | ${sourceCell(e)} |`);
+        lines.push(
+          `| \`${e.name}\` | ${escapeMarkdownTableCell(e.description)} | ${
+            sourceCell(e)
+          } |`,
+        );
       }
       lines.push("");
     }
@@ -2580,9 +2612,11 @@ function generateMD(
       }
       lines.push("```ts");
       const sample = pickDeepImportSample(di.exports);
-      if (sample.length > 0) {
+      if (sample.names.length > 0) {
         lines.push(
-          `import { ${sample.join(", ")} } from "${di.deep.importPath}";`,
+          `import${sample.typeOnly ? " type" : ""} { ${
+            sample.names.join(", ")
+          } } from "${di.deep.importPath}";`,
         );
       } else {
         lines.push(`import "${di.deep.importPath}";`);
@@ -2605,9 +2639,9 @@ function generateMD(
         lines.push("|------|-------------|--------|");
         for (const item of items) {
           lines.push(
-            `| \`${item.name}\` | ${item.description || ""} | ${
-              sourceCell(item)
-            } |`,
+            `| \`${item.name}\` | ${
+              escapeMarkdownTableCell(item.description)
+            } | ${sourceCell(item)} |`,
           );
         }
         lines.push("");
@@ -2618,18 +2652,30 @@ function generateMD(
   return lines.join("\n");
 }
 
-function pickDeepImportSample(exports: CategorizedExports): string[] {
-  const all = [
+function pickDeepImportSample(
+  exports: CategorizedExports,
+): { names: string[]; typeOnly: boolean } {
+  const runtime = [
     ...exports.functions,
     ...exports.components,
     ...exports.classes,
     ...exports.constants,
   ].map((e) => e.name);
-  return all.slice(0, 3);
+  if (runtime.length > 0) {
+    return { names: runtime.slice(0, 3), typeOnly: false };
+  }
+  return {
+    names: exports.types.map((entry) => entry.name).slice(0, 3),
+    typeOnly: true,
+  };
 }
 
 function sourceCell(summary: ExportSummary): string {
   return summary.sourceHref ? `[source](${summary.sourceHref})` : "";
+}
+
+function escapeMarkdownTableCell(value: string): string {
+  return value.replaceAll("|", "\\|");
 }
 
 // ---------------------------------------------------------------------------

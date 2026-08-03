@@ -1,6 +1,8 @@
 import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "../../schemas/define.ts";
 import { lazySchema } from "../../schemas/lazy.ts";
+import { CONFIG_INVALID, NETWORK_ERROR } from "#veryfront/errors";
+import { computeHash } from "#veryfront/utils";
 
 /** Public API contract for agent service registration mode. */
 export type AgentServiceRegistrationMode = "auto" | "enabled" | "disabled";
@@ -241,11 +243,7 @@ async function stableServiceKey(input: {
     input.baseUrl,
     input.podIdentity ?? "no-pod-identity",
   ].join("|");
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(keySource));
-  const hash = Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("")
-    .slice(0, 32);
+  const hash = (await computeHash(keySource)).slice(0, 32);
   return `${input.serviceName}:${hash}`.slice(0, 128);
 }
 
@@ -254,7 +252,9 @@ function requireExplicitRegistrationValue(
   envName: string,
 ): string {
   if (!value) {
-    throw new Error(`${envName} is required when VERYFRONT_AGENT_SERVICE_REGISTRATION=enabled`);
+    throw CONFIG_INVALID.create({
+      detail: `${envName} is required when VERYFRONT_AGENT_SERVICE_REGISTRATION=enabled`,
+    });
   }
   return value;
 }
@@ -315,7 +315,9 @@ async function readAgentPushRuntimeServiceResponse(
   response: Response,
 ): Promise<AgentPushRuntimeServiceRest> {
   if (!response.ok) {
-    throw new Error(`Agent runtime registration request failed with HTTP ${response.status}`);
+    throw NETWORK_ERROR.create({
+      detail: `Agent runtime registration request failed with HTTP ${response.status}`,
+    });
   }
 
   const parsed = agentPushRuntimeServiceResponseSchema.parse(await response.json());
@@ -389,12 +391,27 @@ export async function createAgentServiceRegistrationLifecycle(
     }, fetchImpl);
   };
 
+  let consecutiveHeartbeatFailures = 0;
+
   const interval = setInterval(() => {
-    void heartbeat().catch((error: unknown) => {
-      options.logger?.warn?.("Agent service heartbeat failed", {
-        serviceId: service.id,
-        error: getErrorMessage(error),
-      });
+    void heartbeat().then(() => {
+      consecutiveHeartbeatFailures = 0;
+    }).catch((error: unknown) => {
+      consecutiveHeartbeatFailures++;
+      // Escalate from warn to error after repeated failures — persistent heartbeat
+      // loss means the control plane considers this service dead while it keeps running.
+      if (consecutiveHeartbeatFailures >= 3) {
+        options.logger?.error?.("Agent service heartbeat failing persistently", {
+          serviceId: service.id,
+          consecutiveFailures: consecutiveHeartbeatFailures,
+          error: getErrorMessage(error),
+        });
+      } else {
+        options.logger?.warn?.("Agent service heartbeat failed", {
+          serviceId: service.id,
+          error: getErrorMessage(error),
+        });
+      }
     });
   }, input.heartbeatIntervalMs);
 

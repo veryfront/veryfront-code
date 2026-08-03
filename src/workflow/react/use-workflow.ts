@@ -179,6 +179,9 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
       if (
         currentStatus === "completed" || currentStatus === "failed" || currentStatus === "cancelled"
       ) {
+        // Terminal: stop polling entirely instead of firing forever until the
+        // component unmounts.
+        clearInterval(intervalId);
         return;
       }
 

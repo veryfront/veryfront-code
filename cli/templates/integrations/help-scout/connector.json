@@ -39,7 +39,7 @@
   ],
   "tools": [
     {
-      "id": "list_mailboxes",
+      "id": "help-scout__list_mailboxes",
       "name": "List Mailboxes",
       "description": "List Help Scout mailboxes (inboxes) so agents can find a mailbox ID before reading conversations",
       "requiresWrite": false,
@@ -60,7 +60,7 @@
       }
     },
     {
-      "id": "list_conversations",
+      "id": "help-scout__list_conversations",
       "name": "List Conversations",
       "description": "List Help Scout conversations, optionally filtered by mailbox, status, tag, or assignee",
       "requiresWrite": false,
@@ -121,7 +121,7 @@
       }
     },
     {
-      "id": "get_conversation",
+      "id": "help-scout__get_conversation",
       "name": "Get Conversation",
       "description": "Get a Help Scout conversation by ID, including its message threads",
       "requiresWrite": false,
@@ -145,7 +145,7 @@
       }
     },
     {
-      "id": "list_customers",
+      "id": "help-scout__list_customers",
       "name": "List Customers",
       "description": "List Help Scout customers, optionally filtered by mailbox, name, or a search query",
       "requiresWrite": false,
@@ -196,7 +196,7 @@
       }
     },
     {
-      "id": "list_users",
+      "id": "help-scout__list_users",
       "name": "List Users",
       "description": "List Help Scout users (team members) so agents can find user IDs for assignment and reply attribution",
       "requiresWrite": false,
@@ -227,7 +227,7 @@
       }
     },
     {
-      "id": "add_note",
+      "id": "help-scout__add_note",
       "name": "Add Note",
       "description": "Add an internal note to a conversation - visible to the team only, never emailed to the customer",
       "requiresWrite": true,
@@ -256,7 +256,7 @@
       }
     },
     {
-      "id": "update_tags",
+      "id": "help-scout__update_tags",
       "name": "Update Tags",
       "description": "Replace the tag list of a conversation, e.g. to label it during triage. Send the full list: tags omitted from the payload are removed.",
       "requiresWrite": true,
@@ -281,7 +281,7 @@
       }
     },
     {
-      "id": "create_reply",
+      "id": "help-scout__create_reply",
       "name": "Reply to Conversation",
       "description": "Send a reply on an existing Help Scout conversation, optionally changing its status",
       "requiresWrite": true,
@@ -331,7 +331,7 @@
       }
     },
     {
-      "id": "create_conversation",
+      "id": "help-scout__create_conversation",
       "name": "Create Conversation",
       "description": "Create a new Help Scout conversation in a mailbox with an initial thread",
       "requiresWrite": true,

@@ -1,6 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertInstanceOf, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { AG_UI_MAX_REQUEST_BODY_BYTES } from "./request-shared.ts";
 import {
   createAgUiRunErrorEvent,
   createAgUiSseErrorResponse,
@@ -135,6 +141,21 @@ describe("agent/ag-ui-host-support", () => {
     const body = await result.json();
     assertEquals(body.error, "Invalid AG-UI request");
     assertEquals(body.details, [{ path: [], message: "Malformed JSON request body" }]);
+  });
+
+  it("returns 413 before parsing an oversized AG-UI request", async () => {
+    const request = new Request("http://localhost/api/ag-ui", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ padding: "x".repeat(AG_UI_MAX_REQUEST_BODY_BYTES) }),
+    });
+
+    const result = await parseAgUiRequestOrError(request);
+
+    assertInstanceOf(result, Response);
+    assertEquals(result.status, 413);
+    const body = await result.json();
+    assertEquals(body.error, "Invalid AG-UI request");
   });
 
   it("normalizes text, tool-call, and tool-result parts through the public helper", () => {
@@ -524,6 +545,21 @@ describe("agent/ag-ui-host-support", () => {
     assertStringIncludes(body, "event: RunError");
     assertStringIncludes(body, '"code":"OVERLOADED_ERROR"');
     assertStringIncludes(body, "Overloaded right now");
+  });
+
+  it("rejects invalid public AG-UI event names before constructing an SSE response", () => {
+    assertThrows(
+      () =>
+        createAgUiSseErrorResponse(
+          {
+            event: "RunError\ndata: forged\n\nevent: Forged",
+            payload: { message: "original" },
+          },
+          400,
+        ),
+      TypeError,
+      "AG-UI event names",
+    );
   });
 
   it("creates AG-UI SSE responses with the standard stream headers", () => {

@@ -1,9 +1,14 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { CONFIG_INVALID, INITIALIZATION_ERROR, INVALID_ARGUMENT } from "#veryfront/errors";
+import { agentLogger } from "#veryfront/utils";
 import { streamDataStreamEvents } from "../streaming/data-stream.ts";
 import { getAgUiRequestSchema, normalizeAgUiMessages } from "./host-support.ts";
-import { extractRequest } from "./request-shared.ts";
+import {
+  createAgUiBodyLimitErrorResponse,
+  extractRequest,
+  parseAgUiJsonBody,
+} from "./request-shared.ts";
 import { type AgUiResumeValue, buildMergedAgUiTools } from "./tool-shared.ts";
 import {
   AgentRuntime,
@@ -12,6 +17,7 @@ import {
 } from "../runtime/index.ts";
 import type { Agent } from "../types.ts";
 import type { ChatUiMessage, MessageMetadata } from "#veryfront/chat/types.ts";
+import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const getAgUiDetachedRunIdSchema = defineSchema((v) =>
@@ -297,7 +303,11 @@ export async function executeAgUiDetachedStart(
   input: ExecuteAgUiDetachedStartInput,
 ): Promise<Response> {
   const rawRequest = assertDetachedStartRawRequest(options, input);
-  const context = await resolveDetachedStartContext(options, input);
+  const applicationRequest = rawRequest ? createApplicationRequest(rawRequest) : undefined;
+  const context = await resolveDetachedStartContext(options, {
+    ...input,
+    rawRequest: applicationRequest,
+  });
 
   try {
     const abortSignal = options.sessionManager.startRun({
@@ -316,8 +326,8 @@ export async function executeAgUiDetachedStart(
         if (options.startDetachedExecution) {
           await options.startDetachedExecution({
             request: input.request,
-            requestOrCtx: input.requestOrCtx,
-            rawRequest: rawRequest!,
+            requestOrCtx: applicationRequest,
+            rawRequest: applicationRequest!,
             context,
             abortSignal,
           });
@@ -330,9 +340,9 @@ export async function executeAgUiDetachedStart(
             sessionManager: options.sessionManager,
           });
         } else {
-          throw new Error(
-            "Detached AG-UI start configuration became invalid during execution.",
-          );
+          throw INITIALIZATION_ERROR.create({
+            detail: "Detached AG-UI start configuration became invalid during execution.",
+          });
         }
 
         options.sessionManager.completeRun(input.request.runId);
@@ -348,7 +358,15 @@ export async function executeAgUiDetachedStart(
           error,
         });
       }
-    })().catch(() => undefined);
+    })().catch((error) => {
+      // The inner try/catch handles all expected errors (execution failure, onError, failRun).
+      // Reaching here means the session manager or onError callback itself threw — log so
+      // the broken error-reporting pipeline is visible and the run is not silently abandoned.
+      agentLogger.error(
+        "[detachedStart] Unexpected error escaped inner error handler for run",
+        { runId: input.request.runId, error },
+      );
+    });
 
     scheduleDetachedTask(input.requestOrCtx, detachedTask);
 
@@ -390,22 +408,31 @@ export function createAgUiDetachedStartHandler(
   options: AgUiDetachedStartHandlerOptions,
 ): (requestOrCtx: unknown) => Promise<Response> {
   if (!options.agent && !options.startDetachedExecution) {
-    throw new Error(
-      "Detached AG-UI start requires either an agent or startDetachedExecution handler.",
-    );
+    throw CONFIG_INVALID.create({
+      detail: "Detached AG-UI start requires either an agent or startDetachedExecution handler.",
+    });
   }
 
   return async function POST(requestOrCtx: unknown): Promise<Response> {
     const request = extractRequest(requestOrCtx);
+    const applicationRequest = createApplicationRequest(request);
 
     try {
-      const parsed = getAgUiDetachedStartRequestSchema().parse(await request.json());
+      const parsed = getAgUiDetachedStartRequestSchema().parse(
+        await parseAgUiJsonBody(applicationRequest),
+      );
       return await executeAgUiDetachedStart(options, {
         request: parsed,
         rawRequest: request,
         requestOrCtx,
       });
     } catch (error) {
+      const bodyLimitError = createAgUiBodyLimitErrorResponse(
+        error,
+        "Invalid AG-UI detached start request",
+      );
+      if (bodyLimitError) return bodyLimitError;
+
       if (
         error instanceof Error &&
         "issues" in error &&

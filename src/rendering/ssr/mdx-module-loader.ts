@@ -1,5 +1,5 @@
 import { getCacheNamespace } from "#veryfront/utils/cache/keys/namespace.ts";
-import { COMPILATION_ERROR, wrapWithContext } from "#veryfront/errors/index.ts";
+import { COMPILATION_ERROR, wrapWithContext } from "#veryfront/errors";
 // Direct import from registry.ts to avoid circular dependency through barrel
 import { getLocalAdapter, runtime } from "#veryfront/platform/adapters/registry.ts";
 import { rendererLogger } from "#veryfront/utils";

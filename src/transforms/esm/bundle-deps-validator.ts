@@ -7,13 +7,20 @@
  * @module transforms/esm/bundle-deps-validator
  */
 
-import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { httpBundleCache } from "./http-cache-wrapper.ts";
 import { unbrand } from "./http-cache-types.ts";
 import { extractSourceUrl } from "./source-url-embed.ts";
 import { ensureAbsoluteDir, hasIncompatibleFilePaths } from "./http-cache-helpers.ts";
+import {
+  isHttpBundleCodeWithinLimit,
+  isValidHttpBundleHash,
+  MAX_HTTP_BUNDLE_GRAPH_ENTRIES,
+  readCachedHttpBundleFile,
+} from "./http-bundle-file.ts";
+import { isDegradedArtifact } from "./degraded-artifact.ts";
 
 const logger = rendererLogger.component("http-cache");
 
@@ -26,22 +33,24 @@ export function extractBundleDeps(code: string): Array<{ path: string; hash: str
   const seen = new Set<string>();
 
   // Match absolute file:// paths (legacy format)
-  const absolutePattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-(\d+)\.mjs)/gi;
+  const absolutePattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
   let match: RegExpExecArray | null;
   while ((match = absolutePattern.exec(code)) !== null) {
     const hash = match[2]!;
     if (seen.has(hash)) continue;
     seen.add(hash);
     deps.push({ path: match[1]!, hash });
+    if (deps.length > MAX_HTTP_BUNDLE_GRAPH_ENTRIES) return deps;
   }
 
   // Match relative paths (new portable format): ./http-{hash}.mjs
-  const relativePattern = /["']\.\/http-(\d+)\.mjs["']/gi;
+  const relativePattern = /["']\.\/http-([a-f0-9]+)\.mjs["']/gi;
   while ((match = relativePattern.exec(code)) !== null) {
     const hash = match[1]!;
     if (seen.has(hash)) continue;
     seen.add(hash);
     deps.push({ path: `http-${hash}.mjs`, hash });
+    if (deps.length > MAX_HTTP_BUNDLE_GRAPH_ENTRIES) return deps;
   }
 
   return deps;
@@ -63,36 +72,52 @@ export async function validateBundleDepsExist(
   const pending = [...deps];
 
   while (pending.length > 0) {
-    const batch = pending.splice(0, pending.length).filter((d) => !seen.has(d.hash));
+    const batchByHash = new Map<string, { path: string; hash: string }>();
+    for (const dependency of pending.splice(0, pending.length)) {
+      if (!seen.has(dependency.hash)) batchByHash.set(dependency.hash, dependency);
+    }
+    const batch = [...batchByHash.values()];
     if (batch.length === 0) break;
+    if (
+      seen.size + batch.length > MAX_HTTP_BUNDLE_GRAPH_ENTRIES ||
+      batch.some(({ hash }) => !isValidHttpBundleHash(hash))
+    ) {
+      logger.warn("HTTP bundle dependency graph is invalid or exceeds its limit", {
+        seen: seen.size,
+        pending: batch.length,
+        max: MAX_HTTP_BUNDLE_GRAPH_ENTRIES,
+      });
+      return false;
+    }
 
     for (const { hash } of batch) seen.add(hash);
 
     const localChecks = await Promise.all(
       batch.map(async ({ hash }) => {
-        try {
-          return {
-            hash,
-            exists: await exists(join(absoluteCacheDir, `http-${hash}.mjs`)),
-          };
-        } catch {
-          return { hash, exists: false };
-        }
+        const bundle = await readCachedHttpBundleFile(
+          fs,
+          join(absoluteCacheDir, `http-${hash}.mjs`),
+        );
+        return { hash, bundle };
       }),
     );
 
-    const missingDeps = localChecks.filter((c) => !c.exists);
-    if (missingDeps.length === 0) {
-      for (const { hash } of batch) {
-        try {
-          const code = await fs.readTextFile(join(absoluteCacheDir, `http-${hash}.mjs`));
-          for (const dep of extractBundleDeps(code)) {
-            if (!seen.has(dep.hash)) pending.push(dep);
-          }
-        } catch (_) {
-          /* expected: cached bundle file may be unreadable */
+    const presentDeps = localChecks.filter((check) =>
+      check.bundle !== null && !isDegradedArtifact(check.bundle.code)
+    );
+    const missingDeps = localChecks.filter((check) =>
+      check.bundle === null || isDegradedArtifact(check.bundle.code)
+    );
+
+    for (const { bundle } of presentDeps) {
+      for (const dep of extractBundleDeps(bundle!.code)) {
+        if (!seen.has(dep.hash)) {
+          pending.push(dep);
         }
       }
+    }
+
+    if (missingDeps.length === 0) {
       continue;
     }
 
@@ -121,7 +146,11 @@ export async function validateBundleDepsExist(
 
       const code = unbrand(localCode);
 
-      if (hasIncompatibleFilePaths(code, absoluteCacheDir)) {
+      if (
+        !isHttpBundleCodeWithinLimit(code) ||
+        isDegradedArtifact(code) ||
+        hasIncompatibleFilePaths(code, absoluteCacheDir)
+      ) {
         logger.debug("Dep has incompatible paths, rejecting cache", { hash });
         return false;
       }
@@ -155,16 +184,29 @@ export async function findParentBundleWithEmbeddedUrl(
   cacheDir: string,
   fs: ReturnType<typeof createFileSystem>,
 ): Promise<{ path: string; sourceUrl: string } | null> {
+  if (!isValidHttpBundleHash(targetHash)) return null;
+
   try {
     const files = fs.readDir(cacheDir);
-    const bundlePattern = /^http-(\d+)\.mjs$/;
+    const bundlePattern = /^http-([a-f0-9]+)\.mjs$/i;
+    let scannedBundles = 0;
 
     for await (const file of files) {
       if (!bundlePattern.test(file.name)) continue;
+      scannedBundles += 1;
+      if (scannedBundles > MAX_HTTP_BUNDLE_GRAPH_ENTRIES) {
+        logger.debug("Stopped bounded parent-bundle scan", {
+          targetHash,
+          max: MAX_HTTP_BUNDLE_GRAPH_ENTRIES,
+        });
+        break;
+      }
 
       const filePath = join(cacheDir, file.name);
       try {
-        const content = await fs.readTextFile(filePath);
+        const bundle = await readCachedHttpBundleFile(fs, filePath);
+        if (!bundle) continue;
+        const content = bundle.code;
 
         const importsTarget = content.includes(`./http-${targetHash}.mjs`) ||
           content.includes(`http-${targetHash}.mjs"`);

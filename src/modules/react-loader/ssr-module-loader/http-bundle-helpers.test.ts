@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { join } from "#veryfront/compat/path/index.ts";
+import { join, toFileUrl } from "#veryfront/compat/path/index.ts";
 import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import {
   extractAllFilePaths,
@@ -12,7 +12,6 @@ import {
 } from "./http-bundle-helpers.ts";
 
 describe("extractHttpBundlePaths", () => {
-  // Note: simpleHash() produces decimal numbers (djb2 algorithm), not hex
   it("extracts single HTTP bundle path", () => {
     const code = `import foo from "file:///tmp/.cache/veryfront-http-bundle/http-12345678.mjs";`;
     const [first] = extractHttpBundlePaths(code);
@@ -101,6 +100,19 @@ describe("extractHttpBundlePaths", () => {
 
     assertEquals(extractHttpBundlePaths(code).length, 1);
   });
+
+  it("extracts full SHA-256 bundle hashes", () => {
+    const hash = "d9daafa3b706faf7af89c03417596d23beed4c1ae964d7ee7ead5d335b683412";
+    const code = [
+      `import value from "file:///cache/veryfront-http-bundle/http-${hash}.mjs";`,
+      `export * from "./http-${hash}.mjs";`,
+    ].join("\n");
+
+    assertEquals(extractHttpBundlePaths(code), [{
+      path: `/cache/veryfront-http-bundle/http-${hash}.mjs`,
+      hash,
+    }]);
+  });
 });
 
 describe("extractAllFilePaths", () => {
@@ -132,9 +144,43 @@ describe("extractAllFilePaths", () => {
     assertEquals(extractAllFilePaths(code), ["/app/.cache/markdown.tsx"]);
   });
 
+  it("preserves compiled framework .src cache paths", () => {
+    const code = [
+      `import context from "file:///tmp/deno-compile-veryfront/dist/framework-src/react/context/index.tsx.src";`,
+      `import core from "file:///tmp/deno-compile-veryfront/dist/framework-src/react/runtime/core.ts.src?v=42";`,
+    ].join("\n");
+
+    assertEquals(extractAllFilePaths(code), [
+      "/tmp/deno-compile-veryfront/dist/framework-src/react/context/index.tsx.src",
+      "/tmp/deno-compile-veryfront/dist/framework-src/react/runtime/core.ts.src",
+    ]);
+  });
+
+  it("does not truncate unsupported file URL suffixes into valid-looking paths", () => {
+    const code = [
+      `import source from "file:///tmp/project/Button.ts.source";`,
+      `import sourceMap from "file:///tmp/project/Button.js.map";`,
+    ].join("\n");
+
+    assertEquals(extractAllFilePaths(code), []);
+  });
+
+  it("ignores file URLs with a host component", () => {
+    const code = `import remote from "file://cache-host/tmp/project/Button.js";`;
+
+    assertEquals(extractAllFilePaths(code), []);
+  });
+
   it("strips query parameters from extracted paths", () => {
     const code = `import a from "file:///tmp/project/Button.tsx?v=123";`;
     assertEquals(extractAllFilePaths(code), ["/tmp/project/Button.tsx"]);
+  });
+
+  it("decodes encoded file URL paths before filesystem validation", () => {
+    const path = "/tmp/_pins/on%3Asnapshot/Button.tsx";
+    const code = `import a from ${JSON.stringify(toFileUrl(path).href)};`;
+
+    assertEquals(extractAllFilePaths(code), [path]);
   });
 
   it("deduplicates identical paths", () => {
@@ -213,6 +259,29 @@ describe("recursive cache path extraction", () => {
 
       const paths = await extractAllFilePathsRecursive(
         `import child from "file://${childPath}"; export default child;`,
+      );
+
+      assertEquals(paths.includes(childPath), true);
+      assertEquals(paths.includes("/app/.cache/markdown.tsx"), true);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("visits nested modules through encoded file URL paths", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-encoded-file-path-helper-" });
+    const childDir = join(tempDir, "veryfront-mdx-esm", "_pins", "on%3Asnapshot");
+    const childPath = join(childDir, "vfmod-child.mjs");
+
+    try {
+      await mkdir(childDir, { recursive: true });
+      await writeTextFile(
+        childPath,
+        `import markdown from "file:///app/.cache/markdown.tsx"; export default markdown;`,
+      );
+
+      const paths = await extractAllFilePathsRecursive(
+        `import child from ${JSON.stringify(toFileUrl(childPath).href)}; export default child;`,
       );
 
       assertEquals(paths.includes(childPath), true);

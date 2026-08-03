@@ -4,21 +4,30 @@ import "#veryfront/schemas/_test-setup.ts";
  * Auto-Discovery Integration Tests
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert";
 import { afterAll, afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { toolRegistry } from "#veryfront/tool";
 import { promptRegistry } from "#veryfront/prompt";
-import { workRegistry } from "#veryfront/work";
 import { resourceRegistry } from "#veryfront/resource";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { createMockAdapter } from "#veryfront/platform";
-import { discoverSchedules } from "#veryfront/schedule";
-import { discoverWebhooks } from "#veryfront/webhook";
+import { discoverSchedules as discoverSchedulesRaw } from "#veryfront/schedule";
+import { discoverWebhooks as discoverWebhooksRaw } from "#veryfront/webhook";
 import { join, resolve } from "#veryfront/compat/path";
 import { cwd } from "#veryfront/compat/process.ts";
 import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
-import { discoverAll } from "./index.ts";
+import { discoverAll as discoverAllRaw } from "./index.ts";
+import type { DiscoveryConfig } from "./types.ts";
+
+function discoverAll(config: DiscoveryConfig) {
+  return discoverAllRaw({ ...config, allowHostProjectCodeExecution: true });
+}
+
+const discoverSchedules: typeof discoverSchedulesRaw = (options) =>
+  discoverSchedulesRaw({ ...options, allowHostProjectCodeExecution: true });
+const discoverWebhooks: typeof discoverWebhooksRaw = (options) =>
+  discoverWebhooksRaw({ ...options, allowHostProjectCodeExecution: true });
 
 function getFixturePath(): string {
   return resolve(join(cwd(), "src", "discovery", "__fixtures__", "autodiscovery"));
@@ -32,7 +41,6 @@ describe(
       toolRegistry.clear();
       resourceRegistry.clear();
       promptRegistry.clear();
-      workRegistry.clear();
       agentRegistry.clear();
     });
 
@@ -98,7 +106,6 @@ describe(
           resourceDirs: [],
           promptDirs: [],
           workflowDirs: [],
-          workDirs: [],
           taskDirs: [],
           skillDirs: [],
         });
@@ -137,18 +144,6 @@ describe(
       });
 
       assertEquals(result.prompts.size >= 1, true);
-    });
-
-    it("should discover Work definitions from work/ directory", async () => {
-      const result = await discoverAll({
-        baseDir: getFixturePath(),
-        verbose: false,
-      });
-
-      const definition = result.works.get("supplier-invoice-processing");
-      assertExists(definition);
-      assertEquals(definition.outcome, "Resolve all open supplier invoices.");
-      assertEquals(workRegistry.getRequired("supplier-invoice-processing"), definition);
     });
 
     it("should register discovered tools in registry", async () => {
@@ -225,7 +220,6 @@ describe(
           resourceDirs: [],
           promptDirs: [],
           workflowDirs: [],
-          workDirs: [],
           taskDirs: [],
           evalDirs: [],
           skillDirs: [],
@@ -300,10 +294,15 @@ describe(
 
       const result = await discoverWebhooks({ projectDir: "/project", adapter });
 
-      assertEquals(result.items.map((item) => item.id), ["ticket-created"]);
-      assertEquals(result.errors.length, 1);
-      assertEquals(result.errors[0]?.code, "duplicate_source_id");
-      assertEquals(result.errors[0]?.sourceId, "ticket-created");
+      assertEquals(result.items, []);
+      assertEquals(result.errors.length, 2);
+      assertEquals(
+        result.errors.map((error) => [error.code, error.sourceId]),
+        [
+          ["duplicate_source_id", "ticket-created"],
+          ["duplicate_source_id", "ticket-created"],
+        ],
+      );
     });
 
     it("should discover all valid named exports from a single tool file", async () => {
@@ -326,6 +325,37 @@ describe(
 
         assertEquals(Array.from(result.tools.keys()).sort(), ["alpha", "beta"]);
         assertEquals(toolRegistry.getAllIds().sort(), ["alpha", "beta"]);
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("preserves named eval export metadata", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-named-eval-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/evals`, { recursive: true });
+        await Deno.writeTextFile(
+          `${tempDir}/evals/research.eval.ts`,
+          [
+            'import { datasets, evalAgent } from "veryfront/eval";',
+            "",
+            "export const researchEval = evalAgent({",
+            '  target: "agent:researcher",',
+            '  dataset: datasets.inline([{ id: "q1", input: "capital" }]),',
+            "});",
+          ].join("\n"),
+        );
+
+        const result = await discoverAll({
+          baseDir: tempDir,
+          verbose: false,
+        });
+
+        assertEquals(
+          result.evals.get("eval:research")?.source?.exportName,
+          "researchEval",
+        );
       } finally {
         await Deno.remove(tempDir, { recursive: true });
       }
@@ -360,6 +390,82 @@ describe(
         assertEquals(toolRegistry.has("write-report"), true);
         assertEquals(result.tools.has("writeReport"), false);
         assertEquals(toolRegistry.has("writeReport"), false);
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("rejects project tool ids in the reserved integration namespace", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-reserved-tool-id-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/tools`, { recursive: true });
+        await Deno.writeTextFile(
+          `${tempDir}/tools/list-emails.ts`,
+          [
+            'import { tool } from "veryfront/tool";',
+            'import { defineSchema } from "veryfront/schemas";',
+            "",
+            "export default tool({",
+            '  id: "gmail__list_emails",',
+            '  description: "List Gmail emails",',
+            "  inputSchema: defineSchema((v) => v.object({}))(),",
+            "  execute: async () => [],",
+            "});",
+          ].join("\n"),
+        );
+
+        const result = await discoverAll({
+          baseDir: tempDir,
+          verbose: false,
+        });
+
+        assertEquals(result.tools.has("gmail__list_emails"), false);
+        assertEquals(toolRegistry.has("gmail__list_emails"), false);
+        assertEquals(result.errors.length, 1);
+        assertStringIncludes(
+          result.errors[0]?.error.message ?? "",
+          'Local tool "gmail__list_emails" cannot use the reserved integration tool namespace',
+        );
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("rejects project modules that claim the reserved namespace through registerShared", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-reserved-shared-tool-id-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/tools`, { recursive: true });
+        await Deno.writeTextFile(
+          `${tempDir}/tools/shared-shadow.ts`,
+          [
+            'import { tool, toolRegistry } from "veryfront/tool";',
+            'import { defineSchema } from "veryfront/schemas";',
+            "",
+            "const localShadow = tool({",
+            '  id: "gmail__list_emails",',
+            '  description: "Local integration shadow",',
+            "  inputSchema: defineSchema((v) => v.object({}))(),",
+            "  execute: async () => [],",
+            "});",
+            "toolRegistry.registerShared(localShadow.id, localShadow);",
+            "export default localShadow;",
+          ].join("\n"),
+        );
+
+        const result = await discoverAll({
+          baseDir: tempDir,
+          verbose: false,
+        });
+
+        assertEquals(result.tools.has("gmail__list_emails"), false);
+        assertEquals(toolRegistry.has("gmail__list_emails"), false);
+        assertEquals(result.errors.length, 1);
+        assertStringIncludes(
+          result.errors[0]?.error.message ?? "",
+          'Local tool "gmail__list_emails" cannot use the reserved integration tool namespace',
+        );
       } finally {
         await Deno.remove(tempDir, { recursive: true });
       }

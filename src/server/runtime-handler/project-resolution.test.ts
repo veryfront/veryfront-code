@@ -29,11 +29,19 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(headers.projectSlug, "my-project");
     });
 
-    it("extracts project id from header", () => {
+    it("ignores project id from an untrusted request", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-project-id": "proj-123" },
       });
       const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.projectId, undefined);
+    });
+
+    it("extracts project id only at an operator-authenticated proxy boundary", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "x-project-id": "proj-123" },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url), false, true);
       assertEquals(headers.projectId, "proj-123");
     });
 
@@ -45,82 +53,213 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(headers.releaseId, "rel-456");
     });
 
-    it("extracts branch id from header", () => {
+    it("extracts branch id only at an operator-authenticated proxy boundary", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-branch-id": "branch-1" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), false, true);
       assertEquals(headers.branchId, "branch-1");
     });
 
-    it("extracts branch name from header", () => {
+    it("extracts branch name only at an operator-authenticated proxy boundary", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-branch-name": "feature-x" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), false, true);
       assertEquals(headers.branchName, "feature-x");
     });
 
-    it("extracts environment from header", () => {
+    it("normalizes the trusted branch name like the default branch name", () => {
       const req = new Request("http://localhost/", {
-        headers: { "x-environment": "production" },
+        headers: {
+          "x-branch-name": "vf-utf8:%20%20feature-x%20%20",
+          "x-default-branch-name": "vf-utf8:%20%20trunk%20%20",
+        },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
-      assertEquals(headers.environment, "production");
+      const headers = extractRequestHeaders(req, new URL(req.url), false, true);
+      assertEquals(headers.branchName, "feature-x");
+      assertEquals(headers.defaultBranchName, "trunk");
     });
 
-    it("extracts environment from query parameter when header not present", () => {
-      const req = new Request("http://localhost/?x-environment=staging");
-      const headers = extractRequestHeaders(req, new URL(req.url));
-      assertEquals(headers.environment, "staging");
+    it("extracts the default branch name only at an operator-authenticated proxy boundary", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "x-default-branch-name": "trunk" },
+      });
+      assertEquals(
+        extractRequestHeaders(req, new URL(req.url), false, true).defaultBranchName,
+        "trunk",
+      );
+      assertEquals(
+        extractRequestHeaders(req, new URL(req.url), false, false).defaultBranchName,
+        undefined,
+      );
     });
 
-    it("extracts environment-id from header", () => {
+    it("ignores branch identity from an untrusted request", () => {
       const req = new Request("http://localhost/", {
-        headers: { "x-environment-id": "env-1" },
+        headers: {
+          "x-branch-id": "branch-1",
+          "x-branch-name": "feature-x",
+          "x-default-branch-name": "trunk",
+        },
       });
       const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.branchId, undefined);
+      assertEquals(headers.branchName, undefined);
+      assertEquals(headers.defaultBranchName, undefined);
+    });
+
+    it("extracts environment from header when proxy headers are trusted", () => {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+      try {
+        const req = new Request("http://localhost/", {
+          headers: { "x-environment": "production" },
+        });
+        const headers = extractRequestHeaders(req, new URL(req.url));
+        assertEquals(headers.environment, "production");
+      } finally {
+        Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+      }
+    });
+
+    it("extracts environment from query parameter when proxy headers are trusted", () => {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+      try {
+        const req = new Request("http://localhost/?x-environment=staging");
+        const headers = extractRequestHeaders(req, new URL(req.url));
+        assertEquals(headers.environment, "staging");
+      } finally {
+        Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+      }
+    });
+
+    it("extracts forwarded metadata after request-scoped proxy verification", () => {
+      const req = new Request("http://127.0.0.1:3001/", {
+        headers: {
+          "x-environment": "preview",
+          "x-forwarded-host": "my-project.preview.lvh.me",
+        },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url), true);
+      assertEquals(headers.environment, "preview");
+      assertEquals(headers.projectSlug, "my-project");
+    });
+
+    it("ignores environment overrides when proxy headers are untrusted", async () => {
+      const req = new Request("http://production.example/?x-environment=preview", {
+        headers: { "x-environment": "preview" },
+      });
+      const url = new URL(req.url);
+      const headers = extractRequestHeaders(req, url);
+
+      assertEquals(headers.environment, undefined);
+
+      const result = await resolveProject(req, url, headers, {
+        config: undefined,
+        reqCtx: { slug: "project", mode: "production", branch: null, token: undefined },
+        defaultProjectSlug: undefined,
+        defaultProjectId: undefined,
+        wsSlugOverride: undefined,
+      });
+      assertEquals(result.proxyEnv, undefined);
+    });
+
+    it("ignores environment-id from an untrusted request", () => {
+      const req = new Request("http://localhost/", {
+        headers: {
+          "x-environment-id": "env-1",
+          "x-environment-name": "production",
+        },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.environmentId, undefined);
+      assertEquals(headers.environmentName, undefined);
+    });
+
+    it("extracts environment identity only at an operator-authenticated proxy boundary", () => {
+      const req = new Request("http://localhost/", {
+        headers: {
+          "x-environment-id": "env-1",
+          "x-environment-name": "staging",
+        },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url), false, true);
       assertEquals(headers.environmentId, "env-1");
+      assertEquals(headers.environmentName, "staging");
     });
 
-    it("derives project slug from x-forwarded-host when proxy header is absent", () => {
+    // x-forwarded-host is client-controlled and only honoured behind a trusted
+    // proxy (VERYFRONT_TRUST_FORWARDED_HEADERS=1). The following cases exercise
+    // the trusted-proxy contract; the untrusted-default case is asserted below.
+    it("derives project slug from x-forwarded-host when proxy is trusted and slug header absent", () => {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+      try {
+        const req = new Request("http://127.0.0.1:3001/", {
+          headers: { "x-forwarded-host": "my-project.preview.lvh.me" },
+        });
+        const headers = extractRequestHeaders(req, new URL(req.url));
+        assertEquals(headers.projectSlug, "my-project");
+      } finally {
+        Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+      }
+    });
+
+    it("derives project slug from x-forwarded-host when proxy is trusted and x-project-slug is blank", () => {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+      try {
+        const req = new Request("http://127.0.0.1:3001/", {
+          headers: {
+            "x-forwarded-host": "my-project.preview.lvh.me",
+            "x-project-slug": "   ",
+          },
+        });
+        const headers = extractRequestHeaders(req, new URL(req.url));
+        assertEquals(headers.projectSlug, "my-project");
+      } finally {
+        Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+      }
+    });
+
+    it("derives project slug from x-forwarded-host when proxy is trusted and x-project-slug is empty string", () => {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+      try {
+        const req = new Request("http://127.0.0.1:3001/", {
+          headers: {
+            "x-forwarded-host": "my-project.preview.lvh.me",
+            "x-project-slug": "",
+          },
+        });
+        const headers = extractRequestHeaders(req, new URL(req.url));
+        assertEquals(headers.projectSlug, "my-project");
+      } finally {
+        Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+      }
+    });
+
+    it("takes the first entry from a comma-separated x-forwarded-host when proxy is trusted", () => {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+      try {
+        const req = new Request("http://127.0.0.1:3001/", {
+          headers: {
+            "x-forwarded-host": "my-project.preview.lvh.me, proxy2.internal",
+          },
+        });
+        const headers = extractRequestHeaders(req, new URL(req.url));
+        assertEquals(headers.projectSlug, "my-project");
+      } finally {
+        Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+      }
+    });
+
+    it("ignores x-forwarded-host for slug derivation when proxy is untrusted (default)", () => {
+      // No VERYFRONT_TRUST_FORWARDED_HEADERS: a direct-access client cannot spoof
+      // the project slug via x-forwarded-host; resolution falls back to the Host
+      // header (127.0.0.1 here), which does not parse to the spoofed slug.
       const req = new Request("http://127.0.0.1:3001/", {
         headers: { "x-forwarded-host": "my-project.preview.lvh.me" },
       });
       const headers = extractRequestHeaders(req, new URL(req.url));
-      assertEquals(headers.projectSlug, "my-project");
-    });
-
-    it("derives project slug from x-forwarded-host when x-project-slug is blank", () => {
-      const req = new Request("http://127.0.0.1:3001/", {
-        headers: {
-          "x-forwarded-host": "my-project.preview.lvh.me",
-          "x-project-slug": "   ",
-        },
-      });
-      const headers = extractRequestHeaders(req, new URL(req.url));
-      assertEquals(headers.projectSlug, "my-project");
-    });
-
-    it("derives project slug from x-forwarded-host when x-project-slug is empty string", () => {
-      const req = new Request("http://127.0.0.1:3001/", {
-        headers: {
-          "x-forwarded-host": "my-project.preview.lvh.me",
-          "x-project-slug": "",
-        },
-      });
-      const headers = extractRequestHeaders(req, new URL(req.url));
-      assertEquals(headers.projectSlug, "my-project");
-    });
-
-    it("takes the first entry from a comma-separated x-forwarded-host", () => {
-      const req = new Request("http://127.0.0.1:3001/", {
-        headers: {
-          "x-forwarded-host": "my-project.preview.lvh.me, proxy2.internal",
-        },
-      });
-      const headers = extractRequestHeaders(req, new URL(req.url));
-      assertEquals(headers.projectSlug, "my-project");
+      assertEquals(headers.projectSlug !== "my-project", true);
     });
 
     it("extracts content-source-id from header", () => {
@@ -394,7 +533,67 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(result.proxyEnv, "production");
     });
 
-    it("uses x-forwarded-host for domain resolution", async () => {
+    it("uses x-forwarded-host for domain resolution when proxy is trusted", async () => {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+      try {
+        let capturedHost = "";
+        __injectDepsForTests({
+          parseProjectDomain: (host: string) => {
+            capturedHost = host;
+            return defaultParsedDomain;
+          },
+          lookupProjectByDomain: () => Promise.resolve(null),
+          getEnvironmentType: () => undefined,
+        });
+
+        const req = new Request("http://localhost/", {
+          headers: { "x-forwarded-host": "forwarded.example.com" },
+        });
+        const url = new URL(req.url);
+        const headers = extractRequestHeaders(req, url);
+        await resolveProject(req, url, headers, {
+          config: undefined,
+          reqCtx: { slug: "s", mode: undefined, branch: null, token: undefined },
+          defaultProjectSlug: undefined,
+          defaultProjectId: undefined,
+          wsSlugOverride: undefined,
+        });
+
+        assertEquals(capturedHost, "forwarded.example.com");
+      } finally {
+        Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+      }
+    });
+
+    it("uses x-forwarded-host for domain resolution after request-scoped verification", async () => {
+      let capturedHost = "";
+      __injectDepsForTests({
+        parseProjectDomain: (host: string) => {
+          capturedHost = host;
+          return defaultParsedDomain;
+        },
+        lookupProjectByDomain: () => Promise.resolve(null),
+        getEnvironmentType: () => undefined,
+      });
+
+      const req = new Request("http://localhost/", {
+        headers: { "x-forwarded-host": "forwarded.example.com" },
+      });
+      const url = new URL(req.url);
+      const headers = extractRequestHeaders(req, url, true);
+      await resolveProject(req, url, headers, {
+        config: undefined,
+        reqCtx: { slug: "s", mode: undefined, branch: null, token: undefined },
+        defaultProjectSlug: undefined,
+        defaultProjectId: undefined,
+        wsSlugOverride: undefined,
+        proxyTrusted: true,
+      });
+
+      assertEquals(capturedHost, "forwarded.example.com");
+    });
+
+    it("ignores x-forwarded-host for domain resolution when proxy is untrusted (default)", async () => {
       let capturedHost = "";
       __injectDepsForTests({
         parseProjectDomain: (host: string) => {
@@ -418,7 +617,8 @@ describe("server/runtime-handler/project-resolution", () => {
         wsSlugOverride: undefined,
       });
 
-      assertEquals(capturedHost, "forwarded.example.com");
+      // Untrusted: forwarded host is not honoured; the Host header wins instead.
+      assertEquals(capturedHost !== "forwarded.example.com", true);
     });
 
     it("returns parsedDomain in result", async () => {

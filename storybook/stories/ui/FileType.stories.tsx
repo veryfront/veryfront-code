@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import {
   FileType,
   FileTypeThumb,
-} from "../../../src/react/components/chat/ui/index.ts";
+} from "../../../src/react/components/ui/index.ts";
 import {
   DocsCode,
   DocsComposition,
@@ -13,9 +13,9 @@ import {
   DocsSection,
 } from "../../.storybook/docs";
 
-const importBadge = `import { FileType } from "veryfront/chat/ui"`;
-const importThumb = `import { FileTypeThumb } from "veryfront/chat/ui"`;
-const importLabel = `import { getFileTypeLabel } from "veryfront/chat/ui"`;
+const importBadge = `import { FileType } from "veryfront/ui"`;
+const importThumb = `import { FileTypeThumb } from "veryfront/ui"`;
+const importLabel = `import { getFileTypeLabel } from "veryfront/ui"`;
 
 const importCode = `${importBadge}\n${importThumb}\n${importLabel}`;
 
@@ -111,7 +111,7 @@ getFileTypeLabel('???')
 }
 
 const meta = {
-  title: "Chat/UI/FileType",
+  title: "UI/FileType",
   component: FileType,
   tags: ["autodocs"],
   args: { extension: "tsx" },

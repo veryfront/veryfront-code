@@ -10,30 +10,15 @@ import { ensureDefaultBundlerContracts } from "#veryfront/extensions/bundler/def
 import { isDeno, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
+import { computeHash } from "#veryfront/utils";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { FileDiscoveryContext } from "./types.ts";
-import {
-  DISCOVERY_GLOBAL_VERYFRONT_MODULES,
-  rewriteDiscoveryImports,
-  rewriteForDeno,
-} from "./import-rewriter.ts";
-import { COMPILATION_ERROR, FILE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
+import { rewriteDiscoveryImports, rewriteForDeno } from "./import-rewriter.ts";
+import { COMPILATION_ERROR, FILE_NOT_FOUND } from "#veryfront/errors";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
-// Static imports ensure deno compile includes public discovery modules in the binary.
-import * as agentMod from "#veryfront/agent";
-import * as toolMod from "#veryfront/tool";
-import * as platformMod from "#veryfront/platform";
-import * as promptMod from "#veryfront/prompt";
-import * as resourceMod from "#veryfront/resource";
-import * as embeddingMod from "#veryfront/embedding/index.ts";
-import * as knowledgeMod from "#veryfront/knowledge";
-import * as workflowMod from "#veryfront/workflow";
-import * as workMod from "#veryfront/work";
-import * as evalMod from "#veryfront/eval";
-import * as metricsMod from "#veryfront/metrics";
-import * as schemasMod from "#veryfront/schemas";
-import * as chatUploadsMod from "#veryfront/chat/uploads";
+import { getDiscoveryRuntimeModules } from "./runtime-modules.ts";
+import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 
 type TranspileCacheEntry = {
   /** Content hashes of every file esbuild bundled into the module besides the entry. */
@@ -45,19 +30,6 @@ type TranspileCacheEntry = {
 // bundled dependency contents it was built from and is only served while those
 // still match (see findCachedModuleWithFreshDeps).
 const transpileCache = new Map<string, TranspileCacheEntry[]>();
-
-const textEncoder = new TextEncoder();
-
-async function hashSource(source: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    textEncoder.encode(source),
-  );
-  return Array.from(
-    new Uint8Array(digest),
-    (byte) => byte.toString(16).padStart(2, "0"),
-  ).join("");
-}
 
 /**
  * Returns the first cached module whose recorded bundled-dependency contents
@@ -80,7 +52,7 @@ async function findCachedModuleWithFreshDeps(
           const content = context.fsAdapter
             ? await context.fsAdapter.readFile(dep.path)
             : await createFileSystem().readTextFile(dep.path);
-          hash = await hashSource(content);
+          hash = await computeHash(content);
         } catch {
           hash = undefined;
         }
@@ -105,23 +77,7 @@ let veryfrontGlobalsInitialized = false;
 async function ensureVeryfrontGlobals(): Promise<void> {
   if (veryfrontGlobalsInitialized || !isDenoCompiled) return;
 
-  const modules = {
-    "veryfront/agent": agentMod,
-    "veryfront/tool": toolMod,
-    "veryfront/platform": platformMod,
-    "veryfront/prompt": promptMod,
-    "veryfront/resource": resourceMod,
-    "veryfront/embedding": embeddingMod,
-    "veryfront/knowledge": knowledgeMod,
-    "veryfront/workflow": workflowMod,
-    "veryfront/work": workMod,
-    "veryfront/eval": evalMod,
-    "veryfront/metrics": metricsMod,
-    "veryfront/schemas": schemasMod,
-    "veryfront/chat/uploads": chatUploadsMod,
-  } satisfies Record<(typeof DISCOVERY_GLOBAL_VERYFRONT_MODULES)[number], unknown>;
-
-  (globalThis as Record<string, unknown>).__VERYFRONT_MODULES__ = modules;
+  (globalThis as Record<string, unknown>).__VERYFRONT_MODULES__ = getDiscoveryRuntimeModules();
 
   veryfrontGlobalsInitialized = true;
 }
@@ -223,6 +179,12 @@ export async function importModule(
   file: string,
   context: FileDiscoveryContext,
 ): Promise<unknown> {
+  if (!isExplicitHostProjectCodeExecutionAllowed(context)) {
+    throw new TypeError(
+      "Discovery module host loading requires explicit trusted-local execution",
+    );
+  }
+
   // Ensure veryfront modules are available as globals for compiled binaries
   await ensureVeryfrontGlobals();
 
@@ -240,14 +202,13 @@ export async function importModule(
     });
   }
 
-  // The cache key must include the source content: a shared hosted runtime
-  // process serves many projects and releases, and the same relative path
-  // (e.g. "tools/foo.ts") recurs across them. A path-only key keeps serving
-  // the stale module after a deploy and can hand one project's module to
-  // another project's discovery. The entry hash alone is still not enough —
-  // bundled relative imports are inlined into the module — so cached entries
-  // are only served after their recorded dependency contents re-verify.
-  const cacheKey = `${file} ${await hashSource(source)}`;
+  // A shared hosted runtime serves many projects and source generations, so
+  // namespace identical relative paths before considering entry contents.
+  // The entry hash alone is still not enough: bundled relative imports are
+  // inlined, so cached entries are only served after their recorded dependency
+  // contents re-verify.
+  const cacheNamespace = context.cacheNamespace ?? context.baseDir ?? "";
+  const cacheKey = JSON.stringify([cacheNamespace, file, await computeHash(source)]);
   const cachedEntries = transpileCache.get(cacheKey);
   if (cachedEntries) {
     const cached = await findCachedModuleWithFreshDeps(cachedEntries, context);
@@ -341,7 +302,7 @@ export async function importModule(
     moduleUrl.searchParams.set("v", String(Date.now()));
     const module = await import(moduleUrl.href);
     const deps = await Promise.all(
-      bundledDeps.map(async ({ path, content }) => ({ path, hash: await hashSource(content) })),
+      bundledDeps.map(async ({ path, content }) => ({ path, hash: await computeHash(content) })),
     );
     const entries = transpileCache.get(cacheKey) ?? [];
     entries.push({ deps, module });

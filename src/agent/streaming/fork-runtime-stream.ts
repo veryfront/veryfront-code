@@ -6,6 +6,7 @@ import {
   traceHostTools,
   type TraceHostToolsOptions,
 } from "#veryfront/tool";
+import { getRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import { runWithVeryfrontCloudContextAsync } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { streamDataStreamEvents } from "./data-stream.ts";
 import {
@@ -25,6 +26,7 @@ import {
 } from "../runtime/provider-native-tool-inventory.ts";
 import { AgentRuntime } from "../runtime/index.ts";
 import type { AgentResponse, Message as AgentMessage } from "../schemas/index.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { RuntimeReasoningOption } from "../types.ts";
 import {
   commitForkRuntimeStep,
@@ -32,6 +34,13 @@ import {
   getForkRuntimeProgressUsage,
   shouldContinueForkRuntimeStep,
 } from "./fork-runtime-step-progress.ts";
+import type { ForkPart, ForkRuntimeStep, ForkRuntimeStreamLogger } from "./fork-runtime-types.ts";
+import {
+  applySourceIntegrationPolicy,
+  type SourceIntegrationPolicyManifest,
+} from "#veryfront/integrations/source-policy.ts";
+
+export type { ForkPart, ForkRuntimeStep, ForkRuntimeStreamLogger } from "./fork-runtime-types.ts";
 
 export {
   buildRecoveredStepParts,
@@ -56,84 +65,6 @@ export {
   buildForkRuntimeStepFromResponse,
   shouldContinueForkRuntimeStep,
 } from "./fork-runtime-step-progress.ts";
-
-interface ForkStreamPart {
-  type: "reasoning-delta" | "text-delta";
-  text: string;
-}
-
-interface ForkToolInputStartPart {
-  type: "tool-input-start";
-  toolCallId: string;
-  toolName: string;
-}
-
-interface ForkToolInputDeltaPart {
-  type: "tool-input-delta";
-  toolCallId: string;
-  delta: string;
-}
-
-interface ForkToolCallPart {
-  type: "tool-call";
-  toolName: string;
-  toolCallId: string;
-  input: unknown;
-}
-
-interface ForkToolResultPart {
-  type: "tool-result";
-  toolName: string;
-  toolCallId: string;
-  input: unknown;
-  output: unknown;
-}
-
-interface ForkToolErrorPart {
-  type: "tool-error";
-  toolName: string;
-  toolCallId: string;
-  input: unknown;
-  error: Error;
-}
-
-interface ForkErrorPart {
-  type: "error";
-  error: Error;
-}
-
-/** Public API contract for fork runtime step. */
-export interface ForkRuntimeStep {
-  text: string;
-  messages: unknown[];
-  toolCalls: Array<{
-    toolCallId: string;
-    toolName: string;
-    input: unknown;
-  }>;
-  toolResults: Array<{
-    toolCallId: string;
-    toolName: string;
-    input: unknown;
-    output: unknown;
-  }>;
-  finishReason: string | null;
-}
-
-/** Public API contract for fork part. */
-export type ForkPart =
-  | ForkStreamPart
-  | ForkToolInputStartPart
-  | ForkToolInputDeltaPart
-  | ForkToolCallPart
-  | ForkToolResultPart
-  | ForkToolErrorPart
-  | ForkErrorPart;
-
-/** Public API contract for fork runtime stream logger. */
-export type ForkRuntimeStreamLogger = {
-  warn: (message: string, metadata?: Record<string, unknown>) => void;
-};
 
 /** Result returned from fork runtime stream. */
 export interface ForkRuntimeStreamResult {
@@ -160,6 +91,13 @@ type ForkRuntimeStepPreparationInput = {
 type ForkRuntimeStepPreparation = {
   messages: AgentMessage[];
   system: string;
+  /**
+   * When present (returned by a step preparer that reads from the live
+   * activated-tool context), this overrides `input.forkToolNames` for the
+   * current step so newly activated remote tool schemas are exposed to the
+   * provider without mutating the run-level fixed array.
+   */
+  forkToolNames?: readonly string[];
 };
 
 /** Public API contract for fork runtime step preparer. */
@@ -181,6 +119,7 @@ export type StartAgentRuntimeForkInput = {
   authToken: string;
   projectId: string | null;
   model: string;
+  temperature?: number;
   maxSteps: number;
   prompt?: string;
   maxContinuationSteps?: number;
@@ -188,6 +127,7 @@ export type StartAgentRuntimeForkInput = {
   forkToolNames: string[];
   providerToolNames?: string[];
   runtimeTools: Record<string, Tool | boolean>;
+  sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
   providerOptions?: Record<string, unknown>;
   reasoning?: RuntimeReasoningOption;
   buildInstructions: () => string;
@@ -228,13 +168,16 @@ export function startAgentRuntimeForkWithHostTools<
     ? traceHostTools(input.forkTools, input.traceTools)
     : input.forkTools;
   const runtimeTools = createToolsFromHostDefinitions(forkTools);
-  const forkToolNames = input.forkToolNames
+  const requestedForkToolNames = input.forkToolNames
     ? [...input.forkToolNames]
     : getForkRuntimeAllowedToolNames({
       provider: input.provider,
       forkModel: input.forkModel,
-      forkTools: input.forkTools,
+      forkTools,
     });
+  const forkToolNames = input.sourceIntegrationPolicy
+    ? applySourceIntegrationPolicy(requestedForkToolNames, input.sourceIntegrationPolicy)
+    : requestedForkToolNames;
   const providerNativeToolNames = new Set(
     getProviderNativeToolNames({
       provider: input.provider,
@@ -251,6 +194,7 @@ export function startAgentRuntimeForkWithHostTools<
       authToken: input.authToken,
       projectId: input.projectId,
       model: input.forkModel,
+      temperature: input.temperature,
       maxSteps: input.maxSteps,
       prompt: input.prompt,
       maxContinuationSteps: input.maxContinuationSteps,
@@ -258,6 +202,7 @@ export function startAgentRuntimeForkWithHostTools<
       forkToolNames,
       providerToolNames,
       runtimeTools,
+      sourceIntegrationPolicy: input.sourceIntegrationPolicy,
       providerOptions: input.providerOptions,
       reasoning: input.reasoning,
       buildInstructions: input.buildInstructions,
@@ -317,12 +262,14 @@ export type RunAgentRuntimeForkStepInput = {
   authToken: string;
   projectId: string | null;
   model: string;
+  temperature?: number;
   messages: AgentMessage[];
   system: string;
   abortSignal?: AbortSignal;
   forkToolNames: string[];
   providerToolNames?: string[];
   runtimeTools: Record<string, Tool | boolean>;
+  sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
   providerOptions?: Record<string, unknown>;
   reasoning?: RuntimeReasoningOption;
 };
@@ -331,6 +278,18 @@ export type RunAgentRuntimeForkStepInput = {
 export type RunFrameworkForkStepInput = Omit<RunAgentRuntimeForkStepInput, "runtimeTools"> & {
   frameworkTools: Record<string, Tool | boolean>;
 };
+
+function getForkRuntimeAuthorizationToolNames(
+  toolNames: readonly string[],
+  runtimeTools: Record<string, Tool | boolean>,
+): string[] {
+  return toolNames.map((toolName) => {
+    const runtimeTool = runtimeTools[toolName];
+    return runtimeTool && typeof runtimeTool === "object"
+      ? getRemoteToolProvenance(runtimeTool) ?? toolName
+      : toolName;
+  });
+}
 
 /** Run agent runtime fork step. */
 export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInput): Promise<{
@@ -343,6 +302,9 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
     resolveResponsePromise = resolve;
     rejectResponsePromise = reject;
   });
+  // Callers may never await responsePromise (e.g. Stop during a fork). Mark its
+  // rejection as observed so an abort does not surface as an unhandled rejection.
+  responsePromise.catch(() => {});
   const abortHandler = () => {
     rejectResponsePromise(createAgentRuntimeForkAbortError(input.abortSignal));
   };
@@ -357,6 +319,7 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
 
   const runtimeConfig = {
     model: input.model,
+    ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
     system: input.system,
     tools: input.runtimeTools,
     providerTools: input.providerToolNames ?? [],
@@ -369,31 +332,45 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
         }),
       }
       : {}),
-    __vfAllowedRemoteTools: input.forkToolNames,
+    __vfAllowedRemoteTools: getForkRuntimeAuthorizationToolNames(
+      input.forkToolNames,
+      input.runtimeTools,
+    ),
+    ...(input.sourceIntegrationPolicy
+      ? { __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy }
+      : {}),
   };
   const runtime = new AgentRuntime("invoke-agent-child-runtime", runtimeConfig);
 
-  const stream = await runWithVeryfrontCloudContextAsync(
-    {
-      apiBaseUrl: input.apiUrl,
-      apiToken: input.authToken,
-      serviceLayer: "cloud",
-    },
-    () =>
-      runtime.stream(
-        input.messages,
-        input.projectId ? { projectId: input.projectId } : undefined,
-        {
-          onFinish: (response) => {
-            input.abortSignal?.removeEventListener("abort", abortHandler);
-            resolveResponsePromise(response);
+  let stream: ReadableStream<Uint8Array>;
+  try {
+    stream = await runWithVeryfrontCloudContextAsync(
+      {
+        apiBaseUrl: input.apiUrl,
+        apiToken: input.authToken,
+        serviceLayer: "cloud",
+      },
+      () =>
+        runtime.stream(
+          input.messages,
+          input.projectId ? { projectId: input.projectId } : undefined,
+          {
+            onFinish: (response) => {
+              input.abortSignal?.removeEventListener("abort", abortHandler);
+              resolveResponsePromise(response);
+            },
           },
-        },
-        input.model,
-        undefined,
-        input.abortSignal,
-      ),
-  );
+          input.model,
+          undefined,
+          input.abortSignal,
+        ),
+    );
+  } catch (error) {
+    // stream() failed before onFinish ran; drop the abort listener so it does
+    // not leak on the signal for the lifetime of the request.
+    input.abortSignal?.removeEventListener("abort", abortHandler);
+    throw error;
+  }
 
   return {
     stream,
@@ -419,6 +396,9 @@ export function runFrameworkForkStep(input: RunFrameworkForkStepInput): Promise<
     forkToolNames: input.forkToolNames,
     ...(input.providerToolNames ? { providerToolNames: input.providerToolNames } : {}),
     runtimeTools: input.frameworkTools,
+    ...(input.sourceIntegrationPolicy
+      ? { sourceIntegrationPolicy: input.sourceIntegrationPolicy }
+      : {}),
     ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
     ...(input.reasoning ? { reasoning: input.reasoning } : {}),
   });
@@ -513,9 +493,9 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
   return {
     fullStream: (async function* (): AsyncGenerator<ForkPart> {
       if (!input.initialMessages?.length && typeof input.prompt !== "string") {
-        throw new Error(
-          "startAgentRuntimeFork requires a prompt when no initialMessages are provided.",
-        );
+        throw INVALID_ARGUMENT.create({
+          detail: "startAgentRuntimeFork requires a prompt when no initialMessages are provided.",
+        });
       }
 
       const progress = createForkRuntimeProgress(createInitialForkRuntimeMessages({
@@ -534,17 +514,28 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
           });
           const state = createForkRuntimeStreamMappingState({ logger: input.logger });
           const streamedStepState = createStreamedStepState();
+          // If the step preparer returned a live forkToolNames (pinned ∪ activated),
+          // use it for this step so newly activated tool schemas reach the provider.
+          // Spread into a mutable array: RunAgentRuntimeForkStepInput.forkToolNames
+          // is typed as string[] (mutable) while prepared.forkToolNames is readonly.
+          const effectiveForkToolNames: string[] = [
+            ...(prepared.forkToolNames ?? input.forkToolNames),
+          ];
           const { stream, responsePromise } = await runStep({
             apiUrl: input.apiUrl,
             authToken: input.authToken,
             projectId: input.projectId,
             model: input.model,
+            ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
             messages: prepared.messages,
             system: prepared.system,
             ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
-            forkToolNames: input.forkToolNames,
+            forkToolNames: effectiveForkToolNames,
             ...(input.providerToolNames ? { providerToolNames: input.providerToolNames } : {}),
             runtimeTools: input.runtimeTools,
+            ...(input.sourceIntegrationPolicy
+              ? { sourceIntegrationPolicy: input.sourceIntegrationPolicy }
+              : {}),
             ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
             ...(input.reasoning ? { reasoning: input.reasoning } : {}),
           });

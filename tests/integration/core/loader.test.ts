@@ -1,10 +1,11 @@
 // Disable LRU intervals during testing to prevent resource leaks
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
-import { assertEquals, assertRejects } from "#veryfront/testing/assert";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { getAdapter } from "#veryfront/platform";
 import { clearConfigCache, getConfig, type VeryfrontConfig } from "#veryfront/config";
+import { VeryfrontError } from "#veryfront/errors";
 import { remove, writeTextFile } from "#veryfront/testing/deno-compat";
 import { withTestContext } from "../../_helpers/context.ts";
 
@@ -80,17 +81,16 @@ describe("config/loader", () => {
     });
   });
 
-  it("failure to execute config falls back to defaults", async () => {
+  it("rejects a config that fails during execution", async () => {
     await withTestContext("config-error-fallback", async (context) => {
+      await removeDefaultConfig(context.projectDir);
       await writeTextFile(
         projectFile(context.projectDir, "veryfront.config.ts"),
         `export default (()=>{ throw new Error('boom') })()`,
       );
 
       clearConfigCache();
-      const cfg = await getConfigWithAdapter(context.projectDir);
-
-      assertEquals(cfg.experimental?.esmLayouts, true);
+      await expectConfigError(context.projectDir, ["Failed to load veryfront.config.ts"]);
     });
   });
 
@@ -118,7 +118,10 @@ describe("config/loader", () => {
       );
 
       clearConfigCache();
-      await expectConfigError(context.projectDir, ["security.cors.origin", "must be a string"]);
+      await expectConfigError(context.projectDir, [
+        "Invalid veryfront.config at security.cors:",
+        "Expected boolean or a CORS object",
+      ]);
     });
   });
 
@@ -134,11 +137,16 @@ describe("config/loader", () => {
       clearConfigCache();
       const adapter = await getAdapter();
 
-      await assertRejects(
+      const error = await assertRejects(
         () => getConfig(context.projectDir, adapter),
-        Error,
-        "Unknown config keys: unknownKey, anotherUnknown",
+        VeryfrontError,
       );
+      assert(error instanceof VeryfrontError);
+      assertEquals(error.slug, "config-validation-failed");
+      assertEquals(error.context, {
+        field: "<root>",
+        expected: 'Unrecognized keys: "unknownKey", "anotherUnknown"',
+      });
     });
   });
 

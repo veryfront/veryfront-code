@@ -5,8 +5,6 @@
  * bulk read, and usage statistics primitives that the proxy's token cache needs.
  * Simpler key-value consumers should use `CacheStore` instead.
  *
- * Default implementation: `@veryfront/ext-cache-redis`.
- *
  * @module extensions/cache/token-cache-store
  */
 
@@ -31,7 +29,7 @@ export interface TokenCacheStats {
   hits: number;
   misses: number;
   size: number;
-  type: "memory" | "redis";
+  type: "memory" | "extension";
 }
 
 /**

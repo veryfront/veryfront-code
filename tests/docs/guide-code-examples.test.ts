@@ -44,7 +44,14 @@ import { GoogleFonts } from "../../src/react/fonts/index.ts";
 import { Head } from "../../src/react/components/Head.tsx";
 import { PageContextProvider, usePageContext } from "../../src/react/context/index.tsx";
 import { Link, RouterProvider, useRouter } from "../../src/react/router/index.tsx";
+import {
+  createSearchKnowledgeTool,
+  normalizeKnowledgeQuery,
+  projectKnowledge,
+} from "../../src/knowledge/index.ts";
 import { Sandbox } from "../../src/sandbox/index.ts";
+import { schedule } from "../../src/schedule/index.ts";
+import { webhook } from "../../src/webhook/index.ts";
 import { isTaskDefinition } from "../../src/task/types.ts";
 import {
   getConnector,
@@ -52,7 +59,11 @@ import {
   getRemoteIntegrationToolDefinitions,
   listConnectors,
 } from "../../src/integrations/index.ts";
+import { parseDeployArgs } from "../../cli/commands/deploy/command.ts";
 import { buildKnowledgeIngestRunResult } from "../../cli/commands/knowledge/result.ts";
+import { parsePullArgs } from "../../cli/commands/pull/command.ts";
+import { parsePushArgs } from "../../cli/commands/push/command.ts";
+import { parseCliArgs } from "../../cli/shared/args.ts";
 import { getTemplate } from "../../cli/templates/index.ts";
 
 const EXISTING_GUIDE_EXAMPLE_SUITE = [
@@ -79,6 +90,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "cli-knowledge-ingestion.md",
   "coding-agents.md",
   "create-agent.md",
+  "deploy-from-ci.md",
   "deploying.md",
   "evals.md",
   "extension-authoring.md",
@@ -91,15 +103,18 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "create-api.md",
   "deploy-project.md",
   "integrations.md",
+  "move-studio-changes-to-git.md",
   "pages-and-routing.md",
+  "project-knowledge.md",
   "project-structure.md",
   "project-metrics.md",
   "quickstart.md",
   "sandbox.md",
+  "schedule.md",
+  "webhook.md",
   "skills.md",
   "storybook-ui-workbench.md",
   "tasks.md",
-  "work.md",
   "workflows-advanced.md",
   "eval.md",
 ] as const;
@@ -170,6 +185,60 @@ describe("Guide code example coverage", () => {
   });
 });
 
+describe("Guide: concepts/schedule.md", () => {
+  it("defines the documented stale-run health budget", () => {
+    const definition = schedule({
+      id: "daily-support-triage",
+      schedule: "0 9 * * 1-5",
+      target: { kind: "workflow", id: "escalate-ticket" },
+      health: { maxStalenessSeconds: 1_800 },
+    });
+
+    assertEquals(definition.health, { maxStalenessSeconds: 1_800 });
+  });
+});
+
+describe("Guide: concepts/webhook.md", () => {
+  it("normalizes the documented event filter example", () => {
+    const definition = webhook({
+      id: "pull-request-review",
+      target: { kind: "workflow", id: "review-pull-request" },
+      eventFilter: {
+        mode: "all",
+        conditions: [
+          { path: "action", operator: "in", value: ["opened", "reopened"] },
+          { path: "pull_request.draft", operator: "equals", value: false },
+          { path: "pull_request.labels", operator: "contains", value: "backend" },
+        ],
+      },
+    });
+
+    assertEquals(definition.eventFilter?.mode, "all");
+    assertEquals(definition.eventFilter?.conditions.map((c) => c.operator), [
+      "in",
+      "equals",
+      "contains",
+    ]);
+  });
+
+  it("normalizes the documented agent prompt mapping example", () => {
+    const definition = webhook({
+      id: "support-escalation",
+      target: { kind: "agent", id: "support-agent" },
+      agentMessage: {
+        promptTemplate: "Triage {{payload.summary}} for account {{payload.account.id}}.",
+        conversationMode: "none",
+      },
+    });
+
+    assertEquals(definition.agentMessage?.conversationMode, "none");
+    assertEquals(
+      definition.agentMessage?.promptTemplate,
+      "Triage {{payload.summary}} for account {{payload.account.id}}.",
+    );
+  });
+});
+
 describe("Guide: agent-service-runtime.md", () => {
   it("uses public agent service helpers that exist and produce documented MCP configs", () => {
     assertEquals(typeof startAgentService, "function");
@@ -231,10 +300,9 @@ describe("Guide: chat-ui.md", () => {
   it("uses the preset Chat component with the documented hook and route helper", () => {
     assertEquals(typeof useChat, "function");
     assertEquals(typeof createAgUiHandler, "function");
-    assertExists(Chat);
+    assertEquals(typeof Chat, "function");
     const chatRecord = Chat as unknown as Record<string, unknown>;
     const messageRecord = Message as unknown as Record<string, unknown>;
-    assertEquals(typeof chatRecord.render, "function");
     assertExists(chatRecord.Root);
     assertExists(chatRecord.MessageList);
     assertExists(chatRecord.Input);
@@ -262,6 +330,16 @@ describe("Guide: chat-ui.md", () => {
       ),
     );
     assertEquals(element.type, ChatRoot);
+  });
+});
+
+describe("Guide: memory-and-streaming.md", () => {
+  it("uses the canonical useChat event handlers", async () => {
+    const guide = await readGuide("memory-and-streaming.md");
+
+    assertStringIncludes(guide, "handleInputChange");
+    assertStringIncludes(guide, "handleSubmit");
+    assertEquals(guide.includes("const { messages, input, onChange, onSubmit"), false);
   });
 });
 
@@ -405,13 +483,87 @@ describe("Guide: deploying.md", () => {
         "veryfront dev",
         "veryfront build",
         "veryfront serve",
-        "veryfront deploy",
+        "npx veryfront deploy",
+        "npx veryfront deploy --branch feature-x --env staging",
         "veryfront open",
       ]
     ) {
       assertStringIncludes(guide, command);
     }
     assertEquals(guide.includes("veryfront start"), false);
+  });
+});
+
+describe("Guide: deploy-from-ci.md", () => {
+  it("uses supported Push and Deploy arguments in the required order", async () => {
+    const guide = await readGuide("deploy-from-ci.md");
+    const pushCommand = "veryfront push --branch main --prune --yes";
+    const stagingCommand = "veryfront deploy --branch main --env staging --yes";
+    const productionCommand = "veryfront deploy --branch main --env production --yes";
+
+    const dryRunArgs = parseCliArgs(["push", "--branch", "main", "--prune", "--dry-run"]);
+    const parsedDryRun = parsePushArgs(dryRunArgs);
+    assert(parsedDryRun.success);
+    assertEquals(parsedDryRun.data.branch, "main");
+    assertEquals(parsedDryRun.data.prune, true);
+    assertEquals(parsedDryRun.data.dryRun, true);
+
+    const pushArgs = parseCliArgs(["push", "--branch", "main", "--prune", "--yes"]);
+    const parsedPush = parsePushArgs(pushArgs);
+    assert(parsedPush.success);
+    assertEquals(parsedPush.data.branch, "main");
+    assertEquals(parsedPush.data.prune, true);
+    assertEquals(pushArgs.yes, true);
+
+    const deployArgs = parseCliArgs([
+      "deploy",
+      "--branch",
+      "main",
+      "--env",
+      "staging",
+      "--yes",
+    ]);
+    const parsedDeploy = parseDeployArgs(deployArgs);
+    assert(parsedDeploy.success);
+    assertEquals(parsedDeploy.data.branch, "main");
+    assertEquals(parsedDeploy.data.env, "staging");
+    assertEquals(deployArgs.yes, true);
+
+    assert(
+      guide.indexOf("veryfront push --branch main --prune --dry-run") <
+        guide.indexOf(pushCommand),
+    );
+    assert(guide.indexOf(pushCommand) < guide.indexOf(stagingCommand));
+    assert(guide.indexOf(stagingCommand) < guide.indexOf(productionCommand));
+    assertStringIncludes(guide, "cancel-in-progress: false");
+    assertStringIncludes(guide, "RUNNER_TEMP");
+  });
+});
+
+describe("Guide: move-studio-changes-to-git.md", () => {
+  it("uses the immutable release and pruning Pull arguments", async () => {
+    const guide = await readGuide("move-studio-changes-to-git.md");
+    const pullArgs = parseCliArgs([
+      "pull",
+      "--release",
+      "0.0.42",
+      "--prune",
+      "--yes",
+    ]);
+    const parsedPull = parsePullArgs(pullArgs);
+
+    assert(parsedPull.success);
+    assertEquals(parsedPull.data.release, "0.0.42");
+    assertEquals(parsedPull.data.prune, true);
+    assertEquals(pullArgs.yes, true);
+    assertStringIncludes(
+      guide,
+      'veryfront pull --release "$VERYFRONT_RELEASE" --prune --yes',
+    );
+    assertStringIncludes(guide, "BASE_GIT_SHA");
+    assertStringIncludes(guide, "gh pr create");
+    assertStringIncludes(guide, "--base main");
+    assertStringIncludes(guide, "git merge origin/main");
   });
 });
 
@@ -636,6 +788,31 @@ describe("Guide: project-structure.md", () => {
   });
 });
 
+describe("Guide: project-knowledge.md", () => {
+  it("uses the public manifest and RAG helper contracts", async () => {
+    const guide = await readGuide("project-knowledge.md");
+    const knowledge = projectKnowledge({ projectDir: "." });
+    const searchKnowledge = createSearchKnowledgeTool({
+      id: "search_knowledge",
+      description: "Search the project's reviewed support knowledge.",
+    });
+
+    assertEquals(typeof knowledge.lookup, "function");
+    assertEquals(typeof knowledge.index, "function");
+    assertEquals(typeof knowledge.retrieve, "function");
+    assertEquals(typeof knowledge.search, "function");
+    assertEquals(searchKnowledge.id, "search_knowledge");
+    assertEquals(normalizeKnowledgeQuery("  SSO   recovery  "), "SSO recovery");
+    assertStringIncludes(
+      guide,
+      'import { projectKnowledge } from "veryfront/knowledge"',
+    );
+    assertStringIncludes(guide, "page.mode");
+    assertStringIncludes(guide, "page_info.next");
+    assertStringIncludes(guide, "lookup_target");
+  });
+});
+
 describe("Guide: create-agent.md", () => {
   it("defines the first assistant agent", async () => {
     const guide = await readGuide("create-agent.md");
@@ -762,7 +939,7 @@ describe("Guide: create-frontend.md", () => {
         '"use client";',
         'import { Chat, useChat } from "veryfront/chat"',
         "useChat()",
-        '<Chat {...chat} placeholder="Ask me anything..." />',
+        '<Chat chat={chat} placeholder="Ask me anything..." />',
       ]
     ) {
       assertStringIncludes(guide, snippet);
@@ -778,7 +955,8 @@ describe("Guide: deploy-project.md", () => {
       const command of [
         "veryfront build",
         "veryfront serve",
-        "veryfront deploy",
+        "npx veryfront deploy",
+        "npx veryfront push --branch feature-x",
         "veryfront open",
       ]
     ) {

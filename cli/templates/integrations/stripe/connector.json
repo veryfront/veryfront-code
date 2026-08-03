@@ -34,7 +34,7 @@
   ],
   "tools": [
     {
-      "id": "list_customers",
+      "id": "stripe__list_customers",
       "name": "List Customers",
       "description": "List Stripe customers with optional filtering",
       "requiresWrite": false,
@@ -78,7 +78,7 @@
       }
     },
     {
-      "id": "get_customer",
+      "id": "stripe__get_customer",
       "name": "Get Customer",
       "description": "Retrieve detailed information about a specific customer",
       "requiresWrite": false,
@@ -96,7 +96,7 @@
       }
     },
     {
-      "id": "list_payments",
+      "id": "stripe__list_payments",
       "name": "List Payments",
       "description": "List payment intents with optional status filtering",
       "requiresWrite": false,
@@ -141,7 +141,7 @@
       }
     },
     {
-      "id": "get_balance",
+      "id": "stripe__get_balance",
       "name": "Get Balance",
       "description": "Retrieve the current account balance",
       "requiresWrite": false,
@@ -151,7 +151,7 @@
       }
     },
     {
-      "id": "list_subscriptions",
+      "id": "stripe__list_subscriptions",
       "name": "List Subscriptions",
       "description": "List subscriptions with optional status filtering",
       "requiresWrite": false,
@@ -205,7 +205,7 @@
       }
     },
     {
-      "id": "list_invoices",
+      "id": "stripe__list_invoices",
       "name": "List Invoices",
       "description": "List invoices with optional customer and status filtering",
       "requiresWrite": false,
@@ -260,7 +260,7 @@
       }
     },
     {
-      "id": "list_charges",
+      "id": "stripe__list_charges",
       "name": "List Charges",
       "description": "List charges with optional customer or payment intent filtering",
       "requiresWrite": false,

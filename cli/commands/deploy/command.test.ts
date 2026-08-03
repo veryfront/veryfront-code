@@ -6,45 +6,156 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  createDeployment,
-  createRelease,
-  DeployArgsSchema,
-  getEnvironmentByName,
-  parseDeployArgs,
-} from "./index.ts";
-import type { ApiClient } from "#cli/shared/config";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { setJsonMode } from "../../shared/json-output.ts";
+import type {
+  DeployEvent,
+  DeployProject,
+  DeployProjectRequest,
+} from "../../shared/deployment/deploy-project.ts";
+import type { DeployResult } from "../../shared/deployment/result.ts";
+import { stripAnsi } from "../../ui/ansi.ts";
+import { DeployArgsSchema, parseDeployArgs } from "./index.ts";
+import { deployCommand } from "./command.ts";
 import type { ParsedArgs } from "#cli/shared/types";
 
-type MockClientOverrides = Partial<{
-  get: (path: string, params?: Record<string, string>) => Promise<unknown>;
-  post: (path: string, body?: unknown) => Promise<unknown>;
-}>;
-
-function createMockClient(overrides: MockClientOverrides = {}): ApiClient {
-  return {
-    get: async <T>(path: string, params?: Record<string, string>): Promise<T> => {
-      const result = overrides.get ? await overrides.get(path, params) : { data: [] };
-      return result as T;
-    },
-    post: async <T>(path: string, body?: unknown): Promise<T> => {
-      const result = overrides.post ? await overrides.post(path, body) : {};
-      return result as T;
-    },
-    put: <T>(): Promise<T> => Promise.resolve({} as T),
-    patch: <T>(): Promise<T> => Promise.resolve({} as T),
-    delete: <T>(): Promise<T> => Promise.resolve({} as T),
+async function captureConsole<T>(fn: () => Promise<T>): Promise<{ result: T; output: string[] }> {
+  const output: string[] = [];
+  const originalLog = console.log;
+  const originalWarn = console.warn;
+  console.log = (...args: unknown[]) => {
+    output.push(args.map(String).join(" "));
   };
-}
-
-async function expectErrorMessage(fn: () => Promise<unknown>): Promise<string | undefined> {
+  console.warn = (...args: unknown[]) => {
+    output.push(args.map(String).join(" "));
+  };
   try {
-    await fn();
-    return;
-  } catch (e) {
-    return (e as Error).message;
+    return { result: await fn(), output };
+  } finally {
+    console.log = originalLog;
+    console.warn = originalWarn;
   }
 }
+
+describe("deploy command adapters", () => {
+  it("render human and JSON output from one injected deployment executor", async () => {
+    const sentinelResult: DeployResult = {
+      projectId: "project-sentinel",
+      projectSlug: "sentinel-project",
+      release: {
+        id: "release-sentinel",
+        name: "release-from-fake",
+        version: "2026.07.30-1",
+      },
+      environment: "production",
+      environmentId: "environment-sentinel",
+      deploymentId: "deployment-sentinel",
+      url: "https://sentinel.example.test/dashboard",
+      protected: true,
+      routingConvergence: { status: "converged", acknowledged: 3, recipients: 3 },
+      commitSha: "f".repeat(40),
+      sourceDigest: "sha256:sentinel",
+      controlPlane: "https://control.example.test/api",
+      branch: "main",
+    };
+    const observedRequests: DeployProjectRequest[] = [];
+    const createFakeDeployment = (): DeployProject => ({
+      async execute(request, observer) {
+        observedRequests.push(request);
+        const events: DeployEvent[] = [
+          { kind: "step", step: "resolve-config", phase: "started" },
+          { kind: "step", step: "resolve-config", phase: "completed" },
+          { kind: "step", step: "create-deployment", phase: "started" },
+          { kind: "step", step: "create-deployment", phase: "completed" },
+          {
+            kind: "warning",
+            code: "routing-convergence-unconfirmed",
+            message: "sentinel warning",
+          },
+        ];
+        for (const event of events) await observer?.onEvent(event);
+        return { kind: "deployed", result: sentinelResult };
+      },
+    });
+    const options = {
+      projectDir: "adapter-must-not-read",
+      branch: "main",
+      env: "production",
+      releaseName: "release-from-options",
+      dryRun: false,
+      force: false,
+      quiet: false,
+      skipSourcePush: true,
+      deployProject: createFakeDeployment(),
+    };
+
+    const human = await withMockFetch(
+      () => {
+        throw new Error("adapter performed fetch orchestration");
+      },
+      () => captureConsole(() => deployCommand(options)),
+    );
+
+    let json: { result: DeployResult | null; output: string[] };
+    try {
+      setJsonMode(true);
+      json = await withMockFetch(
+        () => {
+          throw new Error("adapter performed fetch orchestration");
+        },
+        () => captureConsole(() => deployCommand(options)),
+      );
+    } finally {
+      setJsonMode(false);
+    }
+
+    assertEquals(observedRequests.length, 2);
+    assertEquals(observedRequests[0], observedRequests[1]);
+    assertEquals(observedRequests[0], {
+      projectDir: "adapter-must-not-read",
+      branch: "main",
+      environment: "production",
+      releaseName: "release-from-options",
+      mode: "apply",
+      source: { kind: "already-pushed" },
+    });
+    assertEquals(human.result, sentinelResult);
+    assertEquals(json.result, sentinelResult);
+
+    const humanOutput = stripAnsi(human.output.join("\n"));
+    assertEquals(humanOutput.includes("Deployed sentinel-project to production"), true);
+    const expectedUrlLine = `  ${sentinelResult.url}`;
+    assertEquals(
+      human.output.map(stripAnsi).find((line) => line === expectedUrlLine),
+      expectedUrlLine,
+    );
+    assertEquals(humanOutput.includes("Release 2026.07.30-1"), true);
+    assertEquals(humanOutput.includes("sentinel warning"), true);
+
+    const jsonRecords = json.output.map((line) => JSON.parse(line));
+    assertEquals(
+      jsonRecords
+        .filter((record) => record.type === "step")
+        .map((record) => `${record.name}:${record.status}`),
+      [
+        "resolve-config:started",
+        "resolve-config:completed",
+        "deploy:started",
+        "deploy:completed",
+      ],
+    );
+    assertEquals(jsonRecords.at(-2), {
+      type: "warning",
+      code: "routing-convergence-unconfirmed",
+      message: "sentinel warning",
+    });
+    assertEquals(jsonRecords.at(-1), {
+      type: "result",
+      success: true,
+      data: sentinelResult,
+    });
+  });
+});
 
 describe("DeployArgsSchema", () => {
   it("should use default values", () => {
@@ -52,7 +163,7 @@ describe("DeployArgsSchema", () => {
     assertEquals(result.success, true);
     if (!result.success) return;
 
-    assertEquals(result.data.branch, "main");
+    assertEquals(result.data.branch, undefined);
     assertEquals(result.data.env, "production");
   });
 
@@ -81,7 +192,7 @@ describe("parseDeployArgs", () => {
     assertEquals(result.success, true);
     if (!result.success) return;
 
-    assertEquals(result.data.branch, "main");
+    assertEquals(result.data.branch, undefined);
     assertEquals(result.data.env, "production");
   });
 
@@ -141,131 +252,6 @@ describe("parseDeployArgs", () => {
   });
 });
 
-describe("getEnvironmentByName", () => {
-  it("should find environment by name", async () => {
-    const mockClient = createMockClient({
-      get: () =>
-        Promise.resolve({
-          data: [
-            { id: "env-1", name: "production", protected: true },
-            { id: "env-2", name: "staging", protected: false },
-          ],
-        }),
-    });
-
-    const env = await getEnvironmentByName(mockClient, "my-project", "staging");
-    assertEquals(env, { id: "env-2", name: "staging", protected: false });
-  });
-
-  it("should return null when environment not found", async () => {
-    const mockClient = createMockClient({
-      get: () => Promise.resolve({ data: [] }),
-    });
-
-    const env = await getEnvironmentByName(mockClient, "my-project", "nonexistent");
-    assertEquals(env, null);
-  });
-});
-
-describe("createRelease", () => {
-  it("should create release without options", async () => {
-    let capturedUrl = "";
-    let capturedBody: unknown = null;
-
-    const mockClient = createMockClient({
-      post: (url: string, body?: unknown) => {
-        capturedUrl = url;
-        capturedBody = body;
-        return Promise.resolve({
-          id: "rel-123",
-          version: "1.0.0",
-          name: "auto-generated",
-        });
-      },
-    });
-
-    const release = await createRelease(mockClient, "my-project");
-    assertEquals(capturedUrl, "/projects/my-project/releases");
-    assertEquals(capturedBody, {});
-    assertEquals(release.id, "rel-123");
-  });
-
-  it("should create release with custom name", async () => {
-    let capturedBody: unknown = null;
-
-    const mockClient = createMockClient({
-      post: (_url: string, body?: unknown) => {
-        capturedBody = body;
-        return Promise.resolve({ id: "rel-123" });
-      },
-    });
-
-    await createRelease(mockClient, "my-project", { name: "v2.0.0" });
-    assertEquals(capturedBody, { name: "v2.0.0" });
-  });
-
-  it("should create release from specific branch", async () => {
-    let capturedBody: unknown = null;
-
-    const mockClient = createMockClient({
-      post: (_url: string, body?: unknown) => {
-        capturedBody = body;
-        return Promise.resolve({ id: "rel-123" });
-      },
-    });
-
-    await createRelease(mockClient, "my-project", { branch: "develop" });
-    assertEquals(capturedBody, { branch_reference: "develop" });
-  });
-
-  it("should create release with name and branch", async () => {
-    let capturedBody: unknown = null;
-
-    const mockClient = createMockClient({
-      post: (_url: string, body?: unknown) => {
-        capturedBody = body;
-        return Promise.resolve({ id: "rel-123" });
-      },
-    });
-
-    await createRelease(mockClient, "my-project", { name: "v2.0.0", branch: "develop" });
-    assertEquals(capturedBody, { name: "v2.0.0", branch_reference: "develop" });
-  });
-});
-
-describe("getEnvironmentByName - error handling", () => {
-  it("should handle API error gracefully", async () => {
-    const mockClient = createMockClient({
-      get: () => Promise.reject(new Error("Network error")),
-    });
-
-    const message = await expectErrorMessage(() =>
-      getEnvironmentByName(mockClient, "my-project", "production")
-    );
-    assertEquals(message, "Network error");
-  });
-
-  it("should handle paginated empty results", async () => {
-    let callCount = 0;
-    const mockClient = createMockClient({
-      get: () => {
-        callCount++;
-        if (callCount === 1) {
-          return Promise.resolve({
-            data: [{ id: "env-1", name: "staging", protected: false }],
-            page_info: { next: "cursor-2" },
-          });
-        }
-        return Promise.resolve({ data: [], page_info: {} });
-      },
-    });
-
-    const env = await getEnvironmentByName(mockClient, "my-project", "production");
-    assertEquals(env, null);
-    assertEquals(callCount, 2);
-  });
-});
-
 describe("DeployArgsSchema - invalid inputs", () => {
   it("should reject empty branch name", () => {
     const result = DeployArgsSchema.safeParse({ branch: "" });
@@ -280,87 +266,5 @@ describe("DeployArgsSchema - invalid inputs", () => {
   it("should reject empty release name", () => {
     const result = DeployArgsSchema.safeParse({ releaseName: "" });
     assertEquals(result.success, false);
-  });
-});
-
-describe("createRelease - error handling", () => {
-  it("should propagate API errors", async () => {
-    const mockClient = createMockClient({
-      post: () => Promise.reject(new Error("Release creation failed")),
-    });
-
-    const message = await expectErrorMessage(() => createRelease(mockClient, "my-project"));
-    assertEquals(message, "Release creation failed");
-  });
-
-  it("should propagate errors for invalid branch", async () => {
-    const mockClient = createMockClient({
-      post: () => Promise.reject(new Error("Branch not found")),
-    });
-
-    const message = await expectErrorMessage(() =>
-      createRelease(mockClient, "my-project", { branch: "nonexistent" })
-    );
-    assertEquals(message, "Branch not found");
-  });
-});
-
-describe("createDeployment", () => {
-  it("should create deployment with release and environment", async () => {
-    let capturedUrl = "";
-    let capturedBody: unknown = null;
-
-    const mockClient = createMockClient({
-      post: (url: string, body?: unknown) => {
-        capturedUrl = url;
-        capturedBody = body;
-        return Promise.resolve({
-          id: "deploy-123",
-          release: "rel-456",
-          environment: "env-789",
-        });
-      },
-    });
-
-    const deployment = await createDeployment(mockClient, "my-project", "rel-456", "env-789");
-    assertEquals(capturedUrl, "/projects/my-project/deployments");
-    assertEquals(capturedBody, { release_id: "rel-456", environment_id: "env-789" });
-    assertEquals(deployment.id, "deploy-123");
-  });
-});
-
-describe("createDeployment - error handling", () => {
-  it("should propagate API errors for protected environment", async () => {
-    const mockClient = createMockClient({
-      post: () =>
-        Promise.reject(new Error("Cannot deploy to protected environment without approval")),
-    });
-
-    const message = await expectErrorMessage(() =>
-      createDeployment(mockClient, "my-project", "rel-123", "protected-env")
-    );
-    assertEquals(message, "Cannot deploy to protected environment without approval");
-  });
-
-  it("should propagate API errors for invalid release", async () => {
-    const mockClient = createMockClient({
-      post: () => Promise.reject(new Error("Release not found")),
-    });
-
-    const message = await expectErrorMessage(() =>
-      createDeployment(mockClient, "my-project", "invalid-rel", "env-123")
-    );
-    assertEquals(message, "Release not found");
-  });
-
-  it("should propagate API errors for invalid environment", async () => {
-    const mockClient = createMockClient({
-      post: () => Promise.reject(new Error("Environment not found")),
-    });
-
-    const message = await expectErrorMessage(() =>
-      createDeployment(mockClient, "my-project", "rel-123", "invalid-env")
-    );
-    assertEquals(message, "Environment not found");
   });
 });

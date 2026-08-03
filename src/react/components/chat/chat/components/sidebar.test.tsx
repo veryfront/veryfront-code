@@ -4,10 +4,15 @@
  * props, and it also works controlled from explicit `conversations`/`activeId`.
  */
 import { createRoot } from "react-dom/client";
+import { flushSync } from "react-dom";
+import { renderToString } from "react-dom/server";
+import * as React from "react";
 import { JSDOM } from "npm:jsdom@28.0.0";
-import { assert } from "#veryfront/testing/assert.ts";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ChatSidebar } from "./sidebar.tsx";
+import { ChatSidebar, useChatSidebarItem } from "./sidebar.tsx";
+import { ChatSidebarRenameEditor } from "./sidebar-rename-editor.tsx";
 import { ConversationsProvider } from "../contexts/conversations-context.tsx";
 import { memoryConversationStore } from "../persistence/memory-conversation-store.ts";
 import type { Conversation, ConversationSummary } from "../persistence/conversation-store.ts";
@@ -17,6 +22,13 @@ function installDom(): () => void {
     url: "https://example.com/",
   });
   const window = dom.window;
+  // React DOM is initialized before this per-test browser exists, so its text-input
+  // event adapter uses the legacy listener API. JSDOM omits that API; supplying the
+  // listener-shaped methods keeps keyboard tests on the same React event path.
+  Object.defineProperties(window.HTMLElement.prototype, {
+    attachEvent: { configurable: true, value: () => {} },
+    detachEvent: { configurable: true, value: () => {} },
+  });
   const keys = [
     "window",
     "document",
@@ -25,6 +37,10 @@ function installDom(): () => void {
     "Node",
     "Element",
     "HTMLElement",
+    "HTMLInputElement",
+    "Event",
+    "FocusEvent",
+    "KeyboardEvent",
     "localStorage",
   ] as const;
   const previous: Record<string, unknown> = {};
@@ -37,6 +53,10 @@ function installDom(): () => void {
     Node: window.Node,
     Element: window.Element,
     HTMLElement: window.HTMLElement,
+    HTMLInputElement: window.HTMLInputElement,
+    Event: window.Event,
+    FocusEvent: window.FocusEvent,
+    KeyboardEvent: window.KeyboardEvent,
     localStorage: window.localStorage,
   });
   window.localStorage.clear();
@@ -48,6 +68,7 @@ function installDom(): () => void {
 
 async function settle(): Promise<void> {
   for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
+  flushSync(() => {});
 }
 
 function conversation(id: string, title: string, updatedAt: number): Conversation {
@@ -67,18 +88,21 @@ describe("ChatSidebar — conversation-native", () => {
     ]);
     try {
       const root = createRoot(document.getElementById("root")!);
-      root.render(
-        <ConversationsProvider store={store} id="a">
-          <ChatSidebar fill />
-        </ConversationsProvider>,
-      );
+      flushSync(() => {
+        root.render(
+          <ConversationsProvider store={store} id="a">
+            <ChatSidebar />
+          </ConversationsProvider>,
+        );
+      });
       await settle();
 
       const html = document.getElementById("root")!.innerHTML;
       assert(html.includes("First chat"), "lists the first conversation from context");
       assert(html.includes("Second chat"), "lists the second conversation from context");
 
-      root.unmount();
+      await unmountReactRoot(root);
+      await settle();
     } finally {
       restoreDom();
     }
@@ -88,23 +112,215 @@ describe("ChatSidebar — conversation-native", () => {
     const restoreDom = installDom();
     try {
       const root = createRoot(document.getElementById("root")!);
-      root.render(
-        <ChatSidebar
-          fill
-          conversations={[summary("x", "Controlled chat", 5000)]}
-          activeId="x"
-          onSelect={() => {}}
-          onDelete={() => {}}
-        />,
-      );
+      flushSync(() => {
+        root.render(
+          <ChatSidebar
+            conversations={[summary("x", "Controlled chat", 5000)]}
+            activeId="x"
+            onSelect={() => {}}
+            onDelete={() => {}}
+          />,
+        );
+      });
       await settle();
 
       assert(
         document.getElementById("root")!.innerHTML.includes("Controlled chat"),
         "lists the controlled conversation",
       );
+      const currentConversation = document.querySelector<HTMLButtonElement>(
+        'button[aria-current="page"]',
+      );
+      assert(currentConversation, "the current conversation is a native primary action");
+      assert(
+        currentConversation.textContent?.includes("Controlled chat"),
+        "the primary action carries the conversation label",
+      );
 
-      root.unmount();
+      await unmountReactRoot(root);
+      await settle();
+    } finally {
+      restoreDom();
+    }
+  });
+
+  it("keeps the legacy fill prop in embedded layouts", () => {
+    const html = renderToString(
+      <ChatSidebar
+        fill
+        conversations={[summary("x", "Embedded chat", 5000)]}
+        activeId="x"
+        onSelect={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    const railClass = html.match(/data-vf-chat="" class="([^"]*)"/)?.[1] ?? "";
+    assert(railClass.includes("w-full"), "fill keeps the embedded rail full-width");
+    assert(!railClass.includes("w-60"), "fill omits standalone fixed-width chrome");
+  });
+});
+
+describe("ChatSidebar.Item — menu compound (E4 acid test)", () => {
+  it("exposes the row-menu leaves off the compound", () => {
+    assert(typeof ChatSidebar.Item.Menu === "function", "Item.Menu is addressable");
+    assert(typeof ChatSidebar.Item.Rename === "function", "Item.Rename is addressable");
+    assert(typeof ChatSidebar.Item.Delete === "function", "Item.Delete is addressable");
+  });
+
+  it("useChatSidebarItem fails fast outside an <ChatSidebar.Item>", () => {
+    function Orphan() {
+      useChatSidebarItem();
+      return null;
+    }
+    let threw = false;
+    try {
+      renderToString(<Orphan />);
+    } catch {
+      threw = true;
+    }
+    assert(threw, "a misplaced Item leaf is a loud error, not a silent null");
+  });
+
+  it("a custom entry composes alongside the built-ins without re-implementing the row", () => {
+    // The whole point: add a menu entry by composing, not by re-writing the row.
+    const html = renderToString(
+      <ChatSidebar.Root
+        conversations={[summary("x", "Row title", 5000)]}
+        activeId="x"
+        onSelect={() => {}}
+        onDelete={() => {}}
+        onRename={() => {}}
+      >
+        <ChatSidebar.List>
+          <ChatSidebar.Item conversation={summary("x", "Row title", 5000)}>
+            <ChatSidebar.Item.Menu>
+              <ChatSidebar.Item.Rename />
+              <ChatSidebar.Item.Delete />
+              <div data-archive="">Archive</div>
+            </ChatSidebar.Item.Menu>
+          </ChatSidebar.Item>
+        </ChatSidebar.List>
+      </ChatSidebar.Root>,
+    );
+    // The composed row still renders (the built-in row is reused, not replaced).
+    assert(html.includes("Row title"), "the row renders from the composed Item");
+  });
+
+  it("keeps the row ref attached while inline rename is active", async () => {
+    const restoreDom = installDom();
+    const itemRef = React.createRef<HTMLDivElement>();
+    function StartRename(): React.ReactElement {
+      const { startRename } = useChatSidebarItem();
+      return <button type="button" data-start-rename="" onClick={startRename}>Rename</button>;
+    }
+
+    try {
+      const root = createRoot(document.getElementById("root")!);
+      flushSync(() => {
+        root.render(
+          <ChatSidebar.Root
+            conversations={[summary("x", "Row title", 5000)]}
+            activeId="x"
+            onSelect={() => {}}
+            onDelete={() => {}}
+            onRename={() => {}}
+          >
+            <ChatSidebar.List>
+              <ChatSidebar.Item
+                ref={itemRef}
+                className="custom-row"
+                conversation={summary("x", "Row title", 5000)}
+              >
+                <StartRename />
+              </ChatSidebar.Item>
+            </ChatSidebar.List>
+          </ChatSidebar.Root>,
+        );
+      });
+      assert(itemRef.current, "the display row owns the consumer ref");
+
+      flushSync(() => {
+        document.querySelector<HTMLButtonElement>("[data-start-rename]")?.click();
+      });
+
+      assert(itemRef.current, "the inline rename row keeps the consumer ref attached");
+      assert(
+        itemRef.current.classList.contains("custom-row"),
+        "the rename row keeps custom styling",
+      );
+      assert(itemRef.current.querySelector("input"), "the ref targets the active rename row");
+
+      await unmountReactRoot(root);
+      await settle();
+    } finally {
+      restoreDom();
+    }
+  });
+});
+
+describe("ChatSidebarRenameEditor", () => {
+  async function runKeyboardCompletion(key: "Enter" | "Escape"): Promise<[number, number]> {
+    const restoreDom = installDom();
+    let commits = 0;
+    let cancels = 0;
+
+    try {
+      const root = createRoot(document.getElementById("root")!);
+      flushSync(() => {
+        root.render(
+          <ChatSidebarRenameEditor
+            value="Row title"
+            onChange={() => {}}
+            onCommit={() => commits++}
+            onCancel={() => cancels++}
+          />,
+        );
+      });
+      const input = document.querySelector<HTMLInputElement>("input")!;
+      input.focus();
+      flushSync(() => {
+        input.dispatchEvent(
+          new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
+        );
+        input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+      });
+
+      await unmountReactRoot(root);
+      await settle();
+      return [commits, cancels];
+    } finally {
+      restoreDom();
+    }
+  }
+
+  it("does not commit twice when Enter is followed by blur", async () => {
+    assertEquals(await runKeyboardCompletion("Enter"), [1, 0]);
+  });
+
+  it("does not commit after Escape is followed by blur", async () => {
+    assertEquals(await runKeyboardCompletion("Escape"), [0, 1]);
+  });
+
+  it("gives the editor a stable contextual accessible name", async () => {
+    const restoreDom = installDom();
+    try {
+      const root = createRoot(document.getElementById("root")!);
+      const renderEditor = (value: string) => (
+        <ChatSidebarRenameEditor
+          value={value}
+          onChange={() => {}}
+          onCommit={() => {}}
+          onCancel={() => {}}
+        />
+      );
+      flushSync(() => root.render(renderEditor("Original title")));
+      const input = document.querySelector<HTMLInputElement>("input")!;
+      assertEquals(input.getAttribute("aria-label"), "Rename Original title");
+
+      flushSync(() => root.render(renderEditor("Edited title")));
+      assertEquals(input.getAttribute("aria-label"), "Rename Original title");
+      await unmountReactRoot(root);
+      await settle();
     } finally {
       restoreDom();
     }

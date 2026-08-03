@@ -39,7 +39,7 @@
   ],
   "tools": [
     {
-      "id": "list_droplets",
+      "id": "digitalocean__list_droplets",
       "name": "List Droplets",
       "description": "List Droplets in the account",
       "requiresWrite": false,
@@ -111,7 +111,7 @@
       }
     },
     {
-      "id": "get_droplet",
+      "id": "digitalocean__get_droplet",
       "name": "Get Droplet",
       "description": "Get a Droplet by ID",
       "requiresWrite": false,
@@ -132,7 +132,7 @@
       }
     },
     {
-      "id": "create_droplet",
+      "id": "digitalocean__create_droplet",
       "name": "Create Droplet",
       "description": "Create a new Droplet (provisions billable infrastructure)",
       "requiresWrite": true,
@@ -180,7 +180,7 @@
       }
     },
     {
-      "id": "delete_droplet",
+      "id": "digitalocean__delete_droplet",
       "name": "Delete Droplet",
       "description": "Permanently destroy a Droplet by ID",
       "requiresWrite": true,
@@ -198,7 +198,7 @@
       }
     },
     {
-      "id": "list_databases",
+      "id": "digitalocean__list_databases",
       "name": "List Database Clusters",
       "description": "List managed database clusters in the account",
       "requiresWrite": false,
@@ -242,7 +242,7 @@
       }
     },
     {
-      "id": "get_account",
+      "id": "digitalocean__get_account",
       "name": "Get Account",
       "description": "Get account information and limits for the authenticated user",
       "requiresWrite": false,

@@ -348,7 +348,7 @@ describe(
       });
     });
 
-    it("returns runtime error HTML instead of app/error.tsx when page throws synchronously", async () => {
+    it("renders the nearest app/error.tsx when a page throws synchronously", async () => {
       await withTestContext("production-server-app-error-boundary-ssr", async (context) => {
         try {
           await remove(join(context.projectDir, "app"), { recursive: true });
@@ -390,9 +390,9 @@ describe(
         assertEquals(res.status, 500);
         assertMatch(res.headers.get("content-type") ?? "", /text\/html/i);
         const html = await res.text();
-        assertStringIncludes(html, "Runtime Error");
+        assertStringIncludes(html, "ErrA:");
         assertStringIncludes(html, "boom");
-        assertEquals(html.includes("ErrA:"), false);
+        assertEquals(html.includes("Runtime Error"), false);
 
         controller.abort();
         await server.stop();
@@ -451,7 +451,10 @@ describe(
         const res = await fetch(`http://127.0.0.1:${port}/`);
         assertEquals(res.status, 200);
         const html = await res.text();
-        assertStringIncludes(html, "<title>Custom Title</title>");
+        assertStringIncludes(
+          html,
+          '<title data-vf-shell-head="true">Custom Title</title>',
+        );
         assertMatch(html, /<meta[^>]*name="description"[^>]*content="Custom Description"/i);
 
         controller.abort();
@@ -478,7 +481,10 @@ describe(
         const res = await fetch(`http://127.0.0.1:${port}/meta`);
         assertEquals(res.status, 200);
         const html = await res.text();
-        assertStringIncludes(html, "<title>GM Title</title>");
+        assertStringIncludes(
+          html,
+          '<title data-vf-shell-head="true">GM Title</title>',
+        );
         assertMatch(html, /<meta[^>]*name="description"[^>]*content="GM Desc"/i);
         assertMatch(html, /<meta[^>]*name="keywords"[^>]*content="foo,bar"/i);
 

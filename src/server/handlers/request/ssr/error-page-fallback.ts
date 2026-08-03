@@ -7,10 +7,22 @@ import { serverLogger } from "#veryfront/utils";
 import { buildErrorPageCacheKey } from "#veryfront/cache";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import { generateErrorHtml } from "../../../utils/error-html.ts";
+import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
+import {
+  type DependencyPinningSnapshot,
+  type DependencyPinningSourceInput,
+  resolveDependencyPinningSnapshot,
+  resolveProjectReactVersion,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
+import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
+import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 
 const logger = serverLogger.component("error-page-fallback");
 
 type ErrorPageType = "404" | "500" | "_error";
+type ComponentLoaderModule = typeof import("#veryfront/modules/react-loader/component-loader.ts");
+type ComponentSourceLoader = ComponentLoaderModule["loadComponentFromSource"];
 
 interface ErrorPageOptions {
   statusCode: number;
@@ -20,6 +32,7 @@ interface ErrorPageOptions {
 
 /** Injected cache repository for testing */
 let injectedCacheRepo: CacheRepository<string> | null = null;
+let injectedComponentSourceLoader: ComponentSourceLoader | null = null;
 
 /**
  * Inject a CacheRepository for testing.
@@ -31,16 +44,32 @@ export function __injectCacheForTests(
   injectedCacheRepo = cacheRepo;
 }
 
+export function __setComponentSourceLoaderForTests(
+  loader: ComponentSourceLoader | null,
+): void {
+  injectedComponentSourceLoader = loader;
+}
+
 export async function tryErrorPageFallback(
   req: Request,
   ctx: HandlerContext,
   builder: ResponseBuilder,
   options: ErrorPageOptions,
+  requestedDependencySnapshot?: DependencyPinningSnapshot,
 ): Promise<Response | null> {
   const { statusCode, error, pathname } = options;
 
   try {
-    const pagesDir = joinPath(ctx.projectDir, "pages");
+    const dependencyPinningSource = createHandlerDependencyPinningSource(ctx);
+    const dependencySnapshot = await resolveDependencyPinningSnapshot(
+      dependencyPinningSource,
+      requestedDependencySnapshot?.cacheKey,
+      requestedDependencySnapshot?.dependencies,
+    );
+    const pagesDir = joinPath(
+      ctx.projectDir,
+      ctx.config?.directories?.pages ?? "pages",
+    );
 
     try {
       const st = await ctx.adapter.fs.stat(pagesDir);
@@ -50,6 +79,14 @@ export async function tryErrorPageFallback(
       return null;
     }
 
+    const reactVersion = await resolveProjectReactVersion({
+      projectDir: ctx.projectDir,
+      config: ctx.config,
+      dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+      dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningSource,
+    });
+
     const specificPage: ErrorPageType | null = statusCode === 404
       ? "404"
       : statusCode === 500
@@ -57,7 +94,15 @@ export async function tryErrorPageFallback(
       : null;
 
     if (specificPage) {
-      const ErrorComponent = await tryLoadErrorPage(pagesDir, specificPage, ctx);
+      const ErrorComponent = await tryLoadErrorPage(
+        pagesDir,
+        specificPage,
+        ctx,
+        reactVersion,
+        dependencySnapshot,
+        dependencyPinningSource,
+        new URL(req.url).origin,
+      );
       if (ErrorComponent) {
         logger.debug(`Found pages/${specificPage}.tsx`);
         return renderErrorPage(
@@ -68,11 +113,20 @@ export async function tryErrorPageFallback(
           statusCode,
           error,
           pathname,
+          reactVersion,
         );
       }
     }
 
-    const GenericErrorComponent = await tryLoadErrorPage(pagesDir, "_error", ctx);
+    const GenericErrorComponent = await tryLoadErrorPage(
+      pagesDir,
+      "_error",
+      ctx,
+      reactVersion,
+      dependencySnapshot,
+      dependencyPinningSource,
+      new URL(req.url).origin,
+    );
     if (!GenericErrorComponent) return null;
 
     logger.debug("Found pages/_error.tsx");
@@ -84,9 +138,14 @@ export async function tryErrorPageFallback(
       statusCode,
       error,
       pathname,
+      reactVersion,
     );
   } catch (e) {
-    logger.debug("Failed to load error page", { error: e });
+    // The user's custom error page failed to compile/load. Surface at warn so
+    // they learn it's broken, before falling back to the default error output.
+    logger.warn("Failed to load custom error page; falling back to default", {
+      errorName: e instanceof Error ? e.name : typeof e,
+    });
     return null;
   }
 }
@@ -95,12 +154,12 @@ const ERROR_PAGE_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js"] as const;
 /** Special value to indicate "not found" in cache (distinguishes from cache miss) */
 const CACHE_NOT_FOUND = "__NOT_FOUND__";
 
-const errorPagePathCache = new Map<string, string | null>();
+const errorPagePathCache = new LRUCacheAdapter({ maxEntries: 1000 });
 
 async function getCachedPath(
   cacheKey: string,
 ): Promise<string | null | undefined> {
-  if (!injectedCacheRepo) return errorPagePathCache.get(cacheKey);
+  if (!injectedCacheRepo) return errorPagePathCache.get<string | null>(cacheKey);
 
   const cached = await injectedCacheRepo.get(cacheKey);
   if (cached === CACHE_NOT_FOUND) return null;
@@ -115,6 +174,24 @@ async function setCachedPath(cacheKey: string, path: string | null): Promise<voi
   errorPagePathCache.set(cacheKey, path);
 }
 
+/**
+ * Whether a "this project has no error page" answer may be cached.
+ *
+ * In dev it may not. Nothing invalidates this cache when the filesystem
+ * changes, so caching the miss means a project that adds `pages/500.tsx` while
+ * the server is running keeps getting the dev overlay until restart, with no
+ * indication why. A miss costs one file probe on an error render, which is not
+ * a path worth optimising in dev.
+ */
+function canCacheMiss(ctx: HandlerContext): boolean {
+  return !ctx.isLocalProject;
+}
+
+async function setCachedMiss(cacheKey: string, ctx: HandlerContext): Promise<void> {
+  if (!canCacheMiss(ctx)) return;
+  await setCachedPath(cacheKey, null);
+}
+
 async function deleteCachedPath(cacheKey: string): Promise<void> {
   if (injectedCacheRepo) {
     await injectedCacheRepo.delete(cacheKey);
@@ -127,6 +204,10 @@ async function tryLoadErrorPage(
   pagesDir: string,
   pageType: ErrorPageType,
   ctx: HandlerContext,
+  reactVersion: string,
+  dependencySnapshot: DependencyPinningSnapshot,
+  dependencyPinningSource: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
 ): Promise<React.ComponentType<unknown> | null> {
   const cacheKey = buildErrorPageCacheKey(ctx.projectId, ctx.projectDir, pageType);
 
@@ -135,25 +216,39 @@ async function tryLoadErrorPage(
     if (!cachedPath) return null;
 
     try {
-      return await loadErrorComponent(cachedPath, ctx);
+      return await loadErrorComponent(
+        cachedPath,
+        ctx,
+        reactVersion,
+        dependencySnapshot,
+        dependencyPinningSource,
+        moduleServerOrigin,
+      );
     } catch (_) {
       // expected: cached path no longer valid, clear and re-resolve
       await deleteCachedPath(cacheKey);
     }
   }
 
-  const basePath = joinPath(ctx.projectDir, "pages", pageType);
+  const basePath = joinPath(pagesDir, pageType);
 
   if (ctx.adapter.fs.resolveFile) {
     try {
       const resolvedPath = await ctx.adapter.fs.resolveFile(basePath);
       if (!resolvedPath) {
-        await setCachedPath(cacheKey, null);
+        await setCachedMiss(cacheKey, ctx);
         return null;
       }
 
       const fullPath = joinPath(ctx.projectDir, resolvedPath);
-      const component = await loadErrorComponent(fullPath, ctx);
+      const component = await loadErrorComponent(
+        fullPath,
+        ctx,
+        reactVersion,
+        dependencySnapshot,
+        dependencyPinningSource,
+        moduleServerOrigin,
+      );
       if (component) {
         await setCachedPath(cacheKey, fullPath);
         return component;
@@ -162,7 +257,7 @@ async function tryLoadErrorPage(
       // expected: resolveFile may fail, fall through to extension probing
     }
 
-    await setCachedPath(cacheKey, null);
+    await setCachedMiss(cacheKey, ctx);
     return null;
   }
 
@@ -172,7 +267,14 @@ async function tryLoadErrorPage(
       const stat = await ctx.adapter.fs.stat(filePath);
       if (!stat.isFile) continue;
 
-      const component = await loadErrorComponent(filePath, ctx);
+      const component = await loadErrorComponent(
+        filePath,
+        ctx,
+        reactVersion,
+        dependencySnapshot,
+        dependencyPinningSource,
+        moduleServerOrigin,
+      );
       if (component) {
         await setCachedPath(cacheKey, filePath);
         return component;
@@ -182,18 +284,23 @@ async function tryLoadErrorPage(
     }
   }
 
-  await setCachedPath(cacheKey, null);
+  await setCachedMiss(cacheKey, ctx);
   return null;
 }
 
 async function loadErrorComponent(
   filePath: string,
   ctx: HandlerContext,
+  reactVersion: string,
+  dependencySnapshot: DependencyPinningSnapshot,
+  dependencyPinningSource: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
 ): Promise<React.ComponentType<unknown> | null> {
   const src = await ctx.adapter.fs.readFile(filePath);
-  const { loadComponentFromSource } = await import(
-    "#veryfront/modules/react-loader/component-loader.ts"
-  );
+  const loadComponentFromSource = injectedComponentSourceLoader ??
+    (await import(
+      "#veryfront/modules/react-loader/component-loader.ts"
+    )).loadComponentFromSource;
 
   const isLocal = !!ctx.isLocalProject;
   const contentSourceId = ctx.enriched?.contentSourceId ??
@@ -213,6 +320,11 @@ async function loadErrorComponent(
       projectId: ctx.projectId ?? ctx.projectDir,
       dev: isLocal,
       contentSourceId,
+      reactVersion,
+      moduleServerOrigin,
+      dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+      dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningSource,
     },
   );
 
@@ -227,11 +339,12 @@ async function renderErrorPage(
   statusCode: number,
   error?: Error,
   pathname?: string,
+  reactVersion?: string,
 ): Promise<Response> {
-  const React = await import("react");
-  const { renderToStringAdapter } = await import(
+  const { getProjectReact, renderToStringAdapter } = await import(
     "#veryfront/react/compat/ssr-adapter/index.ts"
   );
+  const React = await getProjectReact(reactVersion);
 
   const errorProps = { statusCode, err: error, pathname };
 
@@ -241,7 +354,15 @@ async function renderErrorPage(
   );
 
   try {
-    const inner = await renderToStringAdapter(element as React.ReactElement);
+    const { result: inner } = await runWithHeadCollector(
+      (renderContext) =>
+        renderToStringAdapter(element as React.ReactElement, {
+          nonce: builder.nonce,
+          renderContext,
+          reactVersion,
+        }),
+      { nonce: builder.nonce },
+    );
 
     const html = `<!DOCTYPE html>
 <html lang="en">
@@ -280,6 +401,6 @@ async function renderErrorPage(
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined, req)
       .withCache("no-cache")
-      .html(fallbackHtml, statusCode);
+      .html(addNonceToHtmlTags(fallbackHtml, builder.nonce), statusCode);
   }
 }

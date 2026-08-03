@@ -28,7 +28,7 @@
   ],
   "tools": [
     {
-      "id": "list_documents",
+      "id": "pandadoc__list_documents",
       "name": "List Documents",
       "description": "List and search documents with optional filtering by status, template, folder, or date",
       "requiresWrite": false,
@@ -103,7 +103,7 @@
       }
     },
     {
-      "id": "get_document_status",
+      "id": "pandadoc__get_document_status",
       "name": "Get Document Status",
       "description": "Get basic info and current status of a document — useful to confirm it reached the expected state (e.g. document.draft before sending, document.completed before downloading)",
       "requiresWrite": false,
@@ -121,7 +121,7 @@
       }
     },
     {
-      "id": "get_document_details",
+      "id": "pandadoc__get_document_details",
       "name": "Get Document Details",
       "description": "Get full details of a document: recipients and their completion status, fields, tokens, pricing tables, metadata, and timestamps",
       "requiresWrite": false,
@@ -139,7 +139,7 @@
       }
     },
     {
-      "id": "list_templates",
+      "id": "pandadoc__list_templates",
       "name": "List Templates",
       "description": "List templates in the workspace to find template IDs for creating documents",
       "requiresWrite": false,
@@ -193,7 +193,7 @@
       }
     },
     {
-      "id": "get_template_details",
+      "id": "pandadoc__get_template_details",
       "name": "Get Template Details",
       "description": "Get a template's roles, tokens, fields, and pricing tables to know what Create Document from Template needs",
       "requiresWrite": false,
@@ -211,7 +211,7 @@
       }
     },
     {
-      "id": "create_document_link",
+      "id": "pandadoc__create_document_link",
       "name": "Create Document Link",
       "description": "Create a signing session link for a recipient to view and sign a sent document, without sending an email",
       "requiresWrite": true,
@@ -240,7 +240,7 @@
       }
     },
     {
-      "id": "create_document_from_template",
+      "id": "pandadoc__create_document_from_template",
       "name": "Create Document from Template",
       "description": "Create a new draft document from an existing template, pre-filling recipients, tokens, and fields",
       "requiresWrite": true,
@@ -286,7 +286,7 @@
       }
     },
     {
-      "id": "send_document",
+      "id": "pandadoc__send_document",
       "name": "Send Document",
       "description": "Send a draft document to its recipients for completion and signing (document must be in document.draft status)",
       "requiresWrite": true,

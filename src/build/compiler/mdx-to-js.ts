@@ -4,7 +4,7 @@ import { extract } from "#std/front-matter/yaml.ts";
 import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
 import type { ContentProcessor } from "#veryfront/extensions/content/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 
 export interface MDXFrontmatter {
   title?: string;

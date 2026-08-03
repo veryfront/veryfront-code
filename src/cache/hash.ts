@@ -12,81 +12,26 @@
  * @module cache/hash
  **************************/
 
-import { computeHash, simpleHash } from "#veryfront/utils/hash-utils.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 
-type CacheKeyType =
-  | "http"
-  | "mod"
-  | "esm"
-  | "render"
-  | "mdx"
-  | "css"
-  | "file"
-  | "config";
+export function hashString(input: string): string {
+  // FNV-1a 64-bit. The previous 32-bit fold collides ~1% at 10k distinct inputs,
+  // and these keys embed into module-response cache keys — a collision there
+  // serves one module's cached body for another. BigInt keeps the arithmetic
+  // exact across the full 64-bit range; base36 keeps keys compact and charset-safe.
+  const FNV_OFFSET_BASIS = 14695981039346656037n;
+  const FNV_PRIME = 1099511628211n;
+  const MASK_64 = (1n << 64n) - 1n;
 
-export function fastHash(input: string): number {
-  let hash = 5381;
-
+  let hash = FNV_OFFSET_BASIS;
   for (let i = 0; i < input.length; i++) {
-    hash = ((hash << 5) + hash) ^ input.charCodeAt(i);
+    hash ^= BigInt(input.charCodeAt(i));
+    hash = (hash * FNV_PRIME) & MASK_64;
   }
 
-  return hash >>> 0;
-}
-
-export function hashToString(hash: number): string {
   return hash.toString(36);
 }
 
-export function hashString(input: string): string {
-  return hashToString(fastHash(input));
-}
-
-export function getCacheKey(type: CacheKeyType, input: string): string {
-  return `${type}:${hashString(input)}`;
-}
-
-export function getVersionedCacheKey(
-  type: CacheKeyType,
-  version: number | string,
-  input: string,
-): string {
-  return `${type}:v${version}:${hashString(input)}`;
-}
-
-export function getCompoundCacheKey(type: CacheKeyType, components: string[]): string {
-  return getCacheKey(type, components.join(":"));
-}
-
-export function parseCacheKey(
-  key: string,
-): { type: string; hash: string; version?: string } | null {
-  const [type, ...rest] = key.split(":");
-  if (!type || rest.length === 0) return null;
-
-  const [maybeVersion, ...hashParts] = rest;
-
-  if (maybeVersion?.startsWith("v") && /^v\d+$/.test(maybeVersion)) {
-    return { type, version: maybeVersion.slice(1), hash: hashParts.join(":") };
-  }
-
-  return { type, hash: rest.join(":") };
-}
-
-export const sha256Hash = computeHash;
-
 export async function sha256Short(input: string): Promise<string> {
-  return (await sha256Hash(input)).slice(0, 8);
-}
-
-export function getHttpBundleFilename(normalizedUrl: string): string {
-  return `http-${simpleHash(normalizedUrl)}.mjs`;
-}
-
-export function parseHttpBundleFilename(filename: string): string | null {
-  return filename.match(/^http-(\d+)\.mjs$/)?.[1] ?? null;
-}
-
-export function isCacheKey(value: string): boolean {
-  return /^[a-z]+:[a-z0-9]+/.test(value);
+  return (await computeHash(input)).slice(0, 8);
 }

@@ -1,35 +1,136 @@
-import { createValidationError } from "./errors.ts";
+import { createValidationError, VeryfrontError } from "./errors.ts";
 import { DEFAULT_LIMITS, type RequestLimits } from "./types.ts";
+
+const REQUEST_BODY_TOO_LARGE_DETAIL = "Request body exceeds size limit";
+const BODY_COALESCE_BLOCK_BYTES = 64 * 1024;
+const BODY_READ_YIELD_CHUNKS = 256;
+const MAX_CONSECUTIVE_EMPTY_BODY_CHUNKS = 4_096;
+const textEncoder = new TextEncoder();
+const fatalUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
+const REQUEST_LIMIT_KEYS = new Set([
+  "maxBodySize",
+  "maxUrlLength",
+  "maxHeaderSize",
+  "maxFileSize",
+]);
+const READ_BODY_OPTION_KEYS = new Set(["signal"]);
+
+export interface ReadBodyLimitOptions {
+  /** Abort the read and cancel the underlying stream when the caller deadline expires. */
+  signal?: AbortSignal;
+}
+
+function requireByteLimit(name: string, value: unknown): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 0
+  ) {
+    throw new RangeError(`${name} must be a non-negative safe integer`);
+  }
+  return value;
+}
+
+function snapshotOwnOptions(
+  value: unknown,
+  label: string,
+  allowedKeys: ReadonlySet<string>,
+): Readonly<Record<string, unknown>> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError(`${label} must be a plain object`);
+  }
+  let prototype: object | null;
+  let keys: Array<string | symbol>;
+  try {
+    prototype = Object.getPrototypeOf(value);
+    keys = Reflect.ownKeys(value);
+  } catch {
+    throw new TypeError(`${label} could not be inspected safely`);
+  }
+  if (prototype !== null && prototype !== Object.prototype) {
+    throw new TypeError(`${label} must be a plain object`);
+  }
+
+  const snapshot = Object.create(null) as Record<string, unknown>;
+  for (const key of keys) {
+    if (typeof key !== "string" || !allowedKeys.has(key)) {
+      throw new TypeError(
+        `${label} contains an unsupported ${typeof key === "string" ? `option: ${key}` : "symbol"}`,
+      );
+    }
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
+    } catch {
+      throw new TypeError(`${label}.${key} could not be inspected safely`);
+    }
+    if (!descriptor || !("value" in descriptor)) {
+      throw new TypeError(`${label}.${key} must be an own data property`);
+    }
+    snapshot[key] = descriptor.value;
+  }
+  return Object.freeze(snapshot);
+}
+
+/** Resolve and validate every request-boundary limit before it is used. */
+export function resolveRequestLimits(
+  limits: RequestLimits = {},
+): Required<RequestLimits> {
+  const snapshot = snapshotOwnOptions(limits, "Request limits", REQUEST_LIMIT_KEYS);
+  return {
+    maxBodySize: requireByteLimit(
+      "Request body size limit",
+      snapshot.maxBodySize === undefined ? DEFAULT_LIMITS.maxBodySize : snapshot.maxBodySize,
+    ),
+    maxUrlLength: requireByteLimit(
+      "Request URL size limit",
+      snapshot.maxUrlLength === undefined ? DEFAULT_LIMITS.maxUrlLength : snapshot.maxUrlLength,
+    ),
+    maxHeaderSize: requireByteLimit(
+      "Request header size limit",
+      snapshot.maxHeaderSize === undefined ? DEFAULT_LIMITS.maxHeaderSize : snapshot.maxHeaderSize,
+    ),
+    maxFileSize: requireByteLimit(
+      "Request file size limit",
+      snapshot.maxFileSize === undefined ? DEFAULT_LIMITS.maxFileSize : snapshot.maxFileSize,
+    ),
+  };
+}
+
+export function isRequestBodyTooLargeError(error: unknown): error is VeryfrontError {
+  return error instanceof VeryfrontError &&
+    error.slug === "input-validation-failed" &&
+    error.detail === REQUEST_BODY_TOO_LARGE_DETAIL;
+}
 
 export function validateRequestLimits(
   request: Request,
   limits: RequestLimits = {},
-): void {
-  const { maxUrlLength, maxBodySize, maxHeaderSize } = {
-    ...DEFAULT_LIMITS,
-    ...limits,
-  };
+): Required<RequestLimits> {
+  const resolved = resolveRequestLimits(limits);
+  const { maxUrlLength, maxBodySize, maxHeaderSize } = resolved;
 
   validateUrlLength(request.url, maxUrlLength);
   validateContentLength(request, maxBodySize);
   validateHeaderSize(request, maxHeaderSize);
+  return resolved;
 }
 
 function validateUrlLength(url: string, maxLength: number): void {
-  if (url.length <= maxLength) return;
+  const actualLength = textEncoder.encode(url).byteLength;
+  if (actualLength <= maxLength) return;
 
   throw createValidationError("URL too long", {
     maxLength,
-    actualLength: url.length,
+    actualLength,
   });
 }
 
 function validateContentLength(request: Request, maxSize: number): void {
   const contentLength = request.headers.get("content-length");
-  if (!contentLength) return;
+  if (contentLength === null) return;
 
-  const size = Number.parseInt(contentLength, 10);
-  if (Number.isNaN(size)) throw createValidationError("Invalid Content-Length header");
+  const size = parseContentLength(contentLength);
   if (size <= maxSize) return;
 
   throw createValidationError("Request body too large", {
@@ -38,11 +139,67 @@ function validateContentLength(request: Request, maxSize: number): void {
   });
 }
 
+function parseContentLength(contentLength: string): number {
+  if (!/^\d+$/.test(contentLength)) {
+    throw createValidationError("Invalid Content-Length header");
+  }
+
+  const parsed = Number(contentLength);
+  if (!Number.isSafeInteger(parsed)) {
+    throw createValidationError("Invalid Content-Length header");
+  }
+  return parsed;
+}
+
+function createBodyTooLargeError(
+  maxSize: number,
+  actualSize: number,
+  source: "content-length" | "stream",
+): VeryfrontError {
+  return createValidationError(REQUEST_BODY_TOO_LARGE_DETAIL, {
+    maxSize,
+    actualSize,
+    source,
+    ...(source === "content-length" ? { contentLength: actualSize } : { bytesRead: actualSize }),
+  });
+}
+
+function cancelBody(
+  body: ReadableStream<Uint8Array> | null,
+  reason: unknown,
+): void {
+  if (!body || body.locked) return;
+  try {
+    void body.cancel(reason).catch(() => undefined);
+  } catch {
+    // Cancellation is best effort. A hostile or broken stream must not keep
+    // the caller waiting after the body has already been rejected.
+  }
+}
+
+function cancelReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  reason: unknown,
+): void {
+  try {
+    void reader.cancel(reason).catch(() => undefined);
+  } catch {
+    // The rejection reason remains authoritative if cancellation itself fails.
+  }
+}
+
+function yieldToTaskQueue(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 function validateHeaderSize(request: Request, maxSize: number): void {
   let headerSize = 0;
 
   for (const [key, value] of request.headers) {
-    headerSize += key.length + value.length + 4; // ": " and "\r\n"
+    headerSize += textEncoder.encode(key).byteLength +
+      textEncoder.encode(value).byteLength +
+      4; // ": " and "\r\n"
+    if (headerSize > maxSize) break;
   }
 
   if (headerSize <= maxSize) return;
@@ -73,38 +230,166 @@ export async function readBodyWithLimit(
   request: Request,
   maxSize: number = DEFAULT_LIMITS.maxBodySize,
 ): Promise<string> {
+  const bytes = await readBodyBytesWithLimit(request, maxSize);
+  return fatalUtf8Decoder.decode(bytes);
+}
+
+/**
+ * Read a request body without accepting more than the configured byte limit.
+ *
+ * Content-Length is an early rejection hint only. The streamed byte count is
+ * always authoritative, which also bounds chunked and dishonest requests.
+ * Tiny transport chunks are coalesced into fixed-size blocks so chunk metadata
+ * cannot grow independently of the byte limit.
+ */
+export async function readBodyBytesWithLimit(
+  request: Request,
+  maxSize: number = DEFAULT_LIMITS.maxBodySize,
+  options: ReadBodyLimitOptions = {},
+): Promise<Uint8Array> {
+  const optionSnapshot = snapshotOwnOptions(
+    options,
+    "Request body read options",
+    READ_BODY_OPTION_KEYS,
+  );
+  if (optionSnapshot.signal !== undefined && !(optionSnapshot.signal instanceof AbortSignal)) {
+    throw new TypeError("Request body read options.signal must be an AbortSignal");
+  }
+  requireByteLimit("Request body size limit", maxSize);
+  if (request.bodyUsed) {
+    throw createValidationError("Request body has already been consumed");
+  }
+
+  const contentLength = request.headers.get("content-length");
+  if (contentLength !== null) {
+    let declaredSize: number;
+    try {
+      declaredSize = parseContentLength(contentLength);
+    } catch (error) {
+      cancelBody(request.body, error);
+      throw error;
+    }
+    if (declaredSize > maxSize) {
+      const error = createBodyTooLargeError(maxSize, declaredSize, "content-length");
+      cancelBody(request.body, error);
+      throw error;
+    }
+  }
+
   const reader = request.body?.getReader();
   if (!reader) throw createValidationError("No request body");
 
-  const chunks: Uint8Array[] = [];
+  const blocks: Uint8Array[] = [];
+  let currentBlock: Uint8Array | null = null;
+  let currentBlockLength = 0;
+  let allocatedCapacity = 0;
   let totalSize = 0;
+  let chunksSinceYield = 0;
+  let consecutiveEmptyChunks = 0;
+  let abortReason: unknown;
+  const optionSignal = optionSnapshot.signal as AbortSignal | undefined;
+  const signal = optionSignal && optionSignal !== request.signal
+    ? AbortSignal.any([request.signal, optionSignal])
+    : request.signal;
+  const abort = (): void => {
+    abortReason = signal?.reason ?? new DOMException("The operation was aborted", "AbortError");
+    cancelReader(reader, abortReason);
+  };
+
+  if (signal?.aborted) abort();
+  else signal?.addEventListener("abort", abort, { once: true });
 
   try {
     while (true) {
+      if (abortReason !== undefined) throw abortReason;
       const { done, value } = await reader.read();
+      if (abortReason !== undefined) throw abortReason;
       if (done) break;
-
-      totalSize += value.length;
-      if (totalSize > maxSize) {
-        throw createValidationError("Request body exceeds size limit", {
-          maxSize,
-          bytesRead: totalSize,
-        });
+      if (!(value instanceof Uint8Array)) {
+        const error = createValidationError(
+          "Request body stream produced a non-byte chunk",
+        );
+        cancelReader(reader, error);
+        throw error;
       }
 
-      chunks.push(value);
+      if (value.byteLength > maxSize - totalSize) {
+        const actualSize = totalSize + value.byteLength;
+        const error = createBodyTooLargeError(maxSize, actualSize, "stream");
+        cancelReader(reader, error);
+        throw error;
+      }
+
+      chunksSinceYield++;
+      if (value.byteLength === 0) {
+        consecutiveEmptyChunks++;
+        if (consecutiveEmptyChunks > MAX_CONSECUTIVE_EMPTY_BODY_CHUNKS) {
+          const error = createValidationError(
+            "Request body stream made no progress",
+            { consecutiveEmptyChunks },
+          );
+          cancelReader(reader, error);
+          throw error;
+        }
+      } else {
+        consecutiveEmptyChunks = 0;
+      }
+
+      // A synchronously produced stream can otherwise monopolize the
+      // microtask queue and prevent its own abort/deadline timer from firing.
+      if (chunksSinceYield >= BODY_READ_YIELD_CHUNKS) {
+        chunksSinceYield = 0;
+        await yieldToTaskQueue();
+        if (abortReason !== undefined) throw abortReason;
+      }
+
+      if (value.byteLength === 0) continue;
+
+      totalSize += value.byteLength;
+      let valueOffset = 0;
+      while (valueOffset < value.byteLength) {
+        if (currentBlock === null) {
+          const nextCapacity = Math.min(
+            BODY_COALESCE_BLOCK_BYTES,
+            maxSize - allocatedCapacity,
+          );
+          currentBlock = new Uint8Array(nextCapacity);
+          allocatedCapacity += nextCapacity;
+        }
+
+        const copyLength = Math.min(
+          currentBlock.byteLength - currentBlockLength,
+          value.byteLength - valueOffset,
+        );
+        currentBlock.set(
+          value.subarray(valueOffset, valueOffset + copyLength),
+          currentBlockLength,
+        );
+        currentBlockLength += copyLength;
+        valueOffset += copyLength;
+
+        if (currentBlockLength === currentBlock.byteLength) {
+          blocks.push(currentBlock);
+          currentBlock = null;
+          currentBlockLength = 0;
+        }
+      }
     }
   } finally {
+    signal?.removeEventListener("abort", abort);
     reader.releaseLock();
   }
 
   const combined = new Uint8Array(totalSize);
   let offset = 0;
 
-  for (const chunk of chunks) {
-    combined.set(chunk, offset);
-    offset += chunk.length;
+  for (const block of blocks) {
+    combined.set(block, offset);
+    offset += block.byteLength;
+  }
+  if (currentBlock !== null && currentBlockLength > 0) {
+    combined.set(currentBlock.subarray(0, currentBlockLength), offset);
   }
 
-  return new TextDecoder().decode(combined);
+  return combined;
 }

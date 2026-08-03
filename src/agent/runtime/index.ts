@@ -14,6 +14,7 @@
 import {
   type AgentConfig,
   type AgentContext,
+  type AgentGenerateToolReplacements,
   type AgentResponse,
   type AgentStatus,
   getTextFromParts,
@@ -32,12 +33,19 @@ import { createAgentMemory, type Memory } from "../memory/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
   addSpanEvent,
+  setActiveSpanErrorStatus as setOtelActiveSpanErrorStatus,
   setSpanAttributes,
   withSpan,
-} from "#veryfront/observability/tracing/index.ts";
+} from "#veryfront/observability/tracing/otlp-setup.ts";
+import { setActiveSpanAttributes as setOtelActiveSpanAttributes } from "#veryfront/observability";
 import { convertToTextGenerationRuntimeRequestMessages } from "./text-generation-runtime-message-converter.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
-import { getRuntimeRemoteToolSources } from "./mcp-server-tool-sources.ts";
+import {
+  bindRuntimeRemoteToolSourcesToCredentialOwner,
+  constrainRuntimeRemoteToolSources,
+  getRuntimeRemoteToolSources,
+} from "./mcp-server-tool-sources.ts";
+import { runWithRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
 import {
   createStreamState,
   processStream,
@@ -47,7 +55,10 @@ import { repairToolCall } from "./repair-tool-call.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
-import { isLocalModelRuntime } from "#veryfront/provider/runtime-inspection.ts";
+import {
+  isLocalModelRuntime,
+  supportsModelRuntimeToolCalling,
+} from "#veryfront/provider/runtime-inspection.ts";
 import { generateText, streamText } from "#veryfront/runtime/runtime-bridge.ts";
 import {
   captureStreamedToolCallInput,
@@ -63,25 +74,38 @@ import {
   shouldContinueAfterStreamStep,
 } from "./tool-result-continuation.ts";
 import {
+  applySkillActivationResult,
   enforceSkillPolicy,
-  extractSkillId,
-  extractSkillPolicy,
-  extractSkillToolAvailability,
   FORM_INPUT_TOOL_ID,
   hasSubmittedFormInputResult,
   hydrateActiveSkillStateFromMessages,
-  INACTIVE_SKILL_TOOL_AVAILABILITY,
   LOAD_SKILL_TOOL_ID,
   removeFormInputAfterSubmission,
   SUBMITTED_FORM_INPUT_CONTEXT_KEY,
 } from "./skill-policy-enforcement.ts";
+import { markRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
 import {
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
   getRuntimeProviderTools,
+  getRuntimeSourceIntegrationPolicy,
+  getRuntimeToolExposureCheckpoint,
+  getRuntimeToolExposureCheckpointPersister,
+  isRuntimeToolExposureCheckpointPersistenceRequired,
+  resolveRuntimeToolLoading,
+  type RuntimeToolFilterConfig,
 } from "./runtime-tool-config.ts";
+import {
+  applySourceIntegrationPolicy,
+  type SourceIntegrationPolicyManifest,
+} from "#veryfront/integrations/source-policy.ts";
 import { prepareAgentRuntimeStep } from "./agent-runtime-step.ts";
 import { buildStreamedAssistantMessage } from "./streamed-assistant-message.ts";
+import {
+  flattenSystemInstructions,
+  hasRuntimeToolInventory,
+  withRuntimeToolInventory,
+} from "./tool-inventory.ts";
 
 // Re-export from submodules
 export { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
@@ -103,6 +127,7 @@ export {
   getAvailableTools,
   isDynamicTool,
   parseToolArgs,
+  resolveConfiguredTool,
 } from "./tool-helpers.ts";
 export type { ParsedToolArgs, ToolConfigEntry } from "./tool-helpers.ts";
 export {
@@ -116,6 +141,8 @@ export {
 } from "./provider-tool-compat.ts";
 export { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 export { createStreamState, processStream } from "./chat-stream-handler.ts";
+import { resolveStreamLifecycleModeFromEnv } from "./stream-lifecycle-mode.ts";
+import { createRuntimeStreamSource } from "./chat-stream-handler.ts";
 export type {
   ChatStreamCallbacks,
   ChatStreamState,
@@ -138,6 +165,28 @@ export {
   shouldContinueAfterStreamStep,
   type StreamedToolCallMaterialization,
 } from "./tool-result-continuation.ts";
+
+function resolveRuntimeGenAiProviderName(modelId: string): string | undefined {
+  const normalizedModelId = modelId.startsWith("veryfront-cloud/")
+    ? modelId.slice("veryfront-cloud/".length)
+    : modelId;
+  const provider = normalizedModelId.split("/")[0]?.trim().toLowerCase();
+
+  switch (provider) {
+    case "anthropic":
+      return "anthropic";
+    case "openai":
+      return "openai";
+    case "google":
+    case "google-ai-studio":
+      return "gcp.gen_ai";
+    case "moonshotai":
+      return "moonshotai";
+    default:
+      return undefined;
+  }
+}
+
 export {
   enforceSkillPolicy,
   extractSkillPolicy,
@@ -146,19 +195,123 @@ export {
 
 import { DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, getModelMaxOutputTokens } from "./constants.ts";
 import { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
-import { executeConfiguredTool, getAvailableTools, isDynamicTool } from "./tool-helpers.ts";
+import {
+  executeConfiguredTool,
+  getAvailableTools,
+  isDynamicTool,
+  resolveConfiguredTool,
+  type ToolConfigEntry,
+} from "./tool-helpers.ts";
 import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 import { resolveRuntimeModel } from "./model-resolution.ts";
-import type { RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
+import type { RuntimeGenerateTextResult, RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
 import { resolveTemperatureParameter } from "./model-capabilities.ts";
-import {
-  applySkillDelegationOverridesToToolInput,
-  extractSkillDelegationOverrides,
-} from "./skill-delegation-overrides.ts";
+import { applySkillDelegationOverridesToToolInput } from "./skill-delegation-overrides.ts";
 import { resolveAgentModelTransport, type ResolvedModelTransport } from "./model-transport.ts";
+import { buildRuntimeUsageTraceAttributes } from "./trace-usage.ts";
+import {
+  createToolExposureCheckpoint,
+  createToolExposureState,
+  searchToolExposure,
+  TOOL_SEARCH_TOOL_NAME,
+  type ToolExposureCheckpoint,
+  type ToolExposurePlan,
+  type ToolExposureState,
+  type ToolSearchResult,
+} from "./tool-exposure.ts";
 
 const logger = serverLogger.component("agent");
+const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = ["load_skill", "load_skill_reference"] as const;
+
+function buildGeneratedAssistantMessage(
+  response: RuntimeGenerateTextResult,
+  metadata: { id: string; timestamp: number },
+): Message {
+  const parts: MessagePart[] = [];
+  if (response.text) parts.push({ type: "text", text: response.text });
+  for (const toolCall of response.toolCalls ?? []) {
+    parts.push({
+      type: `tool-${toolCall.toolName}`,
+      toolCallId: toolCall.toolCallId,
+      toolName: toolCall.toolName,
+      args: toolCall.input as Record<string, unknown>,
+    });
+  }
+  return {
+    ...metadata,
+    role: "assistant",
+    parts,
+  };
+}
+
+function executeFrameworkToolSearch(input: {
+  args: Record<string, unknown>;
+  plan: ToolExposurePlan;
+  state: ToolExposureState;
+}): {
+  result: ReturnType<typeof searchToolExposure> & { nextStep: string };
+  checkpoint: ReturnType<typeof createToolExposureCheckpoint>;
+} {
+  const query = typeof input.args.query === "string" ? input.args.query.trim() : "";
+  if (!query) {
+    throw new Error('tool_search requires a non-empty "query" string');
+  }
+  const result: ToolSearchResult = searchToolExposure({
+    query,
+    authorized: input.plan.deferred,
+    available: input.plan.visible.filter((tool) => tool.name !== TOOL_SEARCH_TOOL_NAME),
+    state: input.state,
+    maxLoadedTools: input.plan.maxLoadedTools,
+  });
+  const alreadyVisible = result.matches.find((match) => match.status === "available");
+  return {
+    result: {
+      ...result,
+      nextStep: alreadyVisible
+        ? `The matching tool "${alreadyVisible.name}" is already available. Call it directly.`
+        : result.loadedCount > 0
+        ? "Continue to the next model step. Loaded tool schemas will be available then."
+        : "Continue with the available tools or answer without a tool.",
+    },
+    checkpoint: createToolExposureCheckpoint(input.plan.authorized, input.state),
+  };
+}
+
+async function persistToolExposureCheckpointBeforeContinuation(input: {
+  checkpoint: ToolExposureCheckpoint;
+  persist: ((checkpoint: ToolExposureCheckpoint) => void | Promise<void>) | undefined;
+  required: boolean;
+}): Promise<void> {
+  if (!input.persist) {
+    if (input.required) {
+      throw new Error("Tool exposure checkpoint persistence is required before continuation");
+    }
+    return;
+  }
+  await input.persist(input.checkpoint);
+}
+
+function isToolVisibleForStep(toolName: string, plan: ToolExposurePlan): boolean {
+  return plan.visible.some((tool) => tool.name === toolName);
+}
+
+function isFrameworkToolSearch(toolName: string, plan: ToolExposurePlan): boolean {
+  return toolName === TOOL_SEARCH_TOOL_NAME &&
+    isToolVisibleForStep(toolName, plan) &&
+    !plan.authorized.some((tool) => tool.name === toolName);
+}
+
+function toolNotVisibleError(toolName: string): string {
+  return `Tool "${toolName}" is not available in the current model step`;
+}
+
+function resolveToolExecutionAuthority(input: {
+  toolName: string;
+  plan: ToolExposurePlan;
+}): { kind: "visible" } | undefined {
+  return isToolVisibleForStep(input.toolName, input.plan) ? { kind: "visible" } : undefined;
+}
 
 function buildStreamFinishUsage(
   usage: AgentResponse["usage"],
@@ -221,8 +374,40 @@ function getResponseFinishReason(response: AgentResponse): string | undefined {
   return typeof finishReason === "string" && finishReason.length > 0 ? finishReason : undefined;
 }
 
+const AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES = new Set([
+  "create_agent",
+  "update_agent",
+]);
+
 function shouldHideProjectToolAfterAgentWriteSuccess(toolName: string): boolean {
-  return toolName === "create_agent" || toolName === "update_agent";
+  return AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES.has(toolName);
+}
+
+function applyAgentWriteFinalResponseGuard(plan: ToolExposurePlan): ToolExposurePlan {
+  const keep = (tool: { name: string }) => !shouldHideProjectToolAfterAgentWriteSuccess(tool.name);
+  for (const toolName of plan.loadedToolNames) {
+    if (shouldHideProjectToolAfterAgentWriteSuccess(toolName)) {
+      plan.loadedToolNames.delete(toolName);
+    }
+  }
+  return {
+    ...plan,
+    authorized: plan.authorized.filter(keep),
+    visible: plan.visible.filter(keep),
+    deferred: plan.deferred.filter(keep),
+  };
+}
+
+function synchronizeRuntimeToolInventory(
+  systemPrompt: string,
+  runtimeTools: Record<string, unknown> | undefined,
+): string {
+  if (!hasRuntimeToolInventory(systemPrompt)) {
+    return systemPrompt;
+  }
+  return flattenSystemInstructions(
+    withRuntimeToolInventory(systemPrompt, Object.keys(runtimeTools ?? {}).sort()),
+  );
 }
 
 function parseToolResultJson(result: string): unknown {
@@ -250,6 +435,213 @@ function isSubmittedFormInputExecutionResult(toolName: string, result: unknown):
   return toolName === FORM_INPUT_TOOL_ID && containsSubmittedFormInputExecutionResult(result);
 }
 
+type RuntimeTraceAttributes = Record<string, string | number | boolean | undefined | null>;
+
+function estimateSerializedSizeBytes(value: unknown): number | undefined {
+  try {
+    const serialized = typeof value === "string" ? value : JSON.stringify(value);
+    if (serialized === undefined) return undefined;
+    return new TextEncoder().encode(serialized).length;
+  } catch {
+    return undefined;
+  }
+}
+
+function compactRuntimeTraceAttributes(
+  attributes: RuntimeTraceAttributes,
+): Record<string, string | number | boolean> {
+  return Object.fromEntries(
+    Object.entries(attributes).filter(([, value]) =>
+      typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+    ),
+  ) as Record<string, string | number | boolean>;
+}
+
+function buildRuntimeToolTraceAttributes(input: {
+  mode: "generate" | "stream";
+  agentId: string;
+  toolName: string;
+  toolCallId: string;
+  context?: ToolExecutionContext;
+  status?: "executing" | "completed" | "failed" | "blocked";
+  providerExecuted?: boolean;
+  inputSizeBytes?: number;
+  outputSizeBytes?: number;
+  errorType?: string;
+  errorMessage?: string;
+}): Record<string, string | number | boolean> {
+  return compactRuntimeTraceAttributes({
+    "agent.id": input.agentId,
+    "run.id": input.context?.runId,
+    "project.id": input.context?.projectId,
+    "project.slug": input.context?.projectSlug,
+    "tool.name": input.toolName,
+    "tool.call.id": input.toolCallId,
+    "tool.id": input.toolCallId,
+    "tool.status": input.status,
+    "tool.provider_executed": input.providerExecuted,
+    "tool.input.size_bytes": input.inputSizeBytes,
+    "tool.output.size_bytes": input.outputSizeBytes,
+    "agent.tool.execution_mode": input.mode,
+    "agent.tool.status": input.status,
+    "agent.tool.provider_executed": input.providerExecuted,
+    "agent.tool.input.size_bytes": input.inputSizeBytes,
+    "agent.tool.output.size_bytes": input.outputSizeBytes,
+    "gen_ai.operation.name": "execute_tool",
+    "gen_ai.agent.id": input.agentId,
+    "gen_ai.tool.name": input.toolName,
+    "gen_ai.tool.type": "function",
+    "gen_ai.tool.call.id": input.toolCallId,
+    "error.type": input.errorType,
+    "error.message": input.errorMessage,
+  });
+}
+
+async function traceConfiguredToolExecution(input: {
+  mode: "generate" | "stream";
+  agentId: string;
+  toolName: string;
+  toolCallId: string;
+  args: Record<string, unknown>;
+  toolsConfig: true | Record<string, ToolConfigEntry> | undefined;
+  context: ToolExecutionContext;
+  allowedRemoteToolNames: string[] | undefined;
+  remoteToolSources: ReturnType<typeof getRuntimeRemoteToolSources>;
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest | undefined;
+  strictConfiguredToolsOnly?: boolean;
+}): Promise<unknown> {
+  const inputSizeBytes = estimateSerializedSizeBytes(input.args);
+  return await withSpan(
+    "agent.tool_execute",
+    async () => {
+      setOtelActiveSpanAttributes(
+        buildRuntimeToolTraceAttributes({
+          mode: input.mode,
+          agentId: input.agentId,
+          toolName: input.toolName,
+          toolCallId: input.toolCallId,
+          context: input.context,
+          status: "executing",
+          providerExecuted: false,
+          inputSizeBytes,
+        }),
+      );
+      try {
+        const inheritedRemoteToolSources = bindRuntimeRemoteToolSourcesToCredentialOwner(
+          constrainRuntimeRemoteToolSources(
+            input.remoteToolSources,
+            input.allowedRemoteToolNames,
+          ),
+          input.context,
+        );
+        const result = await runWithRuntimeRemoteToolSources(
+          inheritedRemoteToolSources,
+          () =>
+            executeConfiguredTool(
+              input.toolName,
+              input.args,
+              input.toolsConfig,
+              input.context,
+              input.allowedRemoteToolNames,
+              input.remoteToolSources,
+              input.sourceIntegrationPolicy,
+              { strictConfiguredToolsOnly: input.strictConfiguredToolsOnly },
+            ),
+        );
+        const resultError = getToolResultError(result);
+        if (resultError !== undefined) {
+          setOtelActiveSpanErrorStatus(resultError);
+        }
+        setOtelActiveSpanAttributes(
+          buildRuntimeToolTraceAttributes({
+            mode: input.mode,
+            agentId: input.agentId,
+            toolName: input.toolName,
+            toolCallId: input.toolCallId,
+            context: input.context,
+            status: resultError === undefined ? "completed" : "failed",
+            providerExecuted: false,
+            inputSizeBytes,
+            outputSizeBytes: estimateSerializedSizeBytes(result),
+            errorType: resultError === undefined ? undefined : "ToolResultError",
+            errorMessage: resultError,
+          }),
+        );
+        return result;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        setOtelActiveSpanAttributes({
+          ...buildRuntimeToolTraceAttributes({
+            mode: input.mode,
+            agentId: input.agentId,
+            toolName: input.toolName,
+            toolCallId: input.toolCallId,
+            context: input.context,
+            status: "failed",
+            providerExecuted: false,
+            inputSizeBytes,
+            errorType: error instanceof Error ? error.name : "Error",
+            errorMessage,
+          }),
+        });
+        throw error;
+      }
+    },
+    buildRuntimeToolTraceAttributes({
+      mode: input.mode,
+      agentId: input.agentId,
+      toolName: input.toolName,
+      toolCallId: input.toolCallId,
+      context: input.context,
+      status: "executing",
+      providerExecuted: false,
+      inputSizeBytes,
+    }),
+  );
+}
+
+async function traceProviderExecutedTool(input: {
+  mode: "generate" | "stream";
+  agentId: string;
+  toolName: string;
+  toolCallId: string;
+  context?: ToolExecutionContext;
+  args?: unknown;
+  result?: unknown;
+  isError?: boolean;
+}): Promise<void> {
+  const status = input.isError === true ? "failed" : "completed";
+  const errorMessage = input.isError === true ? stringifyToolError(input.result) : undefined;
+  await withSpan(
+    "agent.tool_execute",
+    async () => {
+      if (errorMessage !== undefined) {
+        setOtelActiveSpanErrorStatus(errorMessage);
+      }
+      setOtelActiveSpanAttributes(
+        buildRuntimeToolTraceAttributes({
+          ...input,
+          status,
+          providerExecuted: true,
+          inputSizeBytes: estimateSerializedSizeBytes(input.args),
+          outputSizeBytes: estimateSerializedSizeBytes(input.result),
+          errorType: input.isError === true ? "ProviderExecutedToolError" : undefined,
+          errorMessage,
+        }),
+      );
+    },
+    buildRuntimeToolTraceAttributes({
+      ...input,
+      status,
+      providerExecuted: true,
+      inputSizeBytes: estimateSerializedSizeBytes(input.args),
+      outputSizeBytes: estimateSerializedSizeBytes(input.result),
+      errorType: input.isError === true ? "ProviderExecutedToolError" : undefined,
+      errorMessage,
+    }),
+  );
+}
+
 function markSubmittedFormInputRuntimeContext(
   runtimeContext?: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -267,12 +659,18 @@ function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-function warnLocalToolSkipping(agentId: string, modelId: string): void {
+function warnUnsupportedToolCalling(agentId: string, modelId: string): void {
   logger.warn(
-    `Agent "${agentId}" has tools configured but is using local model "${modelId}". ` +
-      "Local models don't support tool calling. Tools will be skipped. " +
-      "Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG, or configure " +
-      "OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for full tool support.",
+    `Agent "${agentId}" has tools configured, but model "${modelId}" does not support ` +
+      "tool calling. Tools will be skipped.",
+  );
+}
+
+function debugRuntimeModelRemap(requestedModel: string, resolvedModelString: string): void {
+  if (resolvedModelString === requestedModel) return;
+
+  logger.debug(
+    `⚡ Using runtime model "${resolvedModelString}" instead of "${requestedModel}".`,
   );
 }
 
@@ -290,7 +688,7 @@ export class AgentRuntime {
 
   constructor(id: string, config: AgentConfig) {
     this.id = id;
-    this.config = config;
+    this.config = { ...config };
 
     // Agents are stateless by default (see docs/guides/memory-and-streaming.md):
     // with no `memory` config, calls never share conversation history, so
@@ -358,6 +756,32 @@ export class AgentRuntime {
     });
   }
 
+  private createGenerateReplacementTools(
+    toolReplacements: AgentGenerateToolReplacements | undefined,
+    retainSkillLoaderTools: boolean | undefined,
+  ): AgentGenerateToolReplacements | undefined {
+    if (toolReplacements === undefined) {
+      return undefined;
+    }
+    if (!retainSkillLoaderTools || this.config.skills === false) {
+      return toolReplacements;
+    }
+
+    const tools: AgentGenerateToolReplacements = { ...toolReplacements };
+    for (const toolName of EVAL_RETAINED_SKILL_LOADER_TOOL_IDS) {
+      if (tools[toolName]) {
+        continue;
+      }
+      const configuredTool = resolveConfiguredTool(this.config.tools, toolName, {
+        agentId: this.id,
+      });
+      if (configuredTool) {
+        tools[toolName] = configuredTool;
+      }
+    }
+    return tools;
+  }
+
   /**
    * Generate a response (non-streaming)
    */
@@ -366,15 +790,18 @@ export class AgentRuntime {
     context?: Record<string, unknown>,
     modelOverride?: string,
     maxOutputTokensOverride?: number,
+    abortSignal?: AbortSignal,
+    options?: {
+      toolReplacements?: AgentGenerateToolReplacements;
+      retainSkillLoaderTools?: boolean;
+    },
   ): Promise<AgentResponse> {
+    throwIfAborted(abortSignal);
     const transport = await this.resolveModelTransport(context, modelOverride, "generate");
     const requestedModel = transport.requestedModel;
     const resolvedModelString = transport.resolvedModelString;
-    if (resolvedModelString !== requestedModel) {
-      logger.info(
-        `⚡ Using runtime model "${resolvedModelString}" instead of "${requestedModel}".`,
-      );
-    }
+    const supportsToolCalling = supportsModelRuntimeToolCalling(transport.languageModel);
+    debugRuntimeModelRemap(requestedModel, resolvedModelString);
 
     return withSpan("agent.generate", async (span) => {
       setSpanAttributes(span, {
@@ -407,6 +834,7 @@ export class AgentRuntime {
               projectId: tryGetCacheKeyContext()?.projectId,
             },
             context,
+            supportsToolCalling,
             resolvedModelString,
             transport.languageModel,
             transport.headers,
@@ -414,6 +842,11 @@ export class AgentRuntime {
             transport.reasoning,
             maxOutputTokensOverride,
             requestedModel,
+            this.createGenerateReplacementTools(
+              options?.toolReplacements,
+              options?.retainSkillLoaderTools,
+            ),
+            abortSignal,
           ),
       );
     });
@@ -438,13 +871,10 @@ export class AgentRuntime {
     const transport = await this.resolveModelTransport(context, modelOverride, "stream");
     const requestedModel = transport.requestedModel;
     const resolvedModelString = transport.resolvedModelString;
-    if (resolvedModelString !== requestedModel) {
-      logger.info(
-        `⚡ Using runtime model "${resolvedModelString}" instead of "${requestedModel}".`,
-      );
-    }
+    debugRuntimeModelRemap(requestedModel, resolvedModelString);
 
-    const memoryMessages = await this.prepareTurnMessages(messages);
+    const inputMessages = normalizeInput(messages);
+    const memoryMessages = await this.prepareTurnMessages(inputMessages);
 
     const systemPrompt = await this.resolveSystemPrompt();
 
@@ -477,13 +907,14 @@ export class AgentRuntime {
 
     // Determine inference mode from the resolved model object, not the string.
     const isLocal = isLocalModelRuntime(languageModel);
+    const supportsToolCalling = supportsModelRuntimeToolCalling(languageModel);
 
     // Eagerly verify the model runtime is available. For local models this
     // checks that @huggingface/transformers can be imported. Must happen
     // BEFORE creating the ReadableStream so no_ai_available errors propagate
     // to the route handler, which returns a 503 instead of swallowing it as an
     // in-band SSE error in a 200 response.
-    await ensureModelReady(languageModel);
+    await ensureModelReady(languageModel, streamAbortSignal);
 
     const agentContext: AgentContext = {
       agentId: this.id,
@@ -531,6 +962,7 @@ export class AgentRuntime {
                 textPartId,
                 toolContext,
                 context,
+                supportsToolCalling,
                 resolvedModelString,
                 languageModel,
                 transport.headers,
@@ -594,8 +1026,9 @@ export class AgentRuntime {
   private async executeAgentLoop(
     systemPrompt: string,
     messages: Message[],
-    toolContextBase?: ToolExecutionContext,
-    runtimeContext?: Record<string, unknown>,
+    toolContextBase: ToolExecutionContext | undefined,
+    runtimeContext: Record<string, unknown> | undefined,
+    supportsToolCalling: boolean,
     modelString?: string,
     resolvedModel?: ModelRuntime,
     headers?: HeadersInit,
@@ -603,6 +1036,8 @@ export class AgentRuntime {
     reasoning?: RuntimeReasoningOption,
     maxOutputTokensOverride?: number,
     temperatureModelString?: string,
+    toolReplacements?: AgentGenerateToolReplacements,
+    abortSignal?: AbortSignal,
   ): Promise<AgentResponse> {
     return withSpan("agent.execution_loop", async (loopSpan) => {
       const { maxAgentSteps } = getPlatformCapabilities();
@@ -614,10 +1049,8 @@ export class AgentRuntime {
       const currentMessages = [...messages];
       const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-      // Local models can't reliably do function calling, so skip tools gracefully.
-      const isLocal = isLocalModelRuntime(languageModel);
-      if (isLocal && this.config.tools) {
-        warnLocalToolSkipping(this.id, effectiveModel);
+      if (!supportsToolCalling && this.config.tools) {
+        warnUnsupportedToolCalling(this.id, effectiveModel);
       }
 
       // Request-scoped skill policy (not class-level mutable state)
@@ -626,16 +1059,71 @@ export class AgentRuntime {
       let activeSkillPolicy = hydratedSkillState.activeSkillPolicy;
       let activeSkillToolAvailability = hydratedSkillState.activeSkillToolAvailability;
       let activeSkillDelegationOverrides = hydratedSkillState.activeSkillDelegationOverrides;
+      const applySuccessfulSkillResult = (result: unknown): void => {
+        const next = applySkillActivationResult({
+          activeSkillId,
+          activeSkillPolicy,
+          activeSkillToolAvailability,
+          activeSkillDelegationOverrides,
+        }, result);
+        activeSkillId = next.activeSkillId;
+        activeSkillPolicy = next.activeSkillPolicy;
+        activeSkillToolAvailability = next.activeSkillToolAvailability;
+        activeSkillDelegationOverrides = next.activeSkillDelegationOverrides;
+      };
       let hasSubmittedFormInputInLoop = hasSubmittedFormInputResult(currentMessages) ||
         runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
-      const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
-      const providerTools = getRuntimeProviderTools(this.config);
-      const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
-      const remoteToolSources = getRuntimeRemoteToolSources(this.config);
+      const hasToolReplacements = toolReplacements !== undefined;
+      const initialToolExposureCheckpoint = hasToolReplacements
+        ? undefined
+        : getRuntimeToolExposureCheckpoint(this.config);
+      const toolExposureState = createToolExposureState();
+      const persistToolExposureCheckpoint = hasToolReplacements
+        ? undefined
+        : getRuntimeToolExposureCheckpointPersister(this.config);
+      const requireToolExposureCheckpointPersistence = hasToolReplacements
+        ? false
+        : isRuntimeToolExposureCheckpointPersistenceRequired(this.config);
+      const runtimeToolsConfig = hasToolReplacements ? toolReplacements : this.config.tools;
+      const toolLoadingResolution = resolveRuntimeToolLoading(this.config);
+      const runConfig: RuntimeToolFilterConfig = {
+        ...this.config,
+        __vfToolLoadingMode: hasToolReplacements ? "eager" : toolLoadingResolution.mode,
+      };
+      const runtimeStepConfig: AgentConfig = hasToolReplacements
+        ? {
+          ...runConfig,
+          tools: runtimeToolsConfig,
+          skills: undefined,
+          providerTools: undefined,
+          mcpServers: undefined,
+          sandbox: undefined,
+        }
+        : runConfig;
+      const allowedRemoteToolNames = hasToolReplacements
+        ? undefined
+        : getRuntimeAllowedRemoteTools(this.config);
+      const forwardedRemoteToolDefinitions = hasToolReplacements
+        ? undefined
+        : getRuntimeForwardedIntegrationToolDefs(this.config);
+      const remoteToolSources = hasToolReplacements
+        ? undefined
+        : getRuntimeRemoteToolSources(this.config, undefined, this.id);
+      const sourceIntegrationPolicy = hasToolReplacements
+        ? undefined
+        : getRuntimeSourceIntegrationPolicy(this.config);
+      const configuredProviderTools = hasToolReplacements
+        ? []
+        : getRuntimeProviderTools(this.config);
+      const providerTools = sourceIntegrationPolicy
+        ? applySourceIntegrationPolicy(configuredProviderTools, sourceIntegrationPolicy)
+        : configuredProviderTools;
       let currentSystemPrompt = systemPrompt;
       let currentRuntimeContext = runtimeContext;
+      let agentWriteFinalResponseToolGuardEnabled = false;
 
       for (let step = 0; step < maxSteps; step++) {
+        throwIfAborted(abortSignal);
         this.status = "thinking";
         addSpanEvent(loopSpan, "step_start", { step });
         const stepRuntimeContext = hasSubmittedFormInputInLoop
@@ -644,53 +1132,87 @@ export class AgentRuntime {
 
         const preparedStep = await prepareAgentRuntimeStep({
           agentId: this.id,
-          activeSkillId,
-          activeSkillPolicy,
-          activeSkillToolAvailability,
+          activeSkillId: hasToolReplacements ? undefined : activeSkillId,
+          activeSkillPolicy: hasToolReplacements ? undefined : activeSkillPolicy,
+          activeSkillToolAvailability: hasToolReplacements
+            ? undefined
+            : activeSkillToolAvailability,
           allowedRemoteToolNames,
-          config: this.config,
+          config: runtimeStepConfig,
+          effectiveModel,
+          excludedToolNames: agentWriteFinalResponseToolGuardEnabled
+            ? AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES
+            : undefined,
           forwardedRemoteToolDefinitions,
           getAvailableTools,
-          isLocalModel: isLocal,
+          supportsToolCalling,
           messages: currentMessages,
           mode: "generate",
+          providerToolNames: supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
+            ? providerTools
+            : [],
           remoteToolSources,
+          sourceIntegrationPolicy,
           resolveRuntimeState: this.resolveRuntimeState.bind(this),
           runtimeContext: stepRuntimeContext,
           step,
           systemPrompt: currentSystemPrompt,
-          toolContextBase,
+          toolContextBase: { ...toolContextBase, abortSignal },
+          strictConfiguredToolsOnly: hasToolReplacements,
+          toolExposureState,
+          toolExposureCheckpoint: step === 0 ? initialToolExposureCheckpoint : undefined,
         });
+        throwIfAborted(abortSignal);
         currentSystemPrompt = preparedStep.systemPrompt;
         currentRuntimeContext = preparedStep.runtimeContext;
         const toolContext = preparedStep.toolContext;
-        const tools = preparedStep.tools;
+        const effectiveToolExposurePlan = agentWriteFinalResponseToolGuardEnabled
+          ? applyAgentWriteFinalResponseGuard(preparedStep.toolExposurePlan)
+          : preparedStep.toolExposurePlan;
+        const tools = effectiveToolExposurePlan.visible;
+        setSpanAttributes(loopSpan, {
+          "tool.loading.mode": resolveRuntimeToolLoading(runtimeStepConfig).mode,
+          "tool.loading.provenance": toolLoadingResolution.provenance,
+          "tool.catalog.authorized_count": preparedStep.toolExposurePlan.authorized.length,
+          "tool.catalog.visible_count": tools.length,
+          "tool.catalog.deferred_count": preparedStep.toolExposurePlan.deferred.length,
+          "tool.loading.path": "framework-fallback",
+        });
+        const stepProviderTools = supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
+          ? providerTools
+          : [];
 
         const temperature = this.resolveTemperature(
           temperatureModelString ?? effectiveModel,
           providerOptions,
         );
+        const runtimeTools = convertToolsToRuntimeTools(tools, {
+          model: effectiveModel,
+          providerTools: stepProviderTools,
+        });
+        currentSystemPrompt = synchronizeRuntimeToolInventory(currentSystemPrompt, runtimeTools);
         const response = await withSpan("agent.generate_text", async (span) => {
           setSpanAttributes(span, {
             "model.id": effectiveModel,
             "messages.count": currentMessages.length,
           });
-          return generateText({
+          const result = await generateText({
             model: languageModel,
             system: currentSystemPrompt,
             messages: convertToTextGenerationRuntimeRequestMessages(currentMessages),
-            tools: convertToolsToRuntimeTools(tools, {
-              model: effectiveModel,
-              providerTools,
-            }),
+            tools: runtimeTools,
             experimental_repairToolCall: repairToolCall,
             maxOutputTokens: this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride),
             ...(temperature === undefined ? {} : { temperature }),
             ...(headers ? { headers } : {}),
             ...(providerOptions ? { providerOptions } : {}),
             ...(reasoning ? { reasoning } : {}),
+            abortSignal,
           });
+          setSpanAttributes(span, buildRuntimeUsageTraceAttributes(result.usage));
+          return result;
         });
+        throwIfAborted(abortSignal);
 
         // Accumulate usage
         if (response.usage) {
@@ -720,28 +1242,16 @@ export class AgentRuntime {
             billingMode: response.usage.billingMode,
             usageCaptureStatus: response.usage.usageCaptureStatus,
           });
+          setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
         }
 
-        const assistantParts: MessagePart[] = [];
-        if (response.text) assistantParts.push({ type: "text", text: response.text });
-
-        for (const tc of response.toolCalls ?? []) {
-          assistantParts.push({
-            type: `tool-${tc.toolName}`,
-            toolCallId: tc.toolCallId,
-            toolName: tc.toolName,
-            args: tc.input as Record<string, unknown>,
-          });
-        }
-
-        const assistantMessage: Message = {
+        const assistantMessage = buildGeneratedAssistantMessage(response, {
           id: `msg_${Date.now()}_${step}`,
-          role: "assistant",
-          parts: assistantParts,
           timestamp: Date.now(),
-        };
+        });
         currentMessages.push(assistantMessage);
         await this.memory.add(assistantMessage);
+        throwIfAborted(abortSignal);
         const generatedToolResults = collectGeneratedToolResults(response.toolResults);
 
         const persistGeneratedToolResult = async (
@@ -757,30 +1267,63 @@ export class AgentRuntime {
           );
           currentMessages.push(toolResultMessage);
           await this.memory.add(toolResultMessage);
+          throwIfAborted(abortSignal);
+        };
+
+        const rejectUnpairedRequestScopedGeneratedToolResult = async (
+          generatedToolResult: RuntimeGenerateToolResult,
+        ): Promise<boolean> => {
+          if (!hasToolReplacements) {
+            return false;
+          }
+
+          const error =
+            `Tool "${generatedToolResult.toolName}" is not available in request-scoped replacement tools`;
+          const toolCall: ToolCall = {
+            id: generatedToolResult.toolCallId,
+            name: generatedToolResult.toolName,
+            args: {},
+            status: "error",
+            error,
+          };
+          toolCalls.push(toolCall);
+          const errorMessage = createToolErrorMessage(
+            generatedToolResult.toolCallId,
+            generatedToolResult.toolName,
+            error,
+          );
+          currentMessages.push(errorMessage);
+          await this.memory.add(errorMessage);
+          return true;
         };
 
         if (!response.toolCalls?.length) {
           for (const generatedToolResult of generatedToolResults.values()) {
+            if (await rejectUnpairedRequestScopedGeneratedToolResult(generatedToolResult)) {
+              continue;
+            }
             await persistGeneratedToolResult(generatedToolResult);
           }
           this.status = "completed";
           addSpanEvent(loopSpan, "loop_complete");
+          setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
           return {
             text: response.text,
             messages: currentMessages,
             toolCalls,
             status: this.status,
             usage: totalUsage,
+            metadata: response.finishReason ? { finishReason: response.finishReason } : undefined,
           };
         }
 
         this.status = "tool_execution";
         addSpanEvent(loopSpan, "tool_execution_start", { count: response.toolCalls.length });
-        let mustLoadSkillFirst = !activeSkillPolicy &&
-          Boolean(this.config.skills) &&
+        const mustLoadSkillFirstForStep = !activeSkillPolicy &&
           response.toolCalls.some((tc) => tc.toolName === LOAD_SKILL_TOOL_ID);
 
         for (const tc of response.toolCalls) {
+          throwIfAborted(abortSignal);
           const toolCall: ToolCall = {
             id: tc.toolCallId,
             name: tc.toolName,
@@ -790,15 +1333,145 @@ export class AgentRuntime {
           const generatedToolResult = generatedToolResults.get(tc.toolCallId);
 
           await withSpan("agent.tool_execute", async (toolSpan) => {
-            setSpanAttributes(toolSpan, { "tool.name": tc.toolName, "tool.id": tc.toolCallId });
+            const inputSizeBytes = estimateSerializedSizeBytes(tc.input);
+            setSpanAttributes(
+              toolSpan,
+              compactRuntimeTraceAttributes({
+                "tool.name": tc.toolName,
+                "tool.call.id": tc.toolCallId,
+                "tool.id": tc.toolCallId,
+                "tool.status": "executing",
+                "tool.input.size_bytes": inputSizeBytes,
+                "gen_ai.operation.name": "execute_tool",
+                "gen_ai.tool.name": tc.toolName,
+                "gen_ai.tool.type": "function",
+                "gen_ai.tool.call.id": tc.toolCallId,
+              }),
+            );
 
-            if (generatedToolResult) {
+            const executionAuthority = resolveToolExecutionAuthority({
+              toolName: tc.toolName,
+              plan: effectiveToolExposurePlan,
+            });
+            if (
+              !hasToolReplacements &&
+              generatedToolResult === undefined &&
+              executionAuthority === undefined
+            ) {
+              toolCall.status = "error";
+              toolCall.error = toolNotVisibleError(tc.toolName);
+              setSpanAttributes(toolSpan, {
+                "tool.status": "blocked",
+                error: true,
+                "error.type": "ToolExposureBlocked",
+                "error.message": toolCall.error,
+              });
+              const errorMessage = createToolErrorMessage(
+                tc.toolCallId,
+                tc.toolName,
+                toolCall.error,
+              );
+              currentMessages.push(errorMessage);
+              await this.memory.add(errorMessage);
+              toolCalls.push(toolCall);
+              return;
+            }
+            if (
+              generatedToolResult === undefined &&
+              isFrameworkToolSearch(tc.toolName, effectiveToolExposurePlan)
+            ) {
+              let checkpoint: ToolExposureCheckpoint;
+              try {
+                const search = executeFrameworkToolSearch({
+                  args: toolCall.args,
+                  plan: effectiveToolExposurePlan,
+                  state: toolExposureState,
+                });
+                toolCall.status = "completed";
+                toolCall.result = search.result;
+                setSpanAttributes(toolSpan, {
+                  "tool.status": "completed",
+                  "tool.search.result_count": search.result.resultCount,
+                  "tool.search.loaded_count": search.result.loadedCount,
+                  "tool.search.miss": search.result.miss,
+                });
+                const toolResultMessage = createToolResultMessage(
+                  tc.toolCallId,
+                  tc.toolName,
+                  search.result,
+                );
+                currentMessages.push(toolResultMessage);
+                await this.memory.add(toolResultMessage);
+                checkpoint = search.checkpoint;
+              } catch (error) {
+                toolCall.status = "error";
+                toolCall.error = error instanceof Error ? error.message : String(error);
+                const errorMessage = createToolErrorMessage(
+                  tc.toolCallId,
+                  tc.toolName,
+                  toolCall.error,
+                );
+                currentMessages.push(errorMessage);
+                await this.memory.add(errorMessage);
+                toolCalls.push(toolCall);
+                return;
+              }
+              await persistToolExposureCheckpointBeforeContinuation({
+                checkpoint,
+                persist: persistToolExposureCheckpoint,
+                required: requireToolExposureCheckpointPersistence,
+              });
+              toolCalls.push(toolCall);
+              return;
+            }
+
+            if (generatedToolResult && !hasToolReplacements) {
+              if (generatedToolResult.providerExecuted === true) {
+                await traceProviderExecutedTool({
+                  mode: "generate",
+                  agentId: this.id,
+                  toolName: tc.toolName,
+                  toolCallId: tc.toolCallId,
+                  context: {
+                    toolCallId: tc.toolCallId,
+                    ...toolContext,
+                    agentId: this.id,
+                  },
+                  args: tc.input,
+                  result: generatedToolResult.result,
+                  isError: generatedToolResult.isError === true,
+                });
+              }
               await persistGeneratedToolResult(generatedToolResult);
               toolCall.status = generatedToolResult.isError === true ? "error" : "completed";
               toolCall.result = generatedToolResult.result;
               toolCall.error = generatedToolResult.isError === true
                 ? stringifyToolError(generatedToolResult.result)
                 : undefined;
+              if (toolCall.error !== undefined) {
+                setOtelActiveSpanErrorStatus(toolCall.error);
+              }
+              if (
+                generatedToolResult.isError !== true &&
+                shouldHideProjectToolAfterAgentWriteSuccess(tc.toolName)
+              ) {
+                agentWriteFinalResponseToolGuardEnabled = true;
+              }
+              setSpanAttributes(
+                toolSpan,
+                compactRuntimeTraceAttributes({
+                  "tool.status": generatedToolResult.isError === true ? "failed" : "completed",
+                  "tool.provider_executed": generatedToolResult.providerExecuted === true,
+                  "tool.output.size_bytes": estimateSerializedSizeBytes(generatedToolResult.result),
+                  ...(toolCall.error
+                    ? {
+                      error: true,
+                      "error.type": "ProviderExecutedToolError",
+                      "error.message": toolCall.error,
+                    }
+                    : {}),
+                }),
+              );
               toolCalls.push(toolCall);
               return;
             }
@@ -806,15 +1479,23 @@ export class AgentRuntime {
             const policyCheck = enforceSkillPolicy(
               tc.toolName,
               activeSkillPolicy,
-              mustLoadSkillFirst,
+              mustLoadSkillFirstForStep,
               {
+                activeSkillId,
                 hasSubmittedFormInput: hasSubmittedFormInputInLoop,
                 skillToolAvailability: activeSkillToolAvailability,
+                toolInput: tc.input,
               },
             );
             if (!policyCheck.allowed) {
               toolCall.status = "error";
               toolCall.error = policyCheck.error;
+              setSpanAttributes(toolSpan, {
+                "tool.status": "blocked",
+                error: true,
+                "error.type": "ToolPolicyBlocked",
+                "error.message": policyCheck.error,
+              });
 
               const errorMessage: Message = {
                 id: `tool_error_${tc.toolCallId}`,
@@ -841,7 +1522,7 @@ export class AgentRuntime {
               toolCall.args = applySkillDelegationOverridesToToolInput(
                 tc.toolName,
                 toolCall.args,
-                activeSkillDelegationOverrides,
+                hasToolReplacements ? undefined : activeSkillDelegationOverrides,
               );
               const executionContext = {
                 toolCallId: tc.toolCallId,
@@ -851,14 +1532,20 @@ export class AgentRuntime {
                 // spreads so caller-supplied context cannot spoof it.
                 agentId: this.id,
               };
-              const result = await executeConfiguredTool(
-                tc.toolName,
-                toolCall.args,
-                this.config.tools,
-                executionContext,
+              throwIfAborted(abortSignal);
+              const result = await traceConfiguredToolExecution({
+                mode: "generate",
+                agentId: this.id,
+                toolName: tc.toolName,
+                toolCallId: tc.toolCallId,
+                args: toolCall.args,
+                toolsConfig: runtimeToolsConfig,
+                context: executionContext,
                 allowedRemoteToolNames,
                 remoteToolSources,
-              );
+                sourceIntegrationPolicy,
+                strictConfiguredToolsOnly: hasToolReplacements,
+              });
               await this.notifyToolResult({
                 mode: "generate",
                 toolName: tc.toolName,
@@ -868,28 +1555,47 @@ export class AgentRuntime {
                 context: executionContext,
               });
 
-              toolCall.status = "completed";
-              toolCall.result = result;
-              toolCall.executionTime = Date.now() - startTime;
-
-              // Track skill policy from load_skill results
-              if (tc.toolName === LOAD_SKILL_TOOL_ID) {
-                activeSkillId = extractSkillId(result);
-                activeSkillPolicy = extractSkillPolicy(result);
-                activeSkillToolAvailability = extractSkillToolAvailability(result) ??
-                  INACTIVE_SKILL_TOOL_AVAILABILITY;
-                activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
-                mustLoadSkillFirst = false;
+              const resultError = getToolResultError(result);
+              if (resultError !== undefined) {
+                setOtelActiveSpanErrorStatus(resultError);
               }
-              activeSkillPolicy = removeFormInputAfterSubmission(
-                tc.toolName,
-                result,
-                activeSkillId,
-                activeSkillPolicy,
+              toolCall.status = resultError === undefined ? "completed" : "error";
+              toolCall.result = result;
+              toolCall.error = resultError;
+              toolCall.executionTime = Date.now() - startTime;
+              setSpanAttributes(
+                toolSpan,
+                compactRuntimeTraceAttributes({
+                  "tool.status": resultError === undefined ? "completed" : "failed",
+                  "tool.provider_executed": false,
+                  "tool.output.size_bytes": estimateSerializedSizeBytes(result),
+                  ...(resultError === undefined ? {} : {
+                    error: true,
+                    "error.type": "ToolResultError",
+                    "error.message": resultError,
+                  }),
+                }),
               );
-              if (isSubmittedFormInputExecutionResult(tc.toolName, result)) {
-                hasSubmittedFormInputInLoop = true;
-                currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
+
+              if (resultError === undefined) {
+                if (shouldHideProjectToolAfterAgentWriteSuccess(tc.toolName)) {
+                  agentWriteFinalResponseToolGuardEnabled = true;
+                }
+                // Track skill policy from successful load_skill results
+                if (tc.toolName === LOAD_SKILL_TOOL_ID) {
+                  applySuccessfulSkillResult(result);
+                }
+                activeSkillPolicy = removeFormInputAfterSubmission(
+                  tc.toolName,
+                  result,
+                  activeSkillPolicy,
+                );
+                if (isSubmittedFormInputExecutionResult(tc.toolName, result)) {
+                  hasSubmittedFormInputInLoop = true;
+                  currentRuntimeContext = markSubmittedFormInputRuntimeContext(
+                    currentRuntimeContext,
+                  );
+                }
               }
 
               const toolResultMessage = createToolResultMessage(
@@ -900,9 +1606,15 @@ export class AgentRuntime {
               currentMessages.push(toolResultMessage);
               await this.memory.add(toolResultMessage);
             } catch (error) {
+              throwIfAborted(abortSignal);
               toolCall.status = "error";
               toolCall.error = error instanceof Error ? error.message : String(error);
-              setSpanAttributes(toolSpan, { error: true, "error.message": toolCall.error });
+              setSpanAttributes(toolSpan, {
+                "tool.status": "failed",
+                error: true,
+                "error.type": error instanceof Error ? error.name : "Error",
+                "error.message": toolCall.error,
+              });
 
               const errorMessage = createToolErrorMessage(
                 tc.toolCallId,
@@ -915,11 +1627,14 @@ export class AgentRuntime {
 
             toolCalls.push(toolCall);
           });
+          throwIfAborted(abortSignal);
         }
       }
 
+      throwIfAborted(abortSignal);
       this.status = "completed";
       addSpanEvent(loopSpan, "max_steps_reached", { maxSteps });
+      setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
 
       const lastMsg = currentMessages[currentMessages.length - 1];
       return {
@@ -943,14 +1658,15 @@ export class AgentRuntime {
     messages: Message[],
     controller: ReadableStreamDefaultController,
     encoder: TextEncoder,
-    callbacks?: {
+    callbacks: {
       onToolCall?: (toolCall: ToolCall) => void;
       onChunk?: (chunk: string) => void;
       onFinish?: (response: AgentResponse) => void;
-    },
-    textPartId?: string,
-    toolContextBase?: Record<string, unknown>,
-    runtimeContext?: Record<string, unknown>,
+    } | undefined,
+    textPartId: string | undefined,
+    toolContextBase: Record<string, unknown> | undefined,
+    runtimeContext: Record<string, unknown> | undefined,
+    supportsToolCalling: boolean,
     modelString?: string,
     resolvedModel?: ModelRuntime,
     headers?: HeadersInit,
@@ -969,10 +1685,8 @@ export class AgentRuntime {
     const currentMessages = [...messages];
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-    // Local models can't reliably do function calling, so skip tools gracefully.
-    const isLocalStreaming = isLocalModelRuntime(languageModel);
-    if (isLocalStreaming && this.config.tools) {
-      warnLocalToolSkipping(this.id, effectiveModel);
+    if (!supportsToolCalling && this.config.tools) {
+      warnUnsupportedToolCalling(this.id, effectiveModel);
     }
 
     // Request-scoped skill policy (not class-level mutable state)
@@ -981,14 +1695,40 @@ export class AgentRuntime {
     let activeSkillPolicy = hydratedSkillState.activeSkillPolicy;
     let activeSkillToolAvailability = hydratedSkillState.activeSkillToolAvailability;
     let activeSkillDelegationOverrides = hydratedSkillState.activeSkillDelegationOverrides;
+    const applySuccessfulSkillResult = (result: unknown): void => {
+      const next = applySkillActivationResult({
+        activeSkillId,
+        activeSkillPolicy,
+        activeSkillToolAvailability,
+        activeSkillDelegationOverrides,
+      }, result);
+      activeSkillId = next.activeSkillId;
+      activeSkillPolicy = next.activeSkillPolicy;
+      activeSkillToolAvailability = next.activeSkillToolAvailability;
+      activeSkillDelegationOverrides = next.activeSkillDelegationOverrides;
+    };
     let hasSubmittedFormInputInLoop = hasSubmittedFormInputResult(currentMessages) ||
       runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
     let finalFinishReason: string | undefined;
     let latestAssistantText = "";
+    const initialToolExposureCheckpoint = getRuntimeToolExposureCheckpoint(this.config);
+    const toolExposureState = createToolExposureState();
+    const persistToolExposureCheckpoint = getRuntimeToolExposureCheckpointPersister(this.config);
+    const requireToolExposureCheckpointPersistence =
+      isRuntimeToolExposureCheckpointPersistenceRequired(this.config);
+    const toolLoadingResolution = resolveRuntimeToolLoading(this.config);
+    const runtimeStepConfig: RuntimeToolFilterConfig = {
+      ...this.config,
+      __vfToolLoadingMode: toolLoadingResolution.mode,
+    };
     const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
-    const providerTools = getRuntimeProviderTools(this.config);
     const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
-    const remoteToolSources = getRuntimeRemoteToolSources(this.config);
+    const remoteToolSources = getRuntimeRemoteToolSources(this.config, undefined, this.id);
+    const sourceIntegrationPolicy = getRuntimeSourceIntegrationPolicy(this.config);
+    const configuredProviderTools = getRuntimeProviderTools(this.config);
+    const providerTools = sourceIntegrationPolicy
+      ? applySourceIntegrationPolicy(configuredProviderTools, sourceIntegrationPolicy)
+      : configuredProviderTools;
     let currentSystemPrompt = systemPrompt;
     let currentRuntimeContext = runtimeContext;
     let agentWriteFinalResponseToolGuardEnabled = false;
@@ -1007,59 +1747,95 @@ export class AgentRuntime {
         activeSkillPolicy,
         activeSkillToolAvailability,
         allowedRemoteToolNames,
-        config: this.config,
+        config: runtimeStepConfig,
+        effectiveModel,
+        excludedToolNames: agentWriteFinalResponseToolGuardEnabled
+          ? AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES
+          : undefined,
         forwardedRemoteToolDefinitions,
         getAvailableTools,
-        isLocalModel: isLocalStreaming,
+        supportsToolCalling,
         messages: currentMessages,
         mode: "stream",
+        providerToolNames: supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
+          ? providerTools
+          : [],
         remoteToolSources,
+        sourceIntegrationPolicy,
         resolveRuntimeState: this.resolveRuntimeState.bind(this),
         runtimeContext: stepRuntimeContext,
         step,
         systemPrompt: currentSystemPrompt,
         toolContextBase,
+        toolExposureState,
+        toolExposureCheckpoint: step === 0 ? initialToolExposureCheckpoint : undefined,
       });
       currentSystemPrompt = preparedStep.systemPrompt;
       currentRuntimeContext = preparedStep.runtimeContext;
       const toolContext = preparedStep.toolContext;
-      const tools = agentWriteFinalResponseToolGuardEnabled
-        ? preparedStep.tools.filter((tool) =>
-          !shouldHideProjectToolAfterAgentWriteSuccess(tool.name)
-        )
-        : preparedStep.tools;
-      const stepProviderTools = agentWriteFinalResponseToolGuardEnabled ? [] : providerTools;
+      const effectiveToolExposurePlan = agentWriteFinalResponseToolGuardEnabled
+        ? applyAgentWriteFinalResponseGuard(preparedStep.toolExposurePlan)
+        : preparedStep.toolExposurePlan;
+      const tools = effectiveToolExposurePlan.visible;
+      setOtelActiveSpanAttributes({
+        "tool.loading.mode": resolveRuntimeToolLoading(runtimeStepConfig).mode,
+        "tool.loading.provenance": toolLoadingResolution.provenance,
+        "tool.catalog.authorized_count": preparedStep.toolExposurePlan.authorized.length,
+        "tool.catalog.visible_count": tools.length,
+        "tool.catalog.deferred_count": preparedStep.toolExposurePlan.deferred.length,
+        "tool.loading.path": "framework-fallback",
+      });
+      const stepProviderTools = supportsToolCalling && !agentWriteFinalResponseToolGuardEnabled
+        ? providerTools
+        : [];
 
       const runtimeTools = convertToolsToRuntimeTools(tools, {
         model: effectiveModel,
         providerTools: stepProviderTools,
       });
-      const runtimeToolNames = Object.keys(runtimeTools ?? {});
+      currentSystemPrompt = synchronizeRuntimeToolInventory(currentSystemPrompt, runtimeTools);
+      const runtimeToolNames = Object.keys(runtimeTools ?? {}).sort();
 
       const temperature = this.resolveTemperature(
         temperatureModelString ?? effectiveModel,
         providerOptions,
       );
-      const result = streamText({
-        model: languageModel,
-        system: currentSystemPrompt,
-        messages: convertToTextGenerationRuntimeRequestMessages(currentMessages),
-        tools: runtimeTools,
-        experimental_repairToolCall: repairToolCall,
-        maxOutputTokens: this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride),
-        ...(temperature === undefined ? {} : { temperature }),
-        ...(headers ? { headers } : {}),
-        ...(providerOptions ? { providerOptions } : {}),
-        ...(reasoning ? { reasoning } : {}),
-        abortSignal,
-      });
+      const maxOutputTokens = this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride);
+      const genAiProviderName = resolveRuntimeGenAiProviderName(effectiveModel);
+      const streamSource = createRuntimeStreamSource((streamSignal) =>
+        streamText({
+          model: languageModel,
+          system: currentSystemPrompt,
+          messages: convertToTextGenerationRuntimeRequestMessages(
+            currentMessages,
+          ),
+          tools: runtimeTools,
+          experimental_repairToolCall: repairToolCall,
+          maxOutputTokens,
+          ...(temperature === undefined ? {} : { temperature }),
+          ...(headers ? { headers } : {}),
+          ...(providerOptions ? { providerOptions } : {}),
+          ...(reasoning ? { reasoning } : {}),
+          abortSignal: streamSignal,
+        })
+      );
 
       const state = createStreamState();
-      await processStream(result, state, controller, encoder, textPartId, {
+      await processStream(streamSource, state, controller, encoder, textPartId, {
         onChunk: callbacks?.onChunk,
         onUsage: (usage) => accumulateUsage(totalUsage, usage),
         providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
         availableToolNames: runtimeToolNames,
+        streamLifecycleMode: resolveStreamLifecycleModeFromEnv(),
+        traceSpanName: `chat ${effectiveModel}`,
+        traceAttributes: {
+          ...(genAiProviderName ? { "gen_ai.provider.name": genAiProviderName } : {}),
+          "gen_ai.request.model": effectiveModel,
+          "gen_ai.response.model": effectiveModel,
+          "gen_ai.request.max_tokens": maxOutputTokens,
+          "gen_ai.output.type": "text",
+          ...(temperature === undefined ? {} : { "gen_ai.request.temperature": temperature }),
+        },
       }, abortSignal);
       throwIfAborted(abortSignal);
       finalFinishReason = state.finishReason ?? finalFinishReason;
@@ -1114,24 +1890,6 @@ export class AgentRuntime {
       latestAssistantText = getTextFromParts(assistantMessage.parts);
       currentMessages.push(assistantMessage);
       await this.memory.add(assistantMessage);
-
-      if (state.suppressedToolCalls.length > 0) {
-        const unavailableNames = [
-          ...new Set(state.suppressedToolCalls.map((toolCall) => toolCall.name)),
-        ];
-        currentMessages.push({
-          id: `runtime_note_${Date.now()}_${step}`,
-          role: "user",
-          parts: [{
-            type: "text",
-            text: `Runtime recovery: ignored unavailable tool call(s): ${
-              unavailableNames.join(", ")
-            }. Continue using only currently available tools: ${runtimeToolNames.join(", ")}.`,
-          }],
-          timestamp: Date.now(),
-        });
-      }
-
       const finalToolResults = collectFinalStreamToolResults(state);
 
       const persistToolResult = async (toolResult: StreamingToolResult): Promise<void> => {
@@ -1165,8 +1923,7 @@ export class AgentRuntime {
 
       this.status = "tool_execution";
       const streamedToolCalls = Array.from(state.toolCalls.values());
-      let mustLoadSkillFirst = !activeSkillPolicy &&
-        Boolean(this.config.skills) &&
+      const mustLoadSkillFirstForStep = !activeSkillPolicy &&
         streamedToolCalls.some((tc) => tc.name === LOAD_SKILL_TOOL_ID);
 
       for (const tc of streamedToolCalls) {
@@ -1229,19 +1986,11 @@ export class AgentRuntime {
               agentWriteFinalResponseToolGuardEnabled = true;
             }
             if (tc.name === LOAD_SKILL_TOOL_ID) {
-              activeSkillId = extractSkillId(matchingResult.output);
-              activeSkillPolicy = extractSkillPolicy(matchingResult.output);
-              activeSkillToolAvailability = extractSkillToolAvailability(matchingResult.output) ??
-                INACTIVE_SKILL_TOOL_AVAILABILITY;
-              activeSkillDelegationOverrides = extractSkillDelegationOverrides(
-                matchingResult.output,
-              );
-              mustLoadSkillFirst = false;
+              applySuccessfulSkillResult(matchingResult.output);
             }
             activeSkillPolicy = removeFormInputAfterSubmission(
               tc.name,
               matchingResult.output,
-              activeSkillId,
               activeSkillPolicy,
             );
             if (isSubmittedFormInputExecutionResult(tc.name, matchingResult.output)) {
@@ -1263,19 +2012,11 @@ export class AgentRuntime {
               agentWriteFinalResponseToolGuardEnabled = true;
             }
             if (tc.name === LOAD_SKILL_TOOL_ID) {
-              activeSkillId = extractSkillId(persistedResult.result);
-              activeSkillPolicy = extractSkillPolicy(persistedResult.result);
-              activeSkillToolAvailability = extractSkillToolAvailability(persistedResult.result) ??
-                INACTIVE_SKILL_TOOL_AVAILABILITY;
-              activeSkillDelegationOverrides = extractSkillDelegationOverrides(
-                persistedResult.result,
-              );
-              mustLoadSkillFirst = false;
+              applySuccessfulSkillResult(persistedResult.result);
             }
             activeSkillPolicy = removeFormInputAfterSubmission(
               tc.name,
               persistedResult.result,
-              activeSkillId,
               activeSkillPolicy,
             );
             if (isSubmittedFormInputExecutionResult(tc.name, persistedResult.result)) {
@@ -1287,6 +2028,18 @@ export class AgentRuntime {
         }
 
         if (tc.providerExecuted === true) {
+          await traceProviderExecutedTool({
+            mode: "stream",
+            agentId: this.id,
+            toolName: tc.name,
+            toolCallId: tc.id,
+            context: {
+              toolCallId: tc.id,
+              ...toolContext,
+              agentId: this.id,
+            },
+            args: toolCall.args,
+          });
           toolCall.status = "completed";
           toolCalls.push(toolCall);
           continue;
@@ -1317,13 +2070,76 @@ export class AgentRuntime {
           continue;
         }
 
+        if (isFrameworkToolSearch(tc.name, effectiveToolExposurePlan)) {
+          let checkpoint: ToolExposureCheckpoint;
+          try {
+            callbacks?.onToolCall?.(toolCall);
+            const search = executeFrameworkToolSearch({
+              args: toolCall.args,
+              plan: effectiveToolExposurePlan,
+              state: toolExposureState,
+            });
+            toolCall.status = "completed";
+            toolCall.result = search.result;
+            toolCalls.push(toolCall);
+            setOtelActiveSpanAttributes({
+              "tool.search.result_count": search.result.resultCount,
+              "tool.search.loaded_count": search.result.loadedCount,
+              "tool.search.miss": search.result.miss,
+            });
+            sendSSE(controller, encoder, {
+              type: "tool-output-available",
+              toolCallId: toolCall.id,
+              output: search.result,
+            });
+            const toolResultMessage = createToolResultMessage(tc.id, tc.name, search.result);
+            currentMessages.push(toolResultMessage);
+            await this.memory.add(toolResultMessage);
+            checkpoint = search.checkpoint;
+            currentStepToolResults.set(tc.id, toolResultMessage.parts[0] as ToolResultPart);
+          } catch (error) {
+            await this.recordToolError(
+              toolCall,
+              error instanceof Error ? error.message : String(error),
+              controller,
+              encoder,
+              currentMessages,
+              toolCalls,
+            );
+            continue;
+          }
+          await persistToolExposureCheckpointBeforeContinuation({
+            checkpoint,
+            persist: persistToolExposureCheckpoint,
+            required: requireToolExposureCheckpointPersistence,
+          });
+          continue;
+        }
+
+        const executionAuthority = resolveToolExecutionAuthority({
+          toolName: tc.name,
+          plan: effectiveToolExposurePlan,
+        });
+        if (executionAuthority === undefined) {
+          await this.recordToolError(
+            toolCall,
+            toolNotVisibleError(tc.name),
+            controller,
+            encoder,
+            currentMessages,
+            toolCalls,
+          );
+          continue;
+        }
         const policyCheck = enforceSkillPolicy(
           tc.name,
           activeSkillPolicy,
-          mustLoadSkillFirst,
+          mustLoadSkillFirstForStep,
           {
+            activeSkillId,
             hasSubmittedFormInput: hasSubmittedFormInputInLoop,
             skillToolAvailability: activeSkillToolAvailability,
+            toolInput: toolCall.args,
           },
         );
         if (!policyCheck.allowed) {
@@ -1356,14 +2172,18 @@ export class AgentRuntime {
             // spread so caller-supplied context cannot spoof it.
             agentId: this.id,
           };
-          const result = await executeConfiguredTool(
-            tc.name,
-            toolCall.args,
-            this.config.tools,
-            executionContext,
+          const result = await traceConfiguredToolExecution({
+            mode: "stream",
+            agentId: this.id,
+            toolName: tc.name,
+            toolCallId: tc.id,
+            args: toolCall.args,
+            toolsConfig: this.config.tools,
+            context: executionContext,
             allowedRemoteToolNames,
             remoteToolSources,
-          );
+            sourceIntegrationPolicy,
+          });
           throwIfAborted(abortSignal);
           await this.notifyToolResult({
             mode: "stream",
@@ -1374,41 +2194,48 @@ export class AgentRuntime {
             context: executionContext,
           });
 
-          toolCall.status = "completed";
+          const resultError = getToolResultError(result);
+          toolCall.status = resultError === undefined ? "completed" : "error";
           toolCall.result = result;
+          toolCall.error = resultError;
           toolCall.executionTime = Date.now() - startTime;
           toolCalls.push(toolCall);
 
-          // Track skill policy from load_skill results
-          if (tc.name === LOAD_SKILL_TOOL_ID) {
-            activeSkillId = extractSkillId(result);
-            activeSkillPolicy = extractSkillPolicy(result);
-            activeSkillToolAvailability = extractSkillToolAvailability(result) ??
-              INACTIVE_SKILL_TOOL_AVAILABILITY;
-            activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
-            mustLoadSkillFirst = false;
-          }
-          activeSkillPolicy = removeFormInputAfterSubmission(
-            tc.name,
-            result,
-            activeSkillId,
-            activeSkillPolicy,
-          );
-          if (isSubmittedFormInputExecutionResult(tc.name, result)) {
-            hasSubmittedFormInputInLoop = true;
-            currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
-          }
-          if (shouldHideProjectToolAfterAgentWriteSuccess(tc.name)) {
-            agentWriteFinalResponseToolGuardEnabled = true;
+          if (resultError === undefined) {
+            // Track skill policy from successful load_skill results
+            if (tc.name === LOAD_SKILL_TOOL_ID) {
+              applySuccessfulSkillResult(result);
+            }
+            activeSkillPolicy = removeFormInputAfterSubmission(
+              tc.name,
+              result,
+              activeSkillPolicy,
+            );
+            if (isSubmittedFormInputExecutionResult(tc.name, result)) {
+              hasSubmittedFormInputInLoop = true;
+              currentRuntimeContext = markSubmittedFormInputRuntimeContext(currentRuntimeContext);
+            }
+            if (shouldHideProjectToolAfterAgentWriteSuccess(tc.name)) {
+              agentWriteFinalResponseToolGuardEnabled = true;
+            }
           }
 
           const dynamic = isDynamicTool(tc.name);
-          sendSSE(controller, encoder, {
-            type: "tool-output-available",
-            toolCallId: toolCall.id,
-            output: result,
-            ...(dynamic ? { dynamic: true } : {}),
-          });
+          if (resultError === undefined) {
+            sendSSE(controller, encoder, {
+              type: "tool-output-available",
+              toolCallId: toolCall.id,
+              output: result,
+              ...(dynamic ? { dynamic: true } : {}),
+            });
+          } else {
+            sendSSE(controller, encoder, {
+              type: "tool-output-error",
+              toolCallId: toolCall.id,
+              errorText: resultError,
+              ...(dynamic ? { dynamic: true } : {}),
+            });
+          }
 
           const toolResultMessage = createToolResultMessage(tc.id, tc.name, result);
           if (!currentStepToolResults.has(tc.id)) {
@@ -1431,6 +2258,25 @@ export class AgentRuntime {
 
       for (const toolResult of finalToolResults.values()) {
         await persistToolResult(toolResult);
+      }
+
+      if (state.suppressedToolCalls.length > 0) {
+        const unavailableNames = [
+          ...new Set(state.suppressedToolCalls.map((toolCall) => toolCall.name)),
+        ];
+        currentMessages.push(
+          markRuntimeGeneratedUserMessage({
+            id: `runtime_note_${Date.now()}_${step}`,
+            role: "user",
+            parts: [{
+              type: "text",
+              text: `Runtime recovery: ignored unavailable tool call(s): ${
+                unavailableNames.join(", ")
+              }. Continue using only currently available tools: ${runtimeToolNames.join(", ")}.`,
+            }],
+            timestamp: Date.now(),
+          }),
+        );
       }
 
       throwIfAborted(abortSignal);

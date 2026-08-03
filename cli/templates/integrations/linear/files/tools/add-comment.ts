@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { addComment } from "../../lib/linear-client.ts";
+import { addComment } from "../lib/linear-client.ts";
 
 export default tool({
-  id: "add-comment",
+  id: "linear-add-comment",
   description: "Add a comment to a Linear issue.",
   inputSchema: defineSchema((v) => v.object({
     issueId: v.string().describe("Linear issue ID"),

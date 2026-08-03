@@ -1,427 +1,142 @@
-/****
- * Production Token Store Examples
- *
- * Copy-paste implementations for different storage backends.
- * Each example includes encryption support via TOKEN_ENCRYPTION_KEY.
- *
- * @module
- */
-
-import { createTokenStore, tokenStore, type TokenStore } from "./token-store.ts";
-
-// ============================================================================
-// Vercel KV Store
-// ============================================================================
-
 /**
- * Token store using Vercel KV (Redis-compatible)
+ * Reference backends for `createEncryptedTokenStore` in
+ * `encrypted-token-store.ts`.
  *
- * Required environment variables:
- * - KV_REST_API_URL
- * - KV_REST_API_TOKEN
- * - TOKEN_ENCRYPTION_KEY (recommended)
+ * The in-memory backend below is for local development and tests only: it is
+ * process-local, so tokens vanish on restart and are not shared across
+ * workers. For production, implement `EncryptedKvBackend` over a durable
+ * service and pass it into startup through an explicit configuration
+ * boundary. This example is complete and does not rely on module globals:
  *
- * @example
- * ```typescript
- * // lib/token-store.ts
- * import { createVercelKVStore } from './token-store-examples';
- * export const tokenStore = createVercelKVStore();
- * ```
- */
-export function createVercelKVStore(): TokenStore {
-  type VercelKV = typeof import("@vercel/kv");
-  let kvPromise: Promise<VercelKV> | null = null;
-
-  async function getKV(): Promise<VercelKV["kv"]> {
-    kvPromise ??= import("@vercel/kv");
-    return (await kvPromise).kv;
-  }
-
-  return createTokenStore({
-    async get(key: string): Promise<string | null> {
-      const kv = await getKV();
-      return kv.get<string>(key);
-    },
-    async set(key: string, value: string): Promise<void> {
-      const kv = await getKV();
-      await kv.set(key, value);
-    },
-    async delete(key: string): Promise<void> {
-      const kv = await getKV();
-      await kv.del(key);
-    },
-  });
-}
-
-// ============================================================================
-// Redis Store
-// ============================================================================
-
-/**
- * Token store using Redis
+ * ```ts
+ * import { configureTokenStore } from "./token-store.ts";
+ * import {
+ *   createEncryptedTokenStore,
+ *   type EncryptedKvBackend,
+ * } from "./encrypted-token-store.ts";
  *
- * Required environment variables:
- * - REDIS_URL (e.g., redis://localhost:6379)
- * - TOKEN_ENCRYPTION_KEY (recommended)
- *
- * @example
- * ```typescript
- * // lib/token-store.ts
- * import { createRedisStore } from './token-store-examples';
- * export const tokenStore = createRedisStore();
- * ```
- */
-export function createRedisStore(): TokenStore {
-  let clientPromise: Promise<ReturnType<(typeof import("redis"))["createClient"]>> | null = null;
-
-  async function getClient(): Promise<ReturnType<(typeof import("redis"))["createClient"]>> {
-    clientPromise ??= (async () => {
-      const { createClient } = await import("redis");
-      const client = createClient({ url: process.env.REDIS_URL });
-      await client.connect();
-      return client;
-    })();
-
-    return clientPromise;
-  }
-
-  return createTokenStore({
-    async get(key: string): Promise<string | null> {
-      const client = await getClient();
-      return client.get(key);
-    },
-    async set(key: string, value: string): Promise<void> {
-      const client = await getClient();
-      await client.set(key, value);
-    },
-    async delete(key: string): Promise<void> {
-      const client = await getClient();
-      await client.del(key);
-    },
-  });
-}
-
-// ============================================================================
-// PostgreSQL Store
-// ============================================================================
-
-/**
- * Token store using PostgreSQL
- *
- * Required environment variables:
- * - DATABASE_URL (e.g., postgres://user:pass@host:5432/db)
- * - TOKEN_ENCRYPTION_KEY (recommended)
- *
- * Required table (create with migration):
- * ```sql
- * CREATE TABLE oauth_tokens (
- *   key VARCHAR(255) PRIMARY KEY,
- *   value TEXT NOT NULL,
- *   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
- *   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
- * );
- * CREATE INDEX idx_oauth_tokens_key ON oauth_tokens(key);
- * ```
- *
- * @example
- * ```typescript
- * // lib/token-store.ts
- * import { createPostgresStore } from './token-store-examples';
- * export const tokenStore = createPostgresStore();
- * ```
- */
-export function createPostgresStore(): TokenStore {
-  let poolPromise: Promise<import("pg").Pool> | null = null;
-
-  async function getPool(): Promise<import("pg").Pool> {
-    poolPromise ??= (async () => {
-      const { Pool } = await import("pg");
-      return new Pool({ connectionString: process.env.DATABASE_URL });
-    })();
-
-    return poolPromise;
-  }
-
-  return createTokenStore({
-    async get(key: string): Promise<string | null> {
-      const pool = await getPool();
-      const result = await pool.query("SELECT value FROM oauth_tokens WHERE key = $1", [key]);
-      return result.rows[0]?.value ?? null;
-    },
-    async set(key: string, value: string): Promise<void> {
-      const pool = await getPool();
-      await pool.query(
-        `INSERT INTO oauth_tokens (key, value, updated_at)
-         VALUES ($1, $2, NOW())
-         ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
-        [key, value],
-      );
-    },
-    async delete(key: string): Promise<void> {
-      const pool = await getPool();
-      await pool.query("DELETE FROM oauth_tokens WHERE key = $1", [key]);
-    },
-  });
-}
-
-// ============================================================================
-// SQLite Store (for edge/serverless with D1, Turso, etc.)
-// ============================================================================
-
-/**
- * Token store using SQLite (Cloudflare D1, Turso, better-sqlite3)
- *
- * Required table:
- * ```sql
- * CREATE TABLE oauth_tokens (
- *   key TEXT PRIMARY KEY,
- *   value TEXT NOT NULL,
- *   updated_at INTEGER DEFAULT (strftime('%s', 'now'))
- * );
- * ```
- *
- * @param db - SQLite database instance (D1Database, Connection, or Database)
- *
- * @example With Cloudflare D1
- * ```typescript
- * // In your API route
- * export async function GET(request: Request, { env }) {
- *   const tokenStore = createSQLiteStore(env.DB);
- *   // ...
+ * export function configureOAuthStorage(backend: EncryptedKvBackend): void {
+ *   configureTokenStore(createEncryptedTokenStore(backend));
  * }
  * ```
  *
- * @example With Turso
- * ```typescript
- * import { createClient } from '@libsql/client';
- * const db = createClient({ url: process.env.TURSO_URL, authToken: process.env.TURSO_AUTH_TOKEN });
- * export const tokenStore = createSQLiteStore(db);
- * ```
- */
-export function createSQLiteStore(db: {
-  prepare(sql: string): {
-    bind(...args: unknown[]): { first(): Promise<{ value?: string } | null>; run(): Promise<void> };
-  };
-}): TokenStore {
-  return createTokenStore({
-    async get(key: string): Promise<string | null> {
-      const result = await db.prepare("SELECT value FROM oauth_tokens WHERE key = ?").bind(key).first();
-      return result?.value ?? null;
-    },
-    async set(key: string, value: string): Promise<void> {
-      await db
-        .prepare(
-          `INSERT OR REPLACE INTO oauth_tokens (key, value, updated_at)
-           VALUES (?, ?, strftime('%s', 'now'))`,
-        )
-        .bind(key, value)
-        .run();
-    },
-    async delete(key: string): Promise<void> {
-      await db.prepare("DELETE FROM oauth_tokens WHERE key = ?").bind(key).run();
-    },
-  });
-}
-
-// ============================================================================
-// Cloudflare Workers KV Store
-// ============================================================================
-
-/**
- * Token store using Cloudflare Workers KV
+ * Redis adapter sketch (pseudocode, not a paste-ready client): replace every
+ * angle-bracketed operation with the equivalent atomic operation from your
+ * initialized Redis client.
  *
- * @param kv - KV namespace binding from worker environment
- *
- * @example
- * ```typescript
- * // In your worker
- * export default {
- *   async fetch(request, env) {
- *     const tokenStore = createWorkersKVStore(env.OAUTH_TOKENS);
- *     // ...
- *   }
+ * ```text
+ * const redisBackend: EncryptedKvBackend = {
+ *   get: (key) => <redis client get>(key),
+ *   set: async (key, value, options) => {
+ *     await <redis client set>(key, value, options?.expiresInMs);
+ *   },
+ *   delete: (key) => <redis client delete>(key),
+ *   compareAndSwap: (key, expected, next, options) =>
+ *     <atomic WATCH/MULTI or Lua CAS>(key, expected, next, options?.expiresInMs),
+ *   withLock: (key, operation) =>
+ *     <bounded, renewable, fenced Redis lease>(key, operation),
  * };
  * ```
  */
-export function createWorkersKVStore(kv: {
-  get(key: string): Promise<string | null>;
-  put(key: string, value: string): Promise<void>;
-  delete(key: string): Promise<void>;
-}): TokenStore {
-  return createTokenStore({
-    get(key: string): Promise<string | null> {
-      return kv.get(key);
-    },
-    set(key: string, value: string): Promise<void> {
-      return kv.put(key, value);
-    },
-    delete(key: string): Promise<void> {
-      return kv.delete(key);
-    },
-  });
+
+import type { EncryptedKvBackend } from "./encrypted-token-store.ts";
+
+function runtimeMode(): string | undefined {
+  try {
+    if (typeof process !== "undefined" && process.env) return process.env.NODE_ENV;
+  } catch {
+    // Deno exposes the Node-compatible `process` global even when env access
+    // is denied. Preserve the fail-closed mode decision in that runtime.
+    return undefined;
+  }
+  try {
+    return (globalThis as { Deno?: { env?: { get?: (name: string) => string | undefined } } })
+      .Deno?.env?.get?.("NODE_ENV");
+  } catch {
+    return undefined;
+  }
 }
 
-// ============================================================================
-// Prisma Store
-// ============================================================================
+interface MemoryRow {
+  value: string;
+  expiresAt: number | null;
+}
 
 /**
- * Token store using Prisma ORM
- *
- * Required Prisma schema:
- * ```prisma
- * model OAuthToken {
- *   key       String   @id
- *   value     String
- *   updatedAt DateTime @updatedAt
- * }
- * ```
- *
- * @example
- * ```typescript
- * import { PrismaClient } from '@prisma/client';
- * const prisma = new PrismaClient();
- * export const tokenStore = createPrismaStore(prisma);
- * ```
+ * Development/test in-memory backend. Values are still encrypted (the store
+ * requires `TOKEN_ENCRYPTION_KEY` in every mode) but nothing is durable and
+ * nothing is shared across workers, so creation is refused in production.
  */
-export function createPrismaStore(prisma: {
-  oAuthToken: {
-    findUnique(args: { where: { key: string } }): Promise<{ value: string } | null>;
-    upsert(args: {
-      where: { key: string };
-      update: { value: string };
-      create: { key: string; value: string };
-    }): Promise<unknown>;
-    delete(args: { where: { key: string } }): Promise<unknown>;
-  };
-}): TokenStore {
-  return createTokenStore({
-    async get(key: string): Promise<string | null> {
-      const record = await prisma.oAuthToken.findUnique({ where: { key } });
-      return record?.value ?? null;
+export function createMemoryKvBackend(): EncryptedKvBackend {
+  const mode = runtimeMode();
+  if (mode !== "development" && mode !== "test") {
+    throw new Error(
+      mode === "production"
+        ? "The in-memory example backend is not allowed in production. Implement " +
+          "EncryptedKvBackend over a durable service (Redis, Postgres, Deno KV)."
+        : "The in-memory example backend requires an explicit development or test " +
+          "runtime. Set NODE_ENV accordingly, or implement EncryptedKvBackend over " +
+          "a durable service (Redis, Postgres, Deno KV).",
+    );
+  }
+
+  const rows = new Map<string, MemoryRow>();
+  const lockTails = new Map<string, Promise<void>>();
+
+  function readRow(key: string): string | null {
+    const row = rows.get(key);
+    if (!row) return null;
+    if (row.expiresAt !== null && Date.now() >= row.expiresAt) {
+      rows.delete(key);
+      return null;
+    }
+    return row.value;
+  }
+
+  function writeRow(key: string, value: string, expiresInMs?: number): void {
+    rows.set(key, {
+      value,
+      expiresAt: expiresInMs === undefined ? null : Date.now() + expiresInMs,
+    });
+  }
+
+  return {
+    get(key) {
+      return Promise.resolve(readRow(key));
     },
-    async set(key: string, value: string): Promise<void> {
-      await prisma.oAuthToken.upsert({
-        where: { key },
-        update: { value },
-        create: { key, value },
+    set(key, value, options) {
+      writeRow(key, value, options?.expiresInMs);
+      return Promise.resolve();
+    },
+    delete(key) {
+      rows.delete(key);
+      return Promise.resolve();
+    },
+    compareAndSwap(key, expected, next, options) {
+      // No await between comparison and write: within one process this block
+      // is indivisible, which is exactly the guarantee the contract asks a
+      // distributed backend to provide server-side.
+      if (readRow(key) !== expected) return Promise.resolve(false);
+      if (next === null) rows.delete(key);
+      else writeRow(key, next, options?.expiresInMs);
+      return Promise.resolve(true);
+    },
+    async withLock(key, operation) {
+      const prior = lockTails.get(key) ?? Promise.resolve();
+      let release!: () => void;
+      const current = new Promise<void>((resolve) => {
+        release = resolve;
       });
-    },
-    async delete(key: string): Promise<void> {
+      const tail = prior.catch(() => undefined).then(() => current);
+      lockTails.set(key, tail);
+
+      await prior.catch(() => undefined);
       try {
-        await prisma.oAuthToken.delete({ where: { key } });
-      } catch {
-        // Ignore if not found
+        return await operation();
+      } finally {
+        release();
+        if (lockTails.get(key) === tail) lockTails.delete(key);
       }
     },
-  });
-}
-
-// ============================================================================
-// Drizzle ORM Store
-// ============================================================================
-
-/**
- * Token store using Drizzle ORM
- *
- * Required schema:
- * ```typescript
- * import { pgTable, text, timestamp } from 'drizzle-orm/pg-core';
- *
- * export const oauthTokens = pgTable('oauth_tokens', {
- *   key: text('key').primaryKey(),
- *   value: text('value').notNull(),
- *   updatedAt: timestamp('updated_at').defaultNow(),
- * });
- * ```
- *
- * @example
- * ```typescript
- * import { drizzle } from 'drizzle-orm/postgres-js';
- * import postgres from 'postgres';
- * import { oauthTokens } from './schema';
- *
- * const client = postgres(process.env.DATABASE_URL!);
- * const db = drizzle(client);
- * export const tokenStore = createDrizzleStore(db, oauthTokens);
- * ```
- */
-export function createDrizzleStore<T extends { key: unknown; value: unknown }>(
-  db: {
-    select(): {
-      from(table: T): { where(condition: unknown): { get(): Promise<{ value: string } | undefined> } };
-    };
-    insert(table: T): {
-      values(data: { key: string; value: string }): {
-        onConflictDoUpdate(args: { target: unknown; set: { value: string } }): { execute(): Promise<void> };
-      };
-    };
-    delete(table: T): { where(condition: unknown): { execute(): Promise<void> } };
-  },
-  table: T & { key: unknown; value: unknown },
-  eq: (col: unknown, val: unknown) => unknown,
-): TokenStore {
-  return createTokenStore({
-    async get(key: string): Promise<string | null> {
-      const result = await db.select().from(table).where(eq(table.key, key)).get();
-      return result?.value ?? null;
-    },
-    async set(key: string, value: string): Promise<void> {
-      await db
-        .insert(table)
-        .values({ key, value })
-        .onConflictDoUpdate({ target: table.key, set: { value } })
-        .execute();
-    },
-    async delete(key: string): Promise<void> {
-      await db.delete(table).where(eq(table.key, key)).execute();
-    },
-  });
-}
-
-// ============================================================================
-// Auto-Select Store (Recommended)
-// ============================================================================
-
-/**
- * Automatically selects the appropriate token store based on environment
- *
- * Detection order:
- * 1. DATABASE_URL -> PostgreSQL
- * 2. KV_REST_API_URL -> Vercel KV
- * 3. REDIS_URL -> Redis
- * 4. Fallback -> In-memory (development only)
- *
- * @example
- * ```typescript
- * // lib/token-store.ts
- * import { createAutoStore } from './token-store-examples';
- * export const tokenStore = createAutoStore();
- * ```
- */
-export function createAutoStore(): TokenStore {
-  const env = process.env;
-
-  if (env.DATABASE_URL) {
-    console.log("[Token Store] Using PostgreSQL storage");
-    return createPostgresStore();
-  }
-
-  if (env.KV_REST_API_URL && env.KV_REST_API_TOKEN) {
-    console.log("[Token Store] Using Vercel KV storage");
-    return createVercelKVStore();
-  }
-
-  if (env.REDIS_URL) {
-    console.log("[Token Store] Using Redis storage");
-    return createRedisStore();
-  }
-
-  console.warn(
-    "[Token Store] No production storage configured. " +
-      "Using in-memory storage (tokens will be lost on restart). " +
-      "Set DATABASE_URL, KV_REST_API_URL, or REDIS_URL for production.",
-  );
-
-  return tokenStore;
+  };
 }

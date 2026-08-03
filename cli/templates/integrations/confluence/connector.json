@@ -19,11 +19,7 @@
       "offline_access"
     ],
     "callbackPath": "/api/auth/confluence/callback",
-    "tokenAuthMethod": "client_secret_post",
-    "additionalParams": {
-      "audience": "api.atlassian.com",
-      "prompt": "consent"
-    },
+    "tokenAuthMethod": "body",
     "requiredApis": [
       {
         "name": "Atlassian OAuth 2.0 App",
@@ -49,11 +45,18 @@
       "required": true,
       "sensitive": true,
       "docsUrl": "https://developer.atlassian.com/console/myapps/"
+    },
+    {
+      "name": "CONFLUENCE_CLOUD_ID",
+      "description": "Optional Atlassian site ID; required when the user can access multiple Confluence sites",
+      "required": false,
+      "sensitive": false,
+      "docsUrl": "https://developer.atlassian.com/cloud/confluence/oauth-2-3lo-apps/#get-list-of-resources"
     }
   ],
   "tools": [
     {
-      "id": "list_sites",
+      "id": "confluence__list_sites",
       "name": "List Atlassian Sites",
       "description": "List Atlassian cloud sites/resources the OAuth token can access; use the returned id as cloudId for Jira and Confluence tools",
       "requiresWrite": false,
@@ -92,7 +95,7 @@
       }
     },
     {
-      "id": "search_content",
+      "id": "confluence__search_content",
       "name": "Search Confluence",
       "description": "Search for pages and blog posts in Confluence",
       "requiresWrite": false,
@@ -191,7 +194,7 @@
       }
     },
     {
-      "id": "get_page",
+      "id": "confluence__get_page",
       "name": "Get Page",
       "description": "Get the content of a specific Confluence page (uses v2 API)",
       "requiresWrite": false,
@@ -221,7 +224,7 @@
       }
     },
     {
-      "id": "create_page",
+      "id": "confluence__create_page",
       "name": "Create Page",
       "description": "Create a new page in a Confluence space (uses v2 API; requires spaceId from list_spaces)",
       "requiresWrite": true,
@@ -265,7 +268,7 @@
       }
     },
     {
-      "id": "update_page",
+      "id": "confluence__update_page",
       "name": "Update Page",
       "description": "Update the content of an existing Confluence page (uses v2 API; version.number must be current+1)",
       "requiresWrite": true,
@@ -314,7 +317,7 @@
       }
     },
     {
-      "id": "list_spaces",
+      "id": "confluence__list_spaces",
       "name": "List Spaces",
       "description": "List all accessible Confluence spaces",
       "requiresWrite": false,
@@ -392,7 +395,7 @@
       }
     },
     {
-      "id": "add_comment",
+      "id": "confluence__add_comment",
       "name": "Add Comment",
       "description": "Add a comment to a Confluence page (uses v1 content API)",
       "requiresWrite": true,

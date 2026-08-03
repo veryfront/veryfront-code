@@ -1,17 +1,35 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { buildRenderCachePrefix } from "#veryfront/cache/keys.ts";
-import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import { buildRenderCacheKey, buildRenderCachePrefix } from "#veryfront/cache/keys.ts";
+import {
+  DEPENDENCY_PINNING_ENV_FLAG,
+  RELEASE_ASSET_MANIFEST_ENV_FLAG,
+} from "#veryfront/release-assets/constants.ts";
 import {
   clearReleaseAssetManifestCache,
-  configureReleaseAssetManifestFetcher,
+  registerManifestFetcherForRelease,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { stub } from "#std/testing/mock";
+import { FakeTime } from "#std/testing/time";
 import type { CachePayload, CacheStore } from "./cache/types.ts";
 import type { RenderContext } from "./context/render-context.ts";
+import type { PageDataResponse, RenderOptions, RenderResult } from "./orchestrator/types.ts";
 import { destroyRenderer, getRenderer, initializeRenderer, Renderer } from "./renderer.ts";
+import {
+  acquireProjectSlot,
+  projectRenderCounts,
+  releaseProjectSlot,
+  RENDER_ACQUIRE_TIMEOUT_MS,
+  RENDER_PER_PROJECT_LIMIT,
+  renderSemaphore,
+} from "./renderer-concurrency.ts";
+import {
+  clearReactVersionCache,
+  type DependencyPinningSource,
+} from "#veryfront/transforms/esm/package-registry.ts";
 
 function getEnv(name: string): string | undefined {
   // deno-lint-ignore no-explicit-any
@@ -103,20 +121,20 @@ async function waitForProductionPrewarm(renderer: Renderer): Promise<void> {
 
 function makeReadyManifest(): ReleaseAssetManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: "proj-1",
     releaseId: "rel-1",
     releaseVersion: 1,
     manifestVersion: 1,
     builderVersion: "0.1.799",
-    sourceContentHash: "",
+    sourceContentHash: "a".repeat(64),
     createdAt: "2026-06-14T00:00:00.000Z",
     assetBasePath: "/_vf/assets",
     modules: {},
     css: [],
     routes: {},
     dependencies: {},
-    fallback: { mode: "jit", gaps: [] },
+    dependencyMode: "immutable",
   };
 }
 
@@ -260,14 +278,14 @@ describe("Renderer release asset cache isolation", () => {
 
   afterEach(() => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalManifestFlag ?? "");
-    configureReleaseAssetManifestFetcher(undefined);
     clearReleaseAssetManifestCache();
   });
 
   it("checks the manifest-versioned cache prefix after awaiting a ready manifest", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
-    configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "ready", manifest: makeReadyManifest() })
+    registerManifestFetcherForRelease(
+      "rel-1",
+      () => Promise.resolve({ state: "ready", manifest_version: 1, manifest: makeReadyManifest() }),
     );
 
     const store = createInMemoryStore();
@@ -301,8 +319,9 @@ describe("Renderer release asset cache isolation", () => {
 
   it("persists rendered HTML under the manifest-versioned cache prefix", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
-    configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "ready", manifest: makeReadyManifest() })
+    registerManifestFetcherForRelease(
+      "rel-1",
+      () => Promise.resolve({ state: "ready", manifest_version: 1, manifest: makeReadyManifest() }),
     );
 
     const store = createInMemoryStore();
@@ -348,9 +367,463 @@ describe("Renderer release asset cache isolation", () => {
     assertEquals(store.data.has(`${jitPrefix}:page:/fresh`), false);
   });
 
+  it("serves stale HTML immediately and refreshes that route in the background", async () => {
+    const store = createInMemoryStore();
+    const ctx = {
+      ...makeRenderContext(),
+      adapter: { fs: { exists: async () => true } },
+    } as unknown as RenderContext;
+    const cacheKey = `${ctx.cachePrefix}:page:/stale`;
+    store.data.set(cacheKey, {
+      result: {
+        html: "<html>stale render</html>",
+        frontmatter: {},
+        headings: [],
+        stream: null,
+        ssrHash: "stale",
+      },
+      storedAt: Date.now() - 10_000,
+      expiresAt: Date.now() - 1,
+      staleUntil: Date.now() + 60_000,
+    });
+
+    let renderCount = 0;
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    (renderer as unknown as {
+      getAllPages: () => Promise<string[]>;
+      pageExists: () => Promise<boolean>;
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: {
+              skipCacheCheck?: boolean;
+              releaseAssetManifest?: ReleaseAssetManifest | null;
+            },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).getAllPages = () => Promise.resolve([]);
+    (renderer as unknown as { pageExists: () => Promise<boolean> }).pageExists = () =>
+      Promise.resolve(true);
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: {
+              skipCacheCheck?: boolean;
+              releaseAssetManifest?: ReleaseAssetManifest | null;
+            },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (slug, options) => {
+          renderCount++;
+          assertEquals(slug, "/stale");
+          assertEquals(options?.skipCacheCheck, true);
+          return Promise.resolve({
+            html: "<html>fresh render</html>",
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const result = await renderer.renderPage("/stale", ctx, {
+      environment: "production",
+      releaseId: "rel-1",
+    });
+
+    assertEquals(result.html, "<html>stale render</html>");
+    assertEquals(renderCount, 0);
+
+    await waitForProductionPrewarm(renderer);
+
+    assertEquals(renderCount, 1);
+    assertEquals(store.data.get(cacheKey)?.result.html, "<html>fresh render</html>");
+  });
+
+  it("serves stale HTML without queueing a refresh at project capacity", async () => {
+    const projectId = `stale-capacity-project-${crypto.randomUUID()}`;
+    const store = createInMemoryStore();
+    const ctx = {
+      ...makeRenderContext(),
+      projectId,
+      projectSlug: projectId,
+      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1"),
+      adapter: { fs: { exists: async () => true } },
+    } as unknown as RenderContext;
+    const cacheKey = `${ctx.cachePrefix}:page:/stale-at-capacity`;
+    store.data.set(cacheKey, {
+      result: {
+        html: "<html>stale at capacity</html>",
+        frontmatter: {},
+        headings: [],
+        stream: null,
+        ssrHash: "stale-at-capacity",
+      },
+      storedAt: Date.now() - 10_000,
+      expiresAt: Date.now() - 1,
+      staleUntil: Date.now() + 60_000,
+    });
+
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let renderCount = 0;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: () => Promise<never>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: () => {
+          renderCount++;
+          return Promise.reject(new Error("refresh must not start"));
+        },
+      },
+    });
+
+    for (let index = 0; index < RENDER_PER_PROJECT_LIMIT; index++) {
+      assertEquals(await acquireProjectSlot(projectId), true);
+    }
+
+    try {
+      const result = await renderer.renderPage("/stale-at-capacity", ctx, {
+        environment: "production",
+        releaseId: "rel-1",
+      });
+      assertEquals(result.html, "<html>stale at capacity</html>");
+
+      await waitForProductionPrewarm(renderer).catch(() => {});
+      assertEquals(renderCount, 0);
+      assertEquals(
+        store.data.get(cacheKey)?.result.html,
+        "<html>stale at capacity</html>",
+      );
+    } finally {
+      while ((projectRenderCounts.get(projectId) ?? 0) > 0) {
+        await releaseProjectSlot(projectId);
+      }
+    }
+  });
+
+  it("preserves request metadata while refreshing stale HTML after disconnect", async () => {
+    const store = createInMemoryStore();
+    const ctx = {
+      ...makeRenderContext(),
+      adapter: { fs: { exists: async () => true } },
+    } as unknown as RenderContext;
+    const url = new URL("https://example.com/data?filter=recent");
+    const requestAbort = new AbortController();
+    const request = new Request(url, {
+      headers: { "accept-language": "en" },
+      signal: requestAbort.signal,
+    });
+    const requestCacheKey = "/data?filter=recent";
+    const cacheKey = buildRenderCacheKey(ctx.cachePrefix, `page:${requestCacheKey}`);
+    store.data.set(cacheKey, {
+      result: {
+        html: "<html>stale data render</html>",
+        frontmatter: {},
+        headings: [],
+        stream: null,
+        ssrHash: "stale-data",
+      },
+      storedAt: Date.now() - 10_000,
+      expiresAt: Date.now() - 1,
+      staleUntil: Date.now() + 60_000,
+    });
+
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    (renderer as unknown as {
+      getAllPages: () => Promise<string[]>;
+      pageExists: () => Promise<boolean>;
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: {
+              request?: Request;
+              url?: URL;
+              skipCacheCheck?: boolean;
+              releaseAssetManifest?: ReleaseAssetManifest | null;
+            },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).getAllPages = () => Promise.resolve([]);
+    (renderer as unknown as { pageExists: () => Promise<boolean> }).pageExists = () =>
+      Promise.resolve(true);
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: {
+              request?: Request;
+              url?: URL;
+              skipCacheCheck?: boolean;
+              releaseAssetManifest?: ReleaseAssetManifest | null;
+            },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          assertEquals(options?.skipCacheCheck, true);
+          assertEquals(options?.request?.url, request.url);
+          assertEquals(options?.request?.headers.get("accept-language"), "en");
+          assertEquals(options?.request?.signal.aborted, false);
+          assertEquals(options?.url, url);
+          return Promise.resolve({
+            html: "<html>fresh data render</html>",
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const result = await renderer.renderPage("/data", ctx, {
+      environment: "production",
+      releaseId: "rel-1",
+      cacheKey: requestCacheKey,
+      request,
+      url,
+    });
+
+    assertEquals(result.html, "<html>stale data render</html>");
+
+    requestAbort.abort(new Error("request disconnected"));
+    await waitForProductionPrewarm(renderer);
+
+    assertEquals(store.data.get(cacheKey)?.result.html, "<html>fresh data render</html>");
+  });
+
+  it("refreshes stale HTML when sibling route prewarming is disabled", async () => {
+    const originalPrewarmLimit = getHostEnv("VERYFRONT_RENDER_PREWARM_MAX_ROUTES");
+    setEnv("VERYFRONT_RENDER_PREWARM_MAX_ROUTES", "0");
+
+    try {
+      const { Renderer: RendererWithPrewarmDisabled } = await import(
+        `./renderer.ts?prewarm-disabled-${Date.now()}`
+      );
+      const store = createInMemoryStore();
+      const ctx = {
+        ...makeRenderContext(),
+        adapter: { fs: { exists: async () => true } },
+      } as unknown as RenderContext;
+      const cacheKey = `${ctx.cachePrefix}:page:/prewarm-disabled`;
+      store.data.set(cacheKey, {
+        result: {
+          html: "<html>stale render with prewarm disabled</html>",
+          frontmatter: {},
+          headings: [],
+          stream: null,
+          ssrHash: "stale-prewarm-disabled",
+        },
+        storedAt: Date.now() - 10_000,
+        expiresAt: Date.now() - 1,
+        staleUntil: Date.now() + 60_000,
+      });
+
+      let renderCount = 0;
+      const renderer = new RendererWithPrewarmDisabled({ cache: { store } });
+      (renderer as unknown as { initialized: boolean }).initialized = true;
+      (renderer as unknown as {
+        getAllPages: () => Promise<string[]>;
+        pageExists: () => Promise<boolean>;
+        createServicesForContext: () => {
+          pipeline: {
+            renderPage: (slug: string, options?: { skipCacheCheck?: boolean }) => Promise<{
+              html: string;
+              frontmatter: Record<string, unknown>;
+              headings: never[];
+              stream: null;
+            }>;
+          };
+        };
+      }).getAllPages = () => Promise.resolve(["/should-not-prewarm"]);
+      (renderer as unknown as { pageExists: () => Promise<boolean> }).pageExists = () =>
+        Promise.resolve(true);
+      (renderer as unknown as {
+        createServicesForContext: () => {
+          pipeline: {
+            renderPage: (slug: string, options?: { skipCacheCheck?: boolean }) => Promise<{
+              html: string;
+              frontmatter: Record<string, unknown>;
+              headings: never[];
+              stream: null;
+            }>;
+          };
+        };
+      }).createServicesForContext = () => ({
+        pipeline: {
+          renderPage: (slug, options) => {
+            renderCount++;
+            assertEquals(slug, "/prewarm-disabled");
+            assertEquals(options?.skipCacheCheck, true);
+            return Promise.resolve({
+              html: "<html>fresh render with prewarm disabled</html>",
+              frontmatter: {},
+              headings: [],
+              stream: null,
+            });
+          },
+        },
+      });
+
+      const result = await renderer.renderPage("/prewarm-disabled", ctx, {
+        environment: "production",
+        releaseId: "rel-1",
+      });
+
+      assertEquals(result.html, "<html>stale render with prewarm disabled</html>");
+
+      await waitForProductionPrewarm(renderer as unknown as Renderer);
+
+      assertEquals(renderCount, 1);
+      assertEquals(
+        store.data.get(cacheKey)?.result.html,
+        "<html>fresh render with prewarm disabled</html>",
+      );
+      assertEquals(store.data.has(`${ctx.cachePrefix}:page:/should-not-prewarm`), false);
+    } finally {
+      setEnv("VERYFRONT_RENDER_PREWARM_MAX_ROUTES", originalPrewarmLimit ?? "");
+    }
+  });
+
+  it("refreshes stale theme variants under the original variant key", async () => {
+    const store = createInMemoryStore();
+    const ctx = {
+      ...makeRenderContext(),
+      adapter: { fs: { exists: async () => true } },
+    } as unknown as RenderContext;
+    const themedCacheKey = `${ctx.cachePrefix}:page:/stale-themed:theme-dark`;
+    const unthemedCacheKey = `${ctx.cachePrefix}:page:/stale-themed`;
+    store.data.set(themedCacheKey, {
+      result: {
+        html: "<html>stale dark render</html>",
+        frontmatter: {},
+        headings: [],
+        stream: null,
+        ssrHash: "stale-dark",
+      },
+      storedAt: Date.now() - 10_000,
+      expiresAt: Date.now() - 1,
+      staleUntil: Date.now() + 60_000,
+    });
+
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    (renderer as unknown as {
+      getAllPages: () => Promise<string[]>;
+      pageExists: () => Promise<boolean>;
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: {
+              colorScheme?: "light" | "dark";
+              skipCacheCheck?: boolean;
+              releaseAssetManifest?: ReleaseAssetManifest | null;
+            },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).getAllPages = () => Promise.resolve([]);
+    (renderer as unknown as { pageExists: () => Promise<boolean> }).pageExists = () =>
+      Promise.resolve(true);
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: {
+              colorScheme?: "light" | "dark";
+              skipCacheCheck?: boolean;
+              releaseAssetManifest?: ReleaseAssetManifest | null;
+            },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          assertEquals(options?.skipCacheCheck, true);
+          assertEquals(options?.colorScheme, "dark");
+          return Promise.resolve({
+            html: "<html>fresh dark render</html>",
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const result = await renderer.renderPage("/stale-themed", ctx, {
+      environment: "production",
+      releaseId: "rel-1",
+      colorScheme: "dark",
+    });
+
+    assertEquals(result.html, "<html>stale dark render</html>");
+
+    await waitForProductionPrewarm(renderer);
+
+    assertEquals(store.data.get(themedCacheKey)?.result.html, "<html>fresh dark render</html>");
+    assertEquals(store.data.has(unthemedCacheKey), false);
+  });
+
   it("prewarms sibling production routes after a cacheable render", async () => {
     const store = createInMemoryStore();
     const renderedSlugs: string[] = [];
+    const renderRequests = new Map<
+      string,
+      { request?: Request; url?: URL }
+    >();
     const stalePages = Array.from(
       { length: 14 },
       (_, index) => `aa-stale-${index.toString().padStart(2, "0")}`,
@@ -364,7 +837,12 @@ describe("Renderer release asset cache isolation", () => {
         pipeline: {
           renderPage: (
             slug: string,
-            options?: { nonce?: string; releaseAssetManifest?: ReleaseAssetManifest | null },
+            options?: {
+              nonce?: string;
+              releaseAssetManifest?: ReleaseAssetManifest | null;
+              request?: Request;
+              url?: URL;
+            },
           ) => Promise<{
             html: string;
             frontmatter: Record<string, unknown>;
@@ -383,7 +861,12 @@ describe("Renderer release asset cache isolation", () => {
         pipeline: {
           renderPage: (
             slug: string,
-            options?: { nonce?: string; releaseAssetManifest?: ReleaseAssetManifest | null },
+            options?: {
+              nonce?: string;
+              releaseAssetManifest?: ReleaseAssetManifest | null;
+              request?: Request;
+              url?: URL;
+            },
           ) => Promise<{
             html: string;
             frontmatter: Record<string, unknown>;
@@ -396,7 +879,116 @@ describe("Renderer release asset cache isolation", () => {
       pipeline: {
         renderPage: (slug, options) => {
           assertEquals(options?.releaseAssetManifest, null);
-          assertEquals(options?.nonce, slug === "/" ? "nonce-123" : undefined);
+          if (slug === "/") {
+            assertEquals(options?.nonce, "nonce-123");
+          } else {
+            assertEquals(typeof options?.nonce, "string");
+            assertEquals(options?.nonce?.length, 32);
+            assertEquals(options?.nonce === "nonce-123", false);
+          }
+          renderedSlugs.push(slug);
+          renderRequests.set(slug, {
+            request: options?.request,
+            url: options?.url,
+          });
+          return Promise.resolve({
+            html: `<html>${slug}</html>`,
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const ctx = {
+      ...makeRenderContext(),
+      adapter: { fs: {} } as RenderContext["adapter"],
+    };
+    const url = new URL("https://preview.example.test/?utm_source=smoke");
+    const result = await renderer.renderPage("/", ctx, {
+      environment: "production",
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+      nonce: "nonce-123",
+      request: new Request(url, {
+        headers: {
+          accept: "text/html",
+          "x-preview-context": "source-request",
+        },
+      }),
+      url,
+    });
+    await waitForProductionPrewarm(renderer);
+
+    const prefix = buildRenderCachePrefix("proj-1", "production", "rel-1");
+    assertEquals(result.html, "<html>/</html>");
+    assertEquals(renderedSlugs.includes("/blog"), true);
+    assertEquals(renderedSlugs.includes("/about"), true);
+    assertEquals(renderedSlugs.includes("about"), false);
+    assertEquals(renderedSlugs.includes("/docs/[slug]"), false);
+    assertEquals(renderedSlugs.some((slug) => slug.startsWith("/aa-stale-")), false);
+    assertEquals(store.data.has(`${prefix}:page:/blog`), true);
+    assertEquals(store.data.has(`${prefix}:page:/about`), true);
+    assertEquals(store.data.has(`${prefix}:page:about`), false);
+
+    for (const slug of ["/blog", "/about"]) {
+      const prewarm = renderRequests.get(slug);
+      assertEquals(prewarm?.url?.href, `https://preview.example.test${slug}`);
+      assertEquals(prewarm?.request?.url, `https://preview.example.test${slug}`);
+      assertEquals(prewarm?.request?.method, "GET");
+      assertEquals(prewarm?.request?.headers.get("accept"), "text/html");
+      assertEquals(prewarm?.request?.headers.has("authorization"), false);
+      assertEquals(prewarm?.request?.headers.has("cookie"), false);
+      assertEquals(prewarm?.request?.headers.has("x-preview-context"), false);
+    }
+  });
+
+  it("prioritizes route-family siblings when prewarming production routes", async () => {
+    const store = createInMemoryStore();
+    const renderedSlugs: string[] = [];
+    const shallowPages = Array.from(
+      { length: 14 },
+      (_, index) => `/page-${index.toString().padStart(2, "0")}`,
+    );
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    (renderer as unknown as {
+      getAllPages: () => Promise<string[]>;
+      pageExists: (slug: string) => Promise<boolean>;
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (slug: string) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).getAllPages = () =>
+      Promise.resolve([
+        "/blog/articles/terraform-azure-kubernetes",
+        ...shallowPages,
+        "/blog/articles/helm-best-practices",
+      ]);
+    (renderer as unknown as {
+      pageExists: (slug: string) => Promise<boolean>;
+    }).pageExists = () => Promise.resolve(true);
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (slug: string) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (slug) => {
           renderedSlugs.push(slug);
           return Promise.resolve({
             html: `<html>${slug}</html>`,
@@ -412,24 +1004,14 @@ describe("Renderer release asset cache isolation", () => {
       ...makeRenderContext(),
       adapter: { fs: {} } as RenderContext["adapter"],
     };
-    const result = await renderer.renderPage("/", ctx, {
+    await renderer.renderPage("/blog/articles/terraform-azure-kubernetes", ctx, {
       environment: "production",
       releaseId: "rel-1",
       releaseAssetManifest: null,
-      nonce: "nonce-123",
     });
     await waitForProductionPrewarm(renderer);
 
-    const prefix = buildRenderCachePrefix("proj-1", "production", "rel-1");
-    assertEquals(result.html, "<html>/</html>");
-    assertEquals(renderedSlugs.includes("/blog"), true);
-    assertEquals(renderedSlugs.includes("/about"), true);
-    assertEquals(renderedSlugs.includes("about"), false);
-    assertEquals(renderedSlugs.includes("/docs/[slug]"), false);
-    assertEquals(renderedSlugs.some((slug) => slug.startsWith("/aa-stale-")), false);
-    assertEquals(store.data.has(`${prefix}:page:/blog`), true);
-    assertEquals(store.data.has(`${prefix}:page:/about`), true);
-    assertEquals(store.data.has(`${prefix}:page:about`), false);
+    assertEquals(renderedSlugs.includes("/blog/articles/helm-best-practices"), true);
   });
 
   it("does not prewarm when the request has cache-sensitive state", async () => {
@@ -496,6 +1078,938 @@ describe("Renderer release asset cache isolation", () => {
     assertEquals(renderedSlugs, ["/"]);
     assertEquals(getAllPagesCalls, 0);
     assertEquals(store.data.size, 0);
+  });
+
+  it("waits within the admission budget for a foreground project slot", async () => {
+    const projectId = `queued-project-${crypto.randomUUID()}`;
+    const ctx = {
+      ...makeRenderContext(),
+      projectId,
+      projectSlug: projectId,
+      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1"),
+    };
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let pipelineStarted = false;
+    let renderSettled = false;
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (slug: string) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (slug) => {
+          pipelineStarted = true;
+          return Promise.resolve({
+            html: `<html>${slug}</html>`,
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    for (let index = 0; index < RENDER_PER_PROJECT_LIMIT; index++) {
+      assertEquals(await acquireProjectSlot(projectId), true);
+    }
+
+    const render = renderer.renderPage("/queued", ctx, {
+      environment: "production",
+      releaseAssetManifest: null,
+    }).finally(() => {
+      renderSettled = true;
+    });
+    void render.catch(() => {});
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(renderSettled, false);
+      assertEquals(pipelineStarted, false);
+
+      await releaseProjectSlot(projectId);
+      const result = await render;
+      assertEquals(result.html, "<html>/queued</html>");
+      assertEquals(pipelineStarted, true);
+    } finally {
+      while ((projectRenderCounts.get(projectId) ?? 0) > 0) {
+        await releaseProjectSlot(projectId);
+      }
+      await render.catch(() => {});
+    }
+  });
+
+  it("shares one admission budget across project and global capacity", async () => {
+    using time = new FakeTime();
+    let admissionNow = 0;
+    using _performanceNow = stub(Performance.prototype, "now", () => admissionNow);
+    const projectId = `budgeted-project-${crypto.randomUUID()}`;
+    const ctx = {
+      ...makeRenderContext(),
+      projectId,
+      projectSlug: projectId,
+      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1"),
+    };
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let pipelineStarted = false;
+    let renderSettled = false;
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: () => Promise<never>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: () => {
+          pipelineStarted = true;
+          return Promise.reject(new Error("pipeline must not start"));
+        },
+      },
+    });
+
+    for (let index = 0; index < RENDER_PER_PROJECT_LIMIT; index++) {
+      assertEquals(await acquireProjectSlot(projectId), true);
+    }
+    let acquiredPermits = 0;
+    while (renderSemaphore.available > 0) {
+      assertEquals(await renderSemaphore.tryAcquire(0), true);
+      acquiredPermits++;
+    }
+
+    const render = renderer.renderPage("/budgeted", ctx, {
+      environment: "production",
+      releaseAssetManifest: null,
+    }).finally(() => {
+      renderSettled = true;
+    });
+    const rejected = assertRejects(() => render, Error, "Service is overloaded");
+
+    try {
+      await time.tickAsync(0);
+      await time.tickAsync(3_000);
+      admissionNow = 3_000;
+      assertEquals(renderSettled, false);
+
+      await releaseProjectSlot(projectId);
+      await time.tickAsync(0);
+      assertEquals(renderSemaphore.waiting, 1);
+
+      await time.tickAsync(RENDER_ACQUIRE_TIMEOUT_MS - 3_001);
+      assertEquals(renderSettled, false);
+
+      await time.tickAsync(1);
+      await rejected;
+      assertEquals(renderSettled, true);
+      assertEquals(pipelineStarted, false);
+      assertEquals(renderSemaphore.waiting, 0);
+    } finally {
+      for (let index = 0; index < acquiredPermits; index++) {
+        renderSemaphore.release();
+      }
+      while ((projectRenderCounts.get(projectId) ?? 0) > 0) {
+        await releaseProjectSlot(projectId);
+      }
+      await render.catch(() => {});
+    }
+  });
+
+  it("does not queue sibling prewarm behind exhausted global capacity", async () => {
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let renderCalls = 0;
+
+    (renderer as unknown as {
+      getAllPages: () => Promise<string[]>;
+      pageExists: () => Promise<boolean>;
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: () => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).getAllPages = () => Promise.resolve(["/blog"]);
+    (renderer as unknown as { pageExists: () => Promise<boolean> }).pageExists = () =>
+      Promise.resolve(true);
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: () => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: () => {
+          renderCalls++;
+          return Promise.resolve({
+            html: "<html>/blog</html>",
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    let acquiredPermits = 0;
+    while (renderSemaphore.available > 0) {
+      assertEquals(await renderSemaphore.tryAcquire(0), true);
+      acquiredPermits++;
+    }
+
+    const ctx = {
+      ...makeRenderContext(),
+      adapter: { fs: {} } as RenderContext["adapter"],
+    };
+    const prewarm = (renderer as unknown as {
+      runProductionRenderPrewarm: (
+        slug: string,
+        ctx: RenderContext,
+        options: {
+          environment: "production";
+          releaseId: string;
+          releaseAssetManifest: null;
+          url: URL;
+        },
+      ) => Promise<void>;
+    }).runProductionRenderPrewarm("/", ctx, {
+      environment: "production",
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+      url: new URL("https://preview.example.test/"),
+    });
+
+    try {
+      for (let index = 0; index < 10 && renderSemaphore.waiting === 0; index++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assertEquals(renderSemaphore.waiting, 0);
+      assertEquals(renderCalls, 0);
+    } finally {
+      for (let index = 0; index < acquiredPermits; index++) {
+        renderSemaphore.release();
+      }
+      await prewarm;
+    }
+  });
+
+  it("retries foreground admission after a shared background leader overloads", async () => {
+    const projectId = `priority-project-${crypto.randomUUID()}`;
+    const ctx = {
+      ...makeRenderContext(),
+      projectId,
+      projectSlug: projectId,
+      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1"),
+    };
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let renderCalls = 0;
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (slug: string) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (slug) => {
+          renderCalls++;
+          return Promise.resolve({
+            html: `<html>${slug}</html>`,
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const firstCapacityCheck = Promise.withResolvers<boolean>();
+    const originalTryAcquire = renderSemaphore.tryAcquire;
+    let capacityChecks = 0;
+    renderSemaphore.tryAcquire = function (
+      timeoutMs?: number,
+      options?: { signal?: AbortSignal },
+    ): Promise<boolean> {
+      capacityChecks++;
+      if (capacityChecks === 1) return firstCapacityCheck.promise;
+      return originalTryAcquire.call(this, timeoutMs, options);
+    };
+
+    const sharedOptions = {
+      cacheKey: "priority-render",
+      environment: "production" as const,
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    };
+    const backgroundRender = (renderer as unknown as {
+      renderPageWithAdmission: (
+        slug: string,
+        ctx: RenderContext,
+        options: typeof sharedOptions,
+        admission: "background",
+      ) => Promise<unknown>;
+    }).renderPageWithAdmission("/priority", ctx, sharedOptions, "background");
+    const backgroundRejected = assertRejects(
+      () => backgroundRender,
+      Error,
+      "Service is overloaded",
+    );
+
+    let foregroundRender: ReturnType<Renderer["renderPage"]> | undefined;
+    try {
+      for (let index = 0; index < 10 && capacityChecks === 0; index++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assertEquals(capacityChecks, 1);
+
+      foregroundRender = renderer.renderPage("/priority", ctx, sharedOptions);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      firstCapacityCheck.resolve(false);
+
+      await backgroundRejected;
+      const result = await foregroundRender;
+      assertEquals(result.html, "<html>/priority</html>");
+      assertEquals(renderCalls, 1);
+      assertEquals(capacityChecks, 2);
+      assertEquals(
+        (renderer as unknown as {
+          renderFlightAdmissions: Map<string, "foreground" | "background">;
+        }).renderFlightAdmissions.size,
+        0,
+      );
+    } finally {
+      renderSemaphore.tryAcquire = originalTryAcquire;
+      firstCapacityCheck.resolve(false);
+      await backgroundRender.catch(() => {});
+      await foregroundRender?.catch(() => {});
+      while ((projectRenderCounts.get(projectId) ?? 0) > 0) {
+        await releaseProjectSlot(projectId);
+      }
+    }
+  });
+
+  it("deduplicates identical cacheable render misses before taking project slots", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+
+    let renderCalls = 0;
+    let releaseRender!: () => void;
+    const renderGate = new Promise<void>((resolve) => {
+      releaseRender = resolve;
+    });
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (slug: string) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: async (slug) => {
+          renderCalls++;
+          await renderGate;
+          return {
+            html: `<html>${slug}</html>`,
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          };
+        },
+      },
+    });
+
+    const ctx = makeRenderContext();
+    const renders = Array.from(
+      { length: 11 },
+      () =>
+        renderer.renderPage("/burst", ctx, {
+          environment: "production",
+          releaseId: "rel-1",
+          releaseAssetManifest: null,
+        }),
+    );
+
+    for (let i = 0; i < 20 && renderCalls === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    releaseRender();
+    const results = await Promise.all(renders);
+
+    assertEquals(results.length, 11);
+    assertEquals(renderCalls, 1);
+    assertEquals(projectRenderCounts.get(ctx.projectId) ?? 0, 0);
+  });
+
+  it("detaches a cancelled caller without aborting a shared cacheable render", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const caller = new AbortController();
+    const renderStarted = Promise.withResolvers<void>();
+    const renderGate = Promise.withResolvers<void>();
+    let renderCalls = 0;
+    let observedSignal: AbortSignal | undefined;
+    let observedRequestSignal: AbortSignal | undefined;
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: { abortSignal?: AbortSignal; request?: Request },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (slug, options) => {
+          renderCalls++;
+          observedSignal = options?.abortSignal;
+          observedRequestSignal = options?.request?.signal;
+          renderStarted.resolve();
+          return new Promise((resolve, reject) => {
+            const onAbort = () => reject(options?.abortSignal?.reason);
+            options?.abortSignal?.addEventListener("abort", onAbort, { once: true });
+            renderGate.promise.then(() => {
+              options?.abortSignal?.removeEventListener("abort", onAbort);
+              resolve({
+                html: `<html>${slug}</html>`,
+                frontmatter: {},
+                headings: [],
+                stream: null,
+              });
+            });
+          });
+        },
+      },
+    });
+
+    const ctx = makeRenderContext();
+    const sharedOptions = {
+      cacheKey: "shared-render",
+      environment: "production" as const,
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    };
+    const cancelledRender = renderer.renderPage("/shared", ctx, {
+      ...sharedOptions,
+      request: new Request("https://example.com/shared", { signal: caller.signal }),
+    });
+    await renderStarted.promise;
+
+    const followerRender = renderer.renderPage("/shared", ctx, sharedOptions);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const reason = new Error("caller disconnected");
+    caller.abort(reason);
+    renderGate.resolve();
+    await assertRejects(() => cancelledRender, Error, reason.message);
+
+    assertEquals(observedSignal?.aborted, false);
+    assertEquals(observedRequestSignal?.aborted, false);
+
+    const result = await followerRender;
+    assertEquals(result.html, "<html>/shared</html>");
+    assertEquals(renderCalls, 1);
+  });
+
+  it("keeps a cacheable leader queued after its first caller disconnects", async () => {
+    const projectId = `shared-queued-project-${crypto.randomUUID()}`;
+    const ctx = {
+      ...makeRenderContext(),
+      projectId,
+      projectSlug: projectId,
+      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1"),
+    };
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const caller = new AbortController();
+    let renderCalls = 0;
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (slug: string) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (slug) => {
+          renderCalls++;
+          return Promise.resolve({
+            html: `<html>${slug}</html>`,
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    for (let index = 0; index < RENDER_PER_PROJECT_LIMIT; index++) {
+      assertEquals(await acquireProjectSlot(projectId), true);
+    }
+
+    const sharedOptions = {
+      cacheKey: "shared-queued-render",
+      environment: "production" as const,
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    };
+    const cancelledRender = renderer.renderPage("/shared-queued", ctx, {
+      ...sharedOptions,
+      request: new Request("https://example.com/shared-queued", {
+        signal: caller.signal,
+      }),
+    });
+    const followerRender = renderer.renderPage("/shared-queued", ctx, sharedOptions);
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(renderCalls, 0);
+
+      const reason = new Error("caller disconnected while queued");
+      caller.abort(reason);
+      await assertRejects(() => cancelledRender, Error, reason.message);
+      assertEquals(renderCalls, 0);
+
+      await releaseProjectSlot(projectId);
+      const result = await followerRender;
+      assertEquals(result.html, "<html>/shared-queued</html>");
+      assertEquals(renderCalls, 1);
+    } finally {
+      while ((projectRenderCounts.get(projectId) ?? 0) > 0) {
+        await releaseProjectSlot(projectId);
+      }
+      await cancelledRender.catch(() => {});
+      await followerRender.catch(() => {});
+    }
+  });
+
+  it("keeps a cacheable leader globally queued after its first caller disconnects", async () => {
+    const projectId = `shared-global-project-${crypto.randomUUID()}`;
+    const ctx = {
+      ...makeRenderContext(),
+      projectId,
+      projectSlug: projectId,
+      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1"),
+    };
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const caller = new AbortController();
+    let renderCalls = 0;
+    let observedSignal: AbortSignal | undefined;
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: { abortSignal?: AbortSignal },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (slug, options) => {
+          renderCalls++;
+          observedSignal = options?.abortSignal;
+          return Promise.resolve({
+            html: `<html>${slug}</html>`,
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    let acquiredPermits = 0;
+    let transferredPermit = false;
+    while (renderSemaphore.available > 0) {
+      assertEquals(await renderSemaphore.tryAcquire(0), true);
+      acquiredPermits++;
+    }
+
+    const sharedOptions = {
+      cacheKey: "shared-global-render",
+      environment: "production" as const,
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    };
+    const cancelledRender = renderer.renderPage("/shared-global", ctx, {
+      ...sharedOptions,
+      request: new Request("https://example.com/shared-global", {
+        signal: caller.signal,
+      }),
+    });
+
+    try {
+      for (let index = 0; index < 10 && renderSemaphore.waiting === 0; index++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assertEquals(renderSemaphore.waiting, 1);
+      assertEquals(renderCalls, 0);
+
+      const followerRender = renderer.renderPage("/shared-global", ctx, sharedOptions);
+      const reason = new Error("caller disconnected while globally queued");
+      caller.abort(reason);
+      await assertRejects(() => cancelledRender, Error, reason.message);
+
+      renderSemaphore.release();
+      transferredPermit = true;
+      const result = await followerRender;
+      assertEquals(result.html, "<html>/shared-global</html>");
+      assertEquals(renderCalls, 1);
+      assertEquals(observedSignal?.aborted, false);
+    } finally {
+      const heldPermits = acquiredPermits - (transferredPermit ? 1 : 0);
+      for (let index = 0; index < heldPermits; index++) {
+        renderSemaphore.release();
+      }
+      await cancelledRender.catch(() => {});
+    }
+  });
+
+  it("aborts underlying render work when the pipeline deadline expires", async () => {
+    using time = new FakeTime();
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let observedSignal: AbortSignal | undefined;
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => markStarted = resolve);
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: { abortSignal?: AbortSignal },
+          ) => Promise<never>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          observedSignal = options?.abortSignal;
+          markStarted();
+          return new Promise<never>(() => {});
+        },
+      },
+    });
+
+    const render = renderer.renderPage("/deadline", makeRenderContext(), {
+      environment: "production",
+      releaseAssetManifest: null,
+    });
+    const rejected = assertRejects(
+      () => render,
+      Error,
+      "Render pipeline for proj-1:/deadline timed out after 60000ms",
+    );
+    await started;
+
+    await time.tickAsync(60_000);
+
+    await rejected;
+    assertEquals(observedSignal?.aborted, true);
+  });
+
+  it("propagates caller cancellation into render pipeline work", async () => {
+    using time = new FakeTime();
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const caller = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    const started = Promise.withResolvers<void>();
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: { abortSignal?: AbortSignal },
+          ) => Promise<never>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          observedSignal = options?.abortSignal;
+          started.resolve();
+          return new Promise<never>((_, reject) => {
+            options?.abortSignal?.addEventListener(
+              "abort",
+              () => reject(options.abortSignal?.reason),
+              { once: true },
+            );
+          });
+        },
+      },
+    });
+
+    const reason = new Error("request aborted");
+    const render = renderer.renderPage("/caller-abort", makeRenderContext(), {
+      abortSignal: caller.signal,
+      environment: "production",
+      releaseAssetManifest: null,
+      request: new Request("https://example.com/caller-abort", {
+        headers: { cookie: "session=caller" },
+        signal: caller.signal,
+      }),
+    });
+    const rejected = assertRejects(() => render, Error, "request aborted");
+    await started.promise;
+
+    caller.abort(reason);
+    await time.tickAsync(0);
+
+    await rejected;
+    assertEquals(observedSignal?.aborted, true);
+    assertEquals(observedSignal?.reason, reason);
+  });
+});
+
+describe("Renderer dependency pin cache isolation", () => {
+  it("forwards preview credentials through renderer-created pinning sources", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+
+    const observedSources: Array<DependencyPinningSource | undefined> = [];
+    const observeSource = (options?: RenderOptions): void => {
+      const source = options?.dependencyPinningSource;
+      observedSources.push(
+        typeof source === "object" && source !== null ? source : undefined,
+      );
+    };
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: RenderOptions,
+          ) => Promise<RenderResult>;
+          resolvePageData: (
+            slug: string,
+            options?: RenderOptions,
+          ) => Promise<PageDataResponse>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          observeSource(options);
+          return Promise.resolve({
+            html: "<html>preview</html>",
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+        resolvePageData: (_slug, options) => {
+          observeSource(options);
+          return Promise.resolve({
+            slug: "/data",
+            pagePath: "pages/data.tsx",
+            pageType: "tsx",
+            layouts: [],
+            providers: [],
+            frontmatter: {},
+            props: {},
+            params: {},
+            layoutProps: {},
+            buildVersion: { framework: "test", serverStart: 0 },
+          });
+        },
+      },
+    });
+
+    const ctx = {
+      ...makeRenderContext(),
+      isLocalProject: false,
+      environment: "preview",
+      contentSourceId: "preview-feature",
+      releaseId: undefined,
+      branch: "feature",
+      proxyToken: "request-scoped-token",
+      cachePrefix: buildRenderCachePrefix("proj-1", "preview", "feature"),
+    } as RenderContext;
+
+    try {
+      await renderer.renderPage("/render", ctx);
+      await renderer.resolvePageData("/data", ctx);
+
+      assertEquals(observedSources.length, 2);
+      for (const source of observedSources) {
+        assertEquals(source?.dependencyWritebackToken, "request-scoped-token");
+        assertEquals(source?.dependencyWritebackTarget, {
+          kind: "branch",
+          branch: "feature",
+        });
+      }
+    } finally {
+      await renderer.destroy();
+    }
+  });
+
+  it("bounds the complete API render key while preserving the flag-off override", () => {
+    const renderer = new Renderer();
+    const buildCacheKey = (renderer as unknown as {
+      buildCacheKey(
+        slug: string,
+        ctx: RenderContext,
+        options?: RenderOptions,
+      ): string | null;
+    }).buildCacheKey.bind(renderer);
+    const ctx = makeRenderContext();
+    const legacyKey = "a".repeat(440);
+    const options: RenderOptions = {
+      cacheKey: legacyKey,
+      colorScheme: "dark",
+      dependencyPinningCacheKey: "on:3w5e11264sgsf",
+      url: new URL("https://preview.example.test"),
+    };
+    const cacheKey = buildCacheKey("/", ctx, options);
+
+    assertEquals(typeof cacheKey, "string");
+    const completeKey = `render:${ctx.cachePrefix}:page:${cacheKey}:theme-dark`;
+    assertEquals(completeKey.length <= 512, true);
+    assertEquals(/^[a-zA-Z0-9_:.\-/*]+$/.test(completeKey), true);
+    assertEquals(
+      buildCacheKey("/", ctx, {
+        ...options,
+        dependencyPinningCacheKey: "off",
+      }),
+      legacyKey,
+    );
+  });
+
+  it("misses the outer render cache when the package map changes", async () => {
+    const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-renderer-pins-" });
+    const packageJsonPath = `${projectDir}/package.json`;
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+
+    let renders = 0;
+    const observedPinKeys: string[] = [];
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: RenderOptions,
+          ) => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          renders++;
+          observedPinKeys.push(options?.dependencyPinningCacheKey ?? "");
+          return Promise.resolve({
+            html: `<html>${options?.dependencyPinningCacheKey}</html>`,
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const ctx = {
+      ...makeRenderContext(),
+      projectDir,
+      environment: "preview",
+      contentSourceId: "preview-main",
+      releaseId: undefined,
+      cachePrefix: buildRenderCachePrefix("proj-1", "preview", "main"),
+    } as RenderContext;
+
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      clearReactVersionCache();
+      await Deno.writeTextFile(
+        packageJsonPath,
+        JSON.stringify({ dependencies: { zod: "3.0.0" } }),
+      );
+      const first = await renderer.renderPage("/pins", ctx);
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await Deno.writeTextFile(
+        packageJsonPath,
+        JSON.stringify({ dependencies: { zod: "4.0.0" } }),
+      );
+      const second = await renderer.renderPage("/pins", ctx);
+      const cachedSecond = await renderer.renderPage("/pins", ctx);
+
+      assertEquals(renders, 2);
+      assertEquals(new Set(observedPinKeys).size, 2);
+      assertEquals(first.html === second.html, false);
+      assertEquals(cachedSecond.html, second.html);
+      assertEquals(store.data.size, 2);
+    } finally {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+      clearReactVersionCache();
+      await renderer.destroy();
+      await Deno.remove(projectDir, { recursive: true });
+    }
   });
 });
 

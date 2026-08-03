@@ -1,4 +1,4 @@
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { LLMProviderRegistry } from "#veryfront/extensions/llm/index.ts";
@@ -15,7 +15,7 @@ export function createVeryfrontCloudEmbeddingModel(modelId: string): EmbeddingRu
   const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "embedding");
   const { apiBaseUrl, apiToken } = requireVeryfrontCloudBootstrap();
   const baseURL = getVeryfrontCloudGatewayBaseUrl(apiBaseUrl, provider);
-  const fetch = createVeryfrontCloudFetch(apiToken);
+  const fetch = createVeryfrontCloudFetch(apiToken, baseURL);
 
   switch (provider) {
     case "openai":

@@ -76,6 +76,21 @@ describe("hydration-script-builder/prod-hydration", () => {
       assertEquals(result.includes('"count":42'), true);
     });
 
+    it("should encode slug and props as safe inline JavaScript literals", () => {
+      const result = generateProdHydrationScript(
+        "x';globalThis.__veryfrontSlugInjection = true;//\nnext",
+        undefined,
+        {
+          marker: "</script><script>globalThis.__veryfrontPropsBreakout = true</script>",
+        },
+      );
+
+      assertEquals(result.includes("from '@/pages/x'"), false);
+      assertEquals(result.includes("</script><script>"), false);
+      assertEquals(result.includes("\\u003c/script"), true);
+      assertEquals(result.includes('from "@/pages/'), true);
+    });
+
     it("should import App and Layout components", () => {
       const result = generateProdHydrationScript("index");
       assertEquals(result.includes("import { App } from '@/components/app'"), true);

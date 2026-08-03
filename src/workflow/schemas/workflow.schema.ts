@@ -6,6 +6,7 @@
 
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import { MAX_WORKFLOW_RUN_LIST_LIMIT, MAX_WORKFLOW_RUN_LIST_OFFSET } from "../limits.ts";
 
 /**
  * Workflow status schema
@@ -158,6 +159,10 @@ export const getPendingApprovalSchema = defineSchema((v) =>
     decidedBy: v.string().optional(),
     decidedAt: v.date().optional(),
     comment: v.string().optional(),
+    // Set when the approval notifier failed: the approval exists but approvers
+    // were not informed. Surfaced so operators can re-notify instead of the
+    // workflow silently hanging until expiry.
+    notificationError: v.string().optional(),
   })
 );
 
@@ -205,8 +210,8 @@ export const getRunFilterSchema = defineSchema((v) =>
     status: v.union([getWorkflowStatusSchema(), v.array(getWorkflowStatusSchema())]).optional(),
     createdAfter: v.date().optional(),
     createdBefore: v.date().optional(),
-    limit: v.number().int().positive().optional(),
-    offset: v.number().int().nonnegative().optional(),
+    limit: v.number().int().positive().max(MAX_WORKFLOW_RUN_LIST_LIMIT).optional(),
+    offset: v.number().int().nonnegative().max(MAX_WORKFLOW_RUN_LIST_OFFSET).optional(),
   })
 );
 

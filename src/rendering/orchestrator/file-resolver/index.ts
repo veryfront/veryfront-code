@@ -16,6 +16,13 @@ export { buildCandidatePaths, findFirstExisting } from "./candidates.ts";
 const SOURCE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"];
 const COMPONENT_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
 
+function stripSourceExtension(path: string): { stem: string; hasExt: boolean } {
+  const matched = SOURCE_EXTENSIONS.find((ext) => path.endsWith(ext));
+  return matched
+    ? { stem: path.slice(0, -matched.length), hasExt: true }
+    : { stem: path, hasExt: false };
+}
+
 export function getLocalLibDir(): string {
   const currentFile = new URL(import.meta.url).pathname;
   const srcIndex = currentFile.indexOf("/src/");
@@ -49,11 +56,24 @@ export async function findSourceFile(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<string | null> {
+  // When the specifier already carries an explicit source extension
+  // (e.g. `@/components/Welcome.tsx`), the literal on-disk path must be a
+  // candidate. `buildCandidatePaths` only produces `${fileName}${ext}` and
+  // `${fileName}/index${ext}` variants, so without stripping the extension
+  // here the file would never match.
+  const { stem, hasExt: hasExplicitExt } = stripSourceExtension(basePath);
+
   if (adapter.fs.resolveFile) {
-    const directBases = [join(projectDir, basePath)];
-    const withoutComponents = basePath.replace(/^components\//, "");
-    if (withoutComponents !== basePath) {
-      directBases.push(join(projectDir, withoutComponents));
+    const directBases: string[] = [];
+    if (hasExplicitExt) directBases.push(join(projectDir, basePath));
+    directBases.push(join(projectDir, stem));
+
+    const stemWithoutComponents = stem.replace(/^components\//, "");
+    if (stemWithoutComponents !== stem) {
+      if (hasExplicitExt) {
+        directBases.push(join(projectDir, basePath.replace(/^components\//, "")));
+      }
+      directBases.push(join(projectDir, stemWithoutComponents));
     }
 
     for (const candidateBase of directBases) {
@@ -67,11 +87,16 @@ export async function findSourceFile(
     }
   }
 
-  const candidates = buildCandidatePaths(projectDir, basePath, SOURCE_EXTENSIONS);
+  const candidates: string[] = [];
+  if (hasExplicitExt) candidates.push(join(projectDir, basePath));
+  candidates.push(...buildCandidatePaths(projectDir, stem, SOURCE_EXTENSIONS));
 
-  const withoutComponents = basePath.replace(/^components\//, "");
-  if (withoutComponents !== basePath) {
-    candidates.push(...buildCandidatePaths(projectDir, withoutComponents, SOURCE_EXTENSIONS));
+  const stemWithoutComponents = stem.replace(/^components\//, "");
+  if (stemWithoutComponents !== stem) {
+    if (hasExplicitExt) {
+      candidates.push(join(projectDir, basePath.replace(/^components\//, "")));
+    }
+    candidates.push(...buildCandidatePaths(projectDir, stemWithoutComponents, SOURCE_EXTENSIONS));
   }
 
   const result = await findFirstExisting(candidates, (p) => adapter.fs.stat(p));

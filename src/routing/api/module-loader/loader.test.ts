@@ -5,7 +5,10 @@ import { join } from "#veryfront/compat/path";
 import {
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
-  loadHandlerModule,
+  getUserDependencies,
+  isSpecifierResolutionError,
+  loadHandlerModule as loadHandlerModuleRaw,
+  prepareHandlerModule,
   resolveEsmUserDependencies,
   rewriteCompiledBinaryUserDependencyImports,
   rewriteCompiledBinaryVeryfrontImports,
@@ -19,8 +22,20 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { env, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import type { LoadModuleOptions } from "./types.ts";
+import { executeAppRoute } from "../route-executor.ts";
+import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
+import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 
 const fs = createFileSystem();
+
+function loadHandlerModule(options: LoadModuleOptions) {
+  return loadHandlerModuleRaw({
+    ...options,
+    allowHostProjectCodeExecution: true,
+  });
+}
 
 const adapter: RuntimeAdapter = {
   id: "node",
@@ -84,6 +99,7 @@ const adapter: RuntimeAdapter = {
 
 describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, () => {
   afterAll(async () => {
+    await __resetPoolForTests();
     const { stop } = await import("veryfront/extensions/bundler");
     await stop();
   });
@@ -102,6 +118,134 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     });
 
     assertEquals(typeof route?.GET, "function");
+  });
+
+  it("rejects host loading without an explicit capability before evaluation", async () => {
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "untrusted-handler.ts");
+    const marker = "__vf_untrusted_host_loader_marker__";
+    delete (globalThis as Record<string, unknown>)[marker];
+    await fs.writeTextFile(
+      modulePath,
+      `globalThis.${marker} = true; export const GET = () => new Response("ok");`,
+    );
+
+    await assertRejects(
+      () =>
+        loadHandlerModuleRaw({
+          projectDir: tmpDir,
+          modulePath,
+          adapter,
+          config: undefined,
+        } as never),
+      TypeError,
+      "explicit trusted-local execution",
+    );
+    assertEquals((globalThis as Record<string, unknown>)[marker], undefined);
+  });
+
+  it("prepares route source without evaluating top-level project code", async () => {
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "prepared-handler.ts");
+    const marker = "__vf_prepare_route_host_marker__";
+    delete (globalThis as Record<string, unknown>)[marker];
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `globalThis.${marker} = "evaluated";`,
+        `export const GET = () => new Response("ok");`,
+      ].join("\n"),
+    );
+
+    const prepared = await prepareHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+
+    assertEquals((globalThis as Record<string, unknown>)[marker], undefined);
+    assertEquals(prepared.sha256.length, 64);
+    assertMatch(prepared.source, /__vf_prepare_route_host_marker__/);
+  });
+
+  it("keeps an authenticated hosted empty remote-host policy fail-closed", async () => {
+    const projectDir = await makeTempDir();
+    const modulePath = join(projectDir, "hosted-handler.ts");
+    await fs.writeTextFile(
+      modulePath,
+      `import { parse } from "https://esm.sh/yaml@2";\n` +
+        `export const GET = () => new Response(typeof parse);`,
+    );
+
+    const originalFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    try {
+      globalThis.fetch = (() => {
+        fetchCalls += 1;
+        return Promise.resolve(new Response("export const parse = () => {};"));
+      }) as typeof fetch;
+
+      await assertRejects(
+        () =>
+          prepareHandlerModule({
+            projectDir,
+            modulePath,
+            adapter,
+            // Hosted callers supply the already authenticated and validated
+            // project config. An explicit empty list means deny every host.
+            config: { security: { remoteHosts: [] } },
+          }),
+        Error,
+        "Remote import blocked by allow-list",
+      );
+      assertEquals(fetchCalls, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("executes prepared bundled source only inside the project worker", async () => {
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "isolated-handler.ts");
+    const marker = "__vf_prepared_route_worker_marker__";
+    delete (globalThis as Record<string, unknown>)[marker];
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `globalThis.${marker} = "worker-only";`,
+        `export function GET() { return new Response(String(globalThis.${marker})); }`,
+      ].join("\n"),
+    );
+
+    const prepared = await prepareHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    const response = await runWithExactSourceIntegrationPolicy(
+      normalizeSourceIntegrationPolicy({ allow: {} }),
+      () =>
+        executeAppRoute(
+          {},
+          new Request("http://localhost/api/isolated"),
+          { route: { pattern: "/api/isolated", page: modulePath }, params: {} },
+          "/api/isolated",
+          adapter,
+          {
+            modulePath,
+            projectDir: tmpDir,
+            isLocalProject: false,
+            preparedModule: prepared,
+            executionScopeId: `loader-test-${crypto.randomUUID()}`,
+          },
+        ),
+    );
+
+    assertEquals(response.status, 200);
+    assertEquals(await response.text(), "worker-only");
+    assertEquals((globalThis as Record<string, unknown>)[marker], undefined);
   });
 
   it("resolves relative imports through adapter when file is not local", async () => {
@@ -143,6 +287,230 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     });
 
     assertEquals(typeof route?.GET, "function");
+  });
+
+  it("resolves the built-in @/ alias through adapter when files are not local", async () => {
+    const realDir = await makeTempDir();
+    await fs.mkdir(join(realDir, "lib"), { recursive: true });
+    await fs.mkdir(join(realDir, "pages", "api"), { recursive: true });
+
+    await fs.writeTextFile(
+      join(realDir, "lib", "greeting.ts"),
+      `export const greeting = "virtual alias";`,
+    );
+    await fs.writeTextFile(
+      join(realDir, "pages", "api", "aliased.ts"),
+      [
+        `import { greeting } from "@/lib/greeting.ts";`,
+        `export function GET() { return new Response(greeting); }`,
+      ].join("\n"),
+    );
+
+    const tempRoot = await makeTempDir();
+    const virtualBase = join(tempRoot, `vf-nonexistent-${Date.now()}`);
+    const toReal = (path: string): string => path.replace(virtualBase, realDir);
+    const virtualAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile: (path: string) => fs.readTextFile(toReal(path)),
+        exists: (path: string) => fs.exists(toReal(path)),
+      },
+    };
+
+    const route = await loadHandlerModule({
+      projectDir: virtualBase,
+      modulePath: join(virtualBase, "pages", "api", "aliased.ts"),
+      adapter: virtualAdapter,
+      config: undefined,
+    });
+
+    assertEquals(typeof route?.GET, "function");
+  });
+
+  it("resolves npm dependencies declared by adapter-backed virtual projects", async () => {
+    const realDir = await makeTempDir();
+    await fs.mkdir(join(realDir, "lib"), { recursive: true });
+    await fs.mkdir(join(realDir, "pages", "api"), { recursive: true });
+
+    await fs.writeTextFile(
+      join(realDir, "package.json"),
+      JSON.stringify({ dependencies: { zod: "4.3.6" } }),
+    );
+    await fs.writeTextFile(
+      join(realDir, "lib", "schema.ts"),
+      [
+        `import { z } from "zod";`,
+        `export const result = z.object({ ok: z.boolean() }).parse({ ok: true }).ok;`,
+      ].join("\n"),
+    );
+    await fs.writeTextFile(
+      join(realDir, "pages", "api", "activity.ts"),
+      [
+        `import { result } from "@/lib/schema.ts";`,
+        `export function GET() { return new Response(result ? "parsed" : "bad"); }`,
+      ].join("\n"),
+    );
+
+    const tempRoot = await makeTempDir();
+    const virtualBase = join(tempRoot, `vf-nonexistent-${Date.now()}`);
+    const toReal = (path: string): string => path.replace(virtualBase, realDir);
+    const virtualAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile: (path: string) => fs.readTextFile(toReal(path)),
+        exists: (path: string) => fs.exists(toReal(path)),
+      },
+    };
+
+    const route = await loadHandlerModule({
+      projectDir: virtualBase,
+      modulePath: join(virtualBase, "pages", "api", "activity.ts"),
+      adapter: virtualAdapter,
+      config: undefined,
+    });
+
+    assertEquals(typeof route?.GET, "function");
+  });
+
+  // Deno resolves the direct import itself and knows nothing about `@/`, so the
+  // route only loads if the failed direct import falls back to bundling, where
+  // the import map plugin resolves the alias.
+  it("loads a local route that imports through the project's @/ alias", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.mkdir(join(tmpDir, "lib"), { recursive: true });
+    await fs.mkdir(join(tmpDir, "pages", "api"), { recursive: true });
+
+    await fs.writeTextFile(
+      join(tmpDir, "lib", "greeting.ts"),
+      `export const greeting = "aliased";`,
+    );
+
+    const modulePath = join(tmpDir, "pages", "api", "aliased.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { greeting } from "@/lib/greeting.ts";`,
+        `export function GET() { return new Response(greeting); }`,
+      ].join("\n"),
+    );
+
+    const config: VeryfrontConfig = {
+      resolve: { importMap: { imports: { "@/": "./" } } },
+    };
+
+    const route = await loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config });
+
+    assertEquals(typeof route?.GET, "function");
+  });
+
+  // Every template ships `paths: { "@/*": ["./*"] }` and no import map entry, so
+  // the alias a real project uses is resolved by esbuild itself, not by the
+  // import map plugin. That lane has to work.
+  it("loads an @/ alias resolved through the project's tsconfig paths", async () => {
+    const projectDir = await makeTempDir();
+    await fs.mkdir(join(projectDir, "lib"), { recursive: true });
+    await fs.mkdir(join(projectDir, "pages", "api"), { recursive: true });
+
+    await fs.writeTextFile(
+      join(projectDir, "lib", "greeting.ts"),
+      `export const greeting = "tsconfig";`,
+    );
+    await fs.writeTextFile(
+      join(projectDir, "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { paths: { "@/*": ["./*"] } } }),
+    );
+
+    const modulePath = join(projectDir, "pages", "api", "aliased.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { greeting } from "@/lib/greeting.ts";`,
+        `export function GET() { return new Response(greeting); }`,
+      ].join("\n"),
+    );
+
+    const route = await loadHandlerModule({
+      projectDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+
+    assertEquals(typeof route?.GET, "function");
+  });
+
+  // esbuild applies tsconfig `paths` before any plugin's onResolve runs, so a
+  // boundary check that lives in a resolver plugin never sees the result. An
+  // alias that climbs out of the project must not load.
+  it("rejects an @/ alias that escapes the project root", async () => {
+    const rootDir = await makeTempDir();
+    const projectDir = join(rootDir, "project");
+    const outsideDir = join(rootDir, "outside");
+    await fs.mkdir(join(projectDir, "pages", "api"), { recursive: true });
+    await fs.mkdir(outsideDir, { recursive: true });
+
+    await fs.writeTextFile(
+      join(outsideDir, "secret.ts"),
+      `export const secret = "TOP-SECRET-OUTSIDE-PROJECT";`,
+    );
+    await fs.writeTextFile(
+      join(projectDir, "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { paths: { "@/*": ["./*"] } } }),
+    );
+
+    const modulePath = join(projectDir, "pages", "api", "leak.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { secret } from "@/../outside/secret.ts";`,
+        `export function GET() { return new Response(secret); }`,
+      ].join("\n"),
+    );
+
+    await assertRejects(
+      () => loadHandlerModule({ projectDir, modulePath, adapter, config: undefined }),
+      Error,
+    );
+  });
+
+  // Bundling reads the route through the adapter; a direct import does not. A
+  // module that threw while evaluating must surface its own error rather than
+  // be evaluated a second time under bundling semantics.
+  it("does not retry a module whose own error quotes a resolver phrase", async () => {
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "handler.ts");
+
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `throw new Error("Cannot find module 'config'");`,
+        `export function GET() { return new Response("ok"); }`,
+      ].join("\n"),
+    );
+
+    let readCount = 0;
+    const countingAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile: (path: string) => {
+          readCount++;
+          return adapter.fs.readFile(path);
+        },
+      },
+    };
+
+    let caught = "";
+    try {
+      await loadHandlerModule({ projectDir: tmpDir, modulePath, adapter: countingAdapter });
+    } catch (error) {
+      caught = error instanceof Error ? error.message : String(error);
+    }
+
+    assertMatch(caught, /Cannot find module 'config'/);
+    assertEquals(readCount, 0, "the broken module was re-read for bundling");
   });
 
   it("throws on missing file", async () => {
@@ -306,6 +674,23 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(packages, ["zod", "pdf-parse", "another-lib"]);
   });
 
+  it("keeps zod as a user dependency for compiled binary resolution (#217)", () => {
+    const dependencies = new Map([
+      ["zod", "^3.22.0"],
+      ["pdf-parse", "^1.1.1"],
+    ]);
+
+    // A compiled binary needs zod in this list so a handler's `import { z } from
+    // "zod"` is rewritten to resolve from node_modules instead of 500ing (#217).
+    assertEquals(
+      [...getUserDependencies(dependencies)],
+      [
+        ["zod", "^3.22.0"],
+        ["pdf-parse", "^1.1.1"],
+      ],
+    );
+  });
+
   it("rewrites bare veryfront imports using the package export map", async () => {
     const tmpDir = await makeTempDir();
     const vfDir = join(tmpDir, "node_modules", "veryfront");
@@ -348,6 +733,30 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
 
     assertMatch(rewritten, /from "file:\/\/.*node_modules\/my-lib\/dist\/index\.js"/);
+  });
+
+  it("preserves route user dependency subpath rewrites despite package export maps", async () => {
+    const tmpDir = await makeTempDir();
+    const depDir = join(tmpDir, "node_modules", "my-lib");
+    await fs.mkdir(depDir, { recursive: true });
+    await fs.writeTextFile(
+      join(depDir, "package.json"),
+      JSON.stringify({
+        exports: {
+          ".": "./dist/index.js",
+          "./feature": "./dist/exported-feature.js",
+        },
+      }),
+    );
+
+    const rewritten = await rewriteNodeExternalImports(
+      'import feature from "my-lib/feature";',
+      tmpDir,
+      fs,
+      new Map([["my-lib", "^1.0.0"]]),
+    );
+
+    assertMatch(rewritten, /from "file:\/\/.*node_modules\/my-lib\/feature"/);
   });
 
   it("rewrites only parsed Node import specifiers", async () => {
@@ -791,6 +1200,277 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
+  it("rejects prepared absolute imports from an unrelated node_modules directory", async () => {
+    const projectDir = await makeTempDir();
+    const unrelatedDir = await makeTempDir();
+    const unrelatedPackageDir = join(unrelatedDir, "node_modules", "host-only");
+    await fs.mkdir(unrelatedPackageDir, { recursive: true });
+
+    const unrelatedModule = join(unrelatedPackageDir, "index.js");
+    await fs.writeTextFile(
+      unrelatedModule,
+      `export const value = "outside-project";`,
+    );
+    const modulePath = join(projectDir, "route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      `import { value } from ${JSON.stringify(unrelatedModule)};\n` +
+        `export const GET = () => new Response(value);`,
+    );
+
+    await assertRejects(
+      () =>
+        prepareHandlerModule({
+          projectDir,
+          modulePath,
+          adapter,
+          config: undefined,
+        }),
+      Error,
+      "Import escapes the project directory",
+    );
+  });
+
+  it("allows prepared imports from the canonical project dependency root", async () => {
+    const projectDir = await makeTempDir();
+    const packageDir = join(projectDir, "node_modules", "project-owned");
+    await fs.mkdir(packageDir, { recursive: true });
+    await fs.writeTextFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "project-owned", type: "module", main: "index.js" }),
+    );
+    await fs.writeTextFile(
+      join(packageDir, "index.js"),
+      `export const value = "project-dependency";`,
+    );
+
+    const modulePath = join(projectDir, "route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      `import { value } from "project-owned";\n` +
+        `export const GET = () => new Response(value);`,
+    );
+
+    const prepared = await prepareHandlerModule({
+      projectDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertMatch(prepared.source, /project-dependency/);
+  });
+
+  it("rejects project symlink escapes before the adapter reads the target", async () => {
+    const projectDir = await makeTempDir();
+    const outsideDir = await makeTempDir();
+    const projectLibDir = join(projectDir, "lib");
+    await fs.mkdir(projectLibDir, { recursive: true });
+
+    const outsideModule = join(outsideDir, "secret.ts");
+    const linkedModule = join(projectLibDir, "linked.ts");
+    await fs.writeTextFile(outsideModule, `export const secret = "outside-project";`);
+    try {
+      await Deno.symlink(outsideModule, linkedModule);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/permission|not supported/i.test(message)) return;
+      throw error;
+    }
+
+    const modulePath = join(projectDir, "route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      `import { secret } from "./lib/linked.ts";\n` +
+        `export const GET = () => new Response(secret);`,
+    );
+
+    let linkedModuleRead = false;
+    const observingAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile(path: string): Promise<string> {
+          if (path === linkedModule) linkedModuleRead = true;
+          return adapter.fs.readFile(path);
+        },
+      },
+    };
+
+    await assertRejects(
+      () =>
+        prepareHandlerModule({
+          projectDir,
+          modulePath,
+          adapter: observingAdapter,
+          config: undefined,
+        }),
+      Error,
+      "Import escapes the project directory",
+    );
+    assertEquals(linkedModuleRead, false);
+  });
+
+  it("rejects a project package manifest symlink before reading outside the project", async () => {
+    const projectDir = await makeTempDir();
+    const outsideDir = await makeTempDir();
+    const outsideManifest = join(outsideDir, "package.json");
+    const projectManifest = join(projectDir, "package.json");
+    await fs.writeTextFile(
+      outsideManifest,
+      JSON.stringify({ dependencies: { "outside-only": "1.0.0" } }),
+    );
+    try {
+      await Deno.symlink(outsideManifest, projectManifest);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/permission|not supported/i.test(message)) return;
+      throw error;
+    }
+
+    const modulePath = join(projectDir, "route.ts");
+    await fs.writeTextFile(modulePath, `export const GET = () => new Response("ok");`);
+
+    const canonicalOutsideManifest = await Deno.realPath(outsideManifest);
+    let outsideManifestRead = false;
+    const observingAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile(path: string): Promise<string> {
+          if (path === canonicalOutsideManifest) outsideManifestRead = true;
+          return adapter.fs.readFile(path);
+        },
+      },
+    };
+
+    await assertRejects(
+      () =>
+        prepareHandlerModule({
+          projectDir,
+          modulePath,
+          adapter: observingAdapter,
+          config: undefined,
+        }),
+      Error,
+      "Import escapes the project directory",
+    );
+    assertEquals(outsideManifestRead, false);
+  });
+
+  it("rejects a symlinked dependency manifest outside the project", async () => {
+    const projectDir = await makeTempDir();
+    const outsideDir = await makeTempDir();
+    const packageName = "outside-dependency";
+    const projectModules = join(projectDir, "node_modules");
+    const outsidePackage = join(outsideDir, packageName);
+    await fs.mkdir(projectModules, { recursive: true });
+    await fs.mkdir(outsidePackage, { recursive: true });
+    await fs.writeTextFile(
+      join(projectDir, "package.json"),
+      JSON.stringify({ dependencies: { [packageName]: "1.0.0" } }),
+    );
+    const outsideManifest = join(outsidePackage, "package.json");
+    await fs.writeTextFile(
+      outsideManifest,
+      JSON.stringify({ name: packageName, version: "1.0.0", type: "module" }),
+    );
+    await fs.writeTextFile(join(outsidePackage, "index.js"), `export const value = "outside";`);
+    try {
+      await Deno.symlink(outsidePackage, join(projectModules, packageName));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/permission|not supported/i.test(message)) return;
+      throw error;
+    }
+
+    const modulePath = join(projectDir, "route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      `import { value } from "${packageName}";\n` +
+        `export const GET = () => new Response(value);`,
+    );
+
+    const canonicalOutsideManifest = await Deno.realPath(outsideManifest);
+    let outsideManifestRead = false;
+    const observingAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile(path: string): Promise<string> {
+          if (path === canonicalOutsideManifest) outsideManifestRead = true;
+          return adapter.fs.readFile(path);
+        },
+      },
+    };
+
+    await assertRejects(
+      () =>
+        prepareHandlerModule({
+          projectDir,
+          modulePath,
+          adapter: observingAdapter,
+          config: undefined,
+        }),
+      Error,
+      "Import escapes the project directory",
+    );
+    assertEquals(outsideManifestRead, false);
+  });
+
+  it("reads the authorized canonical path when a project symlink is swapped", async () => {
+    const projectDir = await makeTempDir();
+    const outsideDir = await makeTempDir();
+    const projectLibDir = join(projectDir, "lib");
+    await fs.mkdir(projectLibDir, { recursive: true });
+
+    const insideModule = join(projectLibDir, "inside.ts");
+    const outsideModule = join(outsideDir, "outside.ts");
+    const linkedModule = join(projectLibDir, "linked.ts");
+    await fs.writeTextFile(insideModule, `export const value = "inside-project-only";`);
+    await fs.writeTextFile(outsideModule, `export const value = "outside-project";`);
+    try {
+      await Deno.symlink(insideModule, linkedModule);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/permission|not supported/i.test(message)) return;
+      throw error;
+    }
+
+    const modulePath = join(projectDir, "route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      `import { value } from "./lib/linked.ts";\n` +
+        `export const GET = () => new Response(value);`,
+    );
+
+    const canonicalInsideModule = await Deno.realPath(insideModule);
+    let swapped = false;
+    const swappingAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        async readFile(path: string): Promise<string> {
+          if (!swapped && path === canonicalInsideModule) {
+            swapped = true;
+            await Deno.remove(linkedModule);
+            await Deno.symlink(outsideModule, linkedModule);
+          }
+          return await adapter.fs.readFile(path);
+        },
+      },
+    };
+
+    const prepared = await prepareHandlerModule({
+      projectDir,
+      modulePath,
+      adapter: swappingAdapter,
+      config: undefined,
+    });
+    assertEquals(swapped, true);
+    assertMatch(prepared.source, /inside-project-only/);
+    assertEquals(prepared.source.includes("outside-project"), false);
+  });
+
   it("rejects API handlers with remote imports when the project lockfile cannot be written for non-read-only reasons", async () => {
     const originalFetch = globalThis.fetch;
     const realDir = await makeTempDir();
@@ -1036,5 +1716,56 @@ describe("generateCompiledBinaryRequireShim - symlink resistance (VULN-FS-5)", {
     try {
       await fs.remove(realProject, { recursive: true });
     } catch (_) { /* best effort */ }
+  });
+});
+
+describe("isSpecifierResolutionError", () => {
+  // Direct import leaves specifier resolution to the runtime, which knows
+  // nothing about the project's `@/` alias — those routes used to 500 with a
+  // flat "Handler not found". Only resolution failures may fall back to
+  // bundling; a genuinely broken module must still surface its own error.
+  it("recognises an unresolved bare or aliased specifier", () => {
+    for (
+      const message of [
+        // Deno appends a hint on later lines; the specifier opens the message.
+        `Import "@/lib/uses-crypto" not a dependency\n  hint: try running \`deno add\``,
+        `Module not found "file:///p/lib/x.js".`,
+        `Relative import path "lib/x.ts" not prefixed with / or ./ or ../`,
+      ]
+    ) {
+      assertEquals(isSpecifierResolutionError(new TypeError(message)), true, message);
+    }
+  });
+
+  it("does not treat a genuine module error as a resolution failure", () => {
+    assertEquals(isSpecifierResolutionError(new SyntaxError("Unexpected token }")), false);
+    assertEquals(isSpecifierResolutionError(new TypeError("x is not a function")), false);
+    assertEquals(isSpecifierResolutionError(new Error("boom")), false);
+  });
+
+  // A route is free to throw whatever it likes. Matching those phrases anywhere
+  // in the message used to hand a broken module to the bundling loader, which
+  // evaluates it a second time under different semantics.
+  it("does not match a module's own error that quotes a resolver phrase", () => {
+    for (
+      const message of [
+        `Cannot find module 'config'`,
+        `Setup failed: Module not found "config"`,
+        `Import "x" not a dependency, said the module`,
+      ]
+    ) {
+      assertEquals(isSpecifierResolutionError(new Error(message)), false, message);
+    }
+
+    // Not even when the module throws the type Deno's resolver uses.
+    assertEquals(
+      isSpecifierResolutionError(new TypeError(`config error: Module not found "db"`)),
+      false,
+    );
+  });
+
+  it("ignores non-Error values", () => {
+    assertEquals(isSpecifierResolutionError(null), false);
+    assertEquals(isSpecifierResolutionError("not a dependency"), false);
   });
 });

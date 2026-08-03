@@ -1,3 +1,9 @@
+---
+title: "Storybook UI workbench"
+description: "Run and verify the dev-only Storybook workbench for shipped Veryfront UI source."
+order: 42
+---
+
 # Storybook UI workbench
 
 Veryfront Code keeps shipped UI source in `src/react`.

@@ -35,8 +35,19 @@ describe("RuntimeConfig", () => {
       expect(DEFAULT_CONFIG.description).toBe("Built with Veryfront");
       expect(DEFAULT_CONFIG.experimental?.esmLayouts).toBe(true);
       expect(DEFAULT_CONFIG.build?.outDir).toBe("dist");
-      expect(DEFAULT_CONFIG.dev?.port).toBe(3001);
+      expect(DEFAULT_CONFIG.dev?.port).toBe(3000);
       expect(DEFAULT_CONFIG.cache?.dir).toBe(".veryfront");
+    });
+
+    it("is deeply frozen so consumers cannot corrupt future configs", () => {
+      expect(Object.isFrozen(DEFAULT_CONFIG)).toBe(true);
+      expect(Object.isFrozen(DEFAULT_CONFIG.experimental)).toBe(true);
+      expect(Object.isFrozen(DEFAULT_CONFIG.theme)).toBe(true);
+      expect(Object.isFrozen(DEFAULT_CONFIG.theme?.colors)).toBe(true);
+      expect(Object.isFrozen(DEFAULT_CONFIG.build)).toBe(true);
+      expect(Object.isFrozen(DEFAULT_CONFIG.cache)).toBe(true);
+      expect(Object.isFrozen(DEFAULT_CONFIG.cache?.render)).toBe(true);
+      expect(Object.isFrozen(DEFAULT_CONFIG.dev)).toBe(true);
     });
   });
 
@@ -46,8 +57,19 @@ describe("RuntimeConfig", () => {
       const config = createRuntimeConfig({}, env);
 
       expect(config.title).toBe("Veryfront App");
+      expect(config.build?.esbuild).toBeUndefined();
       expect(config.runtime).toBeDefined();
       expect(config.runtime.env).toBe(env);
+    });
+
+    it("keeps standalone config out of the process singleton", () => {
+      const config = createRuntimeConfig(
+        { title: "Request-scoped value" },
+        createTestEnvironmentConfig(),
+      );
+
+      expect(config.title).toBe("Request-scoped value");
+      expect(isRuntimeConfigInitialized()).toBe(false);
     });
 
     it("merges file config with defaults", () => {
@@ -60,6 +82,63 @@ describe("RuntimeConfig", () => {
       expect(config.title).toBe("My App");
       expect(config.projectSlug).toBe("my-app");
       expect(config.description).toBe("Built with Veryfront");
+    });
+
+    it("deep-merges nested file config with runtime defaults", () => {
+      const config = createRuntimeConfig(
+        {
+          theme: { colors: { secondary: "#000000" } },
+          build: { trailingSlash: true },
+          cache: { dir: "/tmp/runtime-cache" },
+          dev: { open: true },
+        },
+        createTestEnvironmentConfig(),
+      );
+
+      expect(config.theme?.colors?.primary).toBe("#3B82F6");
+      expect(config.theme?.colors?.secondary).toBe("#000000");
+      expect(config.build?.outDir).toBe("dist");
+      expect(config.build?.trailingSlash).toBe(true);
+      expect(config.cache?.dir).toBe("/tmp/runtime-cache");
+      expect(config.cache?.render?.type).toBe("memory");
+      expect(config.dev?.host).toBe("localhost");
+      expect(config.dev?.open).toBe(true);
+    });
+
+    it("preserves explicitly configured esbuild options", () => {
+      const config = createRuntimeConfig(
+        {
+          build: {
+            esbuild: {
+              wasmURL: "https://cdn.example.com/esbuild.wasm",
+              worker: false,
+            },
+          },
+        },
+        createTestEnvironmentConfig(),
+      );
+
+      expect(config.build?.esbuild).toEqual({
+        wasmURL: "https://cdn.example.com/esbuild.wasm",
+        worker: false,
+      });
+    });
+
+    it("creates independent nested defaults for every runtime config", () => {
+      const first = createRuntimeConfig({}, createTestEnvironmentConfig());
+      const second = createRuntimeConfig({}, createTestEnvironmentConfig());
+
+      expect(first.theme).not.toBe(second.theme);
+      expect(first.theme?.colors).not.toBe(second.theme?.colors);
+      expect(first.build).not.toBe(second.build);
+      expect(first.cache?.render).not.toBe(second.cache?.render);
+      expect(first.dev).not.toBe(second.dev);
+
+      if (!first.theme?.colors) throw new Error("Expected runtime theme defaults");
+      first.theme.colors.primary = "#ffffff";
+
+      expect(second.theme?.colors?.primary).toBe("#3B82F6");
+      expect(DEFAULT_CONFIG.theme?.colors?.primary).toBe("#3B82F6");
     });
 
     it("computes runtime flags correctly", () => {
@@ -136,6 +215,15 @@ describe("RuntimeConfig", () => {
       expect(config.dev?.port).toBe(9000);
     });
 
+    it("preserves a file port when PORT was not configured", () => {
+      const config = createRuntimeConfig(
+        { dev: { port: 4321 } },
+        createTestEnvironmentConfig(),
+      );
+
+      expect(config.dev?.port).toBe(4321);
+    });
+
     it("ignores project-file observability routing in shared proxy mode", () => {
       const config = createRuntimeConfig(
         {
@@ -154,7 +242,10 @@ describe("RuntimeConfig", () => {
         createTestEnvironmentConfig({
           proxyMode: true,
           otelEnabled: false,
+          otelEndpoint: undefined,
+          otelServiceName: undefined,
           otelMetricsEnabled: false,
+          otelMetricsEndpoint: undefined,
         }),
       );
 
@@ -163,6 +254,52 @@ describe("RuntimeConfig", () => {
       expect(config.observability?.tracing?.serviceName).toBeUndefined();
       expect(config.observability?.metrics?.enabled).toBe(false);
       expect(config.observability?.metrics?.endpoint).toBeUndefined();
+    });
+
+    it("keeps host OTel routing while allowing project tracing service identity", () => {
+      const config = createRuntimeConfig(
+        {
+          projectSlug: "veryfront-ops-agent",
+          observability: {
+            tracing: {
+              serviceName: "veryfront-ops-agent",
+            },
+          },
+        },
+        createTestEnvironmentConfig({
+          proxyMode: false,
+          otelEnabled: true,
+          otelEndpoint: "https://platform-collector.example/otlp",
+          otelServiceName: "veryfront-agent",
+        }),
+      );
+
+      expect(config.observability?.tracing?.enabled).toBe(true);
+      expect(config.observability?.tracing?.endpoint).toBe(
+        "https://platform-collector.example/otlp",
+      );
+      expect(config.observability?.tracing?.serviceName).toBe("veryfront-ops-agent");
+    });
+
+    it("preserves non-routing observability config outside shared proxy mode", () => {
+      const config = createRuntimeConfig(
+        {
+          observability: {
+            logging: {
+              file: {
+                enabled: true,
+                path: "/tmp/veryfront.log",
+                format: "json",
+              },
+            },
+          },
+        },
+        createTestEnvironmentConfig({ proxyMode: false }),
+      );
+
+      expect(config.observability?.logging?.file?.enabled).toBe(true);
+      expect(config.observability?.logging?.file?.path).toBe("/tmp/veryfront.log");
+      expect(config.observability?.logging?.file?.format).toBe("json");
     });
   });
 

@@ -1,5 +1,6 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "../config/schemas/index.ts";
+import type { PreparedHostedConfigContext } from "../config/loader.ts";
 import type { RequestContext } from "../server/context/request-context.ts";
 import type { EnrichedContext } from "../server/context/enriched-context-types.ts";
 import type { ParsedDomain } from "../server/utils/domain-parser.ts";
@@ -53,6 +54,12 @@ export interface HandlerContext {
   projectId?: string;
   /** Release ID (from domain lookup for production custom domains) */
   releaseId?: string;
+  /** Canonical branch ID supplied by the operator-authenticated proxy. */
+  branchId?: string;
+  /** Canonical branch name paired with branchId by the operator-authenticated proxy. */
+  branchName?: string;
+  /** Canonical project default branch name supplied by the operator-authenticated proxy. */
+  defaultBranchName?: string;
   /** OAuth token from proxy (via x-token header) */
   proxyToken?: string;
   /** Actual environment name from API (e.g., "Development", "Production") */
@@ -67,8 +74,25 @@ export interface HandlerContext {
   requestContext?: RequestContext;
   /** Whether this request targets a local filesystem project (per-request, from adapter resolution). */
   isLocalProject?: boolean;
+  /**
+   * Host-owned capability for executing this runtime's project code in the
+   * server process. Dedicated single-project runtimes may grant it without
+   * enabling development-only local-project behavior.
+   */
+  allowHostProjectCodeExecution?: boolean;
+  /** Whether this request is executing in the shared multi-project proxy runtime. */
+  isProxyMode?: boolean;
   /** Environment ID for per-project env var resolution (from proxy x-environment-id header) */
   environmentId?: string;
+  /**
+   * Prepares this request's authenticated hosted evaluation context.
+   *
+   * Present only for shared multi-project runtimes, where project config is
+   * untrusted and must be evaluated declaratively. Handlers that load config
+   * themselves must use this rather than deriving source or environment
+   * identity, so every load in a request shares one identity.
+   */
+  prepareHostedConfigContext?: () => Promise<PreparedHostedConfigContext>;
   /** Route registry for handler chain inspection (dev dashboard) */
   routeRegistry?: {
     getHandlers(): ReadonlyArray<{ metadata: HandlerMetadata }>;

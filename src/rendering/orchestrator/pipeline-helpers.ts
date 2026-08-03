@@ -1,11 +1,13 @@
 import type { LayoutItem } from "#veryfront/types";
 import { extractRelativePath as extractRelativePathShared } from "#veryfront/utils/route-path-utils.ts";
+import { isCSSContentHash } from "#veryfront/html/styles-builder/css-identity.ts";
 
-const RENDERED_CSS_HASH_RE = /href="\/_vf\/css\/([a-z0-9-]{1,16})\.css"/i;
+const RENDERED_CSS_HASH_RE = /href="\/_vf\/css\/([a-f0-9]{64})\.css"/;
 const RENDERED_RELEASE_ASSET_CSS_RE = /href="\/_vf\/assets\/([a-f0-9]{64})\.css"/i;
 
 export function extractRenderedCssHash(html: string): string | undefined {
-  return html.match(RENDERED_CSS_HASH_RE)?.[1];
+  const value = RENDERED_CSS_HASH_RE.exec(html)?.[1];
+  return isCSSContentHash(value) ? value : undefined;
 }
 
 export function hasRenderedReleaseAssetCss(html: string): boolean {
@@ -29,11 +31,13 @@ export function serializeLayouts(
 
 export function serializeLayoutProps(
   layoutProps: Map<string, Record<string, unknown>>,
+  projectDir: string,
 ): Record<string, Record<string, unknown>> {
   const serialized: Record<string, Record<string, unknown>> = {};
 
   for (const [layoutId, props] of layoutProps.entries()) {
-    serialized[layoutId] = props;
+    const key = extractRelativePathShared(layoutId, projectDir);
+    serialized[key] = props;
   }
 
   return serialized;

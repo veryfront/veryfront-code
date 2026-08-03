@@ -1,4 +1,5 @@
-import { join } from "@std/path";
+import { join } from "#veryfront/compat/path";
+import { computeHash, computeHashBytes } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version-constant.ts";
 import type { EvalRunProvenance } from "./types.ts";
 
@@ -40,29 +41,37 @@ function firstValue(env: Env, keys: string[]): string | undefined {
   return undefined;
 }
 
+function readEnvironmentValue(key: string): string | undefined {
+  try {
+    return Deno.env.get(key);
+  } catch {
+    return undefined;
+  }
+}
+
 function collectEnv(): Env {
   return {
-    AG_UI_EVAL_BRANCH_ID: Deno.env.get("AG_UI_EVAL_BRANCH_ID"),
-    AG_UI_EVAL_PROJECT_ID: Deno.env.get("AG_UI_EVAL_PROJECT_ID"),
-    AG_UI_EVAL_PROJECT_SLUG: Deno.env.get("AG_UI_EVAL_PROJECT_SLUG"),
-    AG_UI_EVAL_RELEASE_ID: Deno.env.get("AG_UI_EVAL_RELEASE_ID"),
-    CI: Deno.env.get("CI"),
-    GITHUB_ACTIONS: Deno.env.get("GITHUB_ACTIONS"),
-    GITHUB_REF_NAME: Deno.env.get("GITHUB_REF_NAME"),
-    GITHUB_SHA: Deno.env.get("GITHUB_SHA"),
-    TENANT_BRANCH_ID: Deno.env.get("TENANT_BRANCH_ID"),
-    TENANT_DEPLOYMENT_ID: Deno.env.get("TENANT_DEPLOYMENT_ID"),
-    TENANT_ENVIRONMENT: Deno.env.get("TENANT_ENVIRONMENT"),
-    TENANT_PROJECT_ID: Deno.env.get("TENANT_PROJECT_ID"),
-    TENANT_PROJECT_SLUG: Deno.env.get("TENANT_PROJECT_SLUG"),
-    TENANT_RELEASE_ID: Deno.env.get("TENANT_RELEASE_ID"),
-    VERCEL_ENV: Deno.env.get("VERCEL_ENV"),
-    VERYFRONT_BRANCH_REF: Deno.env.get("VERYFRONT_BRANCH_REF"),
-    VERYFRONT_DEPLOYMENT_ID: Deno.env.get("VERYFRONT_DEPLOYMENT_ID"),
-    VERYFRONT_ENVIRONMENT: Deno.env.get("VERYFRONT_ENVIRONMENT"),
-    VERYFRONT_PROJECT_ID: Deno.env.get("VERYFRONT_PROJECT_ID"),
-    VERYFRONT_PROJECT_SLUG: Deno.env.get("VERYFRONT_PROJECT_SLUG"),
-    VERYFRONT_RELEASE_ID: Deno.env.get("VERYFRONT_RELEASE_ID"),
+    AG_UI_EVAL_BRANCH_ID: readEnvironmentValue("AG_UI_EVAL_BRANCH_ID"),
+    AG_UI_EVAL_PROJECT_ID: readEnvironmentValue("AG_UI_EVAL_PROJECT_ID"),
+    AG_UI_EVAL_PROJECT_SLUG: readEnvironmentValue("AG_UI_EVAL_PROJECT_SLUG"),
+    AG_UI_EVAL_RELEASE_ID: readEnvironmentValue("AG_UI_EVAL_RELEASE_ID"),
+    CI: readEnvironmentValue("CI"),
+    GITHUB_ACTIONS: readEnvironmentValue("GITHUB_ACTIONS"),
+    GITHUB_REF_NAME: readEnvironmentValue("GITHUB_REF_NAME"),
+    GITHUB_SHA: readEnvironmentValue("GITHUB_SHA"),
+    TENANT_BRANCH_ID: readEnvironmentValue("TENANT_BRANCH_ID"),
+    TENANT_DEPLOYMENT_ID: readEnvironmentValue("TENANT_DEPLOYMENT_ID"),
+    TENANT_ENVIRONMENT: readEnvironmentValue("TENANT_ENVIRONMENT"),
+    TENANT_PROJECT_ID: readEnvironmentValue("TENANT_PROJECT_ID"),
+    TENANT_PROJECT_SLUG: readEnvironmentValue("TENANT_PROJECT_SLUG"),
+    TENANT_RELEASE_ID: readEnvironmentValue("TENANT_RELEASE_ID"),
+    VERCEL_ENV: readEnvironmentValue("VERCEL_ENV"),
+    VERYFRONT_BRANCH_REF: readEnvironmentValue("VERYFRONT_BRANCH_REF"),
+    VERYFRONT_DEPLOYMENT_ID: readEnvironmentValue("VERYFRONT_DEPLOYMENT_ID"),
+    VERYFRONT_ENVIRONMENT: readEnvironmentValue("VERYFRONT_ENVIRONMENT"),
+    VERYFRONT_PROJECT_ID: readEnvironmentValue("VERYFRONT_PROJECT_ID"),
+    VERYFRONT_PROJECT_SLUG: readEnvironmentValue("VERYFRONT_PROJECT_SLUG"),
+    VERYFRONT_RELEASE_ID: readEnvironmentValue("VERYFRONT_RELEASE_ID"),
   };
 }
 
@@ -185,19 +194,6 @@ async function runGit(
   }
 }
 
-async function sha256Hex(value: string): Promise<string> {
-  return sha256Bytes(new TextEncoder().encode(value));
-}
-
-async function sha256Bytes(value: Uint8Array): Promise<string> {
-  const bytes = new Uint8Array(value.byteLength);
-  bytes.set(value);
-  const hash = await crypto.subtle.digest("SHA-256", bytes.buffer);
-  return Array.from(new Uint8Array(hash))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
-
 function parseNullSeparated(value: string | undefined): string[] {
   if (!value) return [];
   return value.split("\0").filter(Boolean).sort();
@@ -212,7 +208,7 @@ async function hashUntrackedFiles(
   for (const relativePath of paths) {
     try {
       const content = await readFile(join(projectDir, relativePath));
-      entries.push(`${relativePath}\0${await sha256Bytes(content)}`);
+      entries.push(`${relativePath}\0${await computeHashBytes(new Uint8Array(content))}`);
     } catch {
       entries.push(`${relativePath}\0unreadable`);
     }
@@ -250,7 +246,7 @@ async function resolveGitProvenance(
     ...(branch ? { branch } : {}),
     ...(dirty !== undefined ? { dirty } : {}),
     ...(dirty
-      ? { dirtyHash: await sha256Hex(`${status ?? ""}\n${diff ?? ""}\n${untrackedHashInput}`) }
+      ? { dirtyHash: await computeHash(`${status ?? ""}\n${diff ?? ""}\n${untrackedHashInput}`) }
       : {}),
   };
 }

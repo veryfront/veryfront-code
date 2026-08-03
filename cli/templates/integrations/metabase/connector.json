@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_databases",
+      "id": "metabase__list_databases",
       "name": "List Databases",
       "description": "List databases connected to the Metabase instance",
       "requiresWrite": false,
@@ -75,7 +75,7 @@
       }
     },
     {
-      "id": "list_cards",
+      "id": "metabase__list_cards",
       "name": "List Questions",
       "description": "List saved questions (cards) on the Metabase instance",
       "requiresWrite": false,
@@ -98,7 +98,7 @@
       }
     },
     {
-      "id": "run_card_query",
+      "id": "metabase__run_card_query",
       "name": "Run Question Query",
       "description": "Execute a saved question (card) and return its query results",
       "requiresWrite": false,
@@ -128,7 +128,7 @@
       }
     },
     {
-      "id": "search",
+      "id": "metabase__search",
       "name": "Search",
       "description": "Search questions, dashboards, collections, and tables across the instance",
       "requiresWrite": false,
@@ -157,7 +157,7 @@
       }
     },
     {
-      "id": "get_dashboard",
+      "id": "metabase__get_dashboard",
       "name": "Get Dashboard",
       "description": "Get a dashboard and its cards by ID",
       "requiresWrite": false,
@@ -181,7 +181,7 @@
       }
     },
     {
-      "id": "list_collections",
+      "id": "metabase__list_collections",
       "name": "List Collections",
       "description": "List collections that organize questions and dashboards",
       "requiresWrite": false,

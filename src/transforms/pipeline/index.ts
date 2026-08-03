@@ -12,7 +12,6 @@ import {
 import { rendererLogger } from "#veryfront/utils";
 import { createTransformContext, formatTimingLog, recordStageTiming } from "./context.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { computeConfigHash } from "#veryfront/cache/config-hash.ts";
 import { computeDepsHash } from "#veryfront/cache/dependency-graph.ts";
 import type {
   PipelineConfig,
@@ -21,6 +20,8 @@ import type {
   TransformResult,
 } from "./types.ts";
 import {
+  browserNodeBuiltinImportsPlugin,
+  browserServerExportsStripPlugin,
   compilePlugin,
   cssStripPlugin,
   finalizePlugin,
@@ -33,7 +34,26 @@ import {
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { validateCachedBundlesByManifestOrCode } from "../esm/cached-bundle-validation.ts";
-import { extractFrameworkBundlePaths } from "../shared/framework-bundle-paths.ts";
+import { findMissingFrameworkBundlePaths } from "../shared/framework-bundle-paths.ts";
+import { resolveDependencyPinningSnapshot } from "../esm/package-registry.ts";
+import {
+  type DependencyResolutionObservation,
+  resolveDependencyPinForImport,
+  validateDependencyResolutionObservations,
+} from "../import-rewriter/dependency-resolution.ts";
+import { getDependencyResolutionObservations } from "./stages/resolve-imports.ts";
+import { loadImportMap, preloadImportMap } from "#veryfront/modules/import-map/index.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import {
+  computePipelineConfigIdentity,
+  fingerprintPipelineImportMap,
+  getCustomPluginCacheIdentity,
+} from "./cache-identity.ts";
+import {
+  primordialArrayPush,
+  primordialArraySort,
+} from "#veryfront/platform/compat/primordials/array.ts";
 
 const SSR_PIPELINE: TransformPlugin[] = [
   parsePlugin,
@@ -50,6 +70,8 @@ const BROWSER_PIPELINE: TransformPlugin[] = [
   parsePlugin,
   compilePlugin,
   cssStripPlugin, // Strip CSS imports before they hit import resolution
+  browserServerExportsStripPlugin, // Drop server-only hooks + their now-unused imports
+  browserNodeBuiltinImportsPlugin, // node:* named imports -> namespace + destructure
   resolveImportsPlugin, // Unified import resolution
   finalizePlugin,
 ];
@@ -88,30 +110,20 @@ async function validateFrameworkBundles(
     return false;
   }
 
-  const bundlePaths = extractFrameworkBundlePaths(code);
-  if (bundlePaths.length === 0) return true;
-
-  const missing: string[] = [];
-  for (const path of bundlePaths) {
-    try {
-      if (!(await exists(path))) {
-        missing.push(path);
-      }
-    } catch (error) {
-      rendererLogger.error("Framework bundle validation error", {
+  const missing = await findMissingFrameworkBundlePaths(code, exists, {
+    onError: (path, error) => {
+      logger.error("Framework bundle validation error", {
         path,
         error: error instanceof Error ? error.message : String(error),
       });
-      missing.push(path);
-    }
-  }
+    },
+  });
 
   if (missing.length === 0) return true;
 
   logger.debug("Framework bundle validation failed", {
     cacheKey: cacheKey.slice(-40),
     failedCount: missing.length,
-    totalBundles: bundlePaths.length,
     firstMissing: missing[0]?.split("/").pop(),
   });
   return false;
@@ -141,6 +153,39 @@ async function validateCachedBundles(
   return false;
 }
 
+/**
+ * Pin-on entries created before observation metadata existed are deliberately
+ * invalid. Recomputing once records the unresolved imports needed for future
+ * scheduler retries without rerunning every transform stage.
+ */
+function validateCachedDependencyResolutionObservations(
+  cached: Awaited<ReturnType<typeof getCachedTransformAsync>>,
+  ctx: Awaited<ReturnType<typeof createTransformContext>>,
+): readonly DependencyResolutionObservation[] | null {
+  if (!ctx.dependencyPinningCacheKey?.startsWith("on:")) return [];
+
+  return validateDependencyResolutionObservations(
+    cached?.dependencyResolutionObservations,
+    ctx.dependencyPinningDependencies,
+  );
+}
+
+function replayDependencyResolutionObservations(
+  observations: readonly DependencyResolutionObservation[],
+  ctx: Awaited<ReturnType<typeof createTransformContext>>,
+): void {
+  for (const observation of observations) {
+    // The cached value is inert evidence only. The shared resolver re-evaluates
+    // current source authority and scheduler retry TTLs before any write-back.
+    resolveDependencyPinForImport(observation.packageName, {
+      ...ctx,
+      // SSR scheduling belongs to the post-pipeline adapter. Still replay the
+      // observation callback so an outer cache can persist the inner hit.
+      dependencyResolutionObservationOnly: ctx.target === "ssr",
+    });
+  }
+}
+
 export function runPipeline(
   source: string,
   filePath: string,
@@ -154,36 +199,84 @@ export function runPipeline(
     "transform.pipeline",
     async () => {
       const transformStart = performance.now();
+      // Snapshot executable custom-plugin fields before the first await. The
+      // same immutable view must supply both cache identity and execution.
+      const pluginCacheIdentity = getCustomPluginCacheIdentity(config?.plugins);
 
-      const ctx = await createTransformContext(source, filePath, projectDir, options);
+      const dependencySnapshot = await resolveDependencyPinningSnapshot(
+        options.dependencyPinningSource ?? projectDir,
+        options.dependencyPinningCacheKey,
+        options.dependencyPinningDependencies,
+      );
+      const dependencyPinningCacheKey = dependencySnapshot.cacheKey;
+      // Keep the cache key and dependency map atomic for every later stage and
+      // post-transform rewrite in this request without mutating caller-owned
+      // options (which may be frozen or shared by concurrent transforms).
+      const effectiveOptions: TransformOptions = {
+        ...options,
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies: dependencySnapshot.dependencies,
+      };
+
+      const ctx = await createTransformContext(source, filePath, projectDir, effectiveOptions);
       ctx.debug = config?.debug ?? false;
+      ctx.onProgress?.({ phase: "pipeline:context", filePath });
 
-      const configHash = await computeConfigHash({
-        reactVersion: ctx.reactVersion,
-        jsxImportSource: ctx.jsxImportSource,
-        studioEmbed: ctx.studioEmbed,
-        dev: ctx.dev,
-      });
+      let importMapFingerprint: string | undefined;
+      if (effectiveOptions.ssr) {
+        const importMap = await resolvePipelineImportMap(projectDir, effectiveOptions);
+        importMapFingerprint = await fingerprintPipelineImportMap(importMap);
+        ctx.metadata.set("importMap", importMap);
+        ctx.metadata.set("importMapFingerprint", importMapFingerprint);
+      }
 
-      const depsHash = await computeDepsHashSafe(
-        filePath,
-        projectDir,
-        options.readFile,
-        options.dependencyHashCache,
-      );
+      let cacheKey: string | undefined;
+      if (pluginCacheIdentity.cacheable) {
+        const [configHash, depsHash] = await Promise.all([
+          computePipelineConfigIdentity({
+            reactVersion: ctx.reactVersion,
+            jsxImportSource: ctx.jsxImportSource,
+            moduleServerUrl: ctx.moduleServerUrl,
+            moduleServerOrigin: ctx.moduleServerOrigin,
+            vendorBundleHash: ctx.vendorBundleHash,
+            apiBaseUrl: ctx.apiBaseUrl,
+            studioEmbed: ctx.studioEmbed ?? false,
+            dev: ctx.dev,
+            ssr: effectiveOptions.ssr ?? false,
+            projectDir,
+            importMapFingerprint,
+            dependencyPinningCacheKey,
+            customPlugins: pluginCacheIdentity.identity,
+          }),
+          computeDepsHashSafe(
+            filePath,
+            projectDir,
+            effectiveOptions.readFile,
+            effectiveOptions.dependencyHashCache,
+          ),
+        ]);
+        cacheKey = generateCacheKey(
+          filePath,
+          ctx.contentHash,
+          effectiveOptions.ssr ?? false,
+          effectiveOptions.studioEmbed ?? false,
+          { depsHash, configHash, projectId: effectiveOptions.projectId },
+        );
+      }
 
-      const cacheKey = generateCacheKey(
-        filePath,
-        ctx.contentHash,
-        options.ssr ?? false,
-        options.studioEmbed ?? false,
-        { depsHash, configHash, projectId: options.projectId },
-      );
-
-      const cached = await getCachedTransformAsync(cacheKey);
-      if (cached) {
-        // For SSR transforms, validate bundles exist before returning cached code
-        if (options.ssr) {
+      const cached = cacheKey ? await getCachedTransformAsync(cacheKey) : undefined;
+      if (cached && cacheKey) {
+        const dependencyResolutionObservations = validateCachedDependencyResolutionObservations(
+          cached,
+          ctx,
+        );
+        if (dependencyResolutionObservations === null) {
+          logger.debug("Cache invalidated due to missing or inconsistent dependency metadata", {
+            file: filePath.slice(-60),
+          });
+          // Fall through to re-run the pipeline.
+        } else if (effectiveOptions.ssr) {
+          // For SSR transforms, validate bundles exist before returning cached code.
           const httpBundlesValid = await validateCachedBundles(
             cached.code,
             cached.bundleManifestId,
@@ -208,6 +301,11 @@ export function runPipeline(
             });
             // Fall through to re-run the pipeline
           } else {
+            replayDependencyResolutionObservations(
+              dependencyResolutionObservations,
+              ctx,
+            );
+            ctx.onProgress?.({ phase: "pipeline:cache-hit", filePath });
             return {
               code: cached.code,
               contentHash: ctx.contentHash,
@@ -217,6 +315,11 @@ export function runPipeline(
             };
           }
         } else {
+          replayDependencyResolutionObservations(
+            dependencyResolutionObservations,
+            ctx,
+          );
+          ctx.onProgress?.({ phase: "pipeline:cache-hit", filePath });
           return {
             code: cached.code,
             contentHash: ctx.contentHash,
@@ -227,12 +330,24 @@ export function runPipeline(
         }
       }
 
-      const basePipeline = options.ssr ? SSR_PIPELINE : BROWSER_PIPELINE;
-      const pipeline = config?.plugins
-        ? [...basePipeline, ...config.plugins].sort((a, b) => a.stage - b.stage)
-        : basePipeline;
+      const basePipeline = effectiveOptions.ssr ? SSR_PIPELINE : BROWSER_PIPELINE;
+      let pipeline: readonly TransformPlugin[] = basePipeline;
+      if (pluginCacheIdentity.plugins.length > 0) {
+        const sortedPipeline: TransformPlugin[] = [];
+        for (let index = 0; index < basePipeline.length; index++) {
+          primordialArrayPush(sortedPipeline, basePipeline[index]);
+        }
+        for (let index = 0; index < pluginCacheIdentity.plugins.length; index++) {
+          primordialArrayPush(sortedPipeline, pluginCacheIdentity.plugins[index]);
+        }
+        pipeline = primordialArraySort(
+          sortedPipeline,
+          (left, right) => left.stage - right.stage,
+        );
+      }
 
-      for (const plugin of pipeline) {
+      for (let index = 0; index < pipeline.length; index++) {
+        const plugin = pipeline[index]!;
         if (plugin.condition?.(ctx) === false) continue;
 
         const stageStart = performance.now();
@@ -253,22 +368,35 @@ export function runPipeline(
         }
 
         recordStageTiming(ctx, plugin.stage, stageStart);
+        ctx.onProgress?.({ phase: `pipeline:${plugin.name}`, filePath });
       }
 
       // Store the bundleManifestId from ssrHttpCachePlugin for future cache validation
       const bundleManifestId = ctx.metadata.get("bundleManifestId") as string | undefined;
-      setCachedTransformAsync(cacheKey, ctx.code, ctx.contentHash, undefined, bundleManifestId)
-        .catch(
-          (error) => {
-            logger.debug("Failed to cache transform", { error });
-          },
-        );
+      const dependencyResolutionObservations = getDependencyResolutionObservations(ctx);
+      if (cacheKey) {
+        setCachedTransformAsync(
+          cacheKey,
+          ctx.code,
+          ctx.contentHash,
+          undefined,
+          bundleManifestId,
+          dependencyResolutionObservations,
+        )
+          .catch(
+            (error) => {
+              logger.debug("Failed to cache transform", { error });
+            },
+          );
+      }
 
       const totalMs = performance.now() - transformStart;
 
       if (ctx.debug) {
         logger.debug("Transform complete", formatTimingLog(ctx));
       }
+
+      ctx.onProgress?.({ phase: "pipeline:complete", filePath });
 
       return {
         code: ctx.code,
@@ -314,12 +442,32 @@ export async function transformToESM(
 ): Promise<string> {
   if (filePath.endsWith(".css") || filePath.endsWith(".json")) return source;
 
-  const enrichedOptions: TransformOptions = options.readFile
-    ? options
-    : { ...options, readFile: buildReadFile(adapter, projectDir) };
+  const importMapAdapter = options.importMapAdapter ??
+    (adapter ? adapter as RuntimeAdapter : undefined);
+  const enrichedOptions: TransformOptions = {
+    ...options,
+    ...(options.readFile ? {} : { readFile: buildReadFile(adapter, projectDir) }),
+    ...(importMapAdapter ? { importMapAdapter } : {}),
+  };
 
   const { code } = await runPipeline(source, filePath, projectDir, enrichedOptions);
   return code;
+}
+
+async function resolvePipelineImportMap(
+  projectDir: string,
+  options: TransformOptions,
+): Promise<ImportMapConfig> {
+  if (options.preloadedImportMap) return options.preloadedImportMap;
+  if (options.importMapAdapter) {
+    return await preloadImportMap(
+      projectDir,
+      options.importMapAdapter,
+      options.projectId,
+      options.importMapPreloadContext,
+    );
+  }
+  return await loadImportMap(projectDir);
 }
 
 /** Extract readFile from adapter if available, for dependency hash computation. */

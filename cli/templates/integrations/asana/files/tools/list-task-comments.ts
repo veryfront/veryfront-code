@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listTaskComments } from "../../lib/asana-client.ts";
+import { listTaskComments } from "../lib/asana-client.ts";
 
 export default tool({
-  id: "list-task-comments",
+  id: "asana-list-task-comments",
   description: "List comment stories for an Asana task.",
   inputSchema: defineSchema((v) => v.object({
     taskGid: v.string().describe("Asana task GID"),

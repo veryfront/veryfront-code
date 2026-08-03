@@ -1,5 +1,5 @@
 import { rendererLogger as logger } from "#veryfront/utils";
-import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
+import { ensureError, getErrorMessage, RENDER_ERROR } from "#veryfront/errors";
 import type * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, MdxBundle, MDXComponents, MDXModule, PageBundle } from "#veryfront/types";
@@ -8,8 +8,8 @@ import { clearMdxEsmCacheNamespace } from "#veryfront/transforms/mdx/esm-module-
 import { getProjectReact } from "#veryfront/react";
 import { flattenRouteParams } from "#veryfront/routing";
 import { compileContent } from "#veryfront/transforms/mdx/compiler/index.ts";
-import { ensureError, getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 
 interface MDXPageResult {
   pageElement: BundledReact.ReactElement;
@@ -31,6 +31,12 @@ interface StaleMdxEsmRecoveryOptions {
   pagePath: string;
 }
 
+// HEURISTIC: detect stale-cache ESM export mismatches by matching runtime
+// error messages. Both the "does not provide an export named" phrasing and the
+// "requested module / import" context check are taken from V8/Deno's wording.
+// If the runtime changes its error message, this detection stops firing and
+// the stale-cache recovery path becomes a dead code path — verify after
+// runtime upgrades.
 export function isMdxEsmExportMismatchError(error: unknown): boolean {
   const message = getErrorMessage(error);
   return /does not provide an export named/i.test(message) &&
@@ -142,6 +148,14 @@ export function handleMDXPage(
     studioEmbed?: boolean;
     /** Content source identifier for cache isolation (branch name or release ID) */
     contentSourceId?: string;
+    /** React version resolved for this project. */
+    reactVersion?: string;
+    /** Request-scoped dependency-pinning state used by transform caches. */
+    dependencyPinningCacheKey?: string;
+    /** Immutable package map paired with dependencyPinningCacheKey. */
+    dependencyPinningDependencies?: Readonly<Record<string, string>>;
+    /** Exact package source namespace paired with the immutable snapshot. */
+    dependencyPinningSource?: DependencyPinningSourceInput;
   },
 ): Promise<MDXPageResult> {
   return withSpan(
@@ -163,6 +177,11 @@ export function handleMDXPage(
           projectDir,
           options?.projectSlug,
           options?.contentSourceId,
+          options?.reactVersion,
+          options?.dependencyPinningCacheKey,
+          options?.dependencyPinningDependencies,
+          options?.dependencyPinningSource,
+          options?.url?.origin,
         )) as MDXModule;
 
         const MDXComp = mod.MDXContent || mod.default;
@@ -204,7 +223,7 @@ export function handleMDXPage(
         }
 
         // Get project's React for createElement to ensure element symbols match user components
-        const React = await getProjectReact();
+        const React = await getProjectReact(options?.reactVersion);
         const pageElement = React.createElement(
           MDXComp as BundledReact.ComponentType<{ components?: MDXComponents }>,
           { components: mergedComponents },

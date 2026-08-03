@@ -1,8 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryBackend } from "./memory.ts";
 import type { Checkpoint, PendingApproval, WorkflowQueueItem, WorkflowRun } from "../types.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+
+const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
 describe("MemoryBackend", () => {
   let backend: MemoryBackend;
@@ -20,6 +23,8 @@ describe("MemoryBackend", () => {
       pendingApprovals: [],
       createdAt: new Date(),
       ...overrides,
+      sourceIntegrationPolicy: overrides.sourceIntegrationPolicy ??
+        UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
     };
   }
 
@@ -48,6 +53,25 @@ describe("MemoryBackend", () => {
       assertEquals(retrieved.status, "pending");
     });
 
+    it("rejects a malformed source policy before persisting a run", async () => {
+      const run = createTestRun("run-malformed-policy", {
+        sourceIntegrationPolicy: {
+          schemaVersion: 1,
+          mode: "allowlist",
+          integrations: {
+            confluence: { allowedToolIds: ["get_page", "get_page"] },
+          },
+        },
+      });
+
+      await assertRejects(
+        () => backend.createRun(run),
+        Error,
+        "invalid source integration policy snapshot",
+      );
+      assertEquals(await backend.getRun(run.id), null);
+    });
+
     it("should return null for non-existent run", async () => {
       assertEquals(await backend.getRun("non-existent"), null);
     });
@@ -60,6 +84,58 @@ describe("MemoryBackend", () => {
       const updated = await backend.getRun("run-2");
       assertEquals(updated?.status, "running");
       assertExists(updated?.startedAt);
+    });
+
+    it("should conditionally update only the expected worker owner", async () => {
+      await backend.createRun(createTestRun("run-owned", {
+        status: "running",
+        workerId: "worker-new",
+      }));
+
+      assertEquals(
+        await backend.updateRunIfStatusAndWorker(
+          "run-owned",
+          ["running"],
+          "worker-old",
+          { status: "failed" },
+        ),
+        false,
+      );
+      assertEquals((await backend.getRun("run-owned"))?.status, "running");
+
+      assertEquals(
+        await backend.updateRunIfStatusAndWorker(
+          "run-owned",
+          ["running"],
+          "worker-new",
+          { status: "failed" },
+        ),
+        true,
+      );
+      assertEquals((await backend.getRun("run-owned"))?.status, "failed");
+    });
+
+    it("rejects attempts to mutate the source policy after run creation", async () => {
+      const run = createTestRun("run-immutable-policy");
+      await backend.createRun(run);
+      const unsafeUpdateRun = backend.updateRun.bind(backend) as (
+        runId: string,
+        patch: Record<string, unknown>,
+      ) => Promise<void>;
+
+      await assertRejects(
+        () =>
+          unsafeUpdateRun(run.id, {
+            sourceIntegrationPolicy: normalizeSourceIntegrationPolicy({ allow: {} }),
+          }),
+        Error,
+        "immutable",
+      );
+
+      assertEquals(
+        (await backend.getRun(run.id))?.sourceIntegrationPolicy,
+        run.sourceIntegrationPolicy,
+      );
     });
 
     it("should list runs with filters", async () => {
@@ -100,6 +176,38 @@ describe("MemoryBackend", () => {
 
     it("should return null for no checkpoints", async () => {
       assertEquals(await backend.getLatestCheckpoint("no-checkpoints"), null);
+    });
+
+    it("should condition checkpoint appends on the canonical run owner", async () => {
+      await backend.createRun(createTestRun("run-owned-checkpoint", {
+        status: "running",
+        workerId: "worker-new",
+      }));
+      const checkpoint = createCheckpoint("cp-owned", "step-owned", new Date());
+
+      assertEquals(
+        await backend.saveCheckpointIfStatusAndWorker(
+          "synthetic-child-run",
+          "run-owned-checkpoint",
+          ["running"],
+          "worker-old",
+          checkpoint,
+        ),
+        false,
+      );
+      assertEquals(await backend.getCheckpoints("synthetic-child-run"), []);
+
+      assertEquals(
+        await backend.saveCheckpointIfStatusAndWorker(
+          "synthetic-child-run",
+          "run-owned-checkpoint",
+          ["running"],
+          "worker-new",
+          checkpoint,
+        ),
+        true,
+      );
+      assertEquals((await backend.getCheckpoints("synthetic-child-run"))[0]?.id, "cp-owned");
     });
   });
 
@@ -144,6 +252,47 @@ describe("MemoryBackend", () => {
       assertEquals(updatedApproval?.status, "approved");
       assertEquals(updatedApproval?.decidedBy, "admin@example.com");
       assertEquals(updatedApproval?.comment, "Looks good!");
+    });
+
+    it("should condition approval appends on owner and patch notification metadata", async () => {
+      await backend.createRun(createTestRun("run-owned-approval", {
+        status: "waiting",
+        workerId: "worker-new",
+      }));
+      const approval: PendingApproval = {
+        id: "approval-owned",
+        nodeId: "review",
+        status: "pending",
+        message: "Review needed",
+        payload: {},
+        requestedAt: new Date(),
+      };
+
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          "run-owned-approval",
+          ["waiting"],
+          "worker-old",
+          approval,
+        ),
+        false,
+      );
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          "run-owned-approval",
+          ["waiting"],
+          "worker-new",
+          approval,
+        ),
+        true,
+      );
+      await backend.updatePendingApproval("run-owned-approval", approval.id, {
+        notificationError: "delivery failed",
+      });
+      assertEquals(
+        (await backend.getPendingApproval("run-owned-approval", approval.id))?.notificationError,
+        "delivery failed",
+      );
     });
   });
 
@@ -204,20 +353,35 @@ describe("MemoryBackend", () => {
 
   describe("Locking", () => {
     it("should acquire and release locks", async () => {
-      assertEquals(await backend.acquireLock("resource-1", 5000), true);
+      assertExists(await backend.acquireLock("resource-1", 5000));
       await backend.releaseLock("resource-1");
     });
 
     it("should prevent concurrent locks on same resource", async () => {
-      assertEquals(await backend.acquireLock("resource-2", 5000), true);
-      assertEquals(await backend.acquireLock("resource-2", 100), false);
+      assertExists(await backend.acquireLock("resource-2", 5000));
+      assertEquals(await backend.acquireLock("resource-2", 100), null);
       await backend.releaseLock("resource-2");
     });
 
     it("should allow lock after release", async () => {
-      assertEquals(await backend.acquireLock("resource-3", 5000), true);
+      assertExists(await backend.acquireLock("resource-3", 5000));
       await backend.releaseLock("resource-3");
-      assertEquals(await backend.acquireLock("resource-3", 5000), true);
+      assertExists(await backend.acquireLock("resource-3", 5000));
+    });
+
+    it("should reject stale lock tokens after a lease is reacquired", async () => {
+      const staleToken = await backend.acquireLock("resource-4", 0);
+      const currentToken = await backend.acquireLock("resource-4", 5000);
+      assertExists(staleToken);
+      assertExists(currentToken);
+
+      assertEquals(await backend.extendLock("resource-4", 5000, staleToken), false);
+      assertEquals(await backend.extendLock("resource-4", 5000, currentToken), true);
+
+      await backend.releaseLock("resource-4", staleToken);
+      assertEquals(await backend.isLocked("resource-4"), true);
+      await backend.releaseLock("resource-4", currentToken);
+      assertEquals(await backend.isLocked("resource-4"), false);
     });
   });
 

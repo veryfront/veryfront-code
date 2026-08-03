@@ -17,7 +17,6 @@ import {
   generateClientModule,
   generatePrefetchScript,
 } from "../../src/build/production-build/client-runtime.ts";
-import { CLIENT_STYLES } from "../../src/build/production-build/templates.ts";
 import { extractCandidates } from "../../src/html/styles-builder/candidate-extractor.ts";
 
 registerContract("Bundler", new EsbuildBundler());
@@ -32,6 +31,14 @@ const templatesPath = join(
   "production-build",
   "templates.ts",
 );
+const clientStylesPath = join(
+  projectRoot,
+  "src",
+  "build",
+  "production-build",
+  "templates",
+  "client-styles.css",
+);
 const candidatesPath = join(
   projectRoot,
   "src",
@@ -41,19 +48,64 @@ const candidatesPath = join(
   "framework-candidates.generated.ts",
 );
 
-async function writeFormattedTypeScriptFile(path: string, contents: string): Promise<void> {
-  await Deno.writeTextFile(path, contents);
-  const result = await new Deno.Command("deno", {
-    args: ["fmt", path],
-    stdout: "null",
+const checkMode = Deno.args.includes("--check");
+const staleFiles: string[] = [];
+
+/**
+ * Format through stdin rather than writing and formatting in place, so --check
+ * can compare against the same shape the write path lands on disk.
+ */
+async function formatTypeScript(source: string, path: string): Promise<string> {
+  const fmt = new Deno.Command("deno", {
+    args: ["fmt", "-", "--ext", "ts"],
+    stdin: "piped",
+    stdout: "piped",
     stderr: "piped",
-  }).output();
+  }).spawn();
+
+  const writer = fmt.stdin.getWriter();
+  await writer.write(new TextEncoder().encode(source));
+  await writer.close();
+
+  const result = await fmt.output();
   if (!result.success) {
     const errorOutput = new TextDecoder().decode(result.stderr).trim();
+    // This script generates two files; without the path the failure says
+    // nothing about which one to go and look at.
     throw new Error(
       `Failed to format generated file ${path}${errorOutput ? `: ${errorOutput}` : ""}`,
     );
   }
+  return new TextDecoder().decode(result.stdout);
+}
+
+/**
+ * Writes the generated file, or under --check reports whether the committed
+ * copy still matches. Stale files are collected rather than exited on, so one
+ * run tells you everything that needs regenerating.
+ */
+async function emitGeneratedFile(
+  path: string,
+  contents: string,
+  detail: string,
+): Promise<void> {
+  const formatted = await formatTypeScript(contents, path);
+
+  if (checkMode) {
+    const existing = await Deno.readTextFile(path).catch(() => null);
+    if (existing !== formatted) {
+      console.error(`${path} is stale. Run deno task generate.`);
+      staleFiles.push(path);
+      return;
+    }
+    console.log(`${path} is current.`);
+    console.log(`   ${detail}`);
+    return;
+  }
+
+  await Deno.writeTextFile(path, formatted);
+  console.log(`✅ Generated ${path}`);
+  console.log(`   ${detail}`);
 }
 
 console.log("[prebundle-client-scripts] Bundling client router...");
@@ -62,6 +114,11 @@ const routerBundle = await generateClientModule({ forceSourceBundle: true });
 console.log("[prebundle-client-scripts] Bundling client prefetch...");
 // deno-lint-ignore no-explicit-any
 const prefetchBundle = await generatePrefetchScript(null as any, { forceSourceBundle: true });
+
+const clientStyles = (await Deno.readTextFile(clientStylesPath)).trimEnd();
+if (clientStyles.trim().length === 0) {
+  throw new Error(`Client styles source is empty: ${clientStylesPath}`);
+}
 
 const output = `/**
  * Embedded templates for production builds
@@ -72,31 +129,39 @@ const output = `/**
  * @module
  */
 
-export const CLIENT_STYLES = ${JSON.stringify(CLIENT_STYLES)};
+export const CLIENT_STYLES = ${JSON.stringify(clientStyles)};
 
 export const CLIENT_ROUTER_BUNDLE: string | undefined = ${JSON.stringify(routerBundle)};
 
 export const CLIENT_PREFETCH_BUNDLE: string | undefined = ${JSON.stringify(prefetchBundle)};
 `;
 
-await writeFormattedTypeScriptFile(templatesPath, output);
-console.log(`[prebundle-client-scripts] Written to ${templatesPath}`);
+await emitGeneratedFile(templatesPath, output, "client router + prefetch bundles");
 
 // --- Extract framework component Tailwind candidates ---
 console.log("[prebundle-client-scripts] Extracting framework component candidates...");
 
 const FRAMEWORK_DIRS = [
+  join(projectRoot, "src", "react", "components", "ui"),
   join(projectRoot, "src", "react", "components", "chat"),
   join(projectRoot, "src", "react", "primitives"),
 ];
 const SOURCE_EXTS = new Set([".ts", ".tsx"]);
+
+/** Test files ship no runtime UI, so their symbols must not pollute the CSS
+ * candidate heuristic (e.g. `expectedRuntimeExports`, `assertEquals(...)`). */
+function isTestFile(name: string): boolean {
+  return /\.(test|spec)\.(ts|tsx)$/.test(name);
+}
 
 async function scanDir(dir: string, allCandidates: Set<string>): Promise<void> {
   for await (const entry of Deno.readDir(dir)) {
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory) {
       await scanDir(fullPath, allCandidates);
-    } else if (entry.isFile && SOURCE_EXTS.has(extname(entry.name))) {
+    } else if (
+      entry.isFile && SOURCE_EXTS.has(extname(entry.name)) && !isTestFile(entry.name)
+    ) {
       const content = await Deno.readTextFile(fullPath);
       for (const c of extractCandidates(content)) allCandidates.add(c);
     }
@@ -124,7 +189,12 @@ const candidatesOutput = `/**
 export const FRAMEWORK_CANDIDATES: readonly string[] = ${JSON.stringify(sorted, null, 2).replace(/\n\]$/, ",\n]")};
 `;
 
-await writeFormattedTypeScriptFile(candidatesPath, candidatesOutput);
-console.log(
-  `[prebundle-client-scripts] Extracted ${sorted.length} framework candidates to ${candidatesPath}`,
+await emitGeneratedFile(
+  candidatesPath,
+  candidatesOutput,
+  `${sorted.length} framework candidates`,
 );
+
+if (staleFiles.length > 0) {
+  Deno.exit(1);
+}

@@ -25,6 +25,28 @@ describe("rendering/rsc/server-renderer/prop-serializer", () => {
       });
     });
 
+    it("drops markup-breaking and event-handler prop names while preserving valid names", () => {
+      assertEquals(
+        serializeProps({
+          'x" http-equiv="refresh" content': "0;url=https://example.invalid",
+          onClick: "alert(1)",
+          ONLOAD: "alert(1)",
+          className: "safe",
+          htmlFor: "field",
+          "aria-label": "Field",
+          "data-test-id": "field",
+          "xlink:href": "#icon",
+        }),
+        {
+          className: "safe",
+          htmlFor: "field",
+          "aria-label": "Field",
+          "data-test-id": "field",
+          "xlink:href": "#icon",
+        },
+      );
+    });
+
     it("should skip symbol values", () => {
       assertEquals(serializeProps({ sym: Symbol("test"), text: "ok" }), {
         text: "ok",

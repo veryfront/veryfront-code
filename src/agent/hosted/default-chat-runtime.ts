@@ -4,6 +4,7 @@ import {
   type RemoteToolSource,
 } from "#veryfront/tool";
 import { runWithRequestContextAsync, serverLogger } from "#veryfront/utils";
+import { runWithRequestContext as runWithProjectRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import {
   resolveVeryfrontCloudModelId,
   resolveVeryfrontCloudModelThinking,
@@ -28,11 +29,17 @@ import type {
   HostedChatRuntimeCreationResult,
 } from "./chat-runtime-contract.ts";
 import {
+  getActiveHostedRunEventWriterCapability,
+  runWithHostedRunEventWriterCapability,
+} from "./child-run-event-writer-token.ts";
+import {
   type HostedChatRuntimeToolAssemblyResult,
+  type HostedHostToolPolicy,
   prepareHostedChatRuntimeToolAssembly,
   type PrepareHostedChatRuntimeToolAssemblyInput,
 } from "./chat-runtime-tool-assembly.ts";
 import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
+import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
 import {
   createHostedRuntimeStateResolver,
   type HostedRuntimeStateResolverContext,
@@ -43,7 +50,9 @@ import type {
   RuntimeAgentThinkingConfig,
 } from "../runtime/agent-definition.ts";
 import type { AgentConfig } from "../types.ts";
-import type { RuntimeRemoteToolConfig } from "../runtime/mcp-server-tool-sources.ts";
+import type { RuntimeToolFilterConfig } from "../runtime/runtime-tool-config.ts";
+import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import { runWithEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 
 /** Configuration used by default hosted chat runtime. */
 export type DefaultHostedChatRuntimeConfig = {
@@ -74,7 +83,10 @@ export type DefaultHostedChatRuntimeTaskContext = HostedRuntimeStateResolverCont
   runId?: string;
   agentId?: string;
   projectId: string;
+  projectSlug?: string;
   branchId: string | null;
+  runtimeTargetKind?: DefaultHostedChatRuntimeCreationOptions["runtimeTargetKind"];
+  runtimeTargetEnvironmentId?: string | null;
   model: string | undefined;
   clientProfile?: DefaultHostedChatRuntimeCreationOptions["clientProfile"];
   conversationId?: string;
@@ -82,6 +94,7 @@ export type DefaultHostedChatRuntimeTaskContext = HostedRuntimeStateResolverCont
   parentRunId?: string;
   parentMessageId?: string;
   availableSkillIds?: string[];
+  skillSelectorPolicy?: DefaultHostedChatRuntimeCreationOptions["skillSelectorPolicy"];
   /** Per-run skill id -> discovered SKILL.md source path (owner-aware catalog). */
   skillSourcePaths?: Readonly<Record<string, string>>;
   publishParentRunEvents?: DefaultHostedChatRuntimeCreationOptions["publishParentRunEvents"];
@@ -111,14 +124,21 @@ export type DefaultHostedChatRuntimeSteeringMutationInput = {
 /** Input payload for default hosted chat runtime project switch. */
 export type DefaultHostedChatRuntimeProjectSwitchInput = {
   projectId: string;
+  projectSlug?: string;
   taskContext: DefaultHostedChatRuntimeTaskContext;
 };
 
 /** Options accepted by create default hosted chat runtime. */
 export type CreateDefaultHostedChatRuntimeOptions = {
   options: DefaultHostedChatRuntimeCreationOptions;
+  /** Service-owned authorization ceiling applied to Framework host tools. */
+  hostToolPolicy?: HostedHostToolPolicy;
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   config: DefaultHostedChatRuntimeConfig;
-  buildLocalTools: (taskContext: DefaultHostedChatRuntimeTaskContext) => HostToolSet;
+  buildLocalTools: (
+    taskContext: DefaultHostedChatRuntimeTaskContext,
+  ) => HostToolSet | Promise<HostToolSet>;
+  cleanup?: () => Promise<void>;
   createTaskContext?: (
     input: CreateDefaultHostedChatRuntimeContextInput,
   ) => DefaultHostedChatRuntimeTaskContext;
@@ -147,7 +167,10 @@ function createDefaultTaskContext(
     runId: input.options.runId,
     agentId: input.options.agentId,
     projectId: input.options.projectId ?? "",
+    projectSlug: input.options.projectSlug,
     branchId: input.options.branchId ?? null,
+    runtimeTargetKind: input.options.runtimeTargetKind ?? null,
+    runtimeTargetEnvironmentId: input.options.runtimeTargetEnvironmentId ?? null,
     model: input.modelId,
     clientProfile: input.options.clientProfile,
     conversationId: input.options.conversationId,
@@ -155,6 +178,7 @@ function createDefaultTaskContext(
     parentRunId: input.options.parentRunId,
     parentMessageId: input.options.parentMessageId,
     availableSkillIds: input.options.availableSkillIds,
+    skillSelectorPolicy: input.options.skillSelectorPolicy,
     skillSourcePaths: input.options.skillSourcePaths,
     publishParentRunEvents: input.options.publishParentRunEvents,
     submittedFormInputResult: input.options.submittedFormInputResult,
@@ -170,21 +194,38 @@ async function buildToolAssembly(
     taskContext: DefaultHostedChatRuntimeTaskContext;
   },
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
+  const liveProjectSteering = input.options.liveProjectSteering;
   return prepareHostedChatRuntimeToolAssembly({
     taskContext: input.taskContext,
     instructions: input.options.instructions,
-    localTools: input.buildLocalTools(input.taskContext),
+    ...(liveProjectSteering === undefined ? {} : {
+      renderInstructions: (modelVisibleToolNames: readonly string[]) =>
+        buildVeryfrontCloudRuntimeInstructions({
+          agentConfig: liveProjectSteering.agent,
+          projectId: input.taskContext.projectId,
+          branchId: input.taskContext.branchId,
+          environmentContext: liveProjectSteering.environmentContext,
+          instructions: liveProjectSteering.initialProjectInstructions ?? "",
+          skills: liveProjectSteering.initialSkills ?? [],
+          availableToolNames: modelVisibleToolNames,
+        }),
+    }),
+    localTools: await input.buildLocalTools(input.taskContext),
+    hostToolPolicy: input.hostToolPolicy,
     apiUrl: input.config.apiUrl,
     apiMcpUrl: input.config.apiMcpUrl,
     studioMcpUrl: input.config.studioMcpUrl,
     mcpServers: input.config.mcpServers,
     conversationId: input.options.conversationId,
     allowedToolNames: input.options.allowedTools ?? null,
+    allowedProviderToolNames: input.options.allowedProviderTools,
+    includeRuntimeEssentialToolsWhenEmpty: input.options.includeRuntimeEssentialToolsWhenEmpty,
     sourceProviderToolNames: input.options.liveProjectSteering?.agent.providerTools,
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
     createRemoteToolSource: input.createRemoteToolSource,
     traceLocalTools: input.traceLocalTools,
     preloadLatestConversationUserText: input.preloadLatestConversationUserText,
+    sourceIntegrationPolicy: input.sourceIntegrationPolicy,
     prepareRemoteToolInput: ({ toolName, toolInput }) =>
       applyDefaultResearchArtifactPath(toolName, toolInput, input.taskContext),
     shouldRetryWithRemoteTool: ({ toolName, toolInput, error }) =>
@@ -200,9 +241,12 @@ async function buildToolAssembly(
         incrementSteeringRevision(input.taskContext);
       }
     },
-    onStudioProjectSwitch: async (projectId) => {
+    onStudioProjectSwitch: async (projectId, confirmedProject) => {
       const changed = await input.onStudioProjectSwitch?.({
         projectId,
+        ...(confirmedProject?.projectSlug === undefined
+          ? {}
+          : { projectSlug: confirmedProject.projectSlug }),
         taskContext: input.taskContext,
       });
       if (changed) {
@@ -217,6 +261,7 @@ function createRuntimeAgentConfig(input: {
   taskContext: DefaultHostedChatRuntimeTaskContext;
   toolAssembly: HostedChatRuntimeToolAssemblyResult;
   modelId: string;
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   refreshSystem?: CreateDefaultHostedChatRuntimeOptions["refreshSystem"];
 }): AgentConfig {
   const liveProjectSteering = input.options.liveProjectSteering;
@@ -237,14 +282,20 @@ function createRuntimeAgentConfig(input: {
     ]),
   );
 
-  const runtimeConfig: AgentConfig & RuntimeRemoteToolConfig = {
+  const runtimeConfig: RuntimeToolFilterConfig = {
     id: "veryfront-hosted-runtime",
     model: input.modelId,
     system: input.toolAssembly.systemInstructions,
     tools: runtimeTools,
+    __vfToolLoadingMode: input.toolAssembly.toolLoadingMode,
     providerTools: input.toolAssembly.providerToolNames,
     __vfRemoteToolSources: input.toolAssembly.remoteToolSources,
     __vfAllowedRemoteTools: input.toolAssembly.compatibleRemoteToolNames,
+    __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy,
+    __vfToolExposureCheckpoint: input.options.serverResolvedToolExposureCheckpoint,
+    __vfPersistToolExposureCheckpoint: input.options.persistToolExposureCheckpoint,
+    __vfToolExposureCheckpointPersistenceRequired:
+      input.options.requireToolExposureCheckpointPersistence === true,
     temperature: input.options.temperature,
     maxSteps: input.options.maxSteps ?? 50,
     resolveModelTransport: ({ resolvedModel }) => {
@@ -276,6 +327,7 @@ function createCloudContext(input: {
   return {
     apiBaseUrl: input.config.apiUrl,
     apiToken: input.options.authToken,
+    projectSlug: input.options.projectSlug,
     serviceLayer: "cloud",
   };
 }
@@ -295,13 +347,29 @@ function runWithDefaultHostedRequestContext<TResult>(
     }),
     requestId: crypto.randomUUID(),
     projectId: input.taskContext.projectId || undefined,
+    projectSlug: input.taskContext.projectSlug,
     userId: input.taskContext.userId,
     conversationId: input.taskContext.conversationId,
   };
 
   return runWithRequestContextAsync(
     requestContext,
-    () => runWithVeryfrontCloudContextAsync(input.cloudContext, input.operation),
+    () => {
+      const runWithCloudContext = () =>
+        runWithVeryfrontCloudContextAsync(input.cloudContext, input.operation);
+      if (!input.taskContext.projectSlug) {
+        return runWithCloudContext();
+      }
+      return runWithProjectRequestContext(
+        {
+          projectSlug: input.taskContext.projectSlug,
+          projectId: input.taskContext.projectId || undefined,
+          token: input.taskContext.authToken,
+          productionMode: false,
+        },
+        runWithCloudContext,
+      );
+    },
   );
 }
 
@@ -309,60 +377,84 @@ function runWithDefaultHostedRequestContext<TResult>(
 export async function createDefaultHostedChatRuntime(
   input: CreateDefaultHostedChatRuntimeOptions,
 ): Promise<HostedChatRuntimeCreationResult> {
-  const modelId = resolveVeryfrontCloudModelId(input.options.model);
-  const cloudContext = createCloudContext({
-    config: input.config,
-    options: input.options,
-  });
-  const taskContext = input.createTaskContext
-    ? input.createTaskContext({ options: input.options, modelId })
-    : createDefaultTaskContext({ options: input.options, modelId });
-  const cleanup = () => Promise.resolve();
+  const effectiveRunEventWriterCapability = getActiveHostedRunEventWriterCapability();
+  return await runWithEffectiveSourceIntegrationPolicy(
+    input.sourceIntegrationPolicy,
+    async () => {
+      const modelId = resolveVeryfrontCloudModelId(input.options.model);
+      const cloudContext = createCloudContext({
+        config: input.config,
+        options: input.options,
+      });
+      const taskContext = input.createTaskContext
+        ? input.createTaskContext({ options: input.options, modelId })
+        : createDefaultTaskContext({ options: input.options, modelId });
+      const cleanup = input.cleanup ?? (() => Promise.resolve());
 
-  try {
-    const toolAssembly = await buildToolAssembly({
-      ...input,
-      taskContext,
-    });
-    const runtimeAgentConfig = createRuntimeAgentConfig({
-      options: input.options,
-      taskContext,
-      toolAssembly,
-      modelId,
-      refreshSystem: input.refreshSystem,
-    });
-    const runtimeAgent = runWithVeryfrontCloudContext(
-      cloudContext,
-      () => agent(runtimeAgentConfig),
-    );
+      try {
+        const toolAssembly = await runWithHostedRunEventWriterCapability(
+          effectiveRunEventWriterCapability,
+          () => buildToolAssembly({ ...input, taskContext }),
+        );
+        const runtimeAgentConfig = createRuntimeAgentConfig({
+          options: input.options,
+          taskContext,
+          toolAssembly,
+          modelId,
+          sourceIntegrationPolicy: input.sourceIntegrationPolicy,
+          refreshSystem: input.refreshSystem,
+        });
+        const runtimeAgent = runWithVeryfrontCloudContext(
+          cloudContext,
+          () => agent(runtimeAgentConfig),
+        );
 
-    return {
-      runtimeKind: "framework",
-      modelId,
-      cleanup,
-      agent: createHostedChatRuntimeAgentAdapter({
-        runtimeAgent,
-        runId: taskContext.runId,
-        agentId: taskContext.agentId,
-        authToken: taskContext.authToken,
-        runStream: (operation) =>
-          runWithDefaultHostedRequestContext({
-            taskContext,
-            cloudContext,
-            operation,
+        return {
+          runtimeKind: "framework",
+          modelId,
+          cleanup,
+          agent: createHostedChatRuntimeAgentAdapter({
+            runtimeAgent,
+            sourceIntegrationPolicy: input.sourceIntegrationPolicy,
+            runId: taskContext.runId,
+            agentId: taskContext.agentId,
+            conversationId: taskContext.conversationId,
+            projectId: taskContext.projectId,
+            projectSlug: taskContext.projectSlug,
+            authToken: taskContext.authToken,
+            maxOutputTokens: input.options.maxOutputTokens,
+            resolveProjectContext: () => ({
+              ...(taskContext.projectId ? { projectId: taskContext.projectId } : {}),
+              ...(taskContext.projectSlug ? { projectSlug: taskContext.projectSlug } : {}),
+            }),
+            runStream: (operation) =>
+              runWithDefaultHostedRequestContext({
+                taskContext,
+                cloudContext,
+                operation,
+              }),
+            warnOrphanedToolInput: (message, metadata) => {
+              input.logger?.warn(message, {
+                ...metadata,
+                ...(taskContext.projectId ? { project_id: taskContext.projectId } : {}),
+                ...(taskContext.userId ? { user_id: taskContext.userId } : {}),
+                ...(taskContext.conversationId
+                  ? { conversation_id: taskContext.conversationId }
+                  : {}),
+              });
+            },
           }),
-        warnOrphanedToolInput: (message, metadata) => {
-          input.logger?.warn(message, {
-            ...metadata,
-            ...(taskContext.projectId ? { project_id: taskContext.projectId } : {}),
-            ...(taskContext.userId ? { user_id: taskContext.userId } : {}),
-            ...(taskContext.conversationId ? { conversation_id: taskContext.conversationId } : {}),
+        };
+      } catch (error) {
+        try {
+          await cleanup();
+        } catch (cleanupError) {
+          input.logger?.warn("Hosted chat runtime cleanup failed after setup error", {
+            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
           });
-        },
-      }),
-    };
-  } catch (error) {
-    await cleanup();
-    throw error;
-  }
+        }
+        throw error;
+      }
+    },
+  );
 }

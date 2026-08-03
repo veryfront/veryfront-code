@@ -1,4 +1,9 @@
-import type { TokenScope } from "./token-manager.ts";
+import type { TokenRequestOptions, TokenScope } from "./token-manager.ts";
+import { createAbortError } from "#veryfront/utils/abort.ts";
+import { OAuthTokenRequestError } from "./oauth-client.ts";
+
+const MAX_AUTH_COOKIE_HEADER_CODE_UNITS = 64 * 1024;
+const MAX_USER_TOKEN_CODE_UNITS = 64 * 1024;
 
 export interface ProxyTokenResolutionConfig {
   apiClientId: string;
@@ -11,6 +16,7 @@ export interface ProxyTokenManager {
     scope: TokenScope,
     projectSlug?: string,
     customDomain?: string,
+    options?: TokenRequestOptions,
   ): Promise<string>;
 }
 
@@ -18,7 +24,7 @@ export interface ProxyTokenResolutionLogger {
   debug: (msg: string, extra?: Record<string, unknown>) => void;
   info: (msg: string, extra?: Record<string, unknown>) => void;
   warn: (msg: string, extra?: Record<string, unknown>) => void;
-  error: (msg: string, error?: Error, extra?: Record<string, unknown>) => void;
+  error: (msg: string, error?: unknown, extra?: Record<string, unknown>) => void;
 }
 
 export interface ResolveProxyRequestTokenOptions {
@@ -32,6 +38,7 @@ export interface ResolveProxyRequestTokenOptions {
   logger?: ProxyTokenResolutionLogger;
   allowSignedInternalControlPlaneToken?: boolean;
   signedInternalControlPlaneRequest?: boolean;
+  tokenStrategy?: "preview-user-first" | "service-first";
   tokenFetchErrorMessage: string;
 }
 
@@ -43,15 +50,51 @@ export interface ResolvedProxyRequestToken {
 }
 
 export function extractUserToken(cookieHeader: string): string | undefined {
-  const match = cookieHeader.match(/(?:^|;\s*)authToken=([^;]+)/);
-  return match?.[1] ? decodeURIComponent(match[1]) : undefined;
+  if (
+    cookieHeader === "" ||
+    cookieHeader.length > MAX_AUTH_COOKIE_HEADER_CODE_UNITS
+  ) {
+    return undefined;
+  }
+  let token: string | undefined;
+  for (const part of cookieHeader.split(";")) {
+    const trimmed = part.trim();
+    const separatorIndex = trimmed.indexOf("=");
+    if (separatorIndex < 1) continue;
+    if (trimmed.slice(0, separatorIndex).trim() !== "authToken") continue;
+    if (token !== undefined) return undefined;
+
+    const encoded = trimmed.slice(separatorIndex + 1);
+    if (encoded === "") return undefined;
+    try {
+      const decoded = decodeURIComponent(encoded);
+      if (
+        decoded.length === 0 ||
+        decoded.length > MAX_USER_TOKEN_CODE_UNITS ||
+        /[^\u0021-\u007e]/u.test(decoded)
+      ) {
+        return undefined;
+      }
+      token = decoded;
+    } catch {
+      return undefined;
+    }
+  }
+  return token;
 }
 
-// Brittle on purpose: the API currently returns this text when token minting
-// cannot map a custom domain. Tracked in #2217 until a typed error code exists.
-export function isMissingCustomDomainProjectError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /project not found for domain/i.test(message);
+/**
+ * Token service deployments report an unknown project identity with either
+ * HTTP 400 (legacy) or HTTP 404. Classify that contract at the typed HTTP
+ * boundary without coupling the proxy to response prose.
+ */
+export function isMissingProxyProjectError(error: unknown): boolean {
+  try {
+    return error instanceof OAuthTokenRequestError &&
+      (error.status === 400 || error.status === 404);
+  } catch {
+    return false;
+  }
 }
 
 export async function resolveProxyRequestToken(
@@ -71,6 +114,8 @@ export async function resolveProxyRequestToken(
   const userToken = extractUserToken(req.headers.get("cookie") ?? "");
   const useSignedInternalControlPlaneToken = options.allowSignedInternalControlPlaneToken &&
     options.signedInternalControlPlaneRequest;
+  const tokenStrategy = options.tokenStrategy ?? "preview-user-first";
+  const useUserTokenForPreview = tokenStrategy === "preview-user-first";
 
   let token: string | undefined;
   let tokenSource: ResolvedProxyRequestToken["tokenSource"];
@@ -83,7 +128,7 @@ export async function resolveProxyRequestToken(
       pathname: url.pathname,
       scope,
     });
-  } else if (scope === "preview" && userToken) {
+  } else if (scope === "preview" && userToken && useUserTokenForPreview) {
     token = userToken;
     tokenSource = "user";
     logger?.debug("Using user auth token for preview");
@@ -93,12 +138,18 @@ export async function resolveProxyRequestToken(
     const customDomain = projectSlug ? undefined : host;
     if (projectSlug || customDomain) {
       try {
-        token = await tokenManager.getToken(scope, projectSlug, customDomain);
+        token = await tokenManager.getToken(
+          scope,
+          projectSlug,
+          customDomain,
+          { signal: req.signal },
+        );
         tokenSource = "service";
       } catch (error) {
+        if (req.signal.aborted) throw createAbortError(req.signal.reason);
         tokenFetchError = error;
-        if (!(customDomain && isMissingCustomDomainProjectError(error))) {
-          logger?.error(tokenFetchErrorMessage, error as Error, {
+        if (!isMissingProxyProjectError(error)) {
+          logger?.error(tokenFetchErrorMessage, error, {
             projectSlug,
             customDomain,
           });

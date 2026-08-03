@@ -1,8 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { buildUrl } from "./command.ts";
+import { parseCliArgs } from "#cli/shared/args";
+import { buildUrl, parseOpenArgs } from "./command.ts";
 import { createSuccessEnvelope } from "../../shared/json-output.ts";
+
+function assertSuccess<T extends { success: boolean; data?: unknown }>(
+  result: T,
+): asserts result is T & { success: true; data: NonNullable<T["data"]> } {
+  assertEquals(result.success, true);
+}
 
 describe("Open Command", () => {
   describe("buildUrl", () => {
@@ -29,7 +36,7 @@ describe("Open Command", () => {
       assertEquals(url, "https://veryfront.com/studio/my-app");
     });
 
-    it("uses project slug with --project-slug override", () => {
+    it("uses project slug with --project override", () => {
       const url = buildUrl("custom-slug", { studio: false });
       assertEquals(url, "https://veryfront.com/projects/custom-slug");
     });
@@ -42,6 +49,20 @@ describe("Open Command", () => {
       assertEquals(envelope.success, true);
       assertEquals(envelope.command, "open");
       assertEquals(envelope.data.url, "https://veryfront.com/projects/my-app");
+    });
+  });
+
+  describe("parseOpenArgs", () => {
+    it("parses -p as project slug from raw open argv", () => {
+      const result = parseOpenArgs(parseCliArgs(["open", "-p", "my-project"]));
+      assertSuccess(result);
+      assertEquals(result.data.projectSlug, "my-project");
+    });
+
+    it("keeps --project-slug as a compatibility alias", () => {
+      const result = parseOpenArgs(parseCliArgs(["open", "--project-slug", "my-project"]));
+      assertSuccess(result);
+      assertEquals(result.data.projectSlug, "my-project");
     });
   });
 });

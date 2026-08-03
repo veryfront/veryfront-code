@@ -7,7 +7,6 @@
 
 import { gmailConfig, OAuthService } from "veryfront/oauth";
 import { tokenStore } from "./token-store.ts";
-import type { OAuthToken } from "./token-store.ts";
 
 export type GmailMessageFormat = "full" | "metadata" | "minimal" | "raw";
 export type GmailThreadFormat = Exclude<GmailMessageFormat, "raw">;
@@ -203,30 +202,9 @@ export interface GmailClient {
   stopMailboxWatch(): Promise<void>;
 }
 
-// TokenStore adapter keyed by (serviceId, userId). All API calls must pass
-// the authenticated user's id. Never use a shared development user id
-// in production; that re-introduces VULN-AUTH-2.
-const tokenStoreAdapter = {
-  async getTokens(serviceId: string, userId: string): Promise<OAuthToken | null> {
-    return tokenStore.getToken(userId, serviceId);
-  },
-  async setTokens(
-    serviceId: string,
-    userId: string,
-    tokens: { accessToken: string; refreshToken?: string; expiresAt?: number },
-  ): Promise<void> {
-    await tokenStore.setToken(userId, serviceId, tokens);
-  },
-  async clearTokens(serviceId: string, userId: string): Promise<void> {
-    await tokenStore.revokeToken(userId, serviceId);
-  },
-  async setState(): Promise<void> {},
-  async consumeState(): Promise<null> {
-    return null;
-  },
-};
-
-const gmailService = new OAuthService(gmailConfig, tokenStoreAdapter);
+// Keep the full refresh-capable contract: OAuthService uses the store's
+// distributed lock and revisioned compare-and-set when access tokens expire.
+const gmailService = new OAuthService(gmailConfig, tokenStore);
 
 function formatAddresses(addresses: string | string[] | undefined): string {
   if (!addresses) return "";

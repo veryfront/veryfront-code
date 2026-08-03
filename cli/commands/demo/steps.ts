@@ -49,12 +49,12 @@ export const DEMO_STEPS: DemoStep[] = [
   },
   {
     id: "deploy",
-    title: "Deploy to Production",
+    title: "Create a Release and Deploy",
     description: [
-      "Deploy your app to Veryfront's global edge network with a single command.",
-      "No build step required - we handle that for you.",
+      "The demo pushed your source to main when it created the project.",
+      "Now create a release from that source and deploy it to production.",
     ],
-    command: "veryfront deploy",
+    command: "veryfront deploy --branch main --env production",
     hasAction: true,
   },
   {

@@ -4,16 +4,43 @@
  * Provides different ways to publish Claude Code events for streaming.
  */
 
-import { logger as baseLogger } from "#veryfront/utils";
 import type {
   ClaudeCodeEvent,
   ClaudeCodeEventHandler,
   ClaudeCodeEventPublisher,
   ClaudeCodeEventSubscriber,
 } from "./types.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { INVALID_ARGUMENT, ORCHESTRATION_ERROR } from "#veryfront/errors";
+import { ensureRedisRuntimeProvider } from "#veryfront/extensions/distributed/defaults.ts";
+import type {
+  RedisEventPublisherConfig,
+  RedisEventPublisherImplementation,
+} from "#veryfront/extensions/distributed/redis-runtime-provider.ts";
 
-const logger = baseLogger.component("redis-event-publisher");
+export type { RedisEventPublisherConfig };
+
+function dispatchDeliveries<T>(
+  groups: Iterable<Iterable<T>>,
+  dispatch: (value: T) => void | Promise<void>,
+): void | Promise<void> {
+  const pending: Promise<void>[] = [];
+  try {
+    for (const group of groups) {
+      for (const value of group) {
+        const delivery = dispatch(value);
+        if (delivery !== undefined) pending.push(delivery);
+      }
+    }
+  } catch (error) {
+    if (pending.length === 0) throw error;
+    // Once asynchronous delivery has started, aggregate a later synchronous
+    // failure so every admitted promise remains observed by the caller.
+    pending.push(Promise.reject(error));
+  }
+
+  if (pending.length === 1) return pending[0];
+  if (pending.length > 1) return Promise.all(pending).then(() => undefined);
+}
 
 // =============================================================================
 // In-Memory Publisher (for testing/single-process)
@@ -27,21 +54,12 @@ export class MemoryEventPublisher implements ClaudeCodeEventPublisher, ClaudeCod
   private handlers = new Map<string, Set<ClaudeCodeEventHandler>>();
   private globalHandlers = new Set<ClaudeCodeEventHandler>();
 
-  publish(event: ClaudeCodeEvent): void {
-    // Notify run-specific handlers
-    if (event.runId) {
-      const handlers = this.handlers.get(event.runId);
-      if (handlers) {
-        for (const handler of handlers) {
-          handler(event);
-        }
-      }
-    }
-
-    // Notify global handlers
-    for (const handler of this.globalHandlers) {
-      handler(event);
-    }
+  publish(event: ClaudeCodeEvent): void | Promise<void> {
+    const runHandlers = event.runId === undefined ? undefined : this.handlers.get(event.runId);
+    return dispatchDeliveries(
+      runHandlers === undefined ? [this.globalHandlers] : [runHandlers, this.globalHandlers],
+      (handler) => handler(event),
+    );
   }
 
   subscribe(runId: string, handler: ClaudeCodeEventHandler): Promise<() => void> {
@@ -68,139 +86,63 @@ export class MemoryEventPublisher implements ClaudeCodeEventPublisher, ClaudeCod
   }
 }
 
-// =============================================================================
-// Redis Publisher (for distributed deployments)
-// =============================================================================
-
-/**
- * Redis event publisher configuration
- */
-export interface RedisEventPublisherConfig {
-  /** Redis URL */
-  url: string;
-
-  /** Channel prefix (default: "claude-code") */
-  channelPrefix?: string;
-
-  /** Enable debug logging */
-  debug?: boolean;
-}
-
-/**
- * Redis-based event publisher for distributed streaming
- * Uses Redis Pub/Sub for real-time event delivery
- */
-/** Minimal structural type for a Redis Pub/Sub client */
-interface RedisClient {
-  connect(): Promise<void>;
-  publish(channel: string, message: string): Promise<number>;
-  subscribe(channel: string, listener: (message: string) => void): Promise<void>;
-  unsubscribe(channel: string): Promise<void>;
-  close(): Promise<void>;
-}
-
-/** Implement redis event publisher. */
+/** Redis-backed publisher whose implementation is supplied by the Redis extension. */
 export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCodeEventSubscriber {
-  private config: Required<RedisEventPublisherConfig>;
-  private publishClient: RedisClient | null = null;
-  private subscribeClient: RedisClient | null = null;
-  private initialized = false;
+  private readonly config: RedisEventPublisherConfig;
+  private implementation: RedisEventPublisherImplementation | null = null;
+  private initialization: Promise<RedisEventPublisherImplementation> | null = null;
+  private closePromise: Promise<void> | null = null;
 
   constructor(config: RedisEventPublisherConfig) {
-    this.config = {
-      channelPrefix: "claude-code",
-      debug: false,
-      ...config,
-    };
+    this.config = Object.freeze({ ...config });
   }
 
-  private async ensureInitialized(): Promise<void> {
-    if (this.initialized) return;
+  private async getImplementation(): Promise<RedisEventPublisherImplementation> {
+    if (this.closePromise) await this.closePromise;
+    if (this.implementation) return this.implementation;
+    if (this.initialization) return this.initialization;
 
-    // Dynamic import to avoid loading Redis if not used
-    const { createClient } = await import("redis");
-
-    this.publishClient = createClient({ url: this.config.url }) as unknown as RedisClient;
-    this.subscribeClient = createClient({ url: this.config.url }) as unknown as RedisClient;
-
-    await Promise.all([this.publishClient.connect(), this.subscribeClient.connect()]);
-
-    this.initialized = true;
-  }
-
-  private getChannel(runId: string): string {
-    return `${this.config.channelPrefix}:events:${runId}`;
-  }
-
-  private getPublishClient(): RedisClient {
-    if (!this.publishClient) {
-      throw new Error("Redis publish client not initialized");
-    }
-    return this.publishClient;
-  }
-
-  private getSubscribeClient(): RedisClient {
-    if (!this.subscribeClient) {
-      throw new Error("Redis subscribe client not initialized");
-    }
-    return this.subscribeClient;
+    const initialization = ensureRedisRuntimeProvider()
+      .then((provider) => provider.createEventPublisher(this.config))
+      .then((implementation) => {
+        this.implementation = implementation;
+        return implementation;
+      })
+      .finally(() => {
+        if (this.initialization === initialization) this.initialization = null;
+      });
+    this.initialization = initialization;
+    return initialization;
   }
 
   async publish(event: ClaudeCodeEvent): Promise<void> {
-    await this.ensureInitialized();
-
-    const channel = event.runId
-      ? this.getChannel(event.runId)
-      : `${this.config.channelPrefix}:events:global`;
-
-    const message = JSON.stringify(event);
-
-    await this.getPublishClient().publish(channel, message);
-
-    if (this.config.debug) {
-      logger.info("Published event", { channel, eventType: event.type });
-    }
+    await (await this.getImplementation()).publish(event);
   }
 
   async subscribe(runId: string, handler: ClaudeCodeEventHandler): Promise<() => void> {
-    await this.ensureInitialized();
-
-    const channel = this.getChannel(runId);
-    const subscribeClient = this.getSubscribeClient();
-
-    const listener = (message: string) => {
-      try {
-        const parsed: unknown = JSON.parse(message);
-        if (!parsed || typeof parsed !== "object") return;
-        const event = parsed as ClaudeCodeEvent;
-        handler(event);
-      } catch (error) {
-        logger.error("Failed to parse event", error);
-      }
-    };
-
-    await subscribeClient.subscribe(channel, listener);
-
-    if (this.config.debug) {
-      logger.info("Subscribed to channel", { channel });
-    }
-
-    return async () => {
-      await subscribeClient.unsubscribe(channel);
-    };
+    return await (await this.getImplementation()).subscribe(runId, handler);
   }
 
-  async close(): Promise<void> {
-    if (!this.initialized) return;
-
-    await Promise.all([
-      this.publishClient?.close(),
-      this.subscribeClient?.close(),
-    ]);
-
-    this.publishClient = null;
-    this.subscribeClient = null;
-    this.initialized = false;
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    const initialization = this.initialization;
+    const closing = (async () => {
+      let implementation = this.implementation;
+      if (!implementation && initialization) {
+        try {
+          implementation = await initialization;
+        } catch {
+          return;
+        }
+      }
+      if (!implementation) return;
+      await implementation.close();
+      if (this.implementation === implementation) this.implementation = null;
+    })().finally(() => {
+      if (this.closePromise === closing) this.closePromise = null;
+    });
+    this.closePromise = closing;
+    return closing;
   }
 }
 
@@ -215,36 +157,75 @@ export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCode
 export class SSEEventPublisher implements ClaudeCodeEventPublisher {
   private encoder = new TextEncoder();
   private controller: ReadableStreamDefaultController<Uint8Array> | null = null;
-  private closed = false;
+  private state: "idle" | "open" | "closed" = "idle";
 
   /**
    * Create an SSE publisher with an associated ReadableStream
    */
   createStream(): ReadableStream<Uint8Array> {
-    return new ReadableStream({
-      start: (controller) => {
-        this.controller = controller;
-      },
-      cancel: () => {
-        this.closed = true;
-        this.controller = null;
-      },
-    });
+    if (this.state === "closed") {
+      throw ORCHESTRATION_ERROR.create({ detail: "SSE event publisher is closed" });
+    }
+    if (this.state === "open") {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "SSE event publisher already has a stream",
+      });
+    }
+
+    this.state = "open";
+    try {
+      return new ReadableStream({
+        start: (controller) => {
+          this.controller = controller;
+        },
+        cancel: () => {
+          this.state = "closed";
+          this.controller = null;
+        },
+      });
+    } catch (error) {
+      this.state = "closed";
+      this.controller = null;
+      throw error;
+    }
   }
 
   publish(event: ClaudeCodeEvent): void {
-    if (this.closed || !this.controller) return;
+    if (this.state === "closed") {
+      throw ORCHESTRATION_ERROR.create({ detail: "SSE event publisher is closed" });
+    }
+    if (this.state === "idle") {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "SSE event publisher does not have a stream",
+      });
+    }
+    const controller = this.controller;
+    if (controller === null) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "SSE event publisher has no active stream controller",
+      });
+    }
 
     const data = `data: ${JSON.stringify(event)}\n\n`;
-    this.controller.enqueue(this.encoder.encode(data));
+    controller.enqueue(this.encoder.encode(data));
   }
 
   close(): void {
-    if (this.closed || !this.controller) return;
+    if (this.state === "closed") return;
+    if (this.state === "idle") {
+      this.state = "closed";
+      return;
+    }
 
-    this.closed = true;
-    this.controller.close();
+    const controller = this.controller;
+    this.state = "closed";
     this.controller = null;
+    if (controller === null) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "SSE event publisher has no active stream controller",
+      });
+    }
+    controller.close();
   }
 }
 
@@ -259,8 +240,8 @@ export class SSEEventPublisher implements ClaudeCodeEventPublisher {
 export class CallbackEventPublisher implements ClaudeCodeEventPublisher {
   constructor(private callback: ClaudeCodeEventHandler) {}
 
-  publish(event: ClaudeCodeEvent): void {
-    this.callback(event);
+  publish(event: ClaudeCodeEvent): void | Promise<void> {
+    return this.callback(event);
   }
 
   close(): void {
@@ -283,11 +264,17 @@ export class MultiEventPublisher implements ClaudeCodeEventPublisher {
   }
 
   async publish(event: ClaudeCodeEvent): Promise<void> {
-    await Promise.all(this.publishers.map((p) => p.publish(event)));
+    await dispatchDeliveries<ClaudeCodeEventPublisher>(
+      [this.publishers],
+      (publisher) => publisher.publish(event),
+    );
   }
 
   async close(): Promise<void> {
-    await Promise.all(this.publishers.map((p) => p.close()));
+    await dispatchDeliveries<ClaudeCodeEventPublisher>(
+      [this.publishers],
+      (publisher) => publisher.close(),
+    );
   }
 
   addPublisher(publisher: ClaudeCodeEventPublisher): void {

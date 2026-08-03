@@ -10,11 +10,13 @@ import type { InferSchema } from "veryfront/extensions/schema";
 import { join } from "veryfront/platform/path";
 import { createFileSystem, cwd, getEnv } from "veryfront/platform";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
+import { getEnvSource } from "veryfront/utils/env-loader";
 import { cliLogger, VERSION } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
 import { resolveCliApiUrl } from "./constants.ts";
-import { isRetryableConnectionError } from "../../src/proxy/retry.ts";
+import { readProjectLinkForControlPlane } from "./project-link.ts";
+import { isConnectionRefusedError, isRetryableConnectionError } from "../../src/proxy/retry.ts";
 
 // Delays for exponential backoff with jitter: attempt 1 = ~300ms, 2 = ~1s, 3 = ~3s
 const API_RETRY_DELAYS_MS = [300, 1000, 3000] as const;
@@ -25,11 +27,18 @@ function isTransientStatus(status: number): boolean {
   return status === 502 || status === 503 || status === 504;
 }
 
-/** Returns true when the connection error is a refused connection (request never reached server). */
-function isConnectionRefused(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const msg = error.message.toLowerCase();
-  return msg.includes("connection refused") || msg.includes("os error 111");
+/**
+ * Classify failures from an idempotent API read conservatively.
+ *
+ * A structured HTTP status is authoritative: authentication, validation, and
+ * other client failures must not become retryable merely because an attached
+ * cause resembles a connection error.
+ */
+export function isRetryableApiReadError(error: unknown): boolean {
+  const status = typeof error === "object" && error !== null
+    ? (error as { status?: unknown }).status
+    : undefined;
+  return typeof status === "number" ? isTransientStatus(status) : isRetryableConnectionError(error);
 }
 
 /** Sleep for `ms` milliseconds plus a random jitter up to 20% of `ms`. */
@@ -54,16 +63,50 @@ export const getResolvedConfigSchema = defineSchema((v) =>
   v.object({
     apiUrl: v.string(),
     apiToken: v.string(),
+    apiTokenSource: v.enum(["env", "env-file", "config-file", "token-store"]).optional(),
     projectSlug: v.string(),
+    projectId: v.string().optional(),
   })
 );
 export const ResolvedConfigSchema = lazySchema(getResolvedConfigSchema);
 export type ResolvedConfig = InferSchema<ReturnType<typeof getResolvedConfigSchema>>;
+type ApiTokenSource = NonNullable<ResolvedConfig["apiTokenSource"]>;
 
-export async function readConfigFile(projectDir: string): Promise<VeryfrontConfig | null> {
+interface ConfigFileResolution {
+  config: VeryfrontConfig | null;
+  jsonProjectSlug?: string;
+  moduleProjectSlug?: string;
+  moduleProjectSlugFile?: string;
+}
+
+export type ProjectReferenceSource =
+  | { kind: "argument"; name: "--project" }
+  | { kind: "environment"; name: "environment configuration" }
+  | { kind: "module-config"; name: string }
+  | { kind: "json-config"; name: "veryfront.json" }
+  | { kind: "tenant-environment"; name: string }
+  | { kind: "local-link"; name: ".veryfront/project.json" }
+  | { kind: "inferred"; name: "project files" };
+
+export interface ResolvedConfigDetails {
+  config: ResolvedConfig;
+  projectReferenceSource: ProjectReferenceSource;
+}
+
+export const ENVIRONMENT_PROJECT_REFERENCE_NAMES = [
+  "VERYFRONT_PROJECT_SLUG",
+  "TENANT_PROJECT_SLUG",
+  "VERYFRONT_PROJECT_ID",
+  "TENANT_PROJECT_ID",
+] as const;
+
+export type EnvironmentProjectReferenceName = typeof ENVIRONMENT_PROJECT_REFERENCE_NAMES[number];
+
+async function readConfigFileResolution(projectDir: string): Promise<ConfigFileResolution> {
   const fs = createFileSystem();
 
   let moduleProjectSlug: string | undefined;
+  let moduleProjectSlugFile: string | undefined;
   for (const ext of [".ts", ".js"]) {
     const configPath = join(projectDir, `veryfront.config${ext}`);
 
@@ -75,6 +118,7 @@ export async function readConfigFile(projectDir: string): Promise<VeryfrontConfi
 
       if (config?.projectSlug) {
         moduleProjectSlug = config.projectSlug;
+        moduleProjectSlugFile = `veryfront.config${ext}`;
         break;
       }
     } catch (error) {
@@ -98,11 +142,20 @@ export async function readConfigFile(projectDir: string): Promise<VeryfrontConfi
     cliLogger.debug(`Failed to read veryfront.json:`, error);
   }
 
-  if (!moduleProjectSlug && !jsonConfig) return null;
-  return {
+  const config = !moduleProjectSlug && !jsonConfig ? null : {
     ...jsonConfig,
     ...(moduleProjectSlug ? { projectSlug: moduleProjectSlug } : {}),
   };
+  return {
+    config,
+    jsonProjectSlug: jsonConfig?.projectSlug,
+    moduleProjectSlug,
+    moduleProjectSlugFile,
+  };
+}
+
+export async function readConfigFile(projectDir: string): Promise<VeryfrontConfig | null> {
+  return (await readConfigFileResolution(projectDir)).config;
 }
 
 export async function writeProjectSlug(projectDir: string, slug: string): Promise<void> {
@@ -143,30 +196,72 @@ async function inferProjectSlug(projectDir: string): Promise<string | null> {
   return dirName ? slugify(dirName) : null;
 }
 
-function resolveTenantProjectReference(): string | undefined {
-  return getEnv("VERYFRONT_PROJECT_SLUG") ||
-    getEnv("TENANT_PROJECT_SLUG") ||
-    getEnv("VERYFRONT_PROJECT_ID") ||
-    getEnv("TENANT_PROJECT_ID") ||
-    undefined;
+export function resolveEnvironmentProjectReference():
+  | { reference: string; name: EnvironmentProjectReferenceName }
+  | undefined {
+  for (const name of ENVIRONMENT_PROJECT_REFERENCE_NAMES) {
+    const reference = getEnv(name);
+    if (reference) return { reference, name };
+  }
+  return undefined;
+}
+
+async function resolveApiTokenForMode(
+  env: EnvironmentConfig,
+  configFile: VeryfrontConfig | null,
+  interactive: boolean,
+): Promise<{ apiToken: string | null; apiTokenSource?: ApiTokenSource }> {
+  const envToken = env.apiToken;
+  const envSource = envToken ? getEnvSource("VERYFRONT_API_TOKEN") : { source: "unset" as const };
+  const storedToken = await readToken(env);
+
+  if (envToken && envSource.source !== "env-file") {
+    return {
+      apiToken: envToken,
+      apiTokenSource: "env",
+    };
+  }
+
+  if (configFile?.apiToken) {
+    return { apiToken: configFile.apiToken, apiTokenSource: "config-file" };
+  }
+
+  if (interactive && envToken && envSource.source === "env-file" && storedToken) {
+    return { apiToken: storedToken, apiTokenSource: "token-store" };
+  }
+
+  if (envToken) {
+    return {
+      apiToken: envToken,
+      apiTokenSource: envSource.source === "env-file" ? "env-file" : "env",
+    };
+  }
+
+  if (storedToken) {
+    return { apiToken: storedToken, apiTokenSource: "token-store" };
+  }
+
+  return { apiToken: null };
 }
 
 async function resolveConfigBase(
   projectDir: string | undefined,
   env: EnvironmentConfig,
   interactive: boolean,
-): Promise<ResolvedConfig> {
+): Promise<ResolvedConfigDetails> {
   const dir = projectDir ?? cwd();
-  const configFile = await readConfigFile(dir);
+  const configFileResolution = await readConfigFileResolution(dir);
+  const configFile = configFileResolution.config;
 
   const apiUrl = resolveCliApiUrl(env, configFile?.apiUrl);
 
-  let apiToken = env.apiToken ?? configFile?.apiToken ?? (await readToken(env));
+  let { apiToken, apiTokenSource } = await resolveApiTokenForMode(env, configFile, interactive);
 
   if (!apiToken && interactive) {
     const userInfo = await ensureAuthenticated(env);
     if (!userInfo) throw new Error("Authentication required for this operation.");
     apiToken = (await readToken(env)) ?? null;
+    apiTokenSource = apiToken ? "token-store" : undefined;
     if (!apiToken) throw new Error("Authentication failed. Please try again.");
   }
 
@@ -176,22 +271,65 @@ async function resolveConfigBase(
     );
   }
 
-  const projectSlug = env.projectSlug ??
-    configFile?.projectSlug ??
-    resolveTenantProjectReference() ??
-    (await inferProjectSlug(dir));
+  let projectSlug: string | null | undefined;
+  let projectId: string | undefined;
+  let projectReferenceSource: ProjectReferenceSource;
+  if (env.projectSlug !== undefined) {
+    projectSlug = env.projectSlug;
+    projectReferenceSource = { kind: "environment", name: "environment configuration" };
+  } else if (configFileResolution.moduleProjectSlug !== undefined) {
+    projectSlug = configFileResolution.moduleProjectSlug;
+    projectReferenceSource = {
+      kind: "module-config",
+      name: configFileResolution.moduleProjectSlugFile ?? "veryfront.config.ts",
+    };
+  } else if (configFileResolution.jsonProjectSlug !== undefined) {
+    projectSlug = configFileResolution.jsonProjectSlug;
+    projectReferenceSource = { kind: "json-config", name: "veryfront.json" };
+  } else {
+    const tenantReference = resolveEnvironmentProjectReference();
+    if (tenantReference) {
+      projectSlug = tenantReference.reference;
+      if (
+        tenantReference.name === "VERYFRONT_PROJECT_ID" ||
+        tenantReference.name === "TENANT_PROJECT_ID"
+      ) {
+        projectId = tenantReference.reference;
+      }
+      projectReferenceSource = { kind: "tenant-environment", name: tenantReference.name };
+    } else {
+      const projectLink = await readProjectLinkForControlPlane(dir, apiUrl);
+      if (projectLink) {
+        projectSlug = projectLink.projectSlug;
+        projectId = projectLink.projectId;
+        projectReferenceSource = { kind: "local-link", name: ".veryfront/project.json" };
+      } else {
+        projectSlug = await inferProjectSlug(dir);
+        projectReferenceSource = { kind: "inferred", name: "project files" };
+      }
+    }
+  }
   if (!projectSlug) {
     throw new Error(
       "Could not determine project reference. Set VERYFRONT_PROJECT_SLUG, TENANT_PROJECT_SLUG, VERYFRONT_PROJECT_ID, or add projectSlug to veryfront.config.ts",
     );
   }
 
-  return { apiUrl, apiToken, projectSlug };
+  return {
+    config: {
+      apiUrl,
+      apiToken,
+      ...(apiTokenSource ? { apiTokenSource } : {}),
+      projectSlug,
+      ...(projectId ? { projectId } : {}),
+    },
+    projectReferenceSource,
+  };
 }
 
 function createConfigResolver(interactive: boolean) {
-  return (projectDir?: string, env?: EnvironmentConfig): Promise<ResolvedConfig> =>
-    resolveConfigByMode(projectDir, env, interactive);
+  return async (projectDir?: string, env?: EnvironmentConfig): Promise<ResolvedConfig> =>
+    (await resolveConfigByMode(projectDir, env, interactive)).config;
 }
 
 export const resolveConfig = createConfigResolver(false);
@@ -204,16 +342,34 @@ export const resolveConfig = createConfigResolver(false);
  */
 export const resolveConfigWithAuth = createConfigResolver(true);
 
+export function resolveConfigWithAuthDetails(
+  projectDir?: string,
+  env?: EnvironmentConfig,
+): Promise<ResolvedConfigDetails> {
+  return resolveConfigByMode(projectDir, env, true);
+}
+
 function resolveConfigByMode(
   projectDir: string | undefined,
   env: EnvironmentConfig | undefined,
   interactive: boolean,
-): Promise<ResolvedConfig> {
+): Promise<ResolvedConfigDetails> {
   return resolveConfigBase(projectDir, env ?? getEnvironmentConfig(), interactive);
 }
 
+export interface ApiReadOptions {
+  /** Abort the in-flight HTTP request when this signal fires. */
+  signal?: AbortSignal;
+  /** Use `none` when a higher-level polling loop owns retry timing. */
+  retryPolicy?: "default" | "none";
+}
+
 export interface ApiClient {
-  get<T>(path: string, params?: Record<string, string>): Promise<T>;
+  get<T>(
+    path: string,
+    params?: Record<string, string>,
+    options?: ApiReadOptions,
+  ): Promise<T>;
   post<T>(path: string, body?: unknown): Promise<T>;
   put<T>(path: string, body?: unknown): Promise<T>;
   patch<T>(path: string, body?: unknown): Promise<T>;
@@ -222,24 +378,42 @@ export interface ApiClient {
 
 export const getApiErrorSchema = defineSchema((v) =>
   v.object({
-    error: v.string(),
+    error: v.string().optional(),
     message: v.string().optional(),
+    detail: v.string().optional(),
+    title: v.string().optional(),
+    suggestion: v.string().optional(),
     code: v.string().optional(),
+    slug: v.string().optional(),
   })
 );
 export const ApiErrorSchema = lazySchema(getApiErrorSchema);
 export type ApiError = InferSchema<ReturnType<typeof getApiErrorSchema>>;
 
+export function formatApiError(data: ApiError, fallback: string): string {
+  const message = data.message || data.detail || data.error || data.title || fallback;
+  return data.suggestion ? `${message.replace(/[.?!]+$/, "")}. ${data.suggestion}` : message;
+}
+
 export function createApiClient(config: ResolvedConfig): ApiClient {
   const { apiUrl, apiToken } = config;
+
+  function addTokenSourceHint(message: string, status: number): string {
+    if (config.apiTokenSource !== "env-file") return message;
+    if (status !== 401 && status !== 403 && status !== 404) return message;
+
+    return `${message}. VERYFRONT_API_TOKEN was loaded from a project .env file. For management commands, run 'veryfront login' and remove or rename the project runtime token, or pass a management token explicitly in the shell.`;
+  }
 
   async function requestOnce<T>(
     method: string,
     url: string,
     body?: unknown,
+    signal?: AbortSignal,
   ): Promise<T> {
     const response = await fetch(url, {
       method,
+      ...(signal ? { signal } : {}),
       headers: {
         Authorization: `Bearer ${apiToken}`,
         "Content-Type": "application/json",
@@ -255,12 +429,13 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
       try {
         const parsed = ApiErrorSchema.safeParse(await response.json());
         if (parsed.success) {
-          errorMessage = parsed.data.message || parsed.data.error || errorMessage;
+          errorMessage = formatApiError(parsed.data, errorMessage);
         }
       } catch {
         // Keep default error message if JSON parsing fails
       }
 
+      errorMessage = addTokenSourceHint(errorMessage, response.status);
       const err = new Error(errorMessage) as Error & { status: number };
       err.status = response.status;
       throw err;
@@ -273,7 +448,7 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
 
   /** Returns true for request methods that are safe to retry on any transient failure. */
   function isIdempotent(method: string): boolean {
-    return method === "GET" || method === "HEAD";
+    return method === "GET" || method === "HEAD" || method === "PUT";
   }
 
   async function request<T>(
@@ -281,6 +456,7 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
     path: string,
     body?: unknown,
     params?: Record<string, string>,
+    options: ApiReadOptions = {},
   ): Promise<T> {
     const url = new URL(`${apiUrl}${path}`);
 
@@ -290,26 +466,21 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
 
     const urlStr = url.toString();
     let lastError: unknown;
+    const maxAttempts = options.retryPolicy === "none" ? 1 : API_MAX_RETRIES;
 
-    for (let attempt = 0; attempt < API_MAX_RETRIES; attempt++) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
-        return await requestOnce<T>(method, urlStr, body);
+        return await requestOnce<T>(method, urlStr, body, options.signal);
       } catch (error) {
         lastError = error;
 
-        const status = (error as { status?: number }).status;
-        const isTransient = status !== undefined
-          ? isTransientStatus(status)
-          : isRetryableConnectionError(error);
-        const isRefused = isConnectionRefused(error);
+        const isRefused = isConnectionRefusedError(error);
 
-        // Idempotent: retry on transient HTTP status or any retryable connection error.
+        // Idempotent: retry on transient HTTP status or status-less retryable connection errors.
         // Non-idempotent: retry only on connection-refused (request never reached server).
-        const shouldRetry = isIdempotent(method)
-          ? (isTransient || isRetryableConnectionError(error))
-          : isRefused;
+        const shouldRetry = isIdempotent(method) ? isRetryableApiReadError(error) : isRefused;
 
-        if (!shouldRetry || attempt >= API_MAX_RETRIES - 1) {
+        if (!shouldRetry || attempt >= maxAttempts - 1) {
           throw error;
         }
 
@@ -325,8 +496,12 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
   }
 
   return {
-    get<T>(path: string, params?: Record<string, string>): Promise<T> {
-      return request<T>("GET", path, undefined, params);
+    get<T>(
+      path: string,
+      params?: Record<string, string>,
+      options?: ApiReadOptions,
+    ): Promise<T> {
+      return request<T>("GET", path, undefined, params, options);
     },
     post<T>(path: string, body?: unknown): Promise<T> {
       return request<T>("POST", path, body);

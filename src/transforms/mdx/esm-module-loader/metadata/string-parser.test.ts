@@ -62,6 +62,32 @@ describe("transforms/mdx/esm-module-loader/metadata/string-parser", () => {
     it("returns empty for empty source", () => {
       assertEquals(extractBalancedBlock("", 0, "{"), "");
     });
+
+    it("handles template literals — } inside ${} does not terminate block early", () => {
+      // A `}` inside `${}` in a template literal must not be counted as the
+      // closing brace of the outer object block.
+      const source = "{ key: `value ${expr} end` }";
+      const result = extractBalancedBlock(source, 0, "{");
+      assertEquals(result, "{ key: `value ${expr} end` }");
+    });
+
+    it("handles template literal with closing brace inside expression", () => {
+      const source = "{ a: `${obj.key}`, b: 2 }";
+      const result = extractBalancedBlock(source, 0, "{");
+      assertEquals(result, "{ a: `${obj.key}`, b: 2 }");
+    });
+
+    it("handles nested objects inside arrays", () => {
+      const source = "[{text:'a'},{text:'b'}]";
+      const result = extractBalancedBlock(source, 0, "[");
+      assertEquals(result, "[{text:'a'},{text:'b'}]");
+    });
+
+    it("handles nested arrays inside arrays", () => {
+      const source = "[[1, 2], [3, 4]]";
+      const result = extractBalancedBlock(source, 0, "[");
+      assertEquals(result, "[[1, 2], [3, 4]]");
+    });
   });
 
   describe("cleanModuleCode", () => {
@@ -70,6 +96,36 @@ describe("transforms/mdx/esm-module-loader/metadata/string-parser", () => {
       const result = cleanModuleCode(code);
       assertEquals(result.includes("import"), false);
       assertEquals(result.includes("const x = foo()"), true);
+    });
+
+    it("removes multiline destructured imports", () => {
+      const code = `import {\n  Foo,\n  Bar\n} from "mod";\nconst x = 1;`;
+      const result = cleanModuleCode(code);
+      assertEquals(result.includes("import"), false);
+      assertEquals(result.includes("Foo"), false);
+      assertEquals(result.includes("Bar"), false);
+      assertEquals(result.includes("const x = 1"), true);
+    });
+
+    it("removes multiple imports including multiline", () => {
+      const code = [
+        `import { A } from "modA";`,
+        `import {`,
+        `  B,`,
+        `  C`,
+        `} from "modBC";`,
+        `const x = A + B + C;`,
+      ].join("\n");
+      const result = cleanModuleCode(code);
+      assertEquals(result.includes("import"), false);
+      assertEquals(result.includes("const x"), true);
+    });
+
+    it("removes side-effect-only imports", () => {
+      const code = `import "side-effect";\nconst x = 1;`;
+      const result = cleanModuleCode(code);
+      assertEquals(result.includes("import"), false);
+      assertEquals(result.includes("const x = 1"), true);
     });
 
     it("removes export { } blocks", () => {

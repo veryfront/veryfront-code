@@ -10,6 +10,14 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { SSRModuleLoader } from "./ssr-module-loader/index.ts";
 import { extractComponent } from "./extract-component.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { resolveDependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { TransformedModuleCoordinator } from "./transformed-module-coordinator.ts";
+
+const transformedModuleFileSystem = createFileSystem();
+const transformedModuleCoordinator = new TransformedModuleCoordinator(
+  transformedModuleFileSystem,
+);
 
 export async function loadModuleFromSource(
   source: string,
@@ -26,6 +34,16 @@ export async function loadModuleFromSource(
   return await withSpan(
     "modules.react.loadComponentFromSource",
     async () => {
+      const dependencyPinningSource = options?.dependencyPinningSource ?? projectDir;
+      const dependencySnapshot = await resolveDependencyPinningSnapshot(
+        dependencyPinningSource,
+        options?.dependencyPinningCacheKey,
+        options?.dependencyPinningDependencies,
+      );
+      const moduleServerOrigin = dependencySnapshot.cacheKey.startsWith("on:")
+        ? options?.moduleServerOrigin
+        : undefined;
+
       if (ssr) {
         const loader = new SSRModuleLoader({
           projectDir,
@@ -35,6 +53,10 @@ export async function loadModuleFromSource(
           dev,
           contentSourceId: options?.contentSourceId,
           reactVersion: options?.reactVersion,
+          moduleServerOrigin,
+          dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+          dependencyPinningDependencies: dependencySnapshot.dependencies,
+          dependencyPinningSource,
           mode: options?.mode,
         });
 
@@ -45,9 +67,13 @@ export async function loadModuleFromSource(
         projectId,
         dev,
         moduleServerUrl: options?.moduleServerUrl ?? "/_vf_modules",
+        moduleServerOrigin,
         vendorBundleHash: options?.vendorBundleHash,
         ssr: false,
         reactVersion: options?.reactVersion,
+        dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+        dependencyPinningDependencies: dependencySnapshot.dependencies,
+        dependencyPinningSource,
       };
 
       const transformedCode = await transformToESM(
@@ -63,11 +89,13 @@ export async function loadModuleFromSource(
       const componentFile = join(tmpDir, normalizeModulePath(relativeFilePath));
 
       const componentDir = componentFile.substring(0, componentFile.lastIndexOf("/"));
-      const fs = createFileSystem();
-      await fs.mkdir(componentDir, { recursive: true });
-      await fs.writeTextFile(componentFile, transformedCode);
-
-      return await import(`file://${componentFile}?t=${Date.now()}`);
+      await transformedModuleFileSystem.mkdir(componentDir, { recursive: true });
+      return await transformedModuleCoordinator.importTransformedModule(
+        componentFile,
+        transformedCode,
+        await computeHash(transformedCode),
+        tmpDir,
+      );
     },
     {
       "react.file": fileName,

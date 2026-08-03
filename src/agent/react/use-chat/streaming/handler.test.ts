@@ -163,6 +163,49 @@ describe("use-chat streaming handler", () => {
     assertEquals(rec.toolCalls[0]!.toolCall.dynamic, true);
   });
 
+  it("preserves providerExecuted on provider-owned input-only tool parts", async () => {
+    const rec = recorder();
+    await handleStreamingResponse(
+      sseStream([
+        { type: "message-start", messageId: "msg-provider-tool" },
+        {
+          type: "tool-input-start",
+          toolCallId: "provider-fetch",
+          toolName: "web_fetch",
+          providerExecuted: true,
+        },
+        {
+          type: "tool-input-available",
+          toolCallId: "provider-fetch",
+          toolName: "web_fetch",
+          input: { url: "https://example.com/docs" },
+          providerExecuted: true,
+        },
+        { type: "message-finish" },
+      ]),
+      rec.callbacks,
+    );
+
+    assertEquals(rec.toolCalls[0]!.toolCall, {
+      toolCallId: "provider-fetch",
+      toolName: "web_fetch",
+      input: { url: "https://example.com/docs" },
+      dynamic: false,
+    });
+    const message = rec.messages[0];
+    assertExists(message);
+    assertEquals(message.parts, [
+      {
+        type: "tool-web_fetch",
+        toolCallId: "provider-fetch",
+        toolName: "web_fetch",
+        state: "input-available",
+        input: { url: "https://example.com/docs" },
+        providerExecuted: true,
+      },
+    ]);
+  });
+
   it("assembles reasoning blocks across deltas", async () => {
     const rec = recorder();
     await handleStreamingResponse(
@@ -192,6 +235,28 @@ describe("use-chat streaming handler", () => {
       rec.callbacks,
     );
     assertEquals(rec.data, [{ a: 1 }, { b: 2 }]);
+  });
+
+  it("ignores custom data events without a JSON payload", async () => {
+    const rec = recorder();
+    await handleStreamingResponse(
+      sseStream([
+        { type: "message-start", messageId: "msg-custom-data" },
+        { type: "data-missing" },
+        { type: "data-null", data: null },
+        { type: "data-false", data: false },
+        { type: "data-zero", data: 0 },
+        { type: "message-finish" },
+      ]),
+      rec.callbacks,
+    );
+
+    assertEquals(rec.data, [null, false, 0]);
+    assertEquals(rec.messages[0]?.parts, [
+      { type: "data-null", data: null },
+      { type: "data-false", data: false },
+      { type: "data-zero", data: 0 },
+    ]);
   });
 
   it("skips malformed JSON lines without throwing", async () => {
@@ -302,7 +367,7 @@ describe("use-chat streaming handler", () => {
         state: "output-available",
         input: { query: "agents" },
         output: { count: 2 },
-        errorText: undefined,
+        providerExecuted: true,
       },
     ]);
   });

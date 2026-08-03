@@ -16,6 +16,7 @@ export {
   chdir,
   type CommandResult,
   cwd,
+  deleteEnv,
   env,
   exit,
   getArgs,
@@ -41,6 +42,7 @@ export {
   createFileSystem,
   exists,
   type FileSystem,
+  isNotFoundError,
   mkdir,
   readDir,
   readTextFile,
@@ -52,6 +54,7 @@ export {
 export {
   createEscapeBuffer,
   getStdinReader,
+  readStdinLine,
   setRawMode,
   type StdinReader,
 } from "./compat/stdin.ts";

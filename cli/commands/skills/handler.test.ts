@@ -1,9 +1,70 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { fromFileUrl } from "#veryfront/compat/path/index.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getSkillInfo, listSkills } from "./command.ts";
 
 describe("Skills Command", () => {
+  const repositoryRoot = fromFileUrl(new URL("../../../", import.meta.url));
+
+  async function runSkillsInfo(
+    args: string[],
+  ): Promise<{ code: number; stdout: string; stderr: string }> {
+    const cliPath = fromFileUrl(new URL("../../main.ts", import.meta.url));
+    const result = await new Deno.Command(Deno.execPath(), {
+      args: ["run", "-A", cliPath, "skills", "info", ...args, "--json"],
+      cwd: repositoryRoot,
+      env: { VERYFRONT_NO_UPDATE_CHECK: "1", NO_COLOR: "1" },
+      stdin: "null",
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const decoder = new TextDecoder();
+
+    return {
+      code: result.code,
+      stdout: decoder.decode(result.stdout),
+      stderr: decoder.decode(result.stderr),
+    };
+  }
+
+  describe("info JSON output", () => {
+    it("returns a usage envelope when the skill name is missing", async () => {
+      const result = await runSkillsInfo([]);
+
+      assertEquals(result.code, 2);
+      assertEquals(result.stderr, "");
+      assertEquals(JSON.parse(result.stdout), {
+        success: false,
+        command: "skills",
+        error: {
+          code: "INVALID_ARGUMENT",
+          slug: "invalid-argument",
+          message: "Usage: veryfront skills info <name>",
+        },
+      });
+    });
+
+    it("returns a not-found envelope for an unknown skill", async () => {
+      const result = await runSkillsInfo(["nonexistent-skill-xyz"]);
+
+      assertEquals(result.code, 1);
+      assertEquals(result.stderr, "");
+      assertEquals(JSON.parse(result.stdout), {
+        success: false,
+        command: "skills",
+        error: {
+          code: "NOT_FOUND",
+          slug: "skill-not-found",
+          message: 'Skill "nonexistent-skill-xyz" not found',
+          context: {
+            suggestion: "Try: veryfront skills list",
+          },
+        },
+      });
+    });
+  });
+
   describe("listSkills", () => {
     it("returns an array", async () => {
       const skills = await listSkills();

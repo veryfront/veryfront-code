@@ -8,6 +8,17 @@ import {
   toRuntimeRunAgentInput,
 } from "./schema.ts";
 
+const MAIN_BRANCH_TARGET = {
+  runtimeTargetKind: "main_branch",
+  runtimeTargetEnvironmentId: null,
+  runtimeTargetBranchId: null,
+} as const;
+const ENVIRONMENT_TARGET = {
+  runtimeTargetKind: "environment",
+  runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000009",
+  runtimeTargetBranchId: null,
+} as const;
+
 describe("internal-agents/schema", () => {
   it("applies defaults for optional runtime collections", () => {
     const parsed = getRuntimeRunAgentInputSchema().parse({
@@ -87,11 +98,34 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
+      agentSource: { type: "branch", branch: "main" },
       messages: [],
       forwardedProps,
     });
 
     assertEquals(parsed.forwardedProps, forwardedProps);
+  });
+
+  it("preserves environment targets on control-plane stream requests", () => {
+    const runtimeTargetEnvironmentId = "10000000-1000-4000-8000-100000000005";
+    const parsed = getInternalAgentStreamRequestSchema().parse({
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      runtimeTargetKind: "environment",
+      agentSource: {
+        type: "environment",
+        environmentName: "staging",
+        releaseId: "release_1",
+      },
+      messages: [],
+      runtimeTargetEnvironmentId,
+      runtimeTargetBranchId: null,
+    });
+
+    assertEquals(parsed.runtimeTargetEnvironmentId, runtimeTargetEnvironmentId);
+    assertEquals(parsed.runtimeTargetBranchId, null);
   });
 
   it("rejects forwarded props above the 192 KB runtime budget", () => {
@@ -101,6 +135,8 @@ describe("internal-agents/schema", () => {
           agentId: "agent_1",
           threadId: "10000000-1000-4000-8000-100000000001",
           runId: "run_1",
+          ...MAIN_BRANCH_TARGET,
+          agentSource: { type: "branch", branch: "main" },
           messages: [],
           forwardedProps: {
             runtimeOverrides: {
@@ -114,6 +150,45 @@ describe("internal-agents/schema", () => {
         }),
       Error,
       "forwardedProps must be less than 192 KB",
+    );
+  });
+
+  it("rejects malformed forwarded output-token caps instead of dropping them", () => {
+    for (const maxOutputTokens of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "1200"]) {
+      assertThrows(
+        () =>
+          getInternalAgentStreamRequestSchema().parse({
+            agentId: "agent_1",
+            threadId: "10000000-1000-4000-8000-100000000001",
+            runId: "run_1",
+            ...MAIN_BRANCH_TARGET,
+            agentSource: { type: "branch", branch: "main" },
+            messages: [],
+            forwardedProps: { maxOutputTokens },
+          }),
+        Error,
+        "forwardedProps.maxOutputTokens must be a positive safe integer",
+      );
+    }
+  });
+
+  it("rejects duplicate injected tool names instead of silently replacing definitions", () => {
+    assertThrows(
+      () =>
+        getInternalAgentStreamRequestSchema().parse({
+          agentId: "agent_1",
+          threadId: "10000000-1000-4000-8000-100000000001",
+          runId: "run_1",
+          ...MAIN_BRANCH_TARGET,
+          agentSource: { type: "branch", branch: "main" },
+          messages: [],
+          tools: [
+            { name: "focus_component", description: "First definition" },
+            { name: "focus_component", description: "Conflicting definition" },
+          ],
+        }),
+      Error,
+      "Injected tool name focus_component must be unique",
     );
   });
 
@@ -134,10 +209,21 @@ describe("internal-agents/schema", () => {
   });
 
   it("uses the shared runtime agent source context contract", () => {
+    assertThrows(() =>
+      getInternalAgentStreamRequestSchema().parse({
+        agentId: "agent_1",
+        threadId: "10000000-1000-4000-8000-100000000001",
+        runId: "run_1",
+        ...MAIN_BRANCH_TARGET,
+        messages: [],
+      })
+    );
+
     const parsed = getInternalAgentStreamRequestSchema().parse({
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...ENVIRONMENT_TARGET,
       messages: [],
       agentSource: {
         type: "environment",
@@ -151,17 +237,35 @@ describe("internal-agents/schema", () => {
       environmentName: "staging",
       releaseId: "release_1",
     });
+    assertEquals(parsed.runtimeTargetEnvironmentId, ENVIRONMENT_TARGET.runtimeTargetEnvironmentId);
     assertThrows(
       () =>
         getInternalAgentStreamRequestSchema().parse({
           agentId: "agent_1",
           threadId: "10000000-1000-4000-8000-100000000001",
           runId: "run_1",
+          ...MAIN_BRANCH_TARGET,
           messages: [],
           agentSource: { type: "branch", branch: "" },
         }),
       Error,
       "Too small: expected string to have >=1 characters",
+    );
+  });
+
+  it("rejects a signed target whose kind does not match the exact source", () => {
+    assertThrows(
+      () =>
+        getInternalAgentStreamRequestSchema().parse({
+          agentId: "agent_1",
+          threadId: "10000000-1000-4000-8000-100000000001",
+          runId: "run_1",
+          ...ENVIRONMENT_TARGET,
+          agentSource: { type: "branch", branch: "main" },
+          messages: [],
+        }),
+      Error,
+      "environment runtime target requires an environment agent source",
     );
   });
 
@@ -213,77 +317,60 @@ describe("internal-agents/schema", () => {
     assertEquals(parsed.context, [{ description: "Current file", value: "src/main.ts" }]);
   });
 
-  it("accepts canonical runtime invocation payloads posted by the API executor", () => {
-    const internalRequest = getInternalAgentStreamRequestSchema().parse({
-      run: {
-        agentServiceId: "veryfront-platform-agent",
-        agentId: "incident-responder",
-        conversationId: "10000000-1000-4000-8000-100000000001",
-        runId: "run_1",
-        messageId: "10000000-1000-4000-8000-100000000002",
-        inputAnchorMessageId: "10000000-1000-4000-8000-100000000002",
-        requestedByUserId: "10000000-1000-4000-8000-100000000003",
-        project: {
-          projectId: "10000000-1000-4000-8000-100000000004",
-          projectSlug: "incident-responder-cwy27d",
-          runtimeTargetKind: "preview_branch",
-          runtimeTargetEnvironmentId: null,
-          runtimeTargetBranchId: "10000000-1000-4000-8000-100000000005",
-        },
-        validatedClaims: {
-          subject: "10000000-1000-4000-8000-100000000003",
-          projectId: "10000000-1000-4000-8000-100000000004",
-          projectSlug: "incident-responder-cwy27d",
-          scopes: [],
-        },
-      },
+  it("accepts upload metadata on AG-UI runtime attachments", () => {
+    const parsed = getRuntimeRunAgentInputSchema().parse({
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
       messages: [{
-        id: "msg_1",
+        id: "user_1",
         role: "user",
-        parts: [{ type: "text", text: "hi" }],
+        content: "Review this screenshot",
+        attachments: [{
+          type: "file",
+          url: "https://uploads.example.com/screenshot.png",
+          mediaType: "image/png",
+          uploadId: "upload-image-1",
+          uploadPath: "_chat/user/upload-image-1-screenshot.png",
+          filename: "screenshot.png",
+        }],
       }],
-      tools: [{
-        name: "studio_search_files",
-        description: "Search files",
-        inputSchema: { type: "object", properties: { query: { type: "string" } } },
-      }],
-      context: [{ type: "text", text: "Current project context" }],
-      agentSource: { type: "branch", branch: "main" },
-      agentConfig: {
-        id: "incident-responder",
-        name: "Incident Responder",
-        description: "Triages incidents.",
-        instructions: "Use the project incident-response skills.",
-        skills: ["incident-triage"],
-        tools: ["search_knowledge", "get_file"],
-      },
-      forwardedProps: { runtimeOverrides: { allowedTools: ["studio_search_files"] } },
     });
 
-    assertEquals(internalRequest.agentId, "incident-responder");
-    assertEquals(internalRequest.threadId, "10000000-1000-4000-8000-100000000001");
-    assertEquals(internalRequest.runId, "run_1");
-    assertEquals(internalRequest.messages, [{
-      id: "msg_1",
+    assertEquals(parsed.messages[0], {
+      id: "user_1",
       role: "user",
-      parts: [{ type: "text", text: "hi" }],
-    }]);
-    assertEquals(internalRequest.tools[0], {
-      name: "studio_search_files",
-      description: "Search files",
-      inputSchema: { type: "object", properties: { query: { type: "string" } } },
+      content: "Review this screenshot",
+      attachments: [{
+        type: "file",
+        url: "https://uploads.example.com/screenshot.png",
+        mediaType: "image/png",
+        uploadId: "upload-image-1",
+        uploadPath: "_chat/user/upload-image-1-screenshot.png",
+        filename: "screenshot.png",
+      }],
     });
-    assertEquals(internalRequest.agentConfig, {
-      id: "incident-responder",
-      name: "Incident Responder",
-      description: "Triages incidents.",
-      instructions: "Use the project incident-response skills.",
-      skills: ["incident-triage"],
-      tools: ["search_knowledge", "get_file"],
-    });
-    assertEquals(
-      toRuntimeRunAgentInput(internalRequest).threadId,
-      "10000000-1000-4000-8000-100000000001",
+  });
+
+  it("does not dual-read the runtime invocation transport as an internal request", () => {
+    assertThrows(() =>
+      getInternalAgentStreamRequestSchema().parse({
+        run: {
+          agentServiceId: "veryfront-platform-agent",
+          agentId: "incident-responder",
+          conversationId: "10000000-1000-4000-8000-100000000001",
+          runId: "run_1",
+          messageId: "10000000-1000-4000-8000-100000000002",
+          inputAnchorMessageId: "10000000-1000-4000-8000-100000000002",
+          requestedByUserId: "10000000-1000-4000-8000-100000000003",
+          project: {
+            projectId: "10000000-1000-4000-8000-100000000004",
+            projectSlug: "incident-responder-cwy27d",
+            runtimeTargetKind: "main_branch",
+          },
+        },
+        messages: [],
+        agentSource: { type: "branch", branch: "main" },
+      })
     );
   });
 
@@ -294,6 +381,8 @@ describe("internal-agents/schema", () => {
           agentId: "agent_1",
           threadId: "10000000-1000-4000-8000-100000000001",
           runId: "run_1",
+          ...MAIN_BRANCH_TARGET,
+          agentSource: { type: "branch", branch: "main" },
           messages: [],
           agentConfig: {
             id: "agent_2",
@@ -312,6 +401,8 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
+      agentSource: { type: "branch", branch: "main" },
       messages: [
         {
           id: "user_1",
@@ -363,12 +454,59 @@ describe("internal-agents/schema", () => {
     });
   });
 
+  it("preserves upload metadata while normalizing compatibility attachment parts", () => {
+    const internalRequest = getInternalAgentStreamRequestSchema().parse({
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
+      agentSource: { type: "branch", branch: "main" },
+      messages: [
+        {
+          id: "user_1",
+          role: "user",
+          parts: [
+            { type: "text", text: "Review this screenshot" },
+            {
+              type: "file",
+              url: "https://uploads.example.com/screenshot.png",
+              mediaType: "image/png",
+              upload_id: "upload-image-1",
+              upload_path: "_chat/user/upload-image-1-screenshot.png",
+              filename: "screenshot.png",
+            },
+          ],
+        },
+      ],
+      context: [],
+    });
+
+    assertEquals(
+      (toRuntimeRunAgentInput(internalRequest) as unknown as { messages: unknown }).messages,
+      [{
+        id: "user_1",
+        role: "user",
+        content: "Review this screenshot",
+        attachments: [{
+          type: "file",
+          url: "https://uploads.example.com/screenshot.png",
+          mediaType: "image/png",
+          uploadId: "upload-image-1",
+          uploadPath: "_chat/user/upload-image-1-screenshot.png",
+          filename: "screenshot.png",
+        }],
+      }],
+    );
+  });
+
   it("rejects legacy endUserId on internal stream payloads", () => {
     assertThrows(() =>
       getInternalAgentStreamRequestSchema().parse({
         agentId: "agent_1",
         threadId: "10000000-1000-4000-8000-100000000001",
         runId: "run_1",
+        ...MAIN_BRANCH_TARGET,
+        agentSource: { type: "branch", branch: "main" },
         endUserId: "10000000-1000-4000-8000-100000000004",
         messages: [],
         context: [],
@@ -401,6 +539,7 @@ describe("internal-agents/schema", () => {
             scopes: [],
           },
         },
+        agentSource: { type: "branch", branch: "main" },
         endUserId: "10000000-1000-4000-8000-100000000004",
         messages: [],
         context: [],
@@ -413,6 +552,8 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
+      agentSource: { type: "branch", branch: "main" },
       messages: [
         {
           id: "assistant_1",
@@ -460,6 +601,8 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
+      agentSource: { type: "branch", branch: "main" },
       messages: [
         {
           id: "assistant_1",
@@ -500,11 +643,110 @@ describe("internal-agents/schema", () => {
     );
   });
 
+  it("degrades malformed streamed tool input to empty arguments when replaying history", () => {
+    for (const inputText of ['{"path":"plans/report.md"', '"just a string"', "42"]) {
+      const internalRequest = getInternalAgentStreamRequestSchema().parse({
+        agentId: "agent_1",
+        threadId: "10000000-1000-4000-8000-100000000001",
+        runId: "run_1",
+        ...MAIN_BRANCH_TARGET,
+        agentSource: { type: "branch", branch: "main" },
+        messages: [
+          {
+            id: "assistant_1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-call",
+                toolCallId: "tool_1",
+                toolName: "create_file",
+                args: {},
+                inputText,
+              },
+            ],
+          },
+        ],
+        context: [],
+      });
+
+      assertEquals(
+        (toRuntimeRunAgentInput(internalRequest) as unknown as { messages: unknown }).messages,
+        [
+          {
+            id: "assistant_1",
+            role: "assistant",
+            toolCalls: [{
+              id: "tool_1",
+              type: "function",
+              function: {
+                name: "create_file",
+                arguments: "{}",
+              },
+            }],
+          },
+        ],
+      );
+    }
+  });
+
+  it("preserves well-formed streamed tool input when replaying history", () => {
+    for (
+      const [inputText, expected] of [
+        ["{}", {}],
+        ['{"path":"plans/report.md"}', { path: "plans/report.md" }],
+      ] as const
+    ) {
+      const internalRequest = getInternalAgentStreamRequestSchema().parse({
+        agentId: "agent_1",
+        threadId: "10000000-1000-4000-8000-100000000001",
+        runId: "run_1",
+        ...MAIN_BRANCH_TARGET,
+        agentSource: { type: "branch", branch: "main" },
+        messages: [
+          {
+            id: "assistant_1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-call",
+                toolCallId: "tool_1",
+                toolName: "create_file",
+                args: {},
+                inputText,
+              },
+            ],
+          },
+        ],
+        context: [],
+      });
+
+      assertEquals(
+        (toRuntimeRunAgentInput(internalRequest) as unknown as { messages: unknown }).messages,
+        [
+          {
+            id: "assistant_1",
+            role: "assistant",
+            toolCalls: [{
+              id: "tool_1",
+              type: "function",
+              function: {
+                name: "create_file",
+                arguments: JSON.stringify(expected),
+              },
+            }],
+          },
+        ],
+      );
+    }
+  });
+
   it("preserves canonical runtime messages on the compatibility route", () => {
     const internalRequest = getInternalAgentStreamRequestSchema().parse({
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
+      agentSource: { type: "branch", branch: "main" },
       messages: [
         {
           id: "assistant_1",
@@ -560,6 +802,8 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
+      agentSource: { type: "branch", branch: "main" },
       messages: [
         {
           id: "assistant_1",

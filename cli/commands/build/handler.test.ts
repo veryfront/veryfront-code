@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { parseCliArgs } from "#cli/shared/args";
 import { handleBuildCommand, parseBuildArgs } from "./handler.ts";
 
 describe("commands/build/handler", () => {
@@ -16,6 +17,17 @@ describe("commands/build/handler", () => {
   });
 
   describe("parseBuildArgs", () => {
+    it("parses the documented no-compress and no-split flags from raw argv", () => {
+      const args = parseCliArgs(["build", "--no-compress", "--no-split"]);
+      const result = parseBuildArgs(args);
+
+      assertEquals(result.success, true);
+      if (!result.success) return;
+
+      assertEquals(result.data.noCompress, true);
+      assertEquals(result.data.noSplit, true);
+    });
+
     it("parses output directory via --output flag", () => {
       const result = parseBuildArgs({
         _: ["build"],
@@ -50,8 +62,17 @@ describe("commands/build/handler", () => {
         assertEquals(result.data.split, true);
         assertEquals(result.data.compress, true);
         assertEquals(result.data.prefetch, true);
-        assertEquals(result.data.ssg, false);
+        assertEquals(result.data.ssg, undefined);
       }
+    });
+
+    it("keeps an explicit --ssg=false distinct from an omitted flag", () => {
+      const result = parseBuildArgs({
+        _: ["build"],
+        ssg: false,
+      });
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.ssg, false);
     });
 
     it("parses ssg flag for static generation", () => {

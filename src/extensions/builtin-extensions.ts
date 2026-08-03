@@ -1,25 +1,27 @@
-import type {
-  Capability,
-  Extension,
-  ExtensionContext,
-  ExtensionContractMetadata,
-  ExtensionFactory,
-  ResolvedExtension,
-} from "./types.ts";
+import type { Extension, ExtensionFactory, ExtensionLogger, ResolvedExtension } from "./types.ts";
 import { register, tryResolve } from "./contracts.ts";
+import { EXTENSION_VALIDATION_ERROR } from "./errors.ts";
+import { validateExtension } from "./validation.ts";
 import type { EvalReportExporterRegistry } from "./eval/index.ts";
 import { createEvalReportExporterRegistry, EvalReportExporterRegistryName } from "./eval/index.ts";
 import {
   importFirstPartyExtensionModule,
   isMissingFirstPartyExtensionModule,
 } from "./first-party-import.ts";
+import { createDeferredResolvedExtension } from "./deferred-extension.ts";
+import { captureRegistrationId } from "./runtime-validation.ts";
 import type { LLMProvider, LLMProviderRegistry } from "./llm/index.ts";
 import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.ts";
-import { OpenAIProvider } from "../../extensions/ext-llm-openai/src/index.ts";
-import { AnthropicProvider } from "../../extensions/ext-llm-anthropic/src/index.ts";
-import { GoogleProvider } from "../../extensions/ext-llm-google/src/index.ts";
-import extZod from "../../extensions/ext-schema-zod/src/index.ts";
-import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
+import {
+  FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES,
+  type FirstPartyEvalExporterSelection,
+} from "./first-party-defaults.ts";
+import { OpenAIProvider } from "@veryfront/ext-llm-openai";
+import { AnthropicProvider } from "@veryfront/ext-llm-anthropic";
+import { GoogleProvider } from "@veryfront/ext-llm-google";
+import extEvalReportMlflow from "@veryfront/ext-eval-report-mlflow";
+import extZod from "@veryfront/ext-schema-zod";
+export { ensureBuiltinSchemaValidator } from "./builtin-schema-validator.ts";
 
 type BuiltinLLMProviderDefinition = {
   extensionName: string;
@@ -28,11 +30,11 @@ type BuiltinLLMProviderDefinition = {
 };
 
 export type OptionalBuiltinExtensionDefinition = {
-  name: string;
-  origin: string;
-  sourceDirectory: string;
-  contracts?: ExtensionContractMetadata;
-  capabilities: Capability[];
+  readonly name: string;
+  readonly origin: string;
+  readonly sourceDirectory: string;
+  readonly evalExporterSelection?: FirstPartyEvalExporterSelection;
+  readonly factory?: ExtensionFactory;
 };
 
 const BUILTIN_LLM_PROVIDERS: BuiltinLLMProviderDefinition[] = [
@@ -53,90 +55,29 @@ const BUILTIN_LLM_PROVIDERS: BuiltinLLMProviderDefinition[] = [
   },
 ];
 
-const OPTIONAL_BUILTIN_EXTENSIONS: OptionalBuiltinExtensionDefinition[] = [
-  {
-    name: "ext-auth-jwt",
-    origin: "veryfront/ext-auth-jwt",
-    sourceDirectory: "ext-auth-jwt",
-    contracts: { provides: ["AuthProvider"] },
-    capabilities: [{ type: "net:outbound", hosts: ["*"] }],
-  },
-  {
-    name: "ext-observability-opentelemetry",
-    origin: "veryfront/ext-observability-opentelemetry",
-    sourceDirectory: "ext-observability-opentelemetry",
-    contracts: { provides: ["TracingExporter", "NodeTelemetryProvider"] },
-    capabilities: [
-      { type: "net:outbound", hosts: ["*"] },
-      {
-        type: "env:read",
-        keys: [
-          "OTEL_EXPORTER_OTLP_ENDPOINT",
-          "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-          "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
-          "OTEL_EXPORTER_OTLP_HEADERS",
-          "OTEL_SERVICE_NAME",
-          "OTEL_TRACES_ENABLED",
-          "OTEL_METRICS_ENABLED",
-          "OTEL_METRIC_EXPORT_INTERVAL",
-        ],
-      },
-    ],
-  },
-  {
-    name: "ext-bundler-esbuild",
-    origin: "veryfront/ext-bundler-esbuild",
-    sourceDirectory: "ext-bundler-esbuild",
-    contracts: { provides: ["Bundler", "ModuleLexer"] },
-    capabilities: [],
-  },
-  {
-    name: "ext-parser-babel",
-    origin: "veryfront/ext-parser-babel",
-    sourceDirectory: "ext-parser-babel",
-    contracts: { provides: ["CodeParser"] },
-    capabilities: [],
-  },
-  {
-    name: "ext-content-mdx",
-    origin: "veryfront/ext-content-mdx",
-    sourceDirectory: "ext-content-mdx",
-    contracts: { provides: ["ContentProcessor"] },
-    capabilities: [],
-  },
-  {
-    name: "ext-css-tailwind",
-    origin: "veryfront/ext-css-tailwind",
-    sourceDirectory: "ext-css-tailwind",
-    contracts: { provides: ["CSSProcessor"] },
-    capabilities: [{ type: "net:outbound", hosts: ["esm.sh"] }],
-  },
-  {
-    name: "ext-document-kreuzberg",
-    origin: "veryfront/ext-document-kreuzberg",
-    sourceDirectory: "ext-document-kreuzberg",
-    contracts: { provides: ["DocumentExtractor"] },
-    capabilities: [{ type: "fs:read" }],
-  },
-  {
-    name: "ext-db-sqlite",
-    origin: "veryfront/ext-db-sqlite",
-    sourceDirectory: "ext-db-sqlite",
-    contracts: { provides: ["SqliteStore"] },
-    capabilities: [{ type: "fs:read" }, { type: "fs:write" }],
-  },
-  {
-    name: "ext-sandbox-shell-tools",
-    origin: "veryfront/ext-sandbox-shell-tools",
-    sourceDirectory: "ext-sandbox-shell-tools",
-    contracts: { provides: ["SandboxShellToolsProvider"] },
-    capabilities: [{ type: "sandbox:execute", tools: ["bash"] }],
-  },
-];
+export const OPTIONAL_BUILTIN_EXTENSIONS = Object.freeze(
+  FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES.map((policy) =>
+    Object.freeze({
+      name: policy.name,
+      origin: `veryfront/${policy.sourceDirectory}`,
+      sourceDirectory: policy.sourceDirectory,
+      ...(policy.evalExporterSelection
+        ? { evalExporterSelection: policy.evalExporterSelection }
+        : {}),
+      ...(policy.name === "ext-eval-report-mlflow"
+        ? {
+          // MLflow is deliberately shipped inside the root npm package rather
+          // than published as a standalone extension package.
+          factory: extEvalReportMlflow,
+        }
+        : {}),
+    }) satisfies OptionalBuiltinExtensionDefinition
+  ),
+);
 
 function getOrCreateLLMProviderRegistry(): LLMProviderRegistry {
   const existing = tryResolve<LLMProviderRegistry>(LLMProviderRegistryName);
-  if (existing) return existing;
+  if (existing !== undefined) return existing;
 
   const registry = createLLMProviderRegistry();
   register(LLMProviderRegistryName, registry);
@@ -144,8 +85,10 @@ function getOrCreateLLMProviderRegistry(): LLMProviderRegistry {
 }
 
 export function ensureBuiltinEvalReportExporterRegistry(): EvalReportExporterRegistry {
-  const existing = tryResolve<EvalReportExporterRegistry>(EvalReportExporterRegistryName);
-  if (existing) return existing;
+  const existing = tryResolve<EvalReportExporterRegistry>(
+    EvalReportExporterRegistryName,
+  );
+  if (existing !== undefined) return existing;
 
   const registry = createEvalReportExporterRegistry();
   register(EvalReportExporterRegistryName, registry);
@@ -155,30 +98,28 @@ export function ensureBuiltinEvalReportExporterRegistry(): EvalReportExporterReg
 function registerBuiltinLLMProvider(
   registry: LLMProviderRegistry,
   provider: LLMProvider,
+  providerId: string,
 ): boolean {
-  if (registry.has(provider.id)) return false;
+  if (registry.has(providerId)) return false;
   registry.register(provider);
-  return true;
+  return registry.get(providerId) === provider;
 }
 
 export function ensureBuiltinLLMProviders(): LLMProviderRegistry {
   const registry = getOrCreateLLMProviderRegistry();
   for (const definition of BUILTIN_LLM_PROVIDERS) {
-    registerBuiltinLLMProvider(registry, definition.provider());
+    const provider = definition.provider();
+    const providerId = captureRegistrationId(provider, "LLMProvider");
+    registerBuiltinLLMProvider(registry, provider, providerId);
   }
   return registry;
-}
-
-export function ensureBuiltinSchemaValidator(): void {
-  if (!tryResolve("SchemaValidator")) {
-    register("SchemaValidator", createZodAdapter());
-  }
 }
 
 function createBuiltinLLMProviderExtension(
   definition: BuiltinLLMProviderDefinition,
 ): ResolvedExtension {
   const provider = definition.provider();
+  const providerId = captureRegistrationId(provider, "LLMProvider");
   let didRegister = false;
 
   return {
@@ -192,16 +133,22 @@ function createBuiltinLLMProviderExtension(
       },
       capabilities: [],
       setup(ctx) {
-        const registry = ctx.require<LLMProviderRegistry>(LLMProviderRegistryName);
-        didRegister = registerBuiltinLLMProvider(registry, provider);
+        const registry = ctx.require<LLMProviderRegistry>(
+          LLMProviderRegistryName,
+        );
+        didRegister = registerBuiltinLLMProvider(registry, provider, providerId);
         if (didRegister) {
-          ctx.logger.info(`[${definition.extensionName}] ${provider.id} provider registered`);
+          ctx.logger.debug(
+            `[${definition.extensionName}] ${providerId} provider registered`,
+          );
         }
       },
       teardown() {
         if (didRegister) {
-          const registry = tryResolve<LLMProviderRegistry>(LLMProviderRegistryName);
-          registry?.unregister(provider.id);
+          const registry = tryResolve<LLMProviderRegistry>(
+            LLMProviderRegistryName,
+          );
+          registry?.unregister(providerId);
           didRegister = false;
         }
       },
@@ -212,49 +159,50 @@ function createBuiltinLLMProviderExtension(
 export function createOptionalBuiltinExtension(
   definition: OptionalBuiltinExtensionDefinition,
 ): ResolvedExtension {
-  let loaded: Extension | undefined;
-
-  return {
+  const capturedDefinition = Object.freeze({ ...definition });
+  return createDeferredResolvedExtension({
+    name: capturedDefinition.name,
     source: "builtin",
-    origin: definition.origin,
-    extension: {
-      name: definition.name,
-      version: "0.1.0",
-      contracts: definition.contracts,
-      capabilities: definition.capabilities,
-      async setup(ctx) {
-        const extension = await loadOptionalBuiltinExtension(definition, ctx);
-        if (!extension) return;
-
-        loaded = extension;
-        for (const [contract, impl] of Object.entries(extension.provides ?? {})) {
-          ctx.provide(contract, impl);
-        }
-        await extension.setup?.(ctx);
-      },
-      async teardown() {
-        await loaded?.teardown?.();
-        loaded = undefined;
-      },
-    },
-  };
+    origin: capturedDefinition.origin,
+    load: (logger) => loadOptionalBuiltinExtension(capturedDefinition, logger),
+  });
 }
 
 async function loadOptionalBuiltinExtension(
   definition: OptionalBuiltinExtensionDefinition,
-  ctx: ExtensionContext,
+  logger: ExtensionLogger,
 ): Promise<Extension | undefined> {
+  const configuredFactory = definition.factory;
   try {
-    const factory = await importOptionalBuiltinFactory(
+    const factory = configuredFactory ?? await importOptionalBuiltinFactory(
       definition.sourceDirectory,
       getFirstPartyExtensionPackageName(definition),
     );
-    return factory();
+    const factoryResult = (factory as () => unknown)();
+    const issues = validateExtension(factoryResult);
+    if (issues.length > 0) {
+      throw EXTENSION_VALIDATION_ERROR.create({
+        detail: `Optional builtin factory for "${definition.name}" returned an invalid extension: ${
+          issues.join("; ")
+        }`,
+      });
+    }
+    const extension = factoryResult as Extension;
+    if (extension.name !== definition.name) {
+      throw EXTENSION_VALIDATION_ERROR.create({
+        detail:
+          `Optional builtin factory for "${definition.name}" returned extension "${extension.name}"`,
+      });
+    }
+    return extension;
   } catch (error) {
-    if (!isMissingOptionalBuiltinImplementation(error, definition)) {
+    if (
+      configuredFactory !== undefined ||
+      !isMissingOptionalBuiltinImplementation(error, definition)
+    ) {
       throw error;
     }
-    ctx.logger.debug(
+    logger.debug(
       `Builtin extension "${definition.name}" is not available from the root package; install ${
         getFirstPartyExtensionPackageName(definition)
       } to enable it.`,
@@ -271,7 +219,9 @@ async function importOptionalBuiltinFactory(
     default?: unknown;
   }>(sourceDirectory, packageName);
   if (typeof mod.default !== "function") {
-    throw new Error(`Builtin extension "${sourceDirectory}" has no default factory export`);
+    throw new Error(
+      `Builtin extension "${sourceDirectory}" has no default factory export`,
+    );
   }
   return mod.default as ExtensionFactory;
 }
@@ -286,7 +236,9 @@ function isMissingOptionalBuiltinImplementation(
   ]);
 }
 
-function getFirstPartyExtensionPackageName(definition: OptionalBuiltinExtensionDefinition): string {
+function getFirstPartyExtensionPackageName(
+  definition: OptionalBuiltinExtensionDefinition,
+): string {
   return definition.origin.replace("veryfront/", "@veryfront/");
 }
 
@@ -301,6 +253,27 @@ export function createBuiltinExtensions(): ResolvedExtension[] {
       extension: extZod(),
     },
     ...OPTIONAL_BUILTIN_EXTENSIONS.map(createOptionalBuiltinExtension),
+    ...BUILTIN_LLM_PROVIDERS.map(createBuiltinLLMProviderExtension),
+  ];
+}
+
+export function createEvalCliBuiltinExtensions(
+  selectedExporterIds: string[] = [],
+): ResolvedExtension[] {
+  const selected = new Set(selectedExporterIds);
+  const exporterExtensions = OPTIONAL_BUILTIN_EXTENSIONS.filter((definition) => {
+    const selection = definition.evalExporterSelection;
+    if (!selection) return false;
+    return selection.kind === "any-selected" ? selected.size > 0 : selected.has(selection.id);
+  });
+
+  return [
+    {
+      source: "builtin",
+      origin: "veryfront/ext-schema-zod",
+      extension: extZod(),
+    },
+    ...exporterExtensions.map(createOptionalBuiltinExtension),
     ...BUILTIN_LLM_PROVIDERS.map(createBuiltinLLMProviderExtension),
   ];
 }

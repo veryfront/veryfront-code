@@ -24,6 +24,42 @@ import { buildMdxJsxCacheFileName } from "./cache-format.ts";
 import { rewriteDntImports } from "./module-fetcher/index.ts";
 import { ensureCachedJsxModulePatched } from "./jsx-cache.ts";
 import type { ESMLoaderContext } from "./types.ts";
+import { appendSameOriginSSRDependencyPinningKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import {
+  bareStrategy,
+  UnifiedImportRewriter,
+} from "#veryfront/transforms/import-rewriter/index.ts";
+import type { ImportRewriteStrategy } from "#veryfront/transforms/import-rewriter/index.ts";
+import type { DependencyResolutionObservation } from "#veryfront/transforms/import-rewriter/dependency-resolution.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import { isNodeBuiltinSpecifier } from "#veryfront/transforms/import-rewriter/node-builtins.ts";
+
+const URI_SCHEME_PATTERN = /^[A-Za-z][A-Za-z\d+.-]*:/;
+
+const mdxRootBareDependencyStrategy: ImportRewriteStrategy = {
+  name: "mdx-root-bare-dependency",
+  priority: bareStrategy.priority,
+  matches(specifier, ctx) {
+    const hasNonNpmScheme = URI_SCHEME_PATTERN.test(specifier) &&
+      !specifier.startsWith("npm:");
+    return !hasNonNpmScheme &&
+      !isNodeBuiltinSpecifier(specifier) &&
+      bareStrategy.matches(specifier, ctx);
+  },
+  rewrite(info, ctx) {
+    return bareStrategy.rewrite(info, ctx);
+  },
+};
+
+const mdxRootDependencyRewriter = new UnifiedImportRewriter({
+  strategies: [mdxRootBareDependencyStrategy],
+});
+import { parallelMap } from "#veryfront/utils/parallel.ts";
+import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
+import {
+  assertMdxModuleImportCount,
+  MAX_MDX_MODULE_TRANSFORM_CONCURRENCY,
+} from "./module-fetcher/limits.ts";
 
 /**
  * Rewrite @/ aliased imports to /_vf_modules/ paths.
@@ -82,6 +118,62 @@ export function transformImports(code: string, importMap: ImportMapConfig): stri
   });
 }
 
+export interface MdxRootDependencyRewriteOptions {
+  projectDir: string;
+  projectId: string;
+  reactVersion: string;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningSource?: DependencyPinningSourceInput;
+  onDependencyResolutionObserved?: (
+    observation: DependencyResolutionObservation,
+  ) => void;
+}
+
+/**
+ * Apply the existing MDX import-map behavior first, then pin remaining bare
+ * dependencies with the parser-backed import rewriter. Flag-off code keeps
+ * its pre-pinning identity and React remains owned by the existing MDX path.
+ */
+export async function rewriteMdxRootDependencyImports(
+  code: string,
+  importMap: ImportMapConfig,
+  options: MdxRootDependencyRewriteOptions,
+): Promise<string> {
+  const importMapped = transformImports(code, importMap);
+  if (!options.dependencyPinningCacheKey?.startsWith("on:")) return importMapped;
+
+  return await mdxRootDependencyRewriter.rewrite(importMapped, {
+    filePath: `${options.projectDir}/__veryfront_mdx_root__.mjs`,
+    projectDir: options.projectDir,
+    projectId: options.projectId,
+    target: "browser",
+    dev: false,
+    reactVersion: options.reactVersion,
+    dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+    dependencyPinningDependencies: options.dependencyPinningDependencies,
+    dependencyPinningSource: options.dependencyPinningSource,
+    onDependencyResolutionObserved: options.onDependencyResolutionObserved,
+  });
+}
+
+export async function pinSameOriginSSRModuleImports(
+  code: string,
+  dependencyPinningCacheKey?: string,
+  moduleServerOrigin?: string,
+): Promise<string> {
+  if (!dependencyPinningCacheKey?.startsWith("on:") || !moduleServerOrigin) return code;
+
+  return await replaceSpecifiers(code, (specifier) => {
+    const pinned = appendSameOriginSSRDependencyPinningKey(
+      specifier,
+      dependencyPinningCacheKey,
+      moduleServerOrigin,
+    );
+    return pinned === specifier ? null : pinned;
+  });
+}
+
 async function hasReactImport(code: string): Promise<boolean> {
   const imports = await parseImports(code);
   return imports.some((importSpecifier) => importSpecifier.n === "react");
@@ -117,14 +209,16 @@ export async function transformJsxImports(
   }
 
   if (importsToProcess.length === 0) return code;
+  assertMdxModuleImportCount("compiled MDX JSX imports", importsToProcess.length);
 
   const transformStart = performance.now();
   logger.debug(
     `${LOG_PREFIX_MDX_LOADER} Transforming ${importsToProcess.length} JSX imports in parallel`,
   );
 
-  const transformResults = await Promise.all(
-    importsToProcess.map(async ({ specifier, filePath, ext }) => {
+  const transformResults = await parallelMap(
+    importsToProcess,
+    async ({ specifier, filePath, ext }) => {
       try {
         const isFrameworkFile = filePath.startsWith(FRAMEWORK_ROOT);
         let jsxCode: string | Uint8Array;
@@ -198,7 +292,8 @@ export async function transformJsxImports(
         logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to transform JSX import: ${filePath}`, error);
         return null;
       }
-    }),
+    },
+    { semaphore: new Semaphore(MAX_MDX_MODULE_TRANSFORM_CONCURRENCY) },
   );
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} JSX transform phase completed`, {

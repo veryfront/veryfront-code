@@ -1,8 +1,14 @@
 /****
  * Runtime Configuration
  *
- * Combines file-based config (veryfront.config.ts) with runtime environment.
- * This is the primary config type that should be used throughout the application.
+ * Opt-in helpers for combining a caller-supplied `VeryfrontConfig` with a
+ * process environment snapshot.
+ *
+ * The server bootstrap and hosted project loader do not publish project
+ * configuration to this process-wide singleton. Hosted request code must keep
+ * tenant configuration request-scoped; placing it here would leak state across
+ * tenants. Without an explicit caller-supplied config, the singleton contains
+ * only framework defaults and host environment values.
  *
  * @module
  */
@@ -10,9 +16,8 @@
 import type { VeryfrontConfig } from "./schemas/index.ts";
 import type { EnvironmentConfig } from "./environment-config.ts";
 import { createTestEnvironmentConfig, getEnvironmentConfig } from "./environment-config.ts";
-
-/** Maximum entries in the default render cache */
-const DEFAULT_RENDER_CACHE_MAX_ENTRIES = 500;
+import { DEFAULT_RENDER_CACHE_MAX_ENTRIES } from "./defaults.ts";
+import { DEFAULT_DEV_SERVER_PORT } from "#veryfront/utils/constants/network.ts";
 
 /**
  * Runtime-specific configuration derived from environment.
@@ -38,8 +43,8 @@ export interface RuntimeInfo {
 }
 
 /**
- * Full runtime configuration.
- * Combines user config file with runtime environment.
+ * A caller-supplied project configuration combined with one environment
+ * snapshot. Creating this value does not initialize the process singleton.
  */
 export interface RuntimeConfig extends VeryfrontConfig {
   /**
@@ -53,7 +58,21 @@ export interface RuntimeConfig extends VeryfrontConfig {
  * Default configuration values.
  * Used when no config file is found.
  */
-export const DEFAULT_CONFIG: Partial<VeryfrontConfig> = {
+function deepFreezeDefaults<T>(value: T, seen = new WeakSet<object>()): T {
+  if (value === null || typeof value !== "object") return value;
+
+  const object = value as object;
+  if (seen.has(object)) return value;
+  seen.add(object);
+
+  for (const child of Object.values(value as Record<string, unknown>)) {
+    deepFreezeDefaults(child, seen);
+  }
+
+  return Object.freeze(value);
+}
+
+export const DEFAULT_CONFIG: Partial<VeryfrontConfig> = deepFreezeDefaults({
   title: "Veryfront App",
   description: "Built with Veryfront",
   experimental: {
@@ -77,11 +96,11 @@ export const DEFAULT_CONFIG: Partial<VeryfrontConfig> = {
     },
   },
   dev: {
-    port: 3001,
+    port: DEFAULT_DEV_SERVER_PORT,
     host: "localhost",
     open: false,
   },
-};
+});
 
 function createRuntimeInfo(env: EnvironmentConfig): RuntimeInfo {
   return {
@@ -98,6 +117,9 @@ function mergeObservabilityConfig(
   fileConfig: VeryfrontConfig,
   env: EnvironmentConfig,
 ): VeryfrontConfig["observability"] {
+  const tracingServiceName = fileConfig.observability?.tracing?.serviceName ||
+    env.otelServiceName;
+
   if (env.proxyMode) {
     return {
       tracing: {
@@ -113,11 +135,12 @@ function mergeObservabilityConfig(
   }
 
   return {
+    ...fileConfig.observability,
     tracing: {
       ...fileConfig.observability?.tracing,
       enabled: env.otelEnabled || fileConfig.observability?.tracing?.enabled,
       endpoint: env.otelEndpoint || fileConfig.observability?.tracing?.endpoint,
-      serviceName: env.otelServiceName || fileConfig.observability?.tracing?.serviceName,
+      serviceName: tracingServiceName,
     },
     metrics: {
       ...fileConfig.observability?.metrics,
@@ -141,18 +164,57 @@ function mergeConfigWithEnv(fileConfig: VeryfrontConfig, env: EnvironmentConfig)
     cache: {
       ...fileConfig.cache,
       dir: env.cacheDir || fileConfig.cache?.dir,
-      render: {
-        ...fileConfig.cache?.render,
-        redisUrl: env.redisUrl || fileConfig.cache?.render?.redisUrl,
-      },
     },
 
     dev: {
       ...fileConfig.dev,
-      port: env.port || fileConfig.dev?.port,
+      port: env.portSource === "default" ? fileConfig.dev?.port : env.port,
     },
 
     observability: mergeObservabilityConfig(fileConfig, env),
+  };
+}
+
+function mergeConfigWithDefaults(fileConfig: VeryfrontConfig): VeryfrontConfig {
+  const mergedBuild: NonNullable<VeryfrontConfig["build"]> = {
+    ...DEFAULT_CONFIG.build,
+    ...fileConfig.build,
+  };
+  if (DEFAULT_CONFIG.build?.esbuild || fileConfig.build?.esbuild) {
+    mergedBuild.esbuild = {
+      ...DEFAULT_CONFIG.build?.esbuild,
+      ...fileConfig.build?.esbuild,
+    };
+  }
+
+  return {
+    ...DEFAULT_CONFIG,
+    ...fileConfig,
+    experimental: {
+      ...DEFAULT_CONFIG.experimental,
+      ...fileConfig.experimental,
+    },
+    theme: {
+      ...DEFAULT_CONFIG.theme,
+      ...fileConfig.theme,
+      colors: {
+        ...DEFAULT_CONFIG.theme?.colors,
+        ...fileConfig.theme?.colors,
+      },
+    },
+    build: mergedBuild,
+    cache: {
+      ...DEFAULT_CONFIG.cache,
+      ...fileConfig.cache,
+      render: {
+        ...DEFAULT_CONFIG.cache?.render,
+        ...fileConfig.cache?.render,
+      },
+    },
+    dev: {
+      ...DEFAULT_CONFIG.dev,
+      ...fileConfig.dev,
+    },
   };
 }
 
@@ -160,7 +222,7 @@ export function createRuntimeConfig(
   fileConfig: VeryfrontConfig = {},
   env: EnvironmentConfig = getEnvironmentConfig(),
 ): RuntimeConfig {
-  const mergedConfig = mergeConfigWithEnv({ ...DEFAULT_CONFIG, ...fileConfig }, env);
+  const mergedConfig = mergeConfigWithEnv(mergeConfigWithDefaults(fileConfig), env);
 
   return {
     ...mergedConfig,
@@ -174,6 +236,12 @@ export function createRuntimeConfig(
 
 let runtimeConfig: RuntimeConfig | null = null;
 
+/**
+ * Explicitly initialize the process-local singleton.
+ *
+ * This utility is intended for trusted single-tenant startup and tooling. The
+ * hosted server does not call it with tenant configuration.
+ */
 export function initRuntimeConfig(fileConfig: VeryfrontConfig = {}): RuntimeConfig {
   if (runtimeConfig) return runtimeConfig;
 
@@ -181,6 +249,12 @@ export function initRuntimeConfig(fileConfig: VeryfrontConfig = {}): RuntimeConf
   return runtimeConfig;
 }
 
+/**
+ * Read the opt-in process singleton, lazily creating defaults plus host
+ * environment values when no caller initialized it.
+ *
+ * This does not discover or load `veryfront.config.*`.
+ */
 export function getRuntimeConfig(): RuntimeConfig {
   return runtimeConfig ?? initRuntimeConfig();
 }
@@ -189,6 +263,11 @@ export function isRuntimeConfigInitialized(): boolean {
   return runtimeConfig !== null;
 }
 
+/**
+ * Replace the trusted process-local singleton.
+ *
+ * Never pass hosted request or tenant configuration to this function.
+ */
 export function updateRuntimeConfig(fileConfig: VeryfrontConfig): RuntimeConfig {
   runtimeConfig = createRuntimeConfig(fileConfig);
   return runtimeConfig;
@@ -198,7 +277,10 @@ export function updateRuntimeConfig(fileConfig: VeryfrontConfig): RuntimeConfig 
 // GlobalThis Bridge
 // ============================================================================
 // Register accessors on globalThis so bottom-layer code (platform/) can reach
-// runtime config without importing from config/ (which would violate layer rules).
+// an explicitly initialized process config without importing from config/
+// (which would violate layer rules). The platform resolver checks
+// `isRuntimeConfigInitialized` first, so importing this module alone does not
+// make the singleton authoritative.
 (globalThis as Record<string, unknown>).__vfGetRuntimeConfig = getRuntimeConfig;
 (globalThis as Record<string, unknown>).__vfIsRuntimeConfigInitialized = isRuntimeConfigInitialized;
 
@@ -214,9 +296,7 @@ export function createTestConfig(
   const { runtime: runtimeOverrides, ...configOverrides } = overrides;
 
   const testEnv = createTestEnvironmentConfig(runtimeOverrides?.env);
-  const fileConfig = { ...DEFAULT_CONFIG, ...configOverrides };
-
-  return createRuntimeConfig(fileConfig, testEnv);
+  return createRuntimeConfig(configOverrides, testEnv);
 }
 
 export function _setRuntimeConfigForTesting(

@@ -24,7 +24,7 @@ describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false 
   describe("ReloadNotifier - Subscription Management", () => {
     it("starts with zero listeners", (): void => {
       assertEquals(ReloadNotifier.getListenerCount(), 0);
-      assertEquals(ReloadNotifier.getInvalidateListenerCount(), 0);
+      assertEquals(ReloadNotifier.getMetrics().activeInvalidateListeners, 0);
     });
 
     it("can subscribe and unsubscribe reload listeners", (): void => {
@@ -42,13 +42,13 @@ describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false 
     it("can subscribe and unsubscribe invalidate listeners", (): void => {
       const listener = (): void => {};
 
-      assertEquals(ReloadNotifier.getInvalidateListenerCount(), 0);
+      assertEquals(ReloadNotifier.getMetrics().activeInvalidateListeners, 0);
 
       const unsubscribe = ReloadNotifier.subscribeInvalidate(listener);
-      assertEquals(ReloadNotifier.getInvalidateListenerCount(), 1);
+      assertEquals(ReloadNotifier.getMetrics().activeInvalidateListeners, 1);
 
       unsubscribe();
-      assertEquals(ReloadNotifier.getInvalidateListenerCount(), 0);
+      assertEquals(ReloadNotifier.getMetrics().activeInvalidateListeners, 0);
     });
 
     it("supports multiple listeners", (): void => {

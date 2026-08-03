@@ -1,16 +1,18 @@
 import { rendererLogger } from "#veryfront/utils";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import type { LayoutItem, MdxBundle, MDXComponents } from "#veryfront/types";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { LayoutComponentCache } from "./component-loader.ts";
 import { applyMDXLayout, applyTSXLayout, loadTSXComponent } from "./component-loader.ts";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { getElementTypeName } from "../../element-validator/primitive-checks.ts";
 import { getProjectReact } from "#veryfront/react";
 import { ensureValidChild } from "./ensure-valid-child.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 
 const logger = rendererLogger.component("apply-layouts-esm");
 
@@ -27,6 +29,12 @@ export function applyLayoutsESM(
   projectSlug: string,
   contentSourceId: string,
   preloadedImportMap?: ImportMapConfig,
+  reactVersion?: string,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
+  config?: VeryfrontConfig,
 ): Promise<BundledReact.ReactElement> {
   return withSpan(
     SpanNames.LAYOUT_APPLY_LAYOUTS_ESM,
@@ -72,6 +80,12 @@ export function applyLayoutsESM(
                   projectSlug,
                   contentSourceId,
                   preloadedImportMap,
+                  reactVersion,
+                  dependencyPinningCacheKey,
+                  dependencyPinningDependencies,
+                  dependencyPinningSource,
+                  moduleServerOrigin,
+                  config,
                 ),
               spanAttrs,
             );
@@ -94,6 +108,11 @@ export function applyLayoutsESM(
                 projectId,
                 projectSlug,
                 contentSourceId,
+                reactVersion,
+                dependencyPinningCacheKey,
+                dependencyPinningDependencies,
+                dependencyPinningSource,
+                moduleServerOrigin,
               ),
             spanAttrs,
           );
@@ -124,6 +143,12 @@ export function applyLayoutsESM(
             projectSlug,
             contentSourceId,
             preloadedImportMap,
+            reactVersion,
+            dependencyPinningCacheKey,
+            dependencyPinningDependencies,
+            dependencyPinningSource,
+            moduleServerOrigin,
+            config,
           ),
         { "layout.kind": "mdx", "layout.type": "named" },
       );
@@ -151,8 +176,13 @@ export async function applyLayoutsFunctionBody(
   projectId: string,
   projectSlug: string,
   contentSourceId: string,
+  reactVersion?: string,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
 ): Promise<BundledReact.ReactElement> {
-  const React = await getProjectReact();
+  const React = await getProjectReact(reactVersion);
   let element = pageElement;
 
   logger.debug("Using function-body wrapping for layouts");
@@ -193,6 +223,12 @@ export async function applyLayoutsFunctionBody(
         projectId,
         projectSlug,
         contentSourceId,
+        reactVersion,
+        undefined,
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies,
+        dependencyPinningSource,
+        moduleServerOrigin,
       );
 
       const child = ensureValidChild(element, React);

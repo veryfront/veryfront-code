@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertNotEquals,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
@@ -8,15 +14,7 @@ function assertFunction(value: unknown): void {
   assertEquals(typeof value, "function");
 }
 
-if (!isDeno) {
-  describe("DenoAdapter", { skip: true }, () => {
-    it("skipped - not running in Deno", () => {});
-  });
-
-  describe("denoAdapter singleton", { skip: true }, () => {
-    it("skipped - not running in Deno", () => {});
-  });
-} else {
+if (isDeno) {
   const { DenoAdapter, denoAdapter } = await import("./adapter.ts");
 
   const testFilePath = new URL(import.meta.url).pathname;
@@ -38,6 +36,16 @@ if (!isDeno) {
     });
 
     describe("capabilities", () => {
+      it("exposes an immutable capability snapshot", () => {
+        assertThrows(
+          () => {
+            (denoAdapter.capabilities as { typescript: boolean }).typescript = false;
+          },
+          TypeError,
+        );
+        assertEquals(denoAdapter.capabilities.typescript, true);
+      });
+
       it("should have typescript capability", () => {
         assertEquals(denoAdapter.capabilities.typescript, true);
       });
@@ -144,6 +152,10 @@ if (!isDeno) {
       it("should return false for file that does not exist", async () => {
         const exists = await denoAdapter.fs.exists("/nonexistent/path/file.ts");
         assertEquals(exists, false);
+      });
+
+      it("should propagate invalid path errors", async () => {
+        await assertRejects(() => denoAdapter.fs.exists("\0"), TypeError);
       });
 
       it("should stat a file", async () => {
@@ -288,12 +300,10 @@ if (!isDeno) {
       });
 
       it("should throw for statSync of non-existent path", () => {
-        try {
-          denoAdapter.shell.statSync("/nonexistent/path/12345");
-          assertEquals(true, false, "Should have thrown");
-        } catch (e) {
-          assertExists(e);
-        }
+        assertThrows(
+          () => denoAdapter.shell.statSync("/nonexistent/path/12345"),
+          Deno.errors.NotFound,
+        );
       });
 
       it("should readFileSync a file", () => {
@@ -303,18 +313,56 @@ if (!isDeno) {
       });
 
       it("should throw for readFileSync of non-existent file", () => {
-        try {
-          denoAdapter.shell.readFileSync("/nonexistent/path/12345.ts");
-          assertEquals(true, false, "Should have thrown");
-        } catch (e) {
-          assertExists(e);
-        }
+        assertThrows(
+          () => denoAdapter.shell.readFileSync("/nonexistent/path/12345.ts"),
+          Deno.errors.NotFound,
+        );
       });
     });
 
     describe("serve method", () => {
       it("should have serve method", () => {
         assertFunction(denoAdapter.serve);
+      });
+
+      it("reports the actual bound address for an ephemeral port", async () => {
+        const adapter = new DenoAdapter();
+        const server = await adapter.serve(
+          () => new Response("ok"),
+          { hostname: "127.0.0.1", port: 0 },
+        );
+
+        try {
+          assertNotEquals(server.addr.port, 0);
+          const response = await fetch(`http://${server.addr.hostname}:${server.addr.port}/`);
+          assertEquals(await response.text(), "ok");
+        } finally {
+          await server.stop();
+        }
+      });
+
+      it("does not open a listener when startup is already aborted", async () => {
+        const adapter = new DenoAdapter();
+        const controller = new AbortController();
+        controller.abort(new DOMException("cancelled", "AbortError"));
+
+        try {
+          await assertRejects(
+            () =>
+              adapter.serve(
+                () => new Response("unreachable"),
+                {
+                  hostname: "127.0.0.1",
+                  port: 0,
+                  signal: controller.signal,
+                },
+              ),
+            DOMException,
+            "cancelled",
+          );
+        } finally {
+          await adapter.shutdown();
+        }
       });
     });
 

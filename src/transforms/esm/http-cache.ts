@@ -10,10 +10,10 @@
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
-import { BUILD_FAILED, BUNDLE_ERROR, FILE_NOT_FOUND } from "#veryfront/errors";
-import { simpleHash } from "#veryfront/utils/hash-utils.ts";
+import { BUILD_FAILED, BUNDLE_ERROR, FILE_NOT_FOUND, retryWithBackoff } from "#veryfront/errors";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
+import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import { replaceSpecifiers } from "./lexer.ts";
 import { createBundleManifest, storeBundleManifest } from "./bundle-manifest.ts";
 import { HTTP_MODULE_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
@@ -29,26 +29,49 @@ import {
   tokenizeCachePaths,
 } from "#veryfront/cache/paths.ts";
 import { looksLikeHtmlContent as looksLikeHtmlNotJs } from "./html-content.ts";
+import { HttpModuleBodyError, readHttpModuleText } from "../shared/http-module-response.ts";
+import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
+import {
+  guardedOutboundFetch,
+  OutboundRequestBlockedError,
+} from "#veryfront/security/http/outbound-fetch.ts";
 
 // Extracted modules
 import { embedSourceUrl, extractSourceUrl } from "./source-url-embed.ts";
+import { isDegradedArtifact } from "./degraded-artifact.ts";
 import {
+  buildHttpCacheIdentity,
+  buildHttpCacheIdentityMetadata,
   type CacheOptions,
   ensureAbsoluteDir,
+  ensurePreparedHttpCacheRequestOptions,
+  getEffectiveHttpCacheRequest,
+  hashHttpCacheIdentity,
   hasIncompatibleFilePaths,
+  type HttpCacheIdentityOptions,
   type HttpCacheLike,
   isHttpUrl,
   normalizeHttpUrl,
+  prepareHttpCacheRequestOptions,
   type SetLike,
 } from "./http-cache-helpers.ts";
 import { extractBundleDeps, validateBundleDepsExist } from "./bundle-deps-validator.ts";
 import {
-  __clearInFlightHttpFetches,
   bundleAccumulatorStorage,
+  createBundleAccumulator,
+  trackCachedBundleGraph,
+  trackWrittenBundle,
+} from "./bundle-accumulator.ts";
+import {
+  isHttpBundleCodeWithinLimit,
+  MAX_CACHED_HTTP_BUNDLE_BYTES,
+  readCachedHttpBundleFile,
+} from "./http-bundle-file.ts";
+import {
+  __clearInFlightHttpFetches,
   inFlightHttpFetches,
   processingStackStorage,
   refreshDistributedCacheAsync,
-  trackBundleAccumulator,
   waitForInFlightFetch,
 } from "./in-flight-manager.ts";
 import {
@@ -67,9 +90,167 @@ import {
 
 /** Threshold in ms above which an HTTP module fetch is considered slow */
 const SLOW_HTTP_FETCH_THRESHOLD_MS = 500;
+const HTTP_MODULE_FETCH_MAX_ATTEMPTS = 3;
+const HTTP_MODULE_FETCH_RETRY_DELAY_MS = 100;
+const HTTP_MODULE_FETCH_WAIT_GRACE_MS = 5_000;
+const HTTP_MODULE_FETCH_MAX_WAIT_MS = HTTP_FETCH_TIMEOUT_MS * HTTP_MODULE_FETCH_MAX_ATTEMPTS +
+  HTTP_MODULE_FETCH_RETRY_DELAY_MS *
+    ((HTTP_MODULE_FETCH_MAX_ATTEMPTS - 1) * HTTP_MODULE_FETCH_MAX_ATTEMPTS / 2) +
+  HTTP_MODULE_FETCH_WAIT_GRACE_MS;
 
 const httpCacheLog = logger.component("http-cache");
 const contentMetricsLog = logger.component("content-metrics");
+
+interface HttpModuleFetchResult {
+  code: string;
+  contentType: string;
+}
+
+class HttpModuleResponseError extends Error {
+  constructor(readonly status: number) {
+    super(`HTTP module response returned status ${status}`);
+    this.name = "HttpModuleResponseError";
+  }
+}
+
+class HttpModuleRequestError extends Error {
+  constructor(readonly requestErrorType: string) {
+    super(`HTTP module request failed (${requestErrorType})`);
+    this.name = "HttpModuleRequestError";
+  }
+}
+
+function shouldRetryHttpModuleFetch(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+async function discardResponseBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch (_) {
+    // The response is already being discarded.
+  }
+}
+
+async function fetchHttpModuleAttempt(
+  url: string,
+  safeUrl: string,
+  urlObj: URL,
+  signal: AbortSignal | undefined,
+  attempt: number,
+): Promise<HttpModuleFetchResult> {
+  let response: Response | undefined;
+
+  try {
+    const startedAt = performance.now();
+    response = await guardedOutboundFetch(url, {
+      headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
+      signal,
+      redirect: "follow",
+    });
+
+    const duration = Math.round(performance.now() - startedAt);
+    contentMetricsLog.debug("HTTP_MODULE_FETCH", {
+      url: safeUrl,
+      host: urlObj.host,
+      duration_ms: duration,
+      status: response.status,
+      slow: duration > SLOW_HTTP_FETCH_THRESHOLD_MS,
+      attempt: attempt + 1,
+    });
+
+    if (!response.ok) {
+      const status = response.status;
+      await discardResponseBody(response);
+      throw new HttpModuleResponseError(status);
+    }
+
+    return {
+      code: await readHttpModuleText(
+        response,
+        MAX_BUNDLE_CHUNK_SIZE_BYTES,
+        signal,
+      ),
+      contentType: response.headers.get("content-type") ?? "",
+    };
+  } catch (error) {
+    if (
+      error instanceof HttpModuleResponseError || error instanceof HttpModuleBodyError ||
+      error instanceof OutboundRequestBlockedError
+    ) {
+      throw error;
+    }
+    if (response) await discardResponseBody(response);
+
+    const requestErrorType = error instanceof Error ? error.name : typeof error;
+    throw new HttpModuleRequestError(requestErrorType);
+  }
+}
+
+async function fetchHttpModule(url: string): Promise<HttpModuleFetchResult> {
+  const urlObj = new URL(url);
+  const safeUrl = sanitizeUrlForSpan(url);
+
+  try {
+    return await retryWithBackoff(
+      (signal, attempt) =>
+        withSpan(
+          SpanNames.HTTP_CLIENT_FETCH,
+          () => fetchHttpModuleAttempt(url, safeUrl, urlObj, signal, attempt),
+          {
+            "http.method": "GET",
+            "http.url": safeUrl,
+            "http.host": urlObj.host,
+            "http.scheme": urlObj.protocol.replace(":", ""),
+            "esm.package_fetch": true,
+          },
+        ),
+      {
+        maxAttempts: HTTP_MODULE_FETCH_MAX_ATTEMPTS,
+        timeoutMs: HTTP_FETCH_TIMEOUT_MS,
+        shouldRetry: (error) =>
+          error instanceof HttpModuleBodyError
+            ? false
+            : error instanceof OutboundRequestBlockedError
+            ? false
+            : !(error instanceof HttpModuleResponseError) ||
+              shouldRetryHttpModuleFetch(error.status),
+        computeDelay: (attempt) => HTTP_MODULE_FETCH_RETRY_DELAY_MS * (attempt + 1),
+        onRetry: ({ error, attempt }) => {
+          httpCacheLog.warn("HTTP module fetch failed, retrying", {
+            url: safeUrl,
+            status: error instanceof HttpModuleResponseError ? error.status : undefined,
+            errorType: error instanceof HttpModuleRequestError
+              ? error.requestErrorType
+              : error.name,
+            attempt: attempt + 1,
+          });
+        },
+      },
+    );
+  } catch (error) {
+    if (error instanceof HttpModuleResponseError) {
+      throw BUILD_FAILED.create({ detail: `Failed to fetch ${safeUrl}: ${error.status}` });
+    }
+    if (error instanceof HttpModuleRequestError) {
+      throw BUILD_FAILED.create({
+        detail: `Failed to fetch ${safeUrl}: ${error.requestErrorType}`,
+      });
+    }
+    if (error instanceof HttpModuleBodyError) {
+      throw BUILD_FAILED.create({
+        detail: `Failed to fetch ${safeUrl}: ${error.message}`,
+      });
+    }
+    if (error instanceof OutboundRequestBlockedError) {
+      // Preserve the policy-denial type so downstream specifier resolution can
+      // distinguish it from a transient fetch failure. Dynamic imports must
+      // never degrade into an unguarded runtime fetch after a policy denial.
+      throw error;
+    }
+    throw error;
+  }
+}
 
 // Re-export for backwards compatibility
 export {
@@ -89,31 +270,68 @@ export { __injectCachesForTests };
 
 async function cacheHttpModuleInternal(url: string, options: CacheOptions): Promise<string | null> {
   const normalizedUrl = normalizeHttpUrl(url);
+  const safeUrl = sanitizeUrlForSpan(normalizedUrl);
   const cacheDir = ensureAbsoluteDir(options.cacheDir);
-  const cacheKey = `${cacheDir}:${normalizedUrl}`;
-
-  const existing = getCachedPaths().get(cacheKey);
-  if (existing) {
-    if (await exists(existing)) return existing;
-    getCachedPaths().delete(cacheKey);
-  }
-
-  const hash = simpleHash(normalizedUrl);
+  const cacheIdentity = await buildHttpCacheIdentity(normalizedUrl, options);
+  const identityMetadata = await buildHttpCacheIdentityMetadata(normalizedUrl, options);
+  const cacheKey = `${cacheDir}:${cacheIdentity}`;
+  const hash = await hashHttpCacheIdentity(cacheIdentity);
   const cachePath = join(cacheDir, `http-${hash}.mjs`);
   const fs = createFileSystem();
 
-  if (await exists(cachePath)) {
-    const code = await fs.readTextFile(cachePath);
-    const deps = extractBundleDeps(code);
+  const existing = getCachedPaths().get(cacheKey);
+  if (existing) {
+    if (
+      await exists(existing) &&
+      await trackCachedBundleGraph(hash, normalizedUrl, existing, cacheDir)
+    ) {
+      return existing;
+    }
+    getCachedPaths().delete(cacheKey);
+  }
 
-    if (deps.length > 0) {
-      const depsValid = await validateBundleDepsExist(deps, cacheDir);
-      if (!depsValid) {
-        httpCacheLog.debug("Local cache has missing deps, will re-fetch", {
-          url: normalizedUrl,
-          hash,
-          missingDeps: deps.length,
-        });
+  if (await exists(cachePath)) {
+    const cachedBundle = await readCachedHttpBundleFile(fs, cachePath);
+    const code = cachedBundle?.code;
+
+    if (!code) {
+      httpCacheLog.debug("Local cache bundle is unreadable or oversized, will re-fetch", {
+        url: safeUrl,
+        hash,
+      });
+    } else if (isDegradedArtifact(code)) {
+      // The artifact on disk is the fallback a previous render wrote when a
+      // dependency could not be prefetched. Retry the prefetch instead of
+      // handing the degradation on.
+      httpCacheLog.debug("Local cache holds a degraded artifact, will re-fetch", {
+        url: safeUrl,
+        hash,
+      });
+    } else {
+      const deps = extractBundleDeps(code);
+
+      if (deps.length > 0) {
+        const depsValid = await validateBundleDepsExist(deps, cacheDir);
+        if (!depsValid) {
+          httpCacheLog.debug("Local cache has missing deps, will re-fetch", {
+            url: safeUrl,
+            hash,
+            missingDeps: deps.length,
+          });
+        } else {
+          getCachedPaths().set(cacheKey, cachePath);
+          refreshDistributedCacheAsync(
+            hash,
+            code,
+            cacheDir,
+            normalizedUrl,
+            identityMetadata,
+            getLastDistributedRefresh,
+          );
+          if (await trackCachedBundleGraph(hash, normalizedUrl, cachePath, cacheDir)) {
+            return cachePath;
+          }
+        }
       } else {
         getCachedPaths().set(cacheKey, cachePath);
         refreshDistributedCacheAsync(
@@ -121,28 +339,25 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
           code,
           cacheDir,
           normalizedUrl,
+          identityMetadata,
           getLastDistributedRefresh,
         );
-        trackBundleAccumulator(hash, normalizedUrl, cachePath);
-        return cachePath;
+        if (await trackCachedBundleGraph(hash, normalizedUrl, cachePath, cacheDir)) {
+          return cachePath;
+        }
       }
-    } else {
-      getCachedPaths().set(cacheKey, cachePath);
-      refreshDistributedCacheAsync(hash, code, cacheDir, normalizedUrl, getLastDistributedRefresh);
-      trackBundleAccumulator(hash, normalizedUrl, cachePath);
-      return cachePath;
     }
   }
 
   const processingStack = getProcessingStack();
-  if (processingStack.has(normalizedUrl)) {
+  if (processingStack.has(cacheIdentity)) {
     if (await exists(cachePath)) {
       httpCacheLog.debug("Circular dependency detected, file exists", {
-        url: normalizedUrl,
+        url: safeUrl,
       });
     } else {
       httpCacheLog.debug("Circular dependency detected, file pending write", {
-        url: normalizedUrl,
+        url: safeUrl,
         cachePath,
       });
     }
@@ -151,8 +366,15 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
 
   let inFlight = inFlightHttpFetches.get(cacheKey);
   while (inFlight) {
-    const result = await waitForInFlightFetch(inFlight, cacheKey);
-    if (result !== undefined) return result;
+    const result = await waitForInFlightFetch(inFlight, HTTP_MODULE_FETCH_MAX_WAIT_MS);
+    if (result !== undefined) {
+      if (
+        result === null ||
+        await trackCachedBundleGraph(hash, normalizedUrl, result, cacheDir)
+      ) {
+        return result;
+      }
+    }
 
     if (inFlightHttpFetches.get(cacheKey) === inFlight) {
       inFlightHttpFetches.delete(cacheKey);
@@ -167,41 +389,22 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     if (cacheResult.code) {
       const cachedCode = unbrand(cacheResult.code);
       const deps = extractBundleDeps(cachedCode);
+      const isUsable = !isDegradedArtifact(cachedCode) &&
+        isHttpBundleCodeWithinLimit(cachedCode) &&
+        (deps.length === 0 || await validateBundleDepsExist(deps, cacheDir));
 
-      if (deps.length > 0) {
-        const depsExist = await validateBundleDepsExist(deps, cacheDir);
-        if (!depsExist) {
-          httpCacheLog.debug("Cached code has missing bundle deps, will re-fetch", {
-            url: normalizedUrl,
-            hash,
-            missingDeps: deps.length,
-          });
-        } else {
-          logger.debug(
-            cacheResult.wasGzipped
-              ? "[HTTP-CACHE] Distributed cache hit (gzip decoded)"
-              : "[HTTP-CACHE] Distributed cache hit",
-            { url: normalizedUrl, hash },
-          );
-          await fs.mkdir(cacheDir, { recursive: true });
-          await fs.writeTextFile(cachePath, cachedCode);
-
-          if (!(await exists(cachePath))) {
-            throw FILE_NOT_FOUND.create({
-              detail:
-                `[HTTP-CACHE] INVARIANT VIOLATION: Redis recovery write succeeded but file does not exist: ${cachePath}`,
-            });
-          }
-
-          getCachedPaths().set(cacheKey, cachePath);
-          return cachePath;
-        }
+      if (!isUsable) {
+        httpCacheLog.debug("Distributed cache bundle is incomplete or oversized, will re-fetch", {
+          url: safeUrl,
+          hash,
+          dependencyCount: deps.length,
+        });
       } else {
         logger.debug(
           cacheResult.wasGzipped
-            ? "[HTTP-CACHE] Distributed cache hit (gzip decoded, no deps)"
+            ? "[HTTP-CACHE] Distributed cache hit (gzip decoded)"
             : "[HTTP-CACHE] Distributed cache hit",
-          { url: normalizedUrl, hash },
+          { url: safeUrl, hash },
         );
         await fs.mkdir(cacheDir, { recursive: true });
         await fs.writeTextFile(cachePath, cachedCode);
@@ -214,82 +417,58 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
         }
 
         getCachedPaths().set(cacheKey, cachePath);
-        return cachePath;
+        if (await trackCachedBundleGraph(hash, normalizedUrl, cachePath, cacheDir)) {
+          return cachePath;
+        }
+        getCachedPaths().delete(cacheKey);
       }
     } else if (cacheResult.failReason && cacheResult.failReason !== "not_found") {
       httpCacheLog.debug("Distributed cache get failed", {
-        url: normalizedUrl,
+        url: safeUrl,
         reason: cacheResult.failReason,
       });
     }
 
-    httpCacheLog.debug("Fetching from network", { url: normalizedUrl });
+    httpCacheLog.debug("Fetching from network", { url: safeUrl });
+    const fetchedModule = await fetchHttpModule(normalizedUrl);
+    let code = fetchedModule.code;
 
-    const urlObj = new URL(normalizedUrl);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), HTTP_FETCH_TIMEOUT_MS);
-
-    const httpFetchStartTime = performance.now();
-
-    const response = await withSpan(
-      SpanNames.HTTP_CLIENT_FETCH,
-      () =>
-        fetch(normalizedUrl, {
-          headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
-          signal: controller.signal,
-          redirect: "follow",
-        }),
-      {
-        "http.method": "GET",
-        "http.url": normalizedUrl,
-        "http.host": urlObj.host,
-        "http.scheme": urlObj.protocol.replace(":", ""),
-        "esm.package_fetch": true,
-      },
-    );
-    clearTimeout(timeout);
-
-    const httpFetchDuration = Math.round(performance.now() - httpFetchStartTime);
-    contentMetricsLog.debug("HTTP_MODULE_FETCH", {
-      url: normalizedUrl.substring(0, 120),
-      host: urlObj.host,
-      duration_ms: httpFetchDuration,
-      status: response.status,
-      slow: httpFetchDuration > SLOW_HTTP_FETCH_THRESHOLD_MS,
-    });
-
-    if (!response.ok) {
-      throw BUILD_FAILED.create({ detail: `Failed to fetch ${normalizedUrl}: ${response.status}` });
-    }
-
-    let code = await response.text();
-
-    const contentType = response.headers.get("content-type") ?? "";
+    const contentType = fetchedModule.contentType;
     const isHtmlContent = contentType.includes("text/html") || looksLikeHtmlNotJs(code);
 
     if (isHtmlContent) {
       logger.error(
         "[HTTP-CACHE] Received HTML instead of JavaScript, likely an esm.sh error page",
         {
-          url: normalizedUrl,
+          url: safeUrl,
           contentType,
-          preview: code.slice(0, 200),
         },
       );
       throw BUNDLE_ERROR.create({
         detail:
-          `Received HTML instead of JavaScript from ${normalizedUrl}. The package may not exist or failed to build on esm.sh.`,
+          `Received HTML instead of JavaScript from ${safeUrl}. The package may not exist or failed to build on esm.sh.`,
       });
     }
 
-    processingStack.add(normalizedUrl);
+    processingStack.add(cacheIdentity);
     try {
-      code = await rewriteModuleImports(code, normalizedUrl, options, cacheHttpModule);
+      const rewritten = await rewriteModuleImports(
+        code,
+        normalizedUrl,
+        options,
+        cacheHttpModule,
+      );
+      code = rewritten.code;
     } finally {
-      processingStack.delete(normalizedUrl);
+      processingStack.delete(cacheIdentity);
     }
 
     code = embedSourceUrl(code, normalizedUrl);
+    if (!isHttpBundleCodeWithinLimit(code)) {
+      throw BUNDLE_ERROR.create({
+        detail: `Rewritten HTTP module exceeds ${MAX_CACHED_HTTP_BUNDLE_BYTES} bytes`,
+      });
+    }
 
     await fs.mkdir(cacheDir, { recursive: true });
     await fs.writeTextFile(cachePath, code);
@@ -307,22 +486,20 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
         asLocalModuleCode(code),
         normalizedUrl,
         HTTP_MODULE_DISTRIBUTED_TTL_SEC,
+        identityMetadata,
       );
     } catch (error) {
       if (error instanceof VeryfrontError && error.slug === "cache-invariant-violation") {
         throw error;
       }
-      httpCacheLog.debug("Distributed cache set failed", { url: normalizedUrl, error });
+      httpCacheLog.debug("Distributed cache set failed", { url: safeUrl, error });
     }
 
     getCachedPaths().set(cacheKey, cachePath);
-
-    const accumulator = bundleAccumulatorStorage.getStore();
-    if (accumulator) {
-      accumulator.push({
-        hash: String(hash),
-        url: normalizedUrl,
-        sizeBytes: code.length,
+    if (!(await trackWrittenBundle(hash, normalizedUrl, cachePath))) {
+      getCachedPaths().delete(cacheKey);
+      throw BUNDLE_ERROR.create({
+        detail: "Freshly written HTTP bundle could not be verified",
       });
     }
 
@@ -338,11 +515,18 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
 }
 
 async function cacheHttpModule(url: string, options: CacheOptions): Promise<string | null> {
+  const preparedOptions = ensurePreparedHttpCacheRequestOptions(options);
+  const effective = getEffectiveHttpCacheRequest(url, preparedOptions);
+  const effectiveOptions = effective.options;
+
   if (hasInjectedProcessingStack() || processingStackStorage.getStore()) {
-    return cacheHttpModuleInternal(url, options);
+    return cacheHttpModuleInternal(effective.url, effectiveOptions);
   }
 
-  return processingStackStorage.run(new Set(), () => cacheHttpModuleInternal(url, options));
+  return processingStackStorage.run(
+    new Set(),
+    () => cacheHttpModuleInternal(effective.url, effectiveOptions),
+  );
 }
 
 /** Result of cacheHttpImportsToLocal including bundle manifest info. */
@@ -359,8 +543,15 @@ export function cacheHttpImportsToLocal(
   code: string,
   options: CacheOptions,
 ): Promise<CacheHttpImportsResult> {
-  return bundleAccumulatorStorage.run([], async () => {
-    const replacements = await buildReplacements(code, undefined, options, cacheHttpModule);
+  const requestOptions = prepareHttpCacheRequestOptions(options);
+  const accumulator = createBundleAccumulator();
+  return bundleAccumulatorStorage.run(accumulator, async () => {
+    const { replacements } = await buildReplacements(
+      code,
+      undefined,
+      requestOptions,
+      cacheHttpModule,
+    );
     if (replacements.size === 0) return { code };
 
     httpCacheLog.debug("Cached HTTP imports", { count: replacements.size });
@@ -370,8 +561,13 @@ export function cacheHttpImportsToLocal(
       (specifier) => replacements.get(specifier) ?? null,
     );
 
-    const bundles = bundleAccumulatorStorage.getStore();
-    if (!bundles?.length) return { code: rewrittenCode };
+    const currentAccumulator = bundleAccumulatorStorage.getStore();
+    if (!currentAccumulator?.complete || currentAccumulator.bundles.size === 0) {
+      return { code: rewrittenCode };
+    }
+    const bundles = [...currentAccumulator.bundles.values()].sort((left, right) =>
+      left.hash.localeCompare(right.hash)
+    );
 
     try {
       const manifest = await createBundleManifest(bundles);
@@ -391,11 +587,15 @@ export function cacheHttpImportsToLocal(
 /**
  * Cache a specific HTTP module URL and return its local file:// path.
  */
-export async function cacheModuleToLocal(url: string, cacheDir: string): Promise<string> {
+export async function cacheModuleToLocal(
+  url: string,
+  cacheDir: string,
+  reactVersion?: string,
+): Promise<string> {
   if (!isHttpUrl(url)) return url;
 
   const importMap = { imports: {}, scopes: {} };
-  const cached = await cacheHttpModule(url, { cacheDir, importMap });
+  const cached = await cacheHttpModule(url, { cacheDir, importMap, reactVersion });
 
   return cached ? `file://${cached}` : url;
 }
@@ -408,8 +608,9 @@ export function recoverHttpBundleByHash(
   hash: string,
   cacheDir: string,
   parentCode?: string,
+  identity?: HttpCacheIdentityOptions,
 ): Promise<boolean> {
-  return recoverHttpBundleByHashImpl(hash, cacheDir, cacheHttpModule, parentCode);
+  return recoverHttpBundleByHashImpl(hash, cacheDir, cacheHttpModule, parentCode, identity);
 }
 
 /**
@@ -419,8 +620,9 @@ export function recoverHttpBundleByHash(
 export function ensureHttpBundlesExist(
   bundlePaths: Array<{ path: string; hash: string }>,
   cacheDir: string,
+  identity?: HttpCacheIdentityOptions,
 ): Promise<string[]> {
-  return ensureHttpBundlesExistImpl(bundlePaths, cacheDir, cacheHttpModule);
+  return ensureHttpBundlesExistImpl(bundlePaths, cacheDir, cacheHttpModule, identity);
 }
 
 /**

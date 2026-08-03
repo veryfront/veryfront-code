@@ -1,7 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertMatch, assertStringIncludes } from "#std/assert";
-import type { ProviderModelMessage } from "./types.ts";
+import { assert, assertEquals, assertMatch, assertStringIncludes, assertThrows } from "#std/assert";
+import type { ChatUiMessage, ProviderModelMessage } from "./types.ts";
+import type { HistoricalToolInputCompactionDiagnostic } from "./message-prep.ts";
 import {
+  compactForStep,
+  compactHistoricalUiMessageToolInputs,
   compressTurn,
   enforceTokenBudget,
   estimateTokens,
@@ -9,8 +12,119 @@ import {
   prepareProviderModelMessagesFromUiMessages,
   repairToolPairs,
   rewriteUnsupportedFilePartsAsAnnotations,
+  sanitizeProviderModelMessages,
   stripPendingToolParts,
 } from "./message-prep.ts";
+
+const GITHUB_PR_DIFF_INPUT = { owner: "veryfront", repo: "veryfront-code", pull_number: 3092 };
+const GITHUB_LIST_PRS_INPUT = { owner: "veryfront", repo: "veryfront-code" };
+
+type ReplayMessage = {
+  id: string;
+  role: ChatUiMessage["role"];
+  parts: unknown[];
+};
+
+function assistantReplayMessage(parts: unknown[], id = "assistant-1"): ReplayMessage {
+  return { id, role: "assistant", parts };
+}
+
+function toolReplayMessage(parts: unknown[], id = "assistant-1:tool"): ReplayMessage {
+  return { id, role: "tool", parts };
+}
+
+function userReplayMessage(text: string, id = "user-1"): ReplayMessage {
+  return { id, role: "user", parts: [textReplayPart(text)] };
+}
+
+function textReplayPart(text: string): unknown {
+  return { type: "text" as const, text };
+}
+
+function dynamicToolReplayPart(
+  toolCallId: string,
+  toolName: string,
+  input: unknown,
+  state = "input-available",
+  output?: unknown,
+): unknown {
+  return output === undefined
+    ? { type: "dynamic-tool" as const, toolName, toolCallId, state, input }
+    : { type: "dynamic-tool" as const, toolName, toolCallId, state, input, output };
+}
+
+function rawToolCallReplayPart(
+  id: string,
+  name: string,
+  input: unknown,
+  state = "pending",
+): unknown {
+  return { type: "tool_call" as const, id, name, state, input };
+}
+
+function rawToolResultReplayPart(toolCallId: string, output: unknown, toolName?: string): unknown {
+  return toolName
+    ? { type: "tool_result" as const, tool_call_id: toolCallId, tool_name: toolName, output }
+    : { type: "tool_result" as const, tool_call_id: toolCallId, output };
+}
+
+function stripReplayMessages(messages: ReplayMessage[]): unknown {
+  return stripPendingToolParts(messages as unknown as ChatUiMessage[]) as unknown;
+}
+
+Deno.test("estimateTokens handles cyclic and non-JSON runtime values", () => {
+  const value: Record<string, unknown> = { big: 42n, notANumber: Number.NaN };
+  value.self = value;
+
+  assertEquals(
+    estimateTokens(value),
+    Math.ceil('{"big":"42","notANumber":null,"self":"[Circular]"}'.length / 4),
+  );
+});
+
+Deno.test("historical compaction validates limits and handles cyclic tool input", () => {
+  const input: Record<string, unknown> = {
+    path: "src/example.ts",
+    content: "x".repeat(2_000),
+  };
+  input.self = input;
+  const messages = [
+    userReplayMessage("Create the file.", "user-old"),
+    assistantReplayMessage([
+      dynamicToolReplayPart(
+        "tool-cyclic",
+        "update_file",
+        input,
+        "output-available",
+        { ok: true },
+      ),
+    ]),
+    userReplayMessage("Continue.", "user-current"),
+  ] as unknown as ChatUiMessage[];
+
+  const compacted = compactHistoricalUiMessageToolInputs(messages);
+  assertStringIncludes(JSON.stringify(compacted), "historical_tool_input_summary");
+
+  assertThrows(
+    () =>
+      compactHistoricalUiMessageToolInputs(messages, {
+        limits: { charsPerToken: 0 },
+      }),
+    TypeError,
+    "charsPerToken",
+  );
+  assertThrows(
+    () =>
+      compactHistoricalUiMessageToolInputs(messages, {
+        resolvePolicy: () => ({
+          compactCompletedInput: true,
+          compactAfterChars: -1,
+        }),
+      }),
+    TypeError,
+    "compactAfterChars",
+  );
+});
 
 Deno.test("repairToolPairs moves a later tool result immediately after the matching tool call", () => {
   const messages = [
@@ -63,6 +177,77 @@ Deno.test("repairToolPairs moves a later tool result immediately after the match
   assertEquals(toolResultMatches.length, 2);
   assertEquals(unavailableMatches.length, 0);
   assertEquals(repaired, [messages[0]!, messages[1]!, messages[3]!, messages[2]!]);
+});
+
+Deno.test("repairToolPairs never steals a matching result from a later user turn", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "reused-tool-id",
+        toolName: "lookup",
+        input: {},
+      }],
+    },
+    { role: "user", content: "Start a new turn." },
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "reused-tool-id",
+        toolName: "lookup",
+        output: { type: "json", value: { from: "later turn" } },
+      }],
+    },
+  ] satisfies ProviderModelMessage[];
+
+  assertEquals(repairToolPairs(messages), [
+    messages[0]!,
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "reused-tool-id",
+        toolName: "lookup",
+        output: { type: "text", value: "[tool result unavailable]" },
+      }],
+    },
+    messages[1]!,
+    messages[2]!,
+  ]);
+});
+
+Deno.test("sanitizeProviderModelMessages drops malformed and role-incompatible parts", () => {
+  const malformed = [
+    {
+      role: "user",
+      content: [
+        { type: "data-private", data: { secret: true } },
+        { type: "text", text: "Keep me" },
+      ],
+    },
+    {
+      role: "assistant",
+      content: [
+        { type: "tool-call", toolCallId: "", toolName: "broken", input: {} },
+        { type: "text", text: "Also keep me" },
+      ],
+    },
+    {
+      role: "tool",
+      content: [{ type: "text", text: "not a tool result" }],
+    },
+    {
+      role: "system",
+      content: { unexpected: true },
+    },
+  ] as unknown as ProviderModelMessage[];
+
+  assertEquals(sanitizeProviderModelMessages(malformed), [
+    { role: "user", content: [{ type: "text", text: "Keep me" }] },
+    { role: "assistant", content: [{ type: "text", text: "Also keep me" }] },
+  ]);
 });
 
 Deno.test("maskOldToolOutputs masks large historical tool outputs and removes stale reasoning before the latest user turn", () => {
@@ -293,7 +478,7 @@ Deno.test("maskOldToolOutputs keeps compact GitHub PR labels from REST list resu
                   html_url: "https://github.com/veryfront/veryfront-code/pull/2567",
                   labels: [
                     { id: 1, name: "bug", color: "d73a4a", description: "ignored" },
-                    { id: 2, name: "integrations", color: "0e8a16" },
+                    { id: 2, name: "integrations", color: "0e8a16", description: null },
                   ],
                   requested_reviewers: [{ login: "reviewer" }],
                   comments: [{ body: "large comment" }],
@@ -740,27 +925,601 @@ Deno.test("compressTurn emits a two-message summary shell", () => {
 
 Deno.test("stripPendingToolParts removes stale assistant tool calls before model conversion", () => {
   const messages = [
+    assistantReplayMessage([
+      textReplayPart("Let me ask one thing."),
+      dynamicToolReplayPart("tool-form", "form_input", { title: "Intake" }),
+    ]),
+  ];
+
+  assertEquals(stripReplayMessages(messages), [
+    {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [{ type: "text", text: "Let me ask one thing." }],
+    },
+  ]);
+});
+
+Deno.test("stripPendingToolParts keeps transient assistant tool calls that have replayed results", () => {
+  const messages = [
+    assistantReplayMessage([
+      textReplayPart("I will inspect the branch."),
+      dynamicToolReplayPart("tool-completed-later", "github__get_pr_diff", GITHUB_PR_DIFF_INPUT),
+      rawToolCallReplayPart(
+        "raw-completed-later",
+        "github__list_prs",
+        GITHUB_LIST_PRS_INPUT,
+        "input-streaming",
+      ),
+      dynamicToolReplayPart("tool-unresolved", "github__get_issue", { number: 12 }, "pending"),
+      dynamicToolReplayPart(
+        "approval-completed-later",
+        "form_input",
+        { title: "Approve?" },
+        "approval-requested",
+      ),
+      dynamicToolReplayPart(
+        "approval-unresolved",
+        "form_input",
+        { title: "Approve again?" },
+        "approval-responded",
+      ),
+      dynamicToolReplayPart(
+        "call-only-completed",
+        "github__get_issue",
+        { number: 14 },
+        "streaming",
+      ),
+    ]),
+    toolReplayMessage([
+      rawToolResultReplayPart(
+        "tool-completed-later",
+        { files: ["src/chat/conversation.ts"] },
+        "github__get_pr_diff",
+      ),
+      rawToolResultReplayPart(
+        "raw-completed-later",
+        { data: [{ number: 3092 }] },
+        "github__list_prs",
+      ),
+      rawToolResultReplayPart("approval-completed-later", { submitted: true }, "form_input"),
+    ]),
+    assistantReplayMessage([
+      dynamicToolReplayPart(
+        "call-only-completed",
+        "github__get_issue",
+        { number: 14 },
+        "completed",
+      ),
+    ], "assistant-call-only-completed"),
+  ];
+
+  assertEquals(stripReplayMessages(messages), [
+    {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [
+        { type: "text", text: "I will inspect the branch." },
+        {
+          type: "dynamic-tool",
+          toolName: "github__get_pr_diff",
+          toolCallId: "tool-completed-later",
+          state: "input-available",
+          input: { owner: "veryfront", repo: "veryfront-code", pull_number: 3092 },
+        },
+        {
+          type: "tool_call",
+          id: "raw-completed-later",
+          name: "github__list_prs",
+          state: "input-streaming",
+          input: { owner: "veryfront", repo: "veryfront-code" },
+        },
+        {
+          type: "dynamic-tool",
+          toolName: "form_input",
+          toolCallId: "approval-completed-later",
+          state: "approval-requested",
+          input: { title: "Approve?" },
+        },
+      ],
+    },
+    {
+      id: "assistant-1:tool",
+      role: "tool",
+      parts: [
+        {
+          type: "tool_result",
+          tool_call_id: "tool-completed-later",
+          tool_name: "github__get_pr_diff",
+          output: { files: ["src/chat/conversation.ts"] },
+        },
+        {
+          type: "tool_result",
+          tool_call_id: "raw-completed-later",
+          tool_name: "github__list_prs",
+          output: { data: [{ number: 3092 }] },
+        },
+        {
+          type: "tool_result",
+          tool_call_id: "approval-completed-later",
+          tool_name: "form_input",
+          output: { submitted: true },
+        },
+      ],
+    },
+    {
+      id: "assistant-call-only-completed",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "github__get_issue",
+          toolCallId: "call-only-completed",
+          state: "completed",
+          input: { number: 14 },
+        },
+      ],
+    },
+  ]);
+});
+
+Deno.test("stripPendingToolParts does not keep an earlier duplicate transient call", () => {
+  const messages = [
+    assistantReplayMessage([
+      dynamicToolReplayPart("duplicate-call", "github__get_pr_diff", { pull_number: 1 }),
+    ]),
+    userReplayMessage("continue with a different PR", "user-2"),
+    assistantReplayMessage([
+      dynamicToolReplayPart(
+        "duplicate-call",
+        "github__get_pr_diff",
+        { pull_number: 2 },
+        "output-available",
+        {
+          files: ["new.ts"],
+        },
+      ),
+    ], "assistant-2"),
+  ];
+
+  assertEquals(stripReplayMessages(messages), [
+    {
+      id: "user-2",
+      role: "user",
+      parts: [{ type: "text", text: "continue with a different PR" }],
+    },
+    {
+      id: "assistant-2",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "github__get_pr_diff",
+          toolCallId: "duplicate-call",
+          state: "output-available",
+          input: { pull_number: 2 },
+          output: { files: ["new.ts"] },
+        },
+      ],
+    },
+  ]);
+});
+
+Deno.test("stripPendingToolParts keeps only the nearest duplicate transient call before a result", () => {
+  const messages = [
+    assistantReplayMessage([
+      dynamicToolReplayPart("duplicate-call", "github__get_pr_diff", { pull_number: 1 }),
+      dynamicToolReplayPart("duplicate-call", "github__get_pr_diff", { pull_number: 2 }),
+    ]),
+    toolReplayMessage([rawToolResultReplayPart("duplicate-call", { files: ["new.ts"] })]),
+  ];
+
+  assertEquals(stripReplayMessages(messages), [
+    {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "github__get_pr_diff",
+          toolCallId: "duplicate-call",
+          state: "input-available",
+          input: { pull_number: 2 },
+        },
+      ],
+    },
+    {
+      id: "assistant-1:tool",
+      role: "tool",
+      parts: [
+        {
+          type: "tool_result",
+          tool_call_id: "duplicate-call",
+          output: { files: ["new.ts"] },
+        },
+      ],
+    },
+  ]);
+});
+
+Deno.test("stripPendingToolParts removes completed duplicate calls superseded by replay results", () => {
+  const messages = [
+    assistantReplayMessage([
+      dynamicToolReplayPart(
+        "duplicate-call",
+        "github__get_pr_diff",
+        { pull_number: 1 },
+        "output-available",
+        { files: ["old.ts"] },
+      ),
+      dynamicToolReplayPart("duplicate-call", "github__get_pr_diff", { pull_number: 2 }),
+    ]),
+    toolReplayMessage([rawToolResultReplayPart("duplicate-call", { files: ["new.ts"] })]),
+  ];
+
+  assertEquals(stripReplayMessages(messages), [
+    {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "github__get_pr_diff",
+          toolCallId: "duplicate-call",
+          state: "input-available",
+          input: { pull_number: 2 },
+        },
+      ],
+    },
+    {
+      id: "assistant-1:tool",
+      role: "tool",
+      parts: [
+        {
+          type: "tool_result",
+          tool_call_id: "duplicate-call",
+          output: { files: ["new.ts"] },
+        },
+      ],
+    },
+  ]);
+});
+
+Deno.test("stripPendingToolParts removes earlier duplicate self-contained results", () => {
+  const messages = [
+    assistantReplayMessage([
+      dynamicToolReplayPart(
+        "duplicate-call",
+        "github__get_pr_diff",
+        { pull_number: 1 },
+        "output-available",
+        { files: ["old.ts"] },
+      ),
+      dynamicToolReplayPart(
+        "duplicate-call",
+        "github__get_pr_diff",
+        { pull_number: 2 },
+        "output-available",
+        { files: ["new.ts"] },
+      ),
+    ]),
+  ];
+
+  assertEquals(stripReplayMessages(messages), [
+    {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "github__get_pr_diff",
+          toolCallId: "duplicate-call",
+          state: "output-available",
+          input: { pull_number: 2 },
+          output: { files: ["new.ts"] },
+        },
+      ],
+    },
+  ]);
+});
+
+Deno.test("stripPendingToolParts removes split duplicate call/results superseded by later results", () => {
+  const messages = [
+    assistantReplayMessage([
+      dynamicToolReplayPart("duplicate-call", "github__get_pr_diff", { pull_number: 1 }),
+    ], "assistant-1"),
+    toolReplayMessage([rawToolResultReplayPart("duplicate-call", { files: ["old.ts"] })]),
+    assistantReplayMessage([
+      dynamicToolReplayPart("duplicate-call", "github__get_pr_diff", { pull_number: 2 }),
+    ], "assistant-2"),
+    toolReplayMessage([
+      rawToolResultReplayPart("duplicate-call", { files: ["new.ts"] }),
+    ], "assistant-2:tool"),
+  ];
+
+  assertEquals(stripReplayMessages(messages), [
+    {
+      id: "assistant-2",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "github__get_pr_diff",
+          toolCallId: "duplicate-call",
+          state: "input-available",
+          input: { pull_number: 2 },
+        },
+      ],
+    },
+    {
+      id: "assistant-2:tool",
+      role: "tool",
+      parts: [
+        {
+          type: "tool_result",
+          tool_call_id: "duplicate-call",
+          output: { files: ["new.ts"] },
+        },
+      ],
+    },
+  ]);
+});
+
+Deno.test("stripPendingToolParts rejects name-mismatched replay results", () => {
+  const messages = [
+    assistantReplayMessage([
+      dynamicToolReplayPart("tool-1", "github__get_pr_diff", { pull_number: 1 }),
+    ]),
+    toolReplayMessage([rawToolResultReplayPart("tool-1", { data: [] }, "github__list_prs")]),
+  ];
+
+  assertEquals(stripReplayMessages(messages), [
+    {
+      id: "assistant-1:tool",
+      role: "tool",
+      parts: [
+        {
+          type: "tool_result",
+          tool_call_id: "tool-1",
+          tool_name: "github__list_prs",
+          output: { data: [] },
+        },
+      ],
+    },
+  ]);
+});
+
+Deno.test("stripPendingToolParts keeps same-message transient calls with text before results", () => {
+  const messages = [
+    assistantReplayMessage([
+      rawToolCallReplayPart("raw-completed-inline", "github__list_prs", GITHUB_LIST_PRS_INPUT),
+      textReplayPart("I will summarize this after the result."),
+      rawToolResultReplayPart("raw-completed-inline", { data: [{ number: 3092 }] }),
+    ]),
+  ];
+
+  assertEquals(stripReplayMessages(messages), messages);
+});
+
+Deno.test("stripPendingToolParts keeps transient calls matched by normalized role:tool results", () => {
+  const messages = [
+    assistantReplayMessage([
+      dynamicToolReplayPart("normalized-completed", "github__get_pr_diff", GITHUB_PR_DIFF_INPUT),
+    ]),
+    toolReplayMessage([
+      dynamicToolReplayPart(
+        "normalized-completed",
+        "github__get_pr_diff",
+        GITHUB_PR_DIFF_INPUT,
+        "output-available",
+        { files: ["src/chat/conversation.ts"] },
+      ),
+    ]),
+  ];
+
+  assertEquals(stripReplayMessages(messages), messages);
+});
+
+Deno.test("stripPendingToolParts does not preserve transient calls from inconvertible replay pairs", () => {
+  const nonConvertibleResultRoles = ["user", "system"] as const;
+  const hyphenatedResultMessages = [
     {
       id: "assistant-1",
       role: "assistant" as const,
       parts: [
-        { type: "text" as const, text: "Let me ask one thing." },
         {
           type: "dynamic-tool" as const,
-          toolName: "form_input",
-          toolCallId: "tool-form",
+          toolName: "github__get_issue",
+          toolCallId: "ignored-hyphenated-result",
           state: "input-available" as const,
-          input: { title: "Intake" },
+          input: { number: 42 },
+        },
+      ],
+    },
+    {
+      id: "assistant-1:tool",
+      role: "tool" as const,
+      parts: [
+        {
+          type: "tool-result" as const,
+          toolCallId: "ignored-hyphenated-result",
+          toolName: "github__get_issue",
+          output: { type: "json" as const, value: { issue: 42 } },
         },
       ],
     },
   ];
 
-  assertEquals(stripPendingToolParts(messages), [
+  for (const role of nonConvertibleResultRoles) {
+    const messages = [
+      assistantReplayMessage([
+        dynamicToolReplayPart(`invalid-${role}-result`, "github__get_issue", { number: 42 }),
+      ]),
+      {
+        id: `assistant-1:${role}`,
+        role,
+        parts: [
+          rawToolResultReplayPart(`invalid-${role}-result`, { issue: 42 }, "github__get_issue"),
+        ],
+      },
+    ];
+
+    assertEquals(stripReplayMessages(messages), [messages[1]]);
+  }
+
+  assertEquals(
+    stripPendingToolParts(hyphenatedResultMessages as unknown as ChatUiMessage[]) as unknown,
+    [
+      hyphenatedResultMessages[1],
+    ],
+  );
+});
+
+Deno.test("stripPendingToolParts does not keep prior-message calls after visible continuation", () => {
+  const messages = [
+    assistantReplayMessage([
+      rawToolCallReplayPart("first-call", "github__get_pr_diff", { pull_number: 1 }),
+      rawToolCallReplayPart("second-call", "github__list_prs", { state: "open" }),
+    ]),
+    assistantReplayMessage([
+      rawToolResultReplayPart("first-call", { files: ["one.ts"] }),
+      textReplayPart("This text starts a continuation."),
+      rawToolResultReplayPart("second-call", { data: [{ number: 3092 }] }),
+    ], "assistant-2"),
+  ];
+
+  assertEquals(stripReplayMessages(messages), [
     {
       id: "assistant-1",
       role: "assistant",
-      parts: [{ type: "text", text: "Let me ask one thing." }],
+      parts: [
+        {
+          type: "tool_call",
+          id: "first-call",
+          name: "github__get_pr_diff",
+          state: "pending",
+          input: { pull_number: 1 },
+        },
+      ],
+    },
+    messages[1],
+  ]);
+});
+
+Deno.test("stripPendingToolParts treats whitespace text as provider-visible", () => {
+  const messages = [
+    assistantReplayMessage([
+      rawToolCallReplayPart("first-call", "github__get_pr_diff", { pull_number: 1 }),
+    ]),
+    assistantReplayMessage([textReplayPart(" \n")], "assistant-whitespace"),
+    toolReplayMessage([
+      rawToolResultReplayPart("first-call", { files: ["one.ts"] }),
+    ]),
+  ];
+
+  assertEquals(stripReplayMessages(messages), [
+    {
+      id: "assistant-whitespace",
+      role: "assistant",
+      parts: [{ type: "text", text: " \n" }],
+    },
+    {
+      id: "assistant-1:tool",
+      role: "tool",
+      parts: [
+        {
+          type: "tool_result",
+          tool_call_id: "first-call",
+          output: { files: ["one.ts"] },
+        },
+      ],
+    },
+  ]);
+});
+
+Deno.test("stripPendingToolParts treats empty text as provider-invisible", () => {
+  const messages = [
+    assistantReplayMessage([
+      rawToolCallReplayPart("first-call", "github__get_pr_diff", { pull_number: 1 }),
+    ]),
+    assistantReplayMessage([textReplayPart("")], "assistant-empty-text"),
+    toolReplayMessage([
+      rawToolResultReplayPart("first-call", { files: ["one.ts"] }),
+    ]),
+  ];
+
+  assertEquals(stripReplayMessages(messages), messages);
+});
+
+Deno.test("stripPendingToolParts treats tool-role text as provider-invisible", () => {
+  const messages = [
+    assistantReplayMessage([
+      rawToolCallReplayPart("first-call", "github__get_pr_diff", { pull_number: 1 }),
+    ]),
+    toolReplayMessage([textReplayPart("diagnostic text")], "tool-note"),
+    toolReplayMessage([
+      rawToolResultReplayPart("first-call", { files: ["one.ts"] }),
+    ]),
+  ];
+
+  assertEquals(stripReplayMessages(messages), messages);
+});
+
+Deno.test("stripPendingToolParts does not keep prior-message calls after a new call batch starts", () => {
+  const messages = [
+    assistantReplayMessage([
+      rawToolCallReplayPart("first-call", "github__get_pr_diff", { pull_number: 1 }),
+      rawToolCallReplayPart("second-call", "github__list_prs", { state: "open" }),
+    ]),
+    assistantReplayMessage([
+      rawToolResultReplayPart("first-call", { files: ["one.ts"] }),
+      rawToolCallReplayPart("third-call", "github__get_issue", { number: 42 }),
+      rawToolResultReplayPart("second-call", { data: [{ number: 3092 }] }),
+      rawToolResultReplayPart("third-call", { issue: 42 }),
+    ], "assistant-2"),
+  ];
+
+  assertEquals(stripReplayMessages(messages), [
+    {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [
+        {
+          type: "tool_call",
+          id: "first-call",
+          name: "github__get_pr_diff",
+          state: "pending",
+          input: { pull_number: 1 },
+        },
+      ],
+    },
+    {
+      id: "assistant-2",
+      role: "assistant",
+      parts: [
+        {
+          type: "tool_result",
+          tool_call_id: "first-call",
+          output: { files: ["one.ts"] },
+        },
+        {
+          type: "tool_call",
+          id: "third-call",
+          name: "github__get_issue",
+          state: "pending",
+          input: { number: 42 },
+        },
+        {
+          type: "tool_result",
+          tool_call_id: "second-call",
+          output: { data: [{ number: 3092 }] },
+        },
+        {
+          type: "tool_result",
+          tool_call_id: "third-call",
+          output: { issue: 42 },
+        },
+      ],
     },
   ]);
 });
@@ -851,6 +1610,46 @@ Deno.test("prepareProviderModelMessagesFromUiMessages normalizes UI history into
   ]);
 });
 
+Deno.test("prepareProviderModelMessagesFromUiMessages preserves replay across empty assistant text", () => {
+  const prepared = prepareProviderModelMessagesFromUiMessages([
+    assistantReplayMessage([
+      rawToolCallReplayPart("tool-1", "github__get_pr_diff", { pull_number: 3092 }),
+    ]),
+    assistantReplayMessage([textReplayPart("")], "assistant-empty-text"),
+    toolReplayMessage([
+      rawToolResultReplayPart("tool-1", { files: ["src/chat/conversation.ts"] }),
+    ]),
+  ] as unknown as ChatUiMessage[]);
+
+  assertEquals(prepared, [
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "tool-1",
+          toolName: "github__get_pr_diff",
+          input: { pull_number: 3092 },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "tool-1",
+          toolName: "github__get_pr_diff",
+          output: {
+            type: "json",
+            value: { files: ["src/chat/conversation.ts"] },
+          },
+        },
+      ],
+    },
+  ]);
+});
+
 Deno.test("prepareProviderModelMessagesFromUiMessages prefers completed tool output over superseded stopped errors", () => {
   const prepared = prepareProviderModelMessagesFromUiMessages([
     {
@@ -871,7 +1670,7 @@ Deno.test("prepareProviderModelMessagesFromUiMessages prefers completed tool out
           providerExecuted: true,
           renderMode: "tool_call",
           errorText: "Stopped by user",
-        },
+        } as unknown as ChatUiMessage["parts"][number],
         {
           type: "dynamic-tool",
           toolName: "notion__search_notion",
@@ -881,7 +1680,7 @@ Deno.test("prepareProviderModelMessagesFromUiMessages prefers completed tool out
           providerExecuted: true,
           renderMode: "tool_result",
           output: { data: [] },
-        },
+        } as unknown as ChatUiMessage["parts"][number],
       ],
     },
     {
@@ -928,6 +1727,227 @@ Deno.test("prepareProviderModelMessagesFromUiMessages prefers completed tool out
   ]);
 });
 
+Deno.test("prepareProviderModelMessagesFromUiMessages compacts large historical write and child-agent inputs", () => {
+  const childPromptMarker = "CHILD_PROMPT_MARKER";
+  const fileBodyMarker = "GENERATED_FILE_BODY_MARKER";
+  const prepared = prepareProviderModelMessagesFromUiMessages([
+    {
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "Build a graph viewer." }],
+    },
+    {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "invoke_agent",
+          toolCallId: "tool-invoke",
+          input: {
+            agent_id: "codegen",
+            model: "sonnet",
+            description: "Build WebGL graph renderer",
+            tools: ["create_file", "update_file", "get_file"],
+            max_steps: 30,
+            prompt: `${childPromptMarker}:${"child prompt ".repeat(4000)}`,
+          },
+          state: "output-available",
+          output: {
+            error: "Chat stream idle timeout after 120000ms during response_pending",
+          },
+        },
+        {
+          type: "dynamic-tool",
+          toolName: "update_file",
+          toolCallId: "tool-update",
+          input: {
+            path: "components/GraphViewer.tsx",
+            content: `${fileBodyMarker}:${"const x = 1;\n".repeat(3000)}`,
+          },
+          state: "output-available",
+          output: { ok: true },
+        },
+      ],
+    },
+    {
+      id: "user-2",
+      role: "user",
+      parts: [{ type: "text", text: "Make each node draggable." }],
+    },
+  ]);
+
+  const serialized = JSON.stringify(prepared);
+  assertEquals(serialized.includes(childPromptMarker), false);
+  assertEquals(serialized.includes(fileBodyMarker), false);
+  assertStringIncludes(serialized, "historical_tool_input_summary");
+  assertStringIncludes(serialized, "Build WebGL graph renderer");
+  assertStringIncludes(serialized, "components/GraphViewer.tsx");
+  assertStringIncludes(serialized, "originalInputChars");
+  assertStringIncludes(serialized, "originalInputHash");
+});
+
+Deno.test("prepareProviderModelMessagesFromUiMessages compacts custom tools through retention policy", () => {
+  const customMarker = "RENDER_CANVAS_SOURCE_MARKER";
+  const diagnostics: HistoricalToolInputCompactionDiagnostic[] = [];
+  const prepared = prepareProviderModelMessagesFromUiMessages(
+    [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Render the canvas." }],
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolName: "render_canvas",
+          toolCallId: "tool-render",
+          input: {
+            targetPath: "components/Canvas.tsx",
+            source: `${customMarker}:${"const node = 1;\n".repeat(3000)}`,
+          },
+          state: "output-available",
+          output: { ok: true },
+        }],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Now make it interactive." }],
+      },
+    ],
+    {
+      historicalToolInputRetention: {
+        diagnostics,
+        resolvePolicy: (toolName) =>
+          toolName === "render_canvas"
+            ? {
+              compactCompletedInput: true,
+              compactAfterChars: 100,
+              retainInputFields: [{ inputName: "targetPath", outputName: "path" }],
+            }
+            : undefined,
+      },
+    },
+  );
+
+  const serialized = JSON.stringify(prepared);
+  assertEquals(serialized.includes(customMarker), false);
+  assertStringIncludes(serialized, "historical_tool_input_summary");
+  assertStringIncludes(serialized, "components/Canvas.tsx");
+  assertEquals(diagnostics.length, 1);
+  assertEquals((diagnostics[0] as { toolName?: string }).toolName, "render_canvas");
+  assertEquals((diagnostics[0] as { toolCallId?: string }).toolCallId, "tool-render");
+  assert((diagnostics[0] as { originalInputChars?: number }).originalInputChars! > 1_000);
+  assert((diagnostics[0] as { retainedInputChars?: number }).retainedInputChars! < 1_000);
+});
+
+Deno.test("compactHistoricalUiMessageToolInputs does not treat raw completed tool calls as results", () => {
+  const inputMarker = "RAW_COMPLETED_CALL_IS_NOT_A_RESULT";
+  const compacted = compactHistoricalUiMessageToolInputs([
+    {
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "Update the file." }],
+    },
+    {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [{
+        type: "dynamic-tool",
+        toolName: "update_file",
+        toolCallId: "tool-raw-completed-only",
+        input: {
+          path: "components/GraphViewer.tsx",
+          content: `${inputMarker}:${"pending body ".repeat(3000)}`,
+        },
+        state: "input-available",
+      }],
+    },
+    {
+      id: "assistant-2",
+      role: "assistant",
+      parts: [
+        rawToolCallReplayPart(
+          "tool-raw-completed-only",
+          "update_file",
+          { path: "components/GraphViewer.tsx" },
+          "completed",
+        ),
+      ],
+    },
+    {
+      id: "user-2",
+      role: "user",
+      parts: [{ type: "text", text: "Continue." }],
+    },
+  ] as ChatUiMessage[]);
+
+  const serialized = JSON.stringify(compacted);
+  assertStringIncludes(serialized, inputMarker);
+  assertEquals(serialized.includes("historical_tool_input_summary"), false);
+});
+
+Deno.test("compactForStep compacts old tool inputs while preserving latest-turn tool inputs", () => {
+  const oldFileBodyMarker = "OLD_FILE_BODY_MARKER";
+  const latestFileBodyMarker = "LATEST_FILE_BODY_MARKER";
+  const messages = [
+    { role: "user", content: "Create the file." },
+    {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "tool-old-update",
+        toolName: "update_file",
+        input: {
+          path: "components/GraphViewer.tsx",
+          content: `${oldFileBodyMarker}:${"old body ".repeat(3000)}`,
+        },
+      }],
+    },
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "tool-old-update",
+        toolName: "update_file",
+        output: { type: "json", value: { ok: true } },
+      }],
+    },
+    { role: "user", content: "Patch the current turn." },
+    {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "tool-latest-update",
+        toolName: "update_file",
+        input: {
+          path: "components/GraphViewer.tsx",
+          content: `${latestFileBodyMarker}:${"new body ".repeat(3000)}`,
+        },
+      }],
+    },
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "tool-latest-update",
+        toolName: "update_file",
+        output: { type: "json", value: { ok: true } },
+      }],
+    },
+  ] satisfies ProviderModelMessage[];
+
+  const compacted = compactForStep(messages);
+  const serialized = JSON.stringify(compacted);
+
+  assertEquals(serialized.includes(oldFileBodyMarker), false);
+  assertEquals(serialized.includes(latestFileBodyMarker), true);
+  assertStringIncludes(serialized, "historical_tool_input_summary");
+});
+
 Deno.test("prepareProviderModelMessagesFromUiMessages omits provider-owned tool history", () => {
   const prepared = prepareProviderModelMessagesFromUiMessages(
     [
@@ -964,7 +1984,7 @@ Deno.test("prepareProviderModelMessagesFromUiMessages omits provider-owned tool 
             tool_call_id: "toolu_web_search",
             tool_name: "web_search",
             output: null,
-          },
+          } as unknown as ChatUiMessage["parts"][number],
         ],
       },
       {

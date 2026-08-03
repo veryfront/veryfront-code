@@ -7,6 +7,7 @@ import { getVeryfrontCloudProviderFromModelId } from "#veryfront/provider";
 import type { AgentTraceAttributes } from "./trace-attributes.ts";
 import type { HostedChatExecutionRuntimeLogger } from "./chat-execution-runtime.ts";
 import type { PreparedHostedChatExecutionRuntimeOptions } from "./prepared-chat-execution.ts";
+import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
 
 /** Environment key for hosted chat stream idle timeout. */
 export const VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_ENV = "VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_MS";
@@ -40,6 +41,27 @@ export function resolveVeryfrontCloudChatStreamWatchdogOptions(
   };
 }
 
+/** Derive hosted chat bootstrap watchdog options from resolved root stream watchdog options. */
+export function resolveVeryfrontCloudStreamBootstrapWatchdogOptions(
+  options: Pick<ChatStreamWatchdogOptions, "idleTimeoutMs" | "toolRunningTimeoutMs">,
+): Pick<
+  PreparedHostedChatExecutionRuntimeOptions,
+  "streamBootstrapKeepaliveIntervalMs" | "streamBootstrapTimeoutMs"
+> {
+  const streamBootstrapKeepaliveIntervalMs = typeof options.idleTimeoutMs === "number"
+    ? Math.max(1, Math.floor(options.idleTimeoutMs / 2))
+    : undefined;
+
+  return {
+    ...(streamBootstrapKeepaliveIntervalMs !== undefined
+      ? { streamBootstrapKeepaliveIntervalMs }
+      : {}),
+    ...(options.toolRunningTimeoutMs !== undefined
+      ? { streamBootstrapTimeoutMs: options.toolRunningTimeoutMs }
+      : {}),
+  };
+}
+
 /** Input payload for create Veryfront Cloud prepared hosted chat execution runtime options. */
 export type CreateVeryfrontCloudPreparedHostedChatExecutionRuntimeOptionsInput = {
   apiUrl: string | URL;
@@ -49,12 +71,23 @@ export type CreateVeryfrontCloudPreparedHostedChatExecutionRuntimeOptionsInput =
   traceStream?: <TResult>(operation: () => Promise<TResult>) => Promise<TResult>;
   setActiveSpanAttributes?: (attributes: AgentTraceAttributes) => void;
   createRootStreamWatchdog?: PreparedHostedChatExecutionRuntimeOptions["createRootStreamWatchdog"];
+  streamBootstrapKeepaliveIntervalMs?: PreparedHostedChatExecutionRuntimeOptions[
+    "streamBootstrapKeepaliveIntervalMs"
+  ];
+  streamBootstrapTimeoutMs?: PreparedHostedChatExecutionRuntimeOptions[
+    "streamBootstrapTimeoutMs"
+  ];
 };
 
 /** Options accepted by create Veryfront Cloud prepared hosted chat execution runtime. */
 export function createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions(
   input: CreateVeryfrontCloudPreparedHostedChatExecutionRuntimeOptionsInput,
 ): PreparedHostedChatExecutionRuntimeOptions {
+  const watchdogOptions = resolveVeryfrontCloudChatStreamWatchdogOptions();
+  const streamBootstrapOptions = resolveVeryfrontCloudStreamBootstrapWatchdogOptions(
+    watchdogOptions,
+  );
+
   return {
     apiUrl: input.apiUrl,
     tracer: input.tracer,
@@ -64,10 +97,19 @@ export function createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions(
     createRootStreamWatchdog: input.createRootStreamWatchdog ??
       (() =>
         createChatStreamWatchdog({
-          ...resolveVeryfrontCloudChatStreamWatchdogOptions(),
+          ...watchdogOptions,
+          // `invoke_agent` delegates to a sub-agent and can outlast the idle
+          // timeout; the shared watchdog no longer defaults this product-specific
+          // exemption, so pass it explicitly for hosted runs.
+          longRunningToolNames: ["invoke_agent"],
+          longRunningToolPrefixes: [AGENT_DELEGATE_TOOL_PREFIX],
           setTimeoutFn: globalThis.setTimeout,
           clearTimeoutFn: globalThis.clearTimeout,
         })),
+    streamBootstrapKeepaliveIntervalMs: input.streamBootstrapKeepaliveIntervalMs ??
+      streamBootstrapOptions.streamBootstrapKeepaliveIntervalMs,
+    streamBootstrapTimeoutMs: input.streamBootstrapTimeoutMs ??
+      streamBootstrapOptions.streamBootstrapTimeoutMs,
     logger: input.logger,
     setActiveSpanAttributes: input.setActiveSpanAttributes,
   };

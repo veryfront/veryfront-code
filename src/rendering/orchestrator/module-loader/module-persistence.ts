@@ -7,12 +7,14 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger } from "#veryfront/utils";
+import { isCacheWriteRaceError } from "#veryfront/utils/cache-file-ops.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import {
   getModulePathCache,
   saveModulePathCache,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import { buildMdxEsmPathCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import { buildModuleTransformCacheVariant } from "./module-cache-lookup.ts";
 
 const logger = rendererLogger.component("module-loader");
 
@@ -36,17 +38,26 @@ function pruneCreatedDirs(): void {
   }
 }
 
-async function ensureDir(adapter: RuntimeAdapter, dir: string): Promise<void> {
-  if (createdDirs.has(dir)) return;
+async function ensureDir(
+  adapter: RuntimeAdapter,
+  dir: string,
+  force = false,
+): Promise<void> {
+  if (!force && createdDirs.has(dir)) return;
 
   try {
     await adapter.fs.mkdir(dir, { recursive: true });
-  } catch (_) {
-    /* expected: directory might already exist */
-  } finally {
-    createdDirs.add(dir);
-    pruneCreatedDirs();
+  } catch (error) {
+    // `recursive: true` is a no-op on an existing directory, so a rejection here
+    // means the directory may genuinely be absent (EMFILE, EACCES, a racing
+    // sweep). Drop the memo so the next attempt retries instead of assuming the
+    // directory is present forever after.
+    createdDirs.delete(dir);
+    throw error;
   }
+
+  createdDirs.add(dir);
+  pruneCreatedDirs();
 }
 
 export interface PersistTransformedModuleInput {
@@ -59,6 +70,65 @@ export interface PersistTransformedModuleInput {
   cacheKey: string;
   contentSourceId?: string;
   reactVersion?: string;
+  dependencyPinningCacheKey?: string;
+  moduleServerOrigin?: string;
+  /**
+   * True when a dynamic import elsewhere closes a cycle back onto this module.
+   * Such an edge is left as authored (`import("../app/page.js")`), so it needs a
+   * stable, non-hashed alias next to the content-hashed artifact to resolve to.
+   */
+  isCycleTarget?: boolean;
+}
+
+/**
+ * Whether transformed output exposes a default export, so a cycle alias knows
+ * to re-export it. Covers esbuild's `export default …`, `… as default`, and
+ * `export { default } from …` forms.
+ */
+function hasDefaultExport(code: string): boolean {
+  return /\bexport\s+default\b/.test(code) ||
+    /\bas\s+default\b/.test(code) ||
+    /\bexport\s*\{[^}]*\bdefault\b[^}]*\}/.test(code);
+}
+
+/**
+ * Write a stable, non-hashed alias next to a cycle target's hashed artifact.
+ *
+ * A dynamic import that closes an import cycle is left as the author wrote it
+ * (see the module loader), so esbuild normalises it to a relative `.js` path
+ * (`../app/page.js`) that does not match the content-hashed artifact
+ * (`../app/page.<hash>.js`). The alias sits at that relative path and re-exports
+ * the real artifact, so the edge resolves if the branch runs. Best-effort: a
+ * failed alias just leaves the pre-existing (unresolved) cycle edge in place.
+ */
+async function writeCycleTargetAlias(
+  input: PersistTransformedModuleInput,
+  outputRelativePath: string,
+  hashedFileName: string,
+): Promise<void> {
+  const aliasRelativePath = outputRelativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
+  // Same extension in and out means nothing was renamed (already `.js`): the
+  // authored edge already points at the real artifact, so no alias is needed.
+  if (aliasRelativePath === outputRelativePath) return;
+
+  const aliasPath = join(input.tmpDir, aliasRelativePath);
+  const lines = [`export * from "./${hashedFileName}";`];
+  if (hasDefaultExport(input.transformedCode)) {
+    lines.push(`export { default } from "./${hashedFileName}";`);
+  }
+
+  try {
+    await input.localAdapter.fs.writeFile(aliasPath, lines.join("\n"));
+    logger.debug("Wrote cycle-target alias", {
+      alias: aliasRelativePath,
+      target: hashedFileName,
+    });
+  } catch (error) {
+    logger.warn("Failed to write cycle-target alias", {
+      filePath: input.filePath.slice(-40),
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 /** Write a transformed module artifact and register cache pointers. */
@@ -71,26 +141,60 @@ export async function persistTransformedModule(
     ? input.filePath.slice(input.projectDir.length).replace(/^\/+/, "")
     : input.filePath.replace(/^\/+/, "");
 
-  const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, `.${transformedHash}.js`);
+  const cacheVariant = buildModuleTransformCacheVariant(
+    input.dependencyPinningCacheKey,
+    input.moduleServerOrigin,
+  );
+  const outputRelativePath = cacheVariant
+    ? join("_pins", encodeURIComponent(cacheVariant), relativePath)
+    : relativePath;
+  const jsPath = outputRelativePath.replace(/\.(tsx?|jsx|mdx)$/, `.${transformedHash}.js`);
   const tempFilePath = join(input.tmpDir, jsPath);
 
   const tempDir = tempFilePath.substring(0, tempFilePath.lastIndexOf("/"));
-  await ensureDir(input.localAdapter, tempDir);
+  await ensureDir(input.localAdapter, tempDir).catch(() => {
+    // Fall through to the write, which retries the mkdir on failure.
+  });
 
   try {
     await input.localAdapter.fs.writeFile(tempFilePath, input.transformedCode);
   } catch (error) {
-    logger.error("Failed to write module:", {
-      filePath: input.filePath,
-      tempFilePath,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    throw error;
+    // The cache directory can vanish between mkdir and write — a manual
+    // `rm -rf .cache`, a cache sweep, or a mkdir that never actually landed.
+    // Force the directory back into existence and retry once before failing.
+    if (!isCacheWriteRaceError(error)) {
+      logger.error("Failed to write module:", {
+        filePath: input.filePath,
+        tempFilePath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+
+    try {
+      await ensureDir(input.localAdapter, tempDir, true);
+      await input.localAdapter.fs.writeFile(tempFilePath, input.transformedCode);
+      logger.debug("Recreated module cache directory after failed write", { tempDir });
+    } catch (retryError) {
+      logger.error("Failed to write module:", {
+        filePath: input.filePath,
+        tempFilePath,
+        error: retryError instanceof Error ? retryError.message : String(retryError),
+      });
+      throw retryError;
+    }
   }
 
   if (input.contentSourceId) {
     const normalizedPath = `_vf_modules/${relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js")}`;
-    const mdxCacheKey = buildMdxEsmPathCacheKey(normalizedPath, input.reactVersion);
+    const mdxCacheKey = buildMdxEsmPathCacheKey(
+      normalizedPath,
+      input.reactVersion,
+      buildModuleTransformCacheVariant(
+        input.dependencyPinningCacheKey,
+        input.moduleServerOrigin,
+      ),
+    );
     const cache = await getModulePathCache(input.tmpDir);
     cache.set(mdxCacheKey, tempFilePath);
 
@@ -106,5 +210,11 @@ export async function persistTransformedModule(
   }
 
   input.moduleCache.set(input.cacheKey, tempFilePath);
+
+  if (input.isCycleTarget) {
+    const hashedFileName = jsPath.slice(jsPath.lastIndexOf("/") + 1);
+    await writeCycleTargetAlias(input, outputRelativePath, hashedFileName);
+  }
+
   return tempFilePath;
 }

@@ -20,9 +20,9 @@ const CONCEPT_FILES = new Set<string>([
   "concepts/eval.md",
   "concepts/run.md",
   "concepts/schedule.md",
+  "concepts/webhook.md",
   "concepts/prompt.md",
   "concepts/resource.md",
-  "concepts/work.md",
   "concepts/skill.md",
   "concepts/integration.md",
   "concepts/salesforce-integration.md",
@@ -64,7 +64,14 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/agent.md",
       "../api-reference/veryfront/channels.md",
     ],
-    snippets: ["startAgentService", "VERYFRONT_AGENT_SERVICE_URL", "/api/runs"],
+    snippets: [
+      "startAgentService",
+      "VERYFRONT_AGENT_SERVICE_URL",
+      "/api/runs",
+      "managed dedicated servers",
+      "`veryfront serve`",
+      "do not require a `service.ts`",
+    ],
   },
   "guides/agents.md": {
     references: ["../api-reference/veryfront/agent.md"],
@@ -92,6 +99,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "chunkOptions",
       "AI Gateway",
       "VERYFRONT_DEFAULT_EMBEDDING_MODEL",
+      "Studio Knowledge Q&A agents use native source citations",
     ],
   },
   "guides/api-routes.md": {
@@ -107,7 +115,35 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "guides/chat-hooks.md": {
     references: ["../api-reference/veryfront/chat.md"],
-    snippets: ["useChat", "useAgent", "useCompletion"],
+    snippets: [
+      "useChat",
+      "useAgent",
+      "useCompletion",
+      "useConversations",
+      "useConversation",
+      "ConversationStoreError.operation",
+      "memoryConversationStore",
+      "Deletion is confirm-on-success",
+      "JSON-safe plain data",
+      "Uncloneable seeds",
+      "every seed id must be unique",
+      "Web Locks API",
+      "2 MiB per serialized index",
+      "4 MiB per serialized conversation",
+      "1,000 conversations per store",
+      "1 KiB per identifier",
+      "16 KiB per title",
+      "65,536 JSON nodes",
+      "CONVERSATION_STORAGE_LIMITS",
+      "IndexedDB transactions",
+      "API-backed store",
+      "There is no unlocked fallback.",
+      "coordinated rollout",
+      "older rollback build",
+      "never calls an injected store's optional `dispose`",
+      "last-writer-wins",
+      "durable tombstones",
+    ],
   },
   "guides/chat-ui.md": {
     references: [
@@ -124,6 +160,15 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "theme",
       "attachments",
       "chat context providers",
+      "veryfront/markdown",
+      "server-rendered",
+      "renderCodeBlock",
+      "unsafe link protocols",
+      "ConversationsProvider",
+      "ConversationStoreError",
+      "persistenceError.operation",
+      "memoryConversationStore",
+      "fails closed",
     ],
   },
   "guides/cli-knowledge-ingestion.md": {
@@ -175,7 +220,6 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "getting-started/quickstart.md": {
     references: [
-      "./installation.md",
       "../guides/providers.md",
       "./create-project.md",
       "../api-reference/veryfront/agent.md",
@@ -183,7 +227,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/chat.md",
     ],
     snippets: [
-      "veryfront init support-agent --template ai-agent",
+      "npm create veryfront@latest support-agent",
+      "npx veryfront deploy",
       "calculator.ts",
       "What is 128 divided by 8?",
       "curl -N -X POST",
@@ -206,6 +251,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "guides/deploying.md": {
     references: [
       "../api-reference/veryfront/index.md",
+      "../api-reference/veryfront/cli.md",
       "../api-reference/veryfront/server.md",
       "../api-reference/veryfront/observability.md",
       "../api-reference/veryfront/utils.md",
@@ -214,8 +260,30 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Pick one production path",
       "veryfront build",
       "veryfront serve",
-      "veryfront deploy",
+      "npx veryfront deploy",
+      "last verified Push receipt",
+      "prints the environment URL",
       "veryfront open",
+    ],
+  },
+  "guides/deploy-from-ci.md": {
+    references: [
+      "../api-reference/veryfront/cli.md",
+      "./configuration.md",
+      "./deploying.md",
+    ],
+    snippets: [
+      "veryfront push --branch main --prune --dry-run",
+      "veryfront push --branch main --prune --yes",
+      "veryfront deploy --branch main --env staging --yes",
+      "veryfront deploy --branch main --env production --yes",
+      ".veryfront/push-receipt.json",
+      "cancel-in-progress: false",
+      "Do not edit or publish directly from Studio `main`",
+      "supported text files only",
+      "RUNNER_TEMP",
+      "NDJSON records",
+      "git revert",
     ],
   },
   "guides/extension-authoring.md": {
@@ -246,6 +314,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "datasets.inline",
       "metrics.answer.contains",
       "metrics.agent.noFailedTools",
+      "metrics.knowledge.citationPrecision",
       "createEvalSourceDocument",
       "veryfront eval deep-research",
       "--junit",
@@ -297,6 +366,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Workflows",
       "Extensions",
       "Build and deploy",
+      "Deploy from CI",
+      "Move Studio changes into Git",
     ],
   },
   "concepts/index.md": {
@@ -408,6 +479,12 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
     snippets: ["schedule", "runs", "trigger"],
   },
+  "concepts/webhook.md": {
+    references: [
+      "../api-reference/veryfront/webhook.md",
+    ],
+    snippets: ["eventFilter", "promptTemplate", "64 KiB", "filtered event is ignored"],
+  },
   "concepts/prompt.md": {
     references: ["../api-reference/veryfront/prompt.md"],
     snippets: ["instruction text", "template variables", "MCP"],
@@ -415,18 +492,6 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "concepts/resource.md": {
     references: ["../api-reference/veryfront/resource.md"],
     snippets: ["readable project data", "URI pattern", "MCP"],
-  },
-  "concepts/work.md": {
-    references: ["../api-reference/veryfront/work.md"],
-    snippets: [
-      "business process state",
-      "Work definition",
-      "Work execution",
-      "Work events",
-      "expectations",
-      "Work is not a workflow",
-      "agent({ work:",
-    ],
   },
   "concepts/skill.md": {
     references: ["../guides/skills.md"],
@@ -475,7 +540,14 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "guides/integrations.md": {
     references: ["../api-reference/veryfront/integrations.md"],
-    snippets: ["integrations", "perUser", "Available integrations"],
+    snippets: [
+      "agent source",
+      "Project integration policy",
+      "Connection inventory",
+      "veryfront.config.ts",
+      "Managed OAuth",
+      "Available integrations",
+    ],
   },
   "guides/runs.md": {
     references: ["../api-reference/veryfront/runs.md"],
@@ -523,11 +595,22 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/context.md",
       "../api-reference/veryfront/mdx.md",
     ],
-    snippets: ["app router", "useRouter", "Link"],
+    snippets: ["app router", "useRouter", "Link", "MDXProvider"],
   },
   "guides/project-structure.md": {
     references: ["../api-reference/veryfront/index.md"],
     snippets: ["app/", "agents/", "tools/"],
+  },
+  "guides/project-knowledge.md": {
+    references: ["../api-reference/veryfront/knowledge.md"],
+    snippets: [
+      "projectKnowledge",
+      "createSearchKnowledgeTool",
+      'mode: "browse"',
+      "release-backed content",
+      "lookup_target",
+      "page_info.next",
+    ],
   },
   "guides/project-metrics.md": {
     references: ["../api-reference/veryfront/observability.md"],
@@ -621,8 +704,29 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     snippets: [
       "veryfront build",
       "veryfront serve",
-      "veryfront deploy",
+      "npx veryfront deploy",
+      "last verified Push receipt",
+      "prints the environment URL",
       "veryfront open",
+    ],
+  },
+  "guides/move-studio-changes-to-git.md": {
+    references: [
+      "../api-reference/veryfront/cli.md",
+      "./configuration.md",
+      "./deploy-from-ci.md",
+    ],
+    snippets: [
+      "immutable release",
+      "veryfront pull --release",
+      "--prune --dry-run",
+      "BASE_GIT_SHA",
+      "git switch --create",
+      "gh pr create",
+      "does not perform a three-way merge",
+      "git merge origin/main",
+      "Resolve conflicts in Git",
+      "git push --set-upstream origin HEAD",
     ],
   },
   "guides/sandbox.md": {

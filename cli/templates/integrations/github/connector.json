@@ -33,7 +33,7 @@
   ],
   "tools": [
     {
-      "id": "get_current_user",
+      "id": "github__get_current_user",
       "name": "Get Current User",
       "description": "Get the authenticated GitHub user identity",
       "requiresWrite": false,
@@ -43,7 +43,7 @@
       }
     },
     {
-      "id": "list_repos",
+      "id": "github__list_repos",
       "name": "List Repositories",
       "description": "Get list of user's repositories",
       "requiresWrite": false,
@@ -142,7 +142,7 @@
       }
     },
     {
-      "id": "get_user",
+      "id": "github__get_user",
       "name": "Get User",
       "description": "Get a GitHub user profile by username. Use this to verify repository owners, assignees, and other GitHub usernames before acting.",
       "requiresWrite": false,
@@ -160,7 +160,7 @@
       }
     },
     {
-      "id": "get_repo",
+      "id": "github__get_repo",
       "name": "Get Repository",
       "description": "Get details of a specific repository",
       "requiresWrite": false,
@@ -184,7 +184,7 @@
       }
     },
     {
-      "id": "list_prs",
+      "id": "github__list_prs",
       "name": "List Pull Requests",
       "description": "Get pull requests for a repository",
       "requiresWrite": false,
@@ -294,7 +294,7 @@
       }
     },
     {
-      "id": "create_issue",
+      "id": "github__create_issue",
       "name": "Create Issue",
       "description": "Create a new issue in a repository",
       "requiresWrite": true,
@@ -337,7 +337,7 @@
       }
     },
     {
-      "id": "get_pr_diff",
+      "id": "github__get_pr_diff",
       "name": "Get PR Diff",
       "description": "Get the diff for a pull request",
       "requiresWrite": false,
@@ -373,7 +373,7 @@
       }
     },
     {
-      "id": "list_issues",
+      "id": "github__list_issues",
       "name": "List Issues",
       "description": "List issues for a repository",
       "requiresWrite": false,
@@ -491,7 +491,7 @@
       }
     },
     {
-      "id": "get_issue",
+      "id": "github__get_issue",
       "name": "Get Issue",
       "description": "Get details of a GitHub issue",
       "requiresWrite": false,
@@ -582,7 +582,7 @@
       }
     },
     {
-      "id": "update_issue",
+      "id": "github__update_issue",
       "name": "Update Issue",
       "description": "Update, close, or reopen a GitHub issue",
       "requiresWrite": true,
@@ -634,7 +634,7 @@
       }
     },
     {
-      "id": "add_issue_comment",
+      "id": "github__add_issue_comment",
       "name": "Add Issue Comment",
       "description": "Add a comment to a GitHub issue or pull request",
       "requiresWrite": true,
@@ -671,7 +671,7 @@
       }
     },
     {
-      "id": "get_pr",
+      "id": "github__get_pr",
       "name": "Get Pull Request",
       "description": "Get details of a specific pull request (title, body, status, author, reviewers, labels)",
       "requiresWrite": false,
@@ -771,7 +771,7 @@
       }
     },
     {
-      "id": "create_pr",
+      "id": "github__create_pr",
       "name": "Create Pull Request",
       "description": "Create a new pull request in a repository",
       "requiresWrite": true,
@@ -821,7 +821,7 @@
       }
     },
     {
-      "id": "merge_pr",
+      "id": "github__merge_pr",
       "name": "Merge Pull Request",
       "description": "Merge an open pull request",
       "requiresWrite": true,
@@ -866,7 +866,7 @@
       }
     },
     {
-      "id": "list_commits",
+      "id": "github__list_commits",
       "name": "List Commits",
       "description": "List commits for a repository, branch, or file path",
       "requiresWrite": false,

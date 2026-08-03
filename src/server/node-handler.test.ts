@@ -12,6 +12,7 @@ type FakeRes = {
   setHeader(name: string, value: unknown): void;
   write(chunk: Uint8Array): void;
   end(body?: string): void;
+  on(event: string, listener: () => void): void;
 };
 
 function createFakeRes(): FakeRes {
@@ -38,6 +39,9 @@ function createFakeRes(): FakeRes {
     },
     end(_body) {
       this.ended = true;
+    },
+    on(_event, _listener) {
+      // no-op: close-handler registration is not exercised in unit tests
     },
   };
 }
@@ -96,9 +100,9 @@ Deno.test("toNodeHandler preserves multiple Set-Cookie headers as distinct value
   assertEquals(cookies.includes("b=2; Path=/"), true);
 });
 
-Deno.test("toNodeHandler does not throw when getSetCookie is unavailable (early Node 18)", async () => {
-  // Simulate a runtime whose Headers predates Headers.prototype.getSetCookie
-  // (Node < ~18.14). We wrap a real Headers in a Proxy that hides getSetCookie
+Deno.test("toNodeHandler does not throw when a Headers adapter omits getSetCookie", async () => {
+  // Simulate a compatible Headers adapter that omits getSetCookie. We wrap a
+  // real Headers in a Proxy that hides getSetCookie
   // while still exposing an iterator that yields each Set-Cookie as a distinct
   // entry (matching undici's iteration behaviour). A real Response is returned
   // but with its `headers` accessor pointed at the legacy-like object.

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryTokenAdapter } from "./memory-adapter.ts";
 
@@ -40,6 +40,20 @@ describe("platform/adapters/token/veryfront/memory-adapter", () => {
       const adapter = createAdapter();
       await adapter.set("empty", "");
       assertEquals(await adapter.get("empty"), "");
+    });
+
+    it("keeps direct adapter instances isolated", async () => {
+      const first = new MemoryTokenAdapter();
+      const second = new MemoryTokenAdapter();
+      await first.set("private", "first");
+      assertEquals(await second.get("private"), null);
+    });
+
+    it("rejects empty keys", () => {
+      const adapter = createAdapter();
+      assertThrows(() => adapter.get(""), TypeError, "non-empty");
+      assertThrows(() => adapter.set("", "value"), TypeError, "non-empty");
+      assertThrows(() => adapter.delete(""), TypeError, "non-empty");
     });
   });
 
@@ -120,6 +134,13 @@ describe("platform/adapters/token/veryfront/memory-adapter", () => {
     it("should not throw", () => {
       const adapter = createAdapter();
       adapter.dispose();
+    });
+
+    it("clears sensitive values", async () => {
+      const adapter = createAdapter();
+      await adapter.set("key", "secret");
+      adapter.dispose();
+      assertEquals(await adapter.get("key"), null);
     });
   });
 });

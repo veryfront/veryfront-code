@@ -20,8 +20,9 @@
  *     };
  *   }
  *
- * Falls back to the `REDIS_URL` / `REDIS_PREFIX` env vars when the config path
- * above is not populated, preserving the proxy's historical behavior.
+ * An explicitly activated extension may read `REDIS_URL` / `REDIS_PREFIX`
+ * when its config path is not populated. Missing connection configuration is
+ * a startup error rather than a silent no-op.
  *
  * @module extensions/ext-cache-redis
  */
@@ -88,10 +89,9 @@ const extRedis: ExtensionFactory = () => {
       const url = cfg.url ?? readEnv("REDIS_URL");
 
       if (!url) {
-        ctx.logger.info(
-          "[ext-cache-redis] REDIS_URL not configured — skipping TokenCacheStore registration",
+        throw new TypeError(
+          "ext-cache-redis requires proxy.cache.redis.url or REDIS_URL",
         );
-        return;
       }
 
       const options: RedisTokenCacheStoreOptions = {

@@ -73,5 +73,36 @@ export interface TracingExporter {
    * (for error correlation, proxy trace-id extraction, etc.). Returns `null`
    * when tracing is disabled.
    */
-  getTraceAPI?(): { getActiveSpan(): unknown; getSpan(ctx: unknown): unknown } | null;
+  getTraceAPI?(): {
+    getActiveSpan(): unknown;
+    getSpan(ctx: unknown): unknown;
+    setSpan(ctx: unknown, span: unknown): unknown;
+  } | null;
+
+  /**
+   * Return the OTel Context API so the core shim can preserve active span
+   * context across async work. Returns `null` when tracing is disabled.
+   */
+  getContextAPI?(): {
+    active(): unknown;
+    with<T>(ctx: unknown, fn: () => T): T;
+  } | null;
+
+  /**
+   * Return an emitter that forwards Veryfront structured log records into the
+   * active telemetry backend. Returns `null` when log export is disabled.
+   */
+  getLogRecordEmitter?():
+    | ((record: {
+      timestamp?: string;
+      level?: string;
+      service?: string;
+      message: string;
+      component?: string;
+      context?: Record<string, unknown>;
+      error?: unknown;
+      trace_id?: string;
+      span_id?: string;
+    }) => void)
+    | null;
 }

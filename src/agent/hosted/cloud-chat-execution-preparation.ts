@@ -1,7 +1,8 @@
 import {
-  resolveVeryfrontCloudGatewayModelId,
   resolveVeryfrontCloudModelThinking,
+  runWithVeryfrontCloudContext,
 } from "#veryfront/provider";
+import { resolveRuntimeModel } from "../runtime/model-resolution.ts";
 import type { HostedChatRuntimeCreationResult } from "./chat-runtime-contract.ts";
 import {
   type HostedChatExecutionPreparationInput,
@@ -89,6 +90,16 @@ export async function prepareVeryfrontCloudHostedChatExecution<
   HostedChatExecutionPreparationResult<TRuntimeAgentDefinition, TRuntimeResult>
 > {
   const { logger, rootRun, ...preparationInput } = input;
+  const resolveModelId = (modelId: string | undefined): string | undefined =>
+    runWithVeryfrontCloudContext(
+      {
+        apiBaseUrl: String(input.apiUrl),
+        apiToken: input.request.authToken,
+        projectSlug: input.request.projectSlug,
+        serviceLayer: "cloud",
+      },
+      () => modelId === undefined ? undefined : resolveRuntimeModel(modelId),
+    );
 
   return await prepareHostedChatExecution({
     ...preparationInput,
@@ -96,7 +107,7 @@ export async function prepareVeryfrontCloudHostedChatExecution<
       rootRun,
       logger,
     }),
-    resolveModelId: resolveVeryfrontCloudGatewayModelId,
+    resolveModelId,
     resolveModelThinking: resolveVeryfrontCloudModelThinking,
   });
 }

@@ -12,6 +12,8 @@
  */
 
 import { build, emptyDir } from "#dnt";
+import { STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES } from "#veryfront/extensions/first-party-defaults.ts";
+import { PUBLISHED_RUNTIME_HELPERS } from "../../src/platform/compat/published-runtime-helpers.ts";
 import {
 	BROWSER_SAFE_CLIENT_MODULES,
 	BROWSER_SAFE_DNT_TIMER_MODULES,
@@ -22,8 +24,11 @@ import {
 	readDenoConfigSet,
 } from "./npm-dependency-sources.ts";
 import { buildExtensionPackages } from "./build-npm-extension-packages.ts";
+import { patchDntArgvPolyfill } from "./dnt-polyfill.ts";
 import { normalizeNpmPackageMetadata } from "./npm-package-metadata.ts";
+import { assertNpmRuntimeHelperContract } from "./npm-runtime-helper-contract.ts";
 import { normalizeEsmShReactNpmShims } from "./npm-react-shims.ts";
+import { NPM_NODE_ENGINE } from "./runtime-support.ts";
 
 const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
 const version = denoJson.version;
@@ -60,6 +65,14 @@ const entryPoints = Object.entries(denoJson.exports as Record<string, string>)
 // dnt ignores mappings it doesn't encounter, so including all is safe.
 const esmShMappings = buildEsmShMappings(denoJson.imports as Record<string, string>);
 
+// npm range for the bare react/react-dom peer the emitted package imports (see
+// the `./react/*.ts` mappings below). Derived from the pinned esm.sh version.
+const reactRange = npmDependencyRange(
+	denoConfigSet,
+	"@veryfront/react-upstream",
+	"^",
+);
+
 await build({
 	entryPoints,
 	outDir: "./npm",
@@ -86,11 +99,14 @@ await build({
 	// pipeline then tries to fetch `undici` from esm.sh, which returns 404
 	// (esm.sh refuses to build Node-only packages with `external=react`).
 	//
-	// Node 18+ (our minimum engine) provides fetch/Headers/Response/Request/
+	// The supported Node runtime provides fetch/Headers/Response/Request/
 	// FormData/File/Blob as globals natively, so no shim is needed.
 	shims: {
 		deno: true,
-		timers: true,
+		// Supported Node releases provide native timers. Keeping the dnt timer shim here turns
+		// Timeout objects into numbers, which prevents unrefTimer() from releasing
+		// framework background intervals in short-lived Node processes.
+		timers: false,
 		crypto: true,
 	},
 
@@ -105,6 +121,39 @@ await build({
 	mappings: {
 		// esm.sh URLs - derived from deno.json imports
 		...esmShMappings,
+		// React must resolve to the CONSUMER's bare `react` / `react-dom` in the
+		// emitted package. The repo pins react through the local `./react/*.ts`
+		// deno shims (so Deno imports a stable esm.sh build); if dnt bundles those
+		// into a local `npm/esm/react/react.js` and rewrites every component
+		// import to it, the shim's multi-hop `export { HTMLAttributes, … } from`
+		// re-export collapses `interface Props extends React.HTMLAttributes<…>` to
+		// `{}` under a consumer's `tsc` — stripping `children`/`className`/handlers
+		// from every component's public type (invisible to `deno check`). Mapping
+		// the local shims straight to the bare npm specifiers makes emitted code
+		// `import … from "react"`, so `React.HTMLAttributes` resolves against the
+		// consumer's own `@types/react`. See scripts/typecheck/README.md.
+		"./react/react.ts": { name: "react", version: reactRange },
+		"./react/react-dom.ts": { name: "react-dom", version: reactRange },
+		"./react/react-dom-client.ts": {
+			name: "react-dom",
+			version: reactRange,
+			subPath: "client",
+		},
+		"./react/react-dom-server.ts": {
+			name: "react-dom",
+			version: reactRange,
+			subPath: "server",
+		},
+		"./react/jsx-runtime.ts": {
+			name: "react",
+			version: reactRange,
+			subPath: "jsx-runtime",
+		},
+		"./react/jsx-dev-runtime.ts": {
+			name: "react",
+			version: reactRange,
+			subPath: "jsx-dev-runtime",
+		},
 	},
 
 	package: {
@@ -122,15 +171,12 @@ await build({
 		},
 		homepage: "https://veryfront.com",
 		engines: {
-			node: ">=18.0.0",
+			node: NPM_NODE_ENGINE,
 		},
 		// dnt can't detect dynamic imports, so we add them explicitly
 		dependencies: {
 			"@types/react": npmDependencyRange(denoConfigSet, "@types/react"),
 			"@types/react-dom": npmDependencyRange(denoConfigSet, "@types/react-dom"),
-			// Root deno.json intentionally rejects core npm imports; ws is a
-			// Node-only dynamic import used by the npm server/HMR path.
-			"ws": "8.21.0",
 		},
 		keywords: [
 			"react",
@@ -148,6 +194,8 @@ await build({
 
 	// Post-build steps
 	async postBuild() {
+		await assertNpmRuntimeHelperContract("./npm/esm", PUBLISHED_RUNTIME_HELPERS);
+
 		const pkgPath = "./npm/package.json";
 		const initialPkg = JSON.parse(await Deno.readTextFile(pkgPath));
 		normalizeNpmPackageMetadata(initialPkg);
@@ -179,17 +227,25 @@ await build({
 		console.log(`📝 Copied ${rscClientFiles.length} RSC client files`);
 
 		// Fix dnt polyfill bug: process.argv[1] can be undefined in dynamic imports
-		patchFile(
+		await patchDntArgvPolyfill(
 			"./npm/esm/_dnt.polyfills.js",
-			'process.argv[1].replace',
-			'(process.argv[1] ?? "").replace',
-			"dnt polyfill process.argv[1] fix",
+			{ required: true },
 		);
 
 		const patchedReactShimCount = normalizeEsmShReactNpmShims("./npm/esm/deps/esm.sh");
 		if (patchedReactShimCount > 0) {
 			console.log(`📝 Patched ${patchedReactShimCount} React ecosystem esm.sh npm shims`);
 		}
+
+		// Guard the react-mapping fix: emitted component `.d.ts` MUST import react
+		// via the bare `react` specifier so `React.HTMLAttributes` resolves against
+		// the consumer's `@types/react`. If dnt ever bundles a local react shim
+		// again, `interface Props extends React.HTMLAttributes<…>` collapses to `{}`
+		// for consumers (children/className/handlers vanish) while `deno check`
+		// stays green. See scripts/typecheck/README.md.
+		assertConsumerReactImport(
+			"./npm/esm/src/react/components/ui/app-shell.d.ts",
+		);
 
 		// Keep browser-safe client exports free of dnt Node polyfill imports.
 		// These modules are consumed directly in browser bundles and do not rely on
@@ -256,6 +312,12 @@ await build({
 		pkg.type = "module"; // Required for ESM imports without warnings
 		pkg.types = "./esm/src/index.d.ts";
 		pkg.bin = { veryfront: "bin/veryfront.js" };
+		pkg.dependencies ??= {};
+		// Add after build-local npm install so releases do not require the
+		// just-built auto-loaded extension versions to already exist in the registry.
+		for (const extensionDirectory of STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES) {
+			pkg.dependencies[`@veryfront/${extensionDirectory}`] = version;
+		}
 		pkg.files = ["esm", "script", "bin", "assets", "tsconfig.json", "LICENSE", "NOTICE", "README.md"];
 		pkg.exports["./tsconfig.json"] = "./tsconfig.json";
 		addTypesExportEntries(pkg.exports);
@@ -271,6 +333,201 @@ await buildExtensionPackages({
 	version,
 	license,
 });
+
+await verifyNpmRootImportLifecycle();
+
+async function verifyNpmRootImportLifecycle(): Promise<void> {
+	const consumerDirectory = await Deno.makeTempDir({
+		prefix: "veryfront-npm-lifecycle-",
+	});
+	try {
+		await installBuiltNpmLifecycleConsumer(consumerDirectory);
+		await runNpmRootImportLifecycleProbe(consumerDirectory);
+	} finally {
+		await Deno.remove(consumerDirectory, { recursive: true }).catch(() => undefined);
+	}
+}
+
+async function installBuiltNpmLifecycleConsumer(consumerDirectory: string): Promise<void> {
+	const localPackageDirectories = await Promise.all([
+		Deno.realPath("./npm"),
+		...STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES.map((extensionDirectory) =>
+			Deno.realPath(`./npm/extensions/${extensionDirectory}`)
+		),
+	]);
+	await Deno.writeTextFile(
+		`${consumerDirectory}/package.json`,
+		JSON.stringify({ private: true, type: "module" }),
+	);
+	const install = await new Deno.Command("npm", {
+		args: [
+			"install",
+			"--ignore-scripts",
+			"--legacy-peer-deps",
+			"--no-audit",
+			"--no-fund",
+			"--no-package-lock",
+			"--install-links",
+			...localPackageDirectories,
+		],
+		cwd: consumerDirectory,
+		stdout: "piped",
+		stderr: "piped",
+	}).output();
+	if (!install.success) {
+		const stderr = new TextDecoder().decode(install.stderr).trim();
+		throw new Error(
+			`Built npm lifecycle consumer install failed with exit code ${install.code}.` +
+				(stderr ? `\n${stderr}` : ""),
+		);
+	}
+}
+
+async function runNpmRootImportLifecycleProbe(consumerDirectory: string): Promise<void> {
+	const timeoutMs = 10_000;
+	const probeSource = `
+const root = await import("veryfront");
+if (typeof root.defineConfig !== "function") {
+  throw new Error("defineConfig export missing");
+}
+
+const agent = await import("veryfront/agent");
+const metadata = agent.parseRuntimeSkillMetadata(
+  "---\\nname: public-api\\ndescription: Public API\\n---\\nBody",
+);
+if (metadata?.name !== "public-api") {
+  throw new Error("public runtime Skill parser default unavailable");
+}
+
+const { createBuiltinExtensions, createEvalCliBuiltinExtensions } = await import(
+  "./node_modules/veryfront/esm/src/extensions/builtin-extensions.js"
+);
+const { getDeferredExtensionState } = await import(
+  "./node_modules/veryfront/esm/src/extensions/deferred-extension.js"
+);
+const {
+  createEvalReportExporterRegistry,
+  EvalReportExporterRegistryName,
+} = await import("./node_modules/veryfront/esm/src/extensions/eval/index.js");
+
+const registry = createEvalReportExporterRegistry();
+const resolved = createEvalCliBuiltinExtensions(["mlflow"]).find(
+  (entry) => entry.extension.name === "ext-eval-report-mlflow",
+);
+if (!resolved) throw new Error("bundled MLflow extension missing");
+
+const logger = {
+  debug() {},
+  info() {},
+  warn() {},
+  error() {},
+};
+
+for (const [extensionName, contractName] of [
+  ["ext-css-tailwind", "CSSProcessor"],
+  ["ext-dev-ui-react", "DevUiAssetProvider"],
+  ["ext-node-websocket-ws", "NodeWebSocketServerProvider"],
+]) {
+  const candidate = createBuiltinExtensions().find(
+    (entry) => entry.extension.name === extensionName,
+  );
+  if (!candidate) throw new Error("standard builtin missing: " + extensionName);
+  const standardDeferred = getDeferredExtensionState(candidate);
+  if (!standardDeferred) throw new Error("standard builtin was not deferred: " + extensionName);
+  const standardExtension = await standardDeferred.load(logger);
+  if (!standardExtension) throw new Error("standard builtin failed to load: " + extensionName);
+  let provided;
+  await standardExtension.setup?.({
+    get() {},
+    require(contract) { throw new Error("unexpected extension contract: " + contract); },
+    provide(contract, implementation) {
+      if (contract === contractName) provided = implementation;
+    },
+    config: {},
+    logger,
+  });
+  if (!provided) throw new Error("standard builtin did not provide " + contractName);
+  await standardExtension.teardown?.();
+}
+
+const deferred = getDeferredExtensionState(resolved);
+if (!deferred) throw new Error("bundled MLflow extension was not deferred");
+const extension = await deferred.load(logger);
+if (!extension) throw new Error("bundled MLflow extension failed to load");
+
+const context = {
+  get(contract) {
+    return contract === EvalReportExporterRegistryName ? registry : undefined;
+  },
+  require(contract) {
+    if (contract === EvalReportExporterRegistryName) return registry;
+    throw new Error(\`unexpected extension contract: \${contract}\`);
+  },
+  provide(contract) {
+    throw new Error(\`unexpected provided contract: \${contract}\`);
+  },
+  config: {},
+  logger,
+};
+
+await extension.setup?.(context);
+if (!registry.has("mlflow")) {
+  throw new Error("bundled MLflow exporter did not register");
+}
+await extension.teardown?.();
+if (registry.has("mlflow")) {
+  throw new Error("bundled MLflow exporter did not unregister");
+}
+`;
+	const child = new Deno.Command("node", {
+		args: [
+			"--input-type=module",
+			"--eval",
+			probeSource,
+		],
+		cwd: consumerDirectory,
+		env: {
+			MLFLOW_TRACKING_URI: "http://127.0.0.1:5000",
+			VF_DISABLE_LRU_INTERVAL: "0",
+		},
+		stdout: "piped",
+		stderr: "piped",
+	}).spawn();
+	const outputPromise = child.output();
+	let timeoutId: number | undefined;
+	const result = await Promise.race([
+		outputPromise.then((output) => ({ kind: "complete" as const, output })),
+		new Promise<{ kind: "timeout" }>((resolve) => {
+			timeoutId = setTimeout(() => resolve({ kind: "timeout" }), timeoutMs);
+		}),
+	]);
+
+	if (timeoutId !== undefined) clearTimeout(timeoutId);
+
+	if (result.kind === "timeout") {
+		try {
+			child.kill();
+		} catch {
+			// The process may exit between the timeout and the kill attempt.
+		}
+		const output = await outputPromise.catch(() => undefined);
+		const stderr = output ? new TextDecoder().decode(output.stderr).trim() : "";
+		throw new Error(
+			`Built npm root import did not exit within ${timeoutMs}ms; ` +
+				`a referenced import-time handle is still active.${stderr ? `\n${stderr}` : ""}`,
+		);
+	}
+
+	if (!result.output.success) {
+		const stderr = new TextDecoder().decode(result.output.stderr).trim();
+		throw new Error(
+			`Built npm root import failed with exit code ${result.output.code}.` +
+				(stderr ? `\n${stderr}` : ""),
+		);
+	}
+
+	console.log("✅ Verified npm root import and bundled MLflow lifecycle");
+}
 
 function addTypesExportEntries(
 	exportsMap: Record<string, string | { import?: string; types?: string }>,
@@ -288,27 +545,27 @@ function addTypesExportEntries(
 	}
 }
 
-/** Patch a generated file with string or regex replacement. Throws if pattern not found. */
-function patchFile(
-	path: string,
-	search: string | RegExp,
-	replacement: string,
-	description: string,
-): void {
+/**
+ * Assert an emitted component `.d.ts` imports React via the bare `react`
+ * specifier (a consumer's own `@types/react`), not a bundled local react shim.
+ * See the call site + scripts/typecheck/README.md for why this matters.
+ */
+function assertConsumerReactImport(path: string): void {
 	const content = Deno.readTextFileSync(path);
-	const patched = typeof search === "string"
-		? content.replace(search, replacement)
-		: content.replace(search, replacement);
-	if (patched === content) {
+	const bareImport = /import \* as React from ["']react["'];/.test(content);
+	const shimImport = /import \* as React from ["'][^"']*\/react\/react\.js["'];/
+		.test(content);
+	if (!bareImport || shimImport) {
 		throw new Error(
-			`Patch failed: "${description}" did not match anything in ${path}. ` +
-				`dnt output may have changed — update the patch or remove it if the bug is fixed.`,
+			`Consumer react-import guard failed for ${path}: emitted component ` +
+				`types must import from the bare "react" specifier, not a bundled ` +
+				`react shim, or every \`extends React.HTMLAttributes\` component ` +
+				`ships with its DOM props stripped for consumers. See ` +
+				`scripts/typecheck/README.md.`,
 		);
 	}
-	Deno.writeTextFileSync(path, patched);
-	console.log(`📝 Patched ${description} in ${path}`);
+	console.log(`✅ Verified consumer react import in ${path}`);
 }
-
 function stripPolyfillImportIfPresent(
 	path: string,
 	description: string,

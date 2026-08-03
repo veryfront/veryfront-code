@@ -35,31 +35,31 @@
   ],
   "tools": [
     {
-      "id": "list_boards",
+      "id": "trello__list_boards",
       "name": "List Boards",
       "description": "List all boards accessible to the user",
       "requiresWrite": false
     },
     {
-      "id": "list_cards",
+      "id": "trello__list_cards",
       "name": "List Cards",
       "description": "List cards in a board or list",
       "requiresWrite": false
     },
     {
-      "id": "get_card",
+      "id": "trello__get_card",
       "name": "Get Card",
       "description": "Get details of a specific card",
       "requiresWrite": false
     },
     {
-      "id": "create_card",
+      "id": "trello__create_card",
       "name": "Create Card",
       "description": "Create a new card in a list",
       "requiresWrite": true
     },
     {
-      "id": "update_card",
+      "id": "trello__update_card",
       "name": "Update Card",
       "description": "Update an existing card",
       "requiresWrite": true

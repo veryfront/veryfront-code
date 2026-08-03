@@ -8,70 +8,92 @@
  */
 
 import * as React from "react";
+import type { PromptSuggestion } from "#veryfront/agent/react";
 import { ChatEmptyState } from "./chat-empty-state.tsx";
 import { type QuickAction, QuickActions } from "../components/quick-actions.tsx";
+
+/** Normalize a `string | PromptSuggestion` chip to the `{ label, prompt }` shape. */
+function toPromptSuggestion(suggestion: string | PromptSuggestion): PromptSuggestion {
+  return typeof suggestion === "string" ? { label: suggestion, prompt: suggestion } : suggestion;
+}
 
 /** Props accepted by chat empty. */
 export interface ChatEmptyProps {
   icon?: React.ReactNode;
   title?: string;
   description?: string;
-  suggestions?: string[];
-  onSuggestionClick?: (suggestion: string) => void;
+  /**
+   * Suggestion chips. Plain strings become `{ label, prompt }` where both are
+   * the string; pass `PromptSuggestion` objects to show a short label while
+   * sending a longer prompt (e.g. from `getAgentPromptSuggestionItems`).
+   */
+  suggestions?: Array<string | PromptSuggestion>;
+  /** @deprecated Use `onSuggestionSelect` for the full suggestion object. */
+  onSuggestionClick?: (prompt: string) => void;
+  /** Receives the selected `{ label, prompt }` object. */
+  onSuggestionSelect?: (suggestion: PromptSuggestion) => void;
   quickActions?: QuickAction[];
   onQuickAction?: (action: QuickAction) => void;
   className?: string;
   children?: React.ReactNode;
+
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** Render chat empty. */
-export const ChatEmpty = React.forwardRef<HTMLDivElement, ChatEmptyProps>(
-  function ChatEmpty(
-    {
-      icon,
-      title = "What can I help with?",
-      description,
-      suggestions,
-      onSuggestionClick,
-      quickActions,
-      onQuickAction,
-      className,
-      children,
-    },
+export function ChatEmpty(
+  {
+    icon,
+    title = "What can I help with?",
+    description,
+    suggestions,
+    onSuggestionClick,
+    onSuggestionSelect,
+    quickActions,
+    onQuickAction,
+    className,
+    children,
     ref,
-  ) {
-    const showSuggestions = (suggestions?.length ?? 0) > 0;
-    const showQuickActions = (quickActions?.length ?? 0) > 0;
+  }: ChatEmptyProps,
+): React.ReactElement {
+  const showSuggestions = (suggestions?.length ?? 0) > 0;
+  const showQuickActions = (quickActions?.length ?? 0) > 0;
 
-    return (
-      <ChatEmptyState.Root ref={ref} className={className}>
-        {icon}
-        <ChatEmptyState.Heading>{title}</ChatEmptyState.Heading>
-        {description && (
-          <p className="max-w-md text-center text-sm text-[var(--foreground)]">
-            {description}
-          </p>
-        )}
-        {showSuggestions && (
-          <ChatEmptyState.Suggestions>
-            {suggestions?.map((suggestion) => (
+  return (
+    <ChatEmptyState.Root ref={ref} className={className}>
+      {icon}
+      <ChatEmptyState.Heading>{title}</ChatEmptyState.Heading>
+      {description && (
+        <p className="max-w-md text-center text-sm text-[var(--foreground)]">
+          {description}
+        </p>
+      )}
+      {showSuggestions && (
+        <ChatEmptyState.Suggestions>
+          {suggestions?.map((suggestion, index) => {
+            const item = toPromptSuggestion(suggestion);
+            return (
               <ChatEmptyState.Suggestion
-                key={suggestion}
-                onClick={() => onSuggestionClick?.(suggestion)}
+                key={`${item.label}-${index}`}
+                onClick={() => {
+                  onSuggestionSelect?.(item);
+                  onSuggestionClick?.(item.prompt);
+                }}
               >
-                {suggestion}
+                {item.label}
               </ChatEmptyState.Suggestion>
-            ))}
-          </ChatEmptyState.Suggestions>
-        )}
-        {showQuickActions && (
-          <div className="mt-4">
-            <QuickActions actions={quickActions} onActionClick={onQuickAction} />
-          </div>
-        )}
-        {children}
-      </ChatEmptyState.Root>
-    );
-  },
-);
+            );
+          })}
+        </ChatEmptyState.Suggestions>
+      )}
+      {showQuickActions && (
+        <div className="mt-4">
+          <QuickActions actions={quickActions} onActionClick={onQuickAction} />
+        </div>
+      )}
+      {children}
+    </ChatEmptyState.Root>
+  );
+}
 ChatEmpty.displayName = "ChatEmpty";

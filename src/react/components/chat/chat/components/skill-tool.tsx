@@ -15,9 +15,9 @@
 import * as React from "react";
 import type { ChatDynamicToolPart, ChatToolPart } from "#veryfront/agent/react";
 import { cn } from "../../theme.ts";
-import { cva } from "../../ui/cva.ts";
-import { Shimmer } from "../../ui/shimmer.tsx";
-import { CheckIcon, SparklesIcon } from "../../icons/index.ts";
+import { cva } from "../../../ui/cva.ts";
+import { Shimmer } from "../../../ui/shimmer.tsx";
+import { CheckIcon, SparklesIcon } from "../../../ui/icons/index.ts";
 
 /** Row chrome — mirrors `ChatTool`: 14px text, soft, single-line. */
 const skillToolRow = cva(

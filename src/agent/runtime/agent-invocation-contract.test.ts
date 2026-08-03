@@ -14,6 +14,7 @@ const inputAnchorMessageId = "10000000-1000-4000-8000-100000000003";
 const userId = "10000000-1000-4000-8000-100000000004";
 const projectId = "10000000-1000-4000-8000-100000000005";
 const branchId = "10000000-1000-4000-8000-100000000006";
+const environmentId = "10000000-1000-4000-8000-100000000007";
 
 function createInvocation(overrides: Record<string, unknown> = {}) {
   return {
@@ -101,6 +102,10 @@ describe("agent/runtime-agent-invocation-contract", () => {
     }));
 
     assertEquals(parsed.run.project.runtimeTargetKind, "main_branch");
+    const nonMainDefault = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      agentSource: { type: "branch", branch: "trunk" },
+    }));
+    assertEquals(nonMainDefault.agentSource, { type: "branch", branch: "trunk" });
     assertThrows(() =>
       RuntimeAgentRunInvocationSchema.parse(createInvocation({
         run: {
@@ -119,6 +124,66 @@ describe("agent/runtime-agent-invocation-contract", () => {
           },
         },
       }))
+    );
+  });
+
+  it("requires an immutable release for environment agent sources", () => {
+    assertThrows(() =>
+      RuntimeAgentRunInvocationSchema.parse(createInvocation({
+        agentSource: {
+          type: "environment",
+          environmentName: "Production",
+        },
+      }))
+    );
+
+    const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      run: {
+        ...createInvocation().run,
+        project: {
+          projectId,
+          projectSlug: "demo-project",
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: environmentId,
+        },
+      },
+      agentSource: {
+        type: "environment",
+        environmentName: "Production",
+        releaseId: "release-1",
+      },
+    }));
+
+    assertEquals(parsed.agentSource, {
+      type: "environment",
+      environmentName: "Production",
+      releaseId: "release-1",
+    });
+  });
+
+  it("rejects agent sources that do not match the selected runtime target", () => {
+    assertThrows(
+      () =>
+        RuntimeAgentRunInvocationSchema.parse(createInvocation({
+          run: {
+            ...createInvocation().run,
+            project: {
+              projectId,
+              projectSlug: "demo-project",
+              runtimeTargetKind: "environment",
+              runtimeTargetEnvironmentId: environmentId,
+            },
+          },
+          agentSource: { type: "branch", branch: "main" },
+        })),
+      Error,
+      "environment runtime target requires an environment agent source",
+    );
+  });
+
+  it("requires an exact source for every runtime invocation", () => {
+    assertThrows(() =>
+      RuntimeAgentRunInvocationSchema.parse(createInvocation({ agentSource: undefined }))
     );
   });
 
@@ -219,6 +284,8 @@ describe("agent/runtime-agent-invocation-contract", () => {
         project: {
           projectId,
           projectSlug: "demo-project",
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetBranchId: branchId,
         },
         parentRunId: "run_root_1",
       },
@@ -234,10 +301,43 @@ describe("agent/runtime-agent-invocation-contract", () => {
       messages: parsed.messages,
       tools: parsed.tools,
       context: parsed.context,
+      runtimeTargetKind: "preview_branch",
+      runtimeTargetEnvironmentId: null,
+      runtimeTargetBranchId: branchId,
       credentials: parsed.credentials,
       agentSource: parsed.agentSource,
       forwardedProps: parsed.forwardedProps,
     });
+  });
+
+  it("preserves the verified target environment on control-plane stream requests", () => {
+    const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      run: {
+        agentServiceId: "veryfront-platform-agent",
+        agentId: "builder",
+        conversationId,
+        runId: "run_root_1",
+        messageId,
+        inputAnchorMessageId,
+        requestedByUserId: userId,
+        project: {
+          projectId,
+          projectSlug: "demo-project",
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: environmentId,
+        },
+      },
+      agentSource: {
+        type: "environment",
+        environmentName: "Production",
+        releaseId: "release-1",
+      },
+    }));
+
+    const request = buildRuntimeAgentControlPlaneStreamRequestFromInvocation(parsed);
+
+    assertEquals(request.runtimeTargetEnvironmentId, environmentId);
+    assertEquals(request.runtimeTargetBranchId, null);
   });
 
   it("preserves the selected project agent config on control-plane stream requests", () => {

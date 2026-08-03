@@ -1,12 +1,52 @@
 import "#veryfront/schemas/_test-setup.ts";
 import * as React from "react";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import {
   createLayoutComponentCache,
+  loadMDXLayout,
+  loadTSXComponent,
   shouldUnwrapAppRouterDocumentLayout,
   unwrapAppRouterDocumentLayout,
 } from "./component-loader.ts";
+import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
+import type { MdxBundle } from "#veryfront/types";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
+import { validateVeryfrontConfig } from "#veryfront/config";
+import {
+  clearImportMapCache,
+  getCachedImportMap,
+} from "#veryfront/modules/import-map/preloader.ts";
+
+function cacheKeyForDependencies(
+  dependencies: Readonly<Record<string, string>>,
+): string {
+  const sortedEntries = Object.entries(dependencies).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
+  return `on:${hashString(JSON.stringify(sortedEntries))}`;
+}
+
+const SNAPSHOT_A_DEPENDENCIES = { zod: "3.0.0" } as const;
+const SNAPSHOT_A_PIN_KEY = cacheKeyForDependencies(SNAPSHOT_A_DEPENDENCIES);
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error("Timed out waiting for condition");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+function layoutAdapter(source: string): RuntimeAdapter {
+  return {
+    fs: {
+      readFile: () => Promise.resolve(source),
+    },
+  } as unknown as RuntimeAdapter;
+}
 
 describe("rendering/layouts/utils/component-loader", () => {
   describe("createLayoutComponentCache", () => {
@@ -234,18 +274,42 @@ describe("rendering/layouts/utils/component-loader", () => {
 
   describe("App Router document layout unwrapping", () => {
     it("should detect the App Router root layout path", () => {
-      assertEquals(
-        shouldUnwrapAppRouterDocumentLayout("/project/app/layout.tsx", "/project"),
-        true,
-      );
+      for (const extension of ["tsx", "jsx", "ts", "js"]) {
+        assertEquals(
+          shouldUnwrapAppRouterDocumentLayout(
+            `/project/app/layout.${extension}`,
+            "/project",
+          ),
+          true,
+        );
+      }
       assertEquals(
         shouldUnwrapAppRouterDocumentLayout("/project/app/dashboard/layout.tsx", "/project"),
         false,
       );
     });
 
+    it("should detect a configured App Router root layout path", () => {
+      assertEquals(
+        shouldUnwrapAppRouterDocumentLayout(
+          "/project/src/site/layout.tsx",
+          "/project",
+          "src/site",
+        ),
+        true,
+      );
+      assertEquals(
+        shouldUnwrapAppRouterDocumentLayout(
+          "/project/src/site/dashboard/layout.tsx",
+          "/project",
+          "src/site",
+        ),
+        false,
+      );
+    });
+
     it("should preserve body children without mounting html and body inside the root", () => {
-      function RootLayout({ children }: { children: React.ReactNode }) {
+      function RootLayout({ children }: { children?: React.ReactNode }) {
         return React.createElement(
           "html",
           null,
@@ -256,11 +320,362 @@ describe("rendering/layouts/utils/component-loader", () => {
       const WrappedLayout = unwrapAppRouterDocumentLayout(React, RootLayout);
       const result = WrappedLayout({
         children: React.createElement("button", { id: "counter" }, "Count: 0"),
-      }) as React.ReactElement;
+      }) as React.ReactElement<{ children?: React.ReactNode }>;
 
       assertEquals(result.type, "main");
       const child = React.Children.only(result.props.children) as React.ReactElement;
       assertEquals(child.type, "button");
     });
+  });
+
+  describe("loadTSXComponent", () => {
+    it("shares one component load for concurrent cold misses", async () => {
+      const cache = createLayoutComponentCache();
+      const loaded = Promise.withResolvers<React.ComponentType>();
+      let loadCalls = 0;
+      function Layout() {
+        return null;
+      }
+
+      const first = loadTSXComponent(
+        "/project/app/layout.tsx",
+        "/project",
+        cache,
+        layoutAdapter("export default function Layout() { return null; }"),
+        "project-1",
+        "project-slug",
+        "release-1",
+        "19.1.0",
+        {
+          loadComponentFromSource: () => {
+            loadCalls++;
+            return loaded.promise;
+          },
+        },
+      );
+      const second = loadTSXComponent(
+        "/project/app/layout.tsx",
+        "/project",
+        cache,
+        layoutAdapter("export default function Layout() { return null; }"),
+        "project-1",
+        "project-slug",
+        "release-1",
+        "19.1.0",
+        {
+          loadComponentFromSource: () => {
+            loadCalls++;
+            return loaded.promise;
+          },
+        },
+      );
+
+      await waitFor(() => loadCalls > 0);
+      assertEquals(loadCalls, 1);
+
+      loaded.resolve(Layout);
+
+      assertEquals(await Promise.all([first, second]), [Layout, Layout]);
+      assertEquals(loadCalls, 1);
+    });
+
+    it("retries after a failed component load", async () => {
+      const cache = createLayoutComponentCache();
+      const failedLoad = Promise.withResolvers<React.ComponentType>();
+      let loadCalls = 0;
+      function Layout() {
+        return null;
+      }
+      const deps = {
+        loadComponentFromSource: () => {
+          loadCalls++;
+          return loadCalls === 1 ? failedLoad.promise : Promise.resolve(Layout);
+        },
+      };
+
+      const first = loadTSXComponent(
+        "/project/app/retry-layout.tsx",
+        "/project",
+        cache,
+        layoutAdapter("export default function Layout() { return null; }"),
+        "project-1",
+        "project-slug",
+        "release-1",
+        "19.1.0",
+        deps,
+      );
+      await waitFor(() => loadCalls > 0);
+      const rejected = assertRejects(() => first, Error, "load failed");
+      failedLoad.reject(new Error("load failed"));
+      await rejected;
+
+      assertEquals(
+        await loadTSXComponent(
+          "/project/app/retry-layout.tsx",
+          "/project",
+          cache,
+          layoutAdapter("export default function Layout() { return null; }"),
+          "project-1",
+          "project-slug",
+          "release-1",
+          "19.1.0",
+          deps,
+        ),
+        Layout,
+      );
+      assertEquals(loadCalls, 2);
+    });
+
+    it("does not let a stale load overwrite its replacement cache entry", async () => {
+      using time = new FakeTime();
+      const cache = createLayoutComponentCache();
+      const staleLoad = Promise.withResolvers<React.ComponentType>();
+      const loadStarted = Promise.withResolvers<void>();
+      let loadCalls = 0;
+      function StaleLayout() {
+        return null;
+      }
+      function ReplacementLayout() {
+        return null;
+      }
+      function UnexpectedLayout() {
+        return null;
+      }
+      const args = [
+        "/project/app/stale-layout.tsx",
+        "/project",
+        cache,
+        layoutAdapter("export default function Layout() { return null; }"),
+        "project-1",
+        "project-slug",
+        "release-1",
+        "19.1.0",
+      ] as const;
+
+      const stale = loadTSXComponent(...args, {
+        loadComponentFromSource: () => {
+          loadCalls++;
+          loadStarted.resolve(undefined);
+          return staleLoad.promise;
+        },
+      });
+      await loadStarted.promise;
+
+      await time.tickAsync(5 * 60_000);
+      assertEquals(
+        await loadTSXComponent(...args, {
+          loadComponentFromSource: () => {
+            loadCalls++;
+            return Promise.resolve(ReplacementLayout);
+          },
+        }),
+        ReplacementLayout,
+      );
+
+      staleLoad.resolve(StaleLayout);
+      assertEquals(await stale, StaleLayout);
+      assertEquals(
+        await loadTSXComponent(...args, {
+          loadComponentFromSource: () => {
+            loadCalls++;
+            return Promise.resolve(UnexpectedLayout);
+          },
+        }),
+        ReplacementLayout,
+      );
+      assertEquals(loadCalls, 2);
+    });
+  });
+
+  it("threads the project React version into MDX layout module loading", async () => {
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+    let moduleReactVersion: unknown;
+    let modulePinKey: unknown;
+    let moduleDependencies: unknown;
+    mutableRenderer.loadModuleESM = ((...args: unknown[]) => {
+      moduleReactVersion = args[6];
+      modulePinKey = args[7];
+      moduleDependencies = args[8];
+      return Promise.resolve({ default: () => null });
+    }) as typeof mdxRenderer.loadModuleESM;
+
+    try {
+      await loadMDXLayout(
+        { compiledCode: "export default function Layout() { return null; }" } as MdxBundle,
+        "/project",
+        { fs: {} } as unknown as RuntimeAdapter,
+        "project-18",
+        "project-slug",
+        "preview-main",
+        { imports: {} },
+        "18.3.1",
+        SNAPSHOT_A_PIN_KEY,
+        SNAPSHOT_A_DEPENDENCIES,
+      );
+
+      assertEquals(moduleReactVersion, "18.3.1");
+      assertEquals(modulePinKey, SNAPSHOT_A_PIN_KEY);
+      assertEquals(moduleDependencies, SNAPSHOT_A_DEPENDENCIES);
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+    }
+  });
+
+  it("preloads the MDX import map under the exact request context", async () => {
+    clearImportMapCache();
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+    mutableRenderer.loadModuleESM =
+      (() => Promise.resolve({ default: () => null })) as typeof mdxRenderer.loadModuleESM;
+
+    const adapter = {
+      fs: {
+        readFile: () => {
+          const error = new Error("not found") as Error & { code: string };
+          error.code = "ENOENT";
+          throw error;
+        },
+        exists: () => false,
+      },
+      env: { get: () => undefined },
+    } as unknown as RuntimeAdapter;
+    const config = validateVeryfrontConfig({
+      resolve: {
+        importMap: {
+          imports: { "context-package": "https://example.com/context-package.ts" },
+        },
+      },
+    });
+
+    try {
+      await loadMDXLayout(
+        { compiledCode: "export default function Layout() { return null; }" } as MdxBundle,
+        "/context-project",
+        adapter,
+        "context-project-id",
+        "project-slug",
+        "release-1",
+        undefined,
+        "19.1.0",
+        SNAPSHOT_A_PIN_KEY,
+        SNAPSHOT_A_DEPENDENCIES,
+        undefined,
+        undefined,
+        config,
+      );
+
+      // The production call site must register the preloaded map under the
+      // exact release/config variant, not the ambient projectId-only variant.
+      const exactVariant = await getCachedImportMap("context-project-id", {
+        projectDir: "/context-project",
+        contentSourceId: "release-1",
+        config,
+      });
+      assertEquals(
+        exactVariant?.imports?.["context-package"],
+        "https://example.com/context-package.ts",
+      );
+
+      const otherContentSource = await getCachedImportMap("context-project-id", {
+        projectDir: "/context-project",
+        contentSourceId: "release-2",
+        config,
+      });
+      assertEquals(otherContentSource, undefined);
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+      clearImportMapCache();
+    }
+  });
+
+  it("uses the request snapshot in the TSX layout cache key", async () => {
+    function CachedLayout() {
+      return null;
+    }
+    let requestedCacheKey = "";
+    const cache = {
+      get(key: string) {
+        requestedCacheKey = key;
+        return CachedLayout;
+      },
+      set() {},
+      delete() {},
+      clear() {},
+    };
+    const adapter = {
+      fs: {
+        readFile: () => Promise.resolve("export default function Layout() { return null; }"),
+      },
+    } as unknown as RuntimeAdapter;
+
+    const loaded = await loadTSXComponent(
+      "/project/layout.tsx",
+      "/project",
+      cache,
+      adapter,
+      "project-id",
+      "project-slug",
+      "preview-main",
+      "19.1.1",
+      undefined,
+      SNAPSHOT_A_PIN_KEY,
+      SNAPSHOT_A_DEPENDENCIES,
+    );
+
+    assertEquals(loaded, CachedLayout);
+    assertEquals(
+      requestedCacheKey.endsWith(`:19.1.1:pins:${SNAPSHOT_A_PIN_KEY}`),
+      true,
+    );
+  });
+
+  it("preserves the legacy TSX layout cache key when pinning is off", async () => {
+    function CachedLayout() {
+      return null;
+    }
+    const requestedKeys: string[] = [];
+    const cache = {
+      get(key: string) {
+        requestedKeys.push(key);
+        return CachedLayout;
+      },
+      set() {},
+      delete() {},
+      clear() {},
+    };
+    const adapter = {
+      fs: {
+        readFile: () => Promise.resolve("export default function Layout() { return null; }"),
+      },
+    } as unknown as RuntimeAdapter;
+    const common = [
+      "/project/layout.tsx",
+      "/project",
+      cache,
+      adapter,
+      "project-id",
+      "project-slug",
+      "preview-main",
+      "19.1.1",
+    ] as const;
+
+    await loadTSXComponent(...common);
+    await loadTSXComponent(
+      ...common,
+      undefined,
+      "off",
+      undefined,
+      undefined,
+      "https://app.example",
+    );
+
+    assertEquals(requestedKeys.length, 2);
+    assertEquals(requestedKeys[1], requestedKeys[0]);
+    assertEquals(requestedKeys[0]?.includes(":pins:"), false);
   });
 });

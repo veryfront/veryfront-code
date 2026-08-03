@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateHydrationData } from "./hydration-data-generator.ts";
 import type { HTMLGenerationOptions } from "../types.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import { HydrationDataSchema } from "../schemas/index.ts";
 
 function parseHydrationData(
   slug: string,
@@ -108,15 +109,63 @@ describe("hydration-data-generator", () => {
       assertEquals(typeof parsed.pagePath, "string");
     });
 
+    it("should omit filesystem paths outside the project root", () => {
+      const parsed = parseHydrationData("page", {}, {}, {
+        ...baseOptions,
+        projectDir: "/project",
+        pagePath: "/private/tenant/page.tsx",
+        appPath: "/private/tenant/app.tsx",
+        nestedLayouts: [
+          { kind: "tsx", path: "/private/tenant/layout.tsx" },
+          { kind: "tsx", path: "/project/app/layout.tsx" },
+        ],
+      }) as {
+        pagePath?: string;
+        appPath?: string;
+        layouts: Array<{ kind: string; path: string }>;
+      };
+
+      assertEquals(parsed.pagePath, undefined);
+      assertEquals(parsed.appPath, undefined);
+      assertEquals(parsed.layouts, [{ kind: "tsx", path: "app/layout.tsx" }]);
+    });
+
+    it("publishes the configured App Router root", () => {
+      const parsed = parseHydrationData("page", {}, {}, {
+        ...baseOptions,
+        projectDir: "/project",
+        pagePath: "/project/src/app/page.tsx",
+        config: { directories: { app: "src/app" } },
+      }) as { appRouterRoot?: string };
+
+      assertEquals(parsed.appRouterRoot, "src/app");
+    });
+
+    it("publishes isolated client-page ownership", () => {
+      const parsed = parseHydrationData(
+        "page",
+        {},
+        {},
+        {
+          ...baseOptions,
+          isolatedClientPage: true,
+        } as HTMLGenerationOptions & { isolatedClientPage: boolean },
+      ) as {
+        isolatedClientPage?: boolean;
+      };
+
+      assertEquals(parsed.isolatedClientPage, true);
+    });
+
     it("includes release asset module URLs for hydration when a manifest is provided", () => {
       const manifest: ReleaseAssetManifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "project-id",
         releaseId: "release-id",
         releaseVersion: 1,
         manifestVersion: 5,
         builderVersion: "0.1.784",
-        sourceContentHash: "",
+        sourceContentHash: "a".repeat(64),
         createdAt: "2026-06-13T00:00:00.000Z",
         assetBasePath: "/_vf/assets",
         modules: {
@@ -134,7 +183,7 @@ describe("hydration-data-generator", () => {
         css: [],
         routes: {},
         dependencies: {},
-        fallback: { mode: "jit", gaps: [] },
+        dependencyMode: "immutable",
       };
       const parsed = parseHydrationData(
         "page",
@@ -159,6 +208,62 @@ describe("hydration-data-generator", () => {
       assertEquals(
         parsed.releaseAssetModules?.["components/layouts/DefaultLayout.mdx"],
         `/_vf/assets/${"b".repeat(64)}.js`,
+      );
+    });
+
+    it("includes App Router release asset module URLs for hydration", () => {
+      const manifest: ReleaseAssetManifest = {
+        schemaVersion: 2,
+        projectId: "project-id",
+        releaseId: "release-id",
+        releaseVersion: 1,
+        manifestVersion: 5,
+        builderVersion: "0.1.1156",
+        sourceContentHash: "a".repeat(64),
+        createdAt: "2026-07-27T00:00:00.000Z",
+        assetBasePath: "/_vf/assets",
+        modules: {
+          "app/page.tsx": {
+            contentHash: "c".repeat(64),
+            size: 100,
+            contentType: "text/javascript",
+          },
+          "app/layout.tsx": {
+            contentHash: "d".repeat(64),
+            size: 100,
+            contentType: "text/javascript",
+          },
+        },
+        css: [],
+        routes: {
+          "/": { modules: ["app/page.tsx", "app/layout.tsx"], css: [] },
+        },
+        dependencies: {},
+        dependencyMode: "immutable",
+      };
+      const parsed = parseHydrationData(
+        "page",
+        {},
+        {},
+        {
+          ...baseOptions,
+          mode: "production",
+          pagePath: "/project/app/page.tsx",
+          nestedLayouts: [{ kind: "tsx", path: "/project/app/layout.tsx" }],
+          projectDir: "/project",
+          releaseAssetManifest: manifest,
+        } as HTMLGenerationOptions & { releaseAssetManifest: ReleaseAssetManifest },
+      ) as {
+        releaseAssetModules?: Record<string, string>;
+      };
+
+      assertEquals(
+        parsed.releaseAssetModules?.["app/page.tsx"],
+        `/_vf/assets/${"c".repeat(64)}.js`,
+      );
+      assertEquals(
+        parsed.releaseAssetModules?.["app/layout.tsx"],
+        `/_vf/assets/${"d".repeat(64)}.js`,
       );
     });
 
@@ -243,6 +348,20 @@ describe("hydration-data-generator", () => {
       assertEquals(parsed.clientModuleStrategy, "rsc-module");
     });
 
+    it("serializes dependency pin state for RSC module cache identity", () => {
+      const parsed = parseHydrationData("page", {}, {}, {
+        ...baseOptions,
+        dependencyPinningCacheKey: "on:pins-a",
+      }) as { dependencyPinningCacheKey?: unknown };
+      const flagOff = parseHydrationData("page", {}, {}, {
+        ...baseOptions,
+        dependencyPinningCacheKey: "off",
+      }) as { dependencyPinningCacheKey?: unknown };
+
+      assertEquals(parsed.dependencyPinningCacheKey, "on:pins-a");
+      assertEquals(flagOff.dependencyPinningCacheKey, undefined);
+    });
+
     it("should include frontmatter when provided", () => {
       const options: HTMLGenerationOptions = {
         ...baseOptions,
@@ -265,6 +384,20 @@ describe("hydration-data-generator", () => {
         layoutProps?: unknown;
       };
       assertEquals(parsed.layoutProps, { "layouts/main.tsx": { theme: "dark" } });
+    });
+
+    it("should preserve layoutProps when hydration data is schema-parsed", () => {
+      const generated = parseHydrationData("page", {}, {}, {
+        ...baseOptions,
+        layoutProps: {
+          "layouts/main.tsx": { theme: "dark" },
+        },
+      });
+      const parsed = HydrationDataSchema.parse(generated) as Record<string, unknown>;
+
+      assertEquals(parsed.layoutProps, {
+        "layouts/main.tsx": { theme: "dark" },
+      });
     });
 
     it("should set dev=true in development mode", () => {

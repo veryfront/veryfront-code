@@ -13,11 +13,16 @@ import {
   type ClientRuntimeHydrationData,
   getHydrationRouterImportSpecifier,
 } from "./client-module-strategy.ts";
+import { rscLogger } from "../client/browser-logger.ts";
 
 /** Signature of `veryfront/router`'s `wrapForHydration` export. */
 type WrapForHydration = <T>(
   child: T,
-  options: { params?: Record<string, string>; frontmatter?: Record<string, unknown> },
+  options: {
+    params?: Record<string, string>;
+    frontmatter?: Record<string, unknown>;
+    data?: Record<string, unknown>;
+  },
 ) => T;
 
 function normalizeParams(
@@ -54,9 +59,10 @@ export async function wrapWithRouterProvider<T>(
     return (wrap as WrapForHydration)(child, {
       params: normalizeParams(hydrationData?.params),
       frontmatter: hydrationData?.frontmatter ?? {},
+      data: hydrationData?.props ?? {},
     });
   } catch (error) {
-    console.debug?.("[RSC] router provider wrap failed", error);
+    rscLogger.debug("router provider wrap failed", error);
     return child;
   }
 }

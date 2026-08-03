@@ -15,13 +15,17 @@ import {
   withContext,
   withSpan,
 } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
+import { SpanNames } from "#veryfront/observability";
 
 interface SpanInfo {
   /** The server span (unknown type from OTLP setup) */
   span: unknown;
   /** The span context (unknown type from OTLP setup) */
   context: unknown;
+}
+
+interface SpanWithContext {
+  spanContext(): { traceId: string; spanId: string };
 }
 
 /**
@@ -72,6 +76,20 @@ export function setProjectAttributes(
  */
 export function endRequestTracing(span: unknown, status: number, error?: Error): void {
   endServerSpan(span, status, error);
+}
+
+export function getRequestTraceContext(
+  span: unknown,
+): { traceId?: string; spanId?: string } {
+  if (
+    !span || typeof span !== "object" || !("spanContext" in span) ||
+    typeof (span as SpanWithContext).spanContext !== "function"
+  ) {
+    return {};
+  }
+
+  const context = (span as SpanWithContext).spanContext();
+  return { traceId: context.traceId, spanId: context.spanId };
 }
 
 /**

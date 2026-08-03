@@ -34,7 +34,7 @@
   ],
   "tools": [
     {
-      "id": "search_cards",
+      "id": "guru__search_cards",
       "name": "Search Cards",
       "description": "Search the knowledge base for cards matching search terms",
       "requiresWrite": false,
@@ -73,7 +73,7 @@
       }
     },
     {
-      "id": "get_card",
+      "id": "guru__get_card",
       "name": "Get Card",
       "description": "Get a single card with its full content and additional details (collection, verifiers, collaborators)",
       "requiresWrite": false,
@@ -91,7 +91,7 @@
       }
     },
     {
-      "id": "list_collections",
+      "id": "guru__list_collections",
       "name": "List Collections",
       "description": "List the collections in the team to find collection IDs, names, and stats",
       "requiresWrite": false,
@@ -101,7 +101,7 @@
       }
     },
     {
-      "id": "create_card",
+      "id": "guru__create_card",
       "name": "Create Card",
       "description": "Create a new knowledge-base card in a collection",
       "requiresWrite": true,
@@ -135,7 +135,7 @@
       }
     },
     {
-      "id": "update_card",
+      "id": "guru__update_card",
       "name": "Update Card",
       "description": "Update an existing card's title, content, or visibility to keep knowledge current",
       "requiresWrite": true,
@@ -177,7 +177,7 @@
       }
     },
     {
-      "id": "verify_card",
+      "id": "guru__verify_card",
       "name": "Verify Card",
       "description": "Mark a card as verified, confirming its content is accurate and up to date",
       "requiresWrite": true,

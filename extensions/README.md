@@ -38,17 +38,29 @@ Extension availability is separate from contract requirement:
 
 ### Build
 
-| Package                                                   | Contract                 | Description                                                               |
-| --------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------- |
-| [`@veryfront/ext-bundler-esbuild`](./ext-bundler-esbuild) | `Bundler`, `ModuleLexer` | ESM bundling and module analysis via `esbuild` and `es-module-lexer`      |
-| [`@veryfront/ext-parser-babel`](./ext-parser-babel)       | `CodeParser`             | JS/TS AST parsing, traversal, and JSX source-position injection via Babel |
-| [`@veryfront/ext-css-tailwind`](./ext-css-tailwind)       | `CSSProcessor`           | Tailwind CSS v4 compilation with dynamic plugin loading                   |
+| Package                                                   | Contract                  | Description                                                               |
+| --------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------- |
+| [`@veryfront/ext-bundler-esbuild`](./ext-bundler-esbuild) | `Bundler`, `ModuleLexer`  | ESM bundling and module analysis via `esbuild` and `es-module-lexer`      |
+| [`@veryfront/ext-css-lightning`](./ext-css-lightning)     | `CSSOptimizationEngine`   | Explicit CSS compilation, minification, browser targets, and source maps  |
+| [`@veryfront/ext-css-purgecss`](./ext-css-purgecss)       | `CSSPurgingEngine`        | Explicit parser-backed unused and critical CSS extraction via PurgeCSS    |
+| [`@veryfront/ext-css-tailwind`](./ext-css-tailwind)       | `CSSProcessor`            | Tailwind CSS v4 compilation with pinned local plugins                     |
+| [`@veryfront/ext-image-sharp`](./ext-image-sharp)         | `ImageOptimizationEngine` | Explicit bounded native image transformation via Sharp                    |
+| [`@veryfront/ext-parser-babel`](./ext-parser-babel)       | `CodeParser`              | JS/TS AST parsing, traversal, and JSX source-position injection via Babel |
 
 ### Content
 
-| Package                                           | Contract           | Description                                           |
-| ------------------------------------------------- | ------------------ | ----------------------------------------------------- |
-| [`@veryfront/ext-content-mdx`](./ext-content-mdx) | `ContentProcessor` | MDX and Markdown processing via unified/remark/rehype |
+| Package                                           | Contract                      | Description                                           |
+| ------------------------------------------------- | ----------------------------- | ----------------------------------------------------- |
+| [`@veryfront/ext-content-mdx`](./ext-content-mdx) | `ContentProcessor`            | MDX and Markdown processing via unified/remark/rehype |
+| [`@veryfront/ext-yaml`](./ext-yaml)               | `SkillDocumentParserProvider` | YAML parsing for skill and agent documents            |
+
+### Development and rendering
+
+| Package                                                       | Contract                      | Description                                    |
+| ------------------------------------------------------------- | ----------------------------- | ---------------------------------------------- |
+| [`@veryfront/ext-dev-ui-react`](./ext-dev-ui-react)           | `DevUiAssetProvider`          | Offline assets for local development UI        |
+| [`@veryfront/ext-node-websocket-ws`](./ext-node-websocket-ws) | `NodeWebSocketServerProvider` | Node.js WebSocket upgrades and local HMR       |
+| [`@veryfront/ext-react-ssr`](./ext-react-ssr)                 | `IsolatedSsrRendererProvider` | Explicit renderer for isolated project workers |
 
 ### Document extraction
 
@@ -58,9 +70,17 @@ Extension availability is separate from contract requirement:
 
 ### Eval export
 
-| Package                                                     | Contract                     | Description                                             |
-| ----------------------------------------------------------- | ---------------------------- | ------------------------------------------------------- |
-| [`@veryfront/ext-eval-report-http`](./ext-eval-report-http) | `EvalReportExporterRegistry` | Generic HTTP transport for redacted eval report exports |
+| Package                                                         | Contract                     | Description                                             |
+| --------------------------------------------------------------- | ---------------------------- | ------------------------------------------------------- |
+| [`@veryfront/ext-eval-report-http`](./ext-eval-report-http)     | `EvalReportExporterRegistry` | Generic HTTP transport for redacted eval report exports |
+| [`@veryfront/ext-eval-report-mlflow`](./ext-eval-report-mlflow) | `EvalReportExporterRegistry` | MLflow Tracking exporter for redacted eval reports      |
+
+Eval report exporters receive the generic, redacted `EvalReport` shape. Keep
+project-specific extraction in eval adapters or metrics, then select an exporter
+id such as `mlflow` from the CLI with `--export mlflow` or
+`VERYFRONT_EVAL_EXPORTERS=mlflow`. Future vendor integrations such as
+Braintrust should live as sibling `@veryfront/ext-eval-report-*` packages behind
+the same contract.
 
 ### Schema
 
@@ -70,16 +90,20 @@ Extension availability is separate from contract requirement:
 
 ### Storage
 
-| Package                                           | Contract          | Description                              |
-| ------------------------------------------------- | ----------------- | ---------------------------------------- |
-| [`@veryfront/ext-cache-redis`](./ext-cache-redis) | `TokenCacheStore` | Redis-backed token and cache persistence |
-| [`@veryfront/ext-db-sqlite`](./ext-db-sqlite)     | `SqliteStore`     | SQLite persistence                       |
+| Package                                           | Contract               | Description                                         |
+| ------------------------------------------------- | ---------------------- | --------------------------------------------------- |
+| [`@veryfront/ext-blob-gcs`](./ext-blob-gcs)       | `BlobStorage`          | Google Cloud Storage object persistence             |
+| [`@veryfront/ext-blob-s3`](./ext-blob-s3)         | `BlobStorage`          | S3-compatible object persistence                    |
+| [`@veryfront/ext-cache-redis`](./ext-cache-redis) | `TokenCacheStore`      | Redis-backed token and cache persistence            |
+| [`@veryfront/ext-redis`](./ext-redis)             | `RedisRuntimeProvider` | Shared Redis clients, adapters, and Pub/Sub runtime |
+| [`@veryfront/ext-db-sqlite`](./ext-db-sqlite)     | `SqliteStore`          | SQLite persistence                                  |
 
 ### Observability
 
 | Package                                                                           | Contract                                   | Description                                                                  |
 | --------------------------------------------------------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------- |
 | [`@veryfront/ext-observability-opentelemetry`](./ext-observability-opentelemetry) | `TracingExporter`, `NodeTelemetryProvider` | OpenTelemetry trace export, metrics API bridge, and Node telemetry bootstrap |
+| [`@veryfront/ext-observability-sentry`](./ext-observability-sentry)               | Application error reporter                 | Sentry error capture with service and trace correlation                      |
 
 ### Sandbox
 
@@ -87,44 +111,86 @@ Extension availability is separate from contract requirement:
 | ----------------------------------------------------------------- | --------------------------- | ------------------------------------------- |
 | [`@veryfront/ext-sandbox-shell-tools`](./ext-sandbox-shell-tools) | `SandboxShellToolsProvider` | Sandbox shell tool creation via `bash-tool` |
 
-## Auto-enabled core extensions
+## Built-in first-party selection
 
-These extensions are loaded by `createBuiltinExtensions()` during app bootstrap
-unless a project disables or overrides them by name. In npm installs, the root
-`veryfront` package lazy-loads the matching `@veryfront/ext-*` package for
-feature-specific implementations instead of shipping those dependencies in the
-root package.
+These packages are known to `createBuiltinExtensions()`, but that does not make
+every contract an unconditional global default. Direct built-ins are provided
+by their owning source or service distribution. Deferred candidates load only
+when the matching feature selects their contract and the executing distribution
+contains the package. The standard `veryfront` npm/CLI package installs the
+baseline subset used by ordinary apps and local development.
 
-| Package                              | Contracts                   |
-| ------------------------------------ | --------------------------- |
-| `@veryfront/ext-schema-zod`          | `SchemaValidator`           |
-| `@veryfront/ext-bundler-esbuild`     | `Bundler`, `ModuleLexer`    |
-| `@veryfront/ext-parser-babel`        | `CodeParser`                |
-| `@veryfront/ext-content-mdx`         | `ContentProcessor`          |
-| `@veryfront/ext-css-tailwind`        | `CSSProcessor`              |
-| `@veryfront/ext-document-kreuzberg`  | `DocumentExtractor`         |
-| `@veryfront/ext-db-sqlite`           | `SqliteStore`               |
-| `@veryfront/ext-sandbox-shell-tools` | `SandboxShellToolsProvider` |
-| `@veryfront/ext-llm-openai`          | `LLMProvider:openai`        |
-| `@veryfront/ext-llm-anthropic`       | `LLMProvider:anthropic`     |
-| `@veryfront/ext-llm-google`          | `LLMProvider:google`        |
+| Package                                      | Contract                      | Selection and availability                |
+| -------------------------------------------- | ----------------------------- | ----------------------------------------- |
+| `@veryfront/ext-schema-zod`                  | `SchemaValidator`             | Direct built-in                           |
+| `@veryfront/ext-auth-jwt`                    | `AuthProvider`                | Deferred; install when auth is configured |
+| `@veryfront/ext-bundler-esbuild`             | `Bundler`, `ModuleLexer`      | Deferred; standard npm baseline           |
+| `@veryfront/ext-parser-babel`                | `CodeParser`                  | Deferred; standard npm baseline           |
+| `@veryfront/ext-yaml`                        | `SkillDocumentParserProvider` | Deferred; standard npm baseline           |
+| `@veryfront/ext-content-mdx`                 | `ContentProcessor`            | Deferred; standard npm baseline           |
+| `@veryfront/ext-css-tailwind`                | `CSSProcessor`                | Deferred; standard npm baseline           |
+| `@veryfront/ext-node-websocket-ws`           | `NodeWebSocketServerProvider` | Deferred; standard npm baseline           |
+| `@veryfront/ext-dev-ui-react`                | `DevUiAssetProvider`          | Deferred; standard npm baseline           |
+| `@veryfront/ext-document-kreuzberg`          | `DocumentExtractor`           | Deferred; source/service distribution     |
+| `@veryfront/ext-db-sqlite`                   | `SqliteStore`                 | Deferred; source/service distribution     |
+| `@veryfront/ext-sandbox-shell-tools`         | `SandboxShellToolsProvider`   | Deferred; source/service distribution     |
+| `@veryfront/ext-observability-opentelemetry` | `TracingExporter`             | Deferred; install when OTLP is configured |
+| `@veryfront/ext-observability-opentelemetry` | `NodeTelemetryProvider`       | Built into the owning agent service       |
+| `@veryfront/ext-eval-report-http`            | Generic HTTP eval exporter    | Deferred; source/service distribution     |
+| `@veryfront/ext-eval-report-mlflow`          | MLflow eval exporter          | Deferred; source/service distribution     |
+| `@veryfront/ext-llm-openai`                  | `LLMProvider:openai`          | Direct service/source built-in            |
+| `@veryfront/ext-llm-anthropic`               | `LLMProvider:anthropic`       | Direct service/source built-in            |
+| `@veryfront/ext-llm-google`                  | `LLMProvider:google`          | Direct service/source built-in            |
+
+## Explicit opt-in extensions
+
+These packages must not become global defaults because they choose mutually
+exclusive infrastructure, change build output, load native processors, or
+select a specialized isolation implementation.
+
+| Packages                                                      | Why activation stays explicit                         |
+| ------------------------------------------------------------- | ----------------------------------------------------- |
+| `@veryfront/ext-blob-s3`, `@veryfront/ext-blob-gcs`           | Competing credentialed `BlobStorage` implementations  |
+| `@veryfront/ext-cache-redis`, `@veryfront/ext-redis`          | External Redis topology and credentials               |
+| `@veryfront/ext-css-lightning`, `@veryfront/ext-css-purgecss` | Build-output policy and native/parser cost            |
+| `@veryfront/ext-image-sharp`                                  | Native image processing and output policy             |
+| `@veryfront/ext-react-ssr`                                    | Isolated-worker renderer selected by hosting topology |
+
+## Service-conditional extensions
+
+`@veryfront/ext-observability-sentry` is loaded by the owning server or agent
+service only after its Sentry enablement, reporter-selection, and DSN policy
+passes. It is not a normal application contract extension: automatically
+running its package factory would register no useful contract, while eagerly
+initializing the SDK would change process-wide error reporting and network
+egress. Compiled services may embed the dormant adapter; npm services install
+the runtime-specific package they execute.
 
 ## npm service installs
 
 Install extension packages by the features a service executes. Do not install
 raw transitive dependencies such as `bash-tool`, `just-bash`, `jose`,
-`better-sqlite3`, `@kreuzberg/node`, `@mdx-js/mdx`, or `tailwindcss` directly
-to satisfy Veryfront runtime features.
+`better-sqlite3`, `@aws-sdk/client-s3`, `@kreuzberg/node`, `@mdx-js/mdx`, or
+`tailwindcss` directly to satisfy Veryfront runtime features.
 
-| Runtime or service role                    | Install these extension packages                                                                                               |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| CLI, build image, or project server runtime | `@veryfront/ext-bundler-esbuild`, `@veryfront/ext-content-mdx`, `@veryfront/ext-css-tailwind`, `@veryfront/ext-parser-babel`   |
-| Proxy or JWT-authenticated service          | `@veryfront/ext-auth-jwt`                                                                                                      |
-| Document upload or knowledge ingestion      | `@veryfront/ext-document-kreuzberg`                                                                                            |
-| Redis-backed cache or token store           | `@veryfront/ext-cache-redis`                                                                                                   |
-| SQLite-backed persistence                   | `@veryfront/ext-db-sqlite`                                                                                                     |
-| OpenTelemetry export or Node telemetry      | `@veryfront/ext-observability-opentelemetry`                                                                                   |
-| Local shell-tool agent runtime              | `@veryfront/ext-sandbox-shell-tools`                                                                                           |
+| Runtime or service role                      | Install these extension packages                                                                                                                                                                                       |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CLI, build image, or project server runtime  | `@veryfront/ext-bundler-esbuild`, `@veryfront/ext-content-mdx`, `@veryfront/ext-css-tailwind`, `@veryfront/ext-dev-ui-react`, `@veryfront/ext-node-websocket-ws`, `@veryfront/ext-parser-babel`, `@veryfront/ext-yaml` |
+| Build with CSS optimization                  | `@veryfront/ext-css-lightning` (register explicitly)                                                                                                                                                                   |
+| Build with CSS purging or critical CSS       | `@veryfront/ext-css-purgecss` (register explicitly)                                                                                                                                                                    |
+| Build with image optimization                | `@veryfront/ext-image-sharp` (register explicitly)                                                                                                                                                                     |
+| Proxy or JWT-authenticated service           | `@veryfront/ext-auth-jwt`                                                                                                                                                                                              |
+| Document upload or knowledge ingestion       | `@veryfront/ext-document-kreuzberg`                                                                                                                                                                                    |
+| Redis-backed cache or token store            | `@veryfront/ext-cache-redis`                                                                                                                                                                                           |
+| Redis-backed distributed runtime or Pub/Sub  | `@veryfront/ext-redis`                                                                                                                                                                                                 |
+| S3-compatible blob persistence               | `@veryfront/ext-blob-s3`                                                                                                                                                                                               |
+| Google Cloud Storage blob persistence        | `@veryfront/ext-blob-gcs`                                                                                                                                                                                              |
+| SQLite-backed persistence                    | `@veryfront/ext-db-sqlite`                                                                                                                                                                                             |
+| OpenTelemetry export or Node telemetry       | `@veryfront/ext-observability-opentelemetry`                                                                                                                                                                           |
+| Sentry application error capture             | `@veryfront/ext-observability-sentry`                                                                                                                                                                                  |
+| Local shell-tool agent runtime               | `@veryfront/ext-sandbox-shell-tools`                                                                                                                                                                                   |
+| Eval report export to a generic HTTP gateway | `@veryfront/ext-eval-report-http`                                                                                                                                                                                      |
+| Eval report export to MLflow                 | `@veryfront/ext-eval-report-mlflow`                                                                                                                                                                                    |
 
 An agent runtime needs `@veryfront/ext-sandbox-shell-tools` only when it creates
 local bash or shell tools. MCP-only remote tool execution does not need that
@@ -135,22 +201,28 @@ package unless the service also provides local shell tools.
 Veryfront treats contracts as required at the call site, not at the package list
 level.
 
-| Contract                    | Required when                                   | Default source                        |
-| --------------------------- | ----------------------------------------------- | ------------------------------------- |
-| `SchemaValidator`           | Schema-backed runtime validation runs           | Auto-enabled core extension           |
-| `Bundler`, `ModuleLexer`    | Build, import analysis, or module bundling runs | Auto-enabled core extension           |
-| `CodeParser`                | AST parsing or build-time code analysis runs    | Auto-enabled core extension           |
-| `ContentProcessor`          | MDX or Markdown content compilation runs        | Auto-enabled core extension           |
-| `CSSProcessor`              | Tailwind CSS processing runs                    | Auto-enabled core extension           |
-| `DocumentExtractor`         | Document text extraction runs                   | Auto-enabled native service extension |
-| `SqliteStore`               | SQLite-backed persistence runs                  | Auto-enabled native service extension |
-| `SandboxShellToolsProvider` | Sandbox shell tools are created                 | Auto-enabled core extension           |
-| `LLMProvider:*`             | A matching model provider is selected           | Auto-enabled core extension           |
-| `AuthProvider`              | Auth signing or verification is configured      | User-installed extension              |
-| `TokenCacheStore`           | Redis-backed token cache is configured          | User-installed extension              |
-| `EvalReportExporterRegistry` | Eval report exporters are registered            | Auto-enabled core extension           |
-| `TracingExporter`           | OTLP tracing export is configured               | User-installed extension              |
-| `NodeTelemetryProvider`     | Node agent service telemetry is enabled         | Auto-enabled agent service extension  |
+| Contract                      | Required when                                   | Default source                        |
+| ----------------------------- | ----------------------------------------------- | ------------------------------------- |
+| `SchemaValidator`             | Schema-backed runtime validation runs           | Auto-enabled core extension           |
+| `Bundler`, `ModuleLexer`      | Build, import analysis, or module bundling runs | Auto-enabled core extension           |
+| `CodeParser`                  | AST parsing or build-time code analysis runs    | Auto-enabled core extension           |
+| `ContentProcessor`            | MDX or Markdown content compilation runs        | Auto-enabled core extension           |
+| `CSSProcessor`                | Class-candidate CSS processing runs             | Auto-enabled core extension           |
+| `CSSOptimizationEngine`       | CSS compilation or minification runs            | Explicit user-installed extension     |
+| `CSSPurgingEngine`            | CSS purging or critical-CSS extraction runs     | Explicit user-installed extension     |
+| `ImageOptimizationEngine`     | Image optimization runs                         | Explicit user-installed extension     |
+| `DocumentExtractor`           | Document text extraction runs                   | Auto-enabled native service extension |
+| `SqliteStore`                 | SQLite-backed persistence runs                  | Auto-enabled native service extension |
+| `SandboxShellToolsProvider`   | Sandbox shell tools are created                 | Auto-enabled core extension           |
+| `LLMProvider:*`               | A matching model provider is selected           | Auto-enabled core extension           |
+| `BlobStorage`                 | S3 or GCS object persistence is configured      | Explicitly configured extension       |
+| `AuthProvider`                | Auth signing or verification is configured      | User-installed extension              |
+| `TokenCacheStore`             | Redis-backed token cache is configured          | User-installed extension              |
+| `RedisRuntimeProvider`        | A core Redis facade or Pub/Sub is used          | Explicitly configured extension       |
+| `EvalReportExporterRegistry`  | Eval report exporters are registered            | Auto-enabled core extension           |
+| `TracingExporter`             | OTLP tracing export is configured               | User-installed extension              |
+| `NodeTelemetryProvider`       | Node agent service telemetry is enabled         | Auto-enabled agent service extension  |
+| `NodeWebSocketServerProvider` | Node.js WebSocket upgrades or HMR run           | Auto-enabled core extension           |
 
 ## Architecture
 
@@ -258,6 +330,7 @@ inside their named extension boundaries.
 | Sandbox execution   | `ext-sandbox-shell-tools` | `bash-tool`, `just-bash`                  | `SandboxShellToolsProvider`    |
 | Native SQLite store | `ext-db-sqlite`           | `better-sqlite3`, `@types/better-sqlite3` | `SqliteStore`, filesystem I/O  |
 | Document extraction | `ext-document-kreuzberg`  | `@kreuzberg/wasm`                         | `DocumentExtractor`, file read |
+| Redis runtime       | `ext-redis`               | `redis`, `@redis/client`                  | Network and environment access |
 
 ## Capability policy
 
@@ -266,14 +339,18 @@ capability list in the extension factory and in `veryfront.capabilities` inside
 the extension manifest. CI runs `deno task lint:extension-capabilities` to
 check for drift and to enforce the sensitive capability policies below.
 
-| Extension                              | Required capabilities                                          | Why it is sensitive                         |
-| -------------------------------------- | -------------------------------------------------------------- | ------------------------------------------- |
-| `ext-sandbox-shell-tools`              | `sandbox:execute` with `tools: ["bash"]`                       | Exposes command execution in a sandbox      |
-| `ext-cache-redis`                      | `net:outbound`, `env:read` for `REDIS_*`                       | Connects to external cache infrastructure   |
-| `ext-db-sqlite`                        | `fs:read`, `fs:write`                                          | Opens native SQLite databases               |
-| `ext-document-kreuzberg`               | `fs:read`                                                      | Parses uploaded or user-provided documents  |
-| `ext-observability-opentelemetry`      | `net:outbound`, `env:read` for `OTEL_*`                        | Exports telemetry and reads collector config |
-| `ext-eval-report-http`                 | `net:outbound`, `env:read` for `VERYFRONT_EVAL_HTTP_*`         | Exports eval reports to an external endpoint |
+| Extension                         | Required capabilities                                    | Why it is sensitive                          |
+| --------------------------------- | -------------------------------------------------------- | -------------------------------------------- |
+| `ext-blob-gcs`                    | `net:outbound` to Google OAuth and Storage               | Obtains tokens and accesses configured blobs |
+| `ext-blob-s3`                     | `net:outbound`, declared AWS runtime `env:read` keys     | Accesses the explicitly configured endpoint  |
+| `ext-sandbox-shell-tools`         | `sandbox:execute` with `tools: ["bash"]`                 | Exposes command execution in a sandbox       |
+| `ext-cache-redis`                 | `net:outbound`, `env:read` for `REDIS_*`                 | Connects to external cache infrastructure    |
+| `ext-redis`                       | `net:outbound`, `env:read` for Redis connection settings | Connects distributed runtime infrastructure  |
+| `ext-db-sqlite`                   | `fs:read`, `fs:write`                                    | Opens native SQLite databases                |
+| `ext-document-kreuzberg`          | `fs:read`                                                | Parses uploaded or user-provided documents   |
+| `ext-observability-opentelemetry` | `net:outbound`, `env:read` for `OTEL_*`                  | Exports telemetry and reads collector config |
+| `ext-observability-sentry`        | `net:outbound`                                           | Sends scrubbed application errors to Sentry  |
+| `ext-eval-report-http`            | `net:outbound`, `env:read` for `VERYFRONT_EVAL_HTTP_*`   | Exports eval reports to an external endpoint |
 
 Use `veryfront.contracts` for contract ownership and dependency ordering. Use
 `veryfront.capabilities` only for runtime resource access and audit metadata.

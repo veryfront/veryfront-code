@@ -17,7 +17,7 @@ interface AssertImpl {
     errorClassOrMsg?: ErrorClass | string,
     msgIncludesOrMsg?: string,
     msg?: string,
-  ): void;
+  ): unknown;
   assertRejects(
     fn: () => Promise<unknown>,
     errorClassOrMsg?: ErrorClass | string,
@@ -140,7 +140,7 @@ function createNodeAssertImpl(): AssertImpl {
       errorClassOrMsg?: ErrorClass | string,
       msgIncludesOrMsg?: string,
       _msg?: string,
-    ): void {
+    ): unknown {
       let threw = false;
       let error: unknown;
 
@@ -158,6 +158,7 @@ function createNodeAssertImpl(): AssertImpl {
         msgIncludesOrMsg,
         "Expected function to throw",
       );
+      return error;
     },
 
     async assertRejects(
@@ -165,7 +166,7 @@ function createNodeAssertImpl(): AssertImpl {
       errorClassOrMsg?: ErrorClass | string,
       msgIncludesOrMsg?: string,
       _msg?: string,
-    ): Promise<void> {
+    ): Promise<unknown> {
       let threw = false;
       let error: unknown;
 
@@ -183,6 +184,8 @@ function createNodeAssertImpl(): AssertImpl {
         msgIncludesOrMsg,
         "Expected function to reject",
       );
+      // Returning the rejection reason is a stable public testing helper contract.
+      return error;
     },
 
     assertStringIncludes(actual: string, expected: string, msg?: string): void {
@@ -295,11 +298,11 @@ export function assertThrows(
   errorClassOrMsg?: ErrorClass | string,
   msgIncludesOrMsg?: string,
   msg?: string,
-): void {
-  impl.assertThrows(fn, errorClassOrMsg, msgIncludesOrMsg, msg);
+): unknown {
+  return impl.assertThrows(fn, errorClassOrMsg, msgIncludesOrMsg, msg);
 }
 
-/** Assert that an async function rejects. */
+/** Assert that an async function rejects, returning the rejection reason. */
 export function assertRejects(
   fn: () => Promise<unknown>,
   errorClassOrMsg?: ErrorClass | string,

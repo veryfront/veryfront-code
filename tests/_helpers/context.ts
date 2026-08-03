@@ -22,7 +22,7 @@
  */
 
 import "./contract-init.ts";
-import { join } from "#veryfront/compat/path";
+import { fromFileUrl, join } from "#veryfront/compat/path";
 import {
   isAlreadyExistsError,
   isNotFoundError,
@@ -31,7 +31,6 @@ import {
   remove,
   writeTextFile,
 } from "../../src/platform/compat/fs.ts";
-import { resolve as resolvePath } from "#veryfront/compat/path";
 import { deleteEnv, getEnv, setEnv } from "../../src/platform/compat/process.ts";
 import { startDevServer } from "../../src/server/dev-server.ts";
 import { startProductionServer } from "../../src/server/production-server.ts";
@@ -48,20 +47,7 @@ import {
 import type { TestServer } from "./server.ts";
 import { getFreePort } from "./utils.ts";
 
-// Initialize esbuild without worker to prevent hanging tests
-// This is done globally so all tests share the same esbuild instance
-let esbuildInitialized = false;
-try {
-  const { initialize } = await import("npm:esbuild@0.28.1");
-  await initialize({ worker: false });
-  esbuildInitialized = true;
-
-  // Set global flag so cleanupBundler knows to skip stopping esbuild
-  // This prevents "child process started before test but closed during test" errors
-  (globalThis as Record<string, unknown>).__vfTestPreserveEsbuild = true;
-} catch {
-  // Ignore if already initialized or module missing
-}
+const REPOSITORY_ROOT = fromFileUrl(new URL("../../", import.meta.url));
 
 // Register the ext-babel CodeParser contract. In production this happens
 // via extension discovery; integration tests scaffold ephemeral project
@@ -228,8 +214,6 @@ await registerExtOpenAIForTests();
 await registerExtMdxForTests();
 await registerExtAnthropicForTests();
 await registerExtGoogleForTests();
-
-export { esbuildInitialized };
 
 function safeSetEnv(key: string, value: string): void {
   try {
@@ -545,6 +529,17 @@ export class TestContext {
     }
 
     try {
+      const { ensureDefaultBundlerContracts } = await import(
+        "../../src/extensions/bundler/defaults.ts"
+      );
+      await ensureDefaultBundlerContracts();
+      const { stop } = await import("veryfront/extensions/bundler");
+      await stop();
+    } catch (error) {
+      errors.push(error as Error);
+    }
+
+    try {
       await resetApiHandler(this.projectDir);
     } catch (error) {
       errors.push(error as Error);
@@ -628,7 +623,7 @@ export class TestContext {
     try {
       const extBabelDir = join(this.projectDir, "extensions", "ext-parser-babel");
       await mkdir(extBabelDir, { recursive: true });
-      const extBabelReal = resolvePath("extensions/ext-parser-babel/src/index.ts");
+      const extBabelReal = join(REPOSITORY_ROOT, "extensions/ext-parser-babel/src/index.ts");
       await writeTextFile(
         join(extBabelDir, "index.ts"),
         `export { default } from "${"file://" + extBabelReal}";\n`,
@@ -643,7 +638,7 @@ export class TestContext {
     try {
       const extOpenAIDir = join(this.projectDir, "extensions", "ext-llm-openai");
       await mkdir(extOpenAIDir, { recursive: true });
-      const extOpenAIReal = resolvePath("extensions/ext-llm-openai/src/index.ts");
+      const extOpenAIReal = join(REPOSITORY_ROOT, "extensions/ext-llm-openai/src/index.ts");
       await writeTextFile(
         join(extOpenAIDir, "index.ts"),
         `export { default } from "${"file://" + extOpenAIReal}";\n`,
@@ -658,7 +653,7 @@ export class TestContext {
     try {
       const extMdxDir = join(this.projectDir, "extensions", "ext-content-mdx");
       await mkdir(extMdxDir, { recursive: true });
-      const extMdxReal = resolvePath("extensions/ext-content-mdx/src/index.ts");
+      const extMdxReal = join(REPOSITORY_ROOT, "extensions/ext-content-mdx/src/index.ts");
       await writeTextFile(
         join(extMdxDir, "index.ts"),
         `export { default } from "${"file://" + extMdxReal}";\n`,
@@ -671,7 +666,10 @@ export class TestContext {
     try {
       const extAnthropicDir = join(this.projectDir, "extensions", "ext-llm-anthropic");
       await mkdir(extAnthropicDir, { recursive: true });
-      const extAnthropicReal = resolvePath("extensions/ext-llm-anthropic/src/index.ts");
+      const extAnthropicReal = join(
+        REPOSITORY_ROOT,
+        "extensions/ext-llm-anthropic/src/index.ts",
+      );
       await writeTextFile(
         join(extAnthropicDir, "index.ts"),
         `export { default } from "${"file://" + extAnthropicReal}";\n`,
@@ -684,7 +682,7 @@ export class TestContext {
     try {
       const extGoogleDir = join(this.projectDir, "extensions", "ext-llm-google");
       await mkdir(extGoogleDir, { recursive: true });
-      const extGoogleReal = resolvePath("extensions/ext-llm-google/src/index.ts");
+      const extGoogleReal = join(REPOSITORY_ROOT, "extensions/ext-llm-google/src/index.ts");
       await writeTextFile(
         join(extGoogleDir, "index.ts"),
         `export { default } from "${"file://" + extGoogleReal}";\n`,

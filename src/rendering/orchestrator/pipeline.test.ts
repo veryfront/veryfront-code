@@ -30,9 +30,10 @@ function cachePageCss(cacheKey: string, css: string): void {
 describe("RenderPipeline helpers", () => {
   describe("pipeline-helpers", () => {
     it("extractRenderedCssHash returns the page css hash when present", () => {
+      const hash = "a".repeat(64);
       assertEquals(
-        extractRenderedCssHash('<link rel="stylesheet" href="/_vf/css/abc123.css">'),
-        "abc123",
+        extractRenderedCssHash(`<link rel="stylesheet" href="/_vf/css/${hash}.css">`),
+        hash,
       );
     });
 
@@ -61,9 +62,12 @@ describe("RenderPipeline helpers", () => {
       assertEquals(result, [{ kind: "tsx", path: "app/layout.tsx" }]);
     });
 
-    it("serializeLayoutProps converts the layout prop map into a plain object", () => {
-      const result = serializeLayoutProps(new Map([["layout-a", { title: "A" }]]));
-      assertEquals(result, { "layout-a": { title: "A" } });
+    it("serializeLayoutProps uses project-relative layout keys", () => {
+      const result = serializeLayoutProps(
+        new Map([["/project/layouts/main.tsx", { title: "A" }]]),
+        "/project",
+      );
+      assertEquals(result, { "layouts/main.tsx": { title: "A" } });
     });
   });
   describe("isHiddenSegment", () => {
@@ -87,28 +91,45 @@ describe("RenderPipeline helpers", () => {
 
   describe("isDotPath", () => {
     it("should detect dot-prefixed slug segments", () => {
-      assertEquals(isDotPath(".veryfront/chat"), true);
-      assertEquals(isDotPath("api/.hidden/route"), true);
+      assertEquals(isDotPath({ slug: ".veryfront/chat", projectDir: "/project" }), true);
+      assertEquals(isDotPath({ slug: "api/.hidden/route", projectDir: "/project" }), true);
     });
 
     it("should detect dot-prefixed filePath segments", () => {
-      assertEquals(isDotPath("normal-slug", "/project/.veryfront/pages/index.tsx"), true);
+      assertEquals(
+        isDotPath({
+          slug: "normal-slug",
+          filePath: "/project/.veryfront/pages/index.tsx",
+          projectDir: "/project",
+        }),
+        true,
+      );
     });
 
     it("should return false for normal paths", () => {
-      assertEquals(isDotPath("about"), false);
-      assertEquals(isDotPath("blog/post-1"), false);
-      assertEquals(isDotPath("normal", "/project/pages/index.tsx"), false);
+      assertEquals(isDotPath({ slug: "about", projectDir: "/project" }), false);
+      assertEquals(isDotPath({ slug: "blog/post-1", projectDir: "/project" }), false);
+      assertEquals(
+        isDotPath({
+          slug: "normal",
+          filePath: "/project/pages/index.tsx",
+          projectDir: "/project",
+        }),
+        false,
+      );
     });
 
     it("should handle missing filePath", () => {
-      assertEquals(isDotPath("normal-slug"), false);
-      assertEquals(isDotPath("normal-slug", undefined), false);
+      assertEquals(isDotPath({ slug: "normal-slug", projectDir: "/project" }), false);
+      assertEquals(
+        isDotPath({ slug: "normal-slug", filePath: undefined, projectDir: "/project" }),
+        false,
+      );
     });
 
     it("should handle '.' and '..' in paths without triggering", () => {
-      assertEquals(isDotPath("./relative"), false);
-      assertEquals(isDotPath("../parent"), false);
+      assertEquals(isDotPath({ slug: "./relative", projectDir: "/project" }), false);
+      assertEquals(isDotPath({ slug: "../parent", projectDir: "/project" }), false);
     });
   });
 
@@ -263,8 +284,9 @@ describe("RenderPipeline helpers", () => {
         "adapter",
         "mode",
         "projectDir",
+        "isLocalProject",
       ];
-      assertEquals(requiredFields.length, 8);
+      assertEquals(requiredFields.length, 9);
     });
 
     it("should accept development mode", () => {

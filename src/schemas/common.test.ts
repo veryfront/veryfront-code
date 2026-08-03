@@ -121,8 +121,29 @@ describe("CommonSchemas", () => {
       assertEquals(result.data.limit, 20);
     });
 
+    it("should reject non-decimal numeric string spellings", () => {
+      for (const value of [" 3 ", "+3", "3.0", "1e2", "0x10"]) {
+        assertParseFailure(CommonSchemas.pagination.safeParse({ page: value }));
+        assertParseFailure(CommonSchemas.pagination.safeParse({ limit: value }));
+      }
+    });
+
+    it("should reject decimal digit strings longer than 16 characters", () => {
+      const overlong = "0".repeat(17);
+
+      assertParseFailure(CommonSchemas.pagination.safeParse({ page: overlong }));
+      assertParseFailure(CommonSchemas.pagination.safeParse({ limit: overlong }));
+    });
+
     it("should reject negative page numbers", () => {
       assertParseFailure(CommonSchemas.pagination.safeParse({ page: -1 }));
+    });
+
+    it("should reject page numbers above the maximum safe integer", () => {
+      const unsafePage = Number.MAX_SAFE_INTEGER + 1;
+
+      assertParseFailure(CommonSchemas.pagination.safeParse({ page: unsafePage }));
+      assertParseFailure(CommonSchemas.pagination.safeParse({ page: String(unsafePage) }));
     });
 
     it("should reject limit exceeding 100", () => {
@@ -131,6 +152,13 @@ describe("CommonSchemas", () => {
 
     it("should reject invalid order values", () => {
       assertParseFailure(CommonSchemas.pagination.safeParse({ order: "random" }));
+    });
+
+    it("should reject non-string and non-number pagination values", () => {
+      assertParseFailure(CommonSchemas.pagination.safeParse({ page: true }));
+      assertParseFailure(CommonSchemas.pagination.safeParse({ page: ["3"] }));
+      assertParseFailure(CommonSchemas.pagination.safeParse({ limit: true }));
+      assertParseFailure(CommonSchemas.pagination.safeParse({ limit: ["20"] }));
     });
   });
 

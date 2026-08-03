@@ -32,6 +32,7 @@ export type {
   ClientComponentMeta,
   ComponentAnalysis,
   ComponentType,
+  RSCChildrenPayload,
   RSCNode,
   RSCPayload,
   RSCRendererOptions,
@@ -82,7 +83,8 @@ export type ComponentFunction = (
   props: ComponentProps,
 ) => React.ReactElement | null;
 
-export type MDXComponents = Record<string, React.ComponentType<unknown>>;
+/** React elements accepted as compiled-MDX component overrides. */
+export type MDXComponents = Record<string, React.ElementType>;
 
 /** Parsed frontmatter values from an MDX page. */
 export interface MDXFrontmatter {
@@ -193,16 +195,12 @@ export interface RenderResult {
 }
 
 export type {
-  BrowserTargets,
   CriticalCSSResult,
   CSSBundle,
   CSSOptimizationOptions,
   CSSOptimizationStrategy,
   CSSOptimizerStats,
   CSSProcessingResult,
-  LightningCSSModule,
-  LightningCSSTransformOptions,
-  LightningCSSTransformResult,
   SelectorExtractionResult,
 } from "#veryfront/build/asset-pipeline/css-optimizer/types/index.ts";
 

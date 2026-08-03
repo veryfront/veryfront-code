@@ -7,8 +7,19 @@
 
 import { isProduction } from "#veryfront/platform/environment.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
-import { redactSensitive } from "#veryfront/utils/logger/redact.ts";
+import { redactForSerialization } from "#veryfront/utils/logger/redact.ts";
 import { VeryfrontError } from "./types.ts";
+import {
+  buildErrorDocsUrl,
+  ERROR_CONTEXT_MAX_LENGTH_CHARS,
+  ERROR_OUTPUT_MAX_LENGTH_CHARS,
+  sanitizeDiagnosticText,
+  snapshotErrorForLoggingBoundary,
+} from "./safe-diagnostics.ts";
+
+const arrayIsArray = Array.isArray;
+const jsonStringify = JSON.stringify;
+const NativeDate = Date;
 
 export interface ErrorLogEntry {
   level: "error";
@@ -24,21 +35,53 @@ export interface ErrorLogEntry {
 }
 
 function toContextRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
+  if (!value || typeof value !== "object") return undefined;
+  try {
+    return arrayIsArray(value) ? undefined : value as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
 }
 
-function mergeContext(
+function redactAndMergeContext(
   errorContext: unknown,
   extraContext?: Record<string, unknown>,
 ): Record<string, unknown> | undefined {
-  const baseContext = toContextRecord(errorContext);
+  const baseContext = toContextRecord(redactForSerialization(errorContext));
+  const safeExtraContext = toContextRecord(redactForSerialization(extraContext));
 
-  if (!baseContext) return extraContext;
-  if (!extraContext) return baseContext;
+  const merged = !baseContext
+    ? safeExtraContext
+    : !safeExtraContext
+    ? baseContext
+    : { ...baseContext, ...safeExtraContext };
+  if (!merged) return undefined;
 
-  return { ...baseContext, ...extraContext };
+  try {
+    return jsonStringify(merged).length <= ERROR_CONTEXT_MAX_LENGTH_CHARS
+      ? merged
+      : { context_truncated: true };
+  } catch {
+    return { unreadable_context: "[REDACTED]" };
+  }
+}
+
+function stringifyErrorLogEntry(entry: ErrorLogEntry): string {
+  const serialized = jsonStringify(entry);
+  if (serialized.length <= ERROR_OUTPUT_MAX_LENGTH_CHARS) return serialized;
+
+  return jsonStringify(
+    {
+      level: entry.level,
+      slug: entry.slug,
+      category: entry.category,
+      title: entry.title,
+      status: entry.status,
+      docs: entry.docs,
+      timestamp: entry.timestamp,
+      context: { context_truncated: true },
+    } satisfies ErrorLogEntry,
+  );
 }
 
 /**
@@ -54,39 +97,41 @@ export function logError(
   error: VeryfrontError,
   context?: Record<string, unknown>,
 ): void {
-  const mergedContext = mergeContext(error.context, context);
-  // Redact once and reuse for both the production JSON entry and the dev-mode
-  // human-readable dump, so neither path can emit unredacted credentials.
-  const safeContext = redactSensitive(mergedContext);
+  const boundary = snapshotErrorForLoggingBoundary(error);
+  const snapshot = boundary.error;
+  const slug = sanitizeDiagnosticText(snapshot.slug);
+  const safeContext = redactAndMergeContext(boundary.context, context);
   const entry: ErrorLogEntry = {
     level: "error",
-    slug: error.slug,
-    category: error.category,
-    title: error.title,
-    detail: error.detail,
-    suggestion: error.suggestion,
-    status: error.status,
-    docs: error.getDocsUrl(),
-    timestamp: new Date().toISOString(),
+    slug,
+    category: snapshot.category,
+    title: sanitizeDiagnosticText(snapshot.title),
+    detail: snapshot.detail === undefined ? undefined : sanitizeDiagnosticText(snapshot.detail),
+    suggestion: snapshot.suggestion === undefined
+      ? undefined
+      : sanitizeDiagnosticText(snapshot.suggestion),
+    status: snapshot.status,
+    docs: buildErrorDocsUrl(snapshot.slug),
+    timestamp: new NativeDate().toISOString(),
     context: safeContext,
   };
 
   if (isProduction()) {
-    // Direct JSON output — this module owns its own structured format
+    // Direct JSON output - this module owns its own structured format
     // (slug, category, status, docs) which differs from the logger envelope.
-    console.error(JSON.stringify(entry));
+    console.error(stringifyErrorLogEntry(entry));
   } else {
     // Human-readable format for development
-    serverLogger.error(`[ERROR] ${error.slug} (${error.category}) — ${error.title}`);
-    if (error.detail) {
-      serverLogger.error(`  Detail: ${error.detail}`);
+    serverLogger.error(`[ERROR] ${entry.slug} (${entry.category}) - ${entry.title}`);
+    if (entry.detail) {
+      serverLogger.error(`  Detail: ${entry.detail}`);
     }
-    if (error.suggestion) {
-      serverLogger.error(`  💡 Suggestion: ${error.suggestion}`);
+    if (entry.suggestion) {
+      serverLogger.error(`  Suggestion: ${entry.suggestion}`);
     }
-    serverLogger.error(`  📚 Docs: ${entry.docs}`);
+    serverLogger.error(`  Docs: ${entry.docs}`);
     if (safeContext) {
-      serverLogger.error(`  Context: ${JSON.stringify(safeContext, null, 2)}`);
+      serverLogger.error(`  Context: ${jsonStringify(safeContext, null, 2)}`);
     }
   }
 }
@@ -105,9 +150,10 @@ export function logErrorWithMessage(
   error: VeryfrontError,
   context?: Record<string, unknown>,
 ): void {
+  const safeContext = toContextRecord(redactForSerialization(context));
   const extendedContext = {
-    ...context,
-    operation: message,
+    ...safeContext,
+    operation: sanitizeDiagnosticText(message),
   };
   logError(error, extendedContext);
 }

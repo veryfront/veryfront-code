@@ -9,8 +9,3 @@ export function deriveNodeStatus(completed: boolean, waiting: boolean): NodeStat
 export function shouldCheckpoint(node: WorkflowNode): boolean {
   return node.config.checkpoint ?? false;
 }
-
-export function sleep(ms: number): Promise<void> {
-  // no cleanup needed: one-shot
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}

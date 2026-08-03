@@ -8,7 +8,7 @@ import { readConfigFile } from "#cli/shared/config";
 import { cwd } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
-import { brand, dim, muted, success } from "#cli/ui";
+import { brand, dim, muted } from "#cli/ui";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 
 /**
@@ -87,7 +87,7 @@ export async function studioCommand(
   }
 
   await openBrowser(url);
-  console.log("  " + success("✓") + " Opening " + brand(project) + " in Studio");
+  console.log("  ✓ Opening " + brand(project) + " in Studio");
   console.log();
   console.log("  " + dim(url));
   console.log();

@@ -33,6 +33,13 @@ describe("AttachmentPill", () => {
     );
     assertStringIncludes(html, "Remove handoff-notes.md");
   });
+
+  it("keeps the remove control visible when reached by keyboard", () => {
+    const html = renderToString(
+      <AttachmentPill attachment={readyFile} onRemove={() => undefined} />,
+    );
+    assertStringIncludes(html, "md:focus-visible:opacity-100");
+  });
 });
 
 // The composability contract: a consuming developer must be able to recompose
@@ -52,6 +59,15 @@ describe("AttachmentPill — composability contract", () => {
         html.indexOf("flex min-w-0 flex-1 flex-col"),
       "expected Remove to render before the Label in the recomposed pill",
     );
+  });
+
+  it("accepts a per-sub-component icon override on .Remove", () => {
+    const html = renderToString(
+      <AttachmentPill attachment={readyFile} onRemove={() => undefined}>
+        <AttachmentPill.Remove icon={<span data-testid="custom-remove">x</span>} />
+      </AttachmentPill>,
+    );
+    assertStringIncludes(html, "custom-remove");
   });
 
   it("restyles: className on a sub-part is merged onto its wrapper", () => {

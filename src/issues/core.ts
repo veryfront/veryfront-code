@@ -45,7 +45,12 @@ export function parseFrontmatter(content: string): { frontmatter: string; body: 
 }
 
 /**
- * Simple YAML parser for frontmatter (handles our limited schema)
+ * Minimal YAML parser for issue frontmatter. Handles ONLY the shapes this
+ * module emits: flat `key: value` scalars, `[a, b]` inline arrays, and
+ * block arrays (`-` items). Keys may contain letters, digits, `_` and `-`.
+ * Values may contain colons (e.g. URLs) since only the first `:` splits the
+ * line. Nested maps, multi-line/block scalars, anchors, and quoted keys are
+ * NOT supported — use a real YAML parser if the schema grows beyond this.
  */
 export function parseYaml(yaml: string): Record<string, unknown> {
   const result: Record<string, unknown> = {};
@@ -72,7 +77,9 @@ export function parseYaml(yaml: string): Record<string, unknown> {
       continue;
     }
 
-    const kvMatch = line.match(/^(\w+):\s*(.*)$/);
+    // Allow hyphens in keys (valid YAML, e.g. "created-at"); only the first
+    // colon splits key from value, so colons inside the value are preserved.
+    const kvMatch = line.match(/^([\w-]+):\s*(.*)$/);
     if (!kvMatch) continue;
 
     flushArray();

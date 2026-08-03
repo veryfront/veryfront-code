@@ -45,7 +45,8 @@ export class NavigationHandlers {
   createPopStateHandler(callbacks: NavigationCallbacks) {
     return (_event: PopStateEvent) => {
       this.isPopStateNav = true;
-      callbacks.onNavigate(globalThis.location.pathname);
+      const { pathname, search, hash } = globalThis.location;
+      callbacks.onNavigate(`${pathname}${search}${hash}`);
     };
   }
 

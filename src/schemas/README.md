@@ -1,32 +1,39 @@
-# Schemas Module
+# Schemas module
 
-This directory contains shared validation schemas used across multiple modules in the veryfront codebase.
+This directory contains shared validation schemas used across multiple modules in the Veryfront codebase.
 
 ## Architecture
 
-The veryfront codebase follows a **schema-first approach** where:
+The Veryfront codebase follows a **schema-first approach** where:
 
 1. **`defineSchema` schemas are the single source of truth** for types
 2. **TypeScript types are inferred** from schemas using `InferSchema<ReturnType<typeof getSchema>>`
 3. **Module-local schemas** live in `{module}/schemas/` directories
 4. **Shared schemas** (cross-module) live in `src/schemas/` (this directory)
 
-## Naming Conventions
+## Naming conventions
 
 - **Schema files**: `{name}.schema.ts` (e.g., `config.schema.ts`)
 - **Shared schema files**: `common.ts`, `primitives.ts` (no `.schema` suffix since they're collections)
 - **Schema getters**: Use `get` + PascalCase (e.g., `getUserSchema`)
-- **Schema exports**: Backward-compat constant (e.g., `export const UserSchema = getUserSchema()`)
+- **Schema exports**: Compatibility constants use `lazySchema` (e.g.,
+  `export const UserSchema = lazySchema(getUserSchema)`) so importing a module
+  does not require a registered `SchemaValidator`
 - **Type exports**: Infer types from schema getters (e.g., `type User = InferSchema<ReturnType<typeof getUserSchema>>`)
 
-## Directory Structure
+## Directory structure
 
 ```
 src/
 ├── schemas/                    # Shared schemas (cross-module)
 │   ├── index.ts                # Barrel export
 │   ├── common.ts               # Common validators (email, url, pagination, etc.)
-│   └── primitives.ts           # Primitive validators (non-empty string, positive int, etc.)
+│   ├── define.ts               # Lazy, memoized schema factories
+│   ├── json-schema.ts          # Adapter-neutral JSON Schema helpers
+│   ├── json-value.ts           # Defensive JSON value validation
+│   ├── lazy.ts                 # Import-safe schema facade
+│   ├── primitives.ts           # Primitive validators
+│   └── *.test.ts               # Colocated behavior and regression tests
 │
 ├── config/
 │   ├── schemas/                # Module-local schemas
@@ -37,9 +44,69 @@ src/
 └── [other modules follow same pattern]
 ```
 
-## When to Use Shared vs Module-Local Schemas
+## Shared schema constraints
 
-### Use `src/schemas/` (shared) for:
+| Schema        | Accepted input and limits                                                                                                                                                                                                                                                                              |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Email         | Valid email string, at most 255 characters                                                                                                                                                                                                                                                             |
+| Slug          | 1 to 100 lowercase ASCII letters, digits, or hyphens                                                                                                                                                                                                                                                   |
+| URL           | Valid URL string, at most 2,048 characters                                                                                                                                                                                                                                                             |
+| Phone number  | E.164 digits with an optional leading `+`                                                                                                                                                                                                                                                              |
+| Pagination    | `page` and `limit` accept numbers or decimal digit strings of at most 16 characters. `page` is a positive safe integer. `limit` is 1 to 100. Defaults are 1 and 10.                                                                                                                                    |
+| File path     | Non-empty, no null bytes, at most 4,096 characters                                                                                                                                                                                                                                                     |
+| Absolute path | Filesystem-rooted, no null bytes, at most 4,096 characters                                                                                                                                                                                                                                             |
+| JSON value    | Data-only JSON with at most 128 levels, 100,000 nodes, and 4 MiB serialized size. A string is at most 1 MiB and an object key is at most 16 KiB in UTF-8. Cycles, accessors, symbol keys, non-enumerable properties, and plain-object prototypes other than `Object.prototype` or `null` are rejected. |
+
+Raw JSON Schema compilation uses a separate, smaller resource envelope. The
+default adapter accepts schemas with at most 64 levels, 8,192 nodes, and 512
+KiB serialized size. A schema string is at most 256 KiB and a property name is
+at most 4 KiB in UTF-8. A direct code-generating collection is at most 256
+entries, and nested compilation is subject to a 24,000-unit work budget.
+
+Both schema documents and validation inputs cross the adapter boundary as
+bounded, data-only snapshots. A validation input uses the JSON value limits in
+the table above. Cycles, accessors, symbols, hidden properties, revoked
+proxies, and custom object prototypes are rejected at the snapshot boundary.
+Invalid schemas do not reach compilation, and invalid inputs do not reach
+validation. Successful validation returns the accepted snapshot rather than
+caller-owned state. The snapshot does not invoke property getters, setters,
+iterators, or `toJSON`. Inspecting a Proxy necessarily invokes its reflection
+traps; a trap may run or throw before rejection.
+
+Compiled validators are cached locally by the default adapter. The cache holds
+at most 128 entries and has a 2 MiB aggregate source-weight budget; least
+recently used entries are evicted when either limit is exceeded.
+
+Adapter-generated JSON Schema documents use the JSON value bounds. Only the
+canonical snapshot crosses the helper boundary, so later reads cannot observe
+different Proxy values. Invalid adapter results fail with a `TypeError`.
+
+## JSON Schema conversion
+
+The built-in adapter preserves these representable constraints:
+
+- Integer, inclusive range, and exclusive range checks
+- String and array length checks
+- Regular expressions without flags
+- Email, URI, UUID, and date-time formats
+- Literal defaults, including defaults on union schemas
+- Optional, nullable, object, array, tuple, record, enum, and union structure
+
+Dynamic default callbacks are not executed during conversion and do not appear
+in the generated document. Runtime transforms, arbitrary refinements, and
+regular-expression flags have no exact JSON Schema equivalent and are omitted.
+Recursive lazy cycles are cut off with an unconstrained schema instead of
+emitting `$ref`. JavaScript-only values such as `bigint`, `Date`, functions,
+and class instances also have no faithful JSON representation and should not
+be exposed as JSON tool inputs. Runtime validation remains authoritative for
+those constraints.
+Conversion stops with a clear error above 128 active schema levels or 100,000
+visited schema nodes instead of exhausting the call stack or allocating an
+unbounded document.
+
+## When to use shared vs module-local schemas
+
+### Use `src/schemas/` (shared) for
 
 - **Cross-cutting validators** used by 3+ modules
   - Examples: email, URL, UUID, slug validation
@@ -47,22 +114,21 @@ src/
   - Date/time schemas
   - Common primitive types
 
-### Use `{module}/schemas/` (module-local) for:
+### Use `{module}/schemas/` (module-local) for
 
 - **Domain-specific schemas** used primarily within one module
   - Examples: `AgentConfig`, `WorkflowStep`, `CacheKeyContext`
 - **Module business logic** types
 - **Module-specific enums** and discriminated unions
 
-## Schema Patterns
+## Schema patterns
 
-### 1. Basic Schema with Inferred Type
+### 1. Basic schema with inferred type
 
 ```typescript
 // schemas/user.schema.ts
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { CommonSchemas, defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
-import { CommonSchemas } from "#veryfront/schemas";
 
 export const getUserSchema = defineSchema((v) =>
   v.object({
@@ -72,16 +138,16 @@ export const getUserSchema = defineSchema((v) =>
     createdAt: v.string().datetime(),
   })
 );
-export const UserSchema = getUserSchema();
+export const UserSchema = lazySchema(getUserSchema);
 
 export type User = InferSchema<ReturnType<typeof getUserSchema>>;
 ```
 
-### 2. Discriminated Union (Event Types)
+### 2. Discriminated union (event types)
 
 ```typescript
 // schemas/events.schema.ts
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 export const getEventSchema = defineSchema((v) =>
@@ -97,16 +163,16 @@ export const getEventSchema = defineSchema((v) =>
     }),
   ])
 );
-export const EventSchema = getEventSchema();
+export const EventSchema = lazySchema(getEventSchema);
 
 export type Event = InferSchema<ReturnType<typeof getEventSchema>>;
 ```
 
-### 3. Composing Schemas
+### 3. Composing schemas
 
 ```typescript
 // schemas/api.schema.ts
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 const getBaseResponseSchema = defineSchema((v) =>
@@ -139,16 +205,16 @@ export const getApiResponseSchema = defineSchema((v) =>
     getErrorResponseSchema(),
   ])
 );
-export const ApiResponseSchema = getApiResponseSchema();
+export const ApiResponseSchema = lazySchema(getApiResponseSchema);
 
 export type ApiResponse = InferSchema<ReturnType<typeof getApiResponseSchema>>;
 ```
 
-### 4. Recursive/Lazy Schemas
+### 4. Recursive and lazy schemas
 
 ```typescript
 // schemas/tree.schema.ts
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 
 export const getTreeNodeSchema = defineSchema((v) => {
@@ -160,16 +226,21 @@ export const getTreeNodeSchema = defineSchema((v) => {
   );
   return schema;
 });
-export const TreeNodeSchema = getTreeNodeSchema();
+export const TreeNodeSchema = lazySchema(getTreeNodeSchema);
 
 export type TreeNode = InferSchema<ReturnType<typeof getTreeNodeSchema>>;
 ```
 
-### 5. Using with Runtime Validation
+### 5. Runtime validation
+
+Calling a schema getter directly materializes the schema. Use direct getter
+invocation only after application or extension bootstrap has registered a
+`SchemaValidator`. Use `lazySchema(getUserSchema)` for module-scope exports.
 
 ```typescript
 import { getUserSchema } from "./schemas/user.schema.ts";
 
+// This code runs after SchemaValidator registration.
 const UserSchema = getUserSchema();
 
 function createUser(data: unknown) {
@@ -193,7 +264,7 @@ function createUserSafe(data: unknown) {
 }
 ```
 
-## Migration Guidelines
+## Migration guidelines
 
 When converting existing `types.ts` files to schemas:
 
@@ -204,7 +275,7 @@ When converting existing `types.ts` files to schemas:
 5. **Delete old `types.ts`** file (no legacy cruft)
 6. **Run `deno task verify`** to ensure everything works
 
-### Before (Old Pattern)
+### Before (old pattern)
 
 ```typescript
 // types.ts
@@ -215,11 +286,11 @@ export interface User {
 }
 ```
 
-### After (New Pattern)
+### After (new pattern)
 
 ```typescript
 // schemas/user.schema.ts
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 export const getUserSchema = defineSchema((v) =>
@@ -229,7 +300,7 @@ export const getUserSchema = defineSchema((v) =>
     name: v.string().min(1),
   })
 );
-export const UserSchema = getUserSchema();
+export const UserSchema = lazySchema(getUserSchema);
 
 export type User = InferSchema<ReturnType<typeof getUserSchema>>;
 ```
@@ -244,12 +315,15 @@ export type User = InferSchema<ReturnType<typeof getUserSchema>>;
 6. **Maintainability**: Change schema once, type updates automatically
 7. **Documentation**: Schemas serve as living documentation
 
-## Testing Schemas
+## Testing schemas
+
+The `_test-setup.ts` side-effect import registers the test validator before the
+schema getter runs, so direct getter invocation is safe in this example.
 
 ```typescript
 import "#veryfront/schemas/_test-setup.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { expect } from "#std/expect";
 import { getUserSchema } from "./user.schema.ts";
 
 const UserSchema = getUserSchema();
@@ -262,7 +336,7 @@ describe("UserSchema", () => {
       name: "John Doe",
     });
 
-    expect(result.success).toBe(true);
+    assertEquals(result.success, true);
   });
 
   it("rejects invalid email", () => {
@@ -272,7 +346,7 @@ describe("UserSchema", () => {
       name: "John Doe",
     });
 
-    expect(result.success).toBe(false);
+    assertEquals(result.success, false);
   });
 });
 ```

@@ -1,4 +1,6 @@
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
+import { hasCompletedStepSignal, resolveStreamOutcome } from "../streaming/stream-outcome.ts";
+import type { StreamSnapshot } from "../streaming/lifecycle/types.ts";
 
 /** Error shape for hosted terminal. */
 export interface HostedTerminalError {
@@ -81,47 +83,46 @@ async function cleanupAfterFinalization(cleanup: () => Promise<void> | void): Pr
   await cleanup();
 }
 
-function getStreamErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  if (typeof error === "string") {
-    return error;
-  }
-
+/**
+ * Read a known step finish reason from a hosted final step, or null.
+ *
+ * Returns every finish reason that marks a completed provider step,
+ * including "tool-calls", which signals a tool handoff rather than run
+ * completion. Unknown reasons and malformed steps read as null.
+ */
+export function readHostedFinishReason(
+  finalStep: unknown,
+): StreamSnapshot["finishReason"] {
   if (
-    typeof error === "object" && error !== null && "message" in error &&
-    typeof error.message === "string"
+    typeof finalStep !== "object" || finalStep === null ||
+    !("finishReason" in finalStep) || typeof finalStep.finishReason !== "string"
   ) {
-    return error.message;
+    return null;
   }
-
-  return String(error);
+  return hasCompletedStepSignal(finalStep.finishReason)
+    ? finalStep.finishReason as StreamSnapshot["finishReason"]
+    : null;
 }
 
-function isLateProviderBodyReadError(error: unknown): boolean {
-  return /error reading a body from connection/i.test(getStreamErrorMessage(error));
-}
-
-function hasFinalStepCompletionSignal(finalStep: unknown): boolean {
-  if (
-    typeof finalStep !== "object" || finalStep === null || !("finishReason" in finalStep) ||
-    typeof finalStep.finishReason !== "string"
-  ) {
-    return false;
-  }
-
-  switch (finalStep.finishReason) {
-    case "stop":
-    case "length":
-    case "tool-calls":
-    case "content-filter":
-    case "other":
-      return true;
-    default:
-      return false;
-  }
+function createHostedCompatibilitySnapshot(input: {
+  hasOutput: boolean;
+  finishReason: StreamSnapshot["finishReason"];
+}): StreamSnapshot {
+  const phase = input.finishReason === "tool-calls"
+    ? "tool_handoff" as const
+    : input.finishReason === null
+    ? "streaming" as const
+    : "completed" as const;
+  return {
+    phase,
+    accumulatedText: input.hasOutput ? "<COMPATIBILITY_OUTPUT>" : "",
+    reasoning: [],
+    tools: [],
+    finishReason: input.finishReason,
+    usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    hasStreamOutput: input.hasOutput,
+    hasSemanticProgress: input.hasOutput || input.finishReason !== null,
+  };
 }
 
 function shouldFailStreamError(input: {
@@ -134,15 +135,15 @@ function shouldFailStreamError(input: {
     return false;
   }
 
-  if (
-    input.hasOutput &&
-    hasFinalStepCompletionSignal(input.finalStep) &&
-    isLateProviderBodyReadError(input.streamError)
-  ) {
-    return false;
-  }
-
-  return true;
+  const streamOutcome = resolveStreamOutcome({
+    snapshot: createHostedCompatibilitySnapshot({
+      hasOutput: input.hasOutput,
+      finishReason: readHostedFinishReason(input.finalStep),
+    }),
+    elapsedMs: 0,
+    thrownError: input.streamError,
+  });
+  return streamOutcome.status === "failed";
 }
 
 /** Response payload for finalize hosted. */

@@ -91,15 +91,19 @@ skills/
 
 ## Agent tools
 
-When skills are available, agents get three built-in tools:
+Every agent gets `load_skill`. Local and project runtimes also expose the two
+supporting skill tools:
 
-| Tool                   | Description                                                |
-| ---------------------- | ---------------------------------------------------------- |
-| `load_skill`           | Load a skill's full instructions by ID                     |
-| `load_skill_reference` | Read a file from `references/`, `resources/`, or `assets/` |
-| `execute_skill_script` | Execute a script from a skill (5-minute timeout)           |
+| Tool                   | Availability               | Description                                                |
+| ---------------------- | -------------------------- | ---------------------------------------------------------- |
+| `load_skill`           | Every runtime              | Load a skill's full instructions by ID                     |
+| `load_skill_reference` | Local and project runtimes | Read a file from `references/`, `resources/`, or `assets/` |
+| `execute_skill_script` | Local and project runtimes | Execute a script from a skill (5-minute timeout)           |
 
-Enable skills on an agent:
+Hosted chat reads an advertised reference through
+`load_skill({ skillId, file })`. It does not execute skill scripts directly.
+
+Discovered skills visible to the agent are advertised by default:
 
 ```ts
 // agents/assistant.ts
@@ -108,9 +112,12 @@ import { agent } from "veryfront/agent";
 export default agent({
   id: "assistant",
   system: "Use project skills when they match the task.",
-  skills: ["code-review"],
 });
 ```
+
+Use `skills: ["code-review"]` to advertise only that skill. Use `skills: []`
+to advertise none. This changes the prompt catalog only. `load_skill` remains
+available and can load any visible skill by ID.
 
 Expose the agent through an AG-UI route, then ask it to use the skill:
 

@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { CodeBlock } from "veryfront/chat";
+import { CodeBlock } from "veryfront/ui";
 import {
   DocsCode,
   DocsComposition,
@@ -11,7 +11,7 @@ import {
 } from "../../.storybook/docs";
 import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
-const importCode = `import { CodeBlock } from "veryfront/chat"`;
+const importCode = `import { CodeBlock } from "veryfront/ui"`;
 
 const compositionTree =
   `CodeBlock  <- bordered surface: header + highlighted body
@@ -134,7 +134,7 @@ function CodeBlockDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/CodeBlock",
+  title: "UI/CodeBlock",
   component: CodeBlock,
   tags: ["autodocs"],
   parameters: {
@@ -151,7 +151,7 @@ export const TypeScript: Story = {
   parameters: {
     docs: {
       source: {
-        code: `import { CodeBlock } from "veryfront/chat";
+        code: `import { CodeBlock } from "veryfront/ui";
 
 <CodeBlock language="tsx" code={\`import { useState } from "react";
 
@@ -180,7 +180,7 @@ export const Json: Story = {
   parameters: {
     docs: {
       source: {
-        code: `import { CodeBlock } from "veryfront/chat";
+        code: `import { CodeBlock } from "veryfront/ui";
 
 <CodeBlock language="json" code={\`{
   "name": "veryfront",
@@ -211,7 +211,7 @@ export const Collapsible: Story = {
   parameters: {
     docs: {
       source: {
-        code: `import { CodeBlock } from "veryfront/chat";
+        code: `import { CodeBlock } from "veryfront/ui";
 
 <CodeBlock
   language="tsx"
@@ -241,7 +241,7 @@ export const Mermaid: Story = {
   parameters: {
     docs: {
       source: {
-        code: `import { CodeBlock } from "veryfront/chat";
+        code: `import { CodeBlock } from "veryfront/ui";
 
 <CodeBlock language="mermaid" code={\`flowchart TD
   A[Prompt] --> B{Tool call?}

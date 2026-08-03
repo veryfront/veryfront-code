@@ -1,17 +1,34 @@
-import { join } from "#veryfront/compat/path";
+import { isAbsolute, join, normalize } from "#veryfront/compat/path";
 import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, LayoutItem, MdxBundle } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getLayoutEntity } from "#veryfront/types/entities/getEntityInfo.ts";
 import { discoverNestedLayouts } from "./utils/discovery.ts";
-import { detectAppRouter } from "../router-detection.ts";
+import { resolveRouterModeForPage } from "../router-detection.ts";
 import { LAYOUT_EXTENSIONS, type LayoutExtension } from "./types.ts";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import { LAYOUT_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
+import { LAYOUT_NOT_FOUND } from "#veryfront/errors";
 
 const logger = rendererLogger.component("layout-collector");
+
+export function resolveLayoutRouterRootDir(
+  projectDir: string,
+  useAppRouter: boolean,
+  config: VeryfrontConfig,
+): string {
+  const directory = useAppRouter
+    ? config.directories?.app ?? "app"
+    : config.directories?.pages ?? "pages";
+  return join(projectDir, directory);
+}
+
+function resolvePagePath(pageFilePath: string, projectDir: string): string {
+  return normalize(
+    isAbsolute(pageFilePath) ? pageFilePath : join(projectDir, pageFilePath),
+  );
+}
 
 function getLayoutKind(path: string): "mdx" | "tsx" {
   return path.endsWith(".mdx") || path.endsWith(".md") ? "mdx" : "tsx";
@@ -305,25 +322,27 @@ export class LayoutCollector {
   }
 
   private async collectNestedLayouts(pageInfo: EntityInfo): Promise<LayoutItem[]> {
-    const pageFilePath = pageInfo.entity.path;
-    const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter, {
-      projectId: this.projectId,
-    });
+    const pageFilePath = resolvePagePath(pageInfo.entity.path, this.projectDir);
+    const routerMode = resolveRouterModeForPage(
+      this.projectDir,
+      pageInfo.entity.path,
+      this.config,
+    );
+    const rootDir = resolveLayoutRouterRootDir(
+      this.projectDir,
+      routerMode === "app",
+      this.config,
+    );
 
-    // Unified path for ALL adapters - discoverNestedLayouts uses adapter.fs.stat()
-    // which works for both filesystem and API adapters
-    return this.collectLayoutsUnified(pageFilePath, useAppRouter);
+    return this.collectLayoutsUnified(pageFilePath, rootDir);
   }
 
   private async collectLayoutsUnified(
     pageFilePath: string,
-    useAppRouter: boolean,
+    rootDir: string,
   ): Promise<LayoutItem[]> {
-    const rootDir = useAppRouter ? join(this.projectDir, "app") : join(this.projectDir, "pages");
-
     logger.debug("collectLayoutsUnified", {
       pageFilePath,
-      useAppRouter,
       rootDir,
       projectDir: this.projectDir,
     });

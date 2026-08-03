@@ -40,6 +40,12 @@ export interface HandlerContextOptions {
   projectId: string | undefined;
   /** Release ID */
   releaseId: string | undefined;
+  /** Canonical branch ID from the trusted proxy boundary. */
+  branchId?: string;
+  /** Canonical branch name from the trusted proxy boundary. */
+  branchName?: string;
+  /** Canonical project default branch name from the trusted proxy boundary. */
+  defaultBranchName?: string;
   /** Proxy token (undefined for local projects) */
   proxyToken: string | undefined;
   /** Environment name */
@@ -52,12 +58,21 @@ export interface HandlerContextOptions {
   routeRegistry: RouteRegistry;
   /** Whether this is a local project */
   isLocalProject: boolean;
+  /** Narrow host-owned capability for project-code execution. */
+  allowHostProjectCodeExecution?: boolean;
+  /** Whether this request is executing in the shared multi-project proxy runtime. */
+  isProxyMode: boolean;
   /** Module server URL */
   moduleServerUrl: string | undefined;
-  /** Environment ID for env var resolution (from proxy x-environment-id header) */
+  /** Canonical environment ID resolved at the operator-authenticated proxy boundary. */
   environmentId: string | undefined;
   /** Skip render-specific enriched context requirements for non-render control-plane routes */
   skipEnrichedContext?: boolean;
+  /**
+   * Prepares the authenticated hosted evaluation context for this request.
+   * Supplied only for shared multi-project runtimes.
+   */
+  prepareHostedConfigContext?: HandlerContext["prepareHostedConfigContext"];
 }
 
 /**
@@ -82,6 +97,7 @@ export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext
       environment: opts.resolvedEnvironment,
       branch: opts.requestContext.branch,
       isLocalProject: opts.isLocalProject,
+      allowHostProjectCodeExecution: opts.allowHostProjectCodeExecution,
       contentSourceId,
       parsedDomain: opts.parsedDomain,
       adapter: opts.adapter,
@@ -105,13 +121,19 @@ export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext
     projectSlug: opts.projectSlug,
     projectId: opts.projectId,
     releaseId: opts.releaseId,
+    branchId: opts.branchId,
+    branchName: opts.branchName,
+    defaultBranchName: opts.defaultBranchName,
     proxyToken: opts.isLocalProject ? undefined : opts.proxyToken,
     environmentName: opts.environmentName,
     resolvedEnvironment: opts.resolvedEnvironment,
     requestContext: { ...opts.requestContext, mode: opts.resolvedEnvironment },
     routeRegistry: opts.routeRegistry,
     isLocalProject: opts.isLocalProject,
+    allowHostProjectCodeExecution: opts.allowHostProjectCodeExecution,
+    isProxyMode: opts.isProxyMode,
     environmentId: opts.environmentId,
+    prepareHostedConfigContext: opts.prepareHostedConfigContext,
     enriched: enrichedContext,
   };
 }

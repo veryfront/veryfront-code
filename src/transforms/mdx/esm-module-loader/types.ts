@@ -1,7 +1,8 @@
 import type { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { Logger } from "#veryfront/utils/logger/logger.ts";
+import type { Logger } from "#veryfront/utils";
 import type { MDXModule } from "../types.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 
 export interface ESMLoaderContext {
   esmCacheDir?: string;
@@ -13,6 +14,14 @@ export interface ESMLoaderContext {
   contentSourceId?: string;
   /** React version for transforms (from project config) */
   reactVersion?: string;
+  /** Absolute request origin used to identify same-origin module URLs. */
+  moduleServerOrigin?: string;
+  /** Request-scoped dependency-pinning state used to isolate module caches. */
+  dependencyPinningCacheKey?: string;
+  /** Immutable package map paired with dependencyPinningCacheKey. */
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  /** Exact package source namespace used to prove write-back authority. */
+  dependencyPinningSource?: DependencyPinningSourceInput;
   /**
    * If true, missing modules fail fast instead of being stubbed.
    * Defaults to true when not specified.
@@ -64,8 +73,18 @@ export interface ModuleFetcherContext {
    * This prevents infinite recursion when A imports B which imports A.
    */
   inFlightModules?: Map<string, Promise<string | null>>;
+  /** Unique normalized modules admitted to this request-scoped graph. */
+  moduleGraph?: Set<string>;
   /** React version for transforms (from project config) */
   reactVersion?: string;
+  /** Absolute request origin used to identify same-origin module URLs. */
+  moduleServerOrigin?: string;
+  /** Request-scoped dependency-pinning state used to isolate module caches. */
+  dependencyPinningCacheKey?: string;
+  /** Immutable package map paired with dependencyPinningCacheKey. */
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  /** Exact package source namespace used to prove write-back authority. */
+  dependencyPinningSource?: DependencyPinningSourceInput;
   /** Logger with request-scoped context (project_id, project_slug, requestId, etc.) */
   logger?: Logger;
   /**

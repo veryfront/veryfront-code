@@ -10,7 +10,6 @@ describe(
   { sanitizeOps: false, sanitizeResources: false },
   () => {
     afterAll(async () => {
-      if ((globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) return;
       await esbuild.stop();
     });
 

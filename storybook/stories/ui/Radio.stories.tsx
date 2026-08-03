@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Radio } from "../../../src/react/components/chat/ui/index.ts";
+import { Radio } from "../../../src/react/components/ui/index.ts";
 import {
   DocsCode,
   DocsComposition,
@@ -10,7 +10,7 @@ import {
   DocsSection,
 } from "../../.storybook/docs";
 
-const importCode = `import { Radio } from "veryfront/chat/ui"`;
+const importCode = `import { Radio } from "veryfront/ui"`;
 const compositionTree = `Radio`;
 
 function RadioDocsPage() {
@@ -51,7 +51,7 @@ function RadioDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/Radio",
+  title: "UI/Radio",
   component: Radio,
   tags: ["autodocs"],
   parameters: { layout: "centered", docs: { page: RadioDocsPage } },

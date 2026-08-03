@@ -6,10 +6,26 @@ export type ResolveHostedRuntimeAllowedToolNamesInput = {
   allowedToolNames?: HostedRuntimeAllowedToolNames;
   localToolNames: Iterable<string>;
   availableSkillIds?: readonly string[];
+  /** Preserve universal skill infrastructure for an empty configured selector. */
+  includeRuntimeEssentialToolsWhenEmpty?: boolean;
 };
 
+// Script execution is intentionally not runtime-essential under allowlists:
+// loading skill instructions is framework infrastructure, while running a
+// project-provided script remains a direct execution capability.
 const SKILL_RUNTIME_TOOL_NAMES = ["load_skill", "load_skill_reference"] as const;
 const SKILL_DELEGATION_TOOL_NAMES = ["invoke_agent"] as const;
+const SKILL_SCRIPT_TOOL_NAMES = ["execute_skill_script"] as const;
+const EMPTY_SKILL_MANIFEST_TOOL_NAMES = [
+  ...SKILL_RUNTIME_TOOL_NAMES,
+  ...SKILL_SCRIPT_TOOL_NAMES,
+] as const;
+
+/**
+ * Tool discovery tools are unconditionally essential: they must never be
+ * truncated by the provider cap, regardless of skill availability.
+ */
+const TOOL_DISCOVERY_TOOL_NAMES = ["search_tools", "load_tools"] as const;
 
 /** Normalize hosted runtime allowed tools. */
 export function normalizeHostedRuntimeAllowedToolNames(
@@ -27,21 +43,64 @@ export function resolveHostedRuntimeAllowedToolNames(
   input: ResolveHostedRuntimeAllowedToolNamesInput,
 ): ReadonlySet<string> | null {
   const allowedToolNames = normalizeHostedRuntimeAllowedToolNames(input.allowedToolNames);
-  if (!allowedToolNames || allowedToolNames.size === 0) {
-    return allowedToolNames;
-  }
-
-  if (!input.availableSkillIds?.length) {
-    return allowedToolNames;
-  }
-
   const localToolNames = new Set(input.localToolNames);
+  const hasKnownSkillManifest = input.availableSkillIds !== undefined;
+  const hasAuthorizedSkills = (input.availableSkillIds?.length ?? 0) > 0;
+
+  if (!allowedToolNames) {
+    if (!hasKnownSkillManifest || hasAuthorizedSkills) {
+      return null;
+    }
+
+    const resolvedToolNames = new Set(localToolNames);
+    for (const toolName of EMPTY_SKILL_MANIFEST_TOOL_NAMES) {
+      resolvedToolNames.delete(toolName);
+    }
+    return resolvedToolNames;
+  }
+
+  if (allowedToolNames.size === 0 && !input.includeRuntimeEssentialToolsWhenEmpty) {
+    return allowedToolNames;
+  }
+
   const resolvedToolNames = new Set(allowedToolNames);
 
-  for (const toolName of SKILL_RUNTIME_TOOL_NAMES) {
-    if (localToolNames.has(toolName)) {
-      resolvedToolNames.add(toolName);
+  if (hasKnownSkillManifest && !hasAuthorizedSkills) {
+    for (const toolName of EMPTY_SKILL_MANIFEST_TOOL_NAMES) {
+      resolvedToolNames.delete(toolName);
     }
+  }
+
+  // Tool discovery is essential only when the agent already has at least one
+  // tool in its resolved set. Under deny-all (empty allowedToolNames), discovery
+  // tools are intentionally excluded: activating new tools is a broader
+  // capability than running pre-configured skills (load_skill), so the two are
+  // treated asymmetrically when allowedToolNames is empty.
+  if (resolvedToolNames.size > 0) {
+    for (const toolName of TOOL_DISCOVERY_TOOL_NAMES) {
+      if (localToolNames.has(toolName)) {
+        resolvedToolNames.add(toolName);
+      }
+    }
+  }
+
+  // Preserve request-scoped skill loading tools when the host supplies them.
+  // Hosted cloud supplies load_skill; other adapters may also supply the
+  // reference tool. Explicit request-level empty allowlists return above and
+  // remain deny-all.
+  if (
+    (resolvedToolNames.size > 0 || input.includeRuntimeEssentialToolsWhenEmpty) &&
+    (!hasKnownSkillManifest || hasAuthorizedSkills)
+  ) {
+    for (const toolName of SKILL_RUNTIME_TOOL_NAMES) {
+      if (localToolNames.has(toolName)) {
+        resolvedToolNames.add(toolName);
+      }
+    }
+  }
+
+  if (!hasAuthorizedSkills) {
+    return resolvedToolNames;
   }
 
   for (const toolName of SKILL_DELEGATION_TOOL_NAMES) {

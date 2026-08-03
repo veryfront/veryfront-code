@@ -41,7 +41,7 @@ export function createLayoutCompiler(
 }
 
 export function createSSRRenderer(ctx: RenderContext): SSRRenderer {
-  return new SSRRenderer(ctx.mode, ctx.adapter, ctx.projectDir, ctx.projectId);
+  return new SSRRenderer(ctx.mode, ctx.adapter, ctx.projectDir, ctx.projectId, ctx.config);
 }
 
 export function createComponentRegistry(

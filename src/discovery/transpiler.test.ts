@@ -2,12 +2,19 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
-import { clearTranspileCache, importModule } from "./transpiler.ts";
+import { clearTranspileCache, importModule as importModuleRaw } from "./transpiler.ts";
 import type { FileDiscoveryContext } from "./types.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { reset, tryResolve } from "#veryfront/extensions/contracts.ts";
 import * as embeddingMod from "#veryfront/embedding/index.ts";
 import * as knowledgeMod from "#veryfront/knowledge";
+
+function importModule(file: string, context: FileDiscoveryContext) {
+  return importModuleRaw(file, {
+    ...context,
+    allowHostProjectCodeExecution: true,
+  });
+}
 
 /**
  * Creates a mock FileSystemAdapter backed by an in-memory file map.
@@ -75,8 +82,8 @@ function createMockAdapter(
 describe("embedding module static import", () => {
   // The embedding module must be statically imported so deno compile includes
   // it in the binary. Unlike agent/tool/platform which are statically imported
-  // throughout the codebase, embedding is only referenced in transpiler.ts.
-  // If this import breaks, the compiled binary will fail to load upload handlers.
+  // throughout the codebase, embedding is registered by the discovery runtime
+  // bootstrap. If this import breaks, the compiled binary cannot load upload handlers.
 
   it("exports createUploadHandler", () => {
     assertEquals(typeof embeddingMod.createUploadHandler, "function");
@@ -120,6 +127,34 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
   });
 
   describe("importModule with fsAdapter", () => {
+    it("rejects untrusted discovery before reading or evaluating project code", async () => {
+      const marker = "__vf_untrusted_discovery_marker__";
+      delete (globalThis as Record<string, unknown>)[marker];
+      let reads = 0;
+      const adapter = createMockAdapter({
+        "/project/tools/untrusted.ts":
+          `globalThis.${marker} = Deno.env.get("VERYFRONT_API_TOKEN"); export default {};`,
+      });
+      const readFile = adapter.readFile.bind(adapter);
+      adapter.readFile = (path) => {
+        reads++;
+        return readFile(path);
+      };
+
+      await assertRejects(
+        () =>
+          importModuleRaw("file:///project/tools/untrusted.ts", {
+            platform: "node",
+            fsAdapter: adapter,
+            baseDir: "/project",
+          }),
+        TypeError,
+        "explicit trusted-local execution",
+      );
+      assertEquals(reads, 0);
+      assertEquals((globalThis as Record<string, unknown>)[marker], undefined);
+    });
+
     it("should transpile a simple module via fsAdapter", async () => {
       const files: Record<string, string> = {
         "/project/agents/assistant.ts": `export default { name: "test-agent" };`,

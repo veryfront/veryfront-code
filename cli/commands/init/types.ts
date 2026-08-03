@@ -15,6 +15,8 @@ export type InitRuntime = "node" | "bun" | "deno";
 
 export interface InitOptions {
   name?: string;
+  /** Parent directory for a named project. Defaults to the current directory. */
+  parentDir?: string;
   template?: InitTemplate;
   skipInstall?: boolean;
   skipEnvPrompt?: boolean;
@@ -29,4 +31,6 @@ export interface InitOptions {
   force?: boolean;
   /** Runtime for the scaffolded project. Defaults to "node". */
   runtime?: InitRuntime;
+  /** Initialize Git for programmatic calls; the CLI wizard controls this interactively. */
+  initGit?: boolean;
 }

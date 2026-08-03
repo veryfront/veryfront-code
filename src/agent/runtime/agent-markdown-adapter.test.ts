@@ -1,7 +1,10 @@
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { toolRegistry } from "#veryfront/tool";
+import { registerSkill } from "#veryfront/skill/registry.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "./agent-markdown-adapter.ts";
+import { getEffectiveAgentSystem } from "./effective-agent-system.ts";
 
 Deno.test("createRuntimeAgentFromMarkdownDefinition preserves provider-native tools", () => {
   const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
@@ -16,8 +19,8 @@ Deno.test("createRuntimeAgentFromMarkdownDefinition preserves provider-native to
   assertEquals(runtimeAgent.config.providerTools, ["web_search", "web_fetch"]);
 });
 
-Deno.test("createRuntimeAgentFromMarkdownDefinition binds delegate tools from delegates", () => {
-  toolRegistry.clearAll();
+Deno.test("createRuntimeAgentFromMarkdownDefinition binds scoped delegate tools", () => {
+  toolRegistryInternal.clearAll();
 
   const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
     id: "lead-delegation-test",
@@ -30,19 +33,65 @@ Deno.test("createRuntimeAgentFromMarkdownDefinition binds delegate tools from de
   const tools = runtimeAgent.config.tools as Record<string, unknown> | undefined;
   assertEquals(
     Object.keys(tools ?? {}).sort(),
-    ["agent_researcher", "agent_writer"],
+    [
+      "agent_researcher",
+      "agent_writer",
+      "execute_skill_script",
+      "load_skill",
+      "load_skill_reference",
+    ],
   );
-  assertEquals(toolRegistry.has("agent_researcher"), false);
-  assertEquals(toolRegistry.has("agent_writer"), false);
+  assertEquals(runtimeAgent.config.delegates, ["writer", "researcher"]);
 });
 
-Deno.test("createRuntimeAgentFromMarkdownDefinition binds no tools without delegates", () => {
+Deno.test("createRuntimeAgentFromMarkdownDefinition preserves delegates and MCP servers", () => {
+  toolRegistryInternal.clearAll();
+
   const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
-    id: "solo-delegation-test",
-    name: "Solo",
-    description: "Independent agent",
-    instructions: "Work alone.",
+    id: "project-orchestrator",
+    name: "Project Orchestrator",
+    description: "Coordinates project agents",
+    instructions: "Use project tools.",
+    delegates: ["worker-agent"],
+    mcpServers: [{
+      kind: "veryfront-api",
+      toolPolicy: { allow: ["get_file", "list_files"] },
+    }],
+    tools: ["get_file", "list_files"],
   });
 
-  assertEquals(runtimeAgent.config.tools, undefined);
+  const tools = runtimeAgent.config.tools as Record<string, unknown> | undefined;
+  assertEquals(typeof tools?.["agent_worker-agent"], "object");
+  assertEquals(tools?.get_file, true);
+  assertEquals(tools?.list_files, true);
+  assertEquals(runtimeAgent.config.delegates, ["worker-agent"]);
+  assertEquals(runtimeAgent.config.mcpServers, [{
+    kind: "veryfront-api",
+    toolPolicy: { allow: ["get_file", "list_files"] },
+  }]);
+});
+
+Deno.test("createRuntimeAgentFromMarkdownDefinition preserves explicit empty skills and hides skill tools", async () => {
+  skillRegistryInternal.clearAll();
+  registerSkill("global-howto", {
+    id: "global-howto",
+    metadata: { name: "global-howto", description: "Follow the project guide" },
+    rootPath: "/project/skills/global-howto",
+  });
+  try {
+    const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
+      id: "solo-delegation-test",
+      name: "Solo",
+      description: "Independent agent",
+      instructions: "Work alone.",
+      skills: [],
+    });
+
+    assertEquals(runtimeAgent.config.tools, undefined);
+    const system = getEffectiveAgentSystem(runtimeAgent);
+    const prompt = typeof system === "function" ? await system() : system;
+    assertEquals(prompt, "Work alone.");
+  } finally {
+    skillRegistryInternal.clearAll();
+  }
 });

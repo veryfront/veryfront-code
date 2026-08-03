@@ -3,6 +3,18 @@
  * details, error boundaries for HTTP and CLI, and user-friendly formatting.
  *
  * @module errors
+ * @example Define and create a structured framework error
+ * ```ts
+ * import { defineError } from "veryfront/errors";
+ *
+ * const INVALID_WIDGET = defineError({
+ *   slug: "invalid-widget",
+ *   category: "GENERAL",
+ *   title: "Invalid widget",
+ *   status: 400,
+ * });
+ * throw INVALID_WIDGET.create({ detail: "The widget id is malformed." });
+ * ```
  */
 
 export { defineError, VeryfrontError } from "./types.ts";
@@ -26,12 +38,16 @@ export {
   API_ERROR,
   API_ROUTE_ERROR,
   ASSET_OPTIMIZATION_ERROR,
+  AUTHENTICATION_REQUIRED,
+  // DEPLOY
+  BRANCH_NOT_FOUND,
   // BUILD
   BUILD_FAILED,
   BUNDLE_ERROR,
   CACHE_ERROR,
   CACHE_INVARIANT_VIOLATION,
   CACHE_PATH_MISMATCH,
+  CIRCUIT_BREAKER_OPEN,
   CIRCULAR_DEPENDENCY,
   // BOUNDARY
   CLIENT_BOUNDARY_VIOLATION,
@@ -48,11 +64,13 @@ export {
   CORS_CONFIG_INVALID,
   COST_LIMIT_EXCEEDED,
   DEPENDENCY_MISSING,
-  // DEPLOY
   DEPLOYMENT_ERROR,
+  DEPLOYMENT_VERIFICATION_TIMEOUT,
   DEV_SERVER_ERROR,
+  DURABLE_RUN_EVENT_PERSISTENCE_FAILED,
   DYNAMIC_ROUTE_ERROR,
   ENV_VAR_MISSING,
+  ENVIRONMENT_NOT_FOUND,
   ERROR_OVERLAY_ERROR,
   // Registry
   ERROR_REGISTRY,
@@ -78,6 +96,8 @@ export {
   INVALID_USE_CLIENT,
   INVALID_USE_SERVER,
   LAYOUT_NOT_FOUND,
+  LOCKFILE_FORMAT_MISMATCH,
+  LOCKFILE_READ_ERROR,
   MDX_COMPILE_ERROR,
   MIDDLEWARE_ERROR,
   // MODULE
@@ -90,7 +110,15 @@ export {
   PLATFORM_ERROR,
   // SERVER
   PORT_IN_USE,
+  PREVIEW_HOSTNAME_TOO_LONG,
   PRODUCTION_BUILD_REQUIRED,
+  PROJECT_EXECUTION_UNAVAILABLE,
+  PROJECT_SOURCE_EMPTY,
+  PUSH_RECEIPT_MISSING,
+  RAG_STORE_CORRUPT,
+  RAG_STORE_UNAVAILABLE,
+  RELEASE_BUILD_TIMEOUT,
+  RELEASE_MISSING_VERSION,
   RELEASE_NOT_FOUND,
   RENDER_ERROR,
   REQUEST_ERROR,
@@ -100,19 +128,29 @@ export {
   ROUTE_HANDLER_INVALID,
   ROUTE_PARAMS_ERROR,
   RSC_PAYLOAD_ERROR,
+  SCHEDULE_CONFIG_INVALID,
   SECURITY_VIOLATION,
+  SEMAPHORE_TIMEOUT,
   SERVER_ONLY_IN_CLIENT,
   SERVER_START_ERROR,
   SERVICE_OVERLOADED,
+  SOURCE_DIGEST_MISMATCH,
   SOURCE_MAP_ERROR,
   SOURCEMAP_ERROR,
   SSG_GENERATION_ERROR,
+  SSR_OUTPUT_LIMIT_EXCEEDED,
   TIMEOUT_ERROR,
   TOKEN_STORAGE_ERROR,
+  TOOL_ID_CONFLICT,
+  TRIGGER_CONFIG_INVALID,
+  TRIGGER_EXECUTION_FAILED,
+  TRIGGER_NOT_SUPPORTED,
+  TRIGGER_TARGET_NOT_FOUND,
   TYPESCRIPT_ERROR,
   // GENERAL
   UNKNOWN_ERROR,
   VERSION_MISMATCH,
+  WEBHOOK_CONFIG_INVALID,
 } from "./error-registry.ts";
 
 // RFC 9457 HTTP error utilities
@@ -151,6 +189,7 @@ export {
   handleErrorWithFallback,
   handleErrorWithFallbackSync,
   retryWithBackoff,
+  type RetryWithBackoffOptions,
 } from "./error-handlers.ts";
 
 export {
@@ -194,4 +233,5 @@ export {
 export type { ErrorSolution as UserFriendlyErrorSolution } from "./user-friendly/index.ts";
 
 export { createError, ensureError, getErrorMessage, toError } from "./veryfront-error.ts";
-export type { VeryfrontErrorData } from "./veryfront-error.ts";
+export type { ConfigContext, VeryfrontErrorData } from "./veryfront-error.ts";
+export { fromError } from "./legacy-error-codec.ts";

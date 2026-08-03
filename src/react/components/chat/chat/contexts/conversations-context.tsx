@@ -9,30 +9,37 @@
  */
 
 import * as React from "react";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../../../create-strict-context.ts";
 import {
   useConversations,
+  type UseConversationsActiveLoadState,
   type UseConversationsOptions,
+  type UseConversationsPersistenceState,
   type UseConversationsResult,
 } from "../hooks/use-conversations.ts";
 
-const ConversationsContext = React.createContext<UseConversationsResult | null>(null);
+/**
+ * Value accepted by the low-level context provider. Persistence state is
+ * optional here so existing caller-supplied structural fixtures remain
+ * compatible; {@link ConversationsProvider} always supplies it.
+ */
+export type ConversationsContextValue =
+  & UseConversationsResult
+  & Partial<UseConversationsPersistenceState & UseConversationsActiveLoadState>;
 
-/** Read the shared conversations state. Throws when used outside a provider. */
-export function useConversationsContext(): UseConversationsResult {
-  const context = React.useContext(ConversationsContext);
-  if (!context) {
-    throw COMPONENT_ERROR.create({
-      detail: "useConversationsContext must be used within a ConversationsProvider",
-    });
-  }
-  return context;
-}
+const [ConversationsContext, useConversationsContext] = createStrictContext<
+  ConversationsContextValue
+>(
+  "useConversationsContext",
+  "a ConversationsProvider",
+);
 
 /** Read the shared conversations state, or `null` when there is no provider. */
-export function useConversationsContextOptional(): UseConversationsResult | null {
+export function useConversationsContextOptional(): ConversationsContextValue | null {
   return React.useContext(ConversationsContext);
 }
+
+export { useConversationsContext };
 
 /** Low-level context provider (value supplied by the caller). */
 export const ConversationsContextProvider = ConversationsContext.Provider;

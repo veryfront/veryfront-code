@@ -1,12 +1,12 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createCalendarClient } from "../../lib/calendar-client.ts";
-import { requireUserIdFromContext } from "../../lib/user-id.ts";
+import { createCalendarClient } from "../lib/calendar-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 type FreeSlot = { start: Date; end: Date };
 
 export default tool({
-  id: "find-free-time",
+  id: "calendar-find-free-time",
   description: "Find available time slots in the calendar for scheduling",
   inputSchema: defineSchema((v) => v.object({
     durationMinutes: v

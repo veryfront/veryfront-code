@@ -2,17 +2,20 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessageChunk } from "../../chat/protocol.ts";
-import type {
-  ConversationRunEventQueueController,
-  ConversationRunEventQueueFlushResult,
-  ConversationRunEventQueueSnapshot,
-} from "./durable.ts";
+import type { ConversationRunEventQueueController } from "./durable.ts";
 import type { ConversationRunEvent } from "./run-events.ts";
 import {
   createConversationRunChunkMirror,
   createHostedConversationRunChunkMirror,
   type HostedConversationRunChunkMirrorTraceAttributes,
 } from "./run-chunk-mirror.ts";
+
+type ConversationRunEventQueueFlushResult = Awaited<
+  ReturnType<ConversationRunEventQueueController["flush"]>
+>;
+type ConversationRunEventQueueSnapshot = ReturnType<
+  ConversationRunEventQueueController["getSnapshot"]
+>;
 
 function createQueueController(): ConversationRunEventQueueController & {
   enqueued: unknown[];
@@ -27,7 +30,14 @@ function createQueueController(): ConversationRunEventQueueController & {
     },
     async flush(): Promise<ConversationRunEventQueueFlushResult> {
       enqueued.length = 0;
-      return { outcome: "flushed", latestEventId: 0, latestExternalEventSequence: 0 };
+      return {
+        outcome: "flushed",
+        latestEventId: 0,
+        latestExternalEventSequence: 0,
+        pendingEventCount: 0,
+        consecutiveFailures: 0,
+        disabled: this.disabled,
+      };
     },
     getSnapshot(): ConversationRunEventQueueSnapshot {
       return {
@@ -252,6 +262,52 @@ describe("agent/conversation-run-chunk-mirror", () => {
           pendingEventCount: 3,
           consecutiveFailures: 0,
           threshold: 2,
+        },
+      }]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("records a terminal auth rejection instead of retrying forever", async () => {
+    const originalFetch = globalThis.fetch;
+    const errors: Array<{ message: string; metadata: Record<string, unknown> }> = [];
+    try {
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ detail: "Invalid authentication token" }),
+            { status: 401, headers: { "Content-Type": "application/json" } },
+          ),
+        )) as typeof fetch;
+      const mirror = createHostedConversationRunChunkMirror({
+        authToken: "expired-token",
+        apiUrl: "https://api.example.test",
+        conversationId: "11111111-1111-4111-8111-111111111111",
+        runId: "run-1",
+        latestEventId: 10,
+        latestExternalEventSequence: 20,
+        instrumentation: {
+          error: (message, metadata) => {
+            errors.push({ message, metadata });
+          },
+        },
+      });
+
+      await mirror.appendEvents([{ type: "TEXT_MESSAGE_CONTENT", delta: "persisted" }]);
+      const snapshot = await mirror.flush();
+      mirror.dispose();
+
+      assertEquals(snapshot.disabled, true);
+      assertEquals(snapshot.pendingEventCount, 0);
+      assertEquals(snapshot.hasRetryTimer, false);
+      assertEquals(errors, [{
+        message: "Disabling durable run mirroring after permanent append authentication rejection",
+        metadata: {
+          conversationId: "11111111-1111-4111-8111-111111111111",
+          runId: "run-1",
+          latestEventId: 10,
+          latestExternalEventSequence: 20,
         },
       }]);
     } finally {

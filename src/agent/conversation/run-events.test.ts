@@ -44,6 +44,27 @@ describe("agent/conversation-run-events", () => {
     );
   });
 
+  it("encodes model step lifecycle events for durable replay", () => {
+    const encoder = new ConversationRunEventEncoder();
+
+    assertEquals(encoder.encode({ type: "start-step" }), [{
+      type: conversationRunEventTypes.stepStarted,
+      stepName: "step-1",
+    }]);
+    assertEquals(encoder.encode({ type: "finish-step" }), [{
+      type: conversationRunEventTypes.stepFinished,
+      stepName: "step-1",
+    }]);
+    assertEquals(encoder.encode({ type: "start-step" }), [{
+      type: conversationRunEventTypes.stepStarted,
+      stepName: "step-2",
+    }]);
+    assertEquals(encoder.encode({ type: "finish-step" }), [{
+      type: conversationRunEventTypes.stepFinished,
+      stepName: "step-2",
+    }]);
+  });
+
   it("encodes text block ids as content ids when a durable message id is active", () => {
     const encoder = new ConversationRunEventEncoder();
     assertEquals(encoder.encode({ type: "start", messageId: "assistant-1" }), []);
@@ -128,6 +149,64 @@ describe("agent/conversation-run-events", () => {
         },
       ],
     );
+  });
+
+  it("encodes source documents as durable custom events", () => {
+    const encoder = new ConversationRunEventEncoder();
+    const path = "knowledge/knowledge-ingest-20260723131451088-source.md";
+
+    assertEquals(
+      encoder.encode({
+        type: "source-document",
+        sourceId: path,
+        mediaType: "text/markdown",
+        title: path,
+        filename: path,
+      }),
+      [{
+        type: conversationRunEventTypes.custom,
+        name: "source-document",
+        value: {
+          type: "source-document",
+          sourceId: path,
+          mediaType: "text/markdown",
+          title: path,
+          filename: path,
+        },
+      }],
+    );
+  });
+
+  it("encodes source URLs as durable custom events", () => {
+    const encoder = new ConversationRunEventEncoder();
+    const sourceUrl = {
+      type: "source-url" as const,
+      sourceId: "web-1",
+      url: "https://example.com/reference",
+      title: "Reference",
+    };
+
+    assertEquals(encoder.encode(sourceUrl), [{
+      type: conversationRunEventTypes.custom,
+      name: "source-url",
+      value: sourceUrl,
+    }]);
+  });
+
+  it("encodes files as durable custom events", () => {
+    const encoder = new ConversationRunEventEncoder();
+    const file = {
+      type: "file" as const,
+      url: "https://cdn.example.com/report.pdf",
+      mediaType: "application/pdf",
+      filename: "report.pdf",
+    };
+
+    assertEquals(encoder.encode(file), [{
+      type: conversationRunEventTypes.custom,
+      name: "file",
+      value: file,
+    }]);
   });
 
   it("encodes and normalizes whole event lists", () => {

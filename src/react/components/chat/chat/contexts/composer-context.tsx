@@ -8,11 +8,14 @@
  */
 
 import * as React from "react";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../../../create-strict-context.ts";
 import type { AttachmentInfo } from "../components/attachment-pill.tsx";
 import type { ModelOption } from "../../model-selector.tsx";
 
-/** Public API contract for composer context value. */
+/**
+ * Public API contract for composer context value.
+ * @deprecated Use {@link ChatInputContextValue}. Alias kept for backward compatibility.
+ */
 export interface ComposerContextValue {
   // Input
   input: string;
@@ -22,6 +25,8 @@ export interface ComposerContextValue {
   // Attachments
   attachments: AttachmentInfo[];
   onAttach?: (files: FileList) => void;
+  /** Open the native file input owned by the enclosing ChatInput provider. */
+  onOpenAttachmentPicker?: () => void;
   onSelectAttachment?: () => void;
   onRemoveAttachment?: (id: string) => void;
   attachAccept?: string;
@@ -45,23 +50,38 @@ export interface ComposerContextValue {
   onModelChange?: (modelId: string) => void;
 }
 
-const ComposerContext = React.createContext<ComposerContextValue | null>(null);
+const [ComposerContext, useComposerContext] = createStrictContext<ComposerContextValue>(
+  "useChatInputContext",
+  "a ChatInput or Chat component",
+);
 
-/** Context for use composer. */
-export function useComposerContext(): ComposerContextValue {
-  const context = React.useContext(ComposerContext);
-  if (!context) {
-    throw COMPONENT_ERROR.create({
-      detail: "useComposerContext must be used within a Composer or Chat component",
-    });
-  }
-  return context;
-}
-
-/** React hook for composer context optional. */
+/**
+ * React hook for composer context optional.
+ * @deprecated Use {@link useChatInputContextOptional}. Alias kept for backward compatibility.
+ */
 export function useComposerContextOptional(): ComposerContextValue | null {
   return React.useContext(ComposerContext);
 }
 
-/** Render composer context provider. */
+/**
+ * Render composer context provider.
+ * @deprecated Use {@link ChatInputContextProvider}. Alias kept for backward compatibility.
+ */
 export const ComposerContextProvider = ComposerContext.Provider;
+/** @deprecated Use {@link useChatInputContext}. Alias kept for backward compatibility. */
+export { useComposerContext };
+
+// ---------------------------------------------------------------------------
+// Canonical RFC 2980 names ("Composer" is banned across the surface → ChatInput).
+// Additive aliases through the migration; the "Composer" names become deprecated
+// re-exports and are removed in the batched breaking release.
+// ---------------------------------------------------------------------------
+
+/** Shared state exposed by a `<ChatInput>` to its children (RFC 2980 name). */
+export type ChatInputContextValue = ComposerContextValue;
+/** Read the enclosing `<ChatInput>` context; throws outside one. */
+export const useChatInputContext = useComposerContext;
+/** Read the enclosing `<ChatInput>` context, or null outside one. */
+export const useChatInputContextOptional = useComposerContextOptional;
+/** Provider for `<ChatInput>` context (RFC 2980 name). */
+export const ChatInputContextProvider = ComposerContextProvider;

@@ -7,7 +7,14 @@
 import { assertEquals, assertExists } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 
-import factory, { resolveOtlpExtensionConfig, resolveOtlpSignalUrl } from "./index.ts";
+import { VERSION } from "veryfront/utils";
+import factory, {
+  logAttributes,
+  resolveOtlpExtensionConfig,
+  resolveOtlpSignalUrl,
+  rewriteLlmObservabilitySpanResource,
+  unifiedServiceResourceAttributes,
+} from "./index.ts";
 
 const noopLogger = {
   debug: () => {},
@@ -18,6 +25,44 @@ const noopLogger = {
 
 function env(vars: Record<string, string>): (name: string) => string | undefined {
   return (name) => vars[name];
+}
+
+async function withOtelSignalsDisabled<T>(fn: () => Promise<T>): Promise<T> {
+  const keys = [
+    "OTEL_TRACES_ENABLED",
+    "OTEL_METRICS_ENABLED",
+    "OTEL_LOGS_ENABLED",
+    "OTEL_TRACES_EXPORTER",
+    "OTEL_METRICS_EXPORTER",
+    "OTEL_LOGS_EXPORTER",
+    "DD_LLMOBS_ENABLED",
+    "OTEL_LLMOBS_ENABLED",
+  ];
+
+  let previous: Map<string, string | undefined>;
+  try {
+    previous = new Map(keys.map((key) => [key, Deno.env.get(key)]));
+  } catch {
+    return await fn();
+  }
+
+  try {
+    for (const key of keys) {
+      Deno.env.delete(key);
+    }
+    Deno.env.set("OTEL_TRACES_EXPORTER", "none");
+    Deno.env.set("OTEL_METRICS_EXPORTER", "none");
+    Deno.env.set("OTEL_LOGS_EXPORTER", "none");
+    return await fn();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) {
+        Deno.env.delete(key);
+      } else {
+        Deno.env.set(key, value);
+      }
+    }
+  }
 }
 
 describe("ext-observability-opentelemetry factory", () => {
@@ -60,17 +105,111 @@ describe("ext-observability-opentelemetry config helpers", () => {
     const config = resolveOtlpExtensionConfig(env({
       OTEL_TRACES_ENABLED: "false",
       OTEL_METRICS_ENABLED: "true",
+      OTEL_LOGS_EXPORTER: "otlp",
       OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector.example/otlp",
+      OTEL_EXPORTER_OTLP_LOGS_HEADERS: "x-log-route=logs",
       OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Basic platform-token",
       OTEL_SERVICE_NAME: "veryfront-server",
     }));
 
     assertEquals(config.tracesEnabled, false);
+    assertEquals(config.llmObservabilityEnabled, false);
     assertEquals(config.metricsEnabled, true);
+    assertEquals(config.logsEnabled, true);
     assertEquals(config.tracesUrl, "https://collector.example/otlp/v1/traces");
+    assertEquals(config.llmObservabilityUrl, "https://collector.example/otlp/v1/traces");
     assertEquals(config.metricsUrl, "https://collector.example/otlp/v1/metrics");
+    assertEquals(config.logsUrl, "https://collector.example/otlp/v1/logs");
     assertEquals(config.headers, { Authorization: "Basic platform-token" });
+    assertEquals(config.logsHeaders, {
+      Authorization: "Basic platform-token",
+      "x-log-route": "logs",
+    });
     assertEquals(config.serviceName, "veryfront-server");
+    assertEquals(config.serviceVersion, VERSION);
+    assertEquals(config.deploymentEnvironment, "development");
+  });
+
+  it("resolves Datadog LLM Observability OTLP routing", () => {
+    const config = resolveOtlpExtensionConfig(env({
+      OTEL_TRACES_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://otlp.datadoghq.eu/v1/traces",
+      OTEL_EXPORTER_OTLP_TRACES_HEADERS: "dd-api-key=redacted",
+      DD_LLMOBS_ENABLED: "true",
+      DD_LLMOBS_ML_APP: "veryfront-ops-agent",
+    }));
+
+    assertEquals(config.llmObservabilityEnabled, true);
+    assertEquals(config.llmObservabilityUrl, "https://otlp.datadoghq.eu/v1/traces");
+    assertEquals(config.llmObservabilityHeaders, {
+      "dd-api-key": "redacted",
+      "dd-otlp-source": "llmobs",
+      "dd-ml-app": "veryfront-ops-agent",
+    });
+  });
+
+  it("defaults the Datadog LLM app to the resolved service name", () => {
+    const config = resolveOtlpExtensionConfig(env({
+      OTEL_RESOURCE_ATTRIBUTES: "service.name=investment-ops-agent",
+      OTEL_TRACES_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://otlp.datadoghq.eu/v1/traces",
+      OTEL_EXPORTER_OTLP_TRACES_HEADERS: "dd-api-key=redacted",
+      DD_LLMOBS_ENABLED: "true",
+    }));
+
+    assertEquals(config.serviceName, "investment-ops-agent");
+    assertEquals(config.llmObservabilityHeaders, {
+      "dd-api-key": "redacted",
+      "dd-otlp-source": "llmobs",
+      "dd-ml-app": "investment-ops-agent",
+    });
+  });
+
+  it("preserves a Datadog LLM app supplied through OTLP headers", () => {
+    const config = resolveOtlpExtensionConfig(env({
+      OTEL_RESOURCE_ATTRIBUTES: "service.name=investment-ops-agent",
+      OTEL_TRACES_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://otlp.datadoghq.eu/v1/traces",
+      OTEL_EXPORTER_OTLP_TRACES_HEADERS: "dd-api-key=redacted,dd-ml-app=header-app",
+      DD_LLMOBS_ENABLED: "true",
+    }));
+
+    assertEquals(config.llmObservabilityHeaders, {
+      "dd-api-key": "redacted",
+      "dd-otlp-source": "llmobs",
+      "dd-ml-app": "header-app",
+    });
+  });
+
+  it("resolves Datadog unified service tags from OTel resource attributes", () => {
+    const config = resolveOtlpExtensionConfig(env({
+      OTEL_RESOURCE_ATTRIBUTES:
+        "service.name=resource-service,service.version=7.8.9,deployment.environment=production",
+      OTEL_TRACES_ENABLED: "true",
+    }));
+
+    assertEquals(config.serviceName, "resource-service");
+    assertEquals(config.serviceVersion, "7.8.9");
+    assertEquals(config.deploymentEnvironment, "production");
+  });
+
+  it("emits Datadog reserved tag aliases with OTel resource attributes", () => {
+    assertEquals(
+      unifiedServiceResourceAttributes({
+        serviceName: "veryfront-ops-agent",
+        serviceVersion: "20260709144949-fe7bf026a69d",
+        deploymentEnvironment: "production",
+      }),
+      {
+        "service.name": "veryfront-ops-agent",
+        "service.version": "20260709144949-fe7bf026a69d",
+        "deployment.environment": "production",
+        "deployment.environment.name": "production",
+        service: "veryfront-ops-agent",
+        version: "20260709144949-fe7bf026a69d",
+        env: "production",
+      },
+    );
   });
 
   it("does not expose a ctx.config.otel exporter-routing override", () => {
@@ -85,77 +224,190 @@ describe("ext-observability-opentelemetry config helpers", () => {
   });
 });
 
-describe("ext-observability-opentelemetry TracingExporter", () => {
-  it("registers TracingExporter on setup", async () => {
-    const provided = new Map<string, unknown>();
-
-    const ctx = {
-      config: {},
-      logger: noopLogger,
-      provide: (name: string, impl: unknown) => provided.set(name, impl),
-      get: () => undefined,
-      require: () => {
-        throw new Error("not used");
+describe("ext-observability-opentelemetry LLMObs resource rewriting", () => {
+  it("rewrites GenAI span resource tags from span service attributes", () => {
+    const span = {
+      attributes: {
+        "gen_ai.operation.name": "chat",
+        "service.name": "veryfront-ops-agent",
+        "service.version": "0.0.34",
+        "deployment.environment.name": "production",
+      },
+      resource: {
+        attributes: {
+          "service.name": "investment-ops-agent",
+          "service.version": "0.0.13",
+          "deployment.environment.name": "production",
+          service: "investment-ops-agent",
+          version: "0.0.13",
+          env: "production",
+        },
+      },
+      instrumentationScope: {
+        name: "investment-ops-agent",
+        version: "0.1.1042",
       },
     };
 
-    const ext = factory();
-    // deno-lint-ignore no-explicit-any
-    await ext.setup?.(ctx as any);
+    const rewritten = rewriteLlmObservabilitySpanResource(span) as typeof span;
 
-    assertEquals(provided.has("TracingExporter"), true);
-    assertEquals(provided.has("NodeTelemetryProvider"), true);
+    assertEquals(Object.is(rewritten, span), false);
+    assertEquals(rewritten.resource.attributes["service.name"], "veryfront-ops-agent");
+    assertEquals(rewritten.resource.attributes.service, "veryfront-ops-agent");
+    assertEquals(rewritten.resource.attributes["service.version"], "0.0.34");
+    assertEquals(rewritten.resource.attributes.version, "0.0.34");
+    assertEquals(rewritten.resource.attributes["deployment.environment.name"], "production");
+    assertEquals(rewritten.resource.attributes.env, "production");
+    assertEquals(rewritten.instrumentationScope.name, "veryfront-ops-agent");
+    assertEquals(span.resource.attributes["service.name"], "investment-ops-agent");
+    assertEquals(span.instrumentationScope.name, "investment-ops-agent");
+  });
 
-    const exporter = provided.get("TracingExporter") as {
-      getProvider: () => unknown;
-      shutdown: () => Promise<void>;
-      export: (spans: unknown[]) => Promise<void>;
-      start: (cfg: unknown) => Promise<void>;
+  it("uses a trace fallback identity for GenAI child spans without service attributes", () => {
+    const span = {
+      attributes: {
+        "gen_ai.operation.name": "execute_tool",
+      },
+      resource: {
+        attributes: {
+          "service.name": "investment-ops-agent",
+          "service.version": "0.0.13",
+          "deployment.environment.name": "production",
+        },
+      },
+      instrumentationScope: {
+        name: "investment-ops-agent",
+      },
     };
 
-    assertExists(exporter);
-    assertEquals(typeof exporter.getProvider, "function");
-    assertEquals(typeof exporter.shutdown, "function");
-    assertEquals(typeof exporter.export, "function");
+    const rewritten = rewriteLlmObservabilitySpanResource(span, {
+      serviceName: "veryfront-ops-agent",
+      serviceVersion: "0.0.34",
+      deploymentEnvironment: "production",
+    }) as typeof span;
 
-    const nodeTelemetryProvider = provided.get("NodeTelemetryProvider") as {
-      initialize: (options: unknown) => Promise<boolean>;
+    assertEquals(rewritten.resource.attributes["service.name"], "veryfront-ops-agent");
+    assertEquals(rewritten.resource.attributes["service.version"], "0.0.34");
+    assertEquals(rewritten.instrumentationScope.name, "veryfront-ops-agent");
+  });
+
+  it("keeps spans unchanged when no project service identity is available", () => {
+    const span = {
+      attributes: {
+        "gen_ai.operation.name": "chat",
+      },
+      resource: {
+        attributes: {
+          "service.name": "veryfront-server",
+        },
+      },
     };
-    assertExists(nodeTelemetryProvider);
-    assertEquals(typeof nodeTelemetryProvider.initialize, "function");
 
-    // getProvider() must return a non-null TracerProvider
-    const provider = exporter.getProvider();
-    assertExists(provider);
-    assertEquals(typeof (provider as { getTracer?: unknown }).getTracer, "function");
+    assertEquals(Object.is(rewriteLlmObservabilitySpanResource(span), span), true);
+  });
+});
 
-    await ext.teardown?.();
+describe("ext-observability-opentelemetry log attributes", () => {
+  it("adds semantic run, tool, and trace correlation attributes", () => {
+    const attributes = logAttributes({
+      message: "Tool finished",
+      trace_id: "0000000000000000000000000000002a",
+      span_id: "0000000000000010",
+      context: {
+        runId: "run_123",
+        agentId: "triage-sweeper",
+        scheduleId: "sched_123",
+        toolName: "query_loki",
+        toolCallId: "call_123",
+      },
+    });
+
+    assertEquals(attributes["run.id"], "run_123");
+    assertEquals(attributes["agent.id"], "triage-sweeper");
+    assertEquals(attributes["schedule.id"], "sched_123");
+    assertEquals(attributes["tool.name"], "query_loki");
+    assertEquals(attributes["tool.call.id"], "call_123");
+    assertEquals(attributes["otel.trace_id"], "0000000000000000000000000000002a");
+    assertEquals(attributes["dd.trace_id"], "42");
+    assertEquals(attributes["dd.span_id"], "16");
+  });
+});
+
+describe("ext-observability-opentelemetry TracingExporter", () => {
+  it("registers TracingExporter on setup", async () => {
+    await withOtelSignalsDisabled(async () => {
+      const provided = new Map<string, unknown>();
+
+      const ctx = {
+        config: {},
+        logger: noopLogger,
+        provide: (name: string, impl: unknown) => provided.set(name, impl),
+        get: () => undefined,
+        require: () => {
+          throw new Error("not used");
+        },
+      };
+
+      const ext = factory();
+      // deno-lint-ignore no-explicit-any
+      await ext.setup?.(ctx as any);
+
+      assertEquals(provided.has("TracingExporter"), true);
+      assertEquals(provided.has("NodeTelemetryProvider"), true);
+
+      const exporter = provided.get("TracingExporter") as {
+        getProvider: () => unknown;
+        shutdown: () => Promise<void>;
+        export: (spans: unknown[]) => Promise<void>;
+        start: (cfg: unknown) => Promise<void>;
+      };
+
+      assertExists(exporter);
+      assertEquals(typeof exporter.getProvider, "function");
+      assertEquals(typeof exporter.shutdown, "function");
+      assertEquals(typeof exporter.export, "function");
+
+      const nodeTelemetryProvider = provided.get("NodeTelemetryProvider") as {
+        initialize: (options: unknown) => Promise<boolean>;
+      };
+      assertExists(nodeTelemetryProvider);
+      assertEquals(typeof nodeTelemetryProvider.initialize, "function");
+
+      // getProvider() must return a non-null TracerProvider
+      const provider = exporter.getProvider();
+      assertExists(provider);
+      assertEquals(typeof (provider as { getTracer?: unknown }).getTracer, "function");
+
+      await ext.teardown?.();
+    });
   });
 
   it("export() is a no-op (BatchSpanProcessor handles export)", async () => {
-    const provided = new Map<string, unknown>();
-    const ctx = {
-      config: {},
-      logger: noopLogger,
-      provide: (name: string, impl: unknown) => provided.set(name, impl),
-      get: () => undefined,
-      require: () => {
-        throw new Error("not used");
-      },
-    };
+    await withOtelSignalsDisabled(async () => {
+      const provided = new Map<string, unknown>();
+      const ctx = {
+        config: {},
+        logger: noopLogger,
+        provide: (name: string, impl: unknown) => provided.set(name, impl),
+        get: () => undefined,
+        require: () => {
+          throw new Error("not used");
+        },
+      };
 
-    const ext = factory();
-    // deno-lint-ignore no-explicit-any
-    await ext.setup?.(ctx as any);
+      const ext = factory();
+      // deno-lint-ignore no-explicit-any
+      await ext.setup?.(ctx as any);
 
-    const exporter = provided.get("TracingExporter") as {
-      export: (spans: unknown[]) => Promise<void>;
-      shutdown: () => Promise<void>;
-    };
+      const exporter = provided.get("TracingExporter") as {
+        export: (spans: unknown[]) => Promise<void>;
+        shutdown: () => Promise<void>;
+      };
 
-    // Should not throw
-    await exporter.export([]);
-    await exporter.shutdown();
+      // Should not throw
+      await exporter.export([]);
+      await exporter.shutdown();
+    });
   });
 
   it("teardown() shuts down without error when called without setup", async () => {

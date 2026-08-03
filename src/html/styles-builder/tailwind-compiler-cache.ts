@@ -1,240 +1,249 @@
 /**
- * Tailwind compiler LRU cache management.
+ * Provider-neutral, exact-snapshot CSS compilation cache.
  *
- * Manages a bounded cache of compiled Tailwind CSS compilers, keyed by
- * stylesheet hash. Prevents race conditions when concurrent requests use
- * different stylesheets.
+ * Core captures one explicitly registered CSSProcessor for a complete
+ * operation. Compilation and the first stateful build are single-flight and
+ * cached only under the exact provider, stylesheet, project, and candidate
+ * identities that produced the output.
  *
- * The actual tailwindcss `compile()` call is routed through the
- * `CSSProcessor` extension contract (default implementation:
- * `@veryfront/ext-css-tailwind`). When no `CSSProcessor` is registered, the
- * compile path returns a no-op compiler that emits empty CSS and logs an
- * actionable install message.
- *
- * @module html/styles-builder/tailwind-compiler-cache
+ * @module html/styles-builder/css-compiler-cache
  */
 
+import { resolve } from "#veryfront/extensions/contracts.ts";
 import {
-  register as registerContract,
-  tryResolve as tryResolveContract,
-} from "#veryfront/extensions/contracts.ts";
-import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
-import type { ExtensionFactory } from "veryfront/extensions";
-import type { CSSCompiler, CSSProcessor } from "#veryfront/extensions/css/index.ts";
-import { serverLogger } from "#veryfront/utils";
-import { DEPENDENCY_MISSING, NETWORK_ERROR } from "#veryfront/errors";
-import { getTailwindCSSUrl } from "#veryfront/utils/constants/cdn.ts";
+  captureCSSProcessor,
+  type CSSProcessor,
+  CSSProcessorName,
+} from "#veryfront/extensions/css/index.ts";
+import { assertCSSPipelineIdentity, serverLogger } from "#veryfront/utils";
+import { normalizeCSSCandidates } from "#veryfront/utils/css-candidate-admission.ts";
+import {
+  assertCSSFileContent,
+  assertCSSOutputContent,
+} from "#veryfront/utils/css-content-admission.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
-import { hashString } from "./candidate-extractor.ts";
-import { loadPlugin } from "./plugin-loader.ts";
+import {
+  detachRetainedString,
+  estimateRetainedStringBytes,
+} from "#veryfront/utils/retained-string.ts";
+import { hashCandidates, hashString } from "./css-identity.ts";
 
-const logger = serverLogger.component("tailwind");
+const logger = serverLogger.component("css-compiler");
+const freeze = Object.freeze;
+const arrayJoin = Array.prototype.join;
+const arraySort = Array.prototype.sort;
+const apply = Reflect.apply;
+const now = Date.now;
+const weakSetAdd = WeakSet.prototype.add;
+const weakSetHas = WeakSet.prototype.has;
 
-type CssTailwindExtensionModule = {
-  default: ExtensionFactory;
-};
-
-/**
- * LRU cache for Tailwind compilers, keyed by stylesheet hash.
- * Each entry stores the compiler and its associated plugin state.
- */
-interface CompilerCacheEntry {
-  compiler: CSSCompiler;
-  createdAt: number;
-  pluginCache: Map<string, unknown>;
-  pluginErrors: Map<string, Error>;
+interface CompilationCacheEntry {
+  readonly css: string;
+  readonly retainedBytes: number;
+  readonly createdAt: number;
 }
 
-const compilerCache = new Map<string, CompilerCacheEntry>();
-const MAX_CACHED_COMPILERS = 10;
+/** One immutable processor snapshot acquired for a complete CSS operation. */
+export interface CSSCompilationSession {
+  readonly cacheIdentity: string;
+  readonly defaultStylesheet: string;
+  build(
+    stylesheet: string,
+    projectSlug: string | undefined,
+    candidates: string[] | Set<string>,
+  ): Promise<string>;
+}
 
-let tailwindBaseCSS: string | null = null;
+const compilationCache = new Map<string, CompilationCacheEntry>();
+const inFlightCompilations = new Map<string, Promise<string>>();
+const inFlightCompilationOwners = new Map<string, object>();
+const cssCompilationSessions = new WeakSet<object>();
+const MAX_CACHED_COMPILATIONS = 10;
+const MAX_CACHED_COMPILATION_BYTES = 64 * 1024 * 1024;
+const CSS_COMPILATION_IDENTITY_SCHEMA = "veryfront.css-compilation.v3";
+let cachedCompilationBytes = 0;
+let compilationCacheEpoch = 0;
 
-registerCache("tailwind-compiler-cache", () => ({
-  name: "tailwind-compiler-cache",
-  entries: compilerCache.size,
-  maxEntries: MAX_CACHED_COMPILERS,
+registerCache("css-compiler-cache", () => ({
+  name: "css-compiler-cache",
+  entries: compilationCache.size,
+  maxEntries: MAX_CACHED_COMPILATIONS,
+  estimatedSizeBytes: cachedCompilationBytes,
 }));
 
-async function getTailwindBaseCSS(): Promise<string> {
-  if (tailwindBaseCSS) return tailwindBaseCSS;
-
-  const url = getTailwindCSSUrl();
-  logger.debug("Fetching base CSS", { url });
-
-  try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw NETWORK_ERROR.create({
-        detail: `Failed to fetch Tailwind CSS: ${response.status} ${response.statusText}`,
-      });
-    }
-    tailwindBaseCSS = await response.text();
-  } catch (error) {
-    logger.warn("Failed to fetch Tailwind base CSS, using empty fallback", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    tailwindBaseCSS = "";
-  }
-
-  return tailwindBaseCSS;
+function createCSSCompilationCacheIdentity(processor: CSSProcessor): string {
+  assertCSSFileContent(
+    processor.defaultStylesheet,
+    "CSSProcessor default stylesheet",
+  );
+  return assertCSSPipelineIdentity(
+    `${CSS_COMPILATION_IDENTITY_SCHEMA}:${hashString(processor.cacheIdentity)}:${
+      hashString(processor.defaultStylesheet)
+    }`,
+    "CSS compilation identity",
+  );
 }
 
-async function resolveCSSProcessor(): Promise<CSSProcessor | undefined> {
-  const registeredProcessor = tryResolveContract<CSSProcessor>("CSSProcessor");
-  if (registeredProcessor) return registeredProcessor;
-
-  try {
-    const { default: createTailwindExtension } = await importFirstPartyExtensionModule<
-      CssTailwindExtensionModule
-    >(
-      "ext-css-tailwind",
-      "@veryfront/ext-css-tailwind",
-    );
-    const extension = createTailwindExtension();
-    await extension.setup?.({
-      config: {},
-      logger,
-      provide: (name: string, impl: unknown) => registerContract(name, impl),
-      get: () => undefined,
-      require: <T>(name: string): T => {
-        const contract = tryResolveContract<T>(name);
-        if (contract === undefined) {
-          throw new Error(`Missing required extension contract: ${name}`);
-        }
-        return contract;
-      },
-    });
-  } catch (error) {
-    logger.warn("Failed to register built-in CSSProcessor extension", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-
-  return tryResolveContract<CSSProcessor>("CSSProcessor");
+function snapshotCandidates(value: string[] | Set<string>): string[] {
+  const snapshot = normalizeCSSCandidates(value);
+  apply(arraySort, snapshot, []);
+  return snapshot;
 }
 
-function evictOldestCompiler(): void {
-  if (compilerCache.size < MAX_CACHED_COMPILERS) return;
-
-  let oldestKey: string | null = null;
-  let oldestTime = Infinity;
-
-  for (const [key, entry] of compilerCache) {
-    if (entry.createdAt < oldestTime) {
-      oldestTime = entry.createdAt;
-      oldestKey = key;
-    }
-  }
-
-  if (!oldestKey) return;
-
-  compilerCache.delete(oldestKey);
-  logger.debug("Evicted oldest compiler from cache", { hash: oldestKey });
+function removeCachedCompilation(key: string): void {
+  const entry = compilationCache.get(key);
+  if (!entry) return;
+  compilationCache.delete(key);
+  cachedCompilationBytes -= entry.retainedBytes;
 }
 
-export async function getCompiler(
+function touchCachedCompilation(key: string, entry: CompilationCacheEntry): void {
+  compilationCache.delete(key);
+  compilationCache.set(key, entry);
+}
+
+function storeCachedCompilation(
+  key: string,
+  css: string,
+): void {
+  const retainedKey = detachRetainedString(key);
+  const retainedCSS = detachRetainedString(css);
+  const retainedBytes = estimateRetainedStringBytes(retainedKey) +
+    estimateRetainedStringBytes(retainedCSS) + 128;
+  removeCachedCompilation(key);
+  while (
+    compilationCache.size >= MAX_CACHED_COMPILATIONS ||
+    cachedCompilationBytes + retainedBytes > MAX_CACHED_COMPILATION_BYTES
+  ) {
+    const oldestKey = compilationCache.keys().next().value as string | undefined;
+    if (oldestKey === undefined) break;
+    removeCachedCompilation(oldestKey);
+  }
+  if (retainedBytes > MAX_CACHED_COMPILATION_BYTES) return;
+  compilationCache.set(retainedKey, {
+    css: retainedCSS,
+    retainedBytes,
+    createdAt: apply(now, Date, []) as number,
+  });
+  cachedCompilationBytes += retainedBytes;
+}
+
+async function buildForProcessor(
+  processor: CSSProcessor,
+  compilationIdentity: string,
   stylesheet: string,
-  projectSlug?: string,
-): Promise<CSSCompiler> {
-  // Tailwind v4's compile().build() is stateful — it accumulates candidates
-  // across calls. Without per-project isolation, projects sharing the same
-  // stylesheet on the shared pool contaminate each other's CSS output.
-  const stylesheetHash = hashString(stylesheet);
-  const hash = projectSlug ? `${projectSlug}:${stylesheetHash}` : stylesheetHash;
+  projectSlug: string | undefined,
+  rawCandidates: string[] | Set<string>,
+): Promise<string> {
+  assertCSSFileContent(stylesheet, "CSS compilation stylesheet");
+  const candidates = snapshotCandidates(rawCandidates);
+  const keyParts = [
+    "css-compile-v2",
+    hashString(compilationIdentity),
+    projectSlug === undefined ? "shared" : hashString(projectSlug),
+    hashString(stylesheet),
+    hashCandidates(candidates),
+  ];
+  const key = apply(arrayJoin, keyParts, [":"]) as string;
 
-  const cached = compilerCache.get(hash);
+  const cached = compilationCache.get(key);
   if (cached) {
-    logger.debug("Compiler cache hit", { hash, projectSlug });
-    return cached.compiler;
+    touchCachedCompilation(key, cached);
+    logger.debug("CSS compilation cache hit", { key, projectSlug });
+    return cached.css;
   }
 
-  logger.debug("Creating new compiler", { hash, projectSlug });
-
-  const processor = await resolveCSSProcessor();
-  if (!processor) {
-    logger.warn(
-      "No CSSProcessor extension registered — CSS output will be empty. Install it with: deno add @veryfront/ext-css-tailwind",
-    );
-    const noopCompiler: CSSCompiler = { build: () => "" };
-    compilerCache.set(hash, {
-      compiler: noopCompiler,
-      createdAt: Date.now(),
-      pluginCache: new Map(),
-      pluginErrors: new Map(),
-    });
-    return noopCompiler;
+  const pending = inFlightCompilations.get(key);
+  if (pending) {
+    logger.debug("CSS compilation single-flight hit", { key, projectSlug });
+    return await pending;
   }
 
-  const tailwindBase = await getTailwindBaseCSS();
-  const pluginCache = new Map<string, unknown>();
-  const pluginErrors = new Map<string, Error>();
+  const compilation = (async () => {
+    const cacheEpoch = compilationCacheEpoch;
+    const compiler = await processor.compile(stylesheet);
+    const css = compiler.build(candidates);
+    assertCSSOutputContent(css, "CSS compiler output");
+    if (cacheEpoch === compilationCacheEpoch) {
+      storeCachedCompilation(key, css);
+    }
+    return css;
+  })();
+  const owner = {};
+  inFlightCompilations.set(key, compilation);
+  inFlightCompilationOwners.set(key, owner);
+  try {
+    return await compilation;
+  } finally {
+    if (inFlightCompilationOwners.get(key) === owner) {
+      inFlightCompilations.delete(key);
+      inFlightCompilationOwners.delete(key);
+    }
+  }
+}
 
-  const newCompiler = await processor.compile(stylesheet, {
-    base: "/",
-    loadStylesheet: (id: string) => {
-      if (id === "tailwindcss") {
-        return Promise.resolve({ content: tailwindBase, base: "/", path: "/" });
-      }
-      logger.debug("Unknown stylesheet import", { id });
-      return Promise.resolve({ content: "", base: "/", path: "/" });
+/** Capture the currently registered provider before any cache lookup awaits. */
+export function acquireCSSCompilationSession(): CSSCompilationSession {
+  const processor = captureCSSProcessor(resolve<unknown>(CSSProcessorName));
+  const cacheIdentity = createCSSCompilationCacheIdentity(processor);
+  const session: CSSCompilationSession = {
+    cacheIdentity,
+    defaultStylesheet: processor.defaultStylesheet,
+    build(stylesheet, projectSlug, candidates) {
+      return buildForProcessor(
+        processor,
+        cacheIdentity,
+        stylesheet,
+        projectSlug,
+        candidates,
+      );
     },
-    loadModule: async (id: string) => {
-      const loaded = await loadPlugin(id, pluginCache, pluginErrors);
-      if (!loaded) {
-        throw DEPENDENCY_MISSING.create({
-          detail: `Failed to load plugin "${id}": plugin not installed`,
-        });
-      }
-      return { module: loaded, base: "/", path: "/" };
-    },
-  });
+  };
+  apply(weakSetAdd, cssCompilationSessions, [session]);
+  return freeze(session);
+}
 
-  evictOldestCompiler();
+/** Identity of all captured provider-owned inputs that can change emitted CSS. */
+export function getCSSCompilationCacheIdentity(): string {
+  return acquireCSSCompilationSession().cacheIdentity;
+}
 
-  compilerCache.set(hash, {
-    compiler: newCompiler,
-    createdAt: Date.now(),
-    pluginCache,
-    pluginErrors,
-  });
-
-  return newCompiler;
+/** Compile with an authentic, already captured session. */
+export function buildCSSWithSession(
+  session: CSSCompilationSession,
+  stylesheet: string,
+  projectSlug: string | undefined,
+  candidates: string[] | Set<string>,
+): Promise<string> {
+  if (!apply(weakSetHas, cssCompilationSessions, [session])) {
+    throw new TypeError("CSS compilation session was not acquired by core");
+  }
+  return session.build(stylesheet, projectSlug, candidates);
 }
 
 export function invalidateCompiler(): void {
-  compilerCache.clear();
-  logger.debug("All compilers invalidated");
+  compilationCacheEpoch++;
+  compilationCache.clear();
+  inFlightCompilations.clear();
+  inFlightCompilationOwners.clear();
+  cachedCompilationBytes = 0;
+  logger.debug("All CSS compilations invalidated");
 }
 
-/**
- * Get compiler cache statistics for monitoring.
- */
+/** Get bounded compilation-cache statistics for monitoring and tests. */
 export function getCompilerCacheStats(): {
   size: number;
   maxSize: number;
-  entries: Array<{ hash: string; createdAt: number; pluginCount: number }>;
+  estimatedSizeBytes: number;
+  entries: Array<{ hash: string; createdAt: number }>;
 } {
-  const entries = Array.from(compilerCache.entries()).map(([hash, entry]) => ({
-    hash,
-    createdAt: entry.createdAt,
-    pluginCount: entry.pluginCache.size,
-  }));
-
-  return { size: compilerCache.size, maxSize: MAX_CACHED_COMPILERS, entries };
-}
-
-export function clearPluginCache(id?: string): void {
-  if (id) {
-    for (const entry of compilerCache.values()) {
-      entry.pluginCache.delete(id);
-      entry.pluginErrors.delete(id);
-    }
-    return;
-  }
-
-  for (const entry of compilerCache.values()) {
-    entry.pluginCache.clear();
-    entry.pluginErrors.clear();
-  }
+  return {
+    size: compilationCache.size,
+    maxSize: MAX_CACHED_COMPILATIONS,
+    estimatedSizeBytes: cachedCompilationBytes,
+    entries: Array.from(compilationCache, ([hash, entry]) => ({
+      hash,
+      createdAt: entry.createdAt,
+    })),
+  };
 }

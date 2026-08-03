@@ -15,17 +15,23 @@ export {
   type DurableRunCanaryApiConfig,
   type DurableRunCanaryCase,
   type DurableRunCanaryCreateRootRunInput,
+  type DurableRunCanaryExecution,
   type DurableRunCanaryMessage,
   type DurableRunCanaryPreparedCase,
   type DurableRunCanaryResult,
   type DurableRunCanaryRunnerConfig,
-  durableRunCanaryRunnerInternals,
   type DurableRunCanaryRunSummary,
   type DurableRunCanarySendUserMessageInput,
   type DurableRunCanaryStartRunInput,
   getDurableRunCanaryMessageSchema,
   parseDurableRunCanaryRunSummary,
 } from "./runner.ts";
+
+export {
+  createDurableRunTokenGrowthCanaryCase,
+  DURABLE_RUN_TOKEN_GROWTH_CANARY_MARKER,
+  type DurableRunTokenGrowthCanaryCaseInput,
+} from "./token-growth.ts";
 
 export {
   assertCompleted,

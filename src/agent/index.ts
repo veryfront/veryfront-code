@@ -66,10 +66,10 @@
  *
  * const assistant = agent({
  *   system: "You are a support engineer. Use skills when relevant.",
- *   skills: ["incident-response", "repo-maintainer"], // or `true` for all discovered skills
+ *   skills: ["incident-response", "repo-maintainer"], // omit for all visible skills
  *   tools: {
  *     Read: true,
- *     "github:list-issues": true,
+ *     github__list_issues: true,
  *   },
  * });
  * ```
@@ -105,9 +105,20 @@
  */
 
 export type {
+  AgentRunEvent,
+  AgentRunEventSink,
+  AgentRunModelCallContextEvent,
+  ModelCallMessage,
+  ModelCallTool,
+} from "../runtime/model-call-context.ts";
+
+export { runWithRunEventSink } from "../runtime/run-event-sink-context.ts";
+
+export type {
   Agent,
   AgentConfig,
   AgentContext,
+  AgentHttpMcpServerConfig,
   AgentMcpHttpTransport,
   AgentMcpServerAuth,
   AgentMcpServerConfig,
@@ -116,6 +127,8 @@ export type {
   AgentResponse,
   AgentStatus,
   AgentStreamResult,
+  AgentVeryfrontMcpServerConfig,
+  AgentVeryfrontMcpServerKind,
   EdgeConfig,
   MemoryConfig,
   Message as AgentMessage,
@@ -131,7 +144,9 @@ export type {
   RuntimeStateResolver,
   StreamToolCall,
   Suggestion,
+  SuggestionConfig,
   Suggestions,
+  SuggestionsConfig,
   ToolCall,
   ToolCallPart,
   ToolCallPartWithArgs,
@@ -153,6 +168,7 @@ export {
   type HostedChatRuntimeToolAssemblyContext,
   type HostedChatRuntimeToolAssemblyResult,
   type HostedChatRuntimeToolAssemblyResult as AgentServiceChatRuntimeToolAssemblyResult,
+  type HostedHostToolPolicy,
   prepareHostedChatRuntimeToolAssembly,
   type PrepareHostedChatRuntimeToolAssemblyInput,
 } from "./hosted/chat-runtime-tool-assembly.ts";
@@ -214,7 +230,9 @@ export {
   getProjectAgentRuntimeAgentIdCandidates,
   type ProjectAgentRuntimeAgentIdCandidates,
   type ProjectAgentRuntimeAgentSource,
+  type ProjectAgentRuntimeDiscovery,
   resolveSingleProjectAgentRuntimeAgentId,
+  runWithProjectAgentRuntime,
 } from "./project/agent-runtime.ts";
 
 export {
@@ -240,6 +258,13 @@ export {
   resolveRuntimeAgentDefinitionsDirInputSchema,
   resolveRuntimeAgentMarkdownDefinitionFilePath,
 } from "./runtime/agent-definition-files.ts";
+export {
+  type AgentCallProjectContext,
+  buildAgentCallContext,
+  type BuildAgentCallContextInput,
+  buildProjectContextPromptBlock,
+  buildProjectInstructionsPromptBlock,
+} from "./runtime/call-context.ts";
 export {
   createRuntimeAgentSystemMessages,
   type CreateRuntimeAgentSystemMessagesInput,
@@ -542,6 +567,8 @@ export {
   buildExecuteToolTraceAttributes,
   buildFinalizedAgentRunTraceAttributes,
   buildInvokeAgentTraceAttributes,
+  buildProjectServiceTraceAttributes,
+  buildScheduleTraceAttributes,
   filterAgentTraceAttributes,
   isAgentTraceAttributeValue,
 } from "./hosted/trace-attributes.ts";
@@ -585,6 +612,12 @@ export type {
   HostedChatRuntimeToUiMessageStreamOptions as AgentServiceChatRuntimeToUiMessageStreamOptions,
 } from "./hosted/chat-runtime-contract.ts";
 
+export {
+  type HostedRuntimeSourceBindingError,
+  type HostedRuntimeSourceIdentity,
+  snapshotHostedRuntimeSourceIdentity,
+  verifyHostedRuntimeSourceBinding,
+} from "./hosted/runtime-source-binding.ts";
 export {
   createHostedAgentServiceRouteSet,
   createHostedAgentServiceRouteSet as createAgentServiceRouteSet,
@@ -643,6 +676,7 @@ export {
   parseRuntimeAgentRunInvocationHostedChatRequestFromRequest,
   parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     as parseRuntimeAgentRunInvocationAgentServiceChatRequestFromRequest,
+  type ParseRuntimeAgentRunInvocationHostedChatRequestOptions,
 } from "./hosted/chat-request-parser.ts";
 export {
   buildParsedHostedAgUiRequest,
@@ -855,6 +889,10 @@ export {
   type HostedDurableChildForkRunContext,
   type HostedDurableChildForkRunContextInput,
 } from "./hosted/child-fork-run-context.ts";
+export {
+  createHostedRunEventWriterCapability,
+  type HostedRunEventWriterCapability,
+} from "./hosted/child-run-event-writer-token.ts";
 export {
   executeHostedChildForkStream,
   type ExecuteHostedChildForkStreamInput,
@@ -1705,10 +1743,12 @@ export {
   parseAgUiRequestOrError,
 } from "./ag-ui/host-support.ts";
 export {
+  type AgUiCompletion,
   type AgUiContextItem,
   type AgUiHandlerConfigWithAgent,
   type AgUiHandlerOptions,
   type AgUiInjectedTool,
+  type AgUiOnComplete,
   type AgUiRequest,
   AgUiRequestSchema,
   createAgUiHandler,

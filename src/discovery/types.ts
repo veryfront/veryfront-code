@@ -9,12 +9,11 @@ import type { Prompt } from "#veryfront/prompt/types.ts";
 import type { Resource } from "#veryfront/resource/types.ts";
 import type { Skill } from "#veryfront/skill/types.ts";
 import type { Tool } from "#veryfront/tool/types.ts";
-import type { WorkDefinition } from "#veryfront/work";
 import type { Workflow } from "#veryfront/workflow/types.ts";
 import type { TaskDefinition } from "#veryfront/task/types.ts";
-import type { EvalDefinition } from "#veryfront/eval";
-import type { ScheduleDefinition } from "#veryfront/schedule";
-import type { WebhookDefinition } from "#veryfront/webhook";
+import type { EvalDefinition } from "#veryfront/eval/types.ts";
+import type { ScheduleDefinition } from "#veryfront/schedule/types.ts";
+import type { WebhookDefinition } from "#veryfront/webhook/types.ts";
 import type { Platform } from "#veryfront/platform/core-platform.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
@@ -24,11 +23,15 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 export interface FileDiscoveryContext {
   platform: Platform;
   fsAdapter?: FileSystemAdapter;
+  /** Stable project or source-snapshot identity for transpiled module reuse. */
+  cacheNamespace?: string;
   nodeDeps?: {
     fs: typeof import("node:fs");
     path: typeof import("node:path");
   };
   baseDir?: string;
+  /** Explicit host-owned capability for trusted local/dedicated runtimes only. */
+  allowHostProjectCodeExecution?: boolean;
 }
 
 /**
@@ -36,19 +39,22 @@ export interface FileDiscoveryContext {
  */
 export interface DiscoveryConfig {
   baseDir: string;
+  /** Stable project or source-snapshot identity for transpiled module reuse. */
+  cacheNamespace?: string;
   toolDirs?: string[];
   agentDirs?: string[];
   skillDirs?: string[];
   resourceDirs?: string[];
   promptDirs?: string[];
   workflowDirs?: string[];
-  workDirs?: string[];
   taskDirs?: string[];
   scheduleDirs?: string[];
   webhookDirs?: string[];
   evalDirs?: string[];
   verbose?: boolean;
   fsAdapter?: FileSystemAdapter;
+  /** Explicit host-owned capability required before executable modules are imported. */
+  allowHostProjectCodeExecution?: boolean;
 }
 
 /**
@@ -61,7 +67,6 @@ export interface DiscoveryResult {
   resources: Map<string, Resource>;
   prompts: Map<string, Prompt>;
   workflows: Map<string, Workflow>;
-  works: Map<string, WorkDefinition>;
   tasks: Map<string, TaskDefinition>;
   schedules: Map<string, ScheduleDefinition>;
   webhooks: Map<string, WebhookDefinition>;
@@ -76,6 +81,6 @@ export interface DiscoveryHandler<T> {
   typeName: string;
   validate: (item: unknown) => item is T;
   getId: (item: T, file: string, dir: string) => string;
-  register: (id: string, item: T, file: string, dir: string) => T;
+  register: (id: string, item: T, file: string, dir: string, exportName?: string) => T;
   getResultMap: (result: DiscoveryResult) => Map<string, T>;
 }

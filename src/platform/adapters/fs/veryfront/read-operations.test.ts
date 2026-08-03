@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { API_CLIENT_ERROR } from "#veryfront/errors";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
@@ -130,6 +131,124 @@ describe("ReadOperations", () => {
           ]),
       );
       assertExists(readOps);
+    });
+  });
+
+  describe("readFileBytesWithinLimit", () => {
+    it("uses the exact branch reader and bypasses materialized content caches", async () => {
+      let exactCall: [string, number] | undefined;
+      let unboundedCalls = 0;
+      const readOps = createReadyReadOps(
+        createMockClient({
+          getFileContent: () => {
+            unboundedCalls++;
+            return Promise.resolve("cached materialization");
+          },
+          getFileContentBytesWithinLimit: (path: string, maximumBytes: number) => {
+            exactCall = [path, maximumBytes];
+            return Promise.resolve(new Uint8Array([1, 2, 3]));
+          },
+        }),
+        true,
+        createBranchContext(),
+        (path) => `original/${path}`,
+        () => Promise.resolve([{ path: "styles/manifest.json", content: "cached" }]),
+      );
+
+      assertEquals(
+        [...await readOps.readFileBytesWithinLimit("styles/manifest.json", 3)],
+        [1, 2, 3],
+      );
+      assertEquals(exactCall, ["original/styles/manifest.json", 3]);
+      assertEquals(unboundedCalls, 0);
+    });
+
+    it("forwards release identity to the exact published reader", async () => {
+      let exactCall: [string, number, string | undefined, string | undefined] | undefined;
+      const readOps = createReadyReadOps(
+        createMockClient({
+          getPublishedFileContentBytesWithinLimit: (
+            path: string,
+            maximumBytes: number,
+            releaseId?: string,
+            environmentName?: string,
+          ) => {
+            exactCall = [path, maximumBytes, releaseId, environmentName];
+            return Promise.resolve(new Uint8Array([4]));
+          },
+        }),
+        false,
+        createReleaseContext("release-exact"),
+      );
+
+      assertEquals([...await readOps.readFileBytesWithinLimit("manifest.json", 1)], [4]);
+      assertEquals(exactCall, ["manifest.json", 1, "release-exact", undefined]);
+    });
+
+    it("resolves extensionless candidates without inspecting materialized caches", async () => {
+      const exactCalls: Array<[string, boolean | undefined]> = [];
+      let unboundedResolverCalls = 0;
+      let fileListCalls = 0;
+      const readOps = createReadyReadOps(
+        createMockClient({
+          getFileContentBytesWithinLimit: (
+            path: string,
+            _maximumBytes: number,
+            options?: { expectedMissing?: boolean },
+          ) => {
+            exactCalls.push([path, options?.expectedMissing]);
+            if (path === "pages/home.tsx") {
+              return Promise.resolve(new Uint8Array([5]));
+            }
+            return Promise.reject(API_CLIENT_ERROR.create({ detail: "not found", status: 404 }));
+          },
+          resolveFileWithExtension: () => {
+            unboundedResolverCalls++;
+            return Promise.resolve({ path: "pages/home.tsx", content: "unbounded" });
+          },
+        }),
+        false,
+        createBranchContext(),
+        undefined,
+        () => {
+          fileListCalls++;
+          throw new Error("materialized file-list content must not be inspected");
+        },
+      );
+
+      assertEquals([...await readOps.readFileBytesWithinLimit("pages/home", 1)], [5]);
+      assertEquals(exactCalls, [["pages/home.tsx", true]]);
+      assertEquals(unboundedResolverCalls, 0);
+      assertEquals(fileListCalls, 0);
+    });
+
+    it("marks only published fallback variants as expected missing", async () => {
+      const exactCalls: Array<[string, boolean | undefined]> = [];
+      const readOps = createReadyReadOps(
+        createMockClient({
+          getPublishedFileContentBytesWithinLimit: (
+            path: string,
+            _maximumBytes: number,
+            _releaseId?: string,
+            _environmentName?: string,
+            options?: { expectedMissing?: boolean },
+          ) => {
+            exactCalls.push([path, options?.expectedMissing]);
+            if (path === "pages/home.tsx") {
+              return Promise.resolve(new Uint8Array([6]));
+            }
+            return Promise.reject(API_CLIENT_ERROR.create({ detail: "not found", status: 404 }));
+          },
+        }),
+        false,
+        createReleaseContext("release-probe"),
+      );
+
+      assertEquals([...await readOps.readFileBytesWithinLimit("pages/home.ts", 1)], [6]);
+      assertEquals(exactCalls, [
+        ["pages/home.ts", undefined],
+        ["pages/home.tsx", true],
+      ]);
     });
   });
 
@@ -767,16 +886,12 @@ describe("ReadOperations", () => {
 
       deferred.get("pages/fast.ts")?.resolve("fast ts content");
 
-      let settled: { status: "resolved"; value: string } | { status: "pending" } = {
-        status: "pending",
-      };
-      readPromise.then((value) => {
-        settled = { status: "resolved", value };
-      });
-
-      for (let i = 0; i < 10 && settled.status === "pending"; i++) {
-        await Promise.resolve();
-      }
+      const settled = await Promise.race([
+        readPromise.then((value) => ({ status: "resolved" as const, value })),
+        new Promise<{ status: "pending" }>((resolve) =>
+          setTimeout(() => resolve({ status: "pending" }), 100)
+        ),
+      ]);
 
       assertEquals(settled, { status: "resolved", value: "fast ts content" });
     });

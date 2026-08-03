@@ -3,10 +3,12 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __destroyRSCHandlerForTests,
+  __getTrackedRSCHandlerKeyCountForTests,
   __injectCacheForTests,
   __resetRSCHandlerForTests,
   getRSCHandler,
   type HandlerCache,
+  invalidateRSCHandlersForProject,
 } from "./handler-registry.ts";
 import type { RSCDevServerHandler } from "../orchestrators/index.ts";
 
@@ -22,6 +24,9 @@ function createStubCache(): HandlerCache<RSCDevServerHandler> & {
     set(key: string, value: RSCDevServerHandler) {
       entries.set(key, value);
     },
+    delete(key: string) {
+      return entries.delete(key);
+    },
     clear() {
       entries.clear();
     },
@@ -34,6 +39,53 @@ function createStubCache(): HandlerCache<RSCDevServerHandler> & {
 describe("server/services/rsc/endpoints/handler-registry", () => {
   afterEach(() => {
     __destroyRSCHandlerForTests();
+  });
+
+  it("does not inspect project dependencies until a handler is used", async () => {
+    const cache = createStubCache();
+    __injectCacheForTests(cache);
+    const originalStat = Deno.stat;
+    const projectDir = "/project/lazy-react-version";
+    let statCalls = 0;
+
+    Deno.stat = (path: string | URL) => {
+      if (String(path).includes(projectDir)) statCalls++;
+      return originalStat(path);
+    };
+
+    try {
+      getRSCHandler(projectDir);
+      await Deno.stat(".");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assertEquals(statCalls, 0);
+    } finally {
+      Deno.stat = originalStat;
+    }
+  });
+
+  describe("invalidateRSCHandlersForProject", () => {
+    it("evicts every handler variant for only the changed project", () => {
+      const cache = createStubCache();
+      __injectCacheForTests(cache);
+
+      const staleProduction = getRSCHandler("/project/a", "project-a");
+      const staleDevelopment = getRSCHandler("/project/a", "project-a", {
+        mode: "development",
+      });
+      const otherProject = getRSCHandler("/project/b", "project-b");
+
+      invalidateRSCHandlersForProject("/project/a", "project-a");
+
+      assertEquals(cache.size, 1);
+      assertEquals(getRSCHandler("/project/a", "project-a") !== staleProduction, true);
+      assertEquals(
+        getRSCHandler("/project/a", "project-a", { mode: "development" }) !==
+          staleDevelopment,
+        true,
+      );
+      assertEquals(getRSCHandler("/project/b", "project-b"), otherProject);
+    });
   });
 
   describe("getRSCHandler", () => {
@@ -61,8 +113,14 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
       __injectCacheForTests(cache);
 
       getRSCHandler("/dir", "proj-123");
-      assertEquals(cache.entries.has("proj-123"), true);
-      assertEquals(cache.entries.has("/dir"), false);
+      assertEquals(
+        cache.entries.has('["proj-123",false,"production","app",null,null]'),
+        true,
+      );
+      assertEquals(
+        cache.entries.has('["/dir",false,"production","app",null,null]'),
+        false,
+      );
     });
 
     it("should use projectDir as cache key when projectId is undefined", () => {
@@ -70,7 +128,10 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
       __injectCacheForTests(cache);
 
       getRSCHandler("/project/dir");
-      assertEquals(cache.entries.has("/project/dir"), true);
+      assertEquals(
+        cache.entries.has('["/project/dir",false,"production","app",null,null]'),
+        true,
+      );
     });
 
     it("should create separate handlers for different projects", () => {
@@ -81,6 +142,163 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
       const handler2 = getRSCHandler("/dir2");
       assertEquals(handler1 !== handler2, true);
       assertEquals(cache.size, 2);
+    });
+
+    it("separates cached handlers by trusted local mode and configured app directory", () => {
+      const cache = createStubCache();
+      __injectCacheForTests(cache);
+
+      const remote = getRSCHandler("/dir", "project", {
+        config: { directories: { app: "app" } },
+        isLocalProject: false,
+      });
+      const local = getRSCHandler("/dir", "project", {
+        config: { directories: { app: "app" } },
+        isLocalProject: true,
+      });
+      const customApp = getRSCHandler("/dir", "project", {
+        config: { directories: { app: "frontend" } },
+        isLocalProject: false,
+      });
+      const remotePreview = getRSCHandler("/dir", "project", {
+        config: { directories: { app: "app" } },
+        isLocalProject: false,
+        mode: "development",
+      });
+
+      assertEquals(remote !== local, true);
+      assertEquals(remote !== customApp, true);
+      assertEquals(remote !== remotePreview, true);
+      assertEquals(cache.size, 4);
+    });
+
+    it("separates cached handlers by configured React version", () => {
+      const cache = createStubCache();
+      __injectCacheForTests(cache);
+
+      const react18 = getRSCHandler("/dir", "project", {
+        config: { react: { version: "18.3.1" } },
+      });
+      const react19 = getRSCHandler("/dir", "project", {
+        config: { client: { cdn: { versions: { react: "19.1.1" } } } },
+      });
+
+      assertEquals(react18 !== react19, true);
+      assertEquals(cache.size, 2);
+    });
+
+    it("uses the current configured Veryfront version when only that version changes", () => {
+      const cache = createStubCache();
+      __injectCacheForTests(cache);
+      const initialConfig = {
+        client: {
+          cdn: {
+            versions: {
+              react: "19.1.1",
+              veryfront: "1.0.0",
+            },
+          },
+        },
+      };
+      const currentConfig = {
+        client: {
+          cdn: {
+            versions: {
+              react: "19.1.1",
+              veryfront: "2.0.0",
+            },
+          },
+        },
+      };
+
+      const veryfront1 = getRSCHandler("/dir", "project", {
+        config: initialConfig,
+      });
+      const veryfront2 = getRSCHandler("/dir", "project", {
+        config: currentConfig,
+      });
+      const currentSource = (veryfront2 as unknown as {
+        dependencyPinningSource: { config?: typeof currentConfig };
+      }).dependencyPinningSource;
+
+      assertEquals(veryfront1 !== veryfront2, true);
+      assertEquals(currentSource.config, currentConfig);
+      assertEquals(cache.size, 2);
+    });
+
+    it("isolates production handlers by release and content source", () => {
+      const cache = createStubCache();
+      __injectCacheForTests(cache);
+
+      const releaseA = getRSCHandler("/dir", "project", {
+        mode: "production",
+        releaseId: "release-a",
+        contentSourceId: "release-release-a",
+      });
+      const releaseB = getRSCHandler("/dir", "project", {
+        mode: "production",
+        releaseId: "release-b",
+        contentSourceId: "release-release-b",
+      });
+
+      assertEquals(releaseA !== releaseB, true);
+      assertEquals(cache.size, 2);
+    });
+
+    it("preserves the legacy handler identity for branches when pinning is disabled", () => {
+      const cache = createStubCache();
+      __injectCacheForTests(cache);
+
+      const branchA = getRSCHandler("/dir", "project", {
+        mode: "development",
+        branch: "feature-a",
+      });
+      const branchB = getRSCHandler("/dir", "project", {
+        mode: "development",
+        branch: "feature-b",
+        dependencyPinningCacheKey: "off",
+        dependencyPinningEnabled: false,
+      });
+      const branchAWithUntrustedPinKey = getRSCHandler("/dir", "project", {
+        mode: "development",
+        branch: "feature-a",
+        dependencyPinningCacheKey: "on:snapshot",
+      });
+
+      assertEquals(branchA, branchB);
+      assertEquals(branchAWithUntrustedPinKey, branchA);
+      assertEquals(cache.size, 1);
+    });
+
+    it("isolates enabled preview page handlers by canonical branch without a pin header", () => {
+      const cache = createStubCache();
+      __injectCacheForTests(cache);
+
+      const branchA = getRSCHandler("/dir", "project", {
+        mode: "development",
+        branch: "feature-a",
+        dependencyPinningEnabled: true,
+      });
+      const branchB = getRSCHandler("/dir", "project", {
+        mode: "development",
+        branch: "feature-b",
+        dependencyPinningEnabled: true,
+      });
+
+      assertEquals(branchA !== branchB, true);
+      assertEquals(cache.size, 2);
+    });
+
+    it("bounds release-source bookkeeping with the handler LRU", () => {
+      for (let index = 0; index <= 50; index++) {
+        getRSCHandler("/dir", "project", {
+          mode: "production",
+          releaseId: `release-${index}`,
+          contentSourceId: `release-source-${index}`,
+        });
+      }
+
+      assertEquals(__getTrackedRSCHandlerKeyCountForTests(), 50);
     });
   });
 

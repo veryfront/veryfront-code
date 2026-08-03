@@ -1,5 +1,12 @@
 import { getMCPRegistry, getMCPStats } from "#veryfront/mcp";
-import { REQUEST_ERROR } from "#veryfront/errors";
+import {
+  ERROR_CATALOG,
+  ERROR_REGISTRY,
+  type ErrorCategory,
+  type ErrorSlug,
+  getErrorMessage,
+  REQUEST_ERROR,
+} from "#veryfront/errors";
 import { executeTool, isToolVisibleTo, toolRegistry } from "#veryfront/tool";
 import { resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
@@ -10,20 +17,17 @@ import {
 } from "#veryfront/provider/model-registry.ts";
 import { WorkflowClient } from "#veryfront/workflow";
 import { workflowRegistry } from "#veryfront/workflow/registry.ts";
-import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
+import { getErrorCollector, getLogBuffer, metrics } from "#veryfront/observability";
 import {
   checkMemoryPressure,
   getCacheStats,
   getHeapStats,
 } from "#veryfront/utils/memory/profiler.ts";
-import { ERROR_CATALOG } from "#veryfront/errors/catalog/index.ts";
-import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { TransformStage } from "#veryfront/transforms/pipeline/types.ts";
 import { isRSCEnabled } from "#veryfront/utils/feature-flags.ts";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
-import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
-import { validatePathSync } from "#veryfront/security";
+import { validatePath } from "#veryfront/security";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { ReloadNotifier } from "../../../reload-notifier.ts";
 import type { HandlerContext } from "../../types.ts";
 import { errorResponse, jsonResponse } from "../http-helpers.ts";
@@ -33,7 +37,7 @@ const WORKFLOW_EXECUTION_TIMEOUT_MS = 30_000;
 /**
  * Validate a relative path against the project directory.
  *
- * Uses `validatePathSync` in strict mode (rejects absolute paths, null bytes,
+ * Uses physical strict path validation (rejects absolute paths, null bytes,
  * `..` traversal, and any resolved path that escapes `baseDir`).
  *
  * Note: `searchParams.get()` already percent-decodes; no extra decoding needed
@@ -41,11 +45,16 @@ const WORKFLOW_EXECUTION_TIMEOUT_MS = 30_000;
  *
  * Returns the canonicalized absolute path on success, or `null` when invalid.
  */
-function validateRelativePath(path: string, projectDir: string): string | null {
-  const result = validatePathSync(path, {
+async function validateRelativePath(
+  path: string,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+): Promise<string | null> {
+  const result = await validatePath(path, {
     baseDir: projectDir,
     allowAbsolute: false,
     level: "strict",
+    adapter,
   });
   if (!result.valid || !result.canonicalPath) return null;
   return result.canonicalPath;
@@ -400,7 +409,7 @@ async function handleListFiles(req: Request, ctx: HandlerContext): Promise<Respo
   if (relativePath === "") {
     fullPath = projectDir;
   } else {
-    const canonical = validateRelativePath(relativePath, projectDir);
+    const canonical = await validateRelativePath(relativePath, projectDir, adapter);
     if (canonical === null) return errorResponse("Invalid path", 400);
     fullPath = canonical;
   }
@@ -438,7 +447,7 @@ async function handleReadFileContent(req: Request, ctx: HandlerContext): Promise
   const relativePath = new URL(req.url).searchParams.get("path") ?? "";
   if (!relativePath) return errorResponse("path parameter is required", 400);
 
-  const canonical = validateRelativePath(relativePath, projectDir);
+  const canonical = await validateRelativePath(relativePath, projectDir, adapter);
   if (canonical === null) return errorResponse("Invalid path", 400);
 
   try {
@@ -542,25 +551,29 @@ function getStageDescription(name: string): string {
   return descriptions[name] ?? name;
 }
 
-function getCategoryFromCode(code: string): string {
-  const num = parseInt(code.replace("VF", ""), 10);
-  if (num < 100) return "config";
-  if (num < 200) return "build";
-  if (num < 300) return "runtime";
-  if (num < 400) return "route";
-  if (num < 500) return "module";
-  if (num < 600) return "server";
-  if (num < 700) return "rsc";
-  if (num < 800) return "dev";
-  if (num < 900) return "deployment";
-  return "general";
+const DASHBOARD_ERROR_CATEGORIES = {
+  CONFIG: "config",
+  BUILD: "build",
+  RUNTIME: "runtime",
+  ROUTE: "route",
+  MODULE: "module",
+  SERVER: "server",
+  BOUNDARY: "rsc",
+  DEV: "dev",
+  DEPLOY: "deployment",
+  AGENT: "agent",
+  GENERAL: "general",
+} as const satisfies Record<ErrorCategory, string>;
+
+function getCategoryFromSlug(slug: ErrorSlug): string {
+  return DASHBOARD_ERROR_CATEGORIES[ERROR_REGISTRY[slug].category];
 }
 
 function handleGetErrors(): Response {
   const errors = Object.entries(ERROR_CATALOG).map(([code, solution]) => ({
     code,
     title: solution.title,
-    category: getCategoryFromCode(code),
+    category: getCategoryFromSlug(solution.slug),
     message: solution.message,
     steps: solution.steps,
     docsUrl: solution.docs,
@@ -584,9 +597,7 @@ function handleLiveErrors(req: Request): Response {
   const type = url.searchParams.get("type") ?? undefined;
   const collector = getErrorCollector();
 
-  const filter = type
-    ? { type: type as import("#veryfront/observability/error-collector.ts").ErrorType }
-    : undefined;
+  const filter = type ? { type: type as import("#veryfront/observability").ErrorType } : undefined;
 
   const errors = collector.getAll(filter);
   return jsonResponse({
@@ -607,7 +618,7 @@ function handleLiveLogs(req: Request): Response {
 
   const buffer = getLogBuffer();
   const entries = buffer.query({
-    level: level as import("#veryfront/observability/log-buffer.ts").LogLevel | undefined,
+    level: level as import("#veryfront/observability").LogLevel | undefined,
     source,
     pattern,
     limit: limit ? parseInt(limit, 10) : undefined,

@@ -24,13 +24,16 @@
 
 export { discoverSourceTriggers } from "./discovery.ts";
 export { runTriggerTarget } from "./local-runner.ts";
+export { isTriggerTarget } from "./target.ts";
+export { isTriggerId } from "./validation.ts";
 export type {
   SourceTriggerDiscoveryError,
   SourceTriggerDiscoveryErrorCode,
+  SourceTriggerDiscoveryOptions,
   SourceTriggerDiscoveryResult,
   SourceTriggerKind,
   TriggerDefinitionWithId,
   TriggerDiscoveryOptions,
 } from "./discovery.ts";
 export type { RunTriggerTargetOptions, TriggerTargetRunResult } from "./local-runner.ts";
-export type { TriggerTarget } from "./target.ts";
+export type { TriggerTarget, TriggerTargetKind } from "./target.ts";

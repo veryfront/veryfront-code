@@ -8,9 +8,9 @@ import {
   DocsPropsTable,
   DocsSection,
 } from "../../.storybook/docs";
-import { Badge } from "../../../src/react/components/chat/ui/index.ts";
+import { Badge } from "../../../src/react/components/ui/index.ts";
 
-const importCode = `import { Badge } from "veryfront/chat/ui"`;
+const importCode = `import { Badge } from "veryfront/ui"`;
 
 function BadgeDocsPage() {
   return (
@@ -89,7 +89,7 @@ function BadgeDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/Badge",
+  title: "UI/Badge",
   component: Badge,
   tags: ["autodocs"],
   parameters: {

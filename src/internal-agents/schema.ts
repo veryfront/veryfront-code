@@ -15,11 +15,12 @@ import {
 import { stripLeadingEmptyObjectPlaceholder } from "#veryfront/agent/streaming/data-stream.ts";
 import { getRuntimeAgentMarkdownDefinitionSchema } from "#veryfront/agent/runtime/agent-definition.ts";
 import {
-  buildRuntimeAgentControlPlaneStreamRequestFromInvocation,
   getRuntimeAgentCredentialsSchema,
-  getRuntimeAgentRunInvocationSchema,
   getRuntimeAgentSourceContextSchema,
+  getRuntimeAgentTargetKindSchema,
   type RuntimeAgentSourceContext,
+  validateRuntimeAgentSourceTargetBinding,
+  validateRuntimeAgentTargetSelection,
 } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
@@ -75,7 +76,10 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
       (value) => isWithinJsonSizeLimit(value, 65_536),
       { message: "context must be less than 64 KB total" },
     ),
-    agentSource: getRuntimeAgentSourceContextSchema().optional(),
+    runtimeTargetKind: getRuntimeAgentTargetKindSchema(),
+    runtimeTargetEnvironmentId: v.string().uuid().nullable().optional(),
+    runtimeTargetBranchId: v.string().uuid().nullable().optional(),
+    agentSource: getRuntimeAgentSourceContextSchema(),
     agentConfig: getRuntimeAgentMarkdownDefinitionSchema().optional().refine(
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_AGENT_CONFIG_BYTES),
       { message: "agentConfig must be less than 64 KB" },
@@ -86,6 +90,9 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
       { message: "forwardedProps must be less than 192 KB" },
     ),
   }).strict().superRefine((input, ctx) => {
+    validateRuntimeAgentTargetSelection(input, ctx);
+    validateRuntimeAgentSourceTargetBinding(input, ctx);
+
     if (input.agentConfig && input.agentConfig.id !== input.agentId) {
       ctx.addIssue({
         code: "custom",
@@ -93,25 +100,52 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
         path: ["agentConfig", "id"],
       });
     }
+
+    const maxOutputTokens = input.forwardedProps?.maxOutputTokens;
+    if (
+      input.forwardedProps &&
+      Object.hasOwn(input.forwardedProps, "maxOutputTokens") &&
+      (
+        typeof maxOutputTokens !== "number" ||
+        !Number.isSafeInteger(maxOutputTokens) ||
+        maxOutputTokens <= 0
+      )
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "forwardedProps.maxOutputTokens must be a positive safe integer",
+        path: ["forwardedProps", "maxOutputTokens"],
+      });
+    }
+
+    const toolNames = new Set<string>();
+    for (const [index, tool] of input.tools.entries()) {
+      if (toolNames.has(tool.name)) {
+        ctx.addIssue({
+          code: "custom",
+          message: `Injected tool name ${tool.name} must be unique`,
+          path: ["tools", index, "name"],
+        });
+      }
+      toolNames.add(tool.name);
+    }
   })
 );
 
-export const getInternalAgentStreamRequestSchema = defineSchema((v) => {
-  const controlPlaneStreamRequestSchema = getInternalAgentControlPlaneStreamRequestSchema();
-
-  return v.union([
-    controlPlaneStreamRequestSchema,
-    getRuntimeAgentRunInvocationSchema()
-      .strict()
-      .transform(buildRuntimeAgentControlPlaneStreamRequestFromInvocation)
-      .pipe(controlPlaneStreamRequestSchema),
-  ]);
-});
+export const getInternalAgentStreamRequestSchema = getInternalAgentControlPlaneStreamRequestSchema;
 
 type RuntimeMessage = AgUiRuntimeMessage;
 type InternalAgentCompatibilityMessage = InferSchema<
   ReturnType<typeof getInternalAgentCompatibilityMessageSchema>
 >;
+type RuntimeAttachment = {
+  type: "image" | "file";
+  url: string;
+  mediaType: string;
+  uploadId?: string;
+  uploadPath?: string;
+  filename?: string;
+};
 
 function isRecordObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -146,6 +180,10 @@ function extractToolArgs(
         return parsed;
       }
     } catch {
+      // This converter only replays persisted thread history, so a tool call
+      // truncated by an interrupted stream is already in the record. Throwing
+      // here would poison the thread permanently: every later turn would fail
+      // during request conversion, before the run even starts.
       return {};
     }
   }
@@ -234,6 +272,34 @@ function stringifyToolResult(result: unknown): string {
   }
 }
 
+function getRuntimeAttachment(
+  part: Record<string, unknown>,
+): RuntimeAttachment | null {
+  const type = getPartString(part, "type");
+  if (type !== "image" && type !== "file") {
+    return null;
+  }
+
+  const url = getPartString(part, "url");
+  const mediaType = getPartString(part, "mediaType", "media_type");
+  if (!url || !mediaType) {
+    return null;
+  }
+
+  const uploadId = getPartString(part, "uploadId", "upload_id");
+  const uploadPath = getPartString(part, "uploadPath", "upload_path");
+  const filename = getPartString(part, "filename");
+
+  return {
+    type,
+    url,
+    mediaType,
+    ...(uploadId ? { uploadId } : {}),
+    ...(uploadPath ? { uploadPath } : {}),
+    ...(filename ? { filename } : {}),
+  };
+}
+
 function toRuntimeMessage(
   message: RuntimeMessage | InternalAgentCompatibilityMessage,
 ): RuntimeMessage {
@@ -249,6 +315,11 @@ function toRuntimeMessage(
     .filter((part) => part.type === "text" && typeof part.text === "string")
     .map((part) => part.text as string)
     .join("\n");
+  const attachments = (message.parts as ReadonlyArray<Record<string, unknown>>)
+    .flatMap((part) => {
+      const attachment = getRuntimeAttachment(part);
+      return attachment ? [attachment] : [];
+    });
 
   // Use the conditional-spread pattern (omitting keys entirely when not
   // present) to preserve the pre-migration runtime semantics. Cast the
@@ -272,6 +343,7 @@ function toRuntimeMessage(
         id: message.id,
         role: "user",
         content: textContent,
+        ...(attachments.length ? { attachments } : {}),
         ...sharedFields,
       } as RuntimeMessage;
     case "assistant": {

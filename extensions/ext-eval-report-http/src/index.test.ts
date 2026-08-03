@@ -4,7 +4,7 @@
  * @module extensions/ext-eval-report-http/test
  */
 
-import { assertEquals, assertExists } from "@std/assert";
+import { assertEquals, assertExists, assertStringIncludes } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import type { ExtensionContext } from "veryfront/extensions";
 import {
@@ -21,10 +21,13 @@ const noopLogger = {
   error() {},
 } satisfies ExtensionContext["logger"];
 
-function createContext(registry: EvalReportExporterRegistry): ExtensionContext {
+function createContext(
+  registry: EvalReportExporterRegistry,
+  logger: ExtensionContext["logger"] = noopLogger,
+): ExtensionContext {
   return {
     config: {},
-    logger: noopLogger,
+    logger,
     provide() {},
     get: <T>(name: string) => name === EvalReportExporterRegistryName ? registry as T : undefined,
     require: <T>(name: string) => {
@@ -153,6 +156,55 @@ describe("ext-eval-report-http", () => {
     });
   });
 
+  it("reports HTTP failures without throwing from registry export", async () => {
+    const registry = createEvalReportExporterRegistry();
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+
+    const extension = factory({
+      exporters: [
+        {
+          id: "langsmith-proxy",
+          url: "https://evals.example.test/langsmith",
+        },
+      ],
+      fetch: (input: string | URL | Request, init?: RequestInit) => {
+        requests.push({ url: String(input), init: init ?? {} });
+        return Promise.resolve(new Response("gateway unavailable", { status: 503 }));
+      },
+    });
+
+    await extension.setup?.(createContext(registry));
+
+    const results = await registry.export(
+      {
+        kind: "eval-report",
+        definitionId: "eval:smoke",
+        targetKind: "agent",
+        target: "agent:researcher",
+        runId: "evalrun_1",
+        startedAt: "2026-06-21T00:00:00.000Z",
+        endedAt: "2026-06-21T00:00:01.000Z",
+        records: [],
+        summary: {
+          records: 0,
+          passed: 0,
+          failed: 0,
+          passRate: 1,
+          metrics: [],
+        },
+      },
+      { redaction: {} },
+    );
+
+    assertEquals(requests.length, 1);
+    assertEquals(results[0]?.exporterId, "langsmith-proxy");
+    assertEquals(results[0]?.ok, false);
+    if (results[0]?.ok === false) {
+      assertStringIncludes(results[0].error, "HTTP 503");
+      assertStringIncludes(results[0].error, "gateway unavailable");
+    }
+  });
+
   it("unregisters exporters during teardown", async () => {
     const registry = createEvalReportExporterRegistry();
     const extension = factory({
@@ -169,9 +221,20 @@ describe("ext-eval-report-http", () => {
   it("does not register an exporter when no URL is configured", async () => {
     const registry = createEvalReportExporterRegistry();
     const extension = factory({ exporters: [{ id: "missing-url" }] });
+    const debug: string[] = [];
+    const info: string[] = [];
 
-    await extension.setup?.(createContext(registry));
+    await extension.setup?.(
+      createContext(registry, {
+        debug: (message) => debug.push(message),
+        info: (message) => info.push(message),
+        warn() {},
+        error() {},
+      }),
+    );
 
     assertEquals(registry.list(), []);
+    assertEquals(info, []);
+    assertEquals(debug.some((message) => message.includes("no URL configured")), true);
   });
 });

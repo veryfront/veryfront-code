@@ -10,6 +10,7 @@ function createMockCtx(): HandlerContext {
     projectDir: "/project",
     adapter: {
       fs: {
+        symlinkSemantics: "none",
         readDir: async function* () {},
         readFile: async () => new Uint8Array(),
       },
@@ -25,6 +26,7 @@ function createMockCtxWithFs(fsOverrides: Record<string, unknown> = {}): Handler
     ...createMockCtx(),
     adapter: {
       fs: {
+        symlinkSemantics: "none",
         readDir: async function* () {},
         readFile: async () => "file content",
         ...fsOverrides,
@@ -213,6 +215,28 @@ describe("Dashboard API - GET endpoints", () => {
     assertEquals("errors" in body, true);
     assertEquals("categories" in body, true);
     assertEquals("count" in body, true);
+    assertEquals(body.count, 65);
+    assertEquals(body.categories, {
+      config: 7,
+      build: 8,
+      runtime: 7,
+      route: 6,
+      server: 8,
+      module: 8,
+      dev: 5,
+      rsc: 6,
+      deployment: 4,
+      general: 6,
+    });
+
+    const errorsByCode = new Map<string, { code: string; category: string }>(
+      body.errors.map((error: { code: string; category: string }) => [error.code, error]),
+    );
+    assertEquals(errorsByCode.get("config-not-found")?.category, "config");
+    assertEquals(errorsByCode.get("cache-path-mismatch")?.category, "server");
+    assertEquals(errorsByCode.get("hmr-error")?.category, "dev");
+    assertEquals(errorsByCode.get("client-boundary-violation")?.category, "rsc");
+    assertEquals(errorsByCode.get("deployment-error")?.category, "deployment");
   });
 
   it("/_dev/api/config returns feature flags and env", async () => {

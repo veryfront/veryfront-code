@@ -1,8 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertMatch, assertRejects, assertThrows } from "@std/assert";
 import { join } from "#veryfront/compat/path/index.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { logger } from "#veryfront/utils";
 import { DiskCacheBackend } from "./disk.ts";
+import { CacheValueTooLargeError } from "../bounded-read.ts";
 import {
   runCacheInvariantTests,
   testConcurrentAccess,
@@ -15,24 +17,42 @@ function makeBackend(): DiskCacheBackend {
   return new DiskCacheBackend(TEST_DIR);
 }
 
-function captureDebugLogs(): {
+function captureLogs(level: "debug" | "warn"): {
   entries: Array<{ message: string; args: unknown[] }>;
   restore: () => void;
 } {
   const entries: Array<{ message: string; args: unknown[] }> = [];
   const target = logger as unknown as {
-    debug: (message: string, ...args: unknown[]) => void;
+    [key in "debug" | "warn"]: (message: string, ...args: unknown[]) => void;
   };
-  const original = target.debug;
-  target.debug = (message: string, ...args: unknown[]) => {
+  const original = target[level];
+  target[level] = (message: string, ...args: unknown[]) => {
     entries.push({ message, args });
   };
   return {
     entries,
     restore: () => {
-      target.debug = original;
+      target[level] = original;
     },
   };
+}
+
+function captureDebugLogs() {
+  return captureLogs("debug");
+}
+
+async function cacheFileNames(cacheDir: string): Promise<string[]> {
+  const names: string[] = [];
+  for await (const entry of Deno.readDir(cacheDir)) {
+    if (entry.isFile && entry.name.endsWith(".vfcache")) names.push(entry.name);
+  }
+  return names;
+}
+
+async function onlyCacheFileName(cacheDir: string): Promise<string> {
+  const names = await cacheFileNames(cacheDir);
+  assertEquals(names.length, 1);
+  return names[0]!;
 }
 
 /** Adapter: wraps DiskCacheBackend for the MinimalCache invariant test interface */
@@ -77,11 +97,8 @@ Deno.test("DiskCacheBackend", async (t) => {
     const cacheDir = join(isolatedDir, "veryfront-files");
     let wroteInvalidEnvelope = false;
     for await (const file of Deno.readDir(cacheDir)) {
-      if (file.isFile && file.name.endsWith(".json")) {
-        await Deno.writeTextFile(
-          join(cacheDir, file.name),
-          JSON.stringify({ key, value: { nested: true } }),
-        );
+      if (file.isFile && file.name.endsWith(".vfcache")) {
+        await Deno.writeFile(join(cacheDir, file.name), new Uint8Array([1, 2, 3]));
         wroteInvalidEnvelope = true;
         break;
       }
@@ -125,14 +142,101 @@ Deno.test("DiskCacheBackend", async (t) => {
     const debugCapture = captureDebugLogs();
     try {
       assertEquals(await backend.get(key), null);
-      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 5));
 
       assertEquals(debugCapture.entries.length, 1);
       assertEquals(debugCapture.entries[0]?.message, "[DiskCache] Expired entry cleanup failed");
+      // Without something identifying the entry the log says only that some
+      // cleanup failed, which is not diagnosable against a cache holding
+      // thousands of entries. The digest identifies it without reproducing the
+      // key, which for a user KV entry can embed a token.
+      const context = debugCapture.entries[0]?.args[0] as Record<string, unknown> | undefined;
+      assertMatch(String(context?.keyDigest), /^[0-9a-f]{12}$/);
+      assertEquals(JSON.stringify(context).includes(key), false);
+    } finally {
+      debugCapture.restore();
+      (backend as unknown as { del: (entryKey: string) => Promise<void> }).del = originalDel;
+    }
+  });
+
+  await t.step("logs both keys when a filename digest collides", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "digest-collision");
+    const backend = new DiskCacheBackend(isolatedDir);
+    const cacheDir = join(isolatedDir, "veryfront-files");
+    const storedKey = "collision-stored-key";
+    const requestedKey = "collision-requested-key";
+
+    await backend.set(storedKey, "stored-value");
+    const storedFile = await onlyCacheFileName(cacheDir);
+    const storedBytes = await Deno.readFile(join(cacheDir, storedFile));
+
+    // Force the collision the digest makes astronomically unlikely: park the
+    // envelope written for one key under the other key's filename.
+    await backend.set(requestedKey, "requested-value");
+    const requestedFile = (await cacheFileNames(cacheDir)).find((name) => name !== storedFile);
+    assertEquals(typeof requestedFile, "string");
+    await Deno.writeFile(join(cacheDir, requestedFile!), storedBytes);
+
+    const warnCapture = captureLogs("warn");
+    try {
+      assertEquals(await backend.get(requestedKey), null);
+
+      assertEquals(warnCapture.entries.length, 1);
       assertEquals(
-        (debugCapture.entries[0]?.args[0] as Record<string, unknown> | undefined)?.key,
-        key,
+        warnCapture.entries[0]?.message,
+        "[DiskCache] Filename digest collision; stored key does not match",
       );
+      const context = warnCapture.entries[0]?.args[0] as Record<string, unknown> | undefined;
+      // Digests keep the two entries distinguishable — and equal digests would
+      // mean a genuine SHA-256 collision rather than an overwritten file —
+      // without reproducing key text that can embed a token.
+      assertMatch(String(context?.requestedKeyDigest), /^[0-9a-f]{12}$/);
+      assertMatch(String(context?.storedKeyDigest), /^[0-9a-f]{12}$/);
+      assertEquals(context?.requestedKeyDigest === context?.storedKeyDigest, false);
+      const payload = JSON.stringify(context);
+      assertEquals(payload.includes(requestedKey), false);
+      assertEquals(payload.includes(storedKey), false);
+    } finally {
+      warnCapture.restore();
+    }
+  });
+
+  await t.step("derives the logged key digest from the entry's own filename", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "digest-correlation");
+    const backend = new DiskCacheBackend(isolatedDir);
+    const cacheDir = join(isolatedDir, "veryfront-files");
+    const key = "digest-correlation-key";
+
+    await backend.set(key, "value", 0);
+    const fileName = await onlyCacheFileName(cacheDir);
+    await new Promise((r) => setTimeout(r, 5));
+
+    const originalDel = backend.del.bind(backend);
+    (backend as unknown as { del: (entryKey: string) => Promise<void> }).del = () =>
+      Promise.reject(new Error("delete rejected"));
+
+    const debugCapture = captureDebugLogs();
+    try {
+      assertEquals(await backend.get(key), null);
+      await waitFor(
+        () =>
+          debugCapture.entries.some((entry) =>
+            entry.message === "[DiskCache] Expired entry cleanup failed"
+          ),
+        {
+          interval: 1,
+          timeout: 1_000,
+          message: "expired-entry cleanup diagnostic was not emitted",
+        },
+      );
+
+      // The digest is the prefix of the SHA-256 that names the file, so an
+      // operator can still walk from a log line to the entry on disk.
+      const diagnostic = debugCapture.entries.find((entry) =>
+        entry.message === "[DiskCache] Expired entry cleanup failed"
+      );
+      const context = diagnostic?.args[0] as Record<string, unknown> | undefined;
+      assertEquals(fileName.startsWith(String(context?.keyDigest)), true);
     } finally {
       debugCapture.restore();
       (backend as unknown as { del: (entryKey: string) => Promise<void> }).del = originalDel;
@@ -143,6 +247,9 @@ Deno.test("DiskCacheBackend", async (t) => {
     const backend = makeBackend();
     await backend.set("ttl-long", "val", 3600);
     assertEquals(await backend.get("ttl-long"), "val");
+    const remaining = await backend.getRemainingTtlSeconds("ttl-long");
+    assertEquals(typeof remaining, "number");
+    assertEquals(remaining! > 0 && remaining! <= 3600, true);
   });
 
   await t.step("short TTL expires after delay", async () => {
@@ -163,6 +270,34 @@ Deno.test("DiskCacheBackend", async (t) => {
     const backend = makeBackend();
     await backend.set("a/b/c", "nested");
     assertEquals(await backend.get("a/b/c"), "nested");
+  });
+
+  await t.step("encodes cache namespaces instead of treating them as paths", async () => {
+    const isolatedDir = Deno.makeTempDirSync();
+    const backend = new DiskCacheBackend(isolatedDir, "../escape");
+    await backend.set("key", "value");
+
+    assertEquals(await backend.get("key"), "value");
+    const namespaces = [...Deno.readDirSync(join(isolatedDir, "veryfront-files"))];
+    assertEquals(namespaces.length, 1);
+    assertEquals(namespaces[0]?.isDirectory, true);
+    assertEquals(namespaces[0]?.name.includes("/"), false);
+    assertEquals(await Deno.stat(join(isolatedDir, "veryfront-files")).then(() => true), true);
+    await assertRejects(
+      () => Deno.stat(join(isolatedDir, "escape")),
+      Deno.errors.NotFound,
+    );
+  });
+
+  await t.step("rejects unsupported constructor limits and namespace lengths", () => {
+    assertThrows(
+      () => new DiskCacheBackend(TEST_DIR, undefined, 0),
+      RangeError,
+    );
+    assertThrows(
+      () => new DiskCacheBackend(TEST_DIR, "/".repeat(100)),
+      TypeError,
+    );
   });
 
   await t.step("keys with special characters", async () => {
@@ -188,28 +323,39 @@ Deno.test("DiskCacheBackend", async (t) => {
   await t.step("delByPattern skips invalid cache envelope fields", async () => {
     const isolatedDir = join(Deno.makeTempDirSync(), "invalid-envelope-delbypattern");
     const backend = new DiskCacheBackend(isolatedDir);
-    await backend.set("user:valid", "value");
     await backend.set("user:invalid", "value");
 
     const cacheDir = join(isolatedDir, "veryfront-files");
     for await (const file of Deno.readDir(cacheDir)) {
-      if (!file.isFile || !file.name.endsWith(".json")) continue;
-      const filePath = join(cacheDir, file.name);
-      const raw = await Deno.readTextFile(filePath);
-      const parsed = JSON.parse(raw) as { key?: string };
-      if (parsed.key === "user:invalid") {
-        await Deno.writeTextFile(
-          filePath,
-          JSON.stringify({ key: "user:invalid", value: { nested: true } }),
-        );
-        break;
-      }
+      if (!file.isFile || !file.name.endsWith(".vfcache")) continue;
+      await Deno.writeFile(join(cacheDir, file.name), new Uint8Array([1, 2, 3]));
+      break;
     }
+    await backend.set("user:valid", "value");
 
     const deleted = await backend.delByPattern("user:*");
     assertEquals(deleted, 1);
     assertEquals(await backend.get("user:valid"), null);
     assertEquals(await backend.get("user:invalid"), null);
+  });
+
+  await t.step("does not follow cache-entry symlinks", async () => {
+    const isolatedDir = await Deno.makeTempDir({ prefix: "disk-cache-symlink-" });
+    const outsidePath = join(isolatedDir, "outside.txt");
+    const backend = new DiskCacheBackend(isolatedDir);
+    await backend.set("linked", "safe-value");
+    await Deno.writeTextFile(outsidePath, "outside-value");
+
+    const cacheDir = join(isolatedDir, "veryfront-files");
+    for await (const file of Deno.readDir(cacheDir)) {
+      if (!file.isFile || !file.name.endsWith(".vfcache")) continue;
+      const cachePath = join(cacheDir, file.name);
+      await Deno.remove(cachePath);
+      await Deno.symlink(outsidePath, cachePath);
+      break;
+    }
+
+    assertEquals(await backend.get("linked"), null);
   });
 
   await t.step("overwrite existing key", async () => {
@@ -247,6 +393,86 @@ Deno.test("DiskCacheBackend", async (t) => {
     const largeValue = "x".repeat(100_000);
     await backend.set("large", largeValue);
     assertEquals(await backend.get("large"), largeValue);
+  });
+
+  await t.step("bounded reads preserve valid oversized entries", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "bounded-value-read-test");
+    const backend = new DiskCacheBackend(isolatedDir, undefined, 16);
+    await backend.set("unicode", "é");
+
+    assertEquals(await backend.getWithinLimit("unicode", 2), "é");
+    await assertRejects(
+      () => backend.getWithinLimit("unicode", 1),
+      CacheValueTooLargeError,
+    );
+    assertEquals(await backend.get("unicode"), "é");
+  });
+
+  await t.step("bounded reads keep cache infrastructure failures fail-soft", async () => {
+    const backend = makeBackend();
+    (backend as unknown as { mutationTail: Promise<void> }).mutationTail = Promise.reject(
+      new Error("simulated cache queue failure"),
+    );
+    assertEquals(await backend.getWithinLimit("key", 1), null);
+  });
+
+  await t.step("framed values round-trip control characters and lone surrogates", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "framed-string-roundtrip-test");
+    const backend = new DiskCacheBackend(isolatedDir, undefined, 32);
+    const controlValue = "\0".repeat(8);
+    const surrogateValue = "\ud800x\udc00y😀";
+
+    await backend.set("control", controlValue);
+    await backend.set("surrogate", surrogateValue);
+    assertEquals(await backend.get("control"), controlValue);
+    assertEquals(await backend.getWithinLimit("surrogate", 12), surrogateValue);
+    await assertRejects(
+      () => backend.getWithinLimit("surrogate", 11),
+      CacheValueTooLargeError,
+    );
+  });
+
+  await t.step("bounded reads classify a stored-key mismatch before value overflow", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "bounded-collision-read-test");
+    const backend = new DiskCacheBackend(isolatedDir, undefined, 32);
+    const cacheDir = join(isolatedDir, "veryfront-files");
+    await backend.set("requested-key", "a");
+    const requestedFile = [...Deno.readDirSync(cacheDir)]
+      .find((entry) => entry.name.endsWith(".vfcache"))?.name;
+    assertEquals(typeof requestedFile, "string");
+    await backend.del("requested-key");
+
+    await backend.set("stored-key", "oversized");
+    const storedFile = [...Deno.readDirSync(cacheDir)]
+      .find((entry) => entry.name.endsWith(".vfcache"))?.name;
+    assertEquals(typeof storedFile, "string");
+    await Deno.rename(
+      join(cacheDir, storedFile as string),
+      join(cacheDir, requestedFile as string),
+    );
+
+    assertEquals(await backend.getWithinLimit("requested-key", 1), null);
+  });
+
+  await t.step("expired values are misses before bounded overflow", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "expired-bounded-read-test");
+    const backend = new DiskCacheBackend(isolatedDir, undefined, 32);
+    await backend.set("expired", "oversized", 0);
+    await new Promise((resolve) => setTimeout(resolve, 2));
+
+    assertEquals(await backend.getWithinLimit("expired", 1), null);
+  });
+
+  await t.step("oversized writes do not replace a valid entry", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "oversized-write-test");
+    const backend = new DiskCacheBackend(isolatedDir, undefined, 8);
+    await backend.set("bounded", "old");
+
+    await assertRejects(
+      () => backend.set("bounded", "x".repeat(9)),
+      CacheValueTooLargeError,
+    );
+    assertEquals(await backend.get("bounded"), "old");
   });
 
   await t.step("delByPattern with no matching keys returns 0", async () => {

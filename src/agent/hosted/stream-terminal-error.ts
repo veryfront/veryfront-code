@@ -39,6 +39,7 @@ function getHostedStreamTimeoutTerminalError(error: unknown): HostedStreamTermin
   const normalized = message.toLowerCase();
   const isTimeout = normalized.includes("stream timed out") ||
     normalized.includes("chat stream idle timeout") ||
+    normalized.includes("chat stream bootstrap timeout") ||
     normalized.includes("stream timeout");
 
   if (!isTimeout) {

@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_models",
+      "id": "fireworks-ai__list_models",
       "name": "List Models",
       "description": "List the models available on Fireworks AI",
       "requiresWrite": false,
@@ -49,7 +49,7 @@
       }
     },
     {
-      "id": "create_chat_completion",
+      "id": "fireworks-ai__create_chat_completion",
       "name": "Create Chat Completion",
       "description": "Generate a chat completion from a list of messages",
       "requiresWrite": true,
@@ -79,7 +79,7 @@
       }
     },
     {
-      "id": "create_completion",
+      "id": "fireworks-ai__create_completion",
       "name": "Create Completion",
       "description": "Generate a text completion from a raw prompt",
       "requiresWrite": true,
@@ -109,7 +109,7 @@
       }
     },
     {
-      "id": "create_embedding",
+      "id": "fireworks-ai__create_embedding",
       "name": "Create Embedding",
       "description": "Create an embedding vector for input text",
       "requiresWrite": true,

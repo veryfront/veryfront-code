@@ -1,4 +1,5 @@
 import { isRecord } from "#veryfront/chat/conversation.ts";
+import { toRenderableCustomChunk } from "#veryfront/chat/ag-ui-helpers.ts";
 import { safeJsonParse } from "#veryfront/chat/provider-errors.ts";
 import type { AgUiRuntimeStreamEvent } from "../ag-ui/browser-encoder.ts";
 import {
@@ -6,11 +7,12 @@ import {
   parseToolInputObject,
   stripLeadingEmptyObjectPlaceholder,
 } from "./data-stream.ts";
-import type { ForkPart, ForkRuntimeStep, ForkRuntimeStreamLogger } from "./fork-runtime-stream.ts";
+import type { ForkPart, ForkRuntimeStep, ForkRuntimeStreamLogger } from "./fork-runtime-types.ts";
 
 type ForkToolCallPart = Extract<ForkPart, { type: "tool-call" }>;
 type ForkToolResultPart = Extract<ForkPart, { type: "tool-result" }>;
 type ForkToolErrorPart = Extract<ForkPart, { type: "tool-error" }>;
+type ForkSourcePart = Extract<ForkPart, { type: "source" }>;
 
 export interface RecoveredToolObservation {
   sawInputStart: boolean;
@@ -159,6 +161,58 @@ function buildToolCallPartIfNeeded(
   ];
 }
 
+function mapRenderableSourceToForkPart(value: unknown): ForkSourcePart | null {
+  const chunk = toRenderableCustomChunk(value);
+  if (!chunk) {
+    return null;
+  }
+
+  if (chunk.type === "source-url") {
+    return {
+      type: "source",
+      id: chunk.sourceId,
+      sourceType: "url",
+      url: chunk.url,
+      ...(chunk.title ? { title: chunk.title } : {}),
+    };
+  }
+
+  if (chunk.type === "source-document") {
+    return {
+      type: "source",
+      id: chunk.sourceId,
+      sourceType: "document",
+      mediaType: chunk.mediaType,
+      title: chunk.title,
+      ...(chunk.filename ? { filename: chunk.filename } : {}),
+    };
+  }
+
+  return null;
+}
+
+function mapWrappedSourceDataToForkPart(event: AgUiRuntimeStreamEvent): ForkSourcePart | null {
+  if (!isRecord(event.data)) {
+    return null;
+  }
+
+  const name = event.data.name;
+  if (name !== "source-document" && name !== "source-url") {
+    return null;
+  }
+
+  const sourcePart = mapRenderableSourceToForkPart(event.data.value);
+  if (
+    !sourcePart ||
+    (name === "source-document" && sourcePart.sourceType !== "document") ||
+    (name === "source-url" && sourcePart.sourceType !== "url")
+  ) {
+    return null;
+  }
+
+  return sourcePart;
+}
+
 /** State for create fork runtime stream mapping. */
 export function createForkRuntimeStreamMappingState(
   input: { logger?: ForkRuntimeStreamLogger } = {},
@@ -184,6 +238,17 @@ export function mapAgUiRuntimeEventToForkParts(
 
     case "text-delta":
       return typeof event.delta === "string" ? [{ type: "text-delta", text: event.delta }] : [];
+
+    case "source-document":
+    case "source-url": {
+      const sourcePart = mapRenderableSourceToForkPart(event);
+      return sourcePart ? [sourcePart] : [];
+    }
+
+    case "data": {
+      const sourcePart = mapWrappedSourceDataToForkPart(event);
+      return sourcePart ? [sourcePart] : [];
+    }
 
     case "tool-input-start": {
       const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : null;
@@ -317,6 +382,8 @@ export function mapAgUiRuntimeEventToForkParts(
     case "error": {
       const errorText = typeof event.errorText === "string"
         ? event.errorText
+        : typeof event.error === "string"
+        ? event.error
         : "Framework stream failed";
       return [{ type: "error", error: new Error(errorText) }];
     }

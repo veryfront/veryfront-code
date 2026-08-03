@@ -27,7 +27,7 @@
   ],
   "tools": [
     {
-      "id": "list_models",
+      "id": "openai__list_models",
       "name": "List Models",
       "description": "List the models available to the API key",
       "requiresWrite": false,
@@ -50,7 +50,7 @@
       }
     },
     {
-      "id": "get_model",
+      "id": "openai__get_model",
       "name": "Get Model",
       "description": "Get details about a specific model",
       "requiresWrite": false,
@@ -68,7 +68,7 @@
       }
     },
     {
-      "id": "create_response",
+      "id": "openai__create_response",
       "name": "Create Response",
       "description": "Generate a model response using the OpenAI Responses API",
       "requiresWrite": true,
@@ -102,7 +102,7 @@
       }
     },
     {
-      "id": "create_chat_completion",
+      "id": "openai__create_chat_completion",
       "name": "Create Chat Completion",
       "description": "Generate a chat completion from a list of messages",
       "requiresWrite": true,
@@ -132,7 +132,7 @@
       }
     },
     {
-      "id": "create_embedding",
+      "id": "openai__create_embedding",
       "name": "Create Embedding",
       "description": "Create an embedding vector for input text",
       "requiresWrite": true,
@@ -158,7 +158,7 @@
       }
     },
     {
-      "id": "generate_image",
+      "id": "openai__generate_image",
       "name": "Generate Image",
       "description": "Generate an image from a text prompt",
       "requiresWrite": true,
@@ -189,7 +189,7 @@
       }
     },
     {
-      "id": "upload_file",
+      "id": "openai__upload_file",
       "name": "Upload File",
       "description": "Upload a file for use with assistants, batch, fine-tune, vision, user_data, or evals",
       "requiresWrite": true,
@@ -220,7 +220,7 @@
       }
     },
     {
-      "id": "list_files",
+      "id": "openai__list_files",
       "name": "List Files",
       "description": "List files uploaded to the organization, optionally filtered by purpose",
       "requiresWrite": false,
@@ -269,7 +269,7 @@
       }
     },
     {
-      "id": "get_file",
+      "id": "openai__get_file",
       "name": "Get File",
       "description": "Get metadata about an uploaded file by ID",
       "requiresWrite": false,
@@ -287,7 +287,7 @@
       }
     },
     {
-      "id": "delete_file",
+      "id": "openai__delete_file",
       "name": "Delete File",
       "description": "Delete an uploaded file and remove it from all vector stores",
       "requiresWrite": true,
@@ -305,7 +305,7 @@
       }
     },
     {
-      "id": "get_usage_completions",
+      "id": "openai__get_usage_completions",
       "name": "Get Completions Usage",
       "description": "Get token usage for completions across the organization, bucketed over time. Requires an organization admin API key (created under Settings → Organization → Admin keys) set as OPENAI_API_KEY — a regular project key returns 401",
       "requiresWrite": false,
@@ -349,7 +349,7 @@
       }
     },
     {
-      "id": "get_costs",
+      "id": "openai__get_costs",
       "name": "Get Costs",
       "description": "Get daily spend (in USD) for the organization, bucketed by day. Requires an organization admin API key (created under Settings → Organization → Admin keys) set as OPENAI_API_KEY — a regular project key returns 401",
       "requiresWrite": false,
@@ -388,7 +388,7 @@
       }
     },
     {
-      "id": "get_file_content",
+      "id": "openai__get_file_content",
       "name": "Get File Content",
       "description": "Download the raw contents of an uploaded file by ID — required to read batch output files and other generated artifacts",
       "requiresWrite": false,
@@ -406,7 +406,7 @@
       }
     },
     {
-      "id": "get_usage_embeddings",
+      "id": "openai__get_usage_embeddings",
       "name": "Get Embeddings Usage",
       "description": "Get token usage for embeddings across the organization, bucketed over time. Requires an organization admin API key (created under Settings → Organization → Admin keys) set as OPENAI_API_KEY — a regular project key returns 401",
       "requiresWrite": false,

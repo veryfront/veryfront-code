@@ -4,7 +4,7 @@
  * @module transforms/mdx/esm-module-loader/module-fetcher/path-cache-lookup
  */
 
-import type { Logger } from "#veryfront/utils/logger/logger.ts";
+import type { Logger } from "#veryfront/utils";
 import { getLocalFs } from "../cache/index.ts";
 import { validateCachedModule } from "./framework-validator.ts";
 import { recordModuleToSession } from "./render-sessions.ts";

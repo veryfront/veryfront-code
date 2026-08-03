@@ -22,6 +22,7 @@ export interface TemplateFile {
 export interface TemplateConfig {
   envVars?: EnvVarConfig[];
   npmDependencies?: Record<string, string>;
+  firstPartyExtensions?: string[];
 }
 
 export type TemplateName =

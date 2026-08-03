@@ -101,7 +101,7 @@ describe("middleware/builtin/timeout", () => {
 
   describe("getTimeoutFromEnv", () => {
     it("should return default when env has no timeout", () => {
-      assertEquals(getTimeoutFromEnv({ requestTimeoutMs: undefined } as never), 60000);
+      assertEquals(getTimeoutFromEnv({ requestTimeoutMs: undefined } as never), 75000);
     });
 
     it("should return env value when set", () => {

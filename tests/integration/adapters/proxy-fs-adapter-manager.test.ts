@@ -6,8 +6,9 @@
  */
 
 import "../../_helpers/contract-init.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
+import { VeryfrontFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/adapter.ts";
 import { ProxyFSAdapterManager } from "#veryfront/platform/adapters/fs/veryfront/proxy-manager.ts";
 
 function createLocalManager(): ProxyFSAdapterManager {
@@ -84,7 +85,11 @@ describe("ProxyFSAdapterManager - Cache Isolation", () => {
       assertEquals(manager.hasAdapter("my-project", true, "release-1"), false);
       assertEquals(manager.hasAdapter("my-project", true, "release-2"), false);
 
-      assertThrows(() => manager.hasAdapter("my-project", true, null));
+      assertThrows(
+        () => manager.hasAdapter("my-project", true, null),
+        Error,
+        "Missing releaseId in production",
+      );
 
       assertEquals(
         manager.hasAdapter("my-project", false, null),
@@ -95,27 +100,37 @@ describe("ProxyFSAdapterManager - Cache Isolation", () => {
     }
   });
 
-  it("evictAdapter removes and disposes a cached preview adapter", () => {
-    const manager = createLocalManager();
+  it("evictAdapter removes and disposes a cached preview adapter", async () => {
     let disposed = false;
+    const manager = new ProxyFSAdapterManager({
+      baseConfig: {
+        type: "veryfront-api",
+        veryfront: {
+          apiBaseUrl: "http://localhost:4000/api",
+          apiToken: "test-token",
+          proxyMode: false,
+        },
+      },
+      adapterFactory: (config) => {
+        const adapter = new VeryfrontFSAdapter(config);
+        adapter.initialize = () => Promise.resolve();
+        adapter.dispose = () => {
+          disposed = true;
+        };
+        return adapter;
+      },
+    });
 
     try {
-      (manager as unknown as {
-        adapters: Map<
-          string,
-          { adapter: { dispose: () => void; getCacheStats: () => unknown }; lastAccessed: number }
-        >;
-      }).adapters.set("proxy:my-project:preview:main", {
-        adapter: {
-          dispose: () => {
-            disposed = true;
-          },
-          getCacheStats: () => ({
-            cache: { size: 0, memoryUsed: 0, hits: 0, misses: 0, hitRate: 0 },
-          }),
-        },
-        lastAccessed: Date.now(),
-      });
+      await manager.getAdapter(
+        "my-project",
+        "test-token",
+        undefined,
+        false,
+        null,
+        null,
+        "main",
+      );
 
       assertEquals(manager.hasAdapter("my-project", false, null, "main"), true);
 
@@ -128,13 +143,3 @@ describe("ProxyFSAdapterManager - Cache Isolation", () => {
     }
   });
 });
-
-function assertThrows(fn: () => void): void {
-  let threw = false;
-  try {
-    fn();
-  } catch {
-    threw = true;
-  }
-  assert(threw, "Expected error when releaseId is missing in production mode");
-}

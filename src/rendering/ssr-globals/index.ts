@@ -20,6 +20,7 @@ export {
   createDocumentStub,
   createElementClass,
   createElementStub,
+  createObserverClass,
   createWindowStub,
 } from "./dom-stubs.ts";
 
@@ -50,6 +51,25 @@ export function setupSSRGlobals(): void {
 
   const windowStub = createWindowStub();
 
+  // DOM constructor stubs. Libraries reach these both as bare globals and as
+  // properties of `window` / `ownerDocument.defaultView` (e.g. Headless UI's
+  // focus manager reads `window.HTMLElement.prototype`). Create them once and
+  // expose them in every place a library might look, and wire document.defaultView
+  // back to the window stub so `element.ownerDocument.defaultView` resolves.
+  const domConstructors: Record<string, unknown> = {
+    Element: createElementClass("Element"),
+    HTMLElement: createElementClass("HTMLElement"),
+    SVGElement: createElementClass("SVGElement"),
+    Node: createElementClass("Node"),
+    Text: createElementClass("Text"),
+    Comment: createElementClass("Comment"),
+    DocumentFragment: createElementClass("DocumentFragment"),
+  };
+  for (const [name, ctor] of Object.entries(domConstructors)) {
+    (windowStub as Record<string, unknown>)[name] = ctor;
+  }
+  (windowStub.document as Record<string, unknown>).defaultView = windowStub;
+
   setGlobal("window", windowStub);
   setGlobal("document", windowStub.document);
   setGlobal("navigator", windowStub.navigator);
@@ -65,13 +85,13 @@ export function setupSSRGlobals(): void {
   setGlobal("self", windowStub);
   setGlobal("__VERYFRONT_SSR__", true);
 
-  setGlobalIfMissing("Element", createElementClass("Element"));
-  setGlobalIfMissing("HTMLElement", createElementClass("HTMLElement"));
-  setGlobalIfMissing("SVGElement", createElementClass("SVGElement"));
-  setGlobalIfMissing("Node", createElementClass("Node"));
-  setGlobalIfMissing("Text", createElementClass("Text"));
-  setGlobalIfMissing("Comment", createElementClass("Comment"));
-  setGlobalIfMissing("DocumentFragment", createElementClass("DocumentFragment"));
+  for (const [name, ctor] of Object.entries(domConstructors)) {
+    setGlobalIfMissing(name, ctor);
+  }
+
+  setGlobalIfMissing("ResizeObserver", windowStub.ResizeObserver);
+  setGlobalIfMissing("IntersectionObserver", windowStub.IntersectionObserver);
+  setGlobalIfMissing("MutationObserver", windowStub.MutationObserver);
 
   markSSRGlobalsInitialized();
 }

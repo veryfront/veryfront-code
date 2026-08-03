@@ -4,9 +4,11 @@ import { assertEquals } from "#veryfront/testing/assert";
 import {
   buildIpv4Url,
   buildLocalhostUrl,
+  DEV_LOCALHOST_CSP,
+  DEV_LOCALHOST_ORIGINS,
   HTTP_DEFAULTS,
   LOCALHOST,
-  REDIS_DEFAULTS,
+  LOCALHOST_URLS,
 } from "./network-defaults.ts";
 
 describe("network-defaults", () => {
@@ -20,8 +22,12 @@ describe("network-defaults", () => {
     assertEquals(HTTP_DEFAULTS.PORT, 3000);
   });
 
-  it("REDIS_DEFAULTS should have correct default URL", () => {
-    assertEquals(REDIS_DEFAULTS.URL, "redis://127.0.0.1:6379");
+  it("keeps exported network defaults immutable at runtime", () => {
+    assertEquals(Object.isFrozen(LOCALHOST), true);
+    assertEquals(Object.isFrozen(HTTP_DEFAULTS), true);
+    assertEquals(Object.isFrozen(DEV_LOCALHOST_ORIGINS), true);
+    assertEquals(Object.isFrozen(DEV_LOCALHOST_CSP), true);
+    assertEquals(Object.isFrozen(LOCALHOST_URLS), true);
   });
 
   describe("buildLocalhostUrl", () => {

@@ -1,10 +1,12 @@
 import { isNumberArray } from "./runtime-loader/provider-embedding-responses.ts";
+import { createError, toError } from "#veryfront/errors";
 import {
   mergeUsage,
   readGatewayBillingMode,
   type RuntimeUsage,
 } from "./runtime-loader/provider-usage.ts";
 import type { ProviderKind } from "./runtime-loader/provider-http.ts";
+import type { ModelRuntimePromptMessage, ModelRuntimeToolDefinition } from "./types.ts";
 import {
   buildProviderError,
   parseRetryAfterMs,
@@ -16,7 +18,14 @@ import {
   TOOL_INPUT_PENDING_THRESHOLD_MS,
   withToolInputStatusTransitions,
 } from "./runtime-loader/tool-input-status.ts";
+import { snapshotProviderJsonValue } from "./runtime-loader/json-snapshot.ts";
 
+export {
+  jsonValuesEqual,
+  snapshotJsonValue,
+  snapshotProviderJsonValue,
+} from "./runtime-loader/json-snapshot.ts";
+export type { JsonSnapshotOptions, JsonSnapshotValue } from "./runtime-loader/json-snapshot.ts";
 export {
   ProviderError,
   ProviderOverloadedError,
@@ -35,242 +44,8 @@ export {
   requestJson,
   requestStream,
 };
+export type { RuntimePromptMessage } from "./types.ts";
 export type { RuntimeUsage };
-
-/** Message shape for runtime prompt. */
-export type RuntimePromptMessage =
-  | { role: "system"; content: string }
-  | {
-    role: "user";
-    content: Array<
-      | { type: "text"; text: string }
-      | { type: "image" | "file"; mediaType: string; url: string; filename?: string }
-    >;
-  }
-  | {
-    role: "assistant";
-    content: Array<
-      | { type: "text"; text: string }
-      | {
-        type: "tool-call";
-        toolCallId: string;
-        toolName: string;
-        input: unknown;
-        providerExecuted?: boolean;
-      }
-      | {
-        // Anthropic thinking block replay. Carries the original signed
-        // thinking trace so that on the next turn Anthropic can verify
-        // the signature and let Claude continue reasoning from the same
-        // point. `text` + `signature` are the normal pair for an
-        // un-redacted thinking block; `redactedData` is set instead of
-        // both when Anthropic returned an encrypted opaque payload.
-        type: "reasoning";
-        text?: string;
-        signature?: string;
-        redactedData?: string;
-      }
-    >;
-  }
-  | {
-    role: "tool";
-    content: Array<{
-      type: "tool-result";
-      toolCallId: string;
-      toolName: string;
-      output: { type: "json"; value: unknown };
-    }>;
-  };
-type RuntimeToolDefinition =
-  | {
-    type: "function";
-    name: string;
-    description?: string;
-    inputSchema: unknown;
-  }
-  | {
-    type: "provider";
-    name: string;
-    id: `${string}.${string}`;
-    args: Record<string, unknown>;
-  };
-/**
- * TTL for a single prompt-cache breakpoint.
- *
- * `true` and `"5m"` both map to Anthropic's default ephemeral (5-minute) cache.
- * `"1h"` maps to the extended 1-hour cache at a 2x write cost. Callers can
- * pick per breakpoint target.
- */
-type ProviderCacheTtl = boolean | "5m" | "1h";
-
-/**
- * Per-provider prompt / context caching controls.
- *
- * For Anthropic, flipping these on emits `cache_control: { type: "ephemeral" }`
- * breakpoints on the assembled system prompt and/or the last tool definition
- * sent to the Messages API, enabling Anthropic's explicit prompt cache.
- *
- * OpenAI's prompt cache is automatic on gpt-4o+ and has no request-side
- * directive to emit, so this option is a no-op for the OpenAI runtime. Google
- * uses a separate `cachedContent` resource model that is intentionally not
- * covered by this option (it belongs on a dedicated Gemini-specific surface).
- */
-type ProviderCacheControlOption = {
-  /**
-   * Attach a cache breakpoint to the final system-prompt text block.
-   * Use when the system prompt is large and reused across requests.
-   */
-  system?: ProviderCacheTtl;
-  /**
-   * Attach a cache breakpoint to the last tool definition in `tools`.
-   * Use when the tool schemas are large and identical across requests.
-   */
-  tools?: ProviderCacheTtl;
-};
-
-/**
- * Unified effort level for extended reasoning / thinking. Maps to
- * per-provider knobs: Anthropic `thinking.budget_tokens`, OpenAI
- * `reasoning_effort`, Gemini `thinkingConfig.thinkingBudget`.
- */
-type ProviderReasoningEffort = "low" | "medium" | "high" | "max";
-
-/**
- * Unified reasoning / thinking request option.
- *
- * Setting `enabled: true` turns on extended thinking on providers that
- * support it (Anthropic Claude 4.x, OpenAI o-series, Gemini 2.5+). The
- * `effort` field picks a coarse budget; when `budgetTokens` is set it
- * wins for providers that take a numeric budget (Anthropic, Gemini).
- *
- * Providers that do not support reasoning treat this as a no-op. On
- * Anthropic + OpenAI, enabling reasoning also disables sampling params
- * that the providers reject in combination (`temperature`, `topP`,
- * `topK`, `presencePenalty`, `frequencyPenalty`) — silently dropping
- * them rather than failing the request.
- */
-type ProviderReasoningOption = {
-  enabled?: boolean;
-  effort?: ProviderReasoningEffort;
-  budgetTokens?: number;
-};
-
-type OpenAICompatibleLanguageOptions = {
-  prompt: RuntimePromptMessage[];
-  maxOutputTokens?: number;
-  temperature?: number;
-  topP?: number;
-  topK?: number;
-  stopSequences?: string[];
-  tools?: RuntimeToolDefinition[];
-  toolChoice?: unknown;
-  seed?: number;
-  presencePenalty?: number;
-  frequencyPenalty?: number;
-  headers?: HeadersInit;
-  providerOptions?: Record<string, unknown>;
-  includeRawChunks?: boolean;
-  abortSignal?: AbortSignal;
-  /**
-   * Per-provider prompt / context caching controls. See
-   * {@link ProviderCacheControlOption}. When unset, caching behaviour is
-   * unchanged on every provider.
-   */
-  cacheControl?: ProviderCacheControlOption;
-  /**
-   * Enable extended reasoning / thinking on providers that support it.
-   * See {@link ProviderReasoningOption}. When unset, reasoning behaviour
-   * is unchanged on every provider.
-   */
-  reasoning?: ProviderReasoningOption;
-  /**
-   * Stable per-user identifier for rate-limiting, abuse detection, and
-   * billing attribution. Maps to:
-   *  - Anthropic: `metadata.user_id`
-   *  - OpenAI: `user`
-   *  - Google: `labels.user_id` (when {@link requestLabels} is unset)
-   */
-  userId?: string;
-  /**
-   * Provider-specific label map for Google Gemini's `labels` field.
-   * Anthropic and OpenAI don't have an arbitrary-label equivalent, so
-   * this is intentionally Google-only. When unset, no labels are sent.
-   */
-  requestLabels?: Record<string, string>;
-  /**
-   * OpenAI-specific. Maps to the `service_tier` field on Chat Completions
-   * which trades latency for cost. Documented values:
-   *
-   *  - `default` — standard processing (default if unset)
-   *  - `flex` — lower-priority queue, lower per-token cost, longer
-   *    expected latency. Useful for batchy or non-interactive workloads.
-   *  - `scale` — reserved-capacity tier with strict latency SLOs.
-   *  - `auto` — let OpenAI pick.
-   *
-   * Forwarded verbatim. Anthropic and Google have no equivalent and
-   * the field is silently omitted on those providers.
-   */
-  serviceTier?: "auto" | "default" | "flex" | "scale";
-  /**
-   * OpenAI-specific. When `false`, OpenAI runs tool calls sequentially
-   * instead of in parallel. Useful for ordered side effects where
-   * concurrent calls would race. Default behaviour (unset) is parallel.
-   */
-  parallelToolCalls?: boolean;
-  /**
-   * Structured-output response format. Maps to OpenAI's `response_format`
-   * field on Chat Completions (and Responses). Three variants:
-   *
-   *  - `{ type: "text" }` — the default (no constraint).
-   *  - `{ type: "json" }` — emits OpenAI's `response_format:
-   *    { type: "json_object" }` to force the model to return valid JSON.
-   *  - `{ type: "json_schema", name, schema, strict? }` — emits
-   *    OpenAI's `response_format: { type: "json_schema", json_schema: {
-   *    name, schema, strict } }` for fully constrained structured
-   *    outputs (gpt-4o-2024-08-06+).
-   *
-   * On Anthropic and Google this option emits an "unsupported-setting"
-   * warning when set to anything other than `text` (those providers
-   * have their own structured-output surfaces and need a dedicated
-   * follow-up to wire them in).
-   */
-  responseFormat?:
-    | { type: "text" }
-    | { type: "json" }
-    | {
-      type: "json_schema";
-      name: string;
-      schema: unknown;
-      description?: string;
-      strict?: boolean;
-    };
-  /**
-   * Anthropic-specific. `container` field for programmatic tool calling
-   * and agent skills. Anthropic uses this to scope a session to a
-   * sandboxed container (e.g. for Computer Use, code execution
-   * sandboxes, or skills loaded from a container). Forwarded verbatim.
-   *
-   * The shape varies — string container id or a structured object
-   * depending on the feature. Caller passes whatever Anthropic's docs
-   * specify for the target feature.
-   */
-  anthropicContainer?: unknown;
-  /**
-   * Anthropic-specific. Native MCP server definitions to pass directly
-   * on the Messages API request body. Lets callers register MCP servers
-   * server-side instead of reloading them into local function tools.
-   *
-   * Caller must opt into the MCP beta by adding the matching header to
-   * `headers`, e.g. `{ "anthropic-beta": "mcp-client-2025-04-04" }`.
-   * Without that header Anthropic will reject the request.
-   *
-   * Each entry is forwarded with camelCase keys converted to snake_case
-   * so `authorizationToken` → `authorization_token`,
-   * `toolConfiguration.allowedTools` → `tool_configuration.allowed_tools`,
-   * etc.
-   */
-  mcpServers?: Array<Record<string, unknown>>;
-};
 /** Message shape for OpenAI-compatible chat requests. */
 export type OpenAICompatibleChatMessage =
   | { role: "system"; content: string }
@@ -300,7 +75,10 @@ export type OpenAICompatibleChatMessage =
     tool_call_id: string;
     content: string;
   };
-type RuntimePromptUserContent = Extract<RuntimePromptMessage, { role: "user" }>["content"];
+type RuntimePromptUserContent = Extract<
+  ModelRuntimePromptMessage,
+  { readonly role: "user" }
+>["content"];
 type OpenAICompatibleUserContent = Extract<
   OpenAICompatibleChatMessage,
   { role: "user" }
@@ -364,22 +142,45 @@ export function createWarningCollector(): WarningCollector {
       list.push(warning);
     },
     drain() {
-      return list.slice();
+      return list.splice(0, list.length);
     },
   };
 }
 
 /** Serialize a JSON-compatible value. */
 export function stringifyJsonValue(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
+  try {
+    const serialized = JSON.stringify(
+      snapshotProviderJsonValue(value, { sortObjectKeys: false }),
+    );
+    if (serialized === undefined) {
+      throw new TypeError("value has no JSON representation");
+    }
+    return serialized;
+  } catch {
+    // Native JSON errors can include object paths or property names from the
+    // rejected tool payload. Keep provider-boundary failures contextual
+    // without retaining caller-controlled diagnostics as a public cause.
+    throw new TypeError("Provider tool value must be JSON-serializable");
   }
+}
 
-  return JSON.stringify(value);
+/** Preserve provider-native argument text while serializing structured tool inputs. */
+export function stringifyToolArguments(value: unknown): string {
+  return typeof value === "string" ? value : stringifyJsonValue(value);
+}
+
+/** Preserve text tool results while serializing structured tool results. */
+export function stringifyToolResultValue(value: unknown): string {
+  // Same serialization contract as tool arguments — delegate so the two
+  // cannot drift.
+  return stringifyToolArguments(value);
 }
 
 /** Read text content parts from provider messages. */
-export function readTextParts(parts: Array<{ type: string; text?: string }>): string {
+export function readTextParts(
+  parts: readonly { type: string; text?: string }[],
+): string {
   let text = "";
   for (const part of parts) {
     if (part.type === "text" && typeof part.text === "string") {
@@ -413,9 +214,20 @@ function toOpenAICompatibleUserContent(
   return content.length > 0 ? content : readTextParts(parts);
 }
 
+function incompatibleProviderReplayError(subject: "calls" | "results"): TypeError {
+  return toError(
+    createError({
+      type: "config",
+      message:
+        `OpenAI-compatible provider-executed assistant tool ${subject} cannot be replayed through Chat Completions`,
+    }),
+    TypeError,
+  );
+}
+
 /** Convert runtime prompt messages into OpenAI-compatible chat messages. */
 export function toOpenAICompatibleMessages(
-  prompt: RuntimePromptMessage[],
+  prompt: readonly ModelRuntimePromptMessage[],
 ): OpenAICompatibleChatMessage[] {
   const messages: OpenAICompatibleChatMessage[] = [];
 
@@ -443,13 +255,19 @@ export function toOpenAICompatibleMessages(
           if (part.type === "reasoning") {
             continue;
           }
+          if (part.type === "tool-result") {
+            throw incompatibleProviderReplayError("results");
+          }
+          if (part.providerExecuted === true) {
+            throw incompatibleProviderReplayError("calls");
+          }
 
           toolCalls.push({
             id: part.toolCallId,
             type: "function",
             function: {
               name: part.toolName,
-              arguments: stringifyJsonValue(part.input),
+              arguments: stringifyToolArguments(part.input),
             },
           });
         }
@@ -466,7 +284,7 @@ export function toOpenAICompatibleMessages(
           messages.push({
             role: "tool",
             tool_call_id: part.toolCallId,
-            content: stringifyJsonValue(part.output.value),
+            content: stringifyToolResultValue(part.output.value),
           });
         }
         break;
@@ -478,7 +296,7 @@ export function toOpenAICompatibleMessages(
 
 /** Convert runtime tool definitions into OpenAI-compatible function tools. */
 export function toOpenAICompatibleTools(
-  tools: RuntimeToolDefinition[] | undefined,
+  tools: readonly ModelRuntimeToolDefinition[] | undefined,
 ): OpenAICompatibleChatRequest["tools"] | undefined {
   if (!tools) {
     return undefined;
@@ -509,16 +327,31 @@ export function readProviderOptions(
     return {};
   }
 
-  const merged: Record<string, unknown> = {};
+  const merged = new Map<string, unknown>();
   for (const key of providerNames) {
-    const value = providerOptions[key];
-    const record = readRecord(value);
-    if (record) {
-      Object.assign(merged, record);
+    let ownsKey: boolean;
+    let value: unknown;
+    try {
+      ownsKey = Object.hasOwn(providerOptions, key);
+      if (!ownsKey) continue;
+      value = Reflect.get(providerOptions, key);
+    } catch {
+      throw new TypeError(`Provider options for "${key}" could not be read`);
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+
+    let entries: Array<[string, unknown]>;
+    try {
+      entries = Object.entries(value);
+    } catch {
+      throw new TypeError(`Provider options for "${key}" could not be enumerated`);
+    }
+    for (const [optionName, optionValue] of entries) {
+      merged.set(optionName, optionValue);
     }
   }
 
-  return merged;
+  return Object.fromEntries(merged);
 }
 
 /** Zod schema for unwrap tool input. */
@@ -527,6 +360,11 @@ export function unwrapToolInputSchema(inputSchema: unknown): unknown {
     return inputSchema;
   }
 
-  const candidate = Reflect.get(inputSchema, "jsonSchema");
+  let candidate: unknown;
+  try {
+    candidate = Reflect.get(inputSchema, "jsonSchema");
+  } catch {
+    throw new TypeError("Tool input schema jsonSchema property could not be read");
+  }
   return candidate ?? inputSchema;
 }

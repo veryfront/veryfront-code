@@ -1,4 +1,6 @@
 import { walk } from "#std/fs";
+import { parseSource } from "./style-conventions/ast.ts";
+import type { AstNodeLike } from "./style-conventions/types.ts";
 
 export interface CoreDependencyIssue {
   specifier: string;
@@ -21,7 +23,8 @@ const CORE_THIRD_PARTY_IMPORT_ALLOWLIST = new Set<string>();
 function isThirdPartyImportTarget(target: string): boolean {
   if (target.startsWith("./") || target.startsWith("../")) return false;
   if (target.startsWith("jsr:@std/")) return false;
-  return target.startsWith("npm:") || target.startsWith("https://");
+  return target.startsWith("npm:") || target.startsWith("jsr:") ||
+    target.startsWith("http://") || target.startsWith("https://");
 }
 
 function importMapTargetForSpecifier(
@@ -83,29 +86,409 @@ function isAllowedCoreSourceSpecifier(
   return allowedSpecifiers.has(specifier);
 }
 
-const STATIC_IMPORT_EXPORT_START_RE = /^\s*(?:import|export)\b/;
-const FROM_SPECIFIER_RE = /\bfrom\s+["']([^"']+)["']/;
-const SIDE_EFFECT_IMPORT_RE = /^\s*import\s+["']([^"']+)["']/;
-const DYNAMIC_IMPORT_RE = /(^|[^"'`])\bimport\s*\(\s*["']([^"']+)["']\s*\)/;
-
-function readImportExportStatement(
-  lines: string[],
-  startIndex: number,
-): string {
-  let statement = lines[startIndex];
-  for (let i = startIndex + 1; i < lines.length; i++) {
-    if (statement.includes(";")) break;
-    statement += `\n${lines[i]}`;
-    if (
-      FROM_SPECIFIER_RE.test(statement) || SIDE_EFFECT_IMPORT_RE.test(statement)
-    ) break;
-  }
-  return statement;
+interface StaticBinding {
+  initializer: AstNodeLike;
+  scope: LexicalScope;
 }
 
-function extractStaticSpecifier(statement: string): string | undefined {
-  return FROM_SPECIFIER_RE.exec(statement)?.[1] ??
-    SIDE_EFFECT_IMPORT_RE.exec(statement)?.[1];
+interface LexicalScope {
+  parent?: LexicalScope;
+  bindings: Map<string, StaticBinding | null>;
+  variableScope: LexicalScope;
+}
+
+interface SourceImport {
+  expression: AstNodeLike;
+  line: number;
+  scope: LexicalScope;
+}
+
+const FUNCTION_NODE_TYPES = new Set([
+  "ArrowFunctionExpression",
+  "ClassMethod",
+  "ClassPrivateMethod",
+  "FunctionDeclaration",
+  "FunctionExpression",
+  "ObjectMethod",
+]);
+const EXPRESSION_WRAPPER_TYPES = new Set([
+  "ParenthesizedExpression",
+  "TSAsExpression",
+  "TSInstantiationExpression",
+  "TSNonNullExpression",
+  "TSSatisfiesExpression",
+  "TSTypeAssertion",
+  "TypeCastExpression",
+]);
+
+function isAstNode(value: unknown): value is AstNodeLike {
+  return typeof value === "object" && value !== null &&
+    typeof (value as AstNodeLike).type === "string";
+}
+
+function childNodes(node: AstNodeLike): AstNodeLike[] {
+  const children: AstNodeLike[] = [];
+  for (const [key, value] of Object.entries(node)) {
+    if (
+      key === "loc" || key === "start" || key === "end" || key === "extra" ||
+      key.endsWith("Comments")
+    ) continue;
+    if (Array.isArray(value)) {
+      for (const entry of value) if (isAstNode(entry)) children.push(entry);
+    } else if (isAstNode(value)) {
+      children.push(value);
+    }
+  }
+  return children;
+}
+
+function bindPattern(scope: LexicalScope, pattern: unknown): void {
+  if (!isAstNode(pattern)) return;
+  if (pattern.type === "Identifier" && typeof pattern.name === "string") {
+    scope.bindings.set(pattern.name, null);
+    return;
+  }
+  if (pattern.type === "AssignmentPattern" || pattern.type === "RestElement") {
+    bindPattern(
+      scope,
+      pattern.type === "AssignmentPattern" ? pattern.left : pattern.argument,
+    );
+    return;
+  }
+  if (pattern.type === "ArrayPattern" && Array.isArray(pattern.elements)) {
+    for (const element of pattern.elements) bindPattern(scope, element);
+    return;
+  }
+  if (pattern.type === "ObjectPattern" && Array.isArray(pattern.properties)) {
+    for (const property of pattern.properties) {
+      if (!isAstNode(property)) continue;
+      bindPattern(
+        scope,
+        property.type === "ObjectProperty" ? property.value : property.argument,
+      );
+    }
+    return;
+  }
+  if (pattern.type === "TSParameterProperty") {
+    bindPattern(scope, pattern.parameter);
+  }
+}
+
+function createScope(
+  parent?: LexicalScope,
+  ownsVariables = false,
+): LexicalScope {
+  const scope = {
+    parent,
+    bindings: new Map<string, StaticBinding | null>(),
+  } as LexicalScope;
+  scope.variableScope = ownsVariables ? scope : parent?.variableScope ?? scope;
+  return scope;
+}
+
+function collectScopes(
+  node: AstNodeLike,
+  scope: LexicalScope,
+  nodeScopes: WeakMap<object, LexicalScope>,
+): void {
+  nodeScopes.set(node, scope);
+
+  if (
+    (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration") &&
+    isAstNode(node.id) && node.id.type === "Identifier" &&
+    typeof node.id.name === "string"
+  ) {
+    scope.bindings.set(node.id.name, null);
+  }
+
+  if (FUNCTION_NODE_TYPES.has(node.type ?? "")) {
+    const parameterScope = createScope(scope);
+    const bodyScope = createScope(parameterScope, true);
+    if (node.type === "FunctionExpression") {
+      bindPattern(parameterScope, node.id);
+    }
+    const parameters = Array.isArray(node.params)
+      ? node.params.filter(isAstNode)
+      : [];
+    for (const parameter of parameters) {
+      bindPattern(parameterScope, parameter);
+    }
+    const decorators = Array.isArray(node.decorators)
+      ? node.decorators.filter(isAstNode)
+      : [];
+    const isMethod = node.type === "ClassMethod" ||
+      node.type === "ClassPrivateMethod" || node.type === "ObjectMethod";
+    for (const child of childNodes(node)) {
+      if (child === node.id) continue;
+      const evaluatedOutsideFunction = isMethod &&
+        (child === node.key || decorators.includes(child));
+      collectScopes(
+        child,
+        child === node.body
+          ? bodyScope
+          : evaluatedOutsideFunction
+          ? scope
+          : parameterScope,
+        nodeScopes,
+      );
+    }
+    return;
+  }
+
+  if (node.type === "ClassDeclaration" || node.type === "ClassExpression") {
+    const classScope = createScope(scope);
+    bindPattern(classScope, node.id);
+    for (const child of childNodes(node)) {
+      if (child !== node.id) collectScopes(child, classScope, nodeScopes);
+    }
+    return;
+  }
+
+  if (
+    node.type === "BlockStatement" || node.type === "CatchClause" ||
+    node.type === "ClassBody" || node.type === "StaticBlock" ||
+    node.type === "SwitchStatement" || node.type === "TSModuleBlock"
+  ) {
+    const blockScope = createScope(
+      scope,
+      node.type === "StaticBlock" || node.type === "TSModuleBlock",
+    );
+    if (node.type === "CatchClause") bindPattern(blockScope, node.param);
+    for (const child of childNodes(node)) {
+      if (child !== node.param) collectScopes(child, blockScope, nodeScopes);
+    }
+    return;
+  }
+
+  if (
+    node.type === "ForStatement" || node.type === "ForInStatement" ||
+    node.type === "ForOfStatement"
+  ) {
+    const loopScope = createScope(scope);
+    for (const child of childNodes(node)) {
+      collectScopes(child, loopScope, nodeScopes);
+    }
+    return;
+  }
+
+  if (node.type === "VariableDeclaration" && Array.isArray(node.declarations)) {
+    const declarationScope = node.kind === "var" ? scope.variableScope : scope;
+    for (const declaration of node.declarations) {
+      if (!isAstNode(declaration)) continue;
+      const id = declaration.id;
+      const initializer = declaration.init;
+      if (
+        node.kind === "const" && isAstNode(id) && id.type === "Identifier" &&
+        typeof id.name === "string" && isAstNode(initializer)
+      ) {
+        declarationScope.bindings.set(id.name, {
+          initializer,
+          scope: declarationScope,
+        });
+      } else {
+        bindPattern(declarationScope, id);
+      }
+    }
+  }
+
+  if (node.type === "ImportDeclaration" && Array.isArray(node.specifiers)) {
+    for (const specifier of node.specifiers) {
+      if (isAstNode(specifier)) bindPattern(scope, specifier.local);
+    }
+  }
+
+  for (const child of childNodes(node)) collectScopes(child, scope, nodeScopes);
+}
+
+function resolveBinding(
+  scope: LexicalScope,
+  name: string,
+): StaticBinding | null | undefined {
+  for (
+    let current: LexicalScope | undefined = scope;
+    current;
+    current = current.parent
+  ) {
+    if (current.bindings.has(name)) return current.bindings.get(name);
+  }
+  return undefined;
+}
+
+function propertyName(node: unknown): string | undefined {
+  if (!isAstNode(node)) return undefined;
+  if (node.type === "Identifier" && typeof node.name === "string") {
+    return node.name;
+  }
+  if (node.type === "StringLiteral" && typeof node.value === "string") {
+    return node.value;
+  }
+  return undefined;
+}
+
+function evaluateStaticString(
+  node: AstNodeLike,
+  scope: LexicalScope,
+  resolving = new Set<StaticBinding>(),
+  depth = 0,
+): string | undefined {
+  if (depth > 32) return undefined;
+  if (node.type === "StringLiteral" && typeof node.value === "string") {
+    return node.value;
+  }
+  if (node.type === "TemplateLiteral") {
+    const expressions = Array.isArray(node.expressions) ? node.expressions : [];
+    const quasis = Array.isArray(node.quasis) ? node.quasis : [];
+    if (quasis.length !== expressions.length + 1) return undefined;
+    let result = "";
+    for (let index = 0; index < quasis.length; index++) {
+      const quasi = quasis[index];
+      if (
+        !isAstNode(quasi) || !quasi.value || typeof quasi.value !== "object"
+      ) {
+        return undefined;
+      }
+      const value = quasi.value as Record<string, unknown>;
+      const text = typeof value.cooked === "string"
+        ? value.cooked
+        : typeof value.raw === "string"
+        ? value.raw
+        : undefined;
+      if (text === undefined) return undefined;
+      result += text;
+      if (index < expressions.length) {
+        const expression = expressions[index];
+        if (!isAstNode(expression)) return undefined;
+        const evaluated = evaluateStaticString(
+          expression,
+          scope,
+          resolving,
+          depth + 1,
+        );
+        if (evaluated === undefined) return undefined;
+        result += evaluated;
+      }
+    }
+    return result;
+  }
+  if (node.type === "Identifier" && typeof node.name === "string") {
+    const binding = resolveBinding(scope, node.name);
+    if (!binding || resolving.has(binding)) return undefined;
+    resolving.add(binding);
+    const value = evaluateStaticString(
+      binding.initializer,
+      binding.scope,
+      resolving,
+      depth + 1,
+    );
+    resolving.delete(binding);
+    return value;
+  }
+  if (
+    EXPRESSION_WRAPPER_TYPES.has(node.type ?? "") && isAstNode(node.expression)
+  ) {
+    return evaluateStaticString(node.expression, scope, resolving, depth + 1);
+  }
+  if (
+    node.type === "BinaryExpression" && node.operator === "+" &&
+    isAstNode(node.left) && isAstNode(node.right)
+  ) {
+    const left = evaluateStaticString(node.left, scope, resolving, depth + 1);
+    const right = evaluateStaticString(node.right, scope, resolving, depth + 1);
+    return left === undefined || right === undefined ? undefined : left + right;
+  }
+  if (node.type !== "CallExpression" || !isAstNode(node.callee)) {
+    return undefined;
+  }
+  const callee = node.callee;
+  if (
+    callee.type !== "MemberExpression" || !isAstNode(callee.object) ||
+    (callee.computed === true &&
+      (!isAstNode(callee.property) ||
+        callee.property.type !== "StringLiteral")) ||
+    propertyName(callee.property) !== "join" ||
+    callee.object.type !== "ArrayExpression"
+  ) return undefined;
+  const args = Array.isArray(node.arguments) ? node.arguments : [];
+  if (args.length > 1) return undefined;
+  let separator = ",";
+  if (args.length === 1) {
+    const argument = args[0];
+    if (!isAstNode(argument)) return undefined;
+    const evaluated = evaluateStaticString(
+      argument,
+      scope,
+      resolving,
+      depth + 1,
+    );
+    if (evaluated === undefined) return undefined;
+    separator = evaluated;
+  }
+  const elements = Array.isArray(callee.object.elements)
+    ? callee.object.elements
+    : [];
+  const values: string[] = [];
+  for (const element of elements) {
+    if (element === null) {
+      values.push("");
+      continue;
+    }
+    if (!isAstNode(element) || element.type === "SpreadElement") {
+      return undefined;
+    }
+    const evaluated = evaluateStaticString(
+      element,
+      scope,
+      resolving,
+      depth + 1,
+    );
+    if (evaluated === undefined) return undefined;
+    values.push(evaluated);
+  }
+  return values.join(separator);
+}
+
+function importExpression(node: AstNodeLike): AstNodeLike | undefined {
+  if (
+    (node.type === "ImportDeclaration" ||
+      node.type === "ExportAllDeclaration" ||
+      node.type === "ExportNamedDeclaration") && isAstNode(node.source)
+  ) return node.source;
+  if (node.type === "ImportExpression" && isAstNode(node.source)) {
+    return node.source;
+  }
+  if (node.type === "TSImportType" && isAstNode(node.argument)) {
+    return node.argument;
+  }
+  if (node.type === "TSExternalModuleReference" && isAstNode(node.expression)) {
+    return node.expression;
+  }
+  if (
+    node.type === "CallExpression" && isAstNode(node.callee) &&
+    node.callee.type === "Import" && Array.isArray(node.arguments) &&
+    isAstNode(node.arguments[0])
+  ) return node.arguments[0];
+  return undefined;
+}
+
+function findSourceImports(path: string, content: string): SourceImport[] {
+  const ast = parseSource(path, content);
+  const rootScope = createScope(undefined, true);
+  const nodeScopes = new WeakMap<object, LexicalScope>();
+  collectScopes(ast, rootScope, nodeScopes);
+  const imports: SourceImport[] = [];
+  const visit = (node: AstNodeLike): void => {
+    const expression = importExpression(node);
+    if (expression) {
+      imports.push({
+        expression,
+        line: node.loc?.start?.line ?? 1,
+        scope: nodeScopes.get(expression) ?? rootScope,
+      });
+    }
+    for (const child of childNodes(node)) visit(child);
+  };
+  visit(ast);
+  return imports;
 }
 
 export function findCoreThirdPartyImports(
@@ -186,22 +569,12 @@ export function findCoreThirdPartySourceImports(
     const path = normalizePath(file.path);
     if (!shouldCheckCoreSourceImportPath(path)) continue;
 
-    const lines = file.content.split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (STATIC_IMPORT_EXPORT_START_RE.test(line)) {
-        const specifier = extractStaticSpecifier(
-          readImportExportStatement(lines, i),
-        );
-        if (
-          specifier &&
-          !isAllowedCoreSourceSpecifier(specifier, allowedSpecifiers, importMap)
-        ) {
-          issues.push({ path, line: i + 1, specifier });
-        }
-      }
-
-      const dynamicSpecifier = DYNAMIC_IMPORT_RE.exec(line)?.[2];
+    const seen = new Set<string>();
+    for (const sourceImport of findSourceImports(path, file.content)) {
+      const dynamicSpecifier = evaluateStaticString(
+        sourceImport.expression,
+        sourceImport.scope,
+      );
       if (
         dynamicSpecifier &&
         !isAllowedCoreSourceSpecifier(
@@ -210,7 +583,15 @@ export function findCoreThirdPartySourceImports(
           importMap,
         )
       ) {
-        issues.push({ path, line: i + 1, specifier: dynamicSpecifier });
+        const key = `${sourceImport.line}\0${dynamicSpecifier}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          issues.push({
+            path,
+            line: sourceImport.line,
+            specifier: dynamicSpecifier,
+          });
+        }
       }
     }
   }

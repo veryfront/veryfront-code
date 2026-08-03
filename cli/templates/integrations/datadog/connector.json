@@ -40,7 +40,7 @@
   ],
   "tools": [
     {
-      "id": "validate_api_key",
+      "id": "datadog__validate_api_key",
       "name": "Validate API Key",
       "description": "Check that the configured Datadog API key is valid",
       "requiresWrite": false,
@@ -58,7 +58,7 @@
       }
     },
     {
-      "id": "list_monitors",
+      "id": "datadog__list_monitors",
       "name": "List Monitors",
       "description": "List monitors with optional name or tag filtering",
       "requiresWrite": false,
@@ -112,7 +112,7 @@
       }
     },
     {
-      "id": "get_monitor",
+      "id": "datadog__get_monitor",
       "name": "Get Monitor",
       "description": "Get details and current state of a monitor",
       "requiresWrite": false,
@@ -136,7 +136,7 @@
       }
     },
     {
-      "id": "mute_monitor",
+      "id": "datadog__mute_monitor",
       "name": "Mute Monitor",
       "description": "Mute notifications for a monitor",
       "requiresWrite": true,
@@ -165,7 +165,7 @@
       }
     },
     {
-      "id": "list_dashboards",
+      "id": "datadog__list_dashboards",
       "name": "List Dashboards",
       "description": "List all dashboards",
       "requiresWrite": false,
@@ -198,7 +198,7 @@
       }
     },
     {
-      "id": "query_timeseries",
+      "id": "datadog__query_timeseries",
       "name": "Query Timeseries Metrics",
       "description": "Query timeseries metric data over a time window",
       "requiresWrite": false,
@@ -234,7 +234,7 @@
       }
     },
     {
-      "id": "search_logs",
+      "id": "datadog__search_logs",
       "name": "Search Logs",
       "description": "Search log events with a Datadog log query",
       "requiresWrite": false,

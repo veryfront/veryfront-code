@@ -1,5 +1,7 @@
 import { createRoot } from "react-dom/client";
+import { flushSync } from "react-dom";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { agentsToPickerOptions, ChatAgentPicker } from "./chat-agent-picker.tsx";
@@ -17,16 +19,16 @@ describe("react/components/chat/chat-agent-picker: agentsToPickerOptions", () =>
         agent("sales", { name: "Sales" }),
       ]),
       [
-        { id: "support", name: "Support", avatarSrc: "https://cdn/x.svg" },
-        { id: "sales", name: "Sales" },
+        { id: "support", name: "Support", avatarUrl: "https://cdn/x.svg" },
+        { id: "sales", name: "Sales", avatarUrl: null },
       ],
     );
   });
 
-  it("omits avatarSrc when the agent has no avatar", () => {
+  it("carries a null avatar url through when the agent has no avatar", () => {
     const rows = agentsToPickerOptions([agent("solo", { name: "Solo" })]);
     assertEquals(rows.length, 1);
-    assertEquals("avatarSrc" in rows[0]!, false);
+    assertEquals(rows[0]!.avatarUrl, null);
   });
 });
 
@@ -87,6 +89,7 @@ function stubAgentsFetch(agents: AgentMetadata[]): () => void {
 /** Let the fetch effect resolve and React commit. */
 async function settle(): Promise<void> {
   for (let i = 0; i < 4; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+  flushSync(() => {});
 }
 
 describe("react/components/chat/chat-agent-picker: connected", () => {
@@ -100,14 +103,15 @@ describe("react/components/chat/chat-agent-picker: connected", () => {
       const rootElement = document.getElementById("root");
       assert(rootElement, "root element exists");
       const root = createRoot(rootElement);
-      root.render(<ChatAgentPicker />);
+      flushSync(() => root.render(<ChatAgentPicker />));
       await settle();
 
       const trigger = rootElement.querySelector("button");
       assert(trigger, "picker trigger renders after the agents resolve");
       assertStringIncludes(trigger.textContent ?? "", "Select agent");
 
-      root.unmount();
+      await unmountReactRoot(root);
+      await settle();
     } finally {
       restoreFetch();
       restoreDom();
@@ -124,14 +128,15 @@ describe("react/components/chat/chat-agent-picker: connected", () => {
       const rootElement = document.getElementById("root");
       assert(rootElement, "root element exists");
       const root = createRoot(rootElement);
-      root.render(<ChatAgentPicker value="sales" />);
+      flushSync(() => root.render(<ChatAgentPicker value="sales" />));
       await settle();
 
       const trigger = rootElement.querySelector("button");
       assert(trigger, "picker trigger renders");
       assertStringIncludes(trigger.textContent ?? "", "Sales Agent");
 
-      root.unmount();
+      await unmountReactRoot(root);
+      await settle();
     } finally {
       restoreFetch();
       restoreDom();
@@ -145,13 +150,14 @@ describe("react/components/chat/chat-agent-picker: connected", () => {
       const rootElement = document.getElementById("root");
       assert(rootElement, "root element exists");
       const root = createRoot(rootElement);
-      root.render(<ChatAgentPicker />);
+      flushSync(() => root.render(<ChatAgentPicker />));
       await settle();
 
       assertEquals(rootElement.querySelector("button"), null);
       assertEquals(rootElement.textContent, "");
 
-      root.unmount();
+      await unmountReactRoot(root);
+      await settle();
     } finally {
       restoreFetch();
       restoreDom();
@@ -170,13 +176,14 @@ describe("react/components/chat/chat-agent-picker: connected", () => {
       const rootElement = document.getElementById("root");
       assert(rootElement, "root element exists");
       const root = createRoot(rootElement);
-      root.render(<ChatAgentPicker enabled={false} />);
+      flushSync(() => root.render(<ChatAgentPicker enabled={false} />));
       await settle();
 
       assertEquals(fetches, 0);
       assertEquals(rootElement.querySelector("button"), null);
 
-      root.unmount();
+      await unmountReactRoot(root);
+      await settle();
     } finally {
       globalThis.fetch = previousFetch;
       restoreDom();

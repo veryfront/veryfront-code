@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_contacts",
+      "id": "salesflare__list_contacts",
       "name": "List Contacts",
       "description": "List or search contacts in Salesflare",
       "requiresWrite": false,
@@ -71,7 +71,7 @@
       }
     },
     {
-      "id": "get_contact",
+      "id": "salesflare__get_contact",
       "name": "Get Contact",
       "description": "Get details of a Salesflare contact",
       "requiresWrite": false,
@@ -89,7 +89,7 @@
       }
     },
     {
-      "id": "create_contact",
+      "id": "salesflare__create_contact",
       "name": "Create Contact",
       "description": "Create a new contact in Salesflare",
       "requiresWrite": true,
@@ -126,7 +126,7 @@
       }
     },
     {
-      "id": "update_contact",
+      "id": "salesflare__update_contact",
       "name": "Update Contact",
       "description": "Update an existing Salesflare contact",
       "requiresWrite": true,
@@ -162,7 +162,7 @@
       }
     },
     {
-      "id": "list_accounts",
+      "id": "salesflare__list_accounts",
       "name": "List Accounts",
       "description": "List or search accounts (companies) in Salesflare",
       "requiresWrite": false,
@@ -191,7 +191,7 @@
       }
     },
     {
-      "id": "create_account",
+      "id": "salesflare__create_account",
       "name": "Create Account",
       "description": "Create a new account (company) in Salesflare",
       "requiresWrite": true,
@@ -220,7 +220,7 @@
       }
     },
     {
-      "id": "list_opportunities",
+      "id": "salesflare__list_opportunities",
       "name": "List Opportunities",
       "description": "List or search opportunities in Salesflare",
       "requiresWrite": false,

@@ -1,4 +1,9 @@
-import type { CompatibilityCheckResult, ReactFeatures, SSRMethod } from "./types.ts";
+import type {
+  CompatibilityCheckResult,
+  ReactFeatures,
+  ReactVersionInfo,
+  SSRMethod,
+} from "./types.ts";
 import { getReactVersionInfo } from "./version-cache.ts";
 
 const REACT_19_FEATURES: ReadonlySet<keyof ReactFeatures> = new Set([
@@ -18,10 +23,10 @@ const REACT_18_FEATURES: ReadonlySet<keyof ReactFeatures> = new Set([
   "renderToReadableStream",
 ]);
 
-export function checkVersionCompatibility(
+export function checkVersionCompatibilityForInfo(
+  info: ReactVersionInfo,
   requiredFeatures: Array<keyof ReactFeatures>,
 ): CompatibilityCheckResult {
-  const info = getReactVersionInfo();
   const warnings: string[] = [];
   const errors: string[] = [];
   let compatible = true;
@@ -30,7 +35,8 @@ export function checkVersionCompatibility(
     if (info.features[feature]) continue;
 
     if (REACT_19_FEATURES.has(feature)) {
-      warnings.push(`Feature "${feature}" requires React 19 (current: ${info.version})`);
+      errors.push(`Feature "${feature}" requires React 19+ (current: ${info.version})`);
+      compatible = false;
       continue;
     }
 
@@ -46,10 +52,19 @@ export function checkVersionCompatibility(
   return { compatible, warnings, errors };
 }
 
-export function getRecommendedSSRMethod(): SSRMethod {
-  const { isReact18, isReact19, features } = getReactVersionInfo();
+export function checkVersionCompatibility(
+  requiredFeatures: Array<keyof ReactFeatures>,
+): CompatibilityCheckResult {
+  return checkVersionCompatibilityForInfo(
+    getReactVersionInfo(),
+    requiredFeatures,
+  );
+}
 
-  if (isReact19 || (isReact18 && features.renderToReadableStream)) return "readable-stream";
-  if (isReact18 && features.renderToPipeableStream) return "stream";
+export function getRecommendedSSRMethod(): SSRMethod {
+  const { features } = getReactVersionInfo();
+
+  if (features.renderToReadableStream) return "readable-stream";
+  if (features.renderToPipeableStream) return "stream";
   return "string";
 }

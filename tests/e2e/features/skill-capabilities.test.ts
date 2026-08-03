@@ -264,7 +264,10 @@ export const POST = createAgUiHandler("researcher");
       assertEquals(loadSkillJson.toolId, "load_skill");
       assertStringIncludes(loadSkillJson.result.instructions, "crisp final draft");
       assertEquals(loadSkillJson.result.allowedTools, ["Read", "api:*"]);
-      assertEquals(loadSkillJson.result.references, ["references/style-guide.md"]);
+      assertEquals(loadSkillJson.result.references.toSorted(), [
+        "assets/voice.txt",
+        "references/style-guide.md",
+      ]);
       assertEquals(loadSkillJson.result.scripts, ["scripts/echo-style.sh"]);
 
       const { response: loadSkillReferenceResponse, json: loadSkillReferenceJson } = await postJson<
@@ -408,6 +411,137 @@ export const POST = createAgUiHandler("researcher");
     });
   });
 
+  it("loads skills by canonical id while preserving explicit and legacy display names", async () => {
+    const projectDir = await createSkillProject("skill-display-names", {
+      "app/page.tsx": `
+export default function Home() {
+  return <main id="skill-display-page">Skill display metadata smoke test</main>;
+}
+`,
+      "agents/email-assistant.ts": `
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "email-assistant",
+  system: "You route support emails.",
+  skills: ["process-email", "legacy-helper"],
+});
+`,
+      "skills/process-email/SKILL.md": `
+---
+name: process-email
+description: Processes inbound support emails.
+metadata:
+  display_name: Process Email
+---
+Use this skill to classify and draft support email replies.
+`,
+      "skills/process-email/references/checklist.md": `
+Check sender, urgency, and requested action.
+`,
+      "skills/legacy-helper/SKILL.md": `
+---
+name: Legacy Helper
+description: Legacy display-style skill name.
+---
+Use this legacy helper by canonical id.
+`,
+      "app/api/chat/route.ts": `
+import { createAgUiHandler } from "veryfront/agent";
+
+export const POST = createAgUiHandler("email-assistant");
+`,
+    });
+
+    await withServer(projectDir, async (server) => {
+      const { response: pageResponse, html } = await fetchPage(server, "/");
+      expectPage(html, pageResponse)
+        .toRender()
+        .withElement("skill-display-page")
+        .withText("Skill display metadata smoke test")
+        .withoutErrors();
+
+      const { response: canonicalResponse, json: canonicalJson } = await postJson<{
+        success: boolean;
+        toolId: string;
+        result: {
+          skillId: string;
+          instructions: string;
+          references?: string[];
+        };
+      }>(server, "/_dev/api/execute-tool", {
+        body: {
+          toolId: "load_skill",
+          args: { skillId: "process-email" },
+        },
+      });
+      assertEquals(canonicalResponse.status, 200);
+      assertEquals(canonicalJson.success, true);
+      assertEquals(canonicalJson.toolId, "load_skill");
+      assertEquals(canonicalJson.result.skillId, "process-email");
+      assertStringIncludes(canonicalJson.result.instructions, "classify and draft");
+      assertEquals(canonicalJson.result.references, ["references/checklist.md"]);
+
+      const { response: referenceResponse, json: referenceJson } = await postJson<{
+        success: boolean;
+        toolId: string;
+        result: {
+          path: string;
+          content: string;
+        };
+      }>(server, "/_dev/api/execute-tool", {
+        body: {
+          toolId: "load_skill_reference",
+          args: { skillId: "process-email", reference: "references/checklist.md" },
+        },
+      });
+      assertEquals(referenceResponse.status, 200);
+      assertEquals(referenceJson.success, true);
+      assertEquals(referenceJson.toolId, "load_skill_reference");
+      assertEquals(referenceJson.result.path, "references/checklist.md");
+      assertStringIncludes(referenceJson.result.content, "Check sender");
+
+      const { response: legacyResponse, json: legacyJson } = await postJson<{
+        success: boolean;
+        toolId: string;
+        result: {
+          skillId: string;
+          instructions: string;
+        };
+      }>(server, "/_dev/api/execute-tool", {
+        body: {
+          toolId: "load_skill",
+          args: { skillId: "legacy-helper" },
+        },
+      });
+      assertEquals(legacyResponse.status, 200);
+      assertEquals(legacyJson.success, true);
+      assertEquals(legacyJson.result.skillId, "legacy-helper");
+      assertStringIncludes(legacyJson.result.instructions, "legacy helper by canonical id");
+
+      const { response: displayNameResponse, json: displayNameJson } = await postJson<{
+        error: string;
+      }>(server, "/_dev/api/execute-tool", {
+        body: {
+          toolId: "load_skill",
+          args: { skillId: "Process Email" },
+        },
+      });
+      assertEquals(displayNameResponse.status, 500);
+      assertStringIncludes(displayNameJson.error, "Invalid skill id");
+
+      expectServer(server).withoutErrors();
+    }, {
+      timeout: 60_000,
+      env: {
+        OPENAI_API_KEY: "",
+        ANTHROPIC_API_KEY: "",
+        GOOGLE_API_KEY: "",
+        VERYFRONT_DISABLE_LOCAL_AI: "1",
+      },
+    });
+  });
+
   it("runs the 3-minute AI chatbot pattern documented by the skill", async () => {
     const projectDir = await createSkillProject("chatbot", {
       "app/page.tsx": `
@@ -417,7 +551,7 @@ import { Chat, useChat } from "veryfront/chat";
 export default function Home() {
   const chat = useChat({ api: "/api/ag-ui" });
 
-  return <Chat {...chat} className="flex-1 min-h-0" placeholder="Message" />;
+  return <Chat chat={chat} className="flex-1 min-h-0" placeholder="Message" />;
 }
 `,
       "tools/get-weather.ts": `

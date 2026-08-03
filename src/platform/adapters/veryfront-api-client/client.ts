@@ -3,6 +3,7 @@ import {
   type EnsureStyleArtifactBuildInput,
   type FileDetail,
   type FileListResult,
+  type GetFileOptions,
   type ListFilesOptions,
   type ProjectStyleArtifactResolution,
   type ResolveStyleArtifactInput,
@@ -10,7 +11,11 @@ import {
   type UpsertStyleArtifactInput,
   VeryfrontAPIOperations,
 } from "./operations.ts";
-import { API_CLIENT_ERROR, type VeryfrontAPIConfig } from "./types.ts";
+import { API_CLIENT_ERROR, type VeryfrontAPIConfig, VeryfrontError } from "./types.ts";
+import type {
+  DependencyArtifactBuildResultBody,
+  DependencyArtifactContentType,
+} from "#veryfront/release-assets/dependency-artifact-contracts.ts";
 
 const logger = baseLogger.component("veryfront-api-client");
 
@@ -88,6 +93,19 @@ export class VeryfrontApiClient {
 
   getProjectSlug(): string | undefined {
     return this.requestProjectSlug ?? this.config.projectSlug;
+  }
+
+  /** Throws a structured error when no project slug is configured, instead of passing `undefined` to API calls. */
+  private requireProjectSlug(): string {
+    const slug = this.getProjectSlug();
+    if (!slug) {
+      throw API_CLIENT_ERROR.create({
+        detail:
+          "No project slug configured — call setProjectSlug() or provide projectSlug in the config before making project-scoped API calls",
+        status: 400,
+      });
+    }
+    return slug;
   }
 
   clearProjectSlug(): void {
@@ -245,7 +263,7 @@ export class VeryfrontApiClient {
   }
 
   getProject(projectRef?: string) {
-    return this.operations.getProject(projectRef ?? this.getProjectSlug()!);
+    return this.operations.getProject(projectRef ?? this.requireProjectSlug());
   }
 
   // =============================================================================
@@ -253,11 +271,11 @@ export class VeryfrontApiClient {
   // =============================================================================
 
   listFiles(options: ListFilesOptions = {}): Promise<FileListResult> {
-    return this.listFilesByContext(this.getProjectSlug()!, this.getContext(), options);
+    return this.listFilesByContext(this.requireProjectSlug(), this.getContext(), options);
   }
 
   listAllFiles(options: Omit<ListFilesOptions, "cursor"> = {}) {
-    const projectRef = this.getProjectSlug()!;
+    const projectRef = this.requireProjectSlug();
     const context = this.getContext();
 
     switch (context.type) {
@@ -270,17 +288,17 @@ export class VeryfrontApiClient {
     }
   }
 
-  getFile(pathOrId: string): Promise<FileDetail> {
-    const projectRef = this.getProjectSlug()!;
+  getFile(pathOrId: string, options: { expectedMissing?: boolean } = {}): Promise<FileDetail> {
+    const projectRef = this.requireProjectSlug();
     const context = this.getContext();
 
     switch (context.type) {
       case "branch":
-        return this.operations.getBranchFile(projectRef, context.name, pathOrId);
+        return this.operations.getBranchFile(projectRef, context.name, pathOrId, options);
       case "environment":
-        return this.operations.getEnvironmentFile(projectRef, context.name, pathOrId);
+        return this.operations.getEnvironmentFile(projectRef, context.name, pathOrId, options);
       case "release":
-        return this.operations.getReleaseFile(projectRef, context.version, pathOrId);
+        return this.operations.getReleaseFile(projectRef, context.version, pathOrId, options);
     }
   }
 
@@ -289,16 +307,56 @@ export class VeryfrontApiClient {
     return file.content;
   }
 
+  getFileContentBytesWithinLimit(
+    pathOrId: string,
+    maximumBytes: number,
+    options: GetFileOptions = {},
+  ): Promise<Uint8Array> {
+    const projectRef = this.requireProjectSlug();
+    const context = this.getContext();
+    switch (context.type) {
+      case "branch":
+        return this.operations.getBranchFileContentBytesWithinLimit(
+          projectRef,
+          context.name,
+          pathOrId,
+          maximumBytes,
+          options,
+        );
+      case "environment":
+        return this.operations.getEnvironmentFileContentBytesWithinLimit(
+          projectRef,
+          context.name,
+          pathOrId,
+          maximumBytes,
+          options,
+        );
+      case "release":
+        return this.operations.getReleaseFileContentBytesWithinLimit(
+          projectRef,
+          context.version,
+          pathOrId,
+          maximumBytes,
+          options,
+        );
+    }
+  }
+
+  async getOptionalFileContent(pathOrId: string): Promise<string> {
+    const file = await this.getFile(pathOrId, { expectedMissing: true });
+    return file.content;
+  }
+
   // =============================================================================
   // Branch-specific Operations
   // =============================================================================
 
   listBranchFiles(branchName = "main", options: ListFilesOptions = {}) {
-    return this.operations.listBranchFiles(this.getProjectSlug()!, branchName, options);
+    return this.operations.listBranchFiles(this.requireProjectSlug(), branchName, options);
   }
 
   getBranchFile(branchName: string, pathOrId: string) {
-    return this.operations.getBranchFile(this.getProjectSlug()!, branchName, pathOrId);
+    return this.operations.getBranchFile(this.requireProjectSlug(), branchName, pathOrId);
   }
 
   // =============================================================================
@@ -306,7 +364,11 @@ export class VeryfrontApiClient {
   // =============================================================================
 
   listEnvironmentFiles(environmentName = "production", options: ListFilesOptions = {}) {
-    return this.operations.listEnvironmentFiles(this.getProjectSlug()!, environmentName, options);
+    return this.operations.listEnvironmentFiles(
+      this.requireProjectSlug(),
+      environmentName,
+      options,
+    );
   }
 
   listAllEnvironmentFiles(
@@ -314,14 +376,14 @@ export class VeryfrontApiClient {
     options: Omit<ListFilesOptions, "cursor"> = {},
   ) {
     return this.operations.listAllEnvironmentFiles(
-      this.getProjectSlug()!,
+      this.requireProjectSlug(),
       environmentName,
       options,
     );
   }
 
   getEnvironmentFile(environmentName: string, pathOrId: string) {
-    return this.operations.getEnvironmentFile(this.getProjectSlug()!, environmentName, pathOrId);
+    return this.operations.getEnvironmentFile(this.requireProjectSlug(), environmentName, pathOrId);
   }
 
   // =============================================================================
@@ -329,15 +391,15 @@ export class VeryfrontApiClient {
   // =============================================================================
 
   listReleaseFiles(version = "latest", options: ListFilesOptions = {}) {
-    return this.operations.listReleaseFiles(this.getProjectSlug()!, version, options);
+    return this.operations.listReleaseFiles(this.requireProjectSlug(), version, options);
   }
 
   listAllReleaseFiles(version = "latest", options: Omit<ListFilesOptions, "cursor"> = {}) {
-    return this.operations.listAllReleaseFiles(this.getProjectSlug()!, version, options);
+    return this.operations.listAllReleaseFiles(this.requireProjectSlug(), version, options);
   }
 
   getReleaseFile(version: string, pathOrId: string) {
-    return this.operations.getReleaseFile(this.getProjectSlug()!, version, pathOrId);
+    return this.operations.getReleaseFile(this.requireProjectSlug(), version, pathOrId);
   }
 
   // =============================================================================
@@ -350,30 +412,62 @@ export class VeryfrontApiClient {
 
   resolveStyleArtifact(
     input: ResolveStyleArtifactInput,
-    projectRef = this.getProjectSlug()!,
+    projectRef = this.requireProjectSlug(),
   ): Promise<ProjectStyleArtifactResolution> {
     return this.operations.resolveStyleArtifact(projectRef, input);
   }
 
   ensureStyleArtifactBuild(
     input: EnsureStyleArtifactBuildInput,
-    projectRef = this.getProjectSlug()!,
+    projectRef = this.requireProjectSlug(),
   ): Promise<ProjectStyleArtifactResolution> {
     return this.operations.ensureStyleArtifactBuild(projectRef, input);
   }
 
   upsertStyleArtifact(
     input: UpsertStyleArtifactInput,
-    projectRef = this.getProjectSlug()!,
+    projectRef = this.requireProjectSlug(),
   ): Promise<ProjectStyleArtifactResolution> {
     return this.operations.upsertStyleArtifact(projectRef, input);
+  }
+
+  // =============================================================================
+  // Dependency Artifact Build Operations
+  // =============================================================================
+
+  uploadDependencyArtifactAsset(
+    artifactId: string,
+    attemptCount: number,
+    contentHash: string,
+    contentType: DependencyArtifactContentType,
+    bytes: Uint8Array<ArrayBuffer>,
+  ) {
+    return this.operations.uploadDependencyArtifactAsset(
+      artifactId,
+      attemptCount,
+      contentHash,
+      contentType,
+      bytes,
+    );
+  }
+
+  reportDependencyArtifactBuildResult(
+    artifactId: string,
+    attemptCount: number,
+    result: DependencyArtifactBuildResultBody,
+  ) {
+    return this.operations.reportDependencyArtifactBuildResult(
+      artifactId,
+      attemptCount,
+      result,
+    );
   }
 
   // =============================================================================
   // Release Asset Manifest Operations
   // =============================================================================
 
-  beginReleaseAssetManifestBuild(version: string, projectRef = this.getProjectSlug()!) {
+  beginReleaseAssetManifestBuild(version: string, projectRef = this.requireProjectSlug()) {
     return this.operations.beginReleaseAssetManifestBuild(projectRef, version);
   }
 
@@ -382,7 +476,7 @@ export class VeryfrontApiClient {
     contentHash: string,
     contentType: string,
     bytes: Uint8Array,
-    projectRef = this.getProjectSlug()!,
+    projectRef = this.requireProjectSlug(),
   ) {
     return this.operations.uploadReleaseAsset(
       projectRef,
@@ -393,7 +487,11 @@ export class VeryfrontApiClient {
     );
   }
 
-  putReleaseAssetManifest(version: string, manifest: unknown, projectRef = this.getProjectSlug()!) {
+  putReleaseAssetManifest(
+    version: string,
+    manifest: unknown,
+    projectRef = this.requireProjectSlug(),
+  ) {
     return this.operations.putReleaseAssetManifest(projectRef, version, manifest);
   }
 
@@ -401,13 +499,17 @@ export class VeryfrontApiClient {
     version: string,
     state: "partial" | "failed",
     error?: string,
-    projectRef = this.getProjectSlug()!,
+    projectRef = this.requireProjectSlug(),
   ) {
     return this.operations.reportReleaseAssetManifestState(projectRef, version, state, error);
   }
 
-  getReleaseAssetManifest(version: string, projectRef = this.getProjectSlug()!) {
-    return this.operations.getReleaseAssetManifest(projectRef, version);
+  getReleaseAssetManifest(
+    version: string,
+    projectRef = this.requireProjectSlug(),
+    signal?: AbortSignal,
+  ) {
+    return this.operations.getReleaseAssetManifest(projectRef, version, signal);
   }
 
   // =============================================================================
@@ -419,7 +521,7 @@ export class VeryfrontApiClient {
       const file = await this.getFile(entityId);
       return { path: file.path, content: file.content };
     } catch (error) {
-      if (error instanceof Error && error.message.includes("404")) return null;
+      if (error instanceof VeryfrontError && error.status === 404) return null;
       throw error;
     }
   }
@@ -516,7 +618,7 @@ export class VeryfrontApiClient {
   }
 
   listPublishedFiles(_projectId?: string, releaseId?: string, environmentName?: string) {
-    const projectRef = this.getProjectSlug()!;
+    const projectRef = this.requireProjectSlug();
 
     if (releaseId) {
       return this.operations.listAllReleaseFiles(projectRef, releaseId);
@@ -537,7 +639,7 @@ export class VeryfrontApiClient {
     releaseId?: string,
     environmentName?: string,
   ): Promise<string> {
-    const projectRef = this.getProjectSlug()!;
+    const projectRef = this.requireProjectSlug();
 
     if (releaseId) {
       const result = await this.operations.getReleaseFile(projectRef, releaseId, path);
@@ -549,6 +651,38 @@ export class VeryfrontApiClient {
       return result.content;
     }
 
+    throw API_CLIENT_ERROR.create({
+      detail: "Cannot fetch published file without releaseId or environmentName",
+      status: 400,
+    });
+  }
+
+  getPublishedFileContentBytesWithinLimit(
+    path: string,
+    maximumBytes: number,
+    releaseId?: string,
+    environmentName?: string,
+    options: GetFileOptions = {},
+  ): Promise<Uint8Array> {
+    const projectRef = this.requireProjectSlug();
+    if (releaseId) {
+      return this.operations.getReleaseFileContentBytesWithinLimit(
+        projectRef,
+        releaseId,
+        path,
+        maximumBytes,
+        options,
+      );
+    }
+    if (environmentName) {
+      return this.operations.getEnvironmentFileContentBytesWithinLimit(
+        projectRef,
+        environmentName,
+        path,
+        maximumBytes,
+        options,
+      );
+    }
     throw API_CLIENT_ERROR.create({
       detail: "Cannot fetch published file without releaseId or environmentName",
       status: 400,

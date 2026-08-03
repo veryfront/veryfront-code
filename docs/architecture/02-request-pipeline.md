@@ -88,6 +88,13 @@ Default routing cache controls:
 | `VERYFRONT_PROXY_ROUTING_CACHE_TTL_MS`      | `60000` |
 | `VERYFRONT_PROXY_ROUTING_CACHE_MAX_ENTRIES` | `1000`  |
 
+After a deployment pointer commits, the control plane sends an authenticated,
+project-scoped invalidation through the proxy-owned Redis bus. Every subscribed
+proxy evicts the matching routing entries, refreshes the authoritative metadata,
+and acknowledges only after observing the expected environment and release.
+Generation fencing prevents an older in-flight lookup from repopulating the
+cache. The TTL remains a recovery path when immediate fan-out cannot converge.
+
 Release-backed production page-data requests use a fresh cache window plus a
 bounded stale-while-revalidate window. The cache key includes the project,
 environment, release content source, slug, and canonical query. The canonical

@@ -23,7 +23,7 @@ import { Chat, useChat } from "veryfront/chat";
 export default function Home() {
   const chat = useChat();
 
-  return <Chat {...chat} placeholder="Ask me anything..." />;
+  return <Chat chat={chat} placeholder="Ask me anything..." />;
 }
 ```
 

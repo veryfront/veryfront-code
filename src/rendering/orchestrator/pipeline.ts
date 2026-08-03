@@ -17,16 +17,20 @@
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import { createBuildVersion } from "#veryfront/utils/version.ts";
+import { profilePhase, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { profilePhase } from "#veryfront/observability/request-profiler.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import { VeryfrontError } from "#veryfront/errors/index.ts";
-import { FILE_NOT_FOUND, RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
+import { FILE_NOT_FOUND, RENDER_ERROR, VeryfrontError } from "#veryfront/errors";
 import { buildQueryAwareCacheKey } from "#veryfront/cache/keys.ts";
+import {
+  buildDependencyPinnedRenderCacheKey,
+  type RenderCacheKeyComposition,
+} from "#veryfront/cache/keys/dependency-pinning.ts";
 import { requestHasCacheSensitiveState } from "#veryfront/cache/request-cacheability.ts";
 import {
   extractRelativePath as extractRelativePathShared,
   extractRouteParams as extractRouteParamsShared,
+  extractRouterBasePath,
+  type RouterDirectories,
 } from "#veryfront/utils/route-path-utils.ts";
 import {
   extractRenderedCssHash,
@@ -35,8 +39,9 @@ import {
   serializeLayouts,
 } from "./pipeline-helpers.ts";
 import { join } from "#veryfront/compat/path";
-import type { MdxBundle, PageBundle } from "#veryfront/types";
+import type { EntityInfo, MdxBundle, PageBundle } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import type { CacheLookupResult } from "../cache/cache-coordinator.ts";
 import type { PageRenderer } from "../page-renderer.ts";
@@ -50,7 +55,12 @@ import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/i
 import { setupSSRGlobals } from "../ssr-globals.ts";
 import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
 import type { LayoutItem } from "#veryfront/types";
-import { withTimeout, withTimeoutThrow } from "../utils/stream-utils.ts";
+import {
+  type ProgressTimeoutControl,
+  withProgressTimeoutThrow,
+  withTimeout,
+  withTimeoutThrow,
+} from "../utils/stream-utils.ts";
 import { extractCandidates, generateTailwindCSS } from "#veryfront/html/styles-builder/index.ts";
 import { buildReleaseAssetModules } from "#veryfront/release-assets/client-module-map.ts";
 import {
@@ -59,6 +69,7 @@ import {
 } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { getReadyManifestForRender } from "#veryfront/release-assets/manifest-cache.ts";
 import { createEsmCache, createModuleCache, loadModule } from "./module-loader/index.ts";
+import { isBuildFailure } from "./module-loader/build-failure.ts";
 import type { ModuleLoaderConfig } from "./module-loader/index.ts";
 import {
   getCSSImports,
@@ -66,6 +77,16 @@ import {
 } from "#veryfront/modules/react-loader/css-import-collector.ts";
 import { assembleRenderResult } from "./render-result-assembly.ts";
 import { isMdxEsmExportMismatchError, recoverStaleMdxEsmPreviewCaches } from "../page-rendering.ts";
+import {
+  createDependencyPinningSource,
+  resolveDependencyPinningSnapshot,
+  resolveProjectReactVersion,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  type ClientPageIslandPlan,
+  planClientPageIsland,
+} from "#veryfront/rendering/rsc/page-island.ts";
+import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
 
 // Extracted modules
 import { EMPTY_LAYOUT_RESULT, isDotPath } from "./path-helpers.ts";
@@ -81,7 +102,9 @@ import {
   DATA_FETCH_TIMEOUT_MS,
   hasDataFetchingFunction,
   type LoadedModule,
+  MODULE_LOAD_HARD_TIMEOUT_MS,
   MODULE_LOAD_TIMEOUT_MS,
+  moduleLoadLabel,
   type ModuleToLoad,
   SSR_RENDER_TIMEOUT_MS,
 } from "./module-collection.ts";
@@ -98,8 +121,13 @@ export { __injectCssCacheForTests } from "./css-cache.ts";
  * can supply a context-aware adapter without an unsafe `as any` cast.
  */
 export interface PipelineCacheCoordinator {
-  checkCache(slug: string, cacheKey?: string): Promise<CacheLookupResult>;
-  persistResult(result: RenderResult, slug: string, cacheKey?: string): Promise<void>;
+  checkCache(slug: string, cacheKey?: string, nonce?: string): Promise<CacheLookupResult>;
+  persistResult(
+    result: RenderResult,
+    slug: string,
+    cacheKey?: string,
+    nonce?: string,
+  ): Promise<void>;
 }
 
 export interface RenderPipelineConfig {
@@ -111,8 +139,22 @@ export interface RenderPipelineConfig {
   adapter: RuntimeAdapter;
   mode: "development" | "production";
   projectDir: string;
+  /** Whether browser module URLs may use the local filesystem endpoint. */
+  isLocalProject: boolean;
+  /** Narrow host-owned capability for project-code execution. */
+  allowHostProjectCodeExecution?: boolean;
+  /** Stable project identity used to isolate transformed module caches. */
+  projectId?: string;
+  /** Release or preview source used to isolate transformed module caches. */
+  contentSourceId?: string;
+  /** Project configuration used to resolve the matching React runtime. */
+  config?: VeryfrontConfig;
+  /** Configured App and Pages Router roots. */
+  directories?: RouterDirectories;
   /** Query parameter handling for cache keys (from config.cache.queryParams) */
   queryParamOptions?: import("#veryfront/cache/keys.ts").QueryParamCacheOptions;
+  /** Prefixes applied after the pipeline returns a render cache override. */
+  renderCacheKeyComposition?: Omit<RenderCacheKeyComposition, "colorScheme">;
 }
 
 interface DataResolutionResult {
@@ -139,21 +181,142 @@ interface FetchedDataResult {
   error: Error | null;
 }
 
+interface DataWorkerIdentity {
+  readonly isLocalProject: boolean;
+  readonly allowHostProjectCodeExecution: boolean;
+  readonly workerScope?: string;
+  readonly sourceGeneration?: string;
+}
+
+const PRE_RESOLVED_DATA = Symbol("veryfront.preResolvedData");
+
+type InternalRenderOptions = RenderOptions & {
+  [PRE_RESOLVED_DATA]?: DataResolutionResult;
+};
+
+function stripInternalRenderOptions(options: InternalRenderOptions): RenderOptions {
+  const { [PRE_RESOLVED_DATA]: _preResolvedData, ...publicOptions } = options;
+  return publicOptions;
+}
+
 export class RenderPipeline {
   private config: RenderPipelineConfig;
   private dataFetcher: DataFetcher;
   private moduleLoaderConfig: ModuleLoaderConfig;
+  private reactVersionPromise: Promise<string> | null = null;
 
   constructor(config: RenderPipelineConfig) {
     this.config = config;
     this.dataFetcher = new DataFetcher(config.adapter);
     this.moduleLoaderConfig = {
       projectDir: config.projectDir,
-      projectId: config.projectDir,
+      projectId: config.projectId ?? config.projectDir,
+      contentSourceId: config.contentSourceId,
       adapter: config.adapter,
       mode: config.mode,
       moduleCache: createModuleCache(),
       esmCache: createEsmCache(),
+    };
+  }
+
+  private getDependencyPinningSource() {
+    return createDependencyPinningSource({
+      projectDir: this.config.projectDir,
+      adapter: this.config.adapter,
+      isLocalProject: this.config.isLocalProject,
+      projectId: this.config.projectId,
+      contentSourceId: this.config.contentSourceId,
+      config: this.config.config,
+    });
+  }
+
+  private getReactVersion(
+    dependencyPinningCacheKey?: string,
+    dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  ): Promise<string> {
+    if (
+      dependencyPinningDependencies !== undefined ||
+      dependencyPinningCacheKey?.startsWith("on:")
+    ) {
+      return resolveProjectReactVersion({
+        projectDir: this.config.projectDir,
+        config: this.config.config,
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies,
+      });
+    }
+
+    this.reactVersionPromise ??= resolveProjectReactVersion({
+      projectDir: this.config.projectDir,
+      config: this.config.config,
+    });
+    return this.reactVersionPromise;
+  }
+
+  private planClientPageIsland(
+    pageInfo: EntityInfo,
+    nestedLayouts: LayoutItem[],
+    options?: RenderOptions,
+  ): Promise<ClientPageIslandPlan | null> {
+    const layouts = nestedLayouts
+      .map((layout) => ({
+        kind: layout.kind,
+        path: layout.componentPath ?? layout.path ?? "",
+      }))
+      .filter((layout) => Boolean(layout.path));
+
+    return planClientPageIsland({
+      pageSource: pageInfo.entity.content ?? "",
+      pagePath: pageInfo.entity.path,
+      projectDir: this.config.projectDir,
+      appDir: this.config.directories?.app ?? this.config.config?.directories?.app ?? "app",
+      layouts,
+      fs: this.config.adapter.fs,
+      strategy: determineClientModuleStrategy({
+        isLocalProject: this.config.isLocalProject,
+        environment: options?.environment,
+      }),
+    });
+  }
+
+  /**
+   * Build an immutable loader configuration for one render request. A pipeline can
+   * serve concurrent requests, so request identity must not be written into shared
+   * mutable state while module transforms are in flight.
+   */
+  private async resolveModuleLoaderConfig(
+    options?: Pick<
+      RenderOptions,
+      | "projectId"
+      | "contentSourceId"
+      | "url"
+      | "dependencyPinningCacheKey"
+      | "dependencyPinningDependencies"
+      | "dependencyPinningSource"
+    >,
+  ): Promise<ModuleLoaderConfig> {
+    const dependencyPinningSource = options?.dependencyPinningSource ??
+      this.getDependencyPinningSource();
+    const dependencySnapshot = await resolveDependencyPinningSnapshot(
+      dependencyPinningSource,
+      options?.dependencyPinningCacheKey,
+      options?.dependencyPinningDependencies,
+    );
+    const reactVersion = await this.getReactVersion(
+      dependencySnapshot.cacheKey,
+      dependencySnapshot.dependencies,
+    );
+    return {
+      ...this.moduleLoaderConfig,
+      projectId: options?.projectId ?? this.config.projectId ?? this.config.projectDir,
+      contentSourceId: options?.contentSourceId ?? this.config.contentSourceId,
+      reactVersion,
+      moduleServerOrigin: dependencySnapshot.cacheKey.startsWith("on:")
+        ? options?.url?.origin
+        : undefined,
+      dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+      dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningSource,
     };
   }
 
@@ -166,8 +329,11 @@ export class RenderPipeline {
     this.moduleLoaderConfig.esmCache.clear();
   }
 
-  private loadModule(filePath: string): Promise<Record<string, unknown>> {
-    return loadModule(filePath, this.moduleLoaderConfig);
+  private loadModule(
+    filePath: string,
+    moduleLoaderConfig: ModuleLoaderConfig,
+  ): Promise<Record<string, unknown>> {
+    return loadModule(filePath, moduleLoaderConfig);
   }
 
   private async resolveCssFromRenderedHtml(
@@ -193,11 +359,35 @@ export class RenderPipeline {
    * Layout modules are considered non-critical - their failures are logged as warnings
    * and the page continues to render (possibly without that layout's data).
    */
-  private async loadModulesInParallel(modules: ModuleToLoad[]): Promise<LoadedModule[]> {
+  private async loadModulesInParallel(
+    modules: ModuleToLoad[],
+    options?: Pick<
+      RenderOptions,
+      | "projectId"
+      | "contentSourceId"
+      | "url"
+      | "dependencyPinningCacheKey"
+      | "dependencyPinningDependencies"
+      | "dependencyPinningSource"
+    >,
+    timeoutControl?: ProgressTimeoutControl,
+  ): Promise<LoadedModule[]> {
+    const moduleLoaderConfig = await this.resolveModuleLoaderConfig(options);
+    if (timeoutControl) {
+      const completedMilestones = new Set<string>();
+      moduleLoaderConfig.signal = timeoutControl.signal;
+      moduleLoaderConfig.onProgress = ({ phase, filePath }) => {
+        const milestone = `${phase}:${filePath ?? ""}`;
+        if (completedMilestones.has(milestone)) return;
+        completedMilestones.add(milestone);
+        const fileName = filePath?.split("/").pop();
+        timeoutControl.mark(fileName ? `${phase}:${fileName}` : phase);
+      };
+    }
     const results = await Promise.all(
       modules.map(async (m) => {
         try {
-          const mod = await this.loadModule(m.path);
+          const mod = await this.loadModule(m.path, moduleLoaderConfig);
           return { ...m, mod, error: null as Error | null };
         } catch (error) {
           return { ...m, mod: null, error: error as Error };
@@ -206,11 +396,11 @@ export class RenderPipeline {
     );
 
     const loaded: LoadedModule[] = [];
-    const criticalFailures: Array<{ path: string; error: string }> = [];
+    const criticalFailures: Array<{ path: string; error: string; buildFailure: boolean }> = [];
 
     for (const result of results) {
       if (result.mod && !result.error) {
-        loaded.push({ type: result.type, id: result.id, mod: result.mod });
+        loaded.push({ type: result.type, id: result.id, path: result.path, mod: result.mod });
         continue;
       }
 
@@ -219,7 +409,11 @@ export class RenderPipeline {
       const errorMessage = result.error.message;
 
       if (result.type === "page") {
-        criticalFailures.push({ path: result.path, error: errorMessage });
+        criticalFailures.push({
+          path: result.path,
+          error: errorMessage,
+          buildFailure: isBuildFailure(result.error),
+        });
         renderPageLog.error("Critical page module failed to load", {
           path: result.path,
           error: errorMessage,
@@ -241,6 +435,10 @@ export class RenderPipeline {
         detail: `Critical page module(s) failed to load:\n${failedDetails}`,
         context: {
           criticalFailures,
+          // A module that never compiled is a developer-facing build failure;
+          // one that compiled and threw at module scope is an application
+          // error the project's own error page should present.
+          buildFailure: criticalFailures.some((f) => f.buildFailure),
           loadedCount: loaded.length,
           totalModules: modules.length,
         },
@@ -264,7 +462,7 @@ export class RenderPipeline {
     const pageProps: Record<string, unknown> = {};
     const layoutProps = new Map<string, Record<string, unknown>>();
 
-    if (!options?.request || !options?.url) {
+    if (!options?.url || (!options.staticDataOnly && !options.request)) {
       return { params, pageProps, layoutProps };
     }
 
@@ -274,7 +472,7 @@ export class RenderPipeline {
         pagePath,
       });
 
-      const extracted = extractRouteParamsShared(pagePath, slug);
+      const extracted = extractRouteParamsShared(pagePath, slug, this.config.directories);
       if (extracted.matched) {
         params = extracted.params;
         renderPageLog.debug("Extracted route params", { slug, params });
@@ -283,20 +481,19 @@ export class RenderPipeline {
 
     const dataContext: DataContext = {
       params,
-      query: options.url.searchParams,
-      request: options.request,
+      query: options.staticDataOnly ? new URLSearchParams() : options.url.searchParams,
+      request: options.request ?? new Request(options.url, { method: "GET" }),
       url: options.url,
     };
 
     const fileExtension = getExtensionName(pagePath);
     const isComponentPage = ["tsx", "jsx", "ts", "js"].includes(fileExtension);
-    const isInPagesDir = pagePath.includes("/pages/");
-    const isInAppDir = pagePath.includes("/app/");
+    const routerPath = extractRouterBasePath(pagePath, this.config.directories);
 
     const modulesToLoad = collectModulesToLoad(
       pagePath,
       isComponentPage,
-      isInPagesDir || isInAppDir,
+      routerPath.type !== null,
       nestedLayouts,
     );
 
@@ -310,19 +507,29 @@ export class RenderPipeline {
         withSpan(
           SpanNames.RENDER_LOAD_MODULES,
           () =>
-            withTimeoutThrow(
-              this.loadModulesInParallel(modulesToLoad),
-              MODULE_LOAD_TIMEOUT_MS,
-              `Module loading for ${slug}`,
+            withProgressTimeoutThrow(
+              (control) => this.loadModulesInParallel(modulesToLoad, options, control),
+              {
+                idleTimeoutMs: MODULE_LOAD_TIMEOUT_MS,
+                hardTimeoutMs: options.abortSignal ? undefined : MODULE_LOAD_HARD_TIMEOUT_MS,
+                label: moduleLoadLabel(slug, options.url?.pathname ?? ""),
+                signal: options.abortSignal,
+              },
             ),
           { "render.module_count": modulesToLoad.length },
         ),
     );
 
-    const dataJobs = loadedModules.filter((m) => hasDataFetchingFunction(m.mod));
+    const dataJobs = loadedModules.filter((m) =>
+      options?.staticDataOnly
+        ? typeof (m.mod as PageWithData).getStaticData === "function"
+        : hasDataFetchingFunction(m.mod)
+    );
     if (dataJobs.length === 0) {
       return { params, pageProps, layoutProps };
     }
+
+    const dataWorkerIdentity = await this.resolveDataWorkerIdentity(options);
 
     const dataResults = await profilePhase(
       "render.fetch_data",
@@ -338,6 +545,7 @@ export class RenderPipeline {
                     const fetchOptions: FetchDataOptions = {
                       modulePath: jobPath,
                       projectDir: this.config.projectDir,
+                      ...dataWorkerIdentity,
                     };
                     const result = await this.dataFetcher
                       .fetchData(
@@ -362,6 +570,47 @@ export class RenderPipeline {
     this.applyFetchedDataResults(slug, dataResults, pageProps, layoutProps);
 
     return { params, pageProps, layoutProps };
+  }
+
+  /**
+   * Build a host-owned worker generation for raw local data modules.
+   *
+   * A mutable source may only reuse a Worker when its filesystem adapter
+   * supplies an exact snapshot generation. Otherwise the data fetcher selects
+   * a single-use Worker so an imported module graph cannot survive a source
+   * change. Production releases are immutable and may use the release id.
+   */
+  private async resolveDataWorkerIdentity(
+    options: RenderOptions | undefined,
+  ): Promise<DataWorkerIdentity> {
+    const isLocalProject = this.config.isLocalProject === true;
+    const allowHostProjectCodeExecution = isLocalProject ||
+      this.config.allowHostProjectCodeExecution === true;
+    if (!isLocalProject) {
+      return { isLocalProject, allowHostProjectCodeExecution };
+    }
+
+    const sourceSnapshotVersion = await this.config.adapter.fs
+      .getSourceSnapshotVersion?.();
+    const releaseId = options?.releaseId;
+    if (!releaseId && sourceSnapshotVersion === undefined) {
+      return { isLocalProject, allowHostProjectCodeExecution };
+    }
+
+    const workerScope = this.config.projectId ?? this.config.projectDir;
+    const sourceGeneration = JSON.stringify({
+      releaseId: releaseId ?? null,
+      sourceSnapshotVersion: sourceSnapshotVersion ?? null,
+      contentSourceId: options?.contentSourceId ?? this.config.contentSourceId ?? null,
+      environment: options?.environment ?? null,
+      dependencyPinningCacheKey: options?.dependencyPinningCacheKey ?? null,
+    });
+    return {
+      isLocalProject,
+      allowHostProjectCodeExecution,
+      workerScope,
+      sourceGeneration,
+    };
   }
 
   private applyFetchedDataResults(
@@ -401,9 +650,23 @@ export class RenderPipeline {
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
     const pipelineStartTime = performance.now();
     const timing: Record<string, number> = {};
+    const dependencyPinningSource = options?.dependencyPinningSource ??
+      this.getDependencyPinningSource();
+    const dependencySnapshot = await resolveDependencyPinningSnapshot(
+      dependencyPinningSource,
+      options?.dependencyPinningCacheKey,
+      options?.dependencyPinningDependencies,
+    );
+    const dependencyPinningCacheKey = dependencySnapshot.cacheKey;
+    options = {
+      ...options,
+      dependencyPinningCacheKey,
+      dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningSource,
+    };
     const projectSlug = options?.projectSlug || options?.projectId || "unknown";
-    const projectId = options?.projectId ?? this.config.projectDir;
-    const cacheKey = this.buildCacheKey(slug, options);
+    const projectId = options?.projectId ?? this.config.projectId ?? this.config.projectDir;
+    const cacheKey = this.buildCacheKey(slug, options, dependencyPinningCacheKey);
 
     let cacheResult: Awaited<ReturnType<typeof this.config.cacheCoordinator.checkCache>> | null =
       null;
@@ -412,7 +675,7 @@ export class RenderPipeline {
 
     if (shouldCache && !options?.skipCacheCheck) {
       const cacheCheckStart = performance.now();
-      cacheResult = await this.config.cacheCoordinator.checkCache(slug, cacheKey);
+      cacheResult = await this.config.cacheCoordinator.checkCache(slug, cacheKey, options?.nonce);
       timing.cacheCheck = Math.round(performance.now() - cacheCheckStart);
 
       if (cacheResult?.cachedResult) {
@@ -423,11 +686,8 @@ export class RenderPipeline {
 
     setupSSRGlobals();
 
-    this.moduleLoaderConfig.projectId = projectId;
-    this.moduleLoaderConfig.contentSourceId = options?.contentSourceId;
-
     if (this.config.mode === "development") {
-      clearSSRModuleCacheForProject(projectId);
+      clearSSRModuleCacheForProject(projectId, { preserveActiveTransforms: true });
     }
 
     const renderOnce = () =>
@@ -441,7 +701,10 @@ export class RenderPipeline {
               () =>
                 withSpan(
                   "render.resolve_page",
-                  () => this.config.pageResolver.resolvePage(slug),
+                  () =>
+                    this.config.pageResolver.resolvePage(slug, {
+                      signal: options?.abortSignal,
+                    }),
                   { "render.slug": slug },
                 ),
             );
@@ -453,7 +716,11 @@ export class RenderPipeline {
             );
 
             try {
-              const skipLayouts = isDotPath(slug, pageInfo.entity.path);
+              const skipLayouts = isDotPath({
+                slug,
+                filePath: pageInfo.entity.path,
+                projectDir: this.config.projectDir,
+              });
 
               const layoutCollectStart = performance.now();
               const layoutResult = skipLayouts ? EMPTY_LAYOUT_RESULT : await profilePhase(
@@ -468,7 +735,13 @@ export class RenderPipeline {
               timing.layoutCollect = Math.round(performance.now() - layoutCollectStart);
 
               const layoutPreloadPromise = !skipLayouts && layoutResult.nestedLayouts.length > 0
-                ? this.config.layoutOrchestrator.preloadLayoutModules(layoutResult.nestedLayouts)
+                ? this.config.layoutOrchestrator.preloadLayoutModules(
+                  layoutResult.nestedLayouts,
+                  options?.dependencyPinningCacheKey,
+                  options?.dependencyPinningDependencies,
+                  options?.dependencyPinningSource,
+                  options?.url?.origin,
+                )
                 : Promise.resolve();
 
               let dataFetchingProps: Record<string, unknown> | undefined;
@@ -478,7 +751,19 @@ export class RenderPipeline {
               let layoutDataMap = new Map<string, Record<string, unknown>>();
 
               const dataFetchStart = performance.now();
-              if (options?.request && options?.url) {
+              const internalPreResolvedData = (options as InternalRenderOptions | undefined)?.[
+                PRE_RESOLVED_DATA
+              ];
+              const renderInputOptions = internalPreResolvedData && options
+                ? stripInternalRenderOptions(options as InternalRenderOptions)
+                : options;
+              if (internalPreResolvedData) {
+                resolvedParams = internalPreResolvedData.params;
+                dataFetchingProps = Object.keys(internalPreResolvedData.pageProps).length > 0
+                  ? internalPreResolvedData.pageProps
+                  : undefined;
+                layoutDataMap = internalPreResolvedData.layoutProps;
+              } else if (options?.url && (options.request || options.staticDataOnly)) {
                 await profilePhase(
                   "render.data_fetching",
                   () =>
@@ -516,13 +801,13 @@ export class RenderPipeline {
               const hasResolvedParams = Object.keys(resolvedParams).length > 0;
               const mergedOptions = (dataFetchingProps || hasResolvedParams)
                 ? {
-                  ...options,
+                  ...renderInputOptions,
                   ...(hasResolvedParams ? { params: resolvedParams } : {}),
                   ...(dataFetchingProps
-                    ? { props: { ...options?.props, ...dataFetchingProps } }
+                    ? { props: { ...renderInputOptions?.props, ...dataFetchingProps } }
                     : {}),
                 }
-                : options;
+                : renderInputOptions;
 
               const bundlePrepStart = performance.now();
               const pageBundleResult = await profilePhase(
@@ -552,6 +837,27 @@ export class RenderPipeline {
               }
 
               const { pageElement, pageBundle } = pageBundleResult;
+              const pageIslandPlan = await this.planClientPageIsland(
+                pageInfo,
+                layoutResult.nestedLayouts,
+                mergedOptions,
+              );
+              const clientPageIsland = pageIslandPlan
+                ? {
+                  clientLayoutPaths: pageIslandPlan.clientLayouts.map((layout) => layout.path),
+                  hasServerLayouts: pageIslandPlan.serverLayouts.length > 0,
+                }
+                : undefined;
+              const serializedLayoutProps = serializeLayoutProps(
+                layoutDataMap,
+                this.config.projectDir,
+              );
+              const hydrationOptions = layoutDataMap.size > 0
+                ? { ...mergedOptions, layoutProps: serializedLayoutProps }
+                : mergedOptions;
+              const renderOptions = clientPageIsland
+                ? { ...hydrationOptions, clientPageIsland }
+                : hydrationOptions;
 
               const mergedFrontmatter = {
                 ...pageInfo.entity.frontmatter,
@@ -580,6 +886,11 @@ export class RenderPipeline {
                         mergedFrontmatter,
                         headings,
                         options?.projectSlug,
+                        clientPageIsland,
+                        dataFetchingProps,
+                        options?.dependencyPinningCacheKey,
+                        options?.dependencyPinningDependencies,
+                        options?.dependencyPinningSource,
                       ),
                     {
                       "render.slug": slug,
@@ -611,8 +922,9 @@ export class RenderPipeline {
                             collectedMetadata: pageBundleResult.collectedMetadata,
                             slug,
                             cssImports: collectedCSSImports,
+                            options: renderOptions,
                           },
-                          mergedOptions,
+                          renderOptions,
                         ),
                         SSR_RENDER_TIMEOUT_MS,
                         `SSR rendering for ${slug}`,
@@ -641,6 +953,7 @@ export class RenderPipeline {
                 skipCachePersist: options?.skipCachePersist,
                 cacheCoordinator: this.config.cacheCoordinator,
                 logger: renderPipelineLog,
+                nonce: renderOptions.nonce,
               });
 
               timing.total = Math.round(performance.now() - pipelineStartTime);
@@ -695,21 +1008,39 @@ export class RenderPipeline {
   /** Resolve page data for SPA client-side navigation without rendering HTML. */
   async resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse> {
     setupSSRGlobals();
+    const dependencyPinningSource = options?.dependencyPinningSource ??
+      this.getDependencyPinningSource();
+    const dependencySnapshot = await resolveDependencyPinningSnapshot(
+      dependencyPinningSource,
+      options?.dependencyPinningCacheKey,
+      options?.dependencyPinningDependencies,
+    );
+    options = {
+      ...options,
+      dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+      dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningSource,
+    };
 
-    const projectId = options?.projectId ?? this.config.projectDir;
-    this.moduleLoaderConfig.projectId = projectId;
-    this.moduleLoaderConfig.contentSourceId = options?.contentSourceId;
+    const projectId = options?.projectId ?? this.config.projectId ?? this.config.projectDir;
 
     if (this.config.mode === "development") {
-      clearSSRModuleCacheForProject(projectId);
+      clearSSRModuleCacheForProject(projectId, { preserveActiveTransforms: true });
     }
 
     const pageInfo = await profilePhase(
       "page_data.resolve_page",
-      () => this.config.pageResolver.resolvePage(slug),
+      () =>
+        this.config.pageResolver.resolvePage(slug, {
+          signal: options?.abortSignal,
+        }),
     );
 
-    const skipLayouts = isDotPath(slug, pageInfo.entity.path);
+    const skipLayouts = isDotPath({
+      slug,
+      filePath: pageInfo.entity.path,
+      projectDir: this.config.projectDir,
+    });
     const layoutResult = skipLayouts ? EMPTY_LAYOUT_RESULT : await profilePhase(
       "page_data.collect_layouts",
       () => this.config.layoutOrchestrator.collectLayouts(pageInfo),
@@ -731,7 +1062,10 @@ export class RenderPipeline {
 
     const pageProps: Record<string, unknown> = dataResolution.pageProps;
     const params = dataResolution.params;
-    const layoutProps = serializeLayoutProps(dataResolution.layoutProps);
+    const layoutProps = serializeLayoutProps(
+      dataResolution.layoutProps,
+      this.config.projectDir,
+    );
 
     const { frontmatter, headings } = await profilePhase(
       "page_data.extract_mdx_metadata",
@@ -745,17 +1079,48 @@ export class RenderPipeline {
         ),
     );
 
-    const layouts = serializeLayouts(layoutResult.nestedLayouts, this.config.projectDir);
+    const pageIslandPlan = await this.planClientPageIsland(
+      pageInfo,
+      layoutResult.nestedLayouts,
+      options,
+    );
+    const clientLayoutPaths = new Set(
+      pageIslandPlan?.clientLayouts.map((layout) => layout.path) ?? [],
+    );
+    const hydrationLayouts = pageIslandPlan
+      ? layoutResult.nestedLayouts.filter((layout) =>
+        clientLayoutPaths.has(layout.componentPath ?? layout.path ?? "")
+      )
+      : layoutResult.nestedLayouts;
+    const layouts = serializeLayouts(hydrationLayouts, this.config.projectDir);
 
     const providers: string[] = [];
 
     const projectUpdatedAt = this.resolveProjectUpdatedAt();
 
-    const appPath = await profilePhase("page_data.resolve_app_path", () => this.resolveAppPath());
+    const appPath = pageIslandPlan
+      ? undefined
+      : await profilePhase("page_data.resolve_app_path", () => this.resolveAppPath());
+    const errorPath = await profilePhase(
+      "page_data.resolve_error_path",
+      async () => {
+        const resolved = await this.config.ssrOrchestrator.resolveErrorComponentPath({
+          pageInfo,
+          pageBundle: {} as PageBundle,
+          layoutBundle: layoutResult.layoutBundle,
+          nestedLayouts: layoutResult.nestedLayouts,
+          collectedMetadata: {},
+          slug,
+          cssImports: [],
+          options,
+        });
+        return resolved ? extractRelativePathShared(resolved, this.config.projectDir) : undefined;
+      },
+    );
 
     const { css, cssAction, cssError } = await profilePhase(
       "page_data.resolve_css",
-      () => this.resolvePageDataCss(slug, options, projectUpdatedAt),
+      () => this.resolvePageDataCss(slug, options, projectUpdatedAt, dataResolution),
     );
 
     resolvePageDataLog.debug("Resolved page data", {
@@ -764,6 +1129,9 @@ export class RenderPipeline {
       pageType,
       layoutCount: layouts.length,
       appPath,
+      errorPath,
+      isolatedClientPage: pageIslandPlan ? true : undefined,
+      requiresFullDocumentNavigation: pageIslandPlan?.serverLayouts.length ? true : undefined,
       headingsCount: headings.length,
       hasCss: !!css,
       cssAction,
@@ -781,7 +1149,13 @@ export class RenderPipeline {
       params,
       layoutProps,
       buildVersion: createBuildVersion(projectUpdatedAt),
+      ...(dependencySnapshot.cacheKey === "off"
+        ? {}
+        : { dependencyPinningCacheKey: dependencySnapshot.cacheKey }),
       appPath,
+      errorPath,
+      isolatedClientPage: pageIslandPlan ? true : undefined,
+      requiresFullDocumentNavigation: pageIslandPlan?.serverLayouts.length ? true : undefined,
       releaseId: options?.releaseId,
       releaseAssetModules: buildReleaseAssetModules(options?.releaseAssetManifest),
       headings,
@@ -861,6 +1235,7 @@ export class RenderPipeline {
     slug: string,
     options: RenderOptions | undefined,
     projectUpdatedAt: string | undefined,
+    dataResolution: DataResolutionResult,
   ): Promise<PageCssResult> {
     if (this.hasReadyReleaseCss(options)) {
       return { css: undefined, cssAction: "clear", cssError: undefined };
@@ -871,6 +1246,8 @@ export class RenderPipeline {
       options?.environment,
       slug,
       projectUpdatedAt,
+      options?.dependencyPinningCacheKey,
+      options?.url?.origin,
     );
 
     const cachedCss = getCachedPageCss(cssCacheKey);
@@ -880,16 +1257,19 @@ export class RenderPipeline {
     }
 
     try {
+      const cssRenderOptions: InternalRenderOptions = {
+        ...options,
+        delivery: "string",
+        skipCacheCheck: true,
+        skipCachePersist: true,
+        [PRE_RESOLVED_DATA]: dataResolution,
+      };
+
       const renderResult = await profilePhase(
         "page_data.css.render_html",
         () =>
           withTimeout(
-            this.renderPage(slug, {
-              ...options,
-              delivery: "string",
-              skipCacheCheck: true,
-              skipCachePersist: true,
-            }),
+            this.renderPage(slug, cssRenderOptions),
             CSS_SSR_TIMEOUT_MS,
             `CSS SSR for ${slug}`,
           ),
@@ -980,13 +1360,34 @@ export class RenderPipeline {
    *
    * Query param handling uses config.queryParamOptions for filtering (utm_*, gclid, etc.).
    */
-  private buildCacheKey(slug: string, options?: RenderOptions): string | null {
-    if (options?.cacheKey) return options.cacheKey;
+  private buildCacheKey(
+    slug: string,
+    options: RenderOptions | undefined,
+    dependencyPinningCacheKey: string,
+  ): string | null {
+    const composition: RenderCacheKeyComposition = {
+      ...(this.config.renderCacheKeyComposition ?? {}),
+      colorScheme: options?.colorScheme,
+    };
+    if (options?.cacheKey) {
+      return buildDependencyPinnedRenderCacheKey(
+        options.cacheKey,
+        dependencyPinningCacheKey,
+        options.url?.origin,
+        composition,
+      );
+    }
     const req = options?.request;
     if (req) {
       if (requestHasCacheSensitiveState(req)) return null;
     }
 
-    return buildQueryAwareCacheKey(slug, options?.url, this.config.queryParamOptions);
+    const baseKey = buildQueryAwareCacheKey(slug, options?.url, this.config.queryParamOptions);
+    return buildDependencyPinnedRenderCacheKey(
+      baseKey,
+      dependencyPinningCacheKey,
+      options?.url?.origin,
+      composition,
+    );
   }
 }

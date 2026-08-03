@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_actors",
+      "id": "apify__list_actors",
       "name": "List Actors",
       "description": "List actors in your Apify account",
       "requiresWrite": false,
@@ -72,7 +72,7 @@
       }
     },
     {
-      "id": "run_actor_sync",
+      "id": "apify__run_actor_sync",
       "name": "Run Actor (Sync)",
       "description": "Run an actor, wait for it to finish (up to 300s), and return its dataset items (consumes platform credits)",
       "requiresWrite": true,
@@ -114,7 +114,7 @@
       }
     },
     {
-      "id": "get_run",
+      "id": "apify__get_run",
       "name": "Get Run",
       "description": "Get the status and details of an actor run, including its defaultDatasetId",
       "requiresWrite": false,
@@ -135,7 +135,7 @@
       }
     },
     {
-      "id": "list_runs",
+      "id": "apify__list_runs",
       "name": "List Runs",
       "description": "List recent actor runs in your account",
       "requiresWrite": false,
@@ -168,7 +168,7 @@
       }
     },
     {
-      "id": "get_dataset_items",
+      "id": "apify__get_dataset_items",
       "name": "Get Dataset Items",
       "description": "Fetch items from a dataset produced by an actor run",
       "requiresWrite": false,

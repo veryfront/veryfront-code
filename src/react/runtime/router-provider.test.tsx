@@ -3,8 +3,10 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
+import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import {
   PageContextProvider,
   type PageContextValue,
@@ -58,13 +60,17 @@ function seedRouter(href: string, params: Record<string, string> = {}): RouterVa
 }
 
 /** A page-context seed carrying only the page-authored fields. */
-function seedPage(frontmatter: Record<string, unknown> = {}): PageContextValue {
+function seedPage(
+  frontmatter: Record<string, unknown> = {},
+  data: Record<string, unknown> = {},
+): PageContextValue {
   return {
     slug: "/",
     path: "/",
     params: {},
     query: {},
     frontmatter,
+    data,
     headings: [],
     mdxHeadings: [],
   };
@@ -154,7 +160,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
       assertStringIncludes(rootElement.textContent ?? "", "thread:b");
       assertEquals(router.navigateCount, 1);
 
-      root.unmount();
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -191,7 +197,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
 
       assertStringIncludes(rootElement.textContent ?? "", "tab:b");
 
-      root.unmount();
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -226,7 +232,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
 
       assertStringIncludes(rootElement.textContent ?? "", "/|x");
 
-      root.unmount();
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -263,13 +269,13 @@ describe("react/runtime/RouterProvider (reactive)", () => {
       // Router changed → page context's query tracked it; frontmatter unchanged.
       assertStringIncludes(rootElement.textContent ?? "", "match:true|v:2|fm:kept");
 
-      root.unmount();
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
   });
 
-  it("derives a clean query when the URL carries a hash fragment", () => {
+  it("derives a clean query when the URL carries a hash fragment", async () => {
     const restore = installDom("https://example.com/docs?tab=api#install");
     installFakeRouter();
     try {
@@ -292,7 +298,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
       // The hash must not leak into the query — only `tab` is present.
       assertStringIncludes(rootElement.textContent ?? "", "/docs|tab:api|keys:tab");
 
-      root.unmount();
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -327,13 +333,83 @@ describe("react/runtime/RouterProvider (reactive)", () => {
 
       assertStringIncludes(rootElement.textContent ?? "", "42|comments|Hello");
 
-      root.unmount();
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
   });
 
-  it("wrapForHydration seeds the provider from location + params (no React passed in)", () => {
+  it("exposes getServerData props as usePageContext().data to nested consumers", async () => {
+    const restore = installDom("https://example.com/dash?tab=x");
+    installFakeRouter();
+    try {
+      const rootElement = document.getElementById("root")!;
+      const root = createRoot(rootElement);
+
+      // A deeply-nested consumer reads the page's server data without any
+      // props threaded to it — the whole point of exposing `data` on context.
+      const Deep = (): React.ReactElement => {
+        const { data } = usePageContext();
+        return <span>data:{String(data.serverValue)}</span>;
+      };
+      const Consumer = (): React.ReactElement => (
+        <div>
+          <Deep />
+        </div>
+      );
+
+      flushSync(() => {
+        root.render(
+          <RouterProvider router={seedRouter("/dash?tab=x")}>
+            <PageContextProvider
+              pageContext={seedPage({}, { serverValue: "from-server" })}
+            >
+              <Consumer />
+            </PageContextProvider>
+          </RouterProvider>,
+        );
+      });
+
+      // `data` is the page's server data — NOT derived from the router, unlike
+      // query/params.
+      assertStringIncludes(rootElement.textContent ?? "", "data:from-server");
+
+      await unmountReactRoot(root);
+    } finally {
+      restore();
+    }
+  });
+
+  it("defaults usePageContext().data to an empty object for a seed that omits it", () => {
+    // A seed built before `data` existed omits the field entirely. The provider
+    // must merge it over the defaults so consumers read `{}`, never `undefined`
+    // — the backward-compatibility contract for older PageContext seeds. If this
+    // regressed to `undefined`, `Object.keys(data)` below would throw.
+    const legacySeed = {
+      slug: "/",
+      path: "/",
+      params: {},
+      query: {},
+      frontmatter: {},
+      headings: [],
+      mdxHeadings: [],
+    };
+
+    const Consumer = (): React.ReactElement => {
+      const { data } = usePageContext();
+      return <span>type:{typeof data} keys:{Object.keys(data).length}</span>;
+    };
+
+    const html = renderToStaticMarkup(
+      <PageContextProvider pageContext={legacySeed}>
+        <Consumer />
+      </PageContextProvider>,
+    );
+
+    assertStringIncludes(html, "type:object keys:0");
+  });
+
+  it("wrapForHydration seeds the provider from location + params (no React passed in)", async () => {
     // The hydration path wraps a child by calling this export on the app's own
     // React — nothing is threaded across the module boundary. It seeds params
     // and frontmatter and derives pathname/query from the live URL.
@@ -359,7 +435,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
 
       assertStringIncludes(rootElement.textContent ?? "", "/posts/7:7:x:Hi");
 
-      root.unmount();
+      await unmountReactRoot(root);
     } finally {
       restore();
     }
@@ -395,9 +471,12 @@ describe("react/runtime/RouterProvider (reactive)", () => {
           </RouterProvider>,
         );
       });
-      await tick();
+      await waitFor(
+        () => (rootElement.textContent ?? "").includes("m:true"),
+        { interval: 10, message: "RouterProvider did not finish its client mount" },
+      );
       assertStringIncludes(rootElement.textContent ?? "", "m:true");
-      root.unmount();
+      await unmountReactRoot(root);
     } finally {
       restoreClient();
     }
@@ -437,7 +516,7 @@ describe("react/runtime/RouterProvider (reactive)", () => {
 
       assertStringIncludes(rootElement.textContent ?? "", "tab:b");
 
-      root.unmount();
+      await unmountReactRoot(root);
     } finally {
       restore();
     }

@@ -36,6 +36,22 @@ describe("extensions/contracts", () => {
         "deno add @veryfront/ext-bundler-esbuild",
       );
     });
+
+    it("recommends first-party asset engine extensions", () => {
+      for (
+        const [contract, packageName] of [
+          ["CSSOptimizationEngine", "@veryfront/ext-css-lightning"],
+          ["CSSPurgingEngine", "@veryfront/ext-css-purgecss"],
+          ["ImageOptimizationEngine", "@veryfront/ext-image-sharp"],
+        ] as const
+      ) {
+        assertThrows(
+          () => resolve(contract),
+          Error,
+          `deno add ${packageName}`,
+        );
+      }
+    });
   });
 
   describe("tryResolve()", () => {
@@ -55,6 +71,20 @@ describe("extensions/contracts", () => {
       register("CSSProcessor", { v: 1 });
       register("CSSProcessor", { v: 2 });
       assertEquals(resolve<{ v: number }>("CSSProcessor").v, 2);
+    });
+
+    it("rejects ambiguous names and undefined implementations", () => {
+      assertThrows(
+        () => register(" Contract", {}),
+        TypeError,
+        "non-empty canonical string",
+      );
+      assertThrows(
+        () => register("UndefinedContract", undefined),
+        TypeError,
+        "must not be undefined",
+      );
+      assertEquals(tryResolve("UndefinedContract"), undefined);
     });
   });
 

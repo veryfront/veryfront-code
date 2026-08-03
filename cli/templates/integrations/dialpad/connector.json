@@ -36,7 +36,7 @@
   ],
   "tools": [
     {
-      "id": "list_contacts",
+      "id": "dialpad__list_contacts",
       "name": "List Contacts",
       "description": "List Dialpad contacts visible to the authenticated user",
       "requiresWrite": false,
@@ -81,7 +81,7 @@
       }
     },
     {
-      "id": "get_contact",
+      "id": "dialpad__get_contact",
       "name": "Get Contact",
       "description": "Get details of a Dialpad contact",
       "requiresWrite": false,
@@ -99,7 +99,7 @@
       }
     },
     {
-      "id": "create_contact",
+      "id": "dialpad__create_contact",
       "name": "Create Contact",
       "description": "Create a new contact in Dialpad",
       "requiresWrite": true,
@@ -137,7 +137,7 @@
       }
     },
     {
-      "id": "update_contact",
+      "id": "dialpad__update_contact",
       "name": "Update Contact",
       "description": "Update an existing Dialpad contact",
       "requiresWrite": true,
@@ -181,7 +181,7 @@
       }
     },
     {
-      "id": "list_users",
+      "id": "dialpad__list_users",
       "name": "List Users",
       "description": "List Dialpad users in the company",
       "requiresWrite": false,
@@ -208,7 +208,7 @@
       }
     },
     {
-      "id": "send_sms",
+      "id": "dialpad__send_sms",
       "name": "Send SMS",
       "description": "Send an SMS message on behalf of a Dialpad user",
       "requiresWrite": true,

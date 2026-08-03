@@ -1,15 +1,18 @@
 import { isResponseLike } from "../service/response-like.ts";
+import { INITIALIZATION_ERROR, INVALID_ARGUMENT } from "#veryfront/errors";
+import { agentLogger } from "#veryfront/utils";
 import {
   AgentRuntime,
   RunAlreadyExistsError,
   type RunResumeSessionManager,
 } from "../runtime/index.ts";
-import type { Agent, AgentResponse } from "../types.ts";
+import type { Agent, AgentResponse, Message } from "../types.ts";
 import {
   type AgUiRuntimeRequest,
   parseAgUiRuntimeRequestOrError,
 } from "../runtime/ag-ui-contract.ts";
 import { extractRequest } from "./request-shared.ts";
+import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
 import { type AgUiResumeValue, buildMergedAgUiTools } from "./tool-shared.ts";
 import { normalizeAgUiRuntimeMessages } from "./runtime-support.ts";
 import {
@@ -33,6 +36,14 @@ export interface AgUiRuntimeLifecycleContext {
   request: AgUiRuntimeRequest;
   toolCallId?: string;
   error?: unknown;
+  /**
+   * The finalized messages this run produced (assistant + tool turns). Present
+   * on the `onFinish` context after a successful run that produced a response;
+   * omitted for `onError` / `onToolCallSeen` and bodyless runs.
+   */
+  messages?: Message[];
+  /** The full finalized response, alongside `messages`, on `onFinish`. */
+  response?: AgentResponse;
 }
 
 function invokeLifecycleCallback(
@@ -43,9 +54,11 @@ function invokeLifecycleCallback(
 
   try {
     const result = callback(context);
-    void Promise.resolve(result).catch(() => undefined);
-  } catch {
-    return;
+    void Promise.resolve(result).catch((error) => {
+      agentLogger.error("[AgUiRuntime] Lifecycle callback rejected:", { error });
+    });
+  } catch (error) {
+    agentLogger.error("[AgUiRuntime] Lifecycle callback threw:", { error });
   }
 }
 
@@ -57,8 +70,8 @@ async function invokeLifecycleCallbackAndWait(
 
   try {
     await callback(context);
-  } catch {
-    return;
+  } catch (error) {
+    agentLogger.error("[AgUiRuntime] Lifecycle callback (await) threw:", { error });
   }
 }
 
@@ -112,7 +125,7 @@ async function createAgUiRuntimeStreamResponse(
     upstreamStatus: number;
     upstreamStatusText?: string;
     getCompletedResponse?: () => AgentResponse | null;
-    onFinish?: () => void;
+    onFinish?: (response: AgentResponse | null) => void;
     onError?: (error: unknown) => void;
     onToolCallSeen?: (toolCallId: string) => void;
   },
@@ -181,7 +194,7 @@ async function createAgUiRuntimeStreamResponse(
               return;
             }
           }
-          onFinish?.();
+          onFinish?.(null);
           closeController(controller);
           return;
         }
@@ -202,7 +215,7 @@ async function createAgUiRuntimeStreamResponse(
             return;
           }
         }
-        onFinish?.();
+        onFinish?.(getCompletedResponse?.() ?? null);
       } catch (error) {
         onError?.(error);
         enqueueEvent(controller, "RunError", {
@@ -226,7 +239,7 @@ async function createAgUiRuntimeDirectStreamResponse(
   request: AgUiRuntimeRequest,
   baseContext: Record<string, unknown>,
   lifecycle?: {
-    onFinish?: () => Promise<void> | void;
+    onFinish?: (response: AgentResponse | null) => Promise<void> | void;
     onError?: (error: unknown) => Promise<void> | void;
     onToolCallSeen?: (toolCallId: string) => Promise<void> | void;
   },
@@ -272,7 +285,7 @@ async function createAgUiRuntimeInjectedToolsStreamResponse(
   baseContext: Record<string, unknown>,
   sessionManager: RunResumeSessionManager<AgUiResumeValue>,
   lifecycle?: {
-    onFinish?: () => Promise<void> | void;
+    onFinish?: (response: AgentResponse | null) => Promise<void> | void;
     onError?: (error: unknown) => Promise<void> | void;
     onToolCallSeen?: (toolCallId: string) => Promise<void> | void;
   },
@@ -318,9 +331,9 @@ async function createAgUiRuntimeInjectedToolsStreamResponse(
     upstreamBody,
     upstreamStatus: 200,
     getCompletedResponse: () => completedResponse,
-    onFinish: () => {
+    onFinish: (response) => {
       sessionManager.completeRun(request.runId);
-      void lifecycle?.onFinish?.();
+      void lifecycle?.onFinish?.(response);
     },
     onError: (error) => {
       sessionManager.failRun(request.runId);
@@ -346,7 +359,10 @@ export type AgUiRuntimeHandlerExecute = (
 ) => Promise<Response> | Response;
 
 export interface AgUiRuntimeRequestGateInput {
+  /** Original request for trusted framework admission and authentication only. */
   request: Request;
+  /** Detached request safe to retain or pass into application callbacks. */
+  applicationRequest: Request;
 }
 
 export type AgUiRuntimeRequestGate = (
@@ -391,31 +407,35 @@ export function createAgUiRuntimeHandler(
   config: AgUiRuntimeHandlerConfig,
 ): (requestOrCtx: unknown) => Promise<Response> {
   if (!config.agent && !config.execute) {
-    throw new Error(
-      "createAgUiRuntimeHandler requires either an agent or an execute handler.",
-    );
+    throw INVALID_ARGUMENT.create({
+      detail: "createAgUiRuntimeHandler requires either an agent or an execute handler.",
+    });
   }
 
   return async function POST(requestOrCtx: unknown): Promise<Response> {
     const request = extractRequest(requestOrCtx);
+    const applicationRequest = createApplicationRequest(request);
 
     try {
-      const gateResult = await config.beforeParse?.({ request });
+      const gateResult = await config.beforeParse?.({ request, applicationRequest });
       if (isResponseLike(gateResult)) {
         return gateResult;
       }
 
-      const parsed = await parseAgUiRuntimeRequestOrError(request);
+      const parsed = await parseAgUiRuntimeRequestOrError(applicationRequest);
       if (isResponseLike(parsed)) {
         if (config.validationErrorResponse) {
-          return await config.validationErrorResponse({ request, response: parsed });
+          return await config.validationErrorResponse({
+            request: applicationRequest,
+            response: parsed,
+          });
         }
 
         return parsed;
       }
 
       const context = typeof config.context === "function"
-        ? await config.context(request)
+        ? await config.context(applicationRequest)
         : config.context ?? {};
 
       const createDefaultResponse = config.agent
@@ -468,7 +488,10 @@ export function createAgUiRuntimeHandler(
                 context,
                 config.sessionManager,
                 {
-                  onFinish: () => invokeLifecycle("onFinish"),
+                  onFinish: (response) =>
+                    invokeLifecycle("onFinish", {
+                      ...(response ? { messages: response.messages, response } : {}),
+                    }),
                   onError: (error) => invokeLifecycle("onError", { error }),
                   onToolCallSeen: (toolCallId) => invokeLifecycle("onToolCallSeen", { toolCallId }),
                 },
@@ -480,7 +503,10 @@ export function createAgUiRuntimeHandler(
               parsed,
               context,
               {
-                onFinish: () => invokeLifecycle("onFinish"),
+                onFinish: (response) =>
+                  invokeLifecycle("onFinish", {
+                    ...(response ? { messages: response.messages, response } : {}),
+                  }),
                 onError: (error) => invokeLifecycle("onError", { error }),
                 onToolCallSeen: (toolCallId) => invokeLifecycle("onToolCallSeen", { toolCallId }),
               },
@@ -497,7 +523,7 @@ export function createAgUiRuntimeHandler(
 
       if (config.execute) {
         return await config.execute({
-          request,
+          request: applicationRequest,
           agUiInput: parsed,
           context,
           createDefaultResponse: createDefaultResponseWithLifecycle,
@@ -508,7 +534,9 @@ export function createAgUiRuntimeHandler(
         return await createDefaultResponseWithLifecycle();
       }
 
-      throw new Error("createAgUiRuntimeHandler configuration became invalid during execution.");
+      throw INITIALIZATION_ERROR.create({
+        detail: "createAgUiRuntimeHandler configuration became invalid during execution.",
+      });
     } catch (error) {
       if (
         error instanceof Error &&

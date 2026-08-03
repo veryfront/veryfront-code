@@ -28,7 +28,7 @@
   ],
   "tools": [
     {
-      "id": "list_vouchers",
+      "id": "lexoffice__list_vouchers",
       "name": "List Vouchers",
       "description": "List and filter bookkeeping vouchers (sales and purchase invoices, credit notes) via the voucherlist, e.g. to find open or overdue invoices",
       "requiresWrite": false,
@@ -94,7 +94,7 @@
       }
     },
     {
-      "id": "get_invoice",
+      "id": "lexoffice__get_invoice",
       "name": "Get Invoice",
       "description": "Retrieve a single invoice with line items, totals, tax conditions, and payment status",
       "requiresWrite": false,
@@ -112,7 +112,7 @@
       }
     },
     {
-      "id": "create_invoice",
+      "id": "lexoffice__create_invoice",
       "name": "Create Invoice",
       "description": "Create a sales invoice. Created as an editable draft by default; set finalize=true to immediately open it",
       "requiresWrite": true,
@@ -173,7 +173,7 @@
       }
     },
     {
-      "id": "list_contacts",
+      "id": "lexoffice__list_contacts",
       "name": "List Contacts",
       "description": "List and filter customers and vendors, e.g. to find the contactId for an invoice",
       "requiresWrite": false,
@@ -225,7 +225,7 @@
       }
     },
     {
-      "id": "create_contact",
+      "id": "lexoffice__create_contact",
       "name": "Create Contact",
       "description": "Create a customer or vendor contact for use on invoices and vouchers",
       "requiresWrite": true,
@@ -272,7 +272,7 @@
       }
     },
     {
-      "id": "upload_voucher_file",
+      "id": "lexoffice__upload_voucher_file",
       "name": "Upload Voucher File",
       "description": "Upload a receipt image or invoice file (pdf, jpg, png, xml; max 5 MB) for bookkeeping; returns the file id and the id of the voucher created for it",
       "requiresWrite": true,
@@ -304,7 +304,7 @@
       }
     },
     {
-      "id": "download_file",
+      "id": "lexoffice__download_file",
       "name": "Download File",
       "description": "Download an uploaded bookkeeping voucher file (receipt/invoice image) as binary data by its file id; Content-Type and Content-Disposition response headers carry the MIME type and suggested filename. For sales voucher documents prefer the document render flow.",
       "requiresWrite": false,
@@ -322,7 +322,7 @@
       }
     },
     {
-      "id": "get_invoice_document",
+      "id": "lexoffice__get_invoice_document",
       "name": "Get Invoice Document",
       "description": "Trigger PDF rendering for an invoice and return its documentFileId, which can then be downloaded via Download File. Required for invoices created through the API with status open; draft invoices have no document file and are rejected with 406.",
       "requiresWrite": false,
@@ -340,7 +340,7 @@
       }
     },
     {
-      "id": "get_payments",
+      "id": "lexoffice__get_payments",
       "name": "Get Payments",
       "description": "Get the payment status of an invoice or voucher: open amount, paid date, and payment items — the reliable way to check who actually paid",
       "requiresWrite": false,

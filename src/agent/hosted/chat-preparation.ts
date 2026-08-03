@@ -3,6 +3,7 @@ import type {
   ChatSystemMessage,
   ChatUiMessage,
 } from "#veryfront/chat/types.ts";
+import type { HistoricalToolInputCompactionDiagnostic } from "#veryfront/chat/message-prep.ts";
 import type { AgentRuntimeMessage } from "../runtime/message-adapter.ts";
 import type { ConversationRunEvent } from "../conversation/run-events.ts";
 import type {
@@ -26,7 +27,11 @@ import {
   resolveHostedRuntimeRequestConfig,
 } from "./runtime-request-config.ts";
 import { getRuntimeUploadUrl } from "../runtime/upload-url-client.ts";
-import { isRuntimeSkillVisibleTo, type RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
+import {
+  resolveRuntimeSkillSelectorForAgent,
+  type RuntimeSkillDefinition,
+} from "../runtime/skill-metadata.ts";
+import type { ResolvedSkillSelectorPolicy } from "#veryfront/skill/selector.ts";
 import {
   applyContextBudget,
   type ContextBudgetDiagnostics,
@@ -34,6 +39,17 @@ import {
   ContextCompactionError,
 } from "./context-budget-manager.ts";
 import { findSubmittedFormInputResult } from "./form-input-tool.ts";
+import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
+import {
+  createToolExposureCheckpointEvent,
+  TOOL_SEARCH_TOOL_NAME,
+} from "../runtime/tool-exposure.ts";
+import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
+import type { HostedHostToolPolicy } from "./chat-runtime-tool-assembly.ts";
+import {
+  createHostedRunEventWriterCapabilityForRequest,
+  runWithHostedRunEventWriterCapability,
+} from "./child-run-event-writer-token.ts";
 
 /** Request payload for normalized hosted chat. */
 export type NormalizedHostedChatRequest = {
@@ -50,6 +66,7 @@ export type PrepareHostedChatRuntimeMessagesOptions =
     | "providerOwnedToolNames"
     | "abortSignal"
     | "fileContentFetchTimeoutMs"
+    | "historicalToolInputRetention"
   >
   & {
     authToken?: string;
@@ -63,6 +80,8 @@ export type HostedChatRuntimePreparationRootRunContext = {
   effectiveParentRunId?: string;
   effectiveParentMessageId?: string;
   publishParentRunEvents?: (events: ConversationRunEvent[]) => Promise<void>;
+  durableRunMirror?: ConversationRunChunkMirror | null;
+  privateDurableRunMirror?: ConversationRunChunkMirror | null;
 };
 
 /** Public API contract for hosted chat runtime preparation steering. */
@@ -79,6 +98,7 @@ export type HostedChatRuntimeInstructionsInput<TRuntimeAgentDefinition> = {
   environmentContext?: string;
   instructions: string;
   skills: RuntimeSkillDefinition[];
+  availableToolNames?: readonly string[];
 };
 
 /** Input payload for hosted chat runtime creation preparation. */
@@ -90,14 +110,22 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
     thinking?: RuntimeAgentThinkingConfig;
     maxSteps?: number;
     allowedRemoteTools?: unknown;
-    providerTools?: unknown;
+    providerTools?: string[];
+    tools?: true | string[];
+    skills?: true | false | string[];
   };
   projectId: string | null;
   authToken: string;
   conversationId?: string;
   branchId?: string | null;
+  runtimeTargetKind?: ChatRequestContext["runtimeTargetKind"];
+  runtimeTargetEnvironmentId?: string | null;
   environmentContext?: string;
   rootRunContext?: HostedChatRuntimePreparationRootRunContext;
+  /** Trusted checkpoint resolved after hosted service authentication. */
+  serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
+  /** Service-owned authorization ceiling for Framework host tools. */
+  hostToolPolicy?: HostedHostToolPolicy;
   resolveModelId: (modelId: string | undefined) => string | undefined;
   resolveModelThinking?: (
     modelId: string | undefined,
@@ -124,12 +152,16 @@ export type HostedChatRuntimeCreationPreparationResult<TRuntimeAgentDefinition> 
   runtimeConfig: ResolvedHostedRuntimeRequestConfig;
 };
 
-function getProviderToolNames(agentConfig: { providerTools?: unknown }): string[] {
-  return Array.isArray(agentConfig.providerTools)
-    ? agentConfig.providerTools.filter((toolName): toolName is string =>
+function getProviderOwnedToolNames(input: {
+  agentConfig: { providerTools?: unknown };
+  runtimeConfig: ResolvedHostedRuntimeRequestConfig;
+}): string[] {
+  const configured = Array.isArray(input.agentConfig.providerTools)
+    ? input.agentConfig.providerTools.filter((toolName): toolName is string =>
       typeof toolName === "string" && toolName.length > 0
     )
     : [];
+  return [...new Set([...configured, ...input.runtimeConfig.requestedAllowedProviderTools])];
 }
 
 async function flushRequiredContextCompactionEvent(
@@ -150,6 +182,30 @@ async function flushRequiredContextCompactionEvent(
       "Context compaction event was not durably persisted before model execution",
     );
   }
+}
+
+function createDurableToolExposureCheckpointPersister(
+  rootRunContext: HostedChatRuntimePreparationRootRunContext | undefined,
+): ((checkpoint: ToolExposureCheckpoint) => Promise<void>) | undefined {
+  const privateDurableRunMirror = rootRunContext?.privateDurableRunMirror;
+  if (rootRunContext?.durableRootRun && !privateDurableRunMirror) {
+    return async () => {
+      throw new Error(
+        "A trusted run-event append token is required to persist a private tool exposure checkpoint",
+      );
+    };
+  }
+  if (!privateDurableRunMirror) return undefined;
+  return async (checkpoint) => {
+    await privateDurableRunMirror.appendEvents([createToolExposureCheckpointEvent(checkpoint)]);
+    const snapshot = await privateDurableRunMirror.flush();
+    if (snapshot.disabled || snapshot.pendingEventCount > 0 || snapshot.inFlight) {
+      privateDurableRunMirror.dispose();
+      throw new Error(
+        "Tool exposure checkpoint was not durably persisted before model execution",
+      );
+    }
+  };
 }
 
 /** Options accepted by hosted chat execution preparation root run. */
@@ -181,7 +237,8 @@ export type HostedChatExecutionPreparationInput<
     thinking?: RuntimeAgentThinkingConfig;
     maxSteps?: number;
     allowedRemoteTools?: unknown;
-    providerTools?: unknown;
+    providerTools?: string[];
+    tools?: true | string[];
   },
   TRuntimeResult extends HostedChatRuntimeCreationResult,
 > = {
@@ -209,6 +266,10 @@ export type HostedChatExecutionPreparationInput<
     >,
   ) => Promise<TRuntimeResult>;
   contextBudget?: HostedChatContextBudgetOptions;
+  /** Trusted checkpoint resolved by the authenticated hosted service. */
+  serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
+  /** Service-owned authorization ceiling for Framework host tools. */
+  hostToolPolicy?: HostedHostToolPolicy;
 };
 
 /** Result returned from hosted chat execution preparation. */
@@ -220,6 +281,7 @@ export type HostedChatExecutionPreparationResult<
   runtime: TRuntimeResult;
   finalMessages: AgentRuntimeMessage[];
   contextBudgetDiagnostics?: ContextBudgetDiagnostics;
+  historicalToolInputCompactions?: HistoricalToolInputCompactionDiagnostic[];
   steering: HostedChatRuntimeCreationPreparationResult<
     TRuntimeAgentDefinition
   >["steering"];
@@ -249,16 +311,50 @@ export function normalizeParsedHostedChatRequest(
 
 function buildHostedChatRuntimeProjectSteering<TRuntimeAgentDefinition>(input: {
   agentConfig: TRuntimeAgentDefinition;
+  skillSelectorPolicy: ResolvedSkillSelectorPolicy;
   environmentContext?: string;
   instructions: string;
   skills: RuntimeSkillDefinition[];
 }): HostedChatRuntimeProjectSteering<TRuntimeAgentDefinition> {
   return {
     agent: input.agentConfig,
+    skillSelectorPolicy: input.skillSelectorPolicy,
     ...(input.environmentContext ? { environmentContext: input.environmentContext } : {}),
     ...(input.instructions ? { initialProjectInstructions: input.instructions } : {}),
     ...(input.skills.length > 0 ? { initialSkills: input.skills } : {}),
   };
+}
+
+function resolveInitialModelVisibleToolNames(input: {
+  runtimeConfig: ResolvedHostedRuntimeRequestConfig;
+  selectedSkills: readonly RuntimeSkillDefinition[];
+  hostToolPolicy?: HostedHostToolPolicy;
+}): string[] {
+  const hostAllow = input.hostToolPolicy === undefined
+    ? undefined
+    : new Set(input.hostToolPolicy.allow);
+  const isHostAllowed = (toolName: string): boolean =>
+    hostAllow === undefined || hostAllow.has(toolName);
+
+  if (input.runtimeConfig.requestedAllowedTools === undefined) {
+    return [
+      ...(isHostAllowed("form_input") ? ["form_input"] : []),
+      ...(input.selectedSkills.length > 0 && isHostAllowed("load_skill") ? ["load_skill"] : []),
+      TOOL_SEARCH_TOOL_NAME,
+    ].sort();
+  }
+
+  const visibleToolNames = new Set(
+    input.runtimeConfig.requestedAllowedTools.filter(isHostAllowed),
+  );
+  if (
+    input.selectedSkills.length > 0 &&
+    isHostAllowed("load_skill") &&
+    (visibleToolNames.size > 0 || input.runtimeConfig.includeRuntimeEssentialToolsWhenEmpty)
+  ) {
+    visibleToolNames.add("load_skill");
+  }
+  return [...visibleToolNames].sort();
 }
 
 /** Options accepted by prepare hosted chat runtime creation. */
@@ -272,34 +368,45 @@ export async function prepareHostedChatRuntimeCreationOptions<
     authToken: input.authToken,
     branchId: input.branchId,
   });
-  // Owner-aware: the run only ever sees skills visible to its agent (unowned
-  // plus the agent's own). Filtering here scopes the prompt manifest, the
-  // per-run availableSkillIds gate used by hosted load_skill, its not-found
-  // enumeration, and the live steering payload in one place.
-  const visibleSkills = steering.skills.filter((skill) =>
-    isRuntimeSkillVisibleTo(skill, { agentId: input.agentConfig.id })
-  );
-  const agentInstructions = input.buildInstructions({
-    agentConfig: input.agentConfig,
-    projectId: input.projectId,
-    branchId: input.branchId,
-    environmentContext: input.environmentContext,
-    instructions: steering.instructions,
-    skills: visibleSkills,
+  const skillSelectorSnapshot = resolveRuntimeSkillSelectorForAgent({
+    skills: steering.skills,
+    agentId: input.agentConfig.id,
+    selector: input.agentConfig.skills === false ? [] : input.agentConfig.skills,
   });
+  const selectedSkills = skillSelectorSnapshot.definitions;
   const runtimeConfig = resolveHostedRuntimeRequestConfig({
     request: input.request,
     agentConfig: input.agentConfig,
     resolveModelId: input.resolveModelId,
     resolveModelThinking: input.resolveModelThinking,
   });
-
+  const initialModelVisibleToolNames = resolveInitialModelVisibleToolNames({
+    runtimeConfig,
+    selectedSkills,
+    hostToolPolicy: input.hostToolPolicy,
+  });
+  const agentInstructions = input.buildInstructions({
+    agentConfig: input.agentConfig,
+    projectId: input.projectId,
+    branchId: input.branchId,
+    environmentContext: input.environmentContext,
+    instructions: steering.instructions,
+    skills: selectedSkills,
+    availableToolNames: initialModelVisibleToolNames,
+  });
   return {
     creationOptions: {
       projectId: input.projectId,
+      ...(input.request.projectSlug ? { projectSlug: input.request.projectSlug } : {}),
       authToken: input.authToken,
       instructions: agentInstructions,
       ...(input.branchId !== undefined ? { branchId: input.branchId } : {}),
+      ...(input.runtimeTargetKind !== undefined
+        ? { runtimeTargetKind: input.runtimeTargetKind }
+        : {}),
+      ...(input.runtimeTargetEnvironmentId !== undefined
+        ? { runtimeTargetEnvironmentId: input.runtimeTargetEnvironmentId }
+        : {}),
       ...(runtimeConfig.requestedModel ? { model: runtimeConfig.requestedModel } : {}),
       ...(runtimeConfig.requestedThinking ? { thinking: runtimeConfig.requestedThinking } : {}),
       ...(runtimeConfig.requestedTemperature !== undefined
@@ -308,8 +415,16 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...(runtimeConfig.requestedMaxSteps !== undefined
         ? { maxSteps: runtimeConfig.requestedMaxSteps }
         : {}),
-      ...(runtimeConfig.effectiveRuntimeOverrides?.allowedTools
-        ? { allowedTools: runtimeConfig.effectiveRuntimeOverrides.allowedTools }
+      ...(runtimeConfig.requestedMaxOutputTokens !== undefined
+        ? { maxOutputTokens: runtimeConfig.requestedMaxOutputTokens }
+        : {}),
+      ...(runtimeConfig.requestedAllowedTools !== undefined
+        ? { allowedTools: runtimeConfig.requestedAllowedTools }
+        : {}),
+      allowedProviderTools: runtimeConfig.requestedAllowedProviderTools,
+      includeRuntimeEssentialToolsWhenEmpty: runtimeConfig.includeRuntimeEssentialToolsWhenEmpty,
+      ...(input.serverResolvedToolExposureCheckpoint
+        ? { serverResolvedToolExposureCheckpoint: input.serverResolvedToolExposureCheckpoint }
         : {}),
       ...(input.request.allowDelegation !== undefined
         ? { allowDelegation: input.request.allowDelegation }
@@ -325,30 +440,38 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...(input.rootRunContext?.effectiveParentMessageId
         ? { parentMessageId: input.rootRunContext.effectiveParentMessageId }
         : {}),
-      availableSkillIds: visibleSkills.map((skill) => skill.id),
-      ...(visibleSkills.some((skill) => skill.sourcePath)
+      availableSkillIds: skillSelectorSnapshot.allowedSkillIds,
+      skillSelectorPolicy: skillSelectorSnapshot.policy,
+      ...(Object.keys(skillSelectorSnapshot.skillSourcePaths).length > 0
         ? {
-          skillSourcePaths: Object.fromEntries(
-            visibleSkills
-              .filter((skill) => skill.sourcePath)
-              .map((skill) => [skill.id, skill.sourcePath as string]),
-          ),
+          skillSourcePaths: skillSelectorSnapshot.skillSourcePaths,
         }
         : {}),
       ...(input.rootRunContext?.publishParentRunEvents
         ? { publishParentRunEvents: input.rootRunContext.publishParentRunEvents }
         : {}),
+      ...(input.rootRunContext?.durableRootRun
+        ? {
+          persistToolExposureCheckpoint: createDurableToolExposureCheckpointPersister(
+            input.rootRunContext,
+          ),
+          ...(input.rootRunContext.privateDurableRunMirror
+            ? { requireToolExposureCheckpointPersistence: true as const }
+            : {}),
+        }
+        : {}),
       clientProfile: runtimeConfig.clientProfile,
       liveProjectSteering: buildHostedChatRuntimeProjectSteering({
         agentConfig: input.agentConfig,
+        skillSelectorPolicy: skillSelectorSnapshot.policy,
         environmentContext: input.environmentContext,
         instructions: steering.instructions,
-        skills: visibleSkills,
+        skills: selectedSkills,
       }),
     },
     steering: {
       ...steering,
-      skills: visibleSkills,
+      skills: selectedSkills,
       agentInstructions,
     },
     runtimeConfig,
@@ -363,7 +486,8 @@ export async function prepareHostedChatExecution<
     thinking?: RuntimeAgentThinkingConfig;
     maxSteps?: number;
     allowedRemoteTools?: unknown;
-    providerTools?: unknown;
+    providerTools?: string[];
+    tools?: true | string[];
   },
   TRuntimeResult extends HostedChatRuntimeCreationResult,
 >(
@@ -375,22 +499,29 @@ export async function prepareHostedChatExecution<
   HostedChatExecutionPreparationResult<TRuntimeAgentDefinition, TRuntimeResult>
 > {
   const normalized = normalizeParsedHostedChatRequest(input.request);
-  const rootRunContext = await prepareHostedConversationRootRunContext(
-    {
-      authToken: input.request.authToken,
+  const rootRunEventWriterCapability = input.request.durableRootRun
+    ? createHostedRunEventWriterCapabilityForRequest(input.request, {
       apiUrl: input.apiUrl.toString(),
-      conversationId: input.request.conversationId,
-      projectId: input.request.projectId,
-      branchId: normalized.effectiveValidatedContext.branchId,
-      agentId: input.agentConfig.id,
-      messages: normalized.effectiveMessages,
-      parentRunId: input.request.parentRunId,
-      parentMessageId: normalized.parentMessageId,
-      providedRun: input.request.durableRootRun,
-      persistLatestUserMessageBeforeRun: input.request.persistLatestUserMessageBeforeDurableRun,
-      ...input.rootRun,
-    },
-    { abortSignal: input.abortSignal },
+      runId: input.request.durableRootRun.runId,
+    })
+    : undefined;
+  const rootRunContext = await runWithHostedRunEventWriterCapability(
+    rootRunEventWriterCapability,
+    () =>
+      prepareHostedConversationRootRunContext({
+        authToken: input.request.authToken,
+        apiUrl: input.apiUrl.toString(),
+        conversationId: input.request.conversationId,
+        projectId: input.request.projectId,
+        branchId: normalized.effectiveValidatedContext.branchId,
+        agentId: input.agentConfig.id,
+        messages: normalized.effectiveMessages,
+        parentRunId: input.request.parentRunId,
+        parentMessageId: normalized.parentMessageId,
+        providedRun: input.request.durableRootRun,
+        persistLatestUserMessageBeforeRun: input.request.persistLatestUserMessageBeforeDurableRun,
+        ...input.rootRun,
+      }, { abortSignal: input.abortSignal }),
   );
   const runtimePreparation = await prepareHostedChatRuntimeCreationOptions({
     request: input.request,
@@ -399,24 +530,41 @@ export async function prepareHostedChatExecution<
     authToken: input.request.authToken,
     conversationId: input.request.conversationId,
     branchId: normalized.effectiveValidatedContext.branchId,
+    runtimeTargetKind: normalized.effectiveValidatedContext.runtimeTargetKind,
+    runtimeTargetEnvironmentId: normalized.effectiveValidatedContext.runtimeTargetEnvironmentId,
     environmentContext: normalized.effectiveValidatedContext.environmentContext,
     rootRunContext,
     resolveModelId: input.resolveModelId,
     resolveModelThinking: input.resolveModelThinking,
     fetchSteering: input.fetchSteering,
     buildInstructions: input.buildInstructions,
+    serverResolvedToolExposureCheckpoint: input.serverResolvedToolExposureCheckpoint,
+    hostToolPolicy: input.hostToolPolicy,
   });
   const submittedFormInputResult = findSubmittedFormInputResult(normalized.effectiveMessages);
-  const finalMessages = await prepareHostedChatRuntimeMessages(
+  const historicalToolInputCompactions: HistoricalToolInputCompactionDiagnostic[] = [];
+  const preparedMessages = await prepareHostedChatRuntimeMessages(
     normalized.effectiveMessages,
     {
       authToken: input.request.authToken,
       apiUrl: input.apiUrl,
       projectId: input.request.projectId,
-      providerOwnedToolNames: getProviderToolNames(input.agentConfig),
+      providerOwnedToolNames: getProviderOwnedToolNames({
+        agentConfig: input.agentConfig,
+        runtimeConfig: runtimePreparation.runtimeConfig,
+      }),
       abortSignal: input.abortSignal,
+      historicalToolInputRetention: {
+        diagnostics: historicalToolInputCompactions,
+      },
     },
   );
+  const finalMessages = preparedMessages;
+  if (historicalToolInputCompactions.length > 0) {
+    input.contextBudget?.logger?.debug?.("Hosted chat historical tool inputs compacted", {
+      toolInputCompactions: historicalToolInputCompactions,
+    });
+  }
   let budgetedContext: Awaited<ReturnType<typeof applyContextBudget>> | undefined;
   if (input.contextBudget) {
     try {
@@ -440,10 +588,14 @@ export async function prepareHostedChatExecution<
       ...budgetedContext.diagnostics,
     });
   }
-  const runtime = await input.createRuntime({
-    ...runtimePreparation.creationOptions,
-    ...(submittedFormInputResult ? { submittedFormInputResult } : {}),
-  });
+  const runtime = await runWithHostedRunEventWriterCapability(
+    rootRunEventWriterCapability,
+    () =>
+      input.createRuntime({
+        ...runtimePreparation.creationOptions,
+        ...(submittedFormInputResult ? { submittedFormInputResult } : {}),
+      }),
+  );
 
   return {
     ...normalized,
@@ -451,6 +603,7 @@ export async function prepareHostedChatExecution<
     runtime,
     finalMessages: budgetedContext?.messages ?? finalMessages,
     contextBudgetDiagnostics: budgetedContext?.diagnostics,
+    ...(historicalToolInputCompactions.length > 0 ? { historicalToolInputCompactions } : {}),
     steering: runtimePreparation.steering,
     runtimeConfig: runtimePreparation.runtimeConfig,
   };
@@ -468,6 +621,7 @@ export async function prepareHostedChatRuntimeMessages(
       providerOwnedToolNames: options.providerOwnedToolNames,
       abortSignal: options.abortSignal,
       fileContentFetchTimeoutMs: options.fileContentFetchTimeoutMs,
+      historicalToolInputRetention: options.historicalToolInputRetention,
     });
   }
   const authToken = options.authToken;
@@ -479,6 +633,7 @@ export async function prepareHostedChatRuntimeMessages(
     providerOwnedToolNames: options.providerOwnedToolNames,
     abortSignal: options.abortSignal,
     fileContentFetchTimeoutMs: options.fileContentFetchTimeoutMs,
+    historicalToolInputRetention: options.historicalToolInputRetention,
     resolveFileUrl: ({ uploadId }) =>
       getRuntimeUploadUrl({
         apiUrl,

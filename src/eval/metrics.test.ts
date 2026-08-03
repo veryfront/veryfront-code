@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type EvalRecord, metrics } from "veryfront/eval";
 
@@ -43,6 +43,117 @@ describe("eval/metrics", () => {
     );
   });
 
+  it("matches strict JSON emitted as agent text", async () => {
+    const jsonMatch = metrics.answer.jsonMatch().gate();
+    const reference = {
+      claimed_elsewhere: 2,
+      failed: 0,
+      succeeded: 1,
+    };
+
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({
+        output: {
+          text: '{"succeeded":1,"claimed_elsewhere":2,"failed":0}',
+        },
+        reference,
+      }))).pass,
+      true,
+    );
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({
+        output: { text: JSON.stringify(reference, null, 2) },
+        reference,
+      }))).pass,
+      true,
+    );
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({
+        output: {
+          text: '{"succeeded":1,"claimed_elsewhere":2,"failed":0}',
+        },
+        reference: JSON.stringify(reference),
+      }))).pass,
+      true,
+    );
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({
+        output: { text: '"not-json"' },
+        reference: "not-json",
+      }))).pass,
+      true,
+    );
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({
+        output: {
+          text: '```json\n{"succeeded":1,"claimed_elsewhere":2,"failed":0}\n```',
+        },
+        reference,
+      }))).pass,
+      false,
+    );
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({
+        output: {
+          text: 'Result: {"succeeded":1,"claimed_elsewhere":2,"failed":0}',
+        },
+        reference,
+      }))).pass,
+      false,
+    );
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({
+        output: { text: "not-json" },
+        reference: "not-json",
+      }))).pass,
+      false,
+    );
+
+    const explicitString = metrics.answer.jsonMatch({ expected: "null" }).gate();
+    assertEquals(
+      (await explicitString.evaluate(createRecord({ output: { json: "null" } }))).pass,
+      true,
+    );
+
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({
+        output: "not-json",
+        reference: "not-json",
+      }))).pass,
+      true,
+    );
+  });
+
+  it("ignores inherited json adapter values", async () => {
+    const jsonMatch = metrics.answer.jsonMatch({ expected: { status: "ok" } }).gate();
+    const output = Object.assign(
+      Object.create({ json: { status: "ok" } }) as Record<string, unknown>,
+      { text: "not-json" },
+    );
+
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({ output }))).pass,
+      false,
+    );
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({
+        output: Object.create({ text: '{"status":"ok"}' }) as Record<string, unknown>,
+      }))).pass,
+      false,
+    );
+  });
+
+  it("preserves __proto__ keys during JSON comparison", async () => {
+    const jsonMatch = metrics.answer.jsonMatch({ expected: {} }).gate();
+
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({
+        output: { text: '{"__proto__":{"polluted":true}}' },
+      }))).pass,
+      false,
+    );
+  });
+
   it("evaluates agent and operations metrics", async () => {
     const noFailedTools = metrics.agent.noFailedTools().gate();
     const latency = metrics.ops.latency({ maxMs: 100 }).budget();
@@ -60,6 +171,51 @@ describe("eval/metrics", () => {
     );
     assertEquals((await latency.evaluate(createRecord())).pass, true);
     assertEquals((await tokens.evaluate(createRecord())).pass, true);
+  });
+
+  it("fails operational budgets closed when required measurements are missing", async () => {
+    const record = createRecord({ usage: {} });
+
+    const tokens = await metrics.ops.tokens({ maxTotal: 20 }).budget().evaluate(record);
+    const cost = await metrics.ops.cost({ maxUsd: 0.05 }).budget().evaluate(record);
+
+    assertEquals(tokens.pass, false);
+    assertEquals(tokens.explanation, "Eval token usage was not measured: totalTokens.");
+    assertEquals(cost.pass, false);
+    assertEquals(cost.explanation, "Eval cost was not measured.");
+  });
+
+  it("validates metric bounds and tool-call count contracts at construction", () => {
+    assertThrows(
+      () => metrics.answer.regex({ pattern: "[" }),
+      Error,
+      "pattern is invalid",
+    );
+    assertThrows(
+      () => metrics.knowledge.recallAtK({ k: 0 }),
+      Error,
+      "at least 1",
+    );
+    assertThrows(
+      () => metrics.ops.tokens({}),
+      Error,
+      "requires",
+    );
+    assertThrows(
+      () => metrics.ops.cost({ maxUsd: Number.NaN }),
+      Error,
+      "finite",
+    );
+    assertThrows(
+      () => metrics.answer.exactMatch().gate({ min: 1, max: 0 }),
+      Error,
+      "cannot exceed",
+    );
+    assertThrows(
+      () => metrics.agent.toolCallCount("search", { exact: 1, min: 1 }),
+      Error,
+      "cannot be combined",
+    );
   });
 
   it("evaluates operation cost budgets with billed gateway cost when present", async () => {
@@ -322,6 +478,35 @@ describe("eval/metrics", () => {
     );
   });
 
+  it("matches tool inputs by own JSON keys without prototype collisions", async () => {
+    const expected = JSON.parse('{"__proto__":{"polluted":true}}') as Record<string, unknown>;
+    const inheritedInput = Object.create({ orderId: "A1049" }) as Record<string, unknown>;
+    const record = createRecord({
+      trace: {
+        events: [],
+        toolCalls: [
+          { name: "unsafe", input: {} },
+          { name: "inherited", input: inheritedInput },
+        ],
+      },
+    });
+
+    assertEquals(
+      (await metrics.agent.calledTool("unsafe", {
+        input: expected,
+        match: "exact",
+      }).evaluate(record)).pass,
+      false,
+    );
+    assertEquals(
+      (await metrics.agent.calledTool("inherited", {
+        input: { orderId: "A1049" },
+        match: "partial",
+      }).evaluate(record)).pass,
+      false,
+    );
+  });
+
   it("can read expected knowledge sources from record metadata", async () => {
     const record = createRecord({
       metadata: {
@@ -373,6 +558,144 @@ describe("eval/metrics", () => {
           ],
           foundCount: 2,
           expectedCount: 2,
+        },
+      },
+    );
+  });
+
+  it("evaluates citation precision and recall from structured RAG record evidence", async () => {
+    const record = createRecord({
+      metadata: {
+        expectedKnowledge: [
+          "knowledge/billing/credits.md",
+          {
+            path: "knowledge/support/playbooks/billing-ledger.md",
+            contentMatch: "ledger review",
+          },
+        ],
+      },
+      retrievedContext: [
+        {
+          source: "knowledge/billing/credits.md",
+          content: "Credit grants, expiration, and usage ledger checks.",
+        },
+        {
+          source: "knowledge/support/playbooks/billing-ledger.md",
+          content: "Use the billing ledger review before changing the account.",
+        },
+        {
+          source: "knowledge/unrelated.md",
+          content: "Unrelated troubleshooting note.",
+        },
+      ],
+      citations: [
+        { source: "knowledge/billing/credits.md", text: "[credits]" },
+        { source: "knowledge/unrelated.md", text: "[unrelated]" },
+      ],
+    });
+
+    assertEquals(
+      await metrics.knowledge.citationPrecision().soft({ min: 0.5 }).evaluate(record),
+      {
+        name: "knowledge.citationPrecision",
+        family: "knowledge",
+        severity: "soft",
+        score: 0.5,
+        pass: true,
+        evidence: {
+          tool: "search_knowledge",
+          citations: [
+            "knowledge/billing/credits.md",
+            "knowledge/unrelated.md",
+          ],
+          expected: [
+            "knowledge/billing/credits.md",
+            "knowledge/support/playbooks/billing-ledger.md",
+          ],
+          expectedFrom: "metadata.expectedKnowledge",
+          supported: ["knowledge/billing/credits.md"],
+          unsupported: ["knowledge/unrelated.md"],
+          supportedCount: 1,
+          citationCount: 2,
+        },
+      },
+    );
+
+    assertEquals(
+      await metrics.knowledge.citationRecall().gate({ min: 0.5 }).evaluate(record),
+      {
+        name: "knowledge.citationRecall",
+        family: "knowledge",
+        severity: "gate",
+        score: 0.5,
+        pass: true,
+        evidence: {
+          tool: "search_knowledge",
+          citations: [
+            "knowledge/billing/credits.md",
+            "knowledge/unrelated.md",
+          ],
+          expected: [
+            "knowledge/billing/credits.md",
+            "knowledge/support/playbooks/billing-ledger.md",
+          ],
+          expectedFrom: "metadata.expectedKnowledge",
+          cited: ["knowledge/billing/credits.md"],
+          missing: ["knowledge/support/playbooks/billing-ledger.md"],
+          citedCount: 1,
+          expectedCount: 2,
+        },
+      },
+    );
+  });
+
+  it("reads citations from the output and retrieved context from search_knowledge traces", async () => {
+    const record = createRecord({
+      output: {
+        text: "Check the billing credits runbook and cite the source.",
+        citations: [
+          { source: "knowledge/billing/credits.md" },
+          { source: "knowledge/unrelated.md" },
+        ],
+      },
+      trace: {
+        events: [],
+        toolCalls: [
+          {
+            name: "search_knowledge",
+            status: "ok",
+            output: {
+              data: [
+                { path: "knowledge/billing/credits.md" },
+                { path: "knowledge/support/playbooks/billing-ledger.md" },
+              ],
+            },
+          },
+        ],
+      },
+    });
+
+    assertEquals(
+      await metrics.knowledge.citationPrecision({
+        expected: ["knowledge/billing/credits.md"],
+      }).gate({ min: 0.5 }).evaluate(record),
+      {
+        name: "knowledge.citationPrecision",
+        family: "knowledge",
+        severity: "gate",
+        score: 0.5,
+        pass: true,
+        evidence: {
+          tool: "search_knowledge",
+          citations: [
+            "knowledge/billing/credits.md",
+            "knowledge/unrelated.md",
+          ],
+          expected: ["knowledge/billing/credits.md"],
+          supported: ["knowledge/billing/credits.md"],
+          unsupported: ["knowledge/unrelated.md"],
+          supportedCount: 1,
+          citationCount: 2,
         },
       },
     );

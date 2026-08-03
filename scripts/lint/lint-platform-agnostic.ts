@@ -140,7 +140,7 @@ const EXCEPTIONS: Record<string, string[]> = {
   "src/transforms/mdx/esm-module-loader/module-fetcher/render-sessions.ts": ["node: import"],
 
   // --- node:buffer (File / Buffer) ---
-  // File is global only on Node 20+; import from node:buffer for Node 18 compat
+  // Keep server-only parsing independent of mutable global constructors.
   "src/embedding/upload-handler.ts": ["node: import"],
   "src/security/input-validation/parsers.ts": ["node: import"],
   // Buffer used for constant-time comparison in auth handler
@@ -169,8 +169,6 @@ const EXCEPTIONS: Record<string, string[]> = {
   "src/extensions/discovery.ts": ["Deno.readTextFile()"],
   // Studio bridge handler reads TypeScript source for on-the-fly bundling
   "src/server/handlers/studio/bridge-modules.handler.ts": ["Deno.readTextFile()"],
-  // Plugin loader writes temp files for dynamic import in compiled binaries
-  "src/html/styles-builder/plugin-loader.ts": ["Deno.writeTextFile()"],
   // JSDoc example references Deno.cwd() — not runtime code
   "src/extensions/index.ts": ["Deno.cwd()"],
   // JSDoc example references process.env — not runtime code

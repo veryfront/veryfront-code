@@ -1,4 +1,4 @@
-import type { NodePathModule } from "./types.ts";
+import type { NodePathModule, PathImplementation } from "./types.ts";
 
 const globalProcess = (globalThis as { process?: { versions?: { node?: string } } }).process;
 const hasNodeApis = !!globalProcess?.versions?.node || "Bun" in globalThis;
@@ -9,7 +9,9 @@ let nodePath: NodePathModule | null = null;
 
 if (hasNodeApis) {
   try {
-    const nodeRequire = typeof require !== "undefined" ? require : null;
+    const nodeRequire = (globalThis as {
+      require?: (specifier: string) => unknown;
+    }).require;
     if (nodeRequire) {
       nodePath = nodeRequire("node:path") as NodePathModule;
     }
@@ -23,3 +25,10 @@ export { nodePath };
 export const sep = nodePath?.sep ?? "/";
 export const delimiter = nodePath?.delimiter ?? ":";
 export const hasNodePath = nodePath !== null;
+
+export function getNativePathImplementation(
+  windows: boolean,
+): PathImplementation | null {
+  if (!nodePath) return null;
+  return windows ? nodePath.win32 : nodePath.posix;
+}

@@ -1,4 +1,5 @@
 import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
+import { CONFIG_INVALID } from "#veryfront/errors";
 import { VeryfrontCloudBlobStorage } from "#veryfront/workflow/blob/veryfront-cloud-storage.ts";
 import { serverLogger } from "#veryfront/utils";
 import type { RagDocumentMeta, RagStore } from "./types.ts";
@@ -86,7 +87,7 @@ function sanitizeFileName(raw: string): string {
   return sanitized || "untitled";
 }
 
-export type UploadAuthorizationResult = boolean | Response | void | undefined;
+export type UploadAuthorizationResult = boolean | Response;
 
 export type UploadAuthorize = (
   request: Request,
@@ -98,42 +99,34 @@ export type UploadHandlerAuthConfig =
 
 export interface UploadHandlerConfig {
   maxFileSize?: number;
-  auth?: UploadHandlerAuthConfig;
+  auth: UploadHandlerAuthConfig;
 }
 
 const MAX_CONCURRENT_URL_LOOKUPS = 5;
-let missingAuthWarningEmitted = false;
-
-function warnMissingAuthConfig(): void {
-  if (missingAuthWarningEmitted) return;
-  missingAuthWarningEmitted = true;
-  serverLogger.warn(
-    "createUploadHandler registered without auth. Pass auth: { authorize } for protected routes, " +
-      "or auth: { type: 'none', allowUnauthenticated: true } to explicitly allow unauthenticated uploads.",
-  );
-}
 
 function resolveUploadAuthorize(
   auth: UploadHandlerAuthConfig | undefined,
 ): UploadAuthorize | null {
   if (auth === undefined) {
-    warnMissingAuthConfig();
-    return null;
+    throw CONFIG_INVALID.create({
+      detail: "createUploadHandler requires auth: { authorize } or " +
+        "auth: { type: 'none', allowUnauthenticated: true }.",
+    });
   }
 
   if ("type" in auth) {
     if (auth.type === "none" && auth.allowUnauthenticated === true) return null;
-    throw new Error(
-      "createUploadHandler auth type 'none' requires allowUnauthenticated: true.",
-    );
+    throw CONFIG_INVALID.create({
+      detail: "createUploadHandler auth type 'none' requires allowUnauthenticated: true.",
+    });
   }
 
   if (typeof auth.authorize === "function") return auth.authorize;
 
-  throw new Error(
-    "createUploadHandler auth must be { authorize } or " +
+  throw CONFIG_INVALID.create({
+    detail: "createUploadHandler auth must be { authorize } or " +
       "{ type: 'none', allowUnauthenticated: true }.",
-  );
+  });
 }
 
 async function authorizeUploadRequest(
@@ -147,7 +140,7 @@ async function authorizeUploadRequest(
 
   const result = await authorize(request);
   if (result instanceof Response) return result;
-  if (result === false) {
+  if (result !== true) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
   return null;
@@ -224,8 +217,8 @@ function resolveDeleteId(request: Request, context: { params: Record<string, str
  * Pass `auth: { authorize }` to protect these handlers before they read
  * request bodies or access the RAG store. For local development, pass
  * `auth: { type: "none", allowUnauthenticated: true }` to explicitly allow
- * unauthenticated upload routes. Omitting `auth` still allows the route for
- * compatibility and logs a warning.
+ * unauthenticated upload routes. Omitting `auth` is rejected during handler
+ * construction so a missing configuration cannot expose an upload endpoint.
  *
  * Returns `{ POST, GET, DELETE }` handlers compatible with file-based routing.
  * POST accepts multipart form data with a `file` field, extracts text via
@@ -254,10 +247,12 @@ function resolveDeleteId(request: Request, context: { params: Record<string, str
  */
 export function createUploadHandler(
   store: RagStore,
-  config?: UploadHandlerConfig,
+  config: UploadHandlerConfig,
 ) {
-  const maxSize = config?.maxFileSize ?? MAX_FILE_SIZE;
+  // Keep the runtime guard even though TypeScript requires the config: plain
+  // JavaScript consumers must fail with the same actionable configuration error.
   const authorize = resolveUploadAuthorize(config?.auth);
+  const maxSize = config.maxFileSize ?? MAX_FILE_SIZE;
 
   async function POST(request: Request): Promise<Response> {
     try {

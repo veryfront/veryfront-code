@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
+import { JSDOM } from "npm:jsdom@28.0.0";
 import { wrapInHTML } from "./html-wrapper.ts";
 import type { HTMLWrapOptions } from "./types.ts";
 
@@ -11,6 +12,7 @@ function createOptions(overrides: Partial<HTMLWrapOptions> = {}): HTMLWrapOption
     links: [],
     scripts: [],
     bootstrapScripts: [],
+    bootstrapModules: [],
     ...overrides,
   };
 }
@@ -110,6 +112,16 @@ describe("html-wrapper", () => {
       expect(result).toContain('<script src="/vendor.js" async></script>');
     });
 
+    it("should include bootstrap modules in body", () => {
+      const result = wrapInHTML(
+        "<div>Test</div>",
+        createOptions({ bootstrapModules: ["/app.mjs", "/vendor.mjs"] }),
+      );
+
+      expect(result).toContain('<script src="/app.mjs" type="module" async></script>');
+      expect(result).toContain('<script src="/vendor.mjs" type="module" async></script>');
+    });
+
     it("should add nonce to head scripts when provided", () => {
       const result = wrapInHTML(
         "<div>Test</div>",
@@ -167,7 +179,54 @@ describe("html-wrapper", () => {
 
     it("should escape special characters in title", () => {
       const result = wrapInHTML("<div>Test</div>", createOptions({ title: "Test & <Title>" }));
-      expect(result).toContain("<title>Test & <Title></title>");
+      expect(result).toContain("<title>Test &amp; &lt;Title&gt;</title>");
+    });
+
+    it("keeps head metadata and CSP nonces inside their attributes", () => {
+      const breakout = `"><script data-injected="true">globalThis.pwned=true</script>`;
+      const title = `Safe</title><script data-injected="title">`;
+      const result = wrapInHTML(
+        "<main>trusted renderer output</main>",
+        createOptions({
+          title,
+          meta: { [breakout]: breakout },
+          links: [{ rel: breakout, href: breakout }],
+          scripts: [{ src: breakout, type: breakout }],
+          bootstrapScripts: [breakout],
+          bootstrapModules: [breakout],
+          nonce: breakout,
+        }),
+      );
+
+      const dom = new JSDOM(result);
+      const { document } = dom.window;
+      try {
+        expect(document.title).toBe(title);
+        expect(document.querySelectorAll("script")).toHaveLength(3);
+        expect(document.querySelector("[data-injected]")).toBeNull();
+
+        const meta = document.querySelectorAll("meta")[2];
+        expect(meta?.getAttribute("name")).toBe(breakout);
+        expect(meta?.getAttribute("content")).toBe(breakout);
+
+        const link = document.querySelector("link");
+        expect(link?.getAttribute("rel")).toBe(breakout);
+        expect(link?.getAttribute("href")).toBe(breakout);
+
+        const [headScript, bootstrapScript, bootstrapModule] = [
+          ...document.querySelectorAll("script"),
+        ];
+        expect(headScript?.getAttribute("src")).toBe(breakout);
+        expect(headScript?.getAttribute("type")).toBe(breakout);
+        expect(headScript?.getAttribute("nonce")).toBe(breakout);
+        expect(bootstrapScript?.getAttribute("src")).toBe(breakout);
+        expect(bootstrapScript?.getAttribute("nonce")).toBe(breakout);
+        expect(bootstrapModule?.getAttribute("src")).toBe(breakout);
+        expect(bootstrapModule?.getAttribute("type")).toBe("module");
+        expect(bootstrapModule?.getAttribute("nonce")).toBe(breakout);
+      } finally {
+        dom.window.close();
+      }
     });
 
     it("should preserve content HTML structure", () => {

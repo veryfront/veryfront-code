@@ -4,7 +4,9 @@ description: "Server data, static generation, and client-side fetching."
 order: 13
 ---
 
-Veryfront pages can load data three ways: `getServerData` on every request, `getStaticData` at build time, or `fetch` from a client component. Each one has its place.
+Veryfront pages can load data three ways: `getServerData` on every request,
+`getStaticData` during static generation and cacheable production requests, or
+`fetch` from a client component. Each one has its place.
 
 Examples below use the default app router. Set `router: "pages"` in `veryfront.config.ts` to switch to the pages router.
 
@@ -35,17 +37,34 @@ export default function Dashboard({ user }: { user: { name: string } }) {
 
 Run `veryfront dev` and open [http://localhost:3000/dashboard?name=Grace](http://localhost:3000/dashboard?name=Grace). The page should render `Welcome, Grace`.
 
+`getServerData`, `getStaticData`, and `getStaticPaths` are reserved server data
+export names in browser project modules. Veryfront strips their bodies from
+browser bundles, and imports used exclusively by those stripped hooks are removed
+entirely, including their top-level side effects. Put client initialization in a
+separate client-referenced module or a bare side-effect import that is not only
+used by a server data hook.
+
+The `props` you return are passed to the page component. To read the same props
+data from a layout or nested component without prop-drilling, use
+`usePageContext().data` (see
+[Pages and routing](./pages-and-routing.md)). Veryfront serializes that data
+into hydration markup and restores it after client-side navigation; do not rely
+on JavaScript object identity surviving serialization.
+
 The `DataContext` provides:
 
-| Property  | Type                     | Description                                 |
-| --------- | ------------------------ | ------------------------------------------- |
-| `request` | `Request`                | The incoming HTTP request                   |
-| `params`  | `Record<string, string>` | Route parameters (e.g. `{ slug: "hello" }`) |
-| `query`   | `URLSearchParams`        | Query string parameters                     |
+| Property  | Type                                 | Description                                 |
+| --------- | ------------------------------------ | ------------------------------------------- |
+| `request` | `Request`                            | The incoming HTTP request                   |
+| `params`  | `Record<string, string \| string[]>` | Route parameters (e.g. `{ slug: "hello" }`) |
+| `query`   | `URLSearchParams`                    | Query string parameters                     |
+| `url`     | `URL`                                | Parsed request URL                          |
 
 ## Static data
 
-`getStaticData` runs at build time. Use it for content that doesn't change per request:
+`getStaticData` supplies cacheable data for static builds and production
+requests. Use it for content that does not depend on request headers, cookies,
+or request bodies:
 
 ```tsx
 // app/blog/[slug]/page.tsx
@@ -72,9 +91,35 @@ export default function BlogPost({ post }: { post: { title: string } }) {
 
 For dynamic routes, pair `getStaticData` with `getStaticPaths` to tell the framework which pages to generate.
 
+`getStaticData` receives `params` and `url`. It does not receive `request`,
+request headers, cookies, a body, or a separate `query` property. Read query
+parameters from `url.searchParams`; the complete URL, including the query
+string, participates in static cache identity.
+
+## Revalidate static data
+
+Set `revalidate` to a finite, non-negative number of seconds to refresh static
+data after it becomes stale:
+
+```tsx
+export async function getStaticData() {
+  const response = await fetch("https://api.example.com/posts");
+  const posts = await response.json();
+
+  return {
+    props: { posts },
+    revalidate: 60,
+  };
+}
+```
+
+Veryfront serves the cached result while one background refresh runs. A failed
+refresh keeps the live cached result. Omit `revalidate` or set it to `false` to
+disable background refreshes.
+
 ## Redirects and 404s
 
-Return `redirect()` or `notFound()` from any data function:
+Return `redirect()` or `notFound()` from `getServerData` or `getStaticData`:
 
 ```tsx
 import { type DataContext, notFound, redirect } from "veryfront";
@@ -92,6 +137,27 @@ export async function getServerData({ params }: DataContext) {
 ```ts
 redirect("/new-url", true); // 301 permanent redirect
 ```
+
+Throwing works the same way. `throw notFound()` and `throw redirect(...)` behave exactly like returning them, which is useful inside a helper that has no clean way to return to the data function:
+
+```tsx
+import { type DataContext, notFound } from "veryfront";
+
+const posts = [{ slug: "hello", title: "Hello" }];
+
+function requirePost(slug: string) {
+  const post = posts.find((item) => item.slug === slug);
+  if (!post) throw notFound();
+
+  return post;
+}
+
+export function getServerData({ params }: DataContext) {
+  return { props: { post: requirePost(String(params.slug)) } };
+}
+```
+
+Only the objects `notFound()` and `redirect()` produce are read as control flow. Every other thrown value is an error, including an object that happens to carry a `notFound` property, such as a parsed error body from an upstream API.
 
 ## Client-side fetching
 

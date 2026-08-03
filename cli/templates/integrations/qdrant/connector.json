@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_collections",
+      "id": "qdrant__list_collections",
       "name": "List Collections",
       "description": "List all collections in the Qdrant cluster",
       "requiresWrite": false,
@@ -53,7 +53,7 @@
       }
     },
     {
-      "id": "get_collection",
+      "id": "qdrant__get_collection",
       "name": "Get Collection Info",
       "description": "Get a collection's configuration, vector parameters, and point count",
       "requiresWrite": false,
@@ -80,7 +80,7 @@
       }
     },
     {
-      "id": "search_points",
+      "id": "qdrant__search_points",
       "name": "Search Points",
       "description": "Search a collection for the points nearest to a query vector",
       "requiresWrite": false,
@@ -137,7 +137,7 @@
       }
     },
     {
-      "id": "upsert_points",
+      "id": "qdrant__upsert_points",
       "name": "Upsert Points",
       "description": "Insert or update points (vectors with payloads) in a collection",
       "requiresWrite": true,

@@ -32,13 +32,17 @@
 
 import { rendererLogger } from "#veryfront/utils";
 import { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
-import { INITIALIZATION_ERROR, SERVICE_OVERLOADED } from "#veryfront/errors/error-registry.ts";
+import { INITIALIZATION_ERROR, SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
   buildQueryAwareCacheKey,
   buildRenderCachePrefix,
   type QueryParamCacheOptions,
 } from "#veryfront/cache/keys.ts";
+import {
+  buildDependencyPinnedRenderCacheKey,
+  type RenderCacheKeyComposition,
+} from "#veryfront/cache/keys/dependency-pinning.ts";
 import { requestHasCacheSensitiveState } from "#veryfront/cache/request-cacheability.ts";
 import { getEnvNumber } from "#veryfront/compat/process.ts";
 import { getReadyManifestForRenderAsync } from "#veryfront/release-assets/manifest-cache.ts";
@@ -77,7 +81,7 @@ import { createLayoutComponentCache } from "./layouts/utils/component-loader.ts"
 import type { PageDataResponse, RenderOptions, RenderResult } from "./orchestrator/types.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { TimeoutError, withTimeoutThrow } from "./utils/stream-utils.ts";
-import { Singleflight } from "#veryfront/utils/singleflight.ts";
+import { Singleflight, waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
 import {
   acquireProjectSlot,
   projectRenderCounts,
@@ -87,6 +91,12 @@ import {
   renderSemaphore,
 } from "./renderer-concurrency.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import {
+  createDependencyPinningSource,
+  resolveDependencyPinningSnapshot,
+  resolveDependencyWritebackTarget,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import { bindHtmlNonceFromCache, sealHtmlNonceForCache } from "#veryfront/html/nonce-injection.ts";
 
 const logger = rendererLogger.component("renderer");
 
@@ -105,6 +115,8 @@ const DEFAULT_RENDER_PREWARM_MAX_ROUTES = 12;
 const DEFAULT_RENDER_PREWARM_CONCURRENCY = 1;
 /** Bound remembered release contexts so multi-tenant processes cannot grow without limit. */
 const RENDER_PREWARM_CONTEXT_MAX_ENTRIES = 500;
+
+type RenderAdmission = "foreground" | "background";
 
 const RENDER_PREWARM_MAX_ROUTES = getBoundedEnvNumber(
   "VERYFRONT_RENDER_PREWARM_MAX_ROUTES",
@@ -136,10 +148,16 @@ export interface RendererOptions {
  */
 interface CachedRenderData {
   html: string;
+  htmlNoncePlaceholder?: string;
   frontmatter: RenderResult["frontmatter"];
   headings?: RenderResult["headings"];
   ssrHash?: string;
   pageModule?: RenderResult["pageModule"];
+}
+
+function createCacheRenderNonce(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
 function getBoundedEnvNumber(
@@ -174,6 +192,23 @@ function prewarmSlugDepth(slug: string): number {
   return comparable.split("/").filter(Boolean).length;
 }
 
+function prewarmSlugSegments(slug: string): string[] {
+  const comparable = normalizeComparableSlug(slug);
+  if (comparable === "/") return [];
+  return comparable.split("/").filter(Boolean);
+}
+
+function prewarmRouteFamilyRank(currentSlug: string, candidateSlug: string): number {
+  const currentSegments = prewarmSlugSegments(currentSlug);
+  if (currentSegments.length === 0) return 0;
+
+  const candidateSegments = prewarmSlugSegments(candidateSlug);
+  if (candidateSegments[0] !== currentSegments[0]) return 2;
+  if (currentSegments.length < 2) return 0;
+
+  return candidateSegments[1] === currentSegments[1] ? 0 : 1;
+}
+
 function selectPrewarmSlugs(
   currentSlug: string,
   pages: string[],
@@ -193,6 +228,8 @@ function selectPrewarmSlugs(
   }
 
   candidates.sort((a, b) =>
+    prewarmRouteFamilyRank(currentComparable, a.comparable) -
+      prewarmRouteFamilyRank(currentComparable, b.comparable) ||
     prewarmSlugDepth(a.comparable) - prewarmSlugDepth(b.comparable) ||
     a.comparable.localeCompare(b.comparable)
   );
@@ -230,6 +267,8 @@ export class Renderer {
    * Key format: {cachePrefix}:{slug}:{colorScheme}
    */
   private renderFlight = new Singleflight<CachedRenderData>();
+  /** Lets foreground followers recover when a background leader fails fast at capacity. */
+  private renderFlightAdmissions = new Map<string, RenderAdmission>();
   private productionPrewarmContexts = new Map<string, Promise<void>>();
 
   constructor(options: RendererOptions = {}) {
@@ -257,6 +296,15 @@ export class Renderer {
   }
 
   renderPage(slug: string, ctx: RenderContext, options?: RenderOptions): Promise<RenderResult> {
+    return this.renderPageWithAdmission(slug, ctx, options, "foreground");
+  }
+
+  private renderPageWithAdmission(
+    slug: string,
+    ctx: RenderContext,
+    options: RenderOptions | undefined,
+    admission: RenderAdmission,
+  ): Promise<RenderResult> {
     return withSpan(
       "renderer.renderPage",
       async () => {
@@ -275,79 +323,74 @@ export class Renderer {
 
         const releaseManifest = await this.resolveReleaseAssetManifest(ctx, options);
         const effectiveCtx = this.withManifestCachePrefix(ctx, releaseManifest);
+        const dependencyPinningSource = options?.dependencyPinningSource ??
+          createDependencyPinningSource({
+            projectDir: effectiveCtx.projectDir,
+            adapter: effectiveCtx.adapter,
+            isLocalProject: effectiveCtx.isLocalProject,
+            projectId: effectiveCtx.projectId,
+            projectSlug: effectiveCtx.projectSlug,
+            contentSourceId: effectiveCtx.contentSourceId,
+            releaseId: effectiveCtx.releaseId,
+            branch: effectiveCtx.branch,
+            config: effectiveCtx.config,
+            dependencyWritebackToken: effectiveCtx.proxyToken,
+            dependencyWritebackTarget: resolveDependencyWritebackTarget({
+              environment: effectiveCtx.environment,
+              isLocalProject: effectiveCtx.isLocalProject,
+              releaseId: effectiveCtx.releaseId,
+              branch: effectiveCtx.branch,
+            }),
+          });
+        const dependencyPinningSnapshot = await resolveDependencyPinningSnapshot(
+          dependencyPinningSource,
+          options?.dependencyPinningCacheKey,
+          options?.dependencyPinningDependencies,
+        );
         const effectiveOptions = {
           ...options,
           releaseAssetManifest: releaseManifest,
+          dependencyPinningCacheKey: dependencyPinningSnapshot.cacheKey,
+          dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
+          dependencyPinningSource,
         };
         const cacheKey = this.buildCacheKey(slug, effectiveCtx, effectiveOptions);
         const cacheResult = cacheKey !== null
-          ? await this.cache.checkCache(slug, effectiveCtx, effectiveOptions?.colorScheme, cacheKey)
+          ? await this.cache.checkCache(
+            slug,
+            effectiveCtx,
+            effectiveOptions?.colorScheme,
+            cacheKey,
+            effectiveOptions?.nonce,
+          )
           : { hit: false, cacheKey: "", status: "miss" as const, lookupDurationMs: 0 };
         if (cacheResult.hit && cacheResult.cachedResult) {
           logger.debug("Cache hit", {
             slug,
             projectId: effectiveCtx.projectId,
             colorScheme: effectiveOptions?.colorScheme,
+            status: cacheResult.status,
             duration: `${(performance.now() - startTime).toFixed(2)}ms`,
           });
-          this.scheduleProductionRenderPrewarm(slug, effectiveCtx, effectiveOptions, cacheKey);
+          if (cacheResult.status === "stale") {
+            this.scheduleProductionRenderRefresh(slug, effectiveCtx, effectiveOptions, cacheKey);
+          } else {
+            this.scheduleProductionRenderPrewarm(slug, effectiveCtx, effectiveOptions, cacheKey);
+          }
           return cacheResult.cachedResult;
         }
 
-        if (!(await acquireProjectSlot(effectiveCtx.projectId))) {
-          const activeCount = projectRenderCounts.get(effectiveCtx.projectId) ?? 0;
-          logger.error("Per-project render limit reached", {
-            slug,
-            projectId: effectiveCtx.projectId,
-            activeRenders: activeCount,
-            limit: RENDER_PER_PROJECT_LIMIT,
-          });
-          throw SERVICE_OVERLOADED.create({
-            detail:
-              `Per-project render limit reached (${activeCount}/${RENDER_PER_PROJECT_LIMIT} active). Try again shortly.`,
-            context: {
-              slug,
-              projectId: ctx.projectId,
-              activeRenders: activeCount,
-              limit: RENDER_PER_PROJECT_LIMIT,
-            },
-          });
-        }
-
-        const acquired = await renderSemaphore.tryAcquire(RENDER_ACQUIRE_TIMEOUT_MS);
-        if (!acquired) {
-          await releaseProjectSlot(effectiveCtx.projectId);
-          logger.error("Render capacity exceeded - service overloaded", {
-            slug,
-            projectId: effectiveCtx.projectId,
-            waiting: renderSemaphore.waiting,
-            available: renderSemaphore.available,
-          });
-          throw SERVICE_OVERLOADED.create({
-            detail:
-              `Render capacity exceeded (${renderSemaphore.waiting} waiting). Service is overloaded.`,
-            context: { slug, projectId: ctx.projectId, waiting: renderSemaphore.waiting },
-          });
-        }
-
-        let renderedSuccessfully = false;
-        try {
-          const result = await this.doRenderPage(
-            slug,
-            effectiveCtx,
-            effectiveOptions,
-            startTime,
-            cacheKey,
-          );
-          renderedSuccessfully = true;
-          return result;
-        } finally {
-          renderSemaphore.release();
-          await releaseProjectSlot(effectiveCtx.projectId);
-          if (renderedSuccessfully) {
-            this.scheduleProductionRenderPrewarm(slug, effectiveCtx, effectiveOptions, cacheKey);
-          }
-        }
+        const result = await this.doRenderPage(
+          slug,
+          effectiveCtx,
+          effectiveOptions,
+          startTime,
+          cacheKey,
+          effectiveOptions.abortSignal ?? effectiveOptions.request?.signal,
+          admission,
+        );
+        this.scheduleProductionRenderPrewarm(slug, effectiveCtx, effectiveOptions, cacheKey);
+        return result;
       },
       {
         "renderer.slug": slug,
@@ -412,7 +455,19 @@ export class Renderer {
     ctx: RenderContext,
     options?: RenderOptions,
   ): string | null {
-    if (options?.cacheKey) return options.cacheKey;
+    if (options?.cacheKey) {
+      return this.withDependencyPinningCacheKey(
+        options.cacheKey,
+        options.dependencyPinningCacheKey,
+        options.url?.origin,
+        {
+          backendPrefix: "render",
+          cachePrefix: ctx.cachePrefix,
+          addPagePrefix: true,
+          colorScheme: options.colorScheme,
+        },
+      );
+    }
 
     const req = options?.request;
     if (req) {
@@ -422,7 +477,32 @@ export class Renderer {
     // Get query param handling options from config
     const queryParamOptions = ctx.config?.cache?.queryParams as QueryParamCacheOptions | undefined;
 
-    return buildQueryAwareCacheKey(slug, options?.url, queryParamOptions);
+    const baseCacheKey = buildQueryAwareCacheKey(slug, options?.url, queryParamOptions);
+    return this.withDependencyPinningCacheKey(
+      baseCacheKey,
+      options?.dependencyPinningCacheKey,
+      options?.url?.origin,
+      {
+        backendPrefix: "render",
+        cachePrefix: ctx.cachePrefix,
+        addPagePrefix: true,
+        colorScheme: options?.colorScheme,
+      },
+    );
+  }
+
+  private withDependencyPinningCacheKey(
+    cacheKey: string,
+    dependencyPinningCacheKey: string | undefined,
+    moduleServerOrigin?: string,
+    composition?: RenderCacheKeyComposition,
+  ): string {
+    return buildDependencyPinnedRenderCacheKey(
+      cacheKey,
+      dependencyPinningCacheKey,
+      moduleServerOrigin,
+      composition,
+    );
   }
 
   private scheduleProductionRenderPrewarm(
@@ -433,7 +513,7 @@ export class Renderer {
   ): void {
     if (!this.shouldScheduleProductionPrewarm(ctx, options, cacheKey)) return;
 
-    const prewarmKey = this.getProductionPrewarmKey(ctx);
+    const prewarmKey = this.getProductionPrewarmKey(ctx, options);
     if (this.productionPrewarmContexts.has(prewarmKey)) return;
 
     const prewarmOptions = this.buildCanonicalPrewarmOptions(ctx, options);
@@ -467,6 +547,14 @@ export class Renderer {
     cacheKey: string | null,
   ): boolean {
     if (RENDER_PREWARM_MAX_ROUTES <= 0) return false;
+    return this.shouldScheduleProductionStaleRefresh(ctx, options, cacheKey);
+  }
+
+  private shouldScheduleProductionStaleRefresh(
+    ctx: RenderContext,
+    options: RenderOptions | undefined,
+    cacheKey: string | null,
+  ): boolean {
     if (cacheKey === null) return false;
     if (ctx.environment !== "production" || ctx.mode !== "production") return false;
     if (!ctx.adapter?.fs) return false;
@@ -475,8 +563,14 @@ export class Renderer {
     return true;
   }
 
-  private getProductionPrewarmKey(ctx: RenderContext): string {
-    return `${ctx.cachePrefix}:canonical`;
+  private getProductionPrewarmKey(
+    ctx: RenderContext,
+    options?: RenderOptions,
+  ): string {
+    return this.withDependencyPinningCacheKey(
+      `${ctx.cachePrefix}:canonical`,
+      options?.dependencyPinningCacheKey,
+    );
   }
 
   private rememberProductionPrewarm(key: string, promise: Promise<void>): void {
@@ -492,6 +586,10 @@ export class Renderer {
     ctx: RenderContext,
     options?: RenderOptions,
   ): RenderOptions {
+    const sourceUrl = options?.url ??
+      (options?.request ? new URL(options.request.url) : undefined);
+    const canonicalUrl = sourceUrl ? new URL("/", sourceUrl) : undefined;
+
     return {
       environment: ctx.environment,
       projectId: ctx.projectId,
@@ -499,9 +597,105 @@ export class Renderer {
       contentSourceId: ctx.contentSourceId,
       releaseId: ctx.releaseId,
       releaseAssetManifest: options?.releaseAssetManifest ?? null,
+      dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
+      dependencyPinningDependencies: options?.dependencyPinningDependencies,
       noHmr: options?.noHmr,
       forceProductionScripts: options?.forceProductionScripts,
+      // Background HTML still needs nonce slots so a later request can bind
+      // them to its own CSP. This value is never sent in a response and is
+      // sealed into the cache representation immediately after rendering.
+      nonce: createCacheRenderNonce(),
+      url: canonicalUrl,
     };
+  }
+
+  private buildRoutePrewarmOptions(
+    slug: string,
+    options: RenderOptions,
+  ): RenderOptions {
+    if (!options.url) return options;
+
+    const url = new URL(normalizeComparableSlug(slug), options.url);
+    return {
+      ...options,
+      url,
+      request: new Request(url, {
+        method: "GET",
+        headers: { accept: "text/html" },
+      }),
+    };
+  }
+
+  private buildStaleRefreshOptions(
+    ctx: RenderContext,
+    options?: RenderOptions,
+  ): RenderOptions {
+    return {
+      ...this.buildCanonicalPrewarmOptions(ctx, options),
+      request: options?.request,
+      url: options?.url,
+      cacheKey: options?.cacheKey,
+      colorScheme: options?.colorScheme,
+      colorSchemeFromParam: options?.colorSchemeFromParam,
+      colorSchemeFromHeader: options?.colorSchemeFromHeader,
+    };
+  }
+
+  private scheduleProductionRenderRefresh(
+    slug: string,
+    ctx: RenderContext,
+    options: RenderOptions | undefined,
+    cacheKey: string | null,
+  ): void {
+    if (!this.shouldScheduleProductionStaleRefresh(ctx, options, cacheKey)) return;
+
+    const refreshKey = `${ctx.cachePrefix}:refresh:${cacheKey}`;
+    if (this.productionPrewarmContexts.has(refreshKey)) return;
+
+    const refreshOptions = this.buildStaleRefreshOptions(ctx, options);
+    let resolvePromise!: () => void;
+    let rejectPromise!: (error: unknown) => void;
+    const promise = new Promise<void>((resolve, reject) => {
+      resolvePromise = resolve;
+      rejectPromise = reject;
+    });
+
+    this.rememberProductionPrewarm(refreshKey, promise);
+
+    setTimeout(() => {
+      void this.doRenderPage(
+        slug,
+        ctx,
+        refreshOptions,
+        performance.now(),
+        cacheKey,
+        undefined,
+        "background",
+      )
+        .then(() => {
+          this.scheduleProductionRenderPrewarm(slug, ctx, refreshOptions, cacheKey);
+          resolvePromise();
+        }, rejectPromise);
+    }, 0);
+
+    promise.finally(() => {
+      this.productionPrewarmContexts.delete(refreshKey);
+    }).catch((error) => {
+      if (error instanceof VeryfrontError && error.slug === "service-overloaded") {
+        logger.debug("Production stale render refresh skipped at capacity", {
+          slug,
+          projectId: ctx.projectId,
+          releaseId: ctx.releaseId,
+        });
+        return;
+      }
+      logger.warn("Production stale render refresh failed", {
+        slug,
+        projectId: ctx.projectId,
+        releaseId: ctx.releaseId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
 
   private async runProductionRenderPrewarm(
@@ -538,8 +732,21 @@ export class Renderer {
 
         const slug = slugs[index]!;
         try {
-          await this.renderPage(slug, ctx, options);
+          await this.renderPageWithAdmission(
+            slug,
+            ctx,
+            this.buildRoutePrewarmOptions(slug, options),
+            "background",
+          );
         } catch (error) {
+          if (error instanceof VeryfrontError && error.slug === "service-overloaded") {
+            logger.debug("Production render prewarm route skipped at capacity", {
+              slug,
+              projectId: ctx.projectId,
+              releaseId: ctx.releaseId,
+            });
+            continue;
+          }
           logger.warn("Production render prewarm route failed", {
             slug,
             projectId: ctx.projectId,
@@ -565,29 +772,28 @@ export class Renderer {
     options: RenderOptions | undefined,
     startTime: number,
     cacheKey: string | null,
+    callerSignal: AbortSignal | undefined,
+    admission: RenderAdmission,
+    retryBackgroundOverload = true,
   ): Promise<RenderResult> {
     const effectiveKey = cacheKey ?? crypto.randomUUID();
     const flightKey = this.getSingleflightKey(effectiveKey, ctx, options?.colorScheme);
     const isFollower = cacheKey !== null ? this.renderFlight.has(flightKey) : false;
+    const leaderAdmission = isFollower ? this.renderFlightAdmissions.get(flightKey) : admission;
 
     const runRender = async () => {
-      const services = this.createServicesForContext(ctx, options?.colorScheme);
-
-      let result: RenderResult;
+      if (cacheKey !== null) {
+        this.renderFlightAdmissions.set(flightKey, admission);
+      }
       try {
-        result = await withTimeoutThrow(
-          services.pipeline.renderPage(slug, {
-            ...options,
-            delivery: "string",
-            projectId: ctx.projectId,
-            projectSlug: ctx.projectSlug,
-            environment: ctx.environment,
-            contentSourceId: ctx.contentSourceId,
-            skipCacheCheck: true,
-            skipCachePersist: true,
-          }),
-          RENDER_PIPELINE_TIMEOUT_MS,
-          `Render pipeline for ${ctx.projectId}:${slug}`,
+        return await this.runRenderWithCapacity(
+          slug,
+          ctx,
+          options,
+          startTime,
+          cacheKey,
+          callerSignal,
+          admission,
         );
       } catch (error) {
         if (error instanceof TimeoutError) {
@@ -598,31 +804,48 @@ export class Renderer {
           });
         }
         throw error;
+      } finally {
+        if (
+          cacheKey !== null &&
+          this.renderFlightAdmissions.get(flightKey) === admission
+        ) {
+          this.renderFlightAdmissions.delete(flightKey);
+        }
       }
-
-      if (cacheKey !== null) {
-        await this.cache.persistResult(result, slug, ctx, options?.colorScheme, cacheKey);
-      }
-
-      logger.debug("Render complete (leader)", {
-        slug,
-        projectId: ctx.projectId,
-        duration: `${(performance.now() - startTime).toFixed(2)}ms`,
-        htmlLength: result.html?.length ?? 0,
-      });
-
-      return {
-        html: result.html,
-        frontmatter: result.frontmatter,
-        headings: result.headings,
-        ssrHash: result.ssrHash,
-        pageModule: result.pageModule,
-      };
     };
 
-    const cachedData = cacheKey !== null
-      ? await this.renderFlight.do(flightKey, runRender)
-      : await runRender();
+    let cachedData: CachedRenderData;
+    try {
+      cachedData = cacheKey !== null
+        ? await waitForSharedPromise(
+          this.renderFlight.do(flightKey, runRender),
+          callerSignal,
+        )
+        : await runRender();
+    } catch (error) {
+      if (
+        retryBackgroundOverload &&
+        admission === "foreground" &&
+        isFollower &&
+        leaderAdmission === "background" &&
+        error instanceof VeryfrontError &&
+        error.slug === "service-overloaded"
+      ) {
+        // Background leaders never wait for capacity. Give a foreground follower
+        // its own bounded admission attempt instead of inheriting that fail-fast result.
+        return await this.doRenderPage(
+          slug,
+          ctx,
+          options,
+          startTime,
+          cacheKey,
+          callerSignal,
+          admission,
+          false,
+        );
+      }
+      throw error;
+    }
 
     if (isFollower) {
       logger.debug("Render deduplicated (follower)", {
@@ -634,13 +857,150 @@ export class Renderer {
     }
 
     return {
-      html: cachedData.html,
+      html: bindHtmlNonceFromCache(
+        cachedData.html,
+        cachedData.htmlNoncePlaceholder,
+        options?.nonce,
+      ),
       frontmatter: cachedData.frontmatter,
       headings: cachedData.headings,
       ssrHash: cachedData.ssrHash,
       pageModule: cachedData.pageModule,
       stream: null,
     };
+  }
+
+  private async runRenderWithCapacity(
+    slug: string,
+    ctx: RenderContext,
+    options: RenderOptions | undefined,
+    startTime: number,
+    cacheKey: string | null,
+    callerSignal: AbortSignal | undefined,
+    admission: RenderAdmission,
+  ): Promise<CachedRenderData> {
+    const admissionStartedAt = performance.now();
+    const admissionSignal = cacheKey === null ? callerSignal : undefined;
+    const waitForCapacity = admission === "foreground";
+    const projectAcquired = await acquireProjectSlot(ctx.projectId, {
+      wait: waitForCapacity,
+      timeoutMs: waitForCapacity ? RENDER_ACQUIRE_TIMEOUT_MS : 0,
+      ...(admissionSignal ? { signal: admissionSignal } : {}),
+    });
+
+    if (!projectAcquired) {
+      const activeCount = projectRenderCounts.get(ctx.projectId) ?? 0;
+      const context = {
+        slug,
+        projectId: ctx.projectId,
+        activeRenders: activeCount,
+        limit: RENDER_PER_PROJECT_LIMIT,
+        admission,
+      };
+      if (admission === "background") {
+        logger.debug("Background render skipped at per-project capacity", context);
+      } else {
+        logger.warn("Per-project render admission exhausted", context);
+      }
+      throw SERVICE_OVERLOADED.create({
+        detail:
+          `Per-project render admission exhausted (${activeCount}/${RENDER_PER_PROJECT_LIMIT} active). Try again shortly.`,
+        context,
+      });
+    }
+
+    let globalAcquired = false;
+    try {
+      const elapsedAdmissionMs = performance.now() - admissionStartedAt;
+      const globalWaitMs = waitForCapacity
+        ? Math.max(0, RENDER_ACQUIRE_TIMEOUT_MS - elapsedAdmissionMs)
+        : 0;
+      globalAcquired = await renderSemaphore.tryAcquire(globalWaitMs, {
+        ...(admissionSignal ? { signal: admissionSignal } : {}),
+      });
+
+      if (!globalAcquired) {
+        const context = {
+          slug,
+          projectId: ctx.projectId,
+          waiting: renderSemaphore.waiting,
+          available: renderSemaphore.available,
+          admission,
+        };
+        if (admission === "background") {
+          logger.debug("Background render skipped at global capacity", context);
+        } else {
+          logger.warn("Global render admission exhausted", context);
+        }
+        throw SERVICE_OVERLOADED.create({
+          detail:
+            `Render admission exhausted (${renderSemaphore.waiting} waiting). Service is overloaded.`,
+          context,
+        });
+      }
+
+      const services = this.createServicesForContext(ctx, options?.colorScheme);
+      const renderAbortController = new AbortController();
+      const request = cacheKey !== null && options?.request
+        ? new Request(options.request, { signal: renderAbortController.signal })
+        : options?.request;
+      const result = await withTimeoutThrow(
+        services.pipeline.renderPage(slug, {
+          ...options,
+          request,
+          abortSignal: renderAbortController.signal,
+          delivery: "string",
+          projectId: ctx.projectId,
+          projectSlug: ctx.projectSlug,
+          environment: ctx.environment,
+          contentSourceId: ctx.contentSourceId,
+          skipCacheCheck: true,
+          skipCachePersist: true,
+        }),
+        RENDER_PIPELINE_TIMEOUT_MS,
+        `Render pipeline for ${ctx.projectId}:${slug}`,
+        {
+          signal: cacheKey === null ? callerSignal : undefined,
+          onAbort: (reason) => renderAbortController.abort(reason),
+          onTimeout: (error) => renderAbortController.abort(error),
+        },
+      );
+
+      if (cacheKey !== null) {
+        await this.cache.persistResult(
+          result,
+          slug,
+          ctx,
+          options?.colorScheme,
+          cacheKey,
+          options?.nonce,
+        );
+      }
+
+      logger.debug("Render complete (leader)", {
+        slug,
+        projectId: ctx.projectId,
+        duration: `${(performance.now() - startTime).toFixed(2)}ms`,
+        htmlLength: result.html?.length ?? 0,
+      });
+
+      const sealedHtml = cacheKey === null
+        ? { html: result.html }
+        : sealHtmlNonceForCache(result.html, options?.nonce);
+      return {
+        html: sealedHtml.html,
+        ...(sealedHtml.placeholder === undefined
+          ? {}
+          : { htmlNoncePlaceholder: sealedHtml.placeholder }),
+        frontmatter: result.frontmatter,
+        headings: result.headings,
+        ssrHash: result.ssrHash,
+        pageModule: result.pageModule,
+      };
+    } finally {
+      if (globalAcquired) renderSemaphore.release();
+      await releaseProjectSlot(ctx.projectId);
+    }
   }
 
   resolvePageData(
@@ -657,6 +1017,30 @@ export class Renderer {
     return withSpan("renderer.resolvePageData", async () => {
       const releaseManifest = await this.resolveReleaseAssetManifest(ctx, options);
       const effectiveCtx = this.withManifestCachePrefix(ctx, releaseManifest);
+      const dependencyPinningSource = options?.dependencyPinningSource ??
+        createDependencyPinningSource({
+          projectDir: effectiveCtx.projectDir,
+          adapter: effectiveCtx.adapter,
+          isLocalProject: effectiveCtx.isLocalProject,
+          projectId: effectiveCtx.projectId,
+          projectSlug: effectiveCtx.projectSlug,
+          contentSourceId: effectiveCtx.contentSourceId,
+          releaseId: effectiveCtx.releaseId,
+          branch: effectiveCtx.branch,
+          config: effectiveCtx.config,
+          dependencyWritebackToken: effectiveCtx.proxyToken,
+          dependencyWritebackTarget: resolveDependencyWritebackTarget({
+            environment: effectiveCtx.environment,
+            isLocalProject: effectiveCtx.isLocalProject,
+            releaseId: effectiveCtx.releaseId,
+            branch: effectiveCtx.branch,
+          }),
+        });
+      const dependencyPinningSnapshot = await resolveDependencyPinningSnapshot(
+        dependencyPinningSource,
+        options?.dependencyPinningCacheKey,
+        options?.dependencyPinningDependencies,
+      );
       const services = this.createServicesForContext(effectiveCtx);
 
       return services.pipeline.resolvePageData(slug, {
@@ -667,6 +1051,9 @@ export class Renderer {
         contentSourceId: effectiveCtx.contentSourceId,
         releaseId: effectiveCtx.releaseId,
         releaseAssetManifest: releaseManifest,
+        dependencyPinningCacheKey: dependencyPinningSnapshot.cacheKey,
+        dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
+        dependencyPinningSource,
       });
     }, {
       "renderer.slug": slug,
@@ -784,7 +1171,7 @@ export class Renderer {
       layoutCollector,
       layoutCompiler,
       layoutCache: this.layoutComponentCache,
-      componentRegistry: componentRegistry.getAllAsComponents(),
+      componentRegistry,
     });
 
     const htmlGenerator = new HTMLGenerator({
@@ -792,6 +1179,7 @@ export class Renderer {
       adapter: ctx.adapter,
       config: ctx.config,
       mode: ctx.mode,
+      isLocalProject: ctx.isLocalProject === true,
     });
 
     const ssrOrchestrator = new SSROrchestrator({
@@ -800,11 +1188,12 @@ export class Renderer {
       elementValidator: shared.elementValidator,
       ssrRenderer,
       htmlGenerator,
+      layoutOrchestrator,
     });
 
     const pipelineCacheCoordinator = {
-      checkCache: async (slug: string, cacheKey?: string) => {
-        const result = await this.cache.checkCache(slug, ctx, colorScheme, cacheKey);
+      checkCache: async (slug: string, cacheKey?: string, nonce?: string) => {
+        const result = await this.cache.checkCache(slug, ctx, colorScheme, cacheKey, nonce);
         return {
           cachedResult: result.cachedResult,
           depAwareSlug: slug,
@@ -814,8 +1203,13 @@ export class Renderer {
           lookupDurationMs: result.lookupDurationMs,
         };
       },
-      persistResult: async (result: RenderResult, slug: string, cacheKey?: string) => {
-        await this.cache.persistResult(result, slug, ctx, colorScheme, cacheKey);
+      persistResult: async (
+        result: RenderResult,
+        slug: string,
+        cacheKey?: string,
+        nonce?: string,
+      ) => {
+        await this.cache.persistResult(result, slug, ctx, colorScheme, cacheKey, nonce);
       },
       clearAll: () => this.cache.clearAll(),
       clearSlug: (slug: string) => this.cache.clearSlug(slug, ctx),
@@ -831,7 +1225,18 @@ export class Renderer {
       adapter: ctx.adapter,
       mode: ctx.mode,
       projectDir: ctx.projectDir,
+      isLocalProject: ctx.isLocalProject === true,
+      allowHostProjectCodeExecution: ctx.allowHostProjectCodeExecution,
+      projectId: ctx.projectId,
+      contentSourceId: ctx.contentSourceId,
+      config: ctx.config,
+      directories: ctx.config.directories,
       queryParamOptions: ctx.config?.cache?.queryParams as QueryParamCacheOptions | undefined,
+      renderCacheKeyComposition: {
+        backendPrefix: "render",
+        cachePrefix: ctx.cachePrefix,
+        addPagePrefix: true,
+      },
     });
 
     return { pipeline };

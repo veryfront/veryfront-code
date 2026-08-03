@@ -1,9 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
-import { serverLogger } from "#veryfront/utils";
 import { createUploadHandler } from "./upload-handler.ts";
 import type { RagSearchOptions, RagSearchResult, RagStore } from "./types.ts";
 
@@ -13,6 +12,15 @@ const CLOUD_ENV_KEYS = [
   "VERYFRONT_SERVICE_LAYER",
   "VERYFRONT_API_BASE_URL",
 ] as const;
+
+const EXPLICIT_UNAUTHENTICATED = {
+  auth: { type: "none", allowUnauthenticated: true },
+} as const;
+
+// Literal public addresses exercise the egress guard without relying on
+// environment-specific DNS behavior for reserved `.test` hostnames.
+const TEST_PUBLIC_API_ORIGIN = "https://93.184.216.34";
+const TEST_PUBLIC_STORAGE_ORIGIN = "https://1.1.1.1";
 
 function clearCloudEnv(): void {
   for (const key of CLOUD_ENV_KEYS) {
@@ -50,24 +58,49 @@ describe("createUploadHandler", () => {
     clearCloudEnv();
   });
 
-  it("warns once when registered without explicit auth", () => {
-    const originalWarn = serverLogger.warn;
-    const warnings: string[] = [];
-    serverLogger.warn = (message: string) => {
-      warnings.push(message);
-    };
+  it("requires an explicit authentication policy", () => {
+    assert(
+      (() => {
+        try {
+          const constructWithoutConfig = createUploadHandler as unknown as (
+            store: RagStore,
+          ) => void;
+          constructWithoutConfig(createStubStore());
+          return false;
+        } catch (error) {
+          return error instanceof Error &&
+            error.message.includes("createUploadHandler requires auth") &&
+            error.message.includes("allowUnauthenticated");
+        }
+      })(),
+      "handler construction must fail closed when auth is omitted",
+    );
+  });
 
-    try {
-      createUploadHandler(createStubStore());
-      createUploadHandler(createStubStore());
-    } finally {
-      serverLogger.warn = originalWarn;
-    }
+  it("allows unauthenticated routes only when explicitly requested", () => {
+    const handlers = createUploadHandler(createStubStore(), EXPLICIT_UNAUTHENTICATED);
+    assert(typeof handlers.POST === "function");
+  });
 
-    assertEquals(warnings.length, 1);
-    assertStringIncludes(warnings[0] ?? "", "createUploadHandler");
-    assertStringIncludes(warnings[0] ?? "", "auth");
-    assertStringIncludes(warnings[0] ?? "", "allowUnauthenticated");
+  it("denies an authorize callback that accidentally returns undefined", async () => {
+    let listCalls = 0;
+    const handlers = createUploadHandler(
+      createStubStore({
+        async listDocuments() {
+          listCalls++;
+          return [];
+        },
+      }),
+      {
+        auth: {
+          authorize: (() => undefined) as unknown as () => boolean,
+        },
+      },
+    );
+
+    const response = await handlers.GET(new Request("http://test/uploads"));
+    assertEquals(response.status, 401);
+    assertEquals(listCalls, 0);
   });
 
   it("rejects upload routes before store access when auth denies", async () => {
@@ -245,30 +278,33 @@ describe("createUploadHandler", () => {
   it("stores uploaded source binaries in Veryfront Cloud when bootstrap is present", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_uploads");
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
-    setEnv("VERYFRONT_API_BASE_URL", "https://api.test");
+    setEnv("VERYFRONT_API_BASE_URL", TEST_PUBLIC_API_ORIGIN);
 
     const calls: Array<{ method: string; url: string; body?: unknown }> = [];
     const store = createStubStore();
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
       const url = request.url;
       const method = request.method;
 
-      if (method === "POST" && url === "https://api.test/projects/demo-project/uploads") {
+      if (
+        method === "POST" &&
+        url === `${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/uploads`
+      ) {
         const body = await request.json();
         calls.push({ method, url, body });
 
         return Response.json({
-          file_upload_url: "https://storage.test/upload/doc-123",
+          file_upload_url: `${TEST_PUBLIC_STORAGE_ORIGIN}/upload/doc-123`,
           file_path: ".veryfront/rag/uploads/doc-123.blob",
           upload_id: "upload-123",
           required_headers: {},
         });
       }
 
-      if (method === "PUT" && url === "https://storage.test/upload/doc-123") {
+      if (method === "PUT" && url === `${TEST_PUBLIC_STORAGE_ORIGIN}/upload/doc-123`) {
         calls.push({ method, url });
         return new Response(null, { status: 200 });
       }
@@ -291,29 +327,35 @@ describe("createUploadHandler", () => {
       assertEquals(response.status, 200);
       assertEquals(calls.length, 4);
       assertEquals(calls[0]?.method, "POST");
-      assertEquals(calls[0]?.url, "https://api.test/projects/demo-project/uploads");
+      assertEquals(
+        calls[0]?.url,
+        `${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/uploads`,
+      );
       assertEquals(calls[0]?.body, {
         file_path: ".veryfront/rag/uploads/doc-123.blob",
         content_type: "text/plain",
         size: 11,
       });
       assertEquals(calls[1]?.method, "PUT");
-      assertEquals(calls[1]?.url, "https://storage.test/upload/doc-123");
+      assertEquals(calls[1]?.url, `${TEST_PUBLIC_STORAGE_ORIGIN}/upload/doc-123`);
       assertEquals(calls[2]?.method, "POST");
-      assertEquals(calls[2]?.url, "https://api.test/projects/demo-project/uploads");
+      assertEquals(
+        calls[2]?.url,
+        `${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/uploads`,
+      );
       const metadataCreateBody = calls[2]?.body as Record<string, unknown>;
       assertEquals(metadataCreateBody.file_path, ".veryfront/rag/uploads/doc-123.meta.json");
       assertEquals(metadataCreateBody.content_type, "application/json");
       assertEquals(typeof metadataCreateBody.size, "number");
       assertEquals(calls[3]?.method, "PUT");
-      assertEquals(calls[3]?.url, "https://storage.test/upload/doc-123");
+      assertEquals(calls[3]?.url, `${TEST_PUBLIC_STORAGE_ORIGIN}/upload/doc-123`);
     });
   });
 
   it("rolls back the RAG document when cloud source persistence fails", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_uploads");
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
-    setEnv("VERYFRONT_API_BASE_URL", "https://api.test");
+    setEnv("VERYFRONT_API_BASE_URL", TEST_PUBLIC_API_ORIGIN);
 
     const removed: string[] = [];
     const store = createStubStore({
@@ -321,24 +363,27 @@ describe("createUploadHandler", () => {
         removed.push(id);
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
 
       if (
         request.method === "POST" &&
-        request.url === "https://api.test/projects/demo-project/uploads"
+        request.url === `${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/uploads`
       ) {
         return Response.json({
-          file_upload_url: "https://storage.test/upload/doc-123",
+          file_upload_url: `${TEST_PUBLIC_STORAGE_ORIGIN}/upload/doc-123`,
           file_path: ".veryfront/rag/uploads/doc-123.blob",
           upload_id: "upload-123",
           required_headers: {},
         });
       }
 
-      if (request.method === "PUT" && request.url === "https://storage.test/upload/doc-123") {
+      if (
+        request.method === "PUT" &&
+        request.url === `${TEST_PUBLIC_STORAGE_ORIGIN}/upload/doc-123`
+      ) {
         return new Response("boom", { status: 500 });
       }
 
@@ -365,7 +410,7 @@ describe("createUploadHandler", () => {
   it("cleans up cloud source binaries on delete when bootstrap is present", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_uploads");
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
-    setEnv("VERYFRONT_API_BASE_URL", "https://api.test");
+    setEnv("VERYFRONT_API_BASE_URL", TEST_PUBLIC_API_ORIGIN);
 
     const removed: string[] = [];
     const deleteCalls: string[] = [];
@@ -374,7 +419,7 @@ describe("createUploadHandler", () => {
         removed.push(id);
       },
     });
-    const { DELETE } = createUploadHandler(store);
+    const { DELETE } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -388,17 +433,20 @@ describe("createUploadHandler", () => {
 
       assertEquals(response.status, 200);
       assertEquals(removed, ["doc-123"]);
-      assertEquals(deleteCalls, [
-        "DELETE https://api.test/projects/demo-project/uploads/.veryfront%2Frag%2Fuploads%2Fdoc-123.meta.json",
-        "DELETE https://api.test/projects/demo-project/uploads/.veryfront%2Frag%2Fuploads%2Fdoc-123.blob",
-      ]);
+      assertEquals(
+        deleteCalls.toSorted(),
+        [
+          `DELETE ${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/uploads/.veryfront%2Frag%2Fuploads%2Fdoc-123.meta.json`,
+          `DELETE ${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/uploads/.veryfront%2Frag%2Fuploads%2Fdoc-123.blob`,
+        ].toSorted(),
+      );
     });
   });
 
   it("lists cloud-backed uploads with signed source URLs", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_uploads");
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
-    setEnv("VERYFRONT_API_BASE_URL", "https://api.test");
+    setEnv("VERYFRONT_API_BASE_URL", TEST_PUBLIC_API_ORIGIN);
 
     const store = createStubStore({
       async listDocuments() {
@@ -411,7 +459,7 @@ describe("createUploadHandler", () => {
         }];
       },
     });
-    const { GET } = createUploadHandler(store);
+    const { GET } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -421,18 +469,19 @@ describe("createUploadHandler", () => {
       if (
         method === "GET" &&
         url ===
-          "https://api.test/projects/demo-project/uploads/.veryfront%2Frag%2Fuploads%2Fdoc-123.meta.json/url"
+          `${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/uploads/.veryfront%2Frag%2Fuploads%2Fdoc-123.meta.json/url`
       ) {
         return Response.json({
           signed_url:
-            "https://download.test/demo-project/.veryfront%2Frag%2Fuploads%2Fdoc-123.meta.json",
+            `${TEST_PUBLIC_STORAGE_ORIGIN}/demo-project/.veryfront%2Frag%2Fuploads%2Fdoc-123.meta.json`,
           expires_at: "2026-03-09T12:30:00.000Z",
         });
       }
 
       if (
         method === "GET" &&
-        url === "https://download.test/demo-project/.veryfront%2Frag%2Fuploads%2Fdoc-123.meta.json"
+        url ===
+          `${TEST_PUBLIC_STORAGE_ORIGIN}/demo-project/.veryfront%2Frag%2Fuploads%2Fdoc-123.meta.json`
       ) {
         return Response.json({
           version: 1,
@@ -447,11 +496,11 @@ describe("createUploadHandler", () => {
       if (
         method === "GET" &&
         url ===
-          "https://api.test/projects/demo-project/uploads/.veryfront%2Frag%2Fuploads%2Fdoc-123.blob/url"
+          `${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/uploads/.veryfront%2Frag%2Fuploads%2Fdoc-123.blob/url`
       ) {
         return Response.json({
           signed_url:
-            "https://download.test/demo-project/.veryfront%2Frag%2Fuploads%2Fdoc-123.blob",
+            `${TEST_PUBLIC_STORAGE_ORIGIN}/demo-project/.veryfront%2Frag%2Fuploads%2Fdoc-123.blob`,
           expires_at: "2026-03-09T12:30:00.000Z",
         });
       }
@@ -469,7 +518,7 @@ describe("createUploadHandler", () => {
       assertEquals(upload.mediaType, "text/plain");
       assertEquals(
         upload.url,
-        "https://download.test/demo-project/.veryfront%2Frag%2Fuploads%2Fdoc-123.blob",
+        `${TEST_PUBLIC_STORAGE_ORIGIN}/demo-project/.veryfront%2Frag%2Fuploads%2Fdoc-123.blob`,
       );
     });
   });
@@ -477,7 +526,7 @@ describe("createUploadHandler", () => {
   it("removes the document even when blob cleanup fails", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_uploads");
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
-    setEnv("VERYFRONT_API_BASE_URL", "https://api.test");
+    setEnv("VERYFRONT_API_BASE_URL", TEST_PUBLIC_API_ORIGIN);
 
     const removed: string[] = [];
     const store = createStubStore({
@@ -485,7 +534,7 @@ describe("createUploadHandler", () => {
         removed.push(id);
       },
     });
-    const { DELETE } = createUploadHandler(store);
+    const { DELETE } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -508,7 +557,7 @@ describe("createUploadHandler", () => {
 
   it("does not use cloud uploads without bootstrap", async () => {
     const store = createStubStore();
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     await withMockFetch(async () => {
       throw new Error("fetch should not be called");
@@ -538,7 +587,7 @@ describe("createUploadHandler", () => {
         return "doc-xss";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     // Use a filename with angle brackets (the key XSS vector).
     // Deno's FormData mangles filenames with = and control chars,
@@ -575,7 +624,7 @@ describe("createUploadHandler", () => {
         return "doc-amp";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     // Deno's FormData truncates filenames at & so we test with
     // a filename where & appears after a safe prefix
@@ -605,7 +654,7 @@ describe("createUploadHandler", () => {
         return "doc-path";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     const formData = new FormData();
     formData.append(
@@ -629,7 +678,7 @@ describe("createUploadHandler", () => {
         return "doc-empty";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     // Filename of only angle brackets — sanitization removes everything
     const formData = new FormData();
@@ -660,7 +709,7 @@ describe("createUploadHandler", () => {
         return "doc-untitled";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     // Filename of only stripped characters (no extension)
     const formData = new FormData();
@@ -689,7 +738,7 @@ describe("createUploadHandler", () => {
         return "doc-normal";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     const formData = new FormData();
     formData.append(
@@ -717,7 +766,7 @@ describe("createUploadHandler", () => {
         return "doc-unicode";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     const formData = new FormData();
     formData.append(
@@ -745,7 +794,7 @@ describe("createUploadHandler", () => {
         return "doc-long";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     const longName = "a".repeat(300) + ".txt";
     const formData = new FormData();

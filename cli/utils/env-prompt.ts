@@ -9,6 +9,7 @@ import { isInteractive as checkIsInteractive } from "veryfront/platform";
 import { isCiEnv, isDenoTestingEnv } from "veryfront/config";
 import type { EnvVarConfig } from "../templates/index.ts";
 import { promptPassword, promptUser } from "./index.ts";
+import { isInteractive as isCliInteractive } from "../shared/interactive.ts";
 
 export interface EnvPromptOptions {
   /** Whether to run in interactive mode (prompt for values) */
@@ -56,7 +57,8 @@ export async function promptForEnvVars(
   const hasPrefilledValues = Object.keys(prefilledValues).length > 0;
 
   const disablePrompt = options.skipPrompt || isCiEnv() || isDenoTestingEnv();
-  const interactive = options.interactive ?? (!disablePrompt && checkIsInteractive());
+  const interactive = isCliInteractive() &&
+    (options.interactive ?? (!disablePrompt && checkIsInteractive()));
 
   if (envVars.length > 0) {
     logger.info("");
@@ -162,14 +164,16 @@ async function promptForSingleEnvVar(envVar: EnvVarConfig): Promise<string> {
  * Generates content for .gitignore to ensure .env is not committed
  */
 export function generateGitignoreContent(existingContent?: string): string {
-  const requiredEntries = ["# Environment files", ".env", ".env.local", ".env.*.local", ""];
+  const environmentEntries = [".env", ".env.local", ".env.*.local"];
 
   if (!existingContent) {
     return [
       "# Dependencies",
       "node_modules/",
       "",
-      ...requiredEntries,
+      "# Environment files",
+      ...environmentEntries,
+      "",
       "# Build output",
       "dist/",
       ".veryfront/",
@@ -184,7 +188,21 @@ export function generateGitignoreContent(existingContent?: string): string {
     ].join("\n");
   }
 
-  if (existingContent.includes(".env")) return existingContent;
+  const existingEntries = new Set(
+    existingContent.split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
+  );
+  const additions: string[] = [];
+  const missingEnvironmentEntries = environmentEntries.filter((entry) =>
+    !existingEntries.has(entry)
+  );
+  if (missingEnvironmentEntries.length > 0) {
+    additions.push("# Environment files", ...missingEnvironmentEntries);
+  }
+  if (!existingEntries.has(".veryfront/") && !existingEntries.has(".veryfront")) {
+    if (additions.length > 0) additions.push("");
+    additions.push("# Veryfront local state", ".veryfront/");
+  }
 
-  return `${existingContent.trimEnd()}\n\n${requiredEntries.join("\n")}`;
+  if (additions.length === 0) return existingContent;
+  return `${existingContent.trimEnd()}\n\n${additions.join("\n")}\n`;
 }

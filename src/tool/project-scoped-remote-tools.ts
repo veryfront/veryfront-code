@@ -1,3 +1,5 @@
+import { INPUT_VALIDATION_FAILED, PERMISSION_DENIED } from "#veryfront/errors";
+import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "./types.ts";
 
 /** Options accepted by project scoped remote tool. */
@@ -41,7 +43,7 @@ export type ProjectScopedRemoteToolExecutionInput = {
 
 /** Public API contract for project scoped remote tool execution. */
 export type ProjectScopedRemoteToolExecution = ProjectScopedRemoteToolDefinitions & {
-  toolDefinition: ToolDefinition | undefined;
+  toolDefinition: ToolDefinition;
   toolInput: Record<string, unknown>;
   executeContext: ToolExecutionContext | undefined;
 };
@@ -72,14 +74,28 @@ function getProjectNavigationToolNames(
 }
 
 function getRequiredToolProperties(toolDefinition: ToolDefinition): string[] {
-  if (typeof toolDefinition.parameters !== "object" || toolDefinition.parameters === null) {
-    return [];
-  }
-
-  const required = Reflect.get(toolDefinition.parameters, "required");
+  const parameters = snapshotToolParameters(toolDefinition);
+  const required = parameters.required;
   return Array.isArray(required)
     ? required.filter((property): property is string => typeof property === "string")
     : [];
+}
+
+function snapshotToolParameters(
+  toolDefinition: ToolDefinition,
+): Record<string, unknown> {
+  const snapshot = snapshotBoundedJsonValue(toolDefinition.parameters);
+  if (
+    !snapshot.success ||
+    typeof snapshot.value !== "object" ||
+    snapshot.value === null ||
+    Array.isArray(snapshot.value)
+  ) {
+    throw new TypeError(
+      `Tool "${toolDefinition.name}" parameters must be a bounded JSON Schema object`,
+    );
+  }
+  return snapshot.value;
 }
 
 function requiresActiveProject(
@@ -102,11 +118,7 @@ function requiresProjectReference(toolDefinition: ToolDefinition): boolean {
 }
 
 function hasToolProperty(toolDefinition: ToolDefinition, property: string): boolean {
-  if (typeof toolDefinition.parameters !== "object" || toolDefinition.parameters === null) {
-    return false;
-  }
-
-  const properties = Reflect.get(toolDefinition.parameters, "properties");
+  const properties = snapshotToolParameters(toolDefinition).properties;
   return typeof properties === "object" && properties !== null &&
     Object.prototype.hasOwnProperty.call(properties, property);
 }
@@ -129,16 +141,18 @@ function validateRequiredToolInput(input: {
     return;
   }
 
-  const missingProperties = getRequiredToolProperties(input.toolDefinition).filter((property) =>
-    isMissingRequiredToolInput(input.toolInput[property])
-  );
+  const missingProperties = getRequiredToolProperties(input.toolDefinition).filter((property) => {
+    const descriptor = Object.getOwnPropertyDescriptor(input.toolInput, property);
+    return !descriptor || !("value" in descriptor) ||
+      isMissingRequiredToolInput(descriptor.value);
+  });
   if (missingProperties.length === 0) {
     return;
   }
 
-  throw new Error(
-    `Tool "${input.toolDefinition.name}" requires input: ${missingProperties.join(", ")}`,
-  );
+  throw INPUT_VALIDATION_FAILED.create({
+    detail: `Tool "${input.toolDefinition.name}" requires input: ${missingProperties.join(", ")}`,
+  });
 }
 
 /** Check whether a remote tool is project-navigation scoped. */
@@ -189,14 +203,37 @@ export function hydrateProjectScopedRemoteToolInput(input: {
     return input.toolInput;
   }
 
-  if (input.toolInput.project_reference) {
+  const projectReferenceDescriptor = Object.getOwnPropertyDescriptor(
+    input.toolInput,
+    "project_reference",
+  );
+  if (
+    projectReferenceDescriptor &&
+    "value" in projectReferenceDescriptor &&
+    !isMissingRequiredToolInput(projectReferenceDescriptor.value)
+  ) {
     return input.toolInput;
   }
 
+  const snapshot = snapshotBoundedJsonValue(input.toolInput);
+  if (
+    !snapshot.success ||
+    typeof snapshot.value !== "object" ||
+    snapshot.value === null ||
+    Array.isArray(snapshot.value)
+  ) {
+    throw new TypeError(
+      `Tool "${input.toolDefinition.name}" input must be a bounded JSON object`,
+    );
+  }
   return {
-    ...input.toolInput,
+    ...snapshot.value,
     project_reference: input.activeProjectId,
   };
+}
+
+function normalizeProjectId(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
 /** Resolves project scoped remote tool project ID. */
@@ -204,11 +241,7 @@ export function resolveProjectScopedRemoteToolProjectId(
   context: ToolExecutionContext | undefined,
   defaultProjectId: string | null | undefined,
 ): string | null {
-  if (typeof context?.projectId === "string" && context.projectId.length > 0) {
-    return context.projectId;
-  }
-
-  return defaultProjectId || null;
+  return normalizeProjectId(context?.projectId) ?? normalizeProjectId(defaultProjectId);
 }
 
 function resolveDefaultProjectId(
@@ -217,7 +250,7 @@ function resolveDefaultProjectId(
   const resolvedProjectId = typeof defaultProjectId === "function"
     ? defaultProjectId()
     : defaultProjectId;
-  return resolvedProjectId || null;
+  return normalizeProjectId(resolvedProjectId);
 }
 
 function withActiveProjectContext(
@@ -238,13 +271,83 @@ function withActiveProjectContext(
   };
 }
 
+function snapshotToolInput(
+  toolName: string,
+  value: unknown,
+): Record<string, unknown> {
+  const snapshot = snapshotBoundedJsonValue(value);
+  if (
+    !snapshot.success ||
+    typeof snapshot.value !== "object" ||
+    snapshot.value === null ||
+    Array.isArray(snapshot.value)
+  ) {
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: `Tool "${toolName}" input must be a bounded JSON object`,
+    });
+  }
+  return snapshot.value;
+}
+
+function normalizeToolDefinitions(
+  sourceId: string,
+  definitions: readonly ToolDefinition[],
+): ToolDefinition[] {
+  const names = new Set<string>();
+  return definitions.map((definition, index) => {
+    if (
+      typeof definition !== "object" ||
+      definition === null ||
+      typeof definition.name !== "string" ||
+      definition.name.length === 0 ||
+      typeof definition.description !== "string"
+    ) {
+      throw new TypeError(
+        `Remote source "${sourceId}" returned a malformed tool definition at index ${index}`,
+      );
+    }
+    if (names.has(definition.name)) {
+      throw new TypeError(
+        `Remote source "${sourceId}" advertised duplicate tool name "${definition.name}"`,
+      );
+    }
+    names.add(definition.name);
+
+    const normalized: ToolDefinition = {
+      name: definition.name,
+      description: definition.description,
+      parameters: snapshotToolParameters(definition),
+    };
+    if (definition.title !== undefined) {
+      if (typeof definition.title !== "string" || definition.title.length === 0) {
+        throw new TypeError(
+          `Remote source "${sourceId}" returned a malformed title for tool "${definition.name}"`,
+        );
+      }
+      normalized.title = definition.title;
+    }
+    if (definition.annotations !== undefined) {
+      const annotations = snapshotBoundedJsonValue(definition.annotations);
+      if (
+        !annotations.success ||
+        typeof annotations.value !== "object" ||
+        annotations.value === null ||
+        Array.isArray(annotations.value)
+      ) {
+        throw new TypeError(
+          `Remote source "${sourceId}" returned malformed annotations for tool "${definition.name}"`,
+        );
+      }
+      normalized.annotations = annotations.value;
+    }
+    return normalized;
+  });
+}
+
 /** Create project scoped remote tool catalog. */
 export function createProjectScopedRemoteToolCatalog(
   input: ProjectScopedRemoteToolCatalogOptions,
 ): ProjectScopedRemoteToolCatalog {
-  let cachedProjectId: string | null | undefined;
-  let cachedToolDefinitions: ToolDefinition[] | null = null;
-
   async function listActiveToolDefinitions(
     context?: ToolExecutionContext,
   ): Promise<ProjectScopedRemoteToolDefinitions> {
@@ -253,19 +356,12 @@ export function createProjectScopedRemoteToolCatalog(
       resolveDefaultProjectId(input.defaultProjectId),
     );
 
-    if (
-      !input.filterToolDefinitions && cachedToolDefinitions &&
-      cachedProjectId === activeProjectId
-    ) {
-      return {
-        activeProjectId,
-        toolDefinitions: cachedToolDefinitions,
-      };
-    }
-
     const sourceContext = withActiveProjectContext(context, activeProjectId);
     const scopedToolDefinitions = filterProjectScopedRemoteToolDefinitions(
-      await input.source.listTools(sourceContext),
+      normalizeToolDefinitions(
+        input.source.id,
+        await input.source.listTools(sourceContext),
+      ),
       activeProjectId,
       input.projectScopedRemoteToolOptions,
     );
@@ -278,14 +374,9 @@ export function createProjectScopedRemoteToolCatalog(
       })
       : scopedToolDefinitions;
 
-    if (!input.filterToolDefinitions) {
-      cachedProjectId = activeProjectId;
-      cachedToolDefinitions = toolDefinitions;
-    }
-
     return {
       activeProjectId,
-      toolDefinitions,
+      toolDefinitions: normalizeToolDefinitions(input.source.id, toolDefinitions),
     };
   }
 
@@ -300,7 +391,9 @@ export function createProjectScopedRemoteToolCatalog(
     },
     async prepareExecution(executionInput) {
       if (!isRemoteToolNameAllowed(executionInput.toolName, input.allowedToolNames)) {
-        throw new Error(`Tool "${executionInput.toolName}" is not allowed for this run`);
+        throw PERMISSION_DENIED.create({
+          detail: `Tool "${executionInput.toolName}" is not allowed for this run`,
+        });
       }
 
       const { activeProjectId, toolDefinitions } = await listActiveToolDefinitions(
@@ -309,10 +402,16 @@ export function createProjectScopedRemoteToolCatalog(
       const toolDefinition = toolDefinitions.find((definition) =>
         definition.name === executionInput.toolName
       );
+      if (!toolDefinition) {
+        throw PERMISSION_DENIED.create({
+          detail:
+            `Tool "${executionInput.toolName}" is not advertised by remote source "${input.source.id}"`,
+        });
+      }
       const toolInput = hydrateProjectScopedRemoteToolInput({
         toolDefinition,
         activeProjectId,
-        toolInput: executionInput.toolInput,
+        toolInput: snapshotToolInput(executionInput.toolName, executionInput.toolInput),
       });
       validateRequiredToolInput({ toolDefinition, toolInput });
 

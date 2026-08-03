@@ -5,8 +5,8 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
 import { validateHTTPImports } from "./http-validator.ts";
 import { loadSecurityConfig } from "./security-config.ts";
-import type { APIRoute, LoadModuleOptions } from "./types.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import type { APIRoute, LoadHostModuleOptions, LoadModuleOptions } from "./types.ts";
+import { createError, toError } from "#veryfront/errors";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -23,6 +23,16 @@ import {
   readProjectDependencies,
   rewriteExternalImports,
 } from "./external-import-rewriter.ts";
+import {
+  MAX_WORKER_MODULE_SOURCE_BYTES,
+  type PreparedWorkerModule,
+} from "#veryfront/security/sandbox/worker-types.ts";
+import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
+import {
+  createProjectSourceSnapshot,
+  ProjectBoundaryViolationError,
+  type ProjectSourceSnapshot,
+} from "./project-source-snapshot.ts";
 export {
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
@@ -40,7 +50,12 @@ const logger = serverLogger.component("api");
 
 export { toCjsDestructureBindings } from "./loader-helpers.ts";
 
-export function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute | null> {
+export function loadHandlerModule(options: LoadHostModuleOptions): Promise<APIRoute | null> {
+  if (!isExplicitHostProjectCodeExecutionAllowed(options)) {
+    return Promise.reject(
+      new TypeError("Host API module loading requires explicit trusted-local execution"),
+    );
+  }
   return withSpan(
     "api.loadHandlerModule",
     async () => {
@@ -67,6 +82,60 @@ export function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute 
   );
 }
 
+/**
+ * Build an API route without importing or evaluating project code in the host
+ * realm. Shared runtimes pass this immutable source snapshot to the project
+ * worker, which rehashes and evaluates it under tenant-scoped permissions.
+ */
+export function prepareHandlerModule(options: LoadModuleOptions): Promise<PreparedWorkerModule> {
+  return withSpan(
+    "api.prepareHandlerModule",
+    async () => {
+      const { projectDir, modulePath, adapter, config } = options;
+      validateModulePath(modulePath, projectDir);
+
+      if (isCompiledBinary()) {
+        throw toError(
+          createError({
+            type: "api",
+            message: "Isolated API route preparation is unavailable in this compiled runtime",
+          }),
+        );
+      }
+
+      try {
+        const source = await buildTranspiledModuleSource(
+          modulePath,
+          projectDir,
+          adapter,
+          config,
+        );
+        const bytes = new TextEncoder().encode(source);
+        if (bytes.byteLength > MAX_WORKER_MODULE_SOURCE_BYTES) {
+          throw new TypeError(
+            `Prepared API route exceeds the ${MAX_WORKER_MODULE_SOURCE_BYTES}-byte worker limit`,
+          );
+        }
+        const digest = await crypto.subtle.digest("SHA-256", bytes);
+        return Object.freeze({
+          source,
+          sha256: new Uint8Array(digest).toHex(),
+        });
+      } catch (error: unknown) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        logger.error(`Failed to prepare isolated API handler ${modulePath}:`, error);
+        throw toError(
+          createError({
+            type: "api",
+            message: `Failed to prepare isolated API handler: ${errorMsg}`,
+          }),
+        );
+      }
+    },
+    { "api.modulePath": options.modulePath, "api.projectDir": options.projectDir },
+  );
+}
+
 async function loadModule(args: {
   modulePath: string;
   projectDir: string;
@@ -84,7 +153,24 @@ async function loadModule(args: {
   }
 
   const fileExistsLocally = await fs.exists(modulePath);
-  if (fileExistsLocally) return loadTSModuleDirect(modulePath);
+  if (fileExistsLocally) {
+    try {
+      return await loadTSModuleDirect(modulePath);
+    } catch (error) {
+      // A direct import shares the dev server's runtime context, which is what
+      // makes auto-discovery (agentRegistry and friends) work — but it leaves
+      // specifier resolution to Deno, which knows nothing about the project's
+      // `@/` alias. Bundling can resolve that import map path, so fall back to
+      // it rather than reporting a routing-shaped 500.
+      if (!isSpecifierResolutionError(error)) throw error;
+
+      logger.debug("Direct import could not resolve a specifier, bundling instead", {
+        modulePath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+    }
+  }
 
   logger.debug(`File not local, using adapter-based loading: ${modulePath}`);
   return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
@@ -95,6 +181,27 @@ async function loadModule(args: {
  * This allows the module to share the same runtime context as the dev server,
  * enabling auto-discovery features like agentRegistry to work.
  */
+
+/**
+ * Deno's resolver reports an unresolvable import as a TypeError whose message
+ * opens by naming the specifier it could not resolve. Anchoring on that opening
+ * is what keeps a module's own error out: a route that throws
+ * `Error("Cannot find module x")` at evaluation time is broken, and re-running
+ * it under bundling would evaluate broken code a second time.
+ */
+const SPECIFIER_RESOLUTION_MESSAGE =
+  /^(?:Import "[^"]+" not a dependency|Module not found "[^"]+"|Relative import path "[^"]+" not prefixed)/;
+
+/**
+ * True when a module failed to load because Deno could not resolve one of its
+ * import specifiers, rather than because the module itself is broken.
+ */
+export function isSpecifierResolutionError(error: unknown): boolean {
+  // Every other error shape the direct import can produce belongs to the module.
+  if (!(error instanceof TypeError)) return false;
+  return SPECIFIER_RESOLUTION_MESSAGE.test(error.message.trimStart());
+}
+
 function loadTSModuleDirect(modulePath: string): Promise<APIRoute> {
   const cacheBuster = `?v=${Date.now()}`;
   const url = modulePath.startsWith("file://")
@@ -111,7 +218,7 @@ function loadJSModule(modulePath: string): Promise<APIRoute> {
 
 function createImportMapPlugin(
   projectDir: string,
-  adapter: RuntimeAdapter,
+  sourceSnapshot: ProjectSourceSnapshot,
   config?: VeryfrontConfig,
 ): Plugin {
   const importMap = config?.resolve?.importMap?.imports ?? {};
@@ -119,7 +226,7 @@ function createImportMapPlugin(
 
   if (importMapEntries.length === 0) return { name: "import-map", setup() {} };
 
-  logger.info(`Using import map with ${importMapEntries.length} entries`);
+  logger.debug(`Using import map with ${importMapEntries.length} entries`);
 
   return {
     name: "import-map",
@@ -183,7 +290,7 @@ function createImportMapPlugin(
       build.onLoad(
         { filter: /.*/, namespace: "import-map" },
         createNamespaceOnLoadHandler({
-          adapter,
+          sourceSnapshot,
           projectDir,
           errorLabel: "file via import map",
         }),
@@ -193,16 +300,16 @@ function createImportMapPlugin(
 }
 
 function createNamespaceOnLoadHandler(options: {
-  adapter: RuntimeAdapter;
+  sourceSnapshot: ProjectSourceSnapshot;
   projectDir: string;
   errorLabel: string;
 }) {
-  const { adapter, projectDir, errorLabel } = options;
+  const { sourceSnapshot, projectDir, errorLabel } = options;
 
   return wrapWithCurrentContext(async (args: { path: string }) => {
     try {
       const { filePath, contents } = await readFileWithExtensions(
-        adapter,
+        sourceSnapshot,
         args.path,
         FILE_EXTENSIONS,
         projectDir,
@@ -221,9 +328,43 @@ function createNamespaceOnLoadHandler(options: {
   });
 }
 
+/** Resolves the framework's built-in @/ project alias through the runtime adapter. */
+function createProjectAliasPlugin(
+  sourceSnapshot: ProjectSourceSnapshot,
+  projectDir: string,
+): Plugin {
+  const projectRoot = pathHelper.resolve(projectDir);
+
+  return {
+    name: "vf-project-alias",
+    setup(build) {
+      build.onResolve({ filter: /^@\// }, (args) => {
+        const absolutePath = pathHelper.resolve(projectRoot, args.path.slice(2));
+        if (!isWithinDirectory(projectRoot, absolutePath)) {
+          logger.error(
+            `[API] Project alias escapes project: ${args.path} -> ${absolutePath}`,
+          );
+          return { errors: [{ text: `Project alias escapes project: ${args.path}` }] };
+        }
+
+        return { path: absolutePath, namespace: "vf-project-alias" };
+      });
+
+      build.onLoad(
+        { filter: /.*/, namespace: "vf-project-alias" },
+        createNamespaceOnLoadHandler({
+          sourceSnapshot,
+          projectDir,
+          errorLabel: "via project alias",
+        }),
+      );
+    },
+  };
+}
+
 /** Resolves relative imports through the adapter's virtual FS for remote projects. */
 function createAdapterResolvePlugin(
-  adapter: RuntimeAdapter,
+  sourceSnapshot: ProjectSourceSnapshot,
   projectDir: string,
 ): Plugin {
   return {
@@ -262,7 +403,7 @@ function createAdapterResolvePlugin(
       build.onLoad(
         { filter: /.*/, namespace: "vf-adapter" },
         createNamespaceOnLoadHandler({
-          adapter,
+          sourceSnapshot,
           projectDir,
           errorLabel: "via adapter",
         }),
@@ -271,18 +412,85 @@ function createAdapterResolvePlugin(
   };
 }
 
-function loadAndTranspileModule(
+/**
+ * Refuse to load any file the bundle resolved outside the project.
+ *
+ * The resolver plugins above validate the specifiers they claim, but esbuild
+ * applies the project's own tsconfig `paths` itself, before any `onResolve`
+ * callback runs. A templated project maps `@/*` to `./*`, so `@/../secrets.ts`
+ * is resolved by esbuild straight to a path above the project root and loaded
+ * in the default namespace, where none of those guards ever see it.
+ *
+ * The source snapshot canonicalizes both roots and resolved files. Dependencies
+ * are admitted only through the project's own canonical `node_modules` root;
+ * an unrelated path is never trusted merely because one segment has that name.
+ */
+function projectBoundaryError(path: string): { errors: Array<{ text: string }> } {
+  logger.error(`[API] Resolved import escapes project: ${path}`);
+  return {
+    errors: [{
+      text: `Import escapes the project directory: ${path}. ` +
+        `API routes may only import project files and project-owned dependencies.`,
+    }],
+  };
+}
+
+function createProjectBoundaryPlugin(
+  sourceSnapshot: ProjectSourceSnapshot,
+): Plugin {
+  return {
+    name: "vf-project-boundary",
+    setup(build) {
+      build.onLoad({ filter: /.*/ }, async (args) => {
+        try {
+          const source = await sourceSnapshot.read(args.path);
+          return {
+            contents: source.contents,
+            loader: getLoaderForFile(source.logicalPath),
+            resolveDir: pathHelper.dirname(source.logicalPath),
+          };
+        } catch (error) {
+          if (error instanceof ProjectBoundaryViolationError) {
+            return projectBoundaryError(args.path);
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            errors: [{ text: `Failed to read authorized import: ${message}` }],
+          };
+        }
+      });
+    },
+  };
+}
+
+async function loadAndTranspileModule(
   modulePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
   fs: FileSystem,
   config?: VeryfrontConfig,
 ): Promise<APIRoute> {
+  const source = await buildTranspiledModuleSource(
+    modulePath,
+    projectDir,
+    adapter,
+    config,
+  );
+  return await loadModuleFromCode(source, fs);
+}
+
+function buildTranspiledModuleSource(
+  modulePath: string,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+  config?: VeryfrontConfig,
+): Promise<string> {
   return withSpan(
-    "api.loadAndTranspileModule",
+    "api.buildTranspiledModuleSource",
     async () => {
+      const sourceSnapshot = await createProjectSourceSnapshot(projectDir, adapter);
       const { filePath: resolvedPath, contents: source } = await readFileWithExtensions(
-        adapter,
+        sourceSnapshot,
         modulePath,
         FILE_EXTENSIONS,
         projectDir,
@@ -299,22 +507,26 @@ function loadAndTranspileModule(
 
       const loader = getEsbuildLoader(resolvedPath);
 
-      const allowedHosts = await loadSecurityConfig(projectDir, adapter);
+      const allowedHosts = await loadSecurityConfig(projectDir, adapter, config);
       validateHTTPImports(source, allowedHosts);
 
-      const allDeps = await readProjectDependencies(projectDir, fs);
+      const allDeps = await readProjectDependencies(projectDir, sourceSnapshot);
 
       // Filter out framework-managed packages from user deps. These are already
       // handled by the framework's own external/rewrite logic and should not be
       // treated as user npm packages.
-      const frameworkPackages = new Set(["zod", "veryfront", "react", "react-dom", "path"]);
-      const frameworkPrefixes = ["@opentelemetry/", "node:", "veryfront/"];
-      const userDeps = new Map<string, string>();
-      for (const [name, version] of allDeps) {
-        if (frameworkPackages.has(name)) continue;
-        if (frameworkPrefixes.some((p) => name.startsWith(p))) continue;
-        userDeps.set(name, version);
-      }
+      //
+      // `zod` is kept as a user dep on every runtime — Node, the Deno source-run,
+      // AND the compiled binary — so a handler's own `import { z } from "zod"` is
+      // rewritten to a resolvable specifier. Excluding it left a bare `import "zod"`
+      // in the temp handler that Deno cannot resolve → "not a dependency and not in
+      // import map" → 500. (The Node path already always-resolves zod via
+      // getNodeExternalPackagesToResolve.) On the compiled binary, keeping zod in
+      // userDeps routes it through rewriteCompiledBinaryUserDependencyImports like
+      // any other npm package, so its import resolves from the project's
+      // node_modules via the createRequire shim. zod is still force-externalized
+      // below, never bundled inline. See veryfront-issue-inbox#217.
+      const userDeps = getUserDependencies(allDeps);
 
       // Always externalize user npm dependencies. The bundled handler is loaded
       // from a temp file and user deps are resolved at runtime:
@@ -368,9 +580,11 @@ function loadAndTranspileModule(
           sourcefile: resolvedPath,
         },
         plugins: [
-          createImportMapPlugin(projectDir, adapter, config),
-          createAdapterResolvePlugin(adapter, projectDir),
+          createImportMapPlugin(projectDir, sourceSnapshot, config),
+          createProjectAliasPlugin(sourceSnapshot, projectDir),
+          createAdapterResolvePlugin(sourceSnapshot, projectDir),
           createHTTPPlugin({ allowedHosts, projectDir }),
+          createProjectBoundaryPlugin(sourceSnapshot),
         ],
       });
 
@@ -384,18 +598,18 @@ function loadAndTranspileModule(
         );
       }
 
-      logger.info(`built handler ${resolvedPath}`);
+      logger.debug(`built handler ${resolvedPath}`);
       const js = result.outputFiles?.[0]?.text ?? "export {}";
       logger.debug(`transpiled size ${js.length} bytes`);
 
-      return loadModuleFromCode(js, projectDir, fs, userDeps);
+      return await rewriteExternalImports(js, projectDir, sourceSnapshot, userDeps);
     },
     { "api.modulePath": modulePath, "api.projectDir": projectDir },
   );
 }
 
 async function readFileWithExtensions(
-  adapter: RuntimeAdapter,
+  sourceSnapshot: ProjectSourceSnapshot,
   basePath: string,
   extensions: string[],
   projectDir?: string,
@@ -418,9 +632,10 @@ async function readFileWithExtensions(
     }
 
     try {
-      const contents = await adapter.fs.readFile(filePath);
+      const contents = await sourceSnapshot.readTextFile(filePath);
       return { filePath, contents };
-    } catch (_) {
+    } catch (error) {
+      if (error instanceof ProjectBoundaryViolationError) throw error;
       /* expected: trying next file extension candidate */
     }
   }
@@ -433,16 +648,29 @@ async function readFileWithExtensions(
   );
 }
 
+export function getUserDependencies(
+  allDeps: ReadonlyMap<string, string>,
+): Map<string, string> {
+  const frameworkPackages = new Set(["veryfront", "react", "react-dom", "path"]);
+
+  const frameworkPrefixes = ["@opentelemetry/", "node:", "veryfront/"];
+  const userDeps = new Map<string, string>();
+  for (const [name, version] of allDeps) {
+    if (frameworkPackages.has(name)) continue;
+    if (frameworkPrefixes.some((prefix) => name.startsWith(prefix))) continue;
+    userDeps.set(name, version);
+  }
+  return userDeps;
+}
+
 async function loadModuleFromCode(
   code: string,
-  projectDir: string,
   fs: FileSystem,
-  userDeps: Map<string, string> = new Map(),
 ): Promise<APIRoute> {
   const tempDir = await fs.makeTempDir({ prefix: "vf-api-" });
   const tempFile = pathHelper.join(tempDir, "handler.mjs");
 
-  const transformedCode = await rewriteExternalImports(code, projectDir, fs, userDeps);
+  const transformedCode = code;
 
   // In compiled Deno binaries, external modules loaded from temp files cannot
   // resolve "veryfront" since the source is embedded in the binary's virtual FS.

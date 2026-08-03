@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __injectDepsForTests,
@@ -7,6 +7,7 @@ import {
   StaticFileService,
 } from "./static-file.service.ts";
 import type { FileSystemRepository } from "#veryfront/repositories/types.ts";
+import { SECURITY_VIOLATION } from "#veryfront/errors/error-registry.ts";
 
 function makeOptions(overrides: Partial<StaticFileOptions> = {}): StaticFileOptions {
   return {
@@ -45,9 +46,15 @@ function createMockFsRepo(
       if (files.has(path)) {
         return { isFile: true, isDirectory: false, mtime: new Date() };
       }
-      throw new Error("not found");
+      throw createFsError("not found", "ENOENT");
     },
   } as unknown as FileSystemRepository;
+}
+
+function createFsError(message: string, code: string): Error & { code: string } {
+  const error = new Error(message) as Error & { code: string };
+  error.code = code;
+  return error;
 }
 
 afterEach(() => {
@@ -218,13 +225,72 @@ describe("server/services/static/static-file.service", () => {
   });
 
   describe("resolveFile", () => {
+    it("serves project files through the scoped SecureFs boundary", async () => {
+      __injectDepsForTests({
+        manifestCache: new Map(),
+        manifestLoading: new Map(),
+      });
+
+      const fileData = new TextEncoder().encode("hello world");
+      const files = new Map<string, Uint8Array>([
+        ["/project/public/hello.txt", fileData],
+      ]);
+      const ready = Promise.resolve();
+      const adapter = {
+        fs: {
+          symlinkSemantics: "none" as const,
+          readFile: async (path: string) => {
+            const data = files.get(path);
+            if (!data) throw createFsError("not found", "ENOENT");
+            return new TextDecoder().decode(data);
+          },
+          readFileBytes: async (path: string) => {
+            const data = files.get(path);
+            if (!data) throw createFsError("not found", "ENOENT");
+            return data;
+          },
+          writeFile: async () => {},
+          exists: async (path: string) => files.has(path),
+          stat: async (path: string) => {
+            const data = files.get(path);
+            if (!data) throw createFsError("not found", "ENOENT");
+            return {
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+              size: data.byteLength,
+              mtime: new Date(0),
+            };
+          },
+          async *readDir() {},
+          mkdir: async () => {},
+          remove: async () => {},
+          makeTempDir: async (prefix: string) => `/tmp/${prefix}`,
+          watch: () => ({
+            ready,
+            done: ready,
+            close() {},
+            async *[Symbol.asyncIterator]() {},
+          }),
+        },
+      } as unknown as StaticFileOptions["adapter"];
+      const service = new StaticFileService();
+      const options = makeOptions({ adapter, isLocalProject: true });
+
+      const result = await service.resolveFile("/hello.txt", options);
+
+      assertExists(result);
+      assertEquals(result.path, "/project/public/hello.txt");
+      assertEquals(result.data, fileData);
+    });
+
     it("should return null when file does not exist", async () => {
       __injectDepsForTests({
         manifestCache: new Map(),
         manifestLoading: new Map(),
       });
 
-      const service = new StaticFileService();
+      const service = new StaticFileService(createMockFsRepo(new Map()));
       const options = makeOptions();
       const result = await service.resolveFile("/nonexistent.txt", options);
       assertEquals(result, null);
@@ -271,6 +337,85 @@ describe("server/services/static/static-file.service", () => {
       if (result) {
         assertEquals(result.source, "public");
       }
+    });
+
+    it("continues probing sibling candidates after an unexpected candidate error", async () => {
+      __injectDepsForTests({
+        manifestCache: new Map(),
+        manifestLoading: new Map(),
+      });
+
+      const fileData = new TextEncoder().encode("public fallback");
+      const repo = {
+        readFile: async () => "",
+        readFileBytes: async (path: string) => {
+          if (path === "/project/dist/app.js") {
+            throw createFsError("temporary read failure", "EIO");
+          }
+          return fileData;
+        },
+        stat: async (path: string) => {
+          if (path === "/project/dist/app.js" || path === "/project/public/app.js") {
+            return { isFile: true, isDirectory: false, mtime: new Date() };
+          }
+          throw createFsError("not found", "ENOENT");
+        },
+      } as unknown as FileSystemRepository;
+      const service = new StaticFileService(repo);
+      const options = makeOptions();
+
+      const result = await service.resolveFile("/app.js", options);
+      assertExists(result);
+      assertEquals(result.source, "public");
+      assertEquals(new TextDecoder().decode(result.data), "public fallback");
+    });
+
+    it("surfaces unexpected candidate errors when no sibling candidate resolves", async () => {
+      __injectDepsForTests({
+        manifestCache: new Map(),
+        manifestLoading: new Map(),
+      });
+
+      const repo = {
+        readFile: async () => "",
+        readFileBytes: async () => {
+          throw createFsError("temporary read failure", "EIO");
+        },
+        stat: async (path: string) => {
+          if (path === "/project/dist/app.js") {
+            return { isFile: true, isDirectory: false, mtime: new Date() };
+          }
+          throw createFsError("not found", "ENOENT");
+        },
+      } as unknown as FileSystemRepository;
+      const service = new StaticFileService(repo);
+      const options = makeOptions();
+
+      await assertRejects(
+        () => service.resolveFile("/app.js", options),
+        Error,
+        "temporary read failure",
+      );
+    });
+
+    it("treats security validation candidate rejection as a candidate miss", async () => {
+      __injectDepsForTests({
+        manifestCache: new Map(),
+        manifestLoading: new Map(),
+      });
+
+      const repo = {
+        readFile: async () => "",
+        readFileBytes: async () => new Uint8Array(),
+        stat: async () => {
+          throw SECURITY_VIOLATION.create({ detail: "Invalid path" });
+        },
+      } as unknown as FileSystemRepository;
+      const service = new StaticFileService(repo);
+      const options = makeOptions();
+
+      const result = await service.resolveFile("/app.js", options);
+      assertEquals(result, null);
     });
 
     it("should ignore generated dist files for local projects", async () => {

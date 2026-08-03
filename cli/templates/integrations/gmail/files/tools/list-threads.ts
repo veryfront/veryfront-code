@@ -4,7 +4,7 @@ import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
-  id: "list-threads",
+  id: "gmail-list-threads",
   description: "List Gmail threads with optional search and label filters.",
   inputSchema: defineSchema((v) => v.object({
     maxResults: v.number().min(1).max(500).default(10).describe("Maximum number of threads"),

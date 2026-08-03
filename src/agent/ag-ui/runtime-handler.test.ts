@@ -5,7 +5,8 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import { RunResumeSessionManager } from "../index.ts";
 import { createAgUiRuntimeHandler } from "./runtime-handler.ts";
 import { AgentRuntime } from "../runtime/index.ts";
-import type { Agent, Message } from "../types.ts";
+import type { Agent, AgentResponse, Message } from "../types.ts";
+import type { AgUiRuntimeLifecycleContext } from "./runtime-handler.ts";
 
 const encoder = new TextEncoder();
 
@@ -183,6 +184,50 @@ describe("agent/ag-ui-runtime-handler", () => {
     });
   });
 
+  it("withholds infrastructure headers from runtime context callbacks", async () => {
+    let admissionToken: string | null = null;
+    const handler = createAgUiRuntimeHandler({
+      beforeParse: ({ request }) => {
+        admissionToken = request.headers.get("x-token");
+      },
+      context: (request) => {
+        assertEquals(request.headers.get("authorization"), "Bearer public-user");
+        assertEquals(request.headers.get("cookie"), "session=public");
+        assertEquals(request.headers.get("x-token"), null);
+        assertEquals(request.headers.get("x-project-slug"), null);
+        assertEquals(request.headers.get("x-forwarded-host"), null);
+        return { admitted: true };
+      },
+      execute: ({ request, context }) => {
+        assertEquals(request.headers.get("authorization"), "Bearer public-user");
+        assertEquals(request.headers.get("x-token"), null);
+        return Response.json(context);
+      },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer public-user",
+          Cookie: "session=public",
+          "x-token": "host-secret",
+          "x-project-slug": "infrastructure-project",
+          "x-forwarded-host": "trusted-proxy.example",
+        },
+        body: JSON.stringify({
+          runId: "run_runtime_boundary",
+          threadId: crypto.randomUUID(),
+          messages: [{ id: "user-1", role: "user", content: "Hello" }],
+        }),
+      }),
+    );
+
+    assertEquals(admissionToken, "host-secret");
+    assertEquals(await response.json(), { admitted: true });
+  });
+
   it("lets hosts short-circuit before parsing the runtime request body", async () => {
     let beforeParseCalls = 0;
     let executeCalls = 0;
@@ -321,6 +366,63 @@ describe("agent/ag-ui-runtime-handler", () => {
     await response.text();
     assertEquals(finishedRunId, "run_runtime_hooks_1");
     assertEquals(seenToolCallId, "tool-call-42");
+  });
+
+  it("carries the finalized messages on the onFinish lifecycle context", async () => {
+    const testAgent = createTestAgent();
+    const finalized: AgentResponse = {
+      text: "hello from runtime",
+      messages: [
+        { id: "assistant-msg-1", role: "assistant", parts: [{ type: "text", text: "hello" }] },
+      ],
+      toolCalls: [],
+      status: "completed",
+    };
+
+    testAgent.agent.stream = async (input) => {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
+          controller.enqueue(
+            encodeDataStreamEvent({ type: "text-delta", id: "text-1", delta: "hello" }),
+          );
+          controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
+          controller.close();
+        },
+      });
+      input.onFinish?.(finalized);
+      return {
+        toDataStreamResponse: () =>
+          new Response(stream, { headers: { "Content-Type": "text/event-stream" } }),
+      };
+    };
+
+    let finishContext: AgUiRuntimeLifecycleContext | undefined;
+    const handler = createAgUiRuntimeHandler({
+      agent: testAgent.agent,
+      onFinish: (context) => {
+        finishContext = context;
+      },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          threadId: crypto.randomUUID(),
+          runId: "run_finalized_messages_1",
+          messages: [{ id: "user-1", role: "user", content: "Hello" }],
+        }),
+      }),
+    );
+
+    assertEquals(response.status, 200);
+    await response.text();
+    // The existing context (request) is preserved AND now carries the messages.
+    assertEquals(finishContext?.request.runId, "run_finalized_messages_1");
+    assertEquals(finishContext?.messages, finalized.messages);
+    assertEquals(finishContext?.response?.text, "hello from runtime");
   });
 
   it("calls onError when the runtime AG-UI stream fails", async () => {

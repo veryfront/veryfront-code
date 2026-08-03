@@ -26,15 +26,23 @@ describe("integrations/index", () => {
     assertEquals(getConnectorNames().includes("salesforce"), false);
   });
 
-  it("shows feature-gated connectors when explicitly enabled", () => {
-    Deno.env.set(EXPERIMENTAL_INTEGRATIONS_ENV, "salesforce");
+  it("shows eligible experimental connectors when explicitly enabled", () => {
+    Deno.env.set(EXPERIMENTAL_INTEGRATIONS_ENV, "stripe");
 
     assertStrictEquals(
-      getConnector("salesforce"),
-      connectors.find((connector) => connector.name === "salesforce"),
+      getConnector("stripe"),
+      connectors.find((connector) => connector.name === "stripe"),
     );
-    assertEquals(getIcon("salesforce"), icons.salesforce);
-    assertEquals(getConnectorNames().includes("salesforce"), true);
+    assertEquals(getIcon("stripe"), icons.stripe);
+    assertEquals(getConnectorNames().includes("stripe"), true);
+  });
+
+  it("keeps provider-adapter-only connectors unavailable when explicitly enabled", () => {
+    Deno.env.set(EXPERIMENTAL_INTEGRATIONS_ENV, "salesforce");
+
+    assertEquals(getConnector("salesforce"), undefined);
+    assertEquals(getIcon("salesforce"), undefined);
+    assertEquals(getConnectorNames().includes("salesforce"), false);
   });
 
   it("returns undefined for unknown connector lookups", () => {

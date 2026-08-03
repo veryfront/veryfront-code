@@ -1,0 +1,162 @@
+/**
+ * Dependency-free anchored popover with the Studio part API used by Veryfront.
+ * It provides stable trigger/content ARIA wiring, initial focus, trigger focus
+ * restoration, collision-aware positioning, and outside/Escape dismissal.
+ *
+ * @module react/components/ui/popover
+ */
+import * as React from "react";
+import { cx as cn } from "./cva.ts";
+import {
+  type AnchoredSlottedTriggerProps,
+  type AnchoredTriggerPublicProps,
+  createAnchoredSurfaceParts,
+} from "./anchored-surface.tsx";
+
+// Per-skin context + machinery -- distinct from DropdownMenu's instance so
+// a DropdownMenu nested inside a Popover cannot accidentally close the Popover.
+const { AnchoredRoot: _Root, AnchoredTrigger: _Trigger, AnchoredContent: _Content } =
+  createAnchoredSurfaceParts();
+
+/** Props accepted by `<Popover>`. */
+export interface PopoverProps {
+  children: React.ReactNode;
+  open?: boolean;
+  defaultOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}
+
+/** Popover root — owns open state and the positioning anchor. */
+export function Popover(props: PopoverProps): React.ReactElement {
+  return <_Root {...props} />;
+}
+
+/**
+ * Trigger — toggles the popover; the positioning anchor. `asChild` merges onto
+ * the child element, which must forward `ref` to its DOM node.
+ */
+export interface PopoverTriggerProps extends AnchoredTriggerPublicProps {}
+
+/** Literal slotted trigger contract with an element-specific ref. */
+export type PopoverSlottedTriggerProps<T extends HTMLElement = HTMLElement> =
+  AnchoredSlottedTriggerProps<T>;
+
+export function PopoverTrigger<T extends HTMLElement = HTMLElement>(
+  props: PopoverSlottedTriggerProps<T>,
+): React.ReactElement;
+export function PopoverTrigger(props: PopoverTriggerProps): React.ReactElement;
+export function PopoverTrigger<T extends HTMLElement = HTMLElement>(
+  props: PopoverTriggerProps | PopoverSlottedTriggerProps<T>,
+): React.ReactElement {
+  return <_Trigger {...props} haspopup="dialog" />;
+}
+
+/** Props accepted by `<PopoverContent>`. */
+export interface PopoverContentProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** Horizontal alignment relative to the trigger. */
+  align?: "start" | "end";
+  /** Consumer ref for the rendered popover surface. */
+  ref?: React.Ref<HTMLDivElement>;
+}
+
+/** Popover surface — rendered below the trigger while open. */
+export function PopoverContent({
+  children,
+  className,
+  align = "end",
+  ...props
+}: PopoverContentProps): React.ReactElement | null {
+  return (
+    <_Content
+      {...props}
+      role="dialog"
+      align={align}
+      initialFocus
+      className={cn("min-w-[220px]", className)}
+    >
+      {children}
+    </_Content>
+  );
+}
+
+/** Primary heading slot at the top of a popover (Studio: Heading level 4). */
+export function PopoverTitle({
+  className,
+  children,
+  ...props
+}: React.HTMLAttributes<HTMLHeadingElement>): React.ReactElement {
+  return (
+    <h4
+      className={cn(
+        "px-5 pt-5 pb-3 text-base font-semibold text-[var(--foreground)]",
+        className,
+      )}
+      {...props}
+    >
+      {children}
+    </h4>
+  );
+}
+
+/** Small section label inside a popover (Studio: Heading level 5). */
+export function PopoverHeader({
+  className,
+  children,
+  ...props
+}: React.HTMLAttributes<HTMLHeadingElement>): React.ReactElement {
+  return (
+    <h5
+      className={cn(
+        "p-5 pb-2 text-sm font-medium text-[var(--foreground)]",
+        className,
+      )}
+      {...props}
+    >
+      {children}
+    </h5>
+  );
+}
+
+/** Body content region (Studio: `px-5 last:pb-5 flex flex-col gap-4`). */
+export function PopoverBody({
+  className,
+  ...props
+}: React.HTMLAttributes<HTMLDivElement>): React.ReactElement {
+  return (
+    <div
+      className={cn("px-5 last:pb-5 flex flex-col gap-4", className)}
+      {...props}
+    />
+  );
+}
+
+/** Footer region; pass `bordered` for a top divider (Studio). */
+export function PopoverFooter({
+  className,
+  bordered,
+  ...props
+}: React.HTMLAttributes<HTMLDivElement> & { bordered?: boolean }): React.ReactElement {
+  return (
+    <div
+      className={cn(
+        "p-5",
+        bordered && "mt-5 border-t border-[var(--separator)]",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+/** Right-aligned button row, for use inside a footer. */
+export function PopoverActions({
+  className,
+  ...props
+}: React.HTMLAttributes<HTMLDivElement>): React.ReactElement {
+  return (
+    <div
+      className={cn("flex gap-2.5 justify-end items-center", className)}
+      {...props}
+    />
+  );
+}

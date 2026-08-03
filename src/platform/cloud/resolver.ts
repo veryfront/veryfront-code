@@ -31,9 +31,15 @@ function isRuntimeConfigInitialized(): boolean {
 
 const DEFAULT_API_BASE_URL = "https://api.veryfront.com";
 
-function getApiBaseUrlEnv(): string {
-  return getHostEnv("VERYFRONT_API_BASE_URL") ??
-    getHostEnv("VERYFRONT_API_URL")?.replace("/graphql", "/api") ?? DEFAULT_API_BASE_URL;
+function normalizeApiBaseUrl(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  return trimmed.replace(/\/graphql\/?$/, "/api").replace(/\/+$/, "");
+}
+
+export function resolveVeryfrontApiBaseUrlFromHostEnv(): string {
+  return normalizeApiBaseUrl(getHostEnv("VERYFRONT_API_BASE_URL")) ??
+    normalizeApiBaseUrl(getHostEnv("VERYFRONT_API_URL")) ?? DEFAULT_API_BASE_URL;
 }
 
 export const DEFAULT_VERYFRONT_CLOUD_MODEL = "veryfront-cloud/openai/gpt-5.4-nano";
@@ -105,7 +111,7 @@ function getResolvedVeryfrontCloudContext(): Omit<VeryfrontCloudBootstrap, "apiB
 }
 
 export function getVeryfrontCloudAuthToken(): string | undefined {
-  return getResolvedVeryfrontCloudContext().apiToken;
+  return getVeryfrontCloudBootstrap().apiToken;
 }
 
 export function getVeryfrontCloudProjectSlug(): string | undefined {
@@ -114,10 +120,35 @@ export function getVeryfrontCloudProjectSlug(): string | undefined {
 
 export function getVeryfrontCloudBootstrap(): VeryfrontCloudBootstrap {
   const scopedContext = getCurrentVeryfrontCloudContext();
+  const scopedApiBaseUrl = scopedContext?.apiBaseUrl?.trim();
+  const resolvedContext = getResolvedVeryfrontCloudContext();
+
+  // A scoped endpoint is a different credential domain. Never attach a
+  // request- or host-owned platform token to it: callers that select an
+  // endpoint must supply the credential for that endpoint in the same scope.
+  if (scopedApiBaseUrl) {
+    return {
+      apiBaseUrl: scopedApiBaseUrl,
+      ...resolvedContext,
+      apiToken: scopedContext?.apiToken,
+    };
+  }
 
   return {
-    apiBaseUrl: scopedContext?.apiBaseUrl?.trim() || getApiBaseUrlEnv(),
-    ...getResolvedVeryfrontCloudContext(),
+    apiBaseUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
+    ...resolvedContext,
+  };
+}
+
+/** Resolve the trusted host identity used by direct server-side platform clients. */
+export function getVeryfrontCloudHostBootstrap(): VeryfrontCloudBootstrap {
+  return {
+    apiBaseUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
+    apiToken: getHostEnv("VERYFRONT_API_TOKEN"),
+    projectSlug: getHostEnv("VERYFRONT_PROJECT_SLUG"),
+    serviceLayer: normalizeServiceLayer(getHostEnv("VERYFRONT_SERVICE_LAYER")),
+    hasRequestContext: false,
+    usesVeryfrontFs: false,
   };
 }
 

@@ -1,0 +1,753 @@
+import { assert, assertEquals, assertThrows } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
+import type {
+  JsonSchemaValidationFunction,
+  JsonSchemaValidationResult,
+} from "veryfront/extensions/schema";
+import { createZodAdapter } from "./adapter.ts";
+
+async function validate(
+  validator: JsonSchemaValidationFunction,
+  input: unknown,
+): Promise<JsonSchemaValidationResult> {
+  return await validator(input);
+}
+
+describe("SchemaValidator.compileJsonSchema", () => {
+  it("validates Draft 2020-12 schemas through a non-mutating data snapshot", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const validator = compile({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      type: "object",
+      properties: {
+        count: { type: "integer" },
+        label: { type: "string", default: "generated" },
+      },
+      required: ["count"],
+      additionalProperties: false,
+    });
+    const input = { count: 2 };
+
+    const result = await validate(validator, input);
+
+    assertEquals(result, { success: true, value: input });
+    assertEquals(input, { count: 2 });
+    assert(result.success && result.value !== input);
+  });
+
+  it("selects the compiler declared by Draft 7 and Draft 2019-09 schemas", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const draft7 = compile({
+      $schema: "http://json-schema.org/draft-07/schema#",
+      type: "object",
+      properties: { value: { type: "integer" } },
+      required: ["value"],
+    });
+    const draft7Https = compile({
+      $schema: "https://json-schema.org/draft-07/schema#",
+      type: "object",
+      properties: { value: { type: "integer" } },
+      required: ["value"],
+    });
+    const draft2019 = compile({
+      $schema: "https://json-schema.org/draft/2019-09/schema",
+      type: "array",
+      items: { type: "string" },
+    });
+
+    assertEquals((await validate(draft7, { value: 1 })).success, true);
+    assertEquals((await validate(draft7, { value: "1" })).success, false);
+    assertEquals((await validate(draft7Https, { value: 1 })).success, true);
+    assertEquals((await validate(draft7Https, { value: "1" })).success, false);
+    assertEquals((await validate(draft2019, ["one", "two"])).success, true);
+    assertEquals((await validate(draft2019, ["one", 2])).success, false);
+  });
+
+  it("supports JSON Schema union type arrays in strict mode", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const validator = compile({
+      type: ["string", "null"],
+    } as never);
+
+    assertEquals((await validate(validator, "value")).success, true);
+    assertEquals((await validate(validator, null)).success, true);
+    assertEquals((await validate(validator, 1)).success, false);
+  });
+
+  it("reuses compiled schemas through a bounded adapter-local cache", () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const first = compile({ type: "string", minLength: 1 });
+    const equivalent = compile({ minLength: 1, type: "string" });
+
+    assertEquals(equivalent === first, true);
+
+    for (let index = 0; index < 128; index++) {
+      compile({ type: "integer", minimum: index });
+    }
+
+    const recompiled = compile({ type: "string", minLength: 1 });
+    assertEquals(recompiled === first, false);
+  });
+
+  it("snapshots cached schemas so later caller mutation cannot change validation", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const schema = { type: "string" as const, minLength: 2 };
+    const validator = compile(schema);
+
+    (schema as { type: string }).type = "number";
+    schema.minLength = 100;
+
+    assertEquals((await validate(validator, "ok")).success, true);
+    assertEquals((await validate(validator, 42)).success, false);
+  });
+
+  it("snapshots proxied array lengths from their data descriptor", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    let lengthReads = 0;
+    const value = new Proxy([] as unknown[], {
+      get(target, property, receiver) {
+        if (property === "length") {
+          lengthReads++;
+          return lengthReads === 5 ? 5 : 0;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    const validator = compile({ enum: [value] });
+
+    assertEquals(lengthReads, 0);
+    assertEquals((await validate(validator, [])).success, true);
+    assertEquals((await validate(validator, [null, null, null, null, null])).success, false);
+  });
+
+  it("rejects non-JSON schema values before they can collide in the cache", () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+
+    assertThrows(
+      () => compile({ type: "number", minimum: Number.NaN }),
+      TypeError,
+      "finite",
+    );
+    assertThrows(
+      () => compile({ type: "string", custom: new Date() } as never),
+      TypeError,
+      "plain JSON objects",
+    );
+    for (const schema of [null, false, [], "string"] as const) {
+      assertThrows(
+        () => compile(schema as never),
+        TypeError,
+        "JSON Schema root must be a plain object",
+      );
+    }
+  });
+
+  it("rejects sparse and extended arrays regardless of cache insertion order", () => {
+    const denseSchema = { enum: [[null]] } as never;
+    const sparseValue: unknown[] = [];
+    sparseValue.length = 1;
+    const sparseSchema = { enum: [sparseValue] } as never;
+    const extendedValue = [null] as unknown[] & { label?: string };
+    extendedValue.label = "not-json-array-data";
+    const extendedSchema = { enum: [extendedValue] } as never;
+
+    const denseFirstCompile = createZodAdapter().compileJsonSchema;
+    assert(denseFirstCompile);
+    denseFirstCompile(denseSchema);
+    assertThrows(() => denseFirstCompile(sparseSchema), TypeError, "dense JSON arrays");
+    assertThrows(() => denseFirstCompile(extendedSchema), TypeError, "dense JSON arrays");
+
+    const invalidFirstCompile = createZodAdapter().compileJsonSchema;
+    assert(invalidFirstCompile);
+    assertThrows(() => invalidFirstCompile(sparseSchema), TypeError, "dense JSON arrays");
+    assertThrows(() => invalidFirstCompile(extendedSchema), TypeError, "dense JSON arrays");
+    invalidFirstCompile(denseSchema);
+  });
+
+  it("rejects schema accessors without invoking them or poisoning the cache", () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const cached = compile({ type: "string" });
+    let objectGetterCalls = 0;
+    let arrayGetterCalls = 0;
+    const objectAccessor = { type: "string" } as Record<string, unknown>;
+    Object.defineProperty(objectAccessor, "minLength", {
+      enumerable: true,
+      get() {
+        objectGetterCalls++;
+        return 2;
+      },
+    });
+    const arrayAccessor: unknown[] = [];
+    Object.defineProperty(arrayAccessor, "0", {
+      enumerable: true,
+      get() {
+        arrayGetterCalls++;
+        return "value";
+      },
+    });
+    arrayAccessor.length = 1;
+
+    assertThrows(
+      () => compile(objectAccessor as never),
+      TypeError,
+      "accessors",
+    );
+    assertThrows(
+      () => compile({ enum: [arrayAccessor] } as never),
+      TypeError,
+      "accessors",
+    );
+    assertEquals(objectGetterCalls, 0);
+    assertEquals(arrayGetterCalls, 0);
+    assertEquals(compile({ type: "string" }) === cached, true);
+  });
+
+  it("rejects hidden and symbol schema keys instead of aliasing cached schemas", () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const cached = compile({ type: "string" });
+    const hidden = { type: "string" } as Record<string, unknown>;
+    Object.defineProperty(hidden, "minLength", {
+      enumerable: false,
+      value: 2,
+    });
+    const symbol = { type: "string" } as Record<PropertyKey, unknown>;
+    symbol[Symbol("constraint")] = { minLength: 2 };
+
+    assertThrows(
+      () => compile(hidden as never),
+      TypeError,
+      "non-enumerable",
+    );
+    assertThrows(
+      () => compile(symbol as never),
+      TypeError,
+      "symbol keys",
+    );
+    assertEquals(compile({ type: "string" }) === cached, true);
+  });
+
+  it("detects cycles while allowing repeated acyclic schema references", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const cyclic: Record<string, unknown> = { type: "object" };
+    cyclic.properties = { self: cyclic };
+
+    assertThrows(() => compile(cyclic as never), TypeError, "cycles");
+
+    const shared = { type: "string" as const, minLength: 1 };
+    const validator = compile({
+      type: "object",
+      properties: { left: shared, right: shared },
+      required: ["left", "right"],
+      additionalProperties: false,
+    });
+    assertEquals((await validate(validator, { left: "a", right: "b" })).success, true);
+  });
+
+  it("enforces explicit depth, node, string, key, and serialized-size bounds", () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    let deeplyNested: unknown = { type: "string" };
+    for (let depth = 0; depth < 66; depth++) {
+      deeplyNested = { allOf: [deeplyNested] };
+    }
+    const tooManyNodes = new Array(8_193).fill(null);
+    const tooLongString = "x".repeat(256 * 1024 + 1);
+    const tooLongKey = "k".repeat(4 * 1024 + 1);
+    const maximumString = "x".repeat(132 * 1024);
+
+    assertThrows(
+      () => compile(deeplyNested as never),
+      TypeError,
+      "maximum depth",
+    );
+    assertThrows(
+      () => compile({ enum: [tooManyNodes] } as never),
+      TypeError,
+      "maximum node count",
+    );
+    assertThrows(
+      () => compile({ description: tooLongString } as never),
+      TypeError,
+      "string exceeds",
+    );
+    assertThrows(
+      () => compile({ [tooLongKey]: true } as never),
+      TypeError,
+      "key exceeds",
+    );
+    assertThrows(
+      () => compile({ enum: [maximumString, maximumString, maximumString, maximumString] }),
+      TypeError,
+      "serialized limit",
+    );
+  });
+
+  it("accepts the combinator fanout boundary and rejects the next branch", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const branch = { type: "string" as const };
+    const atLimit = compile({ anyOf: new Array(256).fill(branch) });
+
+    assertEquals((await validate(atLimit, "value")).success, true);
+    assertThrows(
+      () => compile({ anyOf: new Array(257).fill(branch) }),
+      TypeError,
+      "code-generation collection limit of 256",
+    );
+  });
+
+  it("applies the tuple fanout boundary to Draft 7 items arrays", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const branch = { type: "string" as const };
+    const draft7 = "http://json-schema.org/draft-07/schema#";
+    const atLimit = compile({
+      $schema: draft7,
+      type: "array",
+      items: new Array(256).fill(branch),
+      minItems: 256,
+      maxItems: 256,
+      additionalItems: false,
+    } as never);
+
+    assertEquals((await validate(atLimit, new Array(256).fill("value"))).success, true);
+    assertThrows(
+      () =>
+        compile({
+          $schema: draft7,
+          type: "array",
+          items: new Array(257).fill(branch),
+          minItems: 257,
+          maxItems: 257,
+          additionalItems: false,
+        } as never),
+      TypeError,
+      "code-generation collection limit of 256",
+    );
+  });
+
+  it("rejects every wide code-generating JSON Schema collection before Ajv", () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const fields = Array.from({ length: 257 }, (_, index) => `field${index}`);
+    const schemas = Object.fromEntries(fields.map((field) => [field, { type: "string" }]));
+    const patterns = Object.fromEntries(fields.map((field) => [`^${field}$`, { type: "string" }]));
+    const draft7 = "http://json-schema.org/draft-07/schema#";
+    const cases: Array<{ keyword: string; schema: Record<string, unknown> }> = [
+      { keyword: "required", schema: { type: "object", required: fields } },
+      { keyword: "enum", schema: { enum: fields } },
+      { keyword: "properties", schema: { type: "object", properties: schemas } },
+      { keyword: "patternProperties", schema: { type: "object", patternProperties: patterns } },
+      { keyword: "dependentSchemas", schema: { type: "object", dependentSchemas: schemas } },
+      {
+        keyword: "dependencies",
+        schema: { $schema: draft7, type: "object", dependencies: schemas },
+      },
+    ];
+
+    for (const testCase of cases) {
+      assertThrows(
+        () => compile(testCase.schema),
+        TypeError,
+        `${testCase.keyword} exceeds the code-generation collection limit of 256`,
+      );
+    }
+  });
+
+  it("rejects adversarial dependentRequired maps and entry arrays before Ajv", () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const dependencies = Object.fromEntries(
+      Array.from({ length: 4_000 }, (_, index) => [`field${index}`, ["requiredField"]]),
+    );
+
+    assertThrows(
+      () => compile({ type: "object", dependentRequired: dependencies }),
+      TypeError,
+      "dependentRequired exceeds the code-generation collection limit of 256",
+    );
+    assertThrows(
+      () =>
+        compile({
+          type: "object",
+          dependentRequired: { source: new Array(257).fill("requiredField") },
+        }),
+      TypeError,
+      "dependentRequired entry exceeds the code-generation collection limit of 256",
+    );
+    assertThrows(
+      () =>
+        compile({
+          $schema: "http://json-schema.org/draft-07/schema#",
+          type: "object",
+          dependencies: { source: new Array(257).fill("requiredField") },
+        }),
+      TypeError,
+      "dependencies entry exceeds the code-generation collection limit of 256",
+    );
+  });
+
+  it("rejects schemas whose nested combinators exceed the compile-work budget", () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const branch = { type: "string" as const };
+    const properties = Object.fromEntries(
+      Array.from({ length: 12 }, (_, index) => [
+        `field${index}`,
+        { anyOf: new Array(256).fill(branch) },
+      ]),
+    );
+
+    assertThrows(
+      () => compile({ type: "object", properties }),
+      TypeError,
+      "compilation work limit",
+    );
+  });
+
+  it("evicts by aggregate source weight before the entry-count ceiling", () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const firstSchema = { type: "string" as const, description: "0".repeat(240_000) };
+    const first = compile(firstSchema);
+
+    for (let index = 1; index <= 9; index++) {
+      compile({ type: "string", description: String(index).repeat(240_000) });
+    }
+
+    assertEquals(compile(firstSchema) === first, false);
+  });
+
+  it("validates realistic nested tool schemas below every compile budget", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const validator = compile({
+      type: "object",
+      properties: {
+        query: { type: "string", minLength: 1, maxLength: 4_096 },
+        filters: {
+          type: "array",
+          maxItems: 50,
+          items: {
+            type: "object",
+            properties: {
+              field: { type: "string", enum: ["status", "owner", "createdAt"] },
+              operator: { type: "string", enum: ["eq", "contains", "after"] },
+              value: { type: ["string", "number", "boolean", "null"] },
+            },
+            required: ["field", "operator", "value"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    });
+
+    assertEquals(
+      (await validate(validator, {
+        query: "production incidents",
+        filters: [{ field: "status", operator: "eq", value: "open" }],
+      })).success,
+      true,
+    );
+  });
+
+  it("rejects accessors and revoked proxies without invoking input getters", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const validator = compile({
+      type: "object",
+      properties: { value: { type: "string" } },
+      required: ["value"],
+    });
+    let getterReads = 0;
+    const accessor: Record<string, unknown> = {};
+    Object.defineProperty(accessor, "value", {
+      enumerable: true,
+      get() {
+        getterReads += 1;
+        throw new Error("must not run");
+      },
+    });
+    const revoked = Proxy.revocable({ value: "ok" }, {});
+    revoked.revoke();
+
+    const accessorResult = await validate(validator, accessor);
+    const revokedResult = await validate(validator, revoked.proxy);
+
+    assertEquals(getterReads, 0);
+    assertEquals(accessorResult.success, false);
+    assertEquals(revokedResult.success, false);
+    if (!accessorResult.success) {
+      assertEquals(accessorResult.errors[0]?.keyword, "veryfrontDataOnly");
+    }
+  });
+
+  it("validates one descriptor snapshot of stateful proxied input", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const validator = compile({
+      type: "object",
+      properties: { value: { const: "snapshot" } },
+      required: ["value"],
+    });
+    let descriptorReads = 0;
+    let valueReads = 0;
+    const input = new Proxy({ value: "target" }, {
+      getOwnPropertyDescriptor(_target, property) {
+        if (property !== "value") return undefined;
+        descriptorReads += 1;
+        return {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value: "snapshot",
+        };
+      },
+      get(target, property, receiver) {
+        if (property === "value") valueReads += 1;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    const result = await validate(validator, input);
+
+    assertEquals(result, { success: true, value: { value: "snapshot" } });
+    assertEquals(descriptorReads, 1);
+    assertEquals(valueReads, 0);
+  });
+
+  it("accepts null-prototype schemas and safely canonicalizes __proto__ data keys", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const properties = Object.create(null) as Record<string, unknown>;
+    properties.value = { type: "string" };
+    const schema = Object.assign(Object.create(null) as Record<string, unknown>, {
+      type: "object",
+      properties,
+      required: ["value"],
+      additionalProperties: false,
+    });
+    const input = Object.create(null) as Record<string, unknown>;
+    input.value = "safe";
+    const validator = compile(schema as never);
+
+    assertEquals((await validate(validator, input)).success, true);
+    assertEquals((await validate(validator, {})).success, false);
+
+    const constant = JSON.parse('{"__proto__":"safe"}') as Record<string, unknown>;
+    const constantValidator = compile({ const: constant } as never);
+    assertEquals(
+      (await validate(constantValidator, JSON.parse('{"__proto__":"safe"}'))).success,
+      true,
+    );
+    assertEquals(
+      (await validate(constantValidator, JSON.parse('{"__proto__":"wrong"}'))).success,
+      false,
+    );
+  });
+
+  it("does not coerce input or remove additional properties", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const validator = compile({
+      type: "object",
+      properties: { count: { type: "integer" } },
+      required: ["count"],
+      additionalProperties: false,
+    });
+    const input = { count: "2", extra: true };
+
+    const result = await validate(validator, input);
+
+    assertEquals(result.success, false);
+    if (result.success) return;
+    assertEquals(result.errors.map((error) => error.keyword).sort(), [
+      "additionalProperties",
+      "type",
+    ]);
+    assertEquals(input, { count: "2", extra: true });
+  });
+
+  it("copies validation errors before a later validation can replace them", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const validator = compile({
+      type: "object",
+      properties: { query: { type: "string" } },
+      required: ["query"],
+      additionalProperties: false,
+    });
+
+    const first = await validate(validator, {});
+    assertEquals(first.success, false);
+    if (first.success) return;
+    const snapshot = structuredClone(first.errors);
+
+    await validate(validator, { query: 42 });
+
+    assertEquals(first.errors, snapshot);
+  });
+
+  it("normalizes asynchronous Ajv validation failures", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const validator = compile({
+      $async: true,
+      type: "object",
+      properties: { query: { type: "string" } },
+      required: ["query"],
+      additionalProperties: false,
+    });
+
+    const result = await validate(validator, { query: 42 });
+
+    assertEquals(result.success, false);
+    if (result.success) return;
+    assertEquals(result.errors.map((error) => error.keyword), ["type"]);
+  });
+
+  it("fails schema compilation for unsupported formats in strict mode", () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+
+    assertThrows(
+      () => compile({ type: "string", format: "future-unknown-format" }),
+      Error,
+      "unknown format",
+    );
+  });
+
+  it("validates the standard email, uri, uuid, and date-time formats", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const validator = compile({
+      type: "object",
+      properties: {
+        email: { type: "string", format: "email" },
+        uri: { type: "string", format: "uri" },
+        uuid: { type: "string", format: "uuid" },
+        timestamp: { type: "string", format: "date-time" },
+      },
+      required: ["email", "uri", "uuid", "timestamp"],
+      additionalProperties: false,
+    });
+
+    const valid = await validate(validator, {
+      email: "hello@veryfront.com",
+      uri: "https://veryfront.com/docs?section=schemas",
+      uuid: "123e4567-e89b-42d3-a456-426614174000",
+      timestamp: "2026-07-23T12:34:56Z",
+    });
+    assertEquals(valid.success, true);
+
+    const invalid = await validate(validator, {
+      email: "not-an-email",
+      uri: "not a uri",
+      uuid: "not-a-uuid",
+      timestamp: "not-a-date-time",
+    });
+    assertEquals(invalid.success, false);
+    if (invalid.success) return;
+    assertEquals(
+      invalid.errors.map(
+        (error): [string, string] => [error.instancePath, error.keyword],
+      ).sort(([left], [right]) => left.localeCompare(right)),
+      [
+        ["/email", "format"],
+        ["/timestamp", "format"],
+        ["/uri", "format"],
+        ["/uuid", "format"],
+      ],
+    );
+  });
+
+  it("compiles independent schemas that reuse the same $id", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const first = compile({
+      $id: "urn:veryfront:test:duplicate-id",
+      type: "string",
+      minLength: 3,
+    });
+    const second = compile({
+      $id: "urn:veryfront:test:duplicate-id",
+      type: "integer",
+      minimum: 1,
+    });
+
+    assertEquals((await validate(first, "abc")).success, true);
+    assertEquals((await validate(first, 2)).success, false);
+    assertEquals((await validate(second, 2)).success, true);
+    assertEquals((await validate(second, "abc")).success, false);
+  });
+
+  it("does not retain caller schemas in a shared compiler registry", () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+
+    for (let index = 0; index < 128; index++) {
+      compile({
+        $id: `urn:veryfront:test:bounded-registry:${index}`,
+        type: "object",
+      });
+    }
+
+    assertThrows(
+      () => compile({ $ref: "urn:veryfront:test:bounded-registry:0" }),
+      Error,
+      "can't resolve reference",
+    );
+  });
+
+  it("rejects validation inputs with inherited prototypes", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const validator = compile({
+      type: "object",
+      properties: { ownValue: { type: "string" } },
+      required: ["ownValue"],
+      additionalProperties: false,
+    });
+    const input = Object.create({ ownValue: "inherited" }) as Record<string, unknown>;
+
+    const result = await validate(validator, input);
+
+    assertEquals(result.success, false);
+    if (result.success) return;
+    assertEquals(result.errors.map((error) => error.keyword), ["veryfrontDataOnly"]);
+  });
+
+  it("rejects inherited keys instead of passing them to Ajv", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const validator = compile({
+      type: "object",
+      properties: { ownValue: { type: "string" } },
+      required: ["ownValue"],
+      additionalProperties: false,
+    });
+    const input = Object.assign(
+      Object.create({ inheritedExtra: true }) as Record<string, unknown>,
+      { ownValue: "present" },
+    );
+
+    const result = await validate(validator, input);
+
+    assertEquals(result.success, false);
+    if (result.success) return;
+    assertEquals(result.errors.map((error) => error.keyword), ["veryfrontDataOnly"]);
+  });
+});

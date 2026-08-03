@@ -29,7 +29,7 @@ The CLI groups commands by category. Each command supports `--help` for its full
 | `veryfront lint` | Run linter with optional structured JSON output |
 | `veryfront routes` | List all discovered routes in your application |
 | `veryfront schema` | Show CLI command schema for agent discovery |
-| `veryfront serve` | Start production server |
+| `veryfront serve` | Run the production HTTP server (headless) |
 | `veryfront styles` | Build project CSS artifacts |
 | `veryfront test` | Run tests with optional structured JSON output |
 
@@ -37,12 +37,12 @@ The CLI groups commands by category. Each command supports `--help` for its full
 
 | Command | Description |
 |---------|-------------|
-| `veryfront deploy` | Create a release and deploy to an environment |
+| `veryfront deploy` | Promote a branch to an environment |
 | `veryfront lock` | Manage remote import lockfile for reproducible builds |
 | `veryfront merge` | Merge a branch into main (or another branch) |
 | `veryfront pull` | Download project files from Veryfront remote |
-| `veryfront push` | Create a branch and upload local files to Veryfront |
-| `veryfront up` | Deploy your app with one command (login, create, push, deploy) |
+| `veryfront push` | Push source to a cloud preview |
+| `veryfront up` | Create and publish the initial cloud preview |
 
 ### Project
 
@@ -53,7 +53,7 @@ The CLI groups commands by category. Each command supports `--help` for its full
 | `veryfront init` | Initialize a new Veryfront project |
 | `veryfront install` | Install AI assistant integrations (Cursor, Claude Code, etc.) |
 | `veryfront open` | Open project URLs in the browser |
-| `veryfront start` | Start the production dashboard and proxy server |
+| `veryfront start` | Run the production dashboard with proxy and TUI |
 | `veryfront studio` | Open Veryfront Studio in browser |
 | `veryfront uninstall` | Remove AI assistant integrations |
 
@@ -69,11 +69,15 @@ The CLI groups commands by category. Each command supports `--help` for its full
 
 | Command | Description |
 |---------|-------------|
-| `veryfront eval` | Discover and run eval definitions |
+| `veryfront eval` | List, run, and export discovered eval definitions |
 | `veryfront issues` | File-based issue tracking (SDLC conventions) |
 | `veryfront mcp` | Start MCP server for coding agents |
+| `veryfront schedule` | List or run source-defined schedules |
+| `veryfront schedules` | List source-defined schedules |
 | `veryfront skills` | List and inspect available agent skills |
 | `veryfront task` | Run a task from the tasks/ directory |
+| `veryfront webhook` | List or run source-defined webhooks |
+| `veryfront webhooks` | List source-defined webhooks |
 | `veryfront worker` | Start workflow run worker |
 | `veryfront workflow` | Run a workflow from the workflows directory |
 
@@ -83,4 +87,4 @@ The CLI groups commands by category. Each command supports `--help` for its full
 |---------|-------------|
 | `veryfront login` | Authenticate with Veryfront |
 | `veryfront logout` | Clear stored authentication credentials |
-| `veryfront whoami` | Show current authenticated user |
+| `veryfront whoami` | Show the current authenticated identity |

@@ -42,7 +42,7 @@
   ],
   "tools": [
     {
-      "id": "list_rooms",
+      "id": "webex__list_rooms",
       "name": "List Rooms",
       "description": "List Webex rooms (spaces) the authenticated user belongs to",
       "requiresWrite": false,
@@ -87,7 +87,7 @@
       }
     },
     {
-      "id": "list_messages",
+      "id": "webex__list_messages",
       "name": "List Messages",
       "description": "List recent messages in a Webex room",
       "requiresWrite": false,
@@ -116,7 +116,7 @@
       }
     },
     {
-      "id": "create_message",
+      "id": "webex__create_message",
       "name": "Send Message",
       "description": "Send a message to a Webex room or directly to a person",
       "requiresWrite": true,
@@ -144,7 +144,7 @@
       }
     },
     {
-      "id": "get_my_details",
+      "id": "webex__get_my_details",
       "name": "Get My Details",
       "description": "Get the authenticated Webex user's profile",
       "requiresWrite": false,
@@ -154,7 +154,7 @@
       }
     },
     {
-      "id": "list_people",
+      "id": "webex__list_people",
       "name": "List People",
       "description": "Look up people in the organization by email or display name",
       "requiresWrite": false,

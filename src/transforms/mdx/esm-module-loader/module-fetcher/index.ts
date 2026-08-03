@@ -12,8 +12,7 @@
  * @module build/transforms/mdx/esm-module-loader/module-fetcher
  */
 
-import { rendererLogger as globalLogger } from "#veryfront/utils";
-import type { Logger } from "#veryfront/utils/logger/logger.ts";
+import { type Logger, rendererLogger as globalLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
@@ -22,13 +21,28 @@ import { getModulePathCache } from "../cache/index.ts";
 import { hashString } from "../utils/hash.ts";
 import { resolveModuleFile } from "../resolution/file-finder.ts";
 import { getTransformCacheKey, getVersionedPathCacheKey } from "./cache-keys.ts";
-import { resolveNestedModuleImports } from "./nested-imports.ts";
+import { resolveNestedImportBase, resolveNestedModuleImports } from "./nested-imports.ts";
 import { readDistributedCache } from "./distributed-cache.ts";
 import { resolveUnresolvedModuleViaHttpFallback } from "./http-fallback.ts";
 import { normalizePath } from "./module-cache.ts";
 import { readValidCachedModulePath } from "./path-cache-lookup.ts";
 import { persistResolvedModule } from "./persistence.ts";
 import { transformResolvedModuleSource } from "./source-transform.ts";
+import {
+  MAX_MDX_MODULE_CODE_BYTES,
+  MAX_MDX_MODULE_GRAPH_ENTRIES,
+  ModuleGraphLimitError,
+  ModuleImportLimitError,
+  ModuleSourceLimitError,
+  utf8ByteLength,
+} from "./limits.ts";
+
+export {
+  MAX_MDX_MODULE_GRAPH_ENTRIES,
+  ModuleGraphLimitError,
+  ModuleImportLimitError,
+  ModuleSourceLimitError,
+} from "./limits.ts";
 
 // Re-export extracted modules for backward compatibility
 export { rewriteDntImports } from "./import-rewriter.ts";
@@ -78,7 +92,10 @@ function isFatalModuleFetchError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   return error.name === "MissingModuleError" ||
     error instanceof TransformTreeTimeoutError ||
-    error instanceof CircularModuleDependencyError;
+    error instanceof CircularModuleDependencyError ||
+    error instanceof ModuleGraphLimitError ||
+    error instanceof ModuleImportLimitError ||
+    error instanceof ModuleSourceLimitError;
 }
 
 /**
@@ -94,6 +111,13 @@ export async function fetchAndCacheModule(
   const log = getLog(context);
   const normalizedPath = normalizePath(modulePath, parentModulePath);
   const projectSlug = context.projectSlug || "unknown";
+  const moduleGraph = context.moduleGraph ??= new Set<string>();
+  if (!moduleGraph.has(normalizedPath)) {
+    if (moduleGraph.size >= MAX_MDX_MODULE_GRAPH_ENTRIES) {
+      throw new ModuleGraphLimitError(normalizedPath);
+    }
+    moduleGraph.add(normalizedPath);
+  }
 
   const now = Date.now();
   context.transformDeadline ??= now + TRANSFORM_TREE_TIMEOUT_MS;
@@ -193,9 +217,18 @@ async function doFetchAndCacheModule(
   const log = getLog(context);
   const { esmCacheDir, adapter, projectDir, projectId, contentSourceId } = context;
   const effectiveReactVersion = context.reactVersion ?? REACT_DEFAULT_VERSION;
+  const dependencyPinningCacheKey = context.dependencyPinningCacheKey ?? "off";
+  const moduleServerOrigin = dependencyPinningCacheKey.startsWith("on:")
+    ? context.moduleServerOrigin
+    : undefined;
 
   const pathCache = await getModulePathCache(esmCacheDir);
-  const versionedKey = getVersionedPathCacheKey(normalizedPath, effectiveReactVersion);
+  const versionedKey = getVersionedPathCacheKey(
+    normalizedPath,
+    effectiveReactVersion,
+    dependencyPinningCacheKey,
+    moduleServerOrigin,
+  );
   const cachedPath = await readValidCachedModulePath({
     normalizedPath,
     pathCache,
@@ -225,11 +258,21 @@ async function doFetchAndCacheModule(
         esmCacheDir,
         pathCache,
         reactVersion: effectiveReactVersion,
+        dependencyPinningCacheKey,
+        moduleServerOrigin,
         parentModulePath,
       });
     }
 
     const { sourceCode, actualFilePath } = resolved;
+    const sourceSizeBytes = utf8ByteLength(sourceCode);
+    if (sourceSizeBytes > MAX_MDX_MODULE_CODE_BYTES) {
+      throw new ModuleSourceLimitError(
+        normalizedPath,
+        sourceSizeBytes,
+        MAX_MDX_MODULE_CODE_BYTES,
+      );
+    }
 
     const contentHash = hashString(sourceCode);
     const transformCacheKey = contentSourceId
@@ -239,6 +282,8 @@ async function doFetchAndCacheModule(
         effectiveReactVersion,
         normalizedPath,
         contentHash,
+        dependencyPinningCacheKey,
+        moduleServerOrigin,
       )
       : null;
 
@@ -273,6 +318,10 @@ async function doFetchAndCacheModule(
         normalizedPath,
         projectSlug,
         reactVersion: context.reactVersion,
+        moduleServerOrigin,
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies: context.dependencyPinningDependencies,
+        dependencyPinningSource: context.dependencyPinningSource,
         adapter,
         log,
       });
@@ -286,6 +335,7 @@ async function doFetchAndCacheModule(
       moduleCode,
       esmCacheDir,
       normalizedPath,
+      parentBasePath: resolveNestedImportBase(normalizedPath, actualFilePath),
       strictMissingModules: context.strictMissingModules ?? true,
       projectSlug,
       fetchAndCacheModule: fetchAndCacheModuleFn,
@@ -300,6 +350,8 @@ async function doFetchAndCacheModule(
       log,
       projectSlug,
       reactVersion: effectiveReactVersion,
+      dependencyPinningCacheKey,
+      moduleServerOrigin,
       distributedCacheWrite:
         needsDistributedCacheWrite && distResult?.distributedCache && transformCacheKey &&
           contentSourceId
@@ -333,6 +385,10 @@ export function createModuleFetcherContext(
     isLocalProject?: boolean;
     projectSlug?: string;
     reactVersion?: string;
+    moduleServerOrigin?: string;
+    dependencyPinningCacheKey?: string;
+    dependencyPinningDependencies?: Readonly<Record<string, string>>;
+    dependencyPinningSource?: ModuleFetcherContext["dependencyPinningSource"];
     logger?: Logger;
     strictMissingModules?: boolean;
   },
@@ -345,5 +401,6 @@ export function createModuleFetcherContext(
     ...options,
     // Initialize in-flight tracking for circular import detection
     inFlightModules: new Map(),
+    moduleGraph: new Set(),
   };
 }

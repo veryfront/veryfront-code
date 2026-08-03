@@ -39,3 +39,67 @@ Deno.test("every browser-safe module path points at an existing source file", as
 		`Browser-safe module paths with no matching source file: ${missing.join(", ")}`,
 	);
 });
+
+Deno.test("browser-safe client modules include runtime shims reached by browser entrypoints", () => {
+	for (
+		const builtPath of [
+			"src/react/runtime/core.js",
+			"src/react/components/ui/color-mode.js",
+		]
+	) {
+		assert(
+			BROWSER_SAFE_CLIENT_MODULES.includes(builtPath),
+			`${builtPath} must have dnt shim imports stripped for browser-safe npm entrypoints`,
+		);
+	}
+});
+
+Deno.test("browser error adapters do not retain Node imports", async () => {
+	const output = await new Deno.Command(Deno.execPath(), {
+		args: [
+			"bundle",
+			"--platform=browser",
+			"--no-check",
+			"src/agent/react/use-agent.ts",
+		],
+		cwd: new URL("../../", import.meta.url),
+		stdin: "null",
+		stdout: "piped",
+		stderr: "piped",
+	}).output();
+	const stderr = new TextDecoder().decode(output.stderr);
+	assert(output.success, `browser bundle failed:\n${stderr}`);
+
+	const bundle = new TextDecoder().decode(output.stdout);
+	assert(
+		!/["']node:/.test(bundle),
+		"the useAgent browser bundle must not retain a Node builtin import",
+	);
+});
+
+Deno.test("the public observability barrel does not eagerly import Node-only helpers", async () => {
+	const output = await new Deno.Command(Deno.execPath(), {
+		args: [
+			"bundle",
+			"--platform=browser",
+			"--no-check",
+			"src/observability/index.ts",
+		],
+		cwd: new URL("../../", import.meta.url),
+		stdin: "null",
+		stdout: "piped",
+		stderr: "piped",
+	}).output();
+	const stderr = new TextDecoder().decode(output.stderr);
+	assert(output.success, `observability browser bundle failed:\n${stderr}`);
+
+	const bundle = new TextDecoder().decode(output.stdout);
+	assert(
+		!/\b(?:from|import)\s*["']node:v8["']/.test(bundle),
+		"the public observability barrel must not retain a browser-eager node:v8 import",
+	);
+	assert(
+		!/\b(?:from|import)\s*["']node:util\/types["']/.test(bundle),
+		"the public observability barrel must not retain a browser-eager node:util/types import",
+	);
+});

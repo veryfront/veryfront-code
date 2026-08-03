@@ -52,37 +52,37 @@
   ],
   "tools": [
     {
-      "id": "list_tables",
+      "id": "supabase__list_tables",
       "name": "List Tables",
       "description": "List all tables in your Supabase database",
       "requiresWrite": false
     },
     {
-      "id": "query_table",
+      "id": "supabase__query_table",
       "name": "Query Table",
       "description": "Select rows from a table with optional filters and sorting",
       "requiresWrite": false
     },
     {
-      "id": "insert_row",
+      "id": "supabase__insert_row",
       "name": "Insert Row",
       "description": "Insert a new row into a table",
       "requiresWrite": true
     },
     {
-      "id": "update_row",
+      "id": "supabase__update_row",
       "name": "Update Row",
       "description": "Update an existing row in a table",
       "requiresWrite": true
     },
     {
-      "id": "delete_row",
+      "id": "supabase__delete_row",
       "name": "Delete Row",
       "description": "Delete a row from a table",
       "requiresWrite": true
     },
     {
-      "id": "list_organizations",
+      "id": "supabase__list_organizations",
       "name": "List Organizations",
       "description": "List the organizations your access token can manage",
       "requiresWrite": false,
@@ -92,7 +92,7 @@
       }
     },
     {
-      "id": "list_projects",
+      "id": "supabase__list_projects",
       "name": "List Projects",
       "description": "List all Supabase projects across your organizations",
       "requiresWrite": false,
@@ -102,7 +102,7 @@
       }
     },
     {
-      "id": "get_project",
+      "id": "supabase__get_project",
       "name": "Get Project",
       "description": "Get details and status of a Supabase project",
       "requiresWrite": false,
@@ -120,7 +120,7 @@
       }
     },
     {
-      "id": "run_sql",
+      "id": "supabase__run_sql",
       "name": "Run SQL",
       "description": "Run a SQL query against a project's Postgres database via the Management API",
       "requiresWrite": true,

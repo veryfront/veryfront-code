@@ -21,11 +21,11 @@ export const buildHelp: CommandHelp = {
     },
     {
       flag: "--ssg",
-      description: "Enable static generation",
+      description: "Enable static generation (default; also configurable via build.ssg)",
     },
     {
       flag: "--no-ssg",
-      description: "Disable static generation when another option enables it",
+      description: "Disable static generation (the build fails if it would emit no pages)",
     },
     {
       flag: "--include <paths>",

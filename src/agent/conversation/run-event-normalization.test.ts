@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   getConversationRunEventJsonByteLength,
@@ -7,6 +7,7 @@ import {
   normalizeConversationRunEvent,
   normalizeConversationRunEvents,
 } from "./run-event-normalization.ts";
+import { DurableRunEventPersistenceError } from "./private-run-event.ts";
 
 describe("agent/conversation-run-event-normalization", () => {
   it("returns UTF-8 byte length for JSON-serialized values", () => {
@@ -25,6 +26,19 @@ describe("agent/conversation-run-event-normalization", () => {
   it("returns small events unchanged", () => {
     const event = { type: "TEXT_MESSAGE_CONTENT", delta: "Hello" };
     assertEquals(normalizeConversationRunEvent(event), [event]);
+  });
+
+  it("fails closed for a malformed private event discriminator", () => {
+    assertThrows(
+      () =>
+        normalizeConversationRunEvent({
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          messages: [],
+          contextId: "legacy",
+        }),
+      DurableRunEventPersistenceError,
+      "Invalid private run event shape",
+    );
   });
 
   it("splits oversized string-delta events", () => {
@@ -215,5 +229,14 @@ describe("agent/conversation-run-event-normalization", () => {
 
     const result = normalizeConversationRunEvents(events);
     assertEquals(result.length > 2, true);
+  });
+
+  it("preserves one direct private event above 2 MiB byte-for-byte", () => {
+    const event = {
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      messages: [{ role: "system", content: "x".repeat(2 * 1024 * 1024 + 1) }],
+    };
+
+    assertEquals(normalizeConversationRunEvent(event), [event]);
   });
 });

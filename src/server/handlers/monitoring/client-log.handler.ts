@@ -1,10 +1,17 @@
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
-import { readBodyWithLimit, ResponseBuilder } from "#veryfront/security/index.ts";
+import {
+  isRequestBodyTooLargeError,
+  readBodyWithLimit,
+  ResponseBuilder,
+} from "#veryfront/security/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import { HTTP_OK, PRIORITY_HIGH_CLIENT_LOG } from "#veryfront/utils/constants/index.ts";
-import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
-import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { getErrorMessage } from "#veryfront/errors";
+import {
+  createLocalControlAccessDeniedResponse,
+  isTrustedLocalControlRequest,
+} from "#veryfront/security/http/local-control-request.ts";
 
 const logger = serverLogger.component("client-log-handler");
 
@@ -60,6 +67,11 @@ export class ClientLogHandler extends BaseHandler {
     if (pathname !== "/_veryfront/log" || req.method !== "POST") {
       return this.continue();
     }
+    if (!isTrustedLocalControlRequest(req)) {
+      return this.respond(
+        createLocalControlAccessDeniedResponse(req, "Client log request rejected"),
+      );
+    }
 
     let body = "";
 
@@ -84,11 +96,7 @@ export class ClientLogHandler extends BaseHandler {
         serverLogger.debug(`${prefix} ${message}`, details);
       }
     } catch (e) {
-      if (
-        e instanceof VeryfrontError &&
-        e.slug === "input-validation-failed" &&
-        e.detail === "Request body exceeds size limit"
-      ) {
+      if (isRequestBodyTooLargeError(e)) {
         logger.warn("Client log body too large, rejected");
         return this.respond(
           ResponseBuilder.json({ error: "Payload too large" }, req, {

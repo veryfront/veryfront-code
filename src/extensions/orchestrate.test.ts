@@ -13,7 +13,12 @@ import { reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
 import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
 import type { LLMProvider, LLMProviderRegistry } from "./llm/index.ts";
 import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.ts";
-import { createBuiltinExtensions } from "./builtin-extensions.ts";
+import {
+  createBuiltinExtensions,
+  createEvalCliBuiltinExtensions,
+  createOptionalBuiltinExtension,
+} from "./builtin-extensions.ts";
+import { join } from "@std/path";
 
 const noopLogger = {
   debug: () => {},
@@ -99,7 +104,191 @@ describe("orchestrateExtensions()", () => {
     await loader.teardownAll();
   });
 
+  it("carries production discovery identity through to the factory loader", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-bound-orchestration-" });
+    const extensionDirectory = join(projectDir, "extensions", "ext-bound");
+    await Deno.mkdir(extensionDirectory, { recursive: true });
+    await Deno.writeTextFile(
+      join(extensionDirectory, "index.ts"),
+      "export default () => ({ name: 'must-not-import', version: '1', capabilities: [] });",
+    );
+
+    let bindingObserved = false;
+    try {
+      const loader = await orchestrateExtensions({
+        projectDir,
+        config: {},
+        logger: noopLogger,
+        loadFactory: (path, source, _config, binding) => {
+          bindingObserved = binding?.path === path;
+          return Promise.resolve({
+            extension: stubExt("ext-bound"),
+            source,
+            origin: path,
+          });
+        },
+      });
+
+      assertEquals(bindingObserved, true);
+      await loader.teardownAll();
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("does not import, invoke, or set up explicit-only discovered extensions", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-explicit-extension-" });
+    const projectExtensionDirectory = join(
+      projectDir,
+      "extensions",
+      "ext-explicit-project",
+    );
+    const packageExtensionDirectory = join(
+      projectDir,
+      "node_modules",
+      "ext-explicit-package",
+    );
+    await Deno.mkdir(join(projectExtensionDirectory, "src"), { recursive: true });
+    await Deno.mkdir(packageExtensionDirectory, { recursive: true });
+    await Deno.writeTextFile(
+      join(projectExtensionDirectory, "src", "index.ts"),
+      "throw new Error('project extension must not be imported');",
+    );
+    await Deno.writeTextFile(
+      join(projectExtensionDirectory, "deno.json"),
+      JSON.stringify({
+        veryfront: { extension: true, activation: "explicit" },
+      }),
+    );
+    await Deno.writeTextFile(
+      join(packageExtensionDirectory, "package.json"),
+      JSON.stringify({
+        name: "ext-explicit-package",
+        exports: "./index.js",
+        veryfront: { extension: true, activation: "explicit" },
+      }),
+    );
+    await Deno.writeTextFile(
+      join(packageExtensionDirectory, "index.js"),
+      "throw new Error('package extension must not be imported');",
+    );
+
+    let factoryLoaderCalls = 0;
+    let discoveredSetupCalls = 0;
+    const discoveredExtension = stubExt("must-not-setup", {
+      setup() {
+        discoveredSetupCalls++;
+      },
+    });
+    try {
+      const loader = await orchestrateExtensions({
+        projectDir,
+        config: {},
+        logger: noopLogger,
+        loadFactory: (path, source) => {
+          factoryLoaderCalls++;
+          return Promise.resolve({
+            extension: discoveredExtension,
+            source,
+            origin: path,
+          });
+        },
+      });
+
+      assertEquals(factoryLoaderCalls, 0);
+      assertEquals(discoveredSetupCalls, 0);
+      await loader.teardownAll();
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("sets up an explicit-only extension only when materialized in config", async () => {
+    let factoryLoaderCalls = 0;
+    let setupCalls = 0;
+    const configuredExtension = stubExt("ext-explicit-project", {
+      setup() {
+        setupCalls++;
+      },
+    });
+
+    const loader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: { extensions: [configuredExtension] },
+      logger: noopLogger,
+      discovery: {
+        ...emptyDiscovery(),
+        discoverPackageExtensions: () =>
+          Promise.resolve([{
+            packageName: "ext-explicit-package",
+            importTarget: "/fake/node_modules/ext-explicit-package/index.js",
+            metadata: {
+              isExtension: true,
+              activation: "explicit",
+              capabilities: [],
+            },
+          }]),
+      },
+      loadFactory: (path, source) => {
+        factoryLoaderCalls++;
+        return Promise.resolve({
+          extension: stubExt("must-not-load"),
+          source,
+          origin: path,
+        });
+      },
+    });
+
+    assertEquals(factoryLoaderCalls, 0);
+    assertEquals(setupCalls, 1);
+    await loader.teardownAll();
+  });
+
+  it("fails closed on injected activation accessors without invoking them", async () => {
+    let activationReads = 0;
+    let factoryLoaderCalls = 0;
+    const metadata = Object.defineProperty(
+      { isExtension: true as const, capabilities: [] },
+      "activation",
+      {
+        enumerable: true,
+        get() {
+          activationReads++;
+          return "auto";
+        },
+      },
+    );
+
+    const loader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {},
+      logger: noopLogger,
+      discovery: {
+        ...emptyDiscovery(),
+        discoverPackageExtensions: () =>
+          Promise.resolve([{
+            packageName: "ext-accessor",
+            importTarget: "/canonical/ext-accessor.js",
+            metadata,
+          }]),
+      },
+      loadFactory: (path, source) => {
+        factoryLoaderCalls++;
+        return Promise.resolve({
+          extension: stubExt(path),
+          source,
+          origin: path,
+        });
+      },
+    });
+
+    assertEquals(activationReads, 0);
+    assertEquals(factoryLoaderCalls, 0);
+    await loader.teardownAll();
+  });
+
   it("honors source priority: config beats package beats project beats local-file", async () => {
+    const packageLoadPaths: string[] = [];
     const cfg = stubExt("shared", {
       provides: { Shared: { from: "config" } },
     });
@@ -122,7 +311,12 @@ describe("orchestrateExtensions()", () => {
           Promise.resolve([
             {
               packageName: "@scope/pkg",
-              metadata: { isExtension: true as const, capabilities: [] },
+              importTarget: "/canonical/scope-pkg.js",
+              metadata: {
+                isExtension: true as const,
+                activation: "auto" as const,
+                capabilities: [],
+              },
             },
           ]),
         discoverProjectExtensions: () => Promise.resolve(["/fake/proj.ts"]),
@@ -130,14 +324,19 @@ describe("orchestrateExtensions()", () => {
         mergeExtensions,
       },
       loadFactory: (path: string, source: ExtensionSource) => {
-        const map: Record<ExtensionSource, Extension> = {
+        if (source === "package") packageLoadPaths.push(path);
+        const map: Partial<Record<ExtensionSource, Extension>> = {
           "config": cfg,
           "package": pkg,
           "project": proj,
           "local-file": local,
         };
+        const extension = map[source];
+        if (!extension) {
+          throw new Error(`unexpected extension source: ${source}`);
+        }
         return Promise.resolve<ResolvedExtension>({
-          extension: map[source],
+          extension,
           source,
           origin: path,
         });
@@ -148,6 +347,7 @@ describe("orchestrateExtensions()", () => {
       (tryResolve("Shared") as { from: string }).from,
       "config",
     );
+    assertEquals(packageLoadPaths, ["/canonical/scope-pkg.js"]);
     await loader.teardownAll();
   });
 
@@ -169,6 +369,182 @@ describe("orchestrateExtensions()", () => {
       Error,
       "factory-setup-boom",
     );
+  });
+
+  it("keeps the active generation when replacement preflight fails", async () => {
+    let teardownCount = 0;
+    let beforeActivateCount = 0;
+    const marker = { generation: "active" };
+    const activeLoader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {
+        extensions: [stubExt("active", {
+          provides: { ActiveGeneration: marker },
+          teardown() {
+            teardownCount++;
+          },
+        })],
+      },
+      logger: noopLogger,
+      discovery: emptyDiscovery(),
+    });
+    const invalid = {
+      name: "invalid",
+      version: "1.0.0",
+      capabilities: [],
+      setup: "not-a-function",
+    } as unknown as Extension;
+
+    await assertRejects(
+      () =>
+        orchestrateExtensions({
+          projectDir: "/fake",
+          config: { extensions: [invalid] },
+          logger: noopLogger,
+          discovery: emptyDiscovery(),
+          beforeActivate: () => {
+            beforeActivateCount++;
+          },
+        }),
+      Error,
+      'Extension "invalid" is invalid',
+    );
+
+    assertEquals(teardownCount, 0);
+    assertEquals(beforeActivateCount, 0);
+    assertEquals(tryResolve("ActiveGeneration"), marker);
+    await activeLoader.teardownAll();
+  });
+
+  it("keeps the active generation when replacement factory loading fails", async () => {
+    let teardownCount = 0;
+    const marker = { generation: "active" };
+    const activeLoader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {
+        extensions: [stubExt("active", {
+          provides: { ActiveGeneration: marker },
+          teardown() {
+            teardownCount++;
+          },
+        })],
+      },
+      logger: noopLogger,
+      discovery: emptyDiscovery(),
+    });
+
+    await assertRejects(
+      () =>
+        orchestrateExtensions({
+          projectDir: "/fake",
+          config: {},
+          logger: noopLogger,
+          discovery: {
+            ...emptyDiscovery(),
+            discoverProjectExtensions: () => Promise.resolve(["/fake/extensions/broken.ts"]),
+          },
+          loadFactory: () => Promise.reject(new Error("factory loading failed")),
+        }),
+      Error,
+      "factory loading failed",
+    );
+
+    assertEquals(teardownCount, 0);
+    assertEquals(tryResolve("ActiveGeneration"), marker);
+    await activeLoader.teardownAll();
+  });
+
+  it("replaces the active generation and makes its stale disposer harmless", async () => {
+    let firstTeardownCount = 0;
+    const activationOrder: string[] = [];
+    const firstLoader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {
+        extensions: [stubExt("first", {
+          provides: { ActiveGeneration: { generation: "first" } },
+          teardown() {
+            firstTeardownCount++;
+            activationOrder.push("first:teardown");
+          },
+        })],
+      },
+      logger: noopLogger,
+      discovery: emptyDiscovery(),
+    });
+    const secondMarker = { generation: "second" };
+    const secondLoader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {
+        extensions: [stubExt("second", {
+          provides: { ActiveGeneration: secondMarker },
+          setup() {
+            activationOrder.push("second:setup");
+          },
+        })],
+      },
+      logger: noopLogger,
+      discovery: emptyDiscovery(),
+      beforeActivate: () => {
+        activationOrder.push("before-activate");
+      },
+    });
+
+    assertEquals(firstTeardownCount, 1);
+    assertEquals(activationOrder, [
+      "first:teardown",
+      "before-activate",
+      "second:setup",
+    ]);
+    assertEquals(tryResolve("ActiveGeneration"), secondMarker);
+
+    await firstLoader.teardownAll();
+    assertEquals(tryResolve("ActiveGeneration"), secondMarker);
+    await secondLoader.teardownAll();
+  });
+
+  it("does not activate a retry while timed-out setup is still running", async () => {
+    const firstStarted = Promise.withResolvers<void>();
+    const releaseFirst = Promise.withResolvers<void>();
+    const retryStarted = Promise.withResolvers<void>();
+    const first = orchestrateExtensions({
+      projectDir: "/fake",
+      config: {
+        extensions: [stubExt("late", {
+          async setup() {
+            firstStarted.resolve();
+            await releaseFirst.promise;
+          },
+        })],
+      },
+      logger: noopLogger,
+      discovery: emptyDiscovery(),
+      setupTimeoutMs: 10,
+    });
+    await firstStarted.promise;
+    await assertRejects(() => first, Error, "late");
+
+    const retry = orchestrateExtensions({
+      projectDir: "/fake",
+      config: {
+        extensions: [stubExt("replacement", {
+          setup() {
+            retryStarted.resolve();
+          },
+        })],
+      },
+      logger: noopLogger,
+      discovery: emptyDiscovery(),
+    });
+    const retryStartedBeforeLateSetupSettled = await Promise.race([
+      retryStarted.promise.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 20)),
+    ]);
+
+    releaseFirst.resolve();
+    const retryLoader = await retry;
+    await retryLoader.teardownAll();
+
+    assertEquals(retryStartedBeforeLateSetupSettled, false);
   });
 
   it("filters disable directives from config.extensions", async () => {
@@ -215,7 +591,12 @@ describe("orchestrateExtensions()", () => {
           Promise.resolve([
             {
               packageName: "ext-broken-pkg",
-              metadata: { isExtension: true as const, capabilities: [] },
+              importTarget: "/canonical/ext-broken-pkg.js",
+              metadata: {
+                isExtension: true as const,
+                activation: "auto" as const,
+                capabilities: [],
+              },
             },
           ]),
       },
@@ -225,6 +606,164 @@ describe("orchestrateExtensions()", () => {
         return Promise.reject(
           new Error(`should-not-load: ${path} (source=${source})`),
         );
+      },
+    });
+
+    assertEquals(loadCalls, []);
+    await loader.teardownAll();
+  });
+
+  it("keeps installed first-party builtin packages deferred and prefilters their disable aliases", async () => {
+    const packageHits = [
+      {
+        packageName: "@veryfront/ext-css-tailwind",
+        importTarget: "/canonical/ext-css-tailwind.js",
+        metadata: {
+          isExtension: true as const,
+          activation: "auto" as const,
+          capabilities: [],
+        },
+      },
+      {
+        packageName: "@veryfront/ext-node-websocket-ws",
+        importTarget: "/canonical/ext-node-websocket-ws.js",
+        metadata: {
+          isExtension: true as const,
+          activation: "auto" as const,
+          capabilities: [],
+        },
+      },
+    ];
+
+    for (
+      const [disabledName, expectedDeferredFactoryCalls] of [
+        ["ext-css-tailwind", ["ext-node-websocket-ws"]],
+        ["@veryfront/ext-node-websocket-ws", ["ext-css-tailwind"]],
+      ] as const
+    ) {
+      const loadCalls: string[] = [];
+      const deferredFactoryCalls: string[] = [];
+      const loader = await orchestrateExtensions({
+        projectDir: "/fake",
+        config: {
+          extensions: [{ name: disabledName, enabled: false }],
+        },
+        logger: noopLogger,
+        discovery: {
+          ...emptyDiscovery(),
+          discoverPackageExtensions: () => Promise.resolve(packageHits),
+        },
+        builtinExtensions: [
+          createOptionalBuiltinExtension({
+            name: "ext-css-tailwind",
+            origin: "veryfront/ext-css-tailwind",
+            sourceDirectory: "ext-css-tailwind",
+            factory: () => {
+              deferredFactoryCalls.push("ext-css-tailwind");
+              return stubExt("ext-css-tailwind", {
+                contracts: { provides: ["CSSProcessor"] },
+                setup: (ctx) => ctx.provide("CSSProcessor", { id: "tailwind" }),
+              });
+            },
+          }),
+          createOptionalBuiltinExtension({
+            name: "ext-node-websocket-ws",
+            origin: "veryfront/ext-node-websocket-ws",
+            sourceDirectory: "ext-node-websocket-ws",
+            factory: () => {
+              deferredFactoryCalls.push("ext-node-websocket-ws");
+              return stubExt("ext-node-websocket-ws", {
+                contracts: { provides: ["NodeWebSocketServerProvider"] },
+                setup: (ctx) => ctx.provide("NodeWebSocketServerProvider", { id: "ws" }),
+              });
+            },
+          }),
+        ],
+        loadFactory: (path: string, source: ExtensionSource) => {
+          loadCalls.push(path);
+          return Promise.resolve<ResolvedExtension>({
+            extension: stubExt(path),
+            source,
+            origin: path,
+          });
+        },
+      });
+
+      assertEquals(loadCalls, []);
+      assertEquals(deferredFactoryCalls, [...expectedDeferredFactoryCalls]);
+      await loader.teardownAll();
+    }
+  });
+
+  it("keeps package discovery above ordinary builtins with the same first-party name", async () => {
+    const loader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {},
+      logger: noopLogger,
+      discovery: {
+        ...emptyDiscovery(),
+        discoverPackageExtensions: () =>
+          Promise.resolve([{
+            packageName: "@veryfront/ext-css-tailwind",
+            importTarget: "/canonical/ext-css-tailwind.js",
+            metadata: {
+              isExtension: true as const,
+              activation: "auto" as const,
+              capabilities: [],
+            },
+          }]),
+      },
+      builtinExtensions: [{
+        extension: stubExt("ext-css-tailwind", {
+          provides: { SelectedExtensionSource: { from: "builtin" } },
+        }),
+        source: "builtin",
+        origin: "custom-direct-builtin",
+      }],
+      loadFactory: (_path: string, source: ExtensionSource) =>
+        Promise.resolve<ResolvedExtension>({
+          extension: stubExt("ext-css-tailwind", {
+            provides: { SelectedExtensionSource: { from: "package" } },
+          }),
+          source,
+          origin: "canonical-package",
+        }),
+    });
+
+    assertEquals(tryResolve("SelectedExtensionSource"), { from: "package" });
+    await loader.teardownAll();
+  });
+
+  it("keeps deferred packages lazy for the reduced eval CLI builtin set", async () => {
+    const loadCalls: string[] = [];
+    const loader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {},
+      logger: noopLogger,
+      primeContracts: {
+        [LLMProviderRegistryName]: createLLMProviderRegistry(),
+      },
+      discovery: {
+        ...emptyDiscovery(),
+        discoverPackageExtensions: () =>
+          Promise.resolve([{
+            packageName: "@veryfront/ext-css-tailwind",
+            importTarget: "/canonical/ext-css-tailwind.js",
+            metadata: {
+              isExtension: true as const,
+              activation: "auto" as const,
+              capabilities: [],
+            },
+          }]),
+      },
+      builtinExtensions: createEvalCliBuiltinExtensions([]),
+      loadFactory: (path: string, source: ExtensionSource) => {
+        loadCalls.push(path);
+        return Promise.resolve<ResolvedExtension>({
+          extension: stubExt("ext-css-tailwind"),
+          source,
+          origin: path,
+        });
       },
     });
 
@@ -371,6 +910,9 @@ describe("orchestrateExtensions()", () => {
   });
 
   it("lets higher-priority provider extensions override builtin provider ids", async () => {
+    const builtinLlmExtensions = createBuiltinExtensions().filter((entry) =>
+      entry.extension.name.startsWith("ext-llm-")
+    );
     const customProvider: LLMProvider = {
       id: "anthropic",
       createModel(modelId: string) {
@@ -397,7 +939,7 @@ describe("orchestrateExtensions()", () => {
       logger: noopLogger,
       discovery: emptyDiscovery(),
       primeContracts: { [LLMProviderRegistryName]: registry },
-      builtinExtensions: createBuiltinExtensions(),
+      builtinExtensions: builtinLlmExtensions,
     });
 
     assertEquals(registry.get("anthropic"), customProvider);

@@ -27,7 +27,7 @@
   ],
   "tools": [
     {
-      "id": "get_cost_analytics",
+      "id": "portkey__get_cost_analytics",
       "name": "Get Cost Analytics",
       "description": "Get time-series LLM spend data for a workspace over a date range, optionally filtered by model, status, or metadata",
       "requiresWrite": false,
@@ -72,7 +72,7 @@
       }
     },
     {
-      "id": "get_request_analytics",
+      "id": "portkey__get_request_analytics",
       "name": "Get Request Analytics",
       "description": "Get time-series request volume data for a workspace over a date range to spot traffic spikes and error trends",
       "requiresWrite": false,
@@ -112,7 +112,7 @@
       }
     },
     {
-      "id": "get_token_analytics",
+      "id": "portkey__get_token_analytics",
       "name": "Get Token Analytics",
       "description": "Get time-series token consumption data for a workspace over a date range",
       "requiresWrite": false,
@@ -147,7 +147,7 @@
       }
     },
     {
-      "id": "get_user_analytics_summary",
+      "id": "portkey__get_user_analytics_summary",
       "name": "Get User Analytics Summary",
       "description": "Get per-user grouped analytics (request counts and cost) for a workspace over a date range",
       "requiresWrite": false,
@@ -192,7 +192,7 @@
       }
     },
     {
-      "id": "get_model_analytics_summary",
+      "id": "portkey__get_model_analytics_summary",
       "name": "Get Model Analytics Summary",
       "description": "Get per-model grouped analytics (request counts) for a workspace over a date range — spend and traffic by model",
       "requiresWrite": false,
@@ -237,7 +237,7 @@
       }
     },
     {
-      "id": "list_workspaces",
+      "id": "portkey__list_workspaces",
       "name": "List Workspaces",
       "description": "List the organization's workspaces with their IDs and slugs — feeds the workspace_slug every analytics tool needs",
       "requiresWrite": false,
@@ -275,7 +275,7 @@
       }
     },
     {
-      "id": "list_virtual_keys",
+      "id": "portkey__list_virtual_keys",
       "name": "List Virtual Keys",
       "description": "List virtual keys (managed provider credentials) with their status, usage limits, and expiry",
       "requiresWrite": false,
@@ -314,7 +314,7 @@
       }
     },
     {
-      "id": "list_log_exports",
+      "id": "portkey__list_log_exports",
       "name": "List Log Exports",
       "description": "List log export tasks for a workspace (Portkey exposes gateway logs via exports rather than a direct list endpoint)",
       "requiresWrite": false,

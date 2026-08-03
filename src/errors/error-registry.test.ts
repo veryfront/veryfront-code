@@ -8,6 +8,7 @@ import {
   CONFIG_NOT_FOUND,
   CONFIG_VALIDATION_FAILED,
   ERROR_REGISTRY,
+  type ErrorSlug,
   FALLBACK_EXHAUSTED,
   getAllSlugs,
   getErrorBySlug,
@@ -15,6 +16,7 @@ import {
   INPUT_VALIDATION_FAILED,
   RESOURCE_NOT_FOUND,
   SECURITY_VIOLATION,
+  SSR_OUTPUT_LIMIT_EXCEEDED,
   TOKEN_STORAGE_ERROR,
 } from "./error-registry.ts";
 import type { ErrorCategory } from "./types.ts";
@@ -27,9 +29,9 @@ describe("error-registry", () => {
       assertEquals(slugs.length, uniqueSlugs.size, "Duplicate slugs detected");
     });
 
-    it("should have 82 registered errors", () => {
+    it("should have 105 registered errors", () => {
       const slugs = getAllSlugs();
-      assertEquals(slugs.length, 82);
+      assertEquals(slugs.length, 105);
     });
   });
 
@@ -128,6 +130,15 @@ describe("error-registry", () => {
       assertEquals(error.slug, "config-not-found");
       assertEquals(error.category, "CONFIG");
       assertEquals(error.status, 404);
+      assertEquals(
+        error.suggestion,
+        "Create veryfront.config.js, veryfront.config.ts, or veryfront.config.mjs in the project root",
+      );
+    });
+
+    it("registers actionable CLI precondition errors", () => {
+      assertEquals(getErrorBySlug("authentication-required")?.status, 401);
+      assertEquals(getErrorBySlug("project-source-empty")?.status, 400);
     });
 
     it("should return correct error for all slugs", () => {
@@ -138,12 +149,26 @@ describe("error-registry", () => {
         assertEquals(error.slug, slug);
       }
     });
+
+    it("should not return inherited object properties as errors", () => {
+      for (const slug of ["toString", "constructor", "__proto__"]) {
+        assertEquals(getErrorBySlug(slug as ErrorSlug), undefined);
+      }
+    });
+
+    it("should use the canonical build command in deployment recovery guidance", () => {
+      const error = getErrorBySlug("production-build-required");
+      const suggestion = error.suggestion;
+      assertExists(suggestion);
+      assertEquals(suggestion, "Run 'veryfront build' before deploying");
+      assertEquals(suggestion.includes("'vf build'"), false);
+    });
   });
 
   describe("getErrorsByCategory", () => {
     it("should return CONFIG errors", () => {
       const errors = getErrorsByCategory("CONFIG");
-      assertEquals(errors.length, 8);
+      assertEquals(errors.length, 11);
       for (const error of errors) {
         assertEquals(error.category, "CONFIG");
       }
@@ -289,17 +314,17 @@ describe("error-registry", () => {
 
   describe("error categories coverage", () => {
     const expectedCategoryCounts: Record<string, number> = {
-      CONFIG: 8,
+      CONFIG: 11,
       BUILD: 8,
-      RUNTIME: 7,
+      RUNTIME: 10,
       ROUTE: 6,
-      MODULE: 6,
-      SERVER: 15,
-      BOUNDARY: 6,
+      MODULE: 8,
+      SERVER: 18,
+      BOUNDARY: 7,
       DEV: 5,
-      DEPLOY: 4,
-      AGENT: 7,
-      GENERAL: 10,
+      DEPLOY: 12,
+      AGENT: 8,
+      GENERAL: 12,
     };
 
     for (
@@ -358,6 +383,18 @@ describe("error-registry", () => {
       assertEquals(error.slug, "security-violation");
       assertEquals(error.status, 403);
       assertEquals((error.context as Record<string, unknown>).path, "../etc/passwd");
+    });
+  });
+
+  describe("SSR_OUTPUT_LIMIT_EXCEEDED", () => {
+    it("exposes a stable boundary error for bounded SSR rendering", () => {
+      const error = SSR_OUTPUT_LIMIT_EXCEEDED.create({
+        detail: "Rendered HTML exceeded the configured output ceiling",
+      });
+
+      assertEquals(error.slug, "ssr-output-limit-exceeded");
+      assertEquals(error.category, "BOUNDARY");
+      assertEquals(error.status, 500);
     });
   });
 

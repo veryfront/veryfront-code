@@ -1,6 +1,6 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { formatPhoneNumber, listMessages } from "../../lib/twilio-client.ts";
+import { formatPhoneNumber, listMessages } from "../lib/twilio-client.ts";
 
 type ListMessagesOptions = {
   to?: string;
@@ -10,7 +10,7 @@ type ListMessagesOptions = {
 };
 
 export default tool({
-  id: "list-messages",
+  id: "twilio-list-messages",
   description:
     "List recent SMS and WhatsApp messages from your Twilio account. Supports filtering by recipient, sender, and date.",
   inputSchema: defineSchema((v) => v.object({

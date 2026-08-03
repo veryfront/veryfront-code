@@ -2,7 +2,7 @@
  * Eval discovery for project-local eval definitions.
  */
 
-import { join } from "@std/path";
+import { join } from "#veryfront/compat/path";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform";
 import { importDiscoveryModule } from "#veryfront/discovery/module-import.ts";
@@ -31,7 +31,11 @@ export interface DiscoveredEval {
 /** Loader used to import an eval source module during discovery. */
 export type EvalModuleLoader = (
   filePath: string,
-  options: { adapter: RuntimeAdapter; projectDir: string },
+  options: {
+    adapter: RuntimeAdapter;
+    projectDir: string;
+    allowHostProjectCodeExecution?: boolean;
+  },
 ) => Promise<Record<string, unknown>>;
 
 /** Options for project-local eval discovery. */
@@ -40,6 +44,8 @@ export interface EvalDiscoveryOptions {
   adapter: RuntimeAdapter;
   config?: VeryfrontConfig;
   evalsDir?: string;
+  /** Explicit host-owned capability for a trusted local or dedicated runtime. */
+  allowHostProjectCodeExecution?: boolean;
   /** @internal Override source loading for tests and custom runtimes. */
   moduleLoader?: EvalModuleLoader;
 }
@@ -70,8 +76,8 @@ function stripEvalExtension(relativePath: string): string {
 }
 
 function stripFileProtocol(path: string): string {
-  if (!path.startsWith("file://")) return path;
-  return decodeURIComponent(new URL(path).pathname);
+  const stripped = path.startsWith("file://") ? decodeURIComponent(new URL(path).pathname) : path;
+  return stripped.replaceAll("\\", "/").replace(/^\/([A-Za-z]:\/)/, "$1");
 }
 
 /** Derive the stable `eval:<path>` ID for an eval file. */
@@ -121,10 +127,12 @@ async function loadEvalFromFile(
   adapter: RuntimeAdapter,
   projectDir: string,
   moduleLoader: EvalModuleLoader,
+  allowHostProjectCodeExecution?: boolean,
 ): Promise<DiscoveredEval | null> {
   const module = await moduleLoader(filePath, {
     adapter,
     projectDir,
+    allowHostProjectCodeExecution,
   });
   const evalExport = extractEvalExport(module);
   if (!evalExport) return null;
@@ -159,6 +167,7 @@ export async function discoverEvals(
     config,
     evalsDir = "evals",
     moduleLoader = importDiscoveryModule,
+    allowHostProjectCodeExecution,
   } = options;
 
   const evals: DiscoveredEval[] = [];
@@ -171,7 +180,7 @@ export async function discoverEvals(
     }
 
     const files = await collectEvalFiles(baseDir, adapter);
-    for (const file of files) {
+    for (const file of [...files].sort((left, right) => left.path.localeCompare(right.path))) {
       try {
         const evalItem = await loadEvalFromFile(
           file.path,
@@ -179,6 +188,7 @@ export async function discoverEvals(
           adapter,
           projectDir,
           moduleLoader,
+          allowHostProjectCodeExecution,
         );
         if (evalItem) evals.push(evalItem);
       } catch (error) {
@@ -189,7 +199,35 @@ export async function discoverEvals(
     errors.push({ filePath: baseDir, error: toErrorMessage(error) });
   }
 
-  return { evals, errors };
+  const evalsById = new Map<string, DiscoveredEval[]>();
+  for (const evalItem of evals) {
+    const matches = evalsById.get(evalItem.id) ?? [];
+    matches.push(evalItem);
+    evalsById.set(evalItem.id, matches);
+  }
+
+  const uniqueEvals: DiscoveredEval[] = [];
+  for (const [id, matches] of evalsById) {
+    if (matches.length === 1) {
+      uniqueEvals.push(matches[0]!);
+      continue;
+    }
+    const paths = matches.map((item) => item.filePath).sort();
+    for (const filePath of paths) {
+      errors.push({
+        filePath,
+        error: `Duplicate eval id "${id}" was declared by: ${paths.join(", ")}`,
+      });
+    }
+  }
+
+  uniqueEvals.sort((left, right) =>
+    left.id.localeCompare(right.id) || left.filePath.localeCompare(right.filePath)
+  );
+  errors.sort((left, right) =>
+    left.filePath.localeCompare(right.filePath) || left.error.localeCompare(right.error)
+  );
+  return { evals: uniqueEvals, errors };
 }
 
 /** Discover and return one eval definition by ID. */

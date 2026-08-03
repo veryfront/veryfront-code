@@ -7,15 +7,43 @@
  ********************************************************************************/
 
 import { VERSION } from "#veryfront/utils/version.ts";
+import { computeHash } from "#veryfront/utils";
+import { type Span, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import type { Span } from "#veryfront/observability/tracing/api-shim.ts";
 
 import { cacheRegistry } from "../registry.ts";
 
 import { DEFAULT_EXCLUDED_QUERY_PARAMS, type QueryParamCacheOptions } from "./prefixes.ts";
 
 const querySegmentEncoder = new TextEncoder();
+const pathHashEncoder = new TextEncoder();
+
+// 64-bit FNV-1a parameters (run twice with independent seeds to yield a 128-bit
+// digest). Replaces the previous 32-bit DJB2 hash, whose ~16-bit birthday bound
+// meant cache-key collisions became likely at only ~77k unique paths — a
+// cross-tenant risk since two colliding project paths would share a cache prefix.
+const FNV64_MASK = (1n << 64n) - 1n;
+const FNV64_PRIME = 1099511628211n;
+const FNV64_OFFSET_A = 14695981039346656037n;
+const FNV64_OFFSET_B = 1099511628211n;
+
+/**
+ * Strong, deterministic, synchronous path hash. Produces a 128-bit lowercase-hex
+ * digest by running two independently-seeded 64-bit FNV-1a passes over the UTF-8
+ * bytes of the input. Sync (BigInt, no crypto.subtle) because the cache-key
+ * builders that call it are synchronous hot paths.
+ */
+function strongPathHash(input: string): string {
+  const bytes = pathHashEncoder.encode(input);
+  let a = FNV64_OFFSET_A;
+  let b = FNV64_OFFSET_B;
+  for (const rawByte of bytes) {
+    const byte = BigInt(rawByte);
+    a = ((a ^ byte) * FNV64_PRIME) & FNV64_MASK;
+    b = ((b ^ (byte + 0x9en)) * FNV64_PRIME) & FNV64_MASK;
+  }
+  return a.toString(16).padStart(16, "0") + b.toString(16).padStart(16, "0");
+}
 
 export function parseRenderCacheKey(cacheKey: string): {
   projectId: string;
@@ -55,14 +83,7 @@ export function hashPathWithName(path: string): string {
   // Extract folder name for readability
   const folderName = path.split("/").filter(Boolean).pop() || "unknown";
 
-  // Generate hash for uniqueness
-  let hash = 0;
-  for (let i = 0; i < path.length; i++) {
-    hash = (hash << 5) - hash + path.charCodeAt(i);
-    hash |= 0;
-  }
-
-  return `local-${Math.abs(hash).toString(16)}-${folderName}`;
+  return `local-${strongPathHash(path)}-${folderName}`;
 }
 
 /**
@@ -83,14 +104,7 @@ export function normalizeFilePath(filePath: string): string {
   const parts = filePath.split("/");
   const fileName = parts.pop() || "unknown";
 
-  // Hash the full path for uniqueness
-  let hash = 0;
-  for (let i = 0; i < filePath.length; i++) {
-    hash = (hash << 5) - hash + filePath.charCodeAt(i);
-    hash |= 0;
-  }
-
-  return `${Math.abs(hash).toString(16)}-${fileName}`;
+  return `${strongPathHash(filePath)}-${fileName}`;
 }
 
 /**
@@ -134,14 +148,15 @@ function normalizeQueryParamName(param: string): string {
 }
 
 /**
- * Sanitize query params for use in cache keys.
- * Converts query params to a format safe for API cache key validation.
+ * Encode query params for use in internal cache-key construction.
  *
- * API cache key validation only allows: a-z A-Z 0-9 _ : . * - /
+ * This encoding uses `*HH` byte escapes to avoid collisions between query
+ * values. A key containing these escapes is not a valid concrete API cache key;
+ * ApiCacheBackend maps the completed key to the API schema at its boundary.
  *
  * @param url - URL or URLSearchParams to extract query params from
  * @param options - Query param handling options
- * @returns Sanitized query string safe for cache keys, or empty string
+ * @returns Encoded query string for cache-key construction, or an empty string
  */
 export function sanitizeQueryParamsForCacheKey(
   url: URL | URLSearchParams,
@@ -197,6 +212,65 @@ function encodeCacheKeySegment(value: string): string {
       (byte) => `*${byte.toString(16).toUpperCase().padStart(2, "0")}`,
     ).join("");
   }).join("");
+}
+
+// Keep these constraints aligned with veryfront-api's shared cache schemas.
+const CACHE_KEY_MAX_LENGTH = 512;
+const SANITIZED_CACHE_KEY_MARKER = "vf-sanitized:";
+const SHA256_HEX_LENGTH = 64;
+const MAX_TRUSTED_PREFIX_LENGTH = CACHE_KEY_MAX_LENGTH -
+  1 -
+  SANITIZED_CACHE_KEY_MARKER.length -
+  SHA256_HEX_LENGTH;
+export const CACHE_KEY_ALLOWED_PATTERN = /^[a-zA-Z0-9_:./-]+$/;
+export const CACHE_PATTERN_ALLOWED_PATTERN = /^[a-zA-Z0-9_:.*/-]+$/;
+
+/**
+ * True when a concrete cache key is valid for the API cache backend (non-empty
+ * and within the key character set, with no `*`).
+ */
+export function isValidCacheKey(key: string): boolean {
+  return key.length > 0 &&
+    key.length <= CACHE_KEY_MAX_LENGTH &&
+    CACHE_KEY_ALLOWED_PATTERN.test(key);
+}
+
+/**
+ * True when a del-pattern is valid for the API cache backend (non-empty and
+ * within the key character set plus the `*` glob wildcard).
+ */
+export function isValidCachePattern(pattern: string): boolean {
+  return pattern.length > 0 &&
+    pattern.length <= CACHE_KEY_MAX_LENGTH &&
+    CACHE_PATTERN_ALLOWED_PATTERN.test(pattern);
+}
+
+/**
+ * Guarantee a concrete cache key only contains characters the API cache backend
+ * accepts, so a malformed key can never reach the backend and trigger an
+ * `HTTP 400: Cache key contains invalid characters` (which, on the control-plane
+ * `/execute` path, loops until the request is flagged stuck; see veryfront
+ * issues #162 / #175).
+ *
+ * Ordinary valid keys are returned unchanged. Malformed, empty, overlong, and
+ * reserved-namespace keys become a deterministic SHA-256 fallback. No part of
+ * the unsafe key is retained because it may contain a credential or other
+ * sensitive path data. A separately supplied trusted backend prefix can be
+ * retained so prefix-based invalidation still reaches the fallback entry.
+ * Reserving the namespace prevents a valid raw key from being mistaken for a
+ * generated fallback key.
+ *
+ * Intended for concrete keys only. Delete patterns are validated and rejected
+ * separately because rewriting a glob could broaden its deletion scope.
+ */
+export async function sanitizeCacheKey(key: string, trustedPrefix = ""): Promise<string> {
+  if (isValidCacheKey(key) && !key.includes(SANITIZED_CACHE_KEY_MARKER)) return key;
+
+  const safePrefix = CACHE_KEY_ALLOWED_PATTERN.test(trustedPrefix) &&
+      !trustedPrefix.includes(SANITIZED_CACHE_KEY_MARKER)
+    ? `${trustedPrefix.slice(0, MAX_TRUSTED_PREFIX_LENGTH)}:`
+    : "";
+  return `${safePrefix}${SANITIZED_CACHE_KEY_MARKER}${await computeHash(key)}`;
 }
 
 export function createCacheKeyFilter(options: {

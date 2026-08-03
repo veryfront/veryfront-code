@@ -9,28 +9,55 @@
 
 import type { Agent, AgentResponse } from "../types.ts";
 import type { Tool } from "#veryfront/tool";
-import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { AGENT_ERROR } from "#veryfront/errors";
+import { setActiveSpanAttributes } from "#veryfront/observability";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { getAgentToolInputSchema } from "../schemas/index.ts";
+import { getRuntimeSourceIntegrationPolicyFromContext } from "../runtime/runtime-tool-config.ts";
+import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import { streamDataStreamEvents } from "../streaming/data-stream.ts";
 
 /** Agent as tool helper. */
-async function runAgentAsStreamingTool(agent: Agent, input: string): Promise<AgentResponse> {
-  let finalResponse: AgentResponse | undefined;
-  const stream = await agent.stream({
-    input,
-    onFinish: (response) => {
-      finalResponse = response;
-    },
-  });
+async function runAgentAsStreamingTool(
+  agent: Agent,
+  input: string,
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest | undefined,
+): Promise<AgentResponse> {
+  const execute = async (): Promise<AgentResponse> => {
+    let finalResponse: AgentResponse | undefined;
+    const stream = await agent.stream({
+      input,
+      onFinish: (response) => {
+        finalResponse = response;
+      },
+    });
+    let streamError: string | undefined;
+    const response = stream.toDataStreamResponse();
+    if (response.body) {
+      for await (const event of streamDataStreamEvents(response.body)) {
+        if (event.type !== "error") continue;
+        streamError = typeof event.errorText === "string"
+          ? event.errorText
+          : typeof event.error === "string"
+          ? event.error
+          : "Child agent stream failed";
+      }
+    }
 
-  await stream.toDataStreamResponse().arrayBuffer();
+    if (!finalResponse) {
+      throw AGENT_ERROR.create({
+        detail: streamError ?? `Agent "${agent.id}" stream completed without a final response.`,
+      });
+    }
+    return finalResponse;
+  };
 
-  if (!finalResponse) {
-    throw new Error(`Agent "${agent.id}" stream completed without a final response.`);
-  }
-
-  return finalResponse;
+  return sourceIntegrationPolicy
+    ? runWithExactSourceIntegrationPolicy(sourceIntegrationPolicy, execute)
+    : execute();
 }
 
 export function agentAsTool(agent: Agent, description: string): Tool {
@@ -39,11 +66,15 @@ export function agentAsTool(agent: Agent, description: string): Tool {
     type: "function",
     description,
     inputSchema: getAgentToolInputSchema(),
-    execute({ input }) {
+    execute({ input }, context) {
       return withSpan(
         "agent.composition.agentAsTool.execute",
         async () => {
-          const response = await runAgentAsStreamingTool(agent, input);
+          const response = await runAgentAsStreamingTool(
+            agent,
+            input,
+            getRuntimeSourceIntegrationPolicyFromContext(context),
+          );
 
           setActiveSpanAttributes({
             "agent.tool_calls": response.toolCalls.length,

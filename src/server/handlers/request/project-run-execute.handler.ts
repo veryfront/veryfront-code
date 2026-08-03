@@ -1,3 +1,11 @@
+import {
+  API_CLIENT_ERROR,
+  INPUT_VALIDATION_FAILED,
+  INVALID_ARGUMENT,
+  NOT_SUPPORTED,
+  RESOURCE_NOT_FOUND,
+  TIMEOUT_ERROR,
+} from "#veryfront/errors";
 import { CONTROL_PLANE_RUNS_PATH_PREFIX } from "#veryfront/channels/control-plane.ts";
 import { getEnvironmentConfig } from "#veryfront/config";
 import {
@@ -10,6 +18,9 @@ import {
   readInternalAgentRequestBody,
 } from "#veryfront/internal-agents/request-body.ts";
 import type { RuntimeAdapter } from "#veryfront/platform";
+import type { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
+import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
+import type { StyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { DiscoveryResult } from "#veryfront/discovery";
@@ -55,6 +66,9 @@ export interface ProjectRunExecuteRequest {
   target: string;
   projectId: string;
   runtimeAgUiEndpoint?: string;
+  runtimeTargetKind?: "main_branch" | "environment" | "preview_branch";
+  runtimeTargetEnvironmentId?: string | null;
+  runtimeTargetBranchId?: string | null;
   config?: Record<string, unknown>;
   input?: Record<string, unknown>;
 }
@@ -109,6 +123,7 @@ export interface ProjectRunExecuteHandlerDeps {
       adapter: RuntimeAdapter;
       config?: VeryfrontConfig;
       debug?: boolean;
+      allowHostProjectCodeExecution?: boolean;
     },
   ): Promise<DiscoveredWorkflow | null>;
   findEvalById(
@@ -118,6 +133,7 @@ export interface ProjectRunExecuteHandlerDeps {
       adapter: RuntimeAdapter;
       config?: VeryfrontConfig;
       debug?: boolean;
+      allowHostProjectCodeExecution?: boolean;
     },
   ): Promise<DiscoveredEval | null>;
   createWorkflowClient(
@@ -137,6 +153,16 @@ export interface ProjectRunExecuteHandlerDeps {
     ctx: HandlerContext;
     req: Request;
   }): Promise<ProjectRunExecuteResponse>;
+  executeDependencyArtifactBuild(input: {
+    request: ProjectRunExecuteRequest;
+    ctx: HandlerContext;
+    req: Request;
+  }): Promise<ProjectRunExecuteResponse>;
+  executeStyleArtifactBuild(input: {
+    request: ProjectRunExecuteRequest;
+    ctx: HandlerContext;
+    req: Request;
+  }): Promise<ProjectRunExecuteResponse>;
   sleep(ms: number): Promise<void>;
   now(): number;
 }
@@ -147,45 +173,76 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function parseRecord(value: unknown): Record<string, unknown> | undefined {
   if (value === undefined) return undefined;
-  if (!isRecord(value)) throw new Error("Expected object");
+  if (!isRecord(value)) throw INPUT_VALIDATION_FAILED.create({ detail: "Expected object" });
   return value;
 }
 
 function parseOptionalUrl(value: unknown, fieldName: string): string | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "string" || value.length === 0) throw new Error(`Invalid ${fieldName}`);
+  if (typeof value !== "string" || value.length === 0) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: `Invalid ${fieldName}` });
+  }
 
   try {
     const url = new URL(value);
     if (url.protocol !== "http:" && url.protocol !== "https:") {
-      throw new Error(`Invalid ${fieldName}`);
+      throw INPUT_VALIDATION_FAILED.create({ detail: `Invalid ${fieldName}` });
     }
     return url.toString();
   } catch {
-    throw new Error(`Invalid ${fieldName}`);
+    throw INPUT_VALIDATION_FAILED.create({ detail: `Invalid ${fieldName}` });
   }
 }
 
+function parseRuntimeTargetKind(value: unknown): ProjectRunExecuteRequest["runtimeTargetKind"] {
+  if (value === undefined || value === null) return undefined;
+  if (value === "main_branch" || value === "environment" || value === "preview_branch") {
+    return value;
+  }
+  throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid runtimeTargetKind" });
+}
+
+function parseOptionalNullableString(value: unknown, fieldName: string): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== "string" || value.length === 0) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: `Invalid ${fieldName}` });
+  }
+  return value;
+}
+
 function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecuteRequest {
-  if (!isRecord(value)) throw new Error("Expected object");
+  if (!isRecord(value)) throw INPUT_VALIDATION_FAILED.create({ detail: "Expected object" });
 
   const runId = value.runId;
   const kind = value.kind;
   const target = value.target;
   const projectId = value.projectId;
 
-  if (typeof runId !== "string" || !runId) throw new Error("Invalid runId");
-  if (runId !== pathRunId) throw new Error("Run id does not match request path");
+  if (typeof runId !== "string" || !runId) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid runId" });
+  }
+  if (runId !== pathRunId) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Run id does not match request path" });
+  }
   if (kind !== "task" && kind !== "workflow" && kind !== "eval") {
-    throw new Error("Invalid run kind");
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid run kind" });
   }
-  if (typeof target !== "string" || !target) throw new Error("Invalid target");
-  if (typeof projectId !== "string" || !projectId) throw new Error("Invalid projectId");
-  if (kind === "task" && !target.startsWith("task:")) throw new Error("Invalid task target");
+  if (typeof target !== "string" || !target) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid target" });
+  }
+  if (typeof projectId !== "string" || !projectId) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid projectId" });
+  }
+  if (kind === "task" && !target.startsWith("task:")) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid task target" });
+  }
   if (kind === "workflow" && !target.startsWith("workflow:")) {
-    throw new Error("Invalid workflow target");
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid workflow target" });
   }
-  if (kind === "eval" && !target.startsWith("eval:")) throw new Error("Invalid eval target");
+  if (kind === "eval" && !target.startsWith("eval:")) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid eval target" });
+  }
 
   return {
     runId,
@@ -193,6 +250,15 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
     target,
     projectId,
     runtimeAgUiEndpoint: parseOptionalUrl(value.runtimeAgUiEndpoint, "runtimeAgUiEndpoint"),
+    runtimeTargetKind: parseRuntimeTargetKind(value.runtimeTargetKind),
+    runtimeTargetEnvironmentId: parseOptionalNullableString(
+      value.runtimeTargetEnvironmentId,
+      "runtimeTargetEnvironmentId",
+    ),
+    runtimeTargetBranchId: parseOptionalNullableString(
+      value.runtimeTargetBranchId,
+      "runtimeTargetBranchId",
+    ),
     config: parseRecord(value.config),
     input: parseRecord(value.input),
   };
@@ -280,7 +346,9 @@ async function executeTaskRun(
 ): Promise<ProjectRunExecuteResponse> {
   const taskId = stripTargetPrefix(request.target, "task:");
   if (taskId === "knowledge-ingest") {
-    throw new Error("Knowledge ingest must be executed through the knowledge ingest executor");
+    throw NOT_SUPPORTED.create({
+      detail: "Knowledge ingest must be executed through the knowledge ingest executor",
+    });
   }
 
   const discovery = await deps.ensureProjectDiscovery(ctx);
@@ -299,6 +367,9 @@ async function executeTaskRun(
     task,
     config: request.config ?? {},
     projectId: request.projectId,
+    environmentId: request.runtimeTargetEnvironmentId === undefined
+      ? ctx.environmentId
+      : request.runtimeTargetEnvironmentId ?? undefined,
     debug: ctx.debug,
   });
 
@@ -320,7 +391,7 @@ async function waitForWorkflowResult(
 
   while (true) {
     const run = await client.getRun(runId);
-    if (!run) throw new Error(`Workflow run not found: ${runId}`);
+    if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Workflow run not found: ${runId}` });
 
     if (
       run.status === "completed" ||
@@ -332,7 +403,7 @@ async function waitForWorkflowResult(
     }
 
     if (deps.now() >= deadline) {
-      throw new Error(`Workflow run timed out: ${runId}`);
+      throw TIMEOUT_ERROR.create({ detail: `Workflow run timed out: ${runId}` });
     }
 
     await deps.sleep(DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS);
@@ -352,6 +423,7 @@ async function executeWorkflowRun(
     adapter: ctx.adapter,
     config: ctx.config,
     debug: ctx.debug,
+    allowHostProjectCodeExecution: ctx.allowHostProjectCodeExecution,
   });
 
   if (!workflow) {
@@ -571,7 +643,7 @@ function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiCl
   const apiUrl = getEnvironmentConfig().apiBaseUrl;
   const token = getRuntimeApiToken(req, ctx);
   if (!token) {
-    throw new Error("Missing project runtime API token");
+    throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
   }
 
   async function requestJson<T>(
@@ -596,7 +668,9 @@ function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiCl
     });
 
     if (!response.ok) {
-      throw new Error(`Veryfront API request failed: ${response.status} ${response.statusText}`);
+      throw API_CLIENT_ERROR.create({
+        detail: `Veryfront API request failed: ${response.status} ${response.statusText}`,
+      });
     }
 
     if (response.status === 204) return undefined as T;
@@ -674,7 +748,7 @@ async function resolveUploadIdsToPaths(
       `/projects/${encodeURIComponent(projectReference)}/uploads/${encodeURIComponent(uploadId)}`,
     );
     if (!upload.path) {
-      throw new Error(`Upload not found: ${uploadId}`);
+      throw RESOURCE_NOT_FOUND.create({ detail: `Upload not found: ${uploadId}` });
     }
     paths.push(upload.path);
   }
@@ -746,7 +820,7 @@ async function executeKnowledgeIngestRun(input: {
     const recursive = config.recursive === undefined ? true : Boolean(config.recursive);
 
     if (uploadPaths.length > 0 && pathPrefix) {
-      throw new Error("Use upload paths or upload prefix, not both.");
+      throw INVALID_ARGUMENT.create({ detail: "Use upload paths or upload prefix, not both." });
     }
 
     const options = {
@@ -777,7 +851,7 @@ async function executeKnowledgeIngestRun(input: {
     });
     const requestedCount = collection.sources.length + collection.skipped.length;
     if (requestedCount === 0) {
-      throw new Error("No supported knowledge sources were found.");
+      throw INVALID_ARGUMENT.create({ detail: "No supported knowledge sources were found." });
     }
 
     const results = await ingestResolvedSources(collection.sources, options, {
@@ -895,7 +969,7 @@ function createEvalAdapterConfig(input: {
   const runInput = input.request.input ?? {};
   const authToken = getRuntimeApiToken(input.req, input.ctx);
   if (!authToken) {
-    throw new Error("Missing project runtime API token");
+    throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
   }
   const managedEndpointContext = getManagedProjectAgUiEndpointContext(
     input.request.runtimeAgUiEndpoint,
@@ -949,6 +1023,7 @@ async function executeEvalRun(
     adapter: ctx.adapter,
     config: ctx.config,
     debug: ctx.debug,
+    allowHostProjectCodeExecution: ctx.allowHostProjectCodeExecution,
   });
 
   if (!evalItem) {
@@ -1011,16 +1086,16 @@ async function executeReleaseAssetBuildRun(input: {
 
   try {
     if (!releaseId || releaseVersion === undefined) {
-      throw new Error("Missing release_id or release_version for release asset build");
+      throw INVALID_ARGUMENT.create({
+        detail: "Missing release_id or release_version for release asset build",
+      });
     }
 
     const { VeryfrontApiClient } = await import(
       "#veryfront/platform/adapters/veryfront-api-client/client.ts"
     );
-    const { resolveProjectReactVersion } = await import(
-      "#veryfront/transforms/esm/package-registry.ts"
-    );
     const { runReleaseAssetBuild } = await import("#veryfront/release-assets/build-executor.ts");
+    const { transformToESM } = await import("#veryfront/transforms/esm-transform.ts");
     const { createCompileProjectCss } = await import(
       "#veryfront/release-assets/css-compile.ts"
     );
@@ -1028,7 +1103,7 @@ async function executeReleaseAssetBuildRun(input: {
     const apiBaseUrl = getEnvironmentConfig().apiBaseUrl;
     const token = input.req.headers.get("x-token") ?? input.ctx.proxyToken ??
       input.ctx.requestContext?.token ?? "";
-    if (!token) throw new Error("Missing project runtime API token");
+    if (!token) throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
 
     const apiClient = new VeryfrontApiClient({
       apiBaseUrl,
@@ -1038,20 +1113,18 @@ async function executeReleaseAssetBuildRun(input: {
     });
     apiClient.setProjectSlug(projectReference);
 
-    const reactVersion = await resolveProjectReactVersion({
-      projectDir: input.ctx.projectDir,
-      config: input.ctx.config,
-    });
-
     const releaseVersionRef = releaseId;
+    const releaseConfig = input.ctx.config;
+    if (!releaseConfig) {
+      throw INVALID_ARGUMENT.create({ detail: "Missing validated project config" });
+    }
 
     // Production CSS compiler: compiles the project's Tailwind CSS in-runtime
     // via the pure `generateTailwindCSS` primitive (no distributed-cache /
-    // candidate-contract machinery). Defensive — returns null on any failure,
-    // letting the executor keep its CSS gap.
+    // candidate-contract machinery). Missing providers and compile errors
+    // propagate to the executor, which records an explicit CSS gap.
     const compileProjectCss = createCompileProjectCss({
       projectScope: projectReference,
-      config: input.ctx.config,
     });
 
     const result = await runReleaseAssetBuild({
@@ -1060,13 +1133,35 @@ async function executeReleaseAssetBuildRun(input: {
       releaseId,
       releaseVersion,
       releaseVersionRef,
-      reactVersion,
-      stylesheetPath: input.ctx.config?.tailwind?.stylesheet,
       adapter: input.ctx.adapter,
+      dependencyMode: "source",
+      transform: (source, sourceFile, projectDir, adapter, options) =>
+        transformToESM(source, sourceFile, projectDir, adapter, {
+          projectId: options.projectId,
+          dev: options.dev,
+          ssr: options.ssr,
+          studioEmbed: false,
+          reactVersion: options.reactVersion,
+          dependencyPinningCacheKey: options.dependencyPinningSnapshot?.cacheKey,
+          dependencyPinningDependencies: options.dependencyPinningSnapshot?.dependencies,
+          dependencyPinningSource: options.dependencyPinningSource,
+        }),
+      loadConfig: () => Promise.resolve(releaseConfig),
       client: {
         beginReleaseAssetManifestBuild: (version) =>
           apiClient.beginReleaseAssetManifestBuild(version),
-        listAllReleaseFiles: (version) => apiClient.listAllReleaseFiles(version),
+        listAllReleaseFiles: async (version) => {
+          const files = await apiClient.listAllReleaseFiles(version);
+          return files.map((file) => {
+            if (typeof file.content !== "string") {
+              throw API_CLIENT_ERROR.create({
+                detail: "Release file list omitted file content",
+                status: 502,
+              });
+            }
+            return { path: file.path, content: file.content };
+          });
+        },
         uploadReleaseAsset: (version, hash, contentType, bytes) =>
           apiClient.uploadReleaseAsset(version, hash, contentType, bytes),
         putReleaseAssetManifest: (version, manifest) =>
@@ -1096,6 +1191,335 @@ async function executeReleaseAssetBuildRun(input: {
   }
 }
 
+async function executeDependencyArtifactBuildRun(input: {
+  request: ProjectRunExecuteRequest;
+  ctx: HandlerContext;
+  req: Request;
+}): Promise<ProjectRunExecuteResponse> {
+  const startedAt = Date.now();
+  try {
+    const {
+      parseDependencyArtifactBuildTaskInput,
+      runDependencyArtifactBuild,
+    } = await import("#veryfront/release-assets/dependency-artifact-builder.ts");
+    const taskInput = parseDependencyArtifactBuildTaskInput(input.request.config);
+    const token = getRuntimeApiToken(input.req, input.ctx);
+    if (!token) {
+      throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
+    }
+
+    const { VeryfrontApiClient } = await import(
+      "#veryfront/platform/adapters/veryfront-api-client/client.ts"
+    );
+    const apiClient = new VeryfrontApiClient({
+      apiBaseUrl: getEnvironmentConfig().apiBaseUrl,
+      apiToken: token,
+      projectSlug: input.ctx.projectSlug,
+      projectId: input.ctx.projectId,
+    });
+    const result = await runDependencyArtifactBuild(taskInput, {
+      uploadAsset: ({ artifactId, attemptCount, contentHash, contentType, bytes }) =>
+        apiClient.uploadDependencyArtifactAsset(
+          artifactId,
+          attemptCount,
+          contentHash,
+          contentType,
+          bytes,
+        ),
+      reportResult: ({ artifactId, attemptCount, result }) =>
+        apiClient.reportDependencyArtifactBuildResult(
+          artifactId,
+          attemptCount,
+          result,
+        ),
+    });
+
+    return {
+      success: result.success,
+      result,
+      ...(result.success ? {} : { error: result.failureCode }),
+      logs: null,
+      duration_ms: Date.now() - startedAt,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: errorMessage(error),
+      logs: null,
+      duration_ms: Date.now() - startedAt,
+    };
+  }
+}
+
+type StyleArtifactBuildSelector = {
+  branch?: string;
+  environmentName?: string;
+  releaseId?: string;
+};
+
+type StyleArtifactSourceFile = { path: string; content?: string };
+
+type StyleArtifactSourceProvider = {
+  getAllSourceFiles: () => Promise<StyleArtifactSourceFile[]> | StyleArtifactSourceFile[];
+  getContentContext?: () => ResolvedContentContext | null;
+};
+
+type OptionalTextFileReader = {
+  readOptionalTextFile(path: string): Promise<string>;
+};
+
+const DEFAULT_STYLESHEET_PATHS = [
+  "globals.css",
+  "global.css",
+  "styles/globals.css",
+  "app/globals.css",
+  "src/globals.css",
+  "src/styles/globals.css",
+];
+
+function optionalString(value: string | null | undefined): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function resolveStyleArtifactBuildSelector(
+  config: Record<string, unknown>,
+  ctx: HandlerContext,
+): StyleArtifactBuildSelector {
+  const selector: StyleArtifactBuildSelector = {
+    branch: getStringConfig(config, ["branch"]) ?? optionalString(ctx.parsedDomain?.branch),
+    environmentName: getStringConfig(config, ["environment_name", "environmentName"]) ??
+      optionalString(ctx.environmentName),
+    releaseId: getStringConfig(config, ["release_id", "releaseId"]) ??
+      optionalString(ctx.releaseId),
+  };
+  const count = [selector.branch, selector.environmentName, selector.releaseId]
+    .filter((value) => typeof value === "string" && value.length > 0).length;
+
+  if (count !== 1) {
+    throw INVALID_ARGUMENT.create({ detail: "Exactly one style artifact selector is required" });
+  }
+
+  return selector;
+}
+
+function getStyleArtifactSourceProvider(ctx: HandlerContext): StyleArtifactSourceProvider | null {
+  const wrappedFs = ctx.adapter.fs as { getUnderlyingAdapter?: () => unknown };
+  if (typeof wrappedFs.getUnderlyingAdapter !== "function") return null;
+
+  const fsAdapter = wrappedFs.getUnderlyingAdapter() as {
+    getAllSourceFiles?: StyleArtifactSourceProvider["getAllSourceFiles"];
+    getContentContext?: StyleArtifactSourceProvider["getContentContext"];
+  };
+  if (typeof fsAdapter.getAllSourceFiles !== "function") return null;
+
+  return {
+    getAllSourceFiles: fsAdapter.getAllSourceFiles.bind(fsAdapter),
+    getContentContext: typeof fsAdapter.getContentContext === "function"
+      ? fsAdapter.getContentContext.bind(fsAdapter)
+      : undefined,
+  };
+}
+
+function stylesheetCandidatePaths(stylesheetPath?: string): string[] {
+  return stylesheetPath ? [stylesheetPath.replace(/^\/+/, "")] : DEFAULT_STYLESHEET_PATHS;
+}
+
+function textFromFileContent(content: Uint8Array | string): string {
+  return typeof content === "string" ? content : new TextDecoder().decode(content);
+}
+
+function getOptionalTextFileReader(ctx: HandlerContext): OptionalTextFileReader | null {
+  const wrappedFs = ctx.adapter.fs as {
+    getUnderlyingAdapter?: () => unknown;
+    readOptionalTextFile?: OptionalTextFileReader["readOptionalTextFile"];
+  };
+
+  if (typeof wrappedFs.readOptionalTextFile === "function") {
+    return { readOptionalTextFile: wrappedFs.readOptionalTextFile.bind(wrappedFs) };
+  }
+
+  if (typeof wrappedFs.getUnderlyingAdapter !== "function") return null;
+  const underlying = wrappedFs.getUnderlyingAdapter() as Partial<OptionalTextFileReader>;
+  if (typeof underlying.readOptionalTextFile !== "function") return null;
+
+  return { readOptionalTextFile: underlying.readOptionalTextFile.bind(underlying) };
+}
+
+async function readStylesheetFromAdapter(
+  ctx: HandlerContext,
+  stylesheetPath?: string,
+): Promise<string | undefined> {
+  const optionalReader = getOptionalTextFileReader(ctx);
+
+  for (const path of stylesheetCandidatePaths(stylesheetPath)) {
+    try {
+      const content = optionalReader
+        ? await optionalReader.readOptionalTextFile(path)
+        : textFromFileContent(await ctx.adapter.fs.readFile(path));
+      if (content) return content;
+    } catch {
+      // keep searching
+    }
+  }
+
+  return undefined;
+}
+
+async function resolveStyleArtifactSourceFiles(
+  ctx: HandlerContext,
+  styleProfile: StyleScopeProfile,
+  collectLocalProjectSourceFiles: (
+    options: { projectDir: string; styleProfile: StyleScopeProfile },
+  ) => Promise<StyleArtifactSourceFile[]>,
+): Promise<{ files: StyleArtifactSourceFile[]; contentContext: ResolvedContentContext | null }> {
+  const sourceProvider = getStyleArtifactSourceProvider(ctx);
+  if (sourceProvider) {
+    return {
+      files: await sourceProvider.getAllSourceFiles(),
+      contentContext: sourceProvider.getContentContext?.() ?? null,
+    };
+  }
+
+  return {
+    files: await collectLocalProjectSourceFiles({
+      projectDir: ctx.projectDir,
+      styleProfile,
+    }),
+    contentContext: null,
+  };
+}
+
+async function executeStyleArtifactBuildRun(input: {
+  request: ProjectRunExecuteRequest;
+  ctx: HandlerContext;
+  req: Request;
+}): Promise<ProjectRunExecuteResponse> {
+  const startedAt = Date.now();
+  const config = input.request.config ?? {};
+  const projectReference = input.ctx.projectSlug ?? input.request.projectId;
+  let apiClient: VeryfrontApiClient | null = null;
+  let selector: StyleArtifactBuildSelector | null = null;
+  let styleProfileHash: string | null = null;
+
+  try {
+    const { VeryfrontApiClient } = await import(
+      "#veryfront/platform/adapters/veryfront-api-client/client.ts"
+    );
+    const {
+      buildPreparedCSSArtifactFromFiles,
+      collectLocalProjectSourceFiles,
+      findStylesheetFromFiles,
+      readLocalProjectStylesheet,
+    } = await import("#veryfront/html/styles-builder/css-pregeneration.ts");
+    const { resolveStyleContentVersion } = await import(
+      "#veryfront/html/styles-builder/content-version.ts"
+    );
+    const { createStyleScopeProfile } = await import(
+      "#veryfront/html/styles-builder/style-scope-profile.ts"
+    );
+
+    const token = input.req.headers.get("x-token") ?? input.ctx.proxyToken ??
+      input.ctx.requestContext?.token ?? "";
+    if (!token) throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
+
+    apiClient = new VeryfrontApiClient({
+      apiBaseUrl: getEnvironmentConfig().apiBaseUrl,
+      apiToken: token,
+      projectSlug: projectReference,
+      projectId: input.ctx.projectId,
+    });
+    apiClient.setProjectSlug(projectReference);
+
+    selector = resolveStyleArtifactBuildSelector(config, input.ctx);
+    const styleProfile = createStyleScopeProfile(input.ctx.config);
+    const requestedStyleProfileHash = getStringConfig(config, [
+      "style_profile_hash",
+      "styleProfileHash",
+    ]);
+    styleProfileHash = requestedStyleProfileHash ?? styleProfile.hash;
+
+    if (requestedStyleProfileHash && requestedStyleProfileHash !== styleProfile.hash) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Style profile hash mismatch: expected ${requestedStyleProfileHash}, got ${styleProfile.hash}`,
+      });
+    }
+
+    const { files, contentContext } = await resolveStyleArtifactSourceFiles(
+      input.ctx,
+      styleProfile,
+      collectLocalProjectSourceFiles,
+    );
+    if (files.length === 0) {
+      throw INVALID_ARGUMENT.create({
+        detail: "No project source files were available to build the style artifact",
+      });
+    }
+
+    const stylesheetPath = input.ctx.config?.tailwind?.stylesheet;
+    const stylesheet = findStylesheetFromFiles(files, stylesheetPath) ??
+      (getStyleArtifactSourceProvider(input.ctx)
+        ? await readStylesheetFromAdapter(input.ctx, stylesheetPath)
+        : await readLocalProjectStylesheet(input.ctx.projectDir, stylesheetPath));
+    const result = await buildPreparedCSSArtifactFromFiles({
+      projectSlug: projectReference,
+      projectVersion: resolveStyleContentVersion(contentContext, {
+        branch: selector.branch,
+        environmentName: selector.environmentName,
+        releaseId: selector.releaseId,
+      }),
+      projectDir: input.ctx.projectDir,
+      files,
+      styleProfile,
+      stylesheet,
+      stylesheetPath,
+      minify: true,
+      environment: "preview",
+      buildMode: "production",
+    });
+
+    await apiClient.upsertStyleArtifact({
+      ...selector,
+      styleProfileHash,
+      status: "ready",
+      artifactHash: result.hash,
+      assetPath: `/_vf/css/${result.hash}.css`,
+      contentType: "text/css; charset=utf-8",
+      buildRunId: input.request.runId,
+    });
+
+    return {
+      success: true,
+      result: {
+        state: "ready",
+        artifactHash: result.hash,
+        assetPath: `/_vf/css/${result.hash}.css`,
+        candidateCount: result.candidateCount,
+        fromCache: result.fromCache,
+      },
+      logs: null,
+      duration_ms: Date.now() - startedAt,
+    };
+  } catch (error) {
+    if (apiClient && selector && styleProfileHash) {
+      await apiClient.upsertStyleArtifact({
+        ...selector,
+        styleProfileHash,
+        status: "failed",
+        buildRunId: input.request.runId,
+        failureReason: errorMessage(error),
+      }).catch(() => undefined);
+    }
+
+    return {
+      success: false,
+      error: errorMessage(error),
+      logs: null,
+      duration_ms: Date.now() - startedAt,
+    };
+  }
+}
+
 const defaultDeps: ProjectRunExecuteHandlerDeps = {
   runTask,
   findWorkflowById,
@@ -1107,6 +1531,8 @@ const defaultDeps: ProjectRunExecuteHandlerDeps = {
   ensureProjectDiscovery,
   executeKnowledgeIngest: executeKnowledgeIngestRun,
   executeReleaseAssetBuild: executeReleaseAssetBuildRun,
+  executeDependencyArtifactBuild: executeDependencyArtifactBuildRun,
+  executeStyleArtifactBuild: executeStyleArtifactBuildRun,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now: () => Date.now(),
 };
@@ -1163,6 +1589,10 @@ export class ProjectRunExecuteHandler extends BaseHandler {
             ? await this.deps.executeKnowledgeIngest({ request, ctx, req })
             : request.kind === "task" && request.target === "task:release-asset-build"
             ? await this.deps.executeReleaseAssetBuild({ request, ctx, req })
+            : request.kind === "task" && request.target === "task:dependency-artifact-build"
+            ? await this.deps.executeDependencyArtifactBuild({ request, ctx, req })
+            : request.kind === "task" && request.target === "task:style-artifact-build"
+            ? await this.deps.executeStyleArtifactBuild({ request, ctx, req })
             : request.kind === "task"
             ? await executeTaskRun(request, ctx, this.deps)
             : request.kind === "eval"

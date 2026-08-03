@@ -10,12 +10,17 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { joinPath } from "#veryfront/utils/path-utils.ts";
 import {
+  acquireCSSGenerationSession,
+  type CSSGenerationSession,
   formatCSSError,
   getCSSByHashAsync,
   getProjectCSS,
   regenerateCSSByHash,
 } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
-import { DEFAULT_STYLESHEET } from "#veryfront/html/styles-builder/css-hash-cache.ts";
+import {
+  composeCSSStyleProfileHash,
+  hashCandidates,
+} from "#veryfront/html/styles-builder/css-identity.ts";
 import { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";
 import {
   createPreparedProjectCSSContext,
@@ -32,7 +37,9 @@ import type {
   VeryfrontApiClient,
 } from "#veryfront/platform/adapters/veryfront-api-client/index.ts";
 import { extractProjectCandidates } from "./styles-candidate-scanner.ts";
-import { profilePhase } from "#veryfront/observability/request-profiler.ts";
+import { extractProjectCssImports } from "./styles-css-import-scanner.ts";
+import { mergeImportedCSS } from "#veryfront/rendering/orchestrator/html-imported-css.ts";
+import { profilePhase } from "#veryfront/observability";
 
 const logger = serverLogger.component("styles-css-handler");
 
@@ -56,19 +63,63 @@ export class StylesCSSHandler extends BaseHandler {
         const projectScope = ctx.projectSlug ?? ctx.projectDir;
         const styleProfile = createStyleScopeProfile(ctx.config);
         const contentContext = this.getContentContext(ctx);
-        let rawCss: string;
+        let rawCss = await profilePhase("css.load_stylesheet", () => this.loadStylesheet(ctx));
+        // Production SSR merges CSS imported by modules (`import "./styles.css"`
+        // in a layout) into the page stylesheet during module loading. This
+        // route has no module-loading pass, so discover those imports from the
+        // project sources and merge them here. Runs before the prepared-CSS
+        // context is created so cache keys reflect the merged stylesheet.
         try {
-          rawCss = await profilePhase("css.load_stylesheet", () => this.loadStylesheet(ctx));
+          const cssImports = await profilePhase(
+            "css.scan_css_imports",
+            () => extractProjectCssImports(ctx),
+          );
+          if (cssImports.length > 0) {
+            const merged = await profilePhase(
+              "css.merge_imported_css",
+              () =>
+                mergeImportedCSS({
+                  fs: ctx.adapter.fs,
+                  logger,
+                  projectDir: ctx.projectDir,
+                  globalCSS: rawCss ?? "",
+                  cssImports,
+                  stylesheetPath: ctx.config?.tailwind?.stylesheet ?? "globals.css",
+                }),
+            );
+            if (merged) rawCss = merged;
+          }
         } catch (error) {
-          logger.error("Failed to load stylesheet", {
+          logger.error("Failed to merge module CSS imports", {
             error: error instanceof Error ? error.message : String(error),
           });
-          rawCss = DEFAULT_STYLESHEET;
+          throw error;
         }
+
+        let candidates: Set<string>;
+        try {
+          candidates = await profilePhase(
+            "css.extract_candidates",
+            () => extractProjectCandidates(ctx),
+          );
+        } catch (error) {
+          logger.error("Failed to extract candidates", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        }
+        const generationSession = acquireCSSGenerationSession(false);
+        const resolvedCss = rawCss ?? generationSession.compilationSession.defaultStylesheet;
+        const artifactStyleProfileHash = composeCSSStyleProfileHash(
+          styleProfile.hash,
+          generationSession.cacheIdentity,
+        );
         const preparedContext = this.createPreparedCSSContext(
           projectScope,
-          rawCss,
-          styleProfile.hash,
+          resolvedCss,
+          candidates,
+          generationSession,
+          artifactStyleProfileHash,
           contentContext,
           ctx,
         );
@@ -82,7 +133,7 @@ export class StylesCSSHandler extends BaseHandler {
             logger.debug("Prepared CSS cache hit", {
               projectScope,
               projectVersion: preparedContext.projectVersion,
-              styleProfileHash: styleProfile.hash,
+              styleProfileHash: artifactStyleProfileHash,
               cssHash: prepared.hash,
             });
 
@@ -98,7 +149,7 @@ export class StylesCSSHandler extends BaseHandler {
             this.tryResolveRemotePreparedCSS(
               ctx,
               projectScope,
-              styleProfile.hash,
+              artifactStyleProfileHash,
               contentContext,
               preparedContext,
             ),
@@ -106,7 +157,7 @@ export class StylesCSSHandler extends BaseHandler {
         if (remotePrepared) {
           logger.debug("Prepared CSS resolved via style artifact metadata", {
             projectScope,
-            styleProfileHash: styleProfile.hash,
+            styleProfileHash: artifactStyleProfileHash,
             cssHash: remotePrepared.hash,
           });
 
@@ -115,23 +166,11 @@ export class StylesCSSHandler extends BaseHandler {
           );
         }
 
-        let candidates: Set<string>;
-        try {
-          candidates = await profilePhase(
-            "css.extract_candidates",
-            () => extractProjectCandidates(ctx),
-          );
-        } catch (error) {
-          logger.error("Failed to extract candidates", {
-            error: error instanceof Error ? error.message : String(error),
-          });
-          candidates = new Set<string>();
-        }
         let result: GeneratedStylesResult;
         try {
           result = await profilePhase(
             "css.generate_stylesheet",
-            () => this.generateStylesheet(ctx, rawCss, candidates),
+            () => this.generateStylesheet(ctx, resolvedCss, candidates, generationSession),
           );
         } catch (error) {
           const formatted = formatCSSError(error instanceof Error ? error : String(error));
@@ -198,7 +237,7 @@ body::before {
         if ("hash" in result) {
           await this.registerPreparedCSSArtifact(
             ctx,
-            styleProfile.hash,
+            artifactStyleProfileHash,
             contentContext,
             result.hash,
           );
@@ -225,7 +264,7 @@ body::before {
     }
   }
 
-  private async loadStylesheet(ctx: HandlerContext): Promise<string> {
+  private async loadStylesheet(ctx: HandlerContext): Promise<string | undefined> {
     const configuredPath = ctx.config?.tailwind?.stylesheet;
 
     if (configuredPath) {
@@ -238,8 +277,8 @@ body::before {
       return await ctx.adapter.fs.readFile(globalsPath);
     } catch (_) {
       /* expected: globals.css may not exist */
-      logger.debug("No stylesheet found, using default");
-      return DEFAULT_STYLESHEET;
+      logger.debug("No project stylesheet found; provider default will be used");
+      return undefined;
     }
   }
 
@@ -247,14 +286,15 @@ body::before {
     ctx: HandlerContext,
     rawCss: string,
     candidates: Set<string>,
+    generationSession: CSSGenerationSession,
   ): Promise<GeneratedStylesResult> {
     const projectScope = ctx.projectSlug ?? ctx.projectDir;
 
     return getProjectCSS(projectScope, rawCss, candidates, {
-      minify: true,
+      minify: generationSession.minify,
       environment: "preview",
       buildMode: "production",
-    });
+    }, { generationSession });
   }
 
   private getContentContext(ctx: HandlerContext): ResolvedContentContext | null {
@@ -282,6 +322,8 @@ body::before {
   private createPreparedCSSContext(
     projectScope: string | undefined,
     rawCss: string,
+    candidates: Set<string>,
+    generationSession: CSSGenerationSession,
     styleProfileHash: string,
     contentContext: ResolvedContentContext | null,
     ctx: HandlerContext,
@@ -298,7 +340,9 @@ body::before {
       rawCss,
       styleProfileHash,
       {
-        minify: true,
+        cssPipelineIdentity: generationSession.cacheIdentity,
+        candidatesHash: hashCandidates(candidates),
+        minify: generationSession.minify,
         environment: "preview",
         buildMode: "production",
       },
@@ -357,7 +401,7 @@ body::before {
   ): Promise<{ css: string; hash: string } | undefined> {
     if (!projectScope) return undefined;
 
-    const selector = this.resolveStyleArtifactSelector(contentContext, ctx);
+    const selector = this.resolveRemoteStyleArtifactSelector(contentContext, ctx);
     if (!selector) return undefined;
 
     const client = this.getVeryfrontApiClient(ctx);
@@ -415,7 +459,7 @@ body::before {
     contentContext: ResolvedContentContext | null,
     cssHash: string,
   ): Promise<void> {
-    const selector = this.resolveStyleArtifactSelector(contentContext, ctx);
+    const selector = this.resolveRemoteStyleArtifactSelector(contentContext, ctx);
     if (!selector) return;
 
     const client = this.getVeryfrontApiClient(ctx);
@@ -434,6 +478,19 @@ body::before {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  private resolveRemoteStyleArtifactSelector(
+    contentContext: ResolvedContentContext | null,
+    ctx: HandlerContext,
+  ): StyleArtifactSelectorContext | null {
+    // Branch content changes in-place, but the remote style-artifact selector
+    // has no content-version dimension. Treat any branch context as a terminal
+    // remote-artifact opt-out so a stale branch artifact cannot be reused after
+    // a push or registered for later consumers.
+    if (contentContext?.sourceType === "branch" || ctx.parsedDomain?.branch) return null;
+
+    return this.resolveStyleArtifactSelector(contentContext, ctx);
   }
 
   private shouldEnsureRemoteStyleArtifactBuild(selector: StyleArtifactSelectorContext): boolean {

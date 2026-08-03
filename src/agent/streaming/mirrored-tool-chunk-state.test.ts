@@ -318,6 +318,290 @@ describe("mirrored-tool-chunk-state", () => {
     assertEquals(mirroredOutput, true);
   });
 
+  it("passes through an upstream-derived source without synthesizing duplicates", async () => {
+    const path =
+      "knowledge/knowledge-ingest-20260723131451088-6d16440c-veryfront-equity-story-13july26.md";
+    const sourceChunks: Chunk[] = [
+      {
+        type: "tool-input-available",
+        toolCallId: "tc-1",
+        toolName: "get_file",
+        input: { path },
+      },
+      {
+        type: "tool-output-available",
+        toolCallId: "tc-1",
+        output: { path, content: "# Equity story" },
+      },
+      {
+        type: "source-document",
+        sourceId: path,
+        mediaType: "text/x-markdown",
+        title: "Curated equity story",
+        filename: path,
+      },
+      {
+        type: "tool-input-available",
+        toolCallId: "tc-2",
+        toolName: "get_file",
+        input: { path },
+      },
+      {
+        type: "tool-output-available",
+        toolCallId: "tc-2",
+        output: { path, content: "# Equity story" },
+      },
+    ];
+    const appendedChunks: Chunk[] = [];
+
+    const outputChunks = await collectChunks(
+      createHostedMirroredUiStream({
+        sourceStream: streamChunks(sourceChunks),
+        rootStreamWatchdog: {
+          observe: () => undefined,
+          dispose: () => undefined,
+        },
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        appendChunk: (chunk) => {
+          appendedChunks.push(chunk);
+        },
+      }),
+    );
+    assertEquals(outputChunks, sourceChunks);
+    assertEquals(appendedChunks, outputChunks);
+  });
+
+  it("mirrors a richer upstream source after an early fallback flush", async () => {
+    const path = "knowledge/product/limits.md";
+    const toolInput: Chunk = {
+      type: "tool-input-available",
+      toolCallId: "tc-1",
+      toolName: "get_file",
+      input: { path },
+    };
+    const toolOutput: Chunk = {
+      type: "tool-output-available",
+      toolCallId: "tc-1",
+      output: { path, content: "# Limits" },
+    };
+    const upstreamSource: Chunk = {
+      type: "source-document",
+      sourceId: path,
+      mediaType: "text/x-markdown",
+      title: "Curated product limits",
+      filename: path,
+    };
+    const fallbackSource: Chunk = {
+      type: "source-document",
+      sourceId: path,
+      mediaType: "text/markdown",
+      title: path,
+      filename: path,
+    };
+    const appendedChunks: Chunk[] = [];
+    let flushPendingDerivedSource = async (): Promise<void> => {};
+
+    async function* sourceStream(): AsyncIterable<Chunk> {
+      yield toolInput;
+      yield toolOutput;
+      await flushPendingDerivedSource();
+      yield upstreamSource;
+    }
+
+    const outputChunks = await collectChunks(
+      createHostedMirroredUiStream({
+        sourceStream: sourceStream(),
+        rootStreamWatchdog: {
+          observe: () => undefined,
+          dispose: () => undefined,
+        },
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        appendChunk: (chunk) => {
+          appendedChunks.push(chunk);
+        },
+        registerPendingDerivedSourceFlush: (flush) => {
+          flushPendingDerivedSource = flush;
+        },
+      }),
+    );
+
+    assertEquals(outputChunks, [toolInput, toolOutput, upstreamSource]);
+    assertEquals(appendedChunks, [
+      toolInput,
+      toolOutput,
+      fallbackSource,
+      upstreamSource,
+    ]);
+  });
+
+  it("mirrors a richer upstream source after a yielded fallback", async () => {
+    const path = "knowledge/product/limits.md";
+    const sourceChunks: Chunk[] = [
+      {
+        type: "tool-input-available",
+        toolCallId: "tc-1",
+        toolName: "get_file",
+        input: { path },
+      },
+      {
+        type: "tool-output-available",
+        toolCallId: "tc-1",
+        output: { path, content: "# Limits" },
+      },
+      { type: "text-start", id: "message-1" },
+      {
+        type: "source-document",
+        sourceId: path,
+        mediaType: "text/x-markdown",
+        title: "Curated product limits",
+        filename: "limits.md",
+      },
+    ];
+    const fallbackSource: Chunk = {
+      type: "source-document",
+      sourceId: path,
+      mediaType: "text/markdown",
+      title: path,
+      filename: path,
+    };
+    const appendedChunks: Chunk[] = [];
+
+    const outputChunks = await collectChunks(
+      createHostedMirroredUiStream({
+        sourceStream: streamChunks(sourceChunks),
+        rootStreamWatchdog: {
+          observe: () => undefined,
+          dispose: () => undefined,
+        },
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        appendChunk: (chunk) => {
+          appendedChunks.push(chunk);
+        },
+      }),
+    );
+
+    assertEquals(outputChunks, [
+      sourceChunks[0],
+      sourceChunks[1],
+      fallbackSource,
+      sourceChunks[2],
+      sourceChunks[3],
+    ]);
+    assertEquals(appendedChunks, outputChunks);
+  });
+
+  it("derives one source document for direct streams with repeated knowledge reads", async () => {
+    const path = "knowledge/product/limits.md";
+    const sourceChunks: Chunk[] = [
+      {
+        type: "tool-input-available",
+        toolCallId: "tc-1",
+        toolName: "get_file",
+        input: { path },
+      },
+      {
+        type: "tool-output-available",
+        toolCallId: "tc-1",
+        output: { path, content: "# Limits" },
+      },
+      {
+        type: "tool-input-available",
+        toolCallId: "tc-2",
+        toolName: "get_file",
+        input: { path },
+      },
+      {
+        type: "tool-output-available",
+        toolCallId: "tc-2",
+        output: { path, content: "# Limits" },
+      },
+    ];
+    const appendedChunks: Chunk[] = [];
+
+    const outputChunks = await collectChunks(
+      createHostedMirroredUiStream({
+        sourceStream: streamChunks(sourceChunks),
+        rootStreamWatchdog: {
+          observe: () => undefined,
+          dispose: () => undefined,
+        },
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        appendChunk: (chunk) => {
+          appendedChunks.push(chunk);
+        },
+      }),
+    );
+    const expectedSource: Chunk = {
+      type: "source-document",
+      sourceId: path,
+      mediaType: "text/markdown",
+      title: path,
+      filename: path,
+    };
+
+    assertEquals(outputChunks, [
+      sourceChunks[0],
+      sourceChunks[1],
+      expectedSource,
+      sourceChunks[2],
+      sourceChunks[3],
+    ]);
+    assertEquals(appendedChunks, outputChunks);
+  });
+
+  it("flushes a pending direct-stream source before propagating a stream error", async () => {
+    const path = "knowledge/product/limits.md";
+    const sourceChunks: Chunk[] = [
+      {
+        type: "tool-input-available",
+        toolCallId: "tc-1",
+        toolName: "get_file",
+        input: { path },
+      },
+      {
+        type: "tool-output-available",
+        toolCallId: "tc-1",
+        output: { path, content: "# Limits" },
+      },
+    ];
+    const appendedChunks: Chunk[] = [];
+    let didThrow = false;
+
+    try {
+      await collectChunks(
+        createHostedMirroredUiStream({
+          sourceStream: streamChunks(sourceChunks, new Error("provider stopped")),
+          rootStreamWatchdog: {
+            observe: () => undefined,
+            dispose: () => undefined,
+          },
+          mirroredToolChunkState: createMirroredToolChunkState(),
+          appendChunk: (chunk) => {
+            appendedChunks.push(chunk);
+          },
+        }),
+      );
+    } catch (error) {
+      didThrow = true;
+      if (!(error instanceof Error)) {
+        throw new Error("Expected source stream to throw an Error");
+      }
+      assertEquals(error.message, "provider stopped");
+    }
+
+    assertEquals(didThrow, true);
+    assertEquals(appendedChunks, [
+      ...sourceChunks,
+      {
+        type: "source-document",
+        sourceId: path,
+        mediaType: "text/markdown",
+        title: path,
+        filename: path,
+      },
+    ]);
+  });
+
   it("closes open mirrored tool calls when the source stream aborts", async () => {
     const sourceChunks: Chunk[] = [
       { type: "tool-input-available", toolCallId: "tc-1", toolName: "edit_file", input: {} },

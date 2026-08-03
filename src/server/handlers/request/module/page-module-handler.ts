@@ -6,6 +6,13 @@ import { shouldUseNoCacheHeadersFromHandler } from "../../../context/enriched-co
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { serverLogger } from "#veryfront/utils";
 import { VeryfrontError } from "#veryfront/errors";
+import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
+import {
+  readSnapshotQuery,
+  resolveSnapshotForRequest,
+  snapshotConflictResponse,
+  stripSnapshotQuery,
+} from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
 
 function isPageModuleNotFound(error: unknown): boolean {
   return error instanceof VeryfrontError &&
@@ -30,10 +37,28 @@ export function handlePageModule(
           .replace(/\/$/, "");
         const slug = slugPath || "index";
 
+        const requestUrl = new URL(req.url);
+        const dependencyPinningSource = createHandlerDependencyPinningSource(ctx);
+        const resolution = await resolveSnapshotForRequest(
+          dependencyPinningSource,
+          readSnapshotQuery(requestUrl),
+        );
+        if (resolution.kind === "conflict") {
+          return respond(
+            snapshotConflictResponse(createResponseBuilder(ctx), req, ctx.securityConfig),
+          );
+        }
+        const dependencySnapshot = resolution.snapshot;
+
+        const applicationUrl = stripSnapshotQuery(requestUrl);
         const renderer = await getRendererForProject(ctx);
         const { pageModule } = await renderer.renderPage(slug, {
           params: undefined,
           props: undefined,
+          url: applicationUrl,
+          dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+          dependencyPinningDependencies: dependencySnapshot.dependencies,
+          dependencyPinningSource,
         });
 
         const code = pageModule?.code;

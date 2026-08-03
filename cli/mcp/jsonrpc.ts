@@ -27,7 +27,7 @@ export type JSONRPCRequest = InferSchema<ReturnType<typeof getJSONRPCRequestSche
  */
 export interface JSONRPCResponse {
   jsonrpc: "2.0";
-  id?: string | number;
+  id?: string | number | null;
   result?: unknown;
   error?: {
     code: number;
@@ -62,13 +62,45 @@ export class JsonRpcError extends Error {
 /**
  * Create a JSON-RPC parse error response
  */
-export function parseError(e: unknown): JSONRPCResponse {
+export function parseError(_error?: unknown): JSONRPCResponse {
   return {
     jsonrpc: "2.0",
+    id: null,
     error: {
       code: JSONRPC_ERRORS.PARSE_ERROR,
       message: "Parse error",
-      data: e instanceof Error ? e.message : String(e),
+    },
+  };
+}
+
+/**
+ * Create a JSON-RPC invalid-request response without reflecting validator
+ * diagnostics back to an untrusted client.
+ */
+export function invalidRequestError(_error?: unknown): JSONRPCResponse {
+  return {
+    jsonrpc: "2.0",
+    id: null,
+    error: {
+      code: JSONRPC_ERRORS.INVALID_REQUEST,
+      message: "Invalid Request",
+    },
+  };
+}
+
+/**
+ * Create a generic JSON-RPC internal-error response for failures outside a
+ * method handler's normal error boundary.
+ */
+export function internalError(
+  id: string | number | null | undefined,
+): JSONRPCResponse {
+  return {
+    jsonrpc: "2.0",
+    id: id ?? null,
+    error: {
+      code: JSONRPC_ERRORS.INTERNAL_ERROR,
+      message: "Internal error",
     },
   };
 }

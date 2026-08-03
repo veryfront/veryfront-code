@@ -14,13 +14,30 @@ import type {
 } from "../types.ts";
 import { buildEsmShUrl, TAILWIND_VERSION } from "../url-builder.ts";
 import { parseBarePackageSpecifier } from "../../shared/package-specifier.ts";
+import { isServerOnlyPackage } from "../../shared/server-only-packages.ts";
+import { isCrossProjectImport } from "#veryfront/transforms/shared/cross-project-import.ts";
+import { isDependencyPinningEnabled } from "#veryfront/transforms/esm/npm-registry-client.ts";
+import { resolveDependencyPinForImport } from "../dependency-resolution.ts";
 
 const logger = rendererLogger.component("esm");
 
 const unversionedImportsWarned = new Set<string>();
 
 function hasVersionSpecifier(specifier: string): boolean {
-  return /@[\d^~x][\d.x^~-]*(?=\/|$)/.test(specifier);
+  // Use the package specifier parser so that dist-tags (e.g. @next, @beta,
+  // @canary) are recognised as version specifiers and are never overridden by
+  // a cached numeric pin.
+  return parseBarePackageSpecifier(specifier)?.version != null;
+}
+
+function isPinningEnabledForRewrite(ctx: RewriteContext): boolean {
+  // "on:unknown" means the dependency state could not be established
+  // (unreadable package.json); fall back to conservative flag-off behavior,
+  // matching the canonical guard in dependency-resolution.ts.
+  if (ctx.dependencyPinningCacheKey === "on:unknown") return false;
+  return ctx.dependencyPinningCacheKey
+    ? ctx.dependencyPinningCacheKey.startsWith("on:")
+    : isDependencyPinningEnabled();
 }
 
 function warnUnversionedImport(specifier: string, projectId: string): void {
@@ -41,14 +58,27 @@ function warnUnversionedImport(specifier: string, projectId: string): void {
   });
 }
 
+/**
+ * Resolve a pinned version for a bare package when the flag is on.
+ * Exact declarations are returned immediately. Ranges, tags, and verified
+ * undeclared imports retain the unversioned fallback while the platform
+ * resolver normalizes and persists an exact declaration.
+ */
+function resolvePinnedVersion(
+  packageName: string,
+  ctx: RewriteContext,
+): string | undefined {
+  return resolveDependencyPinForImport(packageName, ctx);
+}
+
 export class BareStrategy implements ImportRewriteStrategy {
   readonly name = "bare";
   readonly priority = 2;
 
   matches(specifier: string, _ctx: RewriteContext): boolean {
     if (
-      specifier.startsWith("http://") ||
-      specifier.startsWith("https://") ||
+      /^https?:\/\//i.test(specifier) ||
+      specifier.startsWith("//") ||
       specifier.startsWith("./") ||
       specifier.startsWith("../") ||
       specifier.startsWith("/") ||
@@ -59,7 +89,8 @@ export class BareStrategy implements ImportRewriteStrategy {
       specifier === "react-dom" ||
       specifier.startsWith("react/") ||
       specifier.startsWith("react-dom/") ||
-      specifier.startsWith("node:")
+      specifier.startsWith("node:") ||
+      isCrossProjectImport(specifier)
     ) {
       return false;
     }
@@ -68,9 +99,67 @@ export class BareStrategy implements ImportRewriteStrategy {
   }
 
   rewrite(info: ImportSpecifierInfo, ctx: RewriteContext): RewriteResult {
-    if (ctx.target === "ssr") return { specifier: null };
+    // Normalise an explicit Deno `npm:` prefix (`npm:zod@4.0.0`): the package
+    // underneath is what matters for both the server-only check and the esm.sh
+    // rewrite. The `npm:` scheme alone does not imply server-only.
+    const isNpmScheme = info.specifier.startsWith("npm:");
+    const bareSpecifier = isNpmScheme ? info.specifier.slice("npm:".length) : info.specifier;
+    const parsed = parseBarePackageSpecifier(bareSpecifier);
 
-    const parsed = parseBarePackageSpecifier(info.specifier);
+    if (
+      ctx.target === "ssr" &&
+      parsed &&
+      !parsed.version &&
+      isPinningEnabledForRewrite(ctx)
+    ) {
+      // The post-pipeline SSR adapter owns the live resolution/scheduling.
+      // Record the same unresolved declaration here so pipeline/outer caches
+      // can replay it without introducing a second fresh-miss write.
+      resolveDependencyPinForImport(parsed.packageName, {
+        ...ctx,
+        dependencyResolutionObservationOnly: true,
+      });
+    }
+
+    // Known server-only packages (`redis`, `pg`, …), including their explicit
+    // `npm:` form, must never be routed through esm.sh — they only run
+    // server-side and either fail to build for the browser or produce a client
+    // that cannot connect. Leave them external for every target so the runtime
+    // resolves them natively (node_modules on Node, npm: on Deno). The
+    // framework's adapters only `import()` these behind a lazy, configured code
+    // path, so an app that does not use the backend never loads them at all.
+    if (parsed && isServerOnlyPackage(parsed.packageName)) {
+      return { specifier: null };
+    }
+
+    if (ctx.target === "ssr") {
+      // On the server an installed package is resolved by name from node_modules
+      // (Node) — a bare specifier carrying an explicit version, e.g.
+      // `next-themes@0.4.6`, has no matching `node_modules/next-themes@0.4.6`
+      // entry, so `import()` never resolves it and the cold module load stalls
+      // to a timeout/500. With dependency pinning enabled, preserve the
+      // author's inline version by resolving it through esm.sh immediately.
+      // This keeps the later SSR adapter from mistaking the stripped package
+      // name for an unversioned import and replacing it with package.json's
+      // exact pin. Flag-off requests retain the installed-package fallback.
+      // `npm:` specifiers keep their native form — the Deno resolver
+      // understands their versions.
+      if (!isNpmScheme && parsed?.version) {
+        if (isPinningEnabledForRewrite(ctx)) {
+          return {
+            specifier: buildEsmShUrl(
+              parsed.packageName,
+              parsed.version,
+              parsed.subpath ?? undefined,
+              { external: ["react"] },
+            ),
+          };
+        }
+        return { specifier: `${parsed.packageName}${parsed.subpath ?? ""}` };
+      }
+      return { specifier: null };
+    }
+
     if (parsed == null) {
       return { specifier: null };
     }
@@ -81,8 +170,21 @@ export class BareStrategy implements ImportRewriteStrategy {
 
     if (packageName === "tailwindcss") {
       version = TAILWIND_VERSION;
-    } else if (!hasVersionSpecifier(info.specifier)) {
-      warnUnversionedImport(info.specifier, ctx.projectId);
+    } else if (!hasVersionSpecifier(bareSpecifier)) {
+      if (isPinningEnabledForRewrite(ctx)) {
+        // Version-selection ladder (flag ON):
+        // 1. inline version in specifier (already captured above as version)
+        // 2. exact package.json pin -> resolved here
+        // 3. current unversioned fallback (warn as before)
+        const pinned = resolvePinnedVersion(packageName, ctx);
+        if (pinned) {
+          version = pinned;
+        } else {
+          warnUnversionedImport(bareSpecifier, ctx.projectId);
+        }
+      } else {
+        warnUnversionedImport(bareSpecifier, ctx.projectId);
+      }
     }
 
     const url = buildEsmShUrl(packageName, version, subpath, {

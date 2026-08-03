@@ -1,64 +1,9 @@
-export interface SharpMetadata {
-  width?: number;
-  height?: number;
-  format?: string;
-  size?: number;
-  space?: string;
-  channels?: number;
-  depth?: string;
-  density?: number;
-  chromaSubsampling?: string;
-  isProgressive?: boolean;
-  hasProfile?: boolean;
-  hasAlpha?: boolean;
-}
-
-type SharpResizeFit = "cover" | "contain" | "fill" | "inside" | "outside";
-
-interface SharpResizeOptions {
-  fit?: SharpResizeFit;
-  withoutEnlargement?: boolean;
-}
-
-interface SharpWebpOptions {
-  quality?: number;
-}
-
-interface SharpAvifOptions {
-  quality?: number;
-}
-
-interface SharpJpegOptions {
-  quality?: number;
-  progressive?: boolean;
-}
-
-interface SharpPngOptions {
-  compressionLevel?: number;
-  adaptiveFiltering?: boolean;
-}
-
-export interface SharpInstance {
-  metadata(): Promise<SharpMetadata>;
-  clone(): SharpInstance;
-  resize(
-    width: number | null,
-    height?: number | null,
-    options?: SharpResizeOptions,
-  ): SharpInstance;
-  webp(options?: SharpWebpOptions): SharpInstance;
-  avif(options?: SharpAvifOptions): SharpInstance;
-  jpeg(options?: SharpJpegOptions): SharpInstance;
-  png(options?: SharpPngOptions): SharpInstance;
-  toBuffer(): Promise<Uint8Array>;
-}
-
-export type SharpConstructor = (input: Uint8Array) => SharpInstance;
-
 export type ImageFormat = "webp" | "avif" | "jpeg" | "png";
 
 export interface ImageOptimizationOptions {
   enabled?: boolean;
+  /** Absolute project boundary for input and output paths. */
+  projectDir?: string;
   formats?: ImageFormat[];
   sizes?: number[];
   quality?: number;
@@ -69,6 +14,8 @@ export interface ImageOptimizationOptions {
 
 export interface OptimizedImageMetadata {
   original: string;
+  /** Source file size in bytes. Optional for manifests produced before this field existed. */
+  originalSize?: number;
   variants: ImageVariant[];
   defaultFormat: string;
   aspectRatio: number;
@@ -87,5 +34,10 @@ export interface ImageOptimizationStats {
   totalImages: number;
   totalVariants: number;
   totalSize: number;
+  averageVariantSize: number;
+  /**
+   * @deprecated This legacy field was historically an alias for average
+   * variant size, despite its name. Use `averageVariantSize`.
+   */
   averageSavings: number;
 }

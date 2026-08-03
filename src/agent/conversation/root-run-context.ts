@@ -1,4 +1,5 @@
 import { type ConversationRunProjection, createConversationAgentRun } from "./durable.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 /** Public API contract for conversation root run descriptor. */
 export interface ConversationRootRunDescriptor {
@@ -20,6 +21,10 @@ function normalizeProvidedRun(input: {
   conversationId: string;
   providedRun: ConversationRootRunDescriptor;
 }): ConversationRunProjection {
+  // The descriptor carries no status, so assume "running"/appendable without a
+  // round-trip. If the server-side run is actually terminal or waiting, the
+  // first append is rejected and the mirror's resync path lands on
+  // non_appendable and disables itself.
   return {
     runId: input.providedRun.runId,
     conversationId: input.conversationId,
@@ -29,6 +34,7 @@ function normalizeProvidedRun(input: {
     waitingToolCallId: null,
     waitingToolName: null,
     status: "running",
+    streamProtocolVersion: 1,
   };
 }
 
@@ -63,10 +69,11 @@ export async function startConversationRootRun(input: {
   agentId: string;
   implementationKind?: string | null;
   providedRun?: ConversationRootRunDescriptor;
+  abortSignal?: AbortSignal;
 }): Promise<ConversationRunProjection | null> {
   if (input.providedRun) {
     if (!input.conversationId) {
-      throw new Error("CONVERSATION_ROOT_RUN_REQUIRES_CONVERSATION");
+      throw INVALID_ARGUMENT.create({ detail: "CONVERSATION_ROOT_RUN_REQUIRES_CONVERSATION" });
     }
 
     return normalizeProvidedRun({
@@ -87,6 +94,7 @@ export async function startConversationRootRun(input: {
     branchId: input.branchId,
     agentId: input.agentId,
     implementationKind: input.implementationKind,
+    abortSignal: input.abortSignal,
   });
 }
 
@@ -101,7 +109,7 @@ export function createConversationRootRunStartAdapter(input: {
   implementationKind?: string | null;
   providedRun?: ConversationRootRunDescriptor;
 }): (input: { abortSignal: AbortSignal }) => Promise<{ run: ConversationRunProjection | null }> {
-  return async () => ({
+  return async ({ abortSignal }) => ({
     run: await startConversationRootRun({
       authToken: input.authToken,
       apiUrl: input.apiUrl,
@@ -111,6 +119,7 @@ export function createConversationRootRunStartAdapter(input: {
       agentId: input.agentId,
       implementationKind: input.implementationKind,
       providedRun: input.providedRun,
+      abortSignal,
     }),
   });
 }

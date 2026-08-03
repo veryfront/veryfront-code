@@ -3,8 +3,14 @@
 import { rendererLogger } from "#veryfront/utils";
 import { getSSRModuleRedisTTL } from "../constants.ts";
 import { CacheBackends, createDistributedCodeCacheAccessor } from "#veryfront/cache/backend.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
+const SSR_MODULE_CACHE_PREFIX = "ssr-module";
+// Mirrors the maximum key length accepted by veryfront-api.
+const API_CACHE_KEY_MAX_LENGTH = 512;
+const API_CACHE_KEY_PATTERN = /^[a-zA-Z0-9_:.\-/]+$/;
+const SHA256_KEY_PREFIX = "sha256:";
 
 /**
  * Lazy-loaded distributed cache gateway for cross-pod sharing.
@@ -15,14 +21,33 @@ const getDistributedCodeCache = createDistributedCodeCacheAccessor(
   "SSR-MODULE-LOADER",
 );
 
+let distributedCacheEnabled = false;
+
 /** Initialize distributed caching for SSR modules */
 export async function initializeSSRDistributedCache(): Promise<boolean> {
-  return (await getDistributedCodeCache()) !== null;
+  distributedCacheEnabled = (await getDistributedCodeCache()) !== null;
+  return distributedCacheEnabled;
 }
 
-/** Check if distributed caching is enabled for SSR modules */
+/**
+ * Report whether initialization actually resolved a distributed backend.
+ * Stays false when the process runs on the in-memory backend, where
+ * `initializeSSRDistributedCache` is never called.
+ */
 export function isSSRDistributedCacheEnabled(): boolean {
-  return true;
+  return distributedCacheEnabled;
+}
+
+async function getDistributedCacheKey(cacheKey: string): Promise<string> {
+  const fullyPrefixedKey = `${SSR_MODULE_CACHE_PREFIX}:${cacheKey}`;
+  if (
+    fullyPrefixedKey.length <= API_CACHE_KEY_MAX_LENGTH &&
+    API_CACHE_KEY_PATTERN.test(fullyPrefixedKey)
+  ) {
+    return cacheKey;
+  }
+
+  return `${SHA256_KEY_PREFIX}${await computeHash(fullyPrefixedKey)}`;
 }
 
 /**
@@ -35,7 +60,7 @@ export async function getFromRedis(cacheKey: string): Promise<string | null> {
 
   try {
     // Use getCode() for automatic detokenization
-    return await gateway.getCode(cacheKey);
+    return await gateway.getCode(await getDistributedCacheKey(cacheKey));
   } catch (error) {
     logger.debug("Distributed cache get failed", { key: cacheKey, error });
     return null;
@@ -58,7 +83,7 @@ export async function setInRedis(
 
   try {
     // Use setCode() for automatic tokenization
-    await gateway.setCode(cacheKey, code, ttl);
+    await gateway.setCode(await getDistributedCacheKey(cacheKey), code, ttl);
   } catch (error) {
     logger.debug("Distributed cache set failed", { key: cacheKey, error });
   }

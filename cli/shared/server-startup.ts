@@ -12,10 +12,10 @@ import {
   prefetchBuiltinContentProcessor,
 } from "./ensure-content-processor.ts";
 import { join } from "veryfront/platform/path";
-import { parseReleaseAssetManifest } from "veryfront/release-assets";
 import {
   clearReleaseAssetManifestCache,
-  configureReleaseAssetManifestFetcher,
+  parseReleaseAssetManifest,
+  registerManifestFetcherForRelease,
 } from "veryfront/release-assets";
 import { LOCAL_RELEASE_ASSET_MANIFEST_PATH } from "veryfront/build";
 
@@ -24,14 +24,37 @@ export interface StartCliProxyModeServerOptions {
   projectDir: string;
   signal: AbortSignal;
   requestInterceptor: (req: Request) => Request | Promise<Request>;
-  defaultProjectSlug: string;
   defaultProjectId: string;
-  fallbackProjectSlug?: string;
+  linkedProjectSlug?: string;
 }
 
-function buildDiscoveryConfig(options: StartCliProxyModeServerOptions): DiscoveryOptions {
+const LOCAL_CLI_PROXY_MODE_ENV = "VERYFRONT_CLI_LOCAL_PROXY_MODE";
+
+export function prepareCliProxyModeEnvironment(): void {
+  // Proxy mode must be set before config loading/bootstrap.
+  setEnv("PROXY_MODE", "1");
+  setEnv(LOCAL_CLI_PROXY_MODE_ENV, "1");
+
+  // Ensure NODE_ENV is set for local proxy mode (the `start` command uses
+  // startProductionServer with PROXY_MODE=1, but this is a local dev scenario,
+  // not a deployed pod). Without this, validateProductionEnvironment throws.
+  if (!getEnv("NODE_ENV") && !getEnv("DENO_ENV")) {
+    setEnv("NODE_ENV", "development");
+  }
+}
+
+export function buildProxyRuntimeProjectIdentity(
+  options: Pick<StartCliProxyModeServerOptions, "defaultProjectId" | "linkedProjectSlug">,
+): Pick<StartProductionServerOptions, "defaultProjectSlug" | "defaultProjectId"> {
+  return {
+    defaultProjectSlug: options.defaultProjectId,
+    defaultProjectId: options.defaultProjectId,
+  };
+}
+
+export function buildDiscoveryConfig(options: StartCliProxyModeServerOptions): DiscoveryOptions {
   const token = getEnv("VERYFRONT_API_TOKEN") ?? "";
-  const slug = getEnv("VERYFRONT_PROJECT_SLUG") ?? options.fallbackProjectSlug ?? "";
+  const slug = getEnv("VERYFRONT_PROJECT_SLUG") ?? options.linkedProjectSlug ?? "";
 
   return {
     baseDir: options.projectDir,
@@ -44,15 +67,7 @@ function buildDiscoveryConfig(options: StartCliProxyModeServerOptions): Discover
 export async function startCliProxyModeServer(
   options: StartCliProxyModeServerOptions,
 ): Promise<Awaited<ReturnType<typeof startProductionServer>>> {
-  // Proxy mode must be set before config loading/bootstrap.
-  setEnv("PROXY_MODE", "1");
-
-  // Ensure NODE_ENV is set for local proxy mode (the `start` command uses
-  // startProductionServer with PROXY_MODE=1, but this is a local dev scenario,
-  // not a deployed pod). Without this, validateProductionEnvironment throws.
-  if (!getEnv("NODE_ENV") && !getEnv("DENO_ENV")) {
-    setEnv("NODE_ENV", "development");
-  }
+  prepareCliProxyModeEnvironment();
 
   prefetchBuiltinContentProcessor();
   const result = await startProductionServer({
@@ -60,8 +75,7 @@ export async function startCliProxyModeServer(
     projectDir: options.projectDir,
     signal: options.signal,
     requestInterceptor: options.requestInterceptor,
-    defaultProjectSlug: options.defaultProjectSlug,
-    defaultProjectId: options.defaultProjectId,
+    ...buildProxyRuntimeProjectIdentity(options),
     discoveryConfig: buildDiscoveryConfig(options),
   });
   await ensureBuiltinContentProcessor();
@@ -108,7 +122,7 @@ export async function startCliProductionServer(
 ): Promise<Awaited<ReturnType<typeof startProductionServer>>> {
   const adapter = options.adapter ?? (await runtime.get());
   const manifestPath = join(options.projectDir, "dist", LOCAL_RELEASE_ASSET_MANIFEST_PATH);
-  let registeredLocalManifest = false;
+  let unregisterLocalManifest: (() => void) | undefined;
   let localReleaseId: string | undefined;
 
   try {
@@ -116,8 +130,15 @@ export async function startCliProductionServer(
     const manifest = parseReleaseAssetManifest(JSON.parse(manifestRaw));
     if (manifest) {
       clearReleaseAssetManifestCache();
-      configureReleaseAssetManifestFetcher(() => Promise.resolve({ state: "ready", manifest }));
-      registeredLocalManifest = true;
+      unregisterLocalManifest = registerManifestFetcherForRelease(
+        manifest.releaseId,
+        () =>
+          Promise.resolve({
+            state: "ready",
+            manifest_version: manifest.manifestVersion,
+            manifest,
+          }),
+      );
       localReleaseId = manifest.releaseId;
     }
   } catch (_) {
@@ -150,8 +171,8 @@ export async function startCliProductionServer(
   return {
     ...result,
     stop: async () => {
-      if (registeredLocalManifest) {
-        configureReleaseAssetManifestFetcher(undefined);
+      if (unregisterLocalManifest) {
+        unregisterLocalManifest();
         clearReleaseAssetManifestCache();
       }
       await result.stop();

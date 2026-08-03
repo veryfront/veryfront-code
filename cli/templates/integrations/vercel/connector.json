@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_projects",
+      "id": "vercel__list_projects",
       "name": "List Projects",
       "description": "List projects of the authenticated user or team",
       "requiresWrite": false,
@@ -80,7 +80,7 @@
       }
     },
     {
-      "id": "get_project",
+      "id": "vercel__get_project",
       "name": "Get Project",
       "description": "Get a project by ID or name",
       "requiresWrite": false,
@@ -108,7 +108,7 @@
       }
     },
     {
-      "id": "list_deployments",
+      "id": "vercel__list_deployments",
       "name": "List Deployments",
       "description": "List deployments under the authenticated user or team",
       "requiresWrite": false,
@@ -183,7 +183,7 @@
       }
     },
     {
-      "id": "get_deployment",
+      "id": "vercel__get_deployment",
       "name": "Get Deployment",
       "description": "Get a deployment by ID or hostname URL",
       "requiresWrite": false,
@@ -211,7 +211,7 @@
       }
     },
     {
-      "id": "list_env_vars",
+      "id": "vercel__list_env_vars",
       "name": "List Environment Variables",
       "description": "List the environment variables of a project (values stay encrypted unless decrypt is set)",
       "requiresWrite": false,

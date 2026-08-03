@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_monitors",
+      "id": "betterstack__list_monitors",
       "name": "List Monitors",
       "description": "List uptime monitors, optionally filtered by URL or name",
       "requiresWrite": false,
@@ -72,7 +72,7 @@
       }
     },
     {
-      "id": "get_monitor",
+      "id": "betterstack__get_monitor",
       "name": "Get Monitor",
       "description": "Get a monitor's configuration and current status",
       "requiresWrite": false,
@@ -93,7 +93,7 @@
       }
     },
     {
-      "id": "get_monitor_sla",
+      "id": "betterstack__get_monitor_sla",
       "name": "Get Monitor Availability",
       "description": "Get a monitor's availability (SLA) summary for a time range",
       "requiresWrite": false,
@@ -124,7 +124,7 @@
       }
     },
     {
-      "id": "list_incidents",
+      "id": "betterstack__list_incidents",
       "name": "List Incidents",
       "description": "List incidents, optionally limited to a date range or unresolved only",
       "requiresWrite": false,
@@ -162,7 +162,7 @@
       }
     },
     {
-      "id": "list_heartbeats",
+      "id": "betterstack__list_heartbeats",
       "name": "List Heartbeats",
       "description": "List heartbeat (cron/job) monitors and their status",
       "requiresWrite": false,

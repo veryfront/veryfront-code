@@ -18,7 +18,7 @@ import type {
 } from "../../handlers/types.ts";
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { STUDIO_BRIDGE_BUNDLE } from "#veryfront/studio/bridge/bridge-bundle.generated.ts";
-import { serverLogger } from "#veryfront/utils";
+import { computeHash, serverLogger } from "#veryfront/utils";
 
 const logger = serverLogger.component("studio-bridge-handler");
 
@@ -32,10 +32,7 @@ const BRIDGE_DIR = new URL("../../../studio/bridge/", import.meta.url).pathname;
  * Compute a content hash for ETag.
  */
 async function computeEtag(content: string): Promise<string> {
-  const data = new TextEncoder().encode(content);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.slice(0, 16).map((b) => b.toString(16).padStart(2, "0")).join("");
+  return (await computeHash(content)).slice(0, 32);
 }
 
 /**

@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getChatDisplayName, listChats } from "../../lib/teams-client.ts";
+import { getChatDisplayName, listChats } from "../lib/teams-client.ts";
 
 export default tool({
-  id: "list-chats",
+  id: "teams-list-chats",
   description:
     "List recent Microsoft Teams chats for the authenticated user. Returns chat IDs, names, types, and last updated timestamps.",
   inputSchema: defineSchema((v) => v.object({

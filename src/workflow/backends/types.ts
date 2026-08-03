@@ -5,7 +5,53 @@ import type {
   RunFilter,
   WorkflowQueueItem,
   WorkflowRun,
+  WorkflowStatus,
 } from "../types.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
+
+/** Run state that may change after the immutable run snapshot is created. */
+export type WorkflowRunUpdate = Partial<
+  Pick<
+    WorkflowRun,
+    | "status"
+    | "output"
+    | "nodeStates"
+    | "currentNodes"
+    | "context"
+    | "error"
+    | "startedAt"
+    | "heartbeatAt"
+    | "completedAt"
+    | "workerId"
+  >
+>;
+
+const WORKFLOW_RUN_UPDATE_FIELDS = new Set<keyof WorkflowRunUpdate>([
+  "status",
+  "output",
+  "nodeStates",
+  "currentNodes",
+  "context",
+  "error",
+  "startedAt",
+  "heartbeatAt",
+  "completedAt",
+  "workerId",
+]);
+
+/** Reject untyped callers that attempt to rewrite immutable run state. */
+export function assertWorkflowRunUpdate(patch: WorkflowRunUpdate): void {
+  const immutableFields = Object.keys(patch).filter((field) =>
+    !WORKFLOW_RUN_UPDATE_FIELDS.has(field as keyof WorkflowRunUpdate)
+  );
+  if (immutableFields.length > 0) {
+    throw INVALID_ARGUMENT.create({
+      detail: `Workflow run fields are immutable after creation: ${
+        immutableFields.sort().join(", ")
+      }`,
+    });
+  }
+}
 
 /** Configuration used by backend. */
 export interface BackendConfig {
@@ -26,28 +72,71 @@ export interface Lock {
 export interface WorkflowBackend {
   createRun(run: WorkflowRun): Promise<void>;
   getRun(runId: string): Promise<WorkflowRun | null>;
-  updateRun(runId: string, patch: Partial<WorkflowRun>): Promise<void>;
+  updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void>;
+  /** Apply a run patch only when its current status matches one of the expected statuses. */
+  updateRunIfStatus?(
+    runId: string,
+    expectedStatuses: WorkflowStatus[],
+    patch: WorkflowRunUpdate,
+  ): Promise<boolean>;
+  /** Apply a run patch only while both status and worker ownership match. */
+  updateRunIfStatusAndWorker?(
+    runId: string,
+    expectedStatuses: WorkflowStatus[],
+    expectedWorkerId: string,
+    patch: WorkflowRunUpdate,
+  ): Promise<boolean>;
   deleteRun?(runId: string): Promise<void>;
   listRuns(filter: RunFilter): Promise<WorkflowRun[]>;
   countRuns?(filter: RunFilter): Promise<number>;
 
   saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void>;
+  /** Append a checkpoint only while the canonical run status and worker owner match. */
+  saveCheckpointIfStatusAndWorker?(
+    storageRunId: string,
+    ownershipRunId: string,
+    expectedStatuses: WorkflowStatus[],
+    expectedWorkerId: string,
+    checkpoint: Checkpoint,
+  ): Promise<boolean>;
   getLatestCheckpoint(runId: string): Promise<Checkpoint | null>;
+  /** Return checkpoint history in append order, oldest first. */
   getCheckpoints?(runId: string): Promise<Checkpoint[]>;
+  /** Delete the oldest append-ordered occurrence of a checkpoint ID. */
   deleteCheckpoint?(runId: string, checkpointId: string): Promise<void>;
+  /** Delete one oldest append-ordered occurrence for each supplied checkpoint ID. */
   deleteCheckpoints?(runId: string, checkpointIds: string[]): Promise<void>;
 
   savePendingApproval(runId: string, approval: PendingApproval): Promise<void>;
+  /** Append an approval only while the run status and worker owner match. */
+  savePendingApprovalIfStatusAndWorker?(
+    runId: string,
+    expectedStatuses: WorkflowStatus[],
+    expectedWorkerId: string,
+    approval: PendingApproval,
+  ): Promise<boolean>;
+  /** Patch metadata on an existing pending approval. */
+  updatePendingApproval?(
+    runId: string,
+    approvalId: string,
+    patch: Partial<PendingApproval>,
+  ): Promise<void>;
   getPendingApprovals(runId: string): Promise<PendingApproval[]>;
   getPendingApproval?(
     runId: string,
     approvalId: string,
   ): Promise<PendingApproval | null>;
+  /**
+   * Apply an approval decision atomically, but only while the approval is still
+   * pending. Atomic backends resolve `true` when the decision was written and
+   * `false` after losing a concurrent decision race. Legacy custom backends may
+   * continue to resolve without a value.
+   */
   updateApproval(
     runId: string,
     approvalId: string,
     decision: ApprovalDecision,
-  ): Promise<void>;
+  ): Promise<boolean | void>;
   listPendingApprovals?(filter?: {
     workflowId?: string;
     approver?: string;
@@ -59,9 +148,12 @@ export interface WorkflowBackend {
   acknowledge?(runId: string): Promise<void>;
   nack?(runId: string): Promise<void>;
 
-  acquireLock?(runId: string, duration: number): Promise<boolean>;
-  releaseLock?(runId: string): Promise<void>;
-  extendLock?(runId: string, duration: number): Promise<boolean>;
+  /** Acquire a lock, returning the owned lockId token on success or null on failure. */
+  acquireLock?(runId: string, duration: number): Promise<string | null>;
+  /** Release a lock. When lockId is provided, only release if it matches the owned token. */
+  releaseLock?(runId: string, lockId?: string): Promise<void>;
+  /** Extend a lock only when lockId matches the owned token. */
+  extendLock?(runId: string, duration: number, lockId?: string): Promise<boolean>;
   isLocked?(runId: string): Promise<boolean>;
 
   /** Find runs that appear stalled (no heartbeat within threshold ms) */
@@ -83,6 +175,38 @@ export interface WorkflowBackend {
   initialize?(): Promise<void>;
   healthCheck?(): Promise<boolean>;
   destroy(): Promise<void>;
+}
+
+/** Apply a run update only while its status is one of the expected values. */
+export async function updateRunIfStatus(
+  backend: WorkflowBackend,
+  runId: string,
+  expectedStatuses: WorkflowStatus[],
+  patch: WorkflowRunUpdate,
+  expectedWorkerId?: string,
+): Promise<boolean> {
+  if (expectedWorkerId !== undefined) {
+    // Worker ownership must be part of the same atomic comparison as status.
+    // Older third-party backends cannot provide that guarantee, so fail closed.
+    if (!backend.updateRunIfStatusAndWorker) return false;
+    return await backend.updateRunIfStatusAndWorker(
+      runId,
+      expectedStatuses,
+      expectedWorkerId,
+      patch,
+    );
+  }
+
+  if (backend.updateRunIfStatus) {
+    return await backend.updateRunIfStatus(runId, expectedStatuses, patch);
+  }
+
+  // Compatibility fallback for third-party backends that predate conditional
+  // updates. Built-in backends implement the atomic method above.
+  const current = await backend.getRun(runId);
+  if (!current || !expectedStatuses.includes(current.status)) return false;
+  await backend.updateRun(runId, patch);
+  return true;
 }
 
 type WithQueueSupport =
@@ -131,6 +255,9 @@ type WithWorkerSupport =
       | "releaseLock"
       | "findStalledRuns"
       | "claimStalledRun"
+      | "updateRunIfStatusAndWorker"
+      | "saveCheckpointIfStatusAndWorker"
+      | "savePendingApprovalIfStatusAndWorker"
     >
   >;
 
@@ -140,6 +267,9 @@ export function hasWorkerSupport(backend: WorkflowBackend): backend is WithWorke
     hasQueueSupport(backend) &&
     hasLockSupport(backend) &&
     typeof backend.findStalledRuns === "function" &&
-    typeof backend.claimStalledRun === "function"
+    typeof backend.claimStalledRun === "function" &&
+    typeof backend.updateRunIfStatusAndWorker === "function" &&
+    typeof backend.saveCheckpointIfStatusAndWorker === "function" &&
+    typeof backend.savePendingApprovalIfStatusAndWorker === "function"
   );
 }

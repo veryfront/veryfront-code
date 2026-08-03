@@ -22,7 +22,7 @@ const calls: RecordedCall[] = [];
 
 function installFetchMock() {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input, init) => {
+  globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
     calls.push({
       input,
       init,
@@ -54,7 +54,12 @@ describe("agent/conversation-hosted-terminal", () => {
           terminalErrorCode: "ERR",
           terminalErrorMessage: "boom",
           metadata: {
-            usage: { inputTokens: 1, outputTokens: 2, cachedInputTokens: 3 },
+            usage: {
+              inputTokens: 1,
+              outputTokens: 2,
+              cachedInputTokens: 3,
+            },
+            usageCaptureStatus: "complete",
           },
         },
       }),
@@ -64,7 +69,12 @@ describe("agent/conversation-hosted-terminal", () => {
         terminalErrorMessage: "boom",
         metadata: {
           modelId: "fallback-model",
-          usage: { inputTokens: 1, outputTokens: 2, cachedInputTokens: 3 },
+          usage: {
+            inputTokens: 1,
+            outputTokens: 2,
+            cachedInputTokens: 3,
+          },
+          usageCaptureStatus: "complete",
         },
       },
     );
@@ -85,6 +95,7 @@ describe("agent/conversation-hosted-terminal", () => {
           latestExternalEventSequence: 0,
           waitingToolCallId: null,
           waitingToolName: null,
+          streamProtocolVersion: 2,
           status: "running",
         },
         fallbackModelId: "fallback-model",
@@ -94,7 +105,12 @@ describe("agent/conversation-hosted-terminal", () => {
       await adapter.finalizeRun({
         status: "completed",
         metadata: {
-          usage: { inputTokens: 4, outputTokens: 6, cachedInputTokens: 2 },
+          usage: {
+            inputTokens: 4,
+            outputTokens: 6,
+            cachedInputTokens: 2,
+          },
+          usageCaptureStatus: "complete",
         },
       });
 
@@ -106,6 +122,52 @@ describe("agent/conversation-hosted-terminal", () => {
           model: "fallback-model",
           inputTokens: 4,
           outputTokens: 6,
+          usageCaptureStatus: "complete",
+          finishReason: "stop",
+        },
+        terminal_error_code: null,
+        terminal_error_message: null,
+      });
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("preserves an explicit missing usage status without token metadata", async () => {
+    calls.length = 0;
+    const restoreFetch = installFetchMock();
+    try {
+      const adapter = createConversationHostedTerminalAdapter({
+        authToken: "tok",
+        apiUrl: "https://api.example.com",
+        run: {
+          conversationId: "conv-1",
+          runId: "run-1",
+          messageId: "msg-1",
+          latestEventId: 0,
+          latestExternalEventSequence: 0,
+          waitingToolCallId: null,
+          waitingToolName: null,
+          streamProtocolVersion: 2,
+          status: "running",
+        },
+        fallbackModelId: "fallback-model",
+        resolveProvider: (modelId) => `provider:${modelId}`,
+      });
+
+      await adapter.finalizeRun({
+        status: "completed",
+        metadata: { usageCaptureStatus: "missing" },
+      });
+
+      assertEquals(calls[0]?.body, {
+        status: "completed",
+        metadata: {
+          provider: "provider:fallback-model",
+          model: "fallback-model",
+          inputTokens: 0,
+          outputTokens: 0,
+          usageCaptureStatus: "missing",
           finishReason: "stop",
         },
         terminal_error_code: null,
@@ -163,6 +225,7 @@ describe("agent/conversation-hosted-terminal", () => {
           latestExternalEventSequence: 0,
           waitingToolCallId: null,
           waitingToolName: null,
+          streamProtocolVersion: 2,
           status: "running",
         },
         fallbackModelId: "fallback-model",

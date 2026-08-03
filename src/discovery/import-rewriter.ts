@@ -9,6 +9,11 @@ import { isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import {
+  resolveContainedPackagePath,
+  resolvePackageExportPath,
+  splitPackageSubpath,
+} from "#veryfront/transforms/import-rewriter/package-resolution.ts";
 
 export const DISCOVERY_GLOBAL_VERYFRONT_MODULES = [
   "veryfront/agent",
@@ -19,10 +24,16 @@ export const DISCOVERY_GLOBAL_VERYFRONT_MODULES = [
   "veryfront/embedding",
   "veryfront/knowledge",
   "veryfront/workflow",
-  "veryfront/work",
   "veryfront/eval",
   "veryfront/metrics",
   "veryfront/schemas",
+  "veryfront/integrations",
+  // API-route middleware helpers (`import { MiddlewarePipeline, cors, … } from
+  // "veryfront/middleware"`). Without this, a compiled binary cannot register the
+  // module, so its per-subpath shim (`_vf_middleware.mjs`) is empty and any API
+  // route using the pipeline 500s with "does not provide an export named
+  // 'MiddlewarePipeline'". See veryfront-issue-inbox#217.
+  "veryfront/middleware",
   // Server-side chat upload route handler (app/api/uploads/route.ts).
   "veryfront/chat/uploads",
 ] as const;
@@ -119,6 +130,12 @@ function isUnprefixedNpmSpecifier(specifier: string): boolean {
 // by TypeScript and must not trigger filesystem resolution.
 const TYPE_ONLY_STATIC_RE = /(?:^|[\s;{}])(?:import|export)\s+type\b/;
 
+function isNotFoundError(error: unknown): boolean {
+  const DenoNotFound = globalThis.Deno?.errors?.NotFound;
+  if (DenoNotFound && error instanceof DenoNotFound) return true;
+  return (error as NodeJS.ErrnoException)?.code === "ENOENT";
+}
+
 function rewriteBareNpmImportsForDeno(code: string): string {
   return code
     // `import x from "spec"`, `export { x } from "spec"`, `export * from "spec"`.
@@ -196,76 +213,6 @@ const resolvedSpecifierCache = new LRUCache<string, string>({
   maxEntries: RESOLVED_SPECIFIER_CACHE_MAX_ENTRIES,
 });
 
-// Split `react/jsx-runtime` → { name: "react", subpath: "./jsx-runtime" } and
-// `@scope/pkg/sub/path` → { name: "@scope/pkg", subpath: "./sub/path" }.
-function splitPackageSubpath(specifier: string): { name: string; subpath: string } {
-  const parts = specifier.split("/");
-  const segments = specifier.startsWith("@") ? parts.slice(0, 2) : parts.slice(0, 1);
-  const name = segments.join("/");
-  const rest = parts.slice(segments.length).join("/");
-  return { name, subpath: rest ? `./${rest}` : "." };
-}
-
-// Pick the relative file path from a `package.json#exports` entry, which can
-// be a string, a conditional object (`{ import, default, ... }`), or an
-// array of those.
-function pickExportEntry(entry: unknown): string | null {
-  if (typeof entry === "string") return entry;
-  if (Array.isArray(entry)) {
-    for (const e of entry) {
-      const v = pickExportEntry(e);
-      if (v) return v;
-    }
-    return null;
-  }
-  if (entry && typeof entry === "object") {
-    const obj = entry as Record<string, unknown>;
-    const candidate = obj.import ?? obj.node ?? obj.default;
-    return candidate ? pickExportEntry(candidate) : null;
-  }
-  return null;
-}
-
-// Resolve a subpath (`.` or `./foo/bar`) against a `package.json#exports`
-// map. Honors literal keys first, then matches `./*`-style glob patterns
-// where the trailing `*` is substituted with the captured remainder.
-// Returns the resolved relative path (e.g. `./debounce.js`) or null when
-// no entry matches.
-function resolveExportPath(exports: unknown, subpath: string): string | null {
-  if (!exports || typeof exports !== "object") return null;
-  const map = exports as Record<string, unknown>;
-
-  // Literal key (covers "." and exact subpaths like "./jsx-runtime").
-  if (subpath in map) return pickExportEntry(map[subpath]);
-
-  // Glob keys like "./*", "./feature/*", "./lib/*.js". Pick the longest
-  // matching prefix so more specific patterns win over `./*`.
-  let bestKey: string | null = null;
-  let bestPrefixLen = -1;
-  for (const key of Object.keys(map)) {
-    const star = key.indexOf("*");
-    if (star === -1) continue;
-    const prefix = key.slice(0, star);
-    const suffix = key.slice(star + 1);
-    if (!subpath.startsWith(prefix) || !subpath.endsWith(suffix)) continue;
-    if (subpath.length < prefix.length + suffix.length) continue;
-    if (prefix.length > bestPrefixLen) {
-      bestKey = key;
-      bestPrefixLen = prefix.length;
-    }
-  }
-  if (!bestKey) return null;
-
-  const star = bestKey.indexOf("*");
-  const captured = subpath.slice(
-    bestKey.slice(0, star).length,
-    subpath.length - bestKey.slice(star + 1).length,
-  );
-  const template = pickExportEntry(map[bestKey]);
-  if (!template) return null;
-  return template.replaceAll("*", captured);
-}
-
 /**
  * Rewrite imports for Node.js runtime
  * - Resolves relative imports to file:// URLs
@@ -282,6 +229,7 @@ export async function rewriteDiscoveryImports(
 
   try {
     const { pathToFileURL } = await import("node:url");
+    const projectRoot = pathHelper.resolve(projectDir);
 
     // Handle relative imports
     transformed = transformed.replace(
@@ -297,20 +245,20 @@ export async function rewriteDiscoveryImports(
     // so a subsequent `npm install` of the missing dep is picked up
     // without a process restart.
     const resolvePackageToFileUrl = async (specifier: string): Promise<string | null> => {
-      const cacheKey = `${projectDir}::${specifier}`;
+      const cacheKey = `${projectRoot}::${specifier}`;
       const cached = resolvedSpecifierCache.get(cacheKey);
       if (cached !== undefined) return cached;
 
       const { name: packageName, subpath } = splitPackageSubpath(specifier);
-      let searchDir = projectDir;
+      let searchDir = projectRoot;
 
       for (let i = 0; i < 10; i++) {
-        const packagePath = pathHelper.join(searchDir, "node_modules", packageName);
+        const packagePath = pathHelper.resolve(searchDir, "node_modules", packageName);
         const packageJsonPath = pathHelper.join(packagePath, "package.json");
 
         try {
           const pkgJson = JSON.parse(await fs.readTextFile(packageJsonPath));
-          const exportPath = resolveExportPath(pkgJson.exports, subpath);
+          const exportPath = resolvePackageExportPath(pkgJson.exports, subpath);
 
           const entryPoint = exportPath ??
             (subpath === "."
@@ -319,19 +267,8 @@ export async function rewriteDiscoveryImports(
               // onto the package dir (e.g. `dotenv/config.js`).
               : subpath.replace(/^\.\//, ""));
 
-          // Defense in depth: refuse resolved paths that escape the package
-          // directory. A malicious package shipping `exports: { ".": "../foo" }`
-          // would otherwise yield a `file://` URL outside `node_modules/<pkg>`
-          // that the discovery loader would still `import()`. `path.resolve`
-          // (unlike `path.join`) normalizes `..` segments, so the prefix
-          // check correctly catches escape attempts.
-          const normalized = pathHelper.resolve(packagePath, entryPoint);
-          const packagePathPrefix = packagePath.endsWith(pathHelper.SEPARATOR)
-            ? packagePath
-            : packagePath + pathHelper.SEPARATOR;
-          if (normalized !== packagePath && !normalized.startsWith(packagePathPrefix)) {
-            return null;
-          }
+          const normalized = resolveContainedPackagePath(packagePath, entryPoint);
+          if (!normalized) return null;
 
           const resolved = pathToFileURL(normalized).href;
           resolvedSpecifierCache.set(cacheKey, resolved);
@@ -447,39 +384,57 @@ export async function rewriteDiscoveryImports(
         );
     };
 
-    // Handle veryfront package imports
-    let vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
-    let exportsMap: Record<string, string | { import?: string }> = {};
+    type VeryfrontExportSource =
+      | { kind: "absent" }
+      | { kind: "present"; packagePath: string; exportsMap: unknown };
 
-    try {
-      const vfPackageJsonPath = pathHelper.join(vfPackagePath, "package.json");
-      const pkgJson = JSON.parse(await fs.readTextFile(vfPackageJsonPath));
-      exportsMap = pkgJson.exports || {};
-    } catch (_) {
-      /* expected: veryfront package.json not found, fallback to deno.json search */
-      // Search for deno.json in parent directories
-      let searchDir = projectDir;
+    const findVeryfrontExportSource = async (): Promise<VeryfrontExportSource> => {
+      const nodePackagePath = pathHelper.resolve(projectRoot, "node_modules", "veryfront");
+      const vfPackageJsonPath = pathHelper.join(nodePackagePath, "package.json");
+      let hasNodePackagePath = false;
+      try {
+        await fs.stat(nodePackagePath);
+        hasNodePackagePath = true;
+      } catch (error) {
+        if (!isNotFoundError(error)) {
+          return { kind: "present", packagePath: nodePackagePath, exportsMap: undefined };
+        }
 
+        /* expected: veryfront directory absent, fallback to deno.json search */
+      }
+
+      if (hasNodePackagePath) {
+        try {
+          const packageJsonText = await fs.readTextFile(vfPackageJsonPath);
+          const pkgJson = JSON.parse(packageJsonText);
+          return { kind: "present", packagePath: nodePackagePath, exportsMap: pkgJson.exports };
+        } catch (_) {
+          return { kind: "present", packagePath: nodePackagePath, exportsMap: undefined };
+        }
+      }
+
+      // Search for deno.json in parent directories.
+      let searchDir = projectRoot;
       for (let i = 0; i < 5; i++) {
         try {
           const denoJsonPath = pathHelper.join(searchDir, "deno.json");
           const denoJson = JSON.parse(await fs.readTextFile(denoJsonPath));
-          if (denoJson.name === "veryfront" && denoJson.exports) {
-            exportsMap = denoJson.exports;
-            vfPackagePath = searchDir;
-            break;
+          if (denoJson.name === "veryfront" && "exports" in denoJson) {
+            return {
+              kind: "present",
+              packagePath: pathHelper.resolve(searchDir),
+              exportsMap: denoJson.exports,
+            };
           }
         } catch (_) {
           /* expected: deno.json not found at this level */
         }
-        searchDir = pathHelper.dirname(searchDir);
+        const parent = pathHelper.dirname(searchDir);
+        if (parent === searchDir) break;
+        searchDir = parent;
       }
-    }
 
-    const getExportPath = (entry: string | { import?: string } | undefined): string | null => {
-      if (!entry) return null;
-      if (typeof entry === "string") return entry;
-      return entry.import ?? null;
+      return { kind: "absent" };
     };
 
     const veryfrontSpecifiers = new Set<string>();
@@ -494,34 +449,40 @@ export async function rewriteDiscoveryImports(
       if (specifier) veryfrontSpecifiers.add(specifier);
     }
 
+    const veryfrontExportSource = await findVeryfrontExportSource();
+
+    const resolveVeryfrontExportToFileUrl = (
+      specifier: string,
+    ): { kind: "resolved"; url: string } | { kind: "rejected" } => {
+      if (veryfrontExportSource.kind === "absent") return { kind: "rejected" };
+
+      const subpath = specifier === "veryfront" ? "." : "./" + specifier.replace("veryfront/", "");
+      const exportPath = resolvePackageExportPath(veryfrontExportSource.exportsMap, subpath);
+      if (!exportPath) return { kind: "rejected" };
+
+      const packagePath = veryfrontExportSource.packagePath;
+      const resolvedPath = resolveContainedPackagePath(packagePath, exportPath);
+      if (!resolvedPath) return { kind: "rejected" };
+
+      return { kind: "resolved", url: pathToFileURL(resolvedPath).href };
+    };
+
     for (const specifier of veryfrontSpecifiers) {
-      const resolvedUrl = resolveRuntimeSpecifierToFileUrl(specifier);
-      if (resolvedUrl) {
-        transformed = rewriteResolvedSpecifierImports(transformed, specifier, resolvedUrl);
+      if (veryfrontExportSource.kind === "absent") continue;
+      const result = resolveVeryfrontExportToFileUrl(specifier);
+      if (result.kind === "resolved") {
+        transformed = rewriteResolvedSpecifierImports(transformed, specifier, result.url);
       }
     }
 
-    // Rewrite veryfront subpath imports
-    transformed = transformed.replace(
-      /from\s+["'](veryfront\/[^"']+)["']/g,
-      (match, fullSpecifier: string) => {
-        const subpath = "./" + fullSpecifier.replace("veryfront/", "");
-        const exportPath = getExportPath(exportsMap[subpath]);
-        if (!exportPath) return match;
-
-        const resolvedPath = pathHelper.join(vfPackagePath, exportPath);
-        return `from "${pathToFileURL(resolvedPath).href}"`;
-      },
-    );
-
-    // Rewrite bare veryfront import
-    transformed = transformed.replace(/from\s+["']veryfront["']/g, () => {
-      const exportPath = getExportPath(exportsMap["."]);
-      if (!exportPath) return 'from "veryfront"';
-
-      const resolvedPath = pathHelper.join(vfPackagePath, exportPath);
-      return `from "${pathToFileURL(resolvedPath).href}"`;
-    });
+    if (veryfrontExportSource.kind === "absent") {
+      for (const specifier of veryfrontSpecifiers) {
+        const resolvedUrl = resolveRuntimeSpecifierToFileUrl(specifier);
+        if (resolvedUrl) {
+          transformed = rewriteResolvedSpecifierImports(transformed, specifier, resolvedUrl);
+        }
+      }
+    }
   } catch (_) {
     /* expected: Node.js URL module unavailable in non-Node runtime */
     return transformed;

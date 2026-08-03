@@ -33,7 +33,7 @@ export default function ChatPage() {
 
   return (
     <Chat
-      {...chat}
+      chat={chat}
       placeholder="Ask anything..."
       maxHeight="80vh"
     />
@@ -47,7 +47,7 @@ The `Chat` component handles the parts-based UI message format internally, extra
 
 ```tsx
 <Chat
-  {...chat}
+  chat={chat}
   theme={{
     container: "bg-gradient-to-b from-gray-50 to-white",
     message: {
@@ -74,7 +74,7 @@ function getTextContent(message: ChatMessage): string {
 }
 
 <Chat
-  {...chat}
+  chat={chat}
   renderMessage={(msg) => (
     <CustomMessage
       id={msg.id}
@@ -89,27 +89,35 @@ function getTextContent(message: ChatMessage): string {
 **Composition API:**
 
 ```tsx
-import { ChatComponents as Chat } from "veryfront/react";
+import { Chat } from "veryfront/react";
 
-<Chat>
-  <Chat.Header>
+<Chat.Root
+  messages={messages}
+  input={input}
+  setInput={setInput}
+  onSubmit={onSubmit}
+>
+  <header>
     <h1>Customer Support</h1>
     <Status />
-  </Chat.Header>
+  </header>
 
-  <Chat.Messages>
-    {messages.map((msg) => <CustomMessage key={msg.id} {...msg} />)}
-  </Chat.Messages>
+  <Chat.MessageList messages={messages} />
 
-  <Chat.Input
-    placeholder="How can we help?"
-    multiline={true}
-  />
+  <Chat.Input.Root
+    input={input}
+    onChange={onChange}
+    onSubmit={onSubmit}
+  >
+    <Chat.Input.Field placeholder="How can we help?" />
+    <Chat.Input.Toolbar>
+      <Chat.Input.Export messages={messages} />
+      <Chat.Input.Send />
+    </Chat.Input.Toolbar>
+  </Chat.Input.Root>
 
-  <Chat.Footer>
-    Powered by Veryfront
-  </Chat.Footer>
-</Chat>;
+  <footer>Powered by Veryfront</footer>
+</Chat.Root>;
 ```
 
 ### AgentCard
@@ -137,28 +145,24 @@ export default function AgentInterface() {
 
 ### Message
 
-Standalone message component for the parts-based `ChatMessage` format.
+Message component for the parts-based `ChatMessage` format. Use the default
+anatomy or include only the compound parts your layout needs.
 
 ```tsx
 import { Message } from "veryfront/react";
 
-<Message
-  message={msg} // ChatMessage with parts array
-  showRole={true}
-  showTimestamp={true}
-  theme={{
-    message: {
-      user: "bg-blue-500 text-white",
-      assistant: "bg-gray-200",
-    },
-  }}
-/>;
+<Message.Root message={msg}>
+  <Message.Header />
+  <Message.Content />
+  <Message.Sources />
+  <Message.Actions />
+</Message.Root>;
 ```
 
 ### Streaming
 
-Pass `isStreaming` to any `<Message>` to surface the "Continuing…" shimmer while
-the turn is still generating (there is no separate `StreamingMessage`).
+Pass `isStreaming` to `<Message>` to surface the "Continuing..." shimmer while
+the turn is still generating.
 
 ```tsx
 import { Message } from "veryfront/react";
@@ -204,7 +208,7 @@ interface AgentTheme {
 All components support dark mode automatically via CSS custom properties. Dark mode activates through `prefers-color-scheme: dark`, a `.dark` class, or `[data-theme="dark"]` on a parent element. No `dark:` Tailwind variants are needed. The token system handles it:
 
 ```tsx
-<Chat {...chat} />;
+<Chat chat={chat} />;
 // Automatically adapts to dark mode via CSS variables
 ```
 
@@ -222,14 +226,14 @@ All components inherit accessibility from Layer 2 primitives:
 ### Level 1: Just Use It
 
 ```tsx
-<Chat {...chat} />;
+<Chat chat={chat} />;
 ```
 
 ### Level 2: Theme Customization
 
 ```tsx
 <Chat
-  {...chat}
+  chat={chat}
   theme={{
     message: { user: "bg-purple-600 text-white" },
   }}
@@ -240,7 +244,7 @@ All components inherit accessibility from Layer 2 primitives:
 
 ```tsx
 <Chat
-  {...chat}
+  chat={chat}
   renderMessage={CustomMessage}
 />;
 ```
@@ -248,11 +252,26 @@ All components inherit accessibility from Layer 2 primitives:
 ### Level 4: Composition API
 
 ```tsx
-<Chat>
-  <Chat.Header>Custom Header</Chat.Header>
-  <Chat.Messages />
-  <Chat.Input />
-</Chat>;
+<Chat.Root
+  messages={chat.messages}
+  input={chat.input}
+  setInput={chat.setInput}
+  onSubmit={chat.handleSubmit}
+>
+  <header>Custom Header</header>
+  <Chat.MessageList messages={chat.messages} />
+  <Chat.Input.Root
+    input={chat.input}
+    onChange={chat.handleInputChange}
+    onSubmit={chat.handleSubmit}
+  >
+    <Chat.Input.Field />
+    <Chat.Input.Toolbar>
+      <Chat.Input.Export messages={chat.messages} />
+      <Chat.Input.Send />
+    </Chat.Input.Toolbar>
+  </Chat.Input.Root>
+</Chat.Root>;
 ```
 
 ### Level 5: Drop to Layer 2 or 1
@@ -269,7 +288,7 @@ import { useChat } from "veryfront/agent/react";
 
 export default function App() {
   const chat = useChat();
-  return <Chat {...chat} />;
+  return <Chat chat={chat} />;
 }
 ```
 
@@ -277,7 +296,7 @@ export default function App() {
 
 ```tsx
 <Chat
-  {...chat}
+  chat={chat}
   className="rounded-xl shadow-lg"
   theme={{
     message: {
@@ -288,7 +307,6 @@ export default function App() {
     button: "bg-purple-600 hover:bg-purple-700",
   }}
   placeholder="Ask me anything..."
-  multiline={true}
 />;
 ```
 
@@ -303,7 +321,9 @@ export default function AgentChat() {
 
   return (
     <div className="grid grid-cols-2 gap-4">
-      <Chat messages={agent.messages} />
+      <Chat.Root messages={agent.messages} input="">
+        <Chat.MessageList messages={agent.messages} />
+      </Chat.Root>
       <AgentCard {...agent} />
     </div>
   );
@@ -344,7 +364,7 @@ export default function AdvancedChat() {
 
   return (
     <Chat
-      {...chat}
+      chat={chat}
       renderMessage={(msg) => <CustomMessage message={msg} />}
     />
   );
@@ -369,80 +389,3 @@ export default function AdvancedChat() {
 **Total: 4 styled components** + theme system
 
 **Next**: Phase 7 (Developer Experience)
-
-## Migration Path
-
-### From Legacy Content Fields to ChatMessage Parts
-
-```tsx
-// Before (v4 - deprecated)
-{
-  messages.map((msg) => <div key={msg.id}>{msg.content}</div>);
-}
-
-// After (parts-based)
-import type { ChatMessage } from "veryfront/agent/react";
-
-function getTextContent(message: ChatMessage): string {
-  return message.parts
-    .filter((p) => p.type === "text")
-    .map((p) => p.text)
-    .join("");
-}
-
-{
-  messages.map((msg) => <div key={msg.id}>{getTextContent(msg)}</div>);
-}
-
-// Or just use the Chat component which handles this automatically
-<Chat {...chat} />;
-```
-
-### From Custom UI → Styled Components
-
-```tsx
-// Before (custom UI)
-<div className="chat-container">
-  {messages.map((msg) => (
-    <div key={msg.id} className="message">
-      {getTextContent(msg)}
-    </div>
-  ))}
-</div>
-
-// After (5 seconds)
-<Chat {...chat} />
-```
-
-### From Styled → Primitives (more control)
-
-```tsx
-// Styled component
-<Chat {...chat} />
-
-// Primitives (more control)
-<ChatContainer>
-  <MessageList>
-    {messages.map((msg) => (
-      <MessageItem key={msg.id} className="your-styles">
-        {getTextContent(msg)}
-      </MessageItem>
-    ))}
-  </MessageList>
-</ChatContainer>
-```
-
-### From Primitives → Hooks (total control)
-
-```tsx
-// Primitives
-<ChatContainer>
-  <MessageList />
-</ChatContainer>;
-
-// Hooks only (v5 API)
-const { messages, input, sendMessage, handleSubmit } = useChat();
-return <YourCompletelyCustomUI />;
-```
-
-Perfect progressive enhancement!

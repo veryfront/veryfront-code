@@ -3,17 +3,192 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   addEsmShDeps,
+  appendDependencyPinningKey,
+  appendDependencyPinningPathKey,
+  appendSameOriginDependencyPinningPathKey,
   buildCrossProjectUrl,
   buildEsmShUrl,
   buildModuleServerUrl,
   buildReactUrl,
   buildVeryfrontModuleUrl,
+  extractDependencyPinningPathKey,
   getReactImportMap,
   isEsmShUrl,
   normalizeExtension,
 } from "./url-builder.ts";
 
 describe("transforms/import-rewriter/url-builder", () => {
+  describe("appendDependencyPinningKey", () => {
+    it("appends and encodes an enabled dependency snapshot key", () => {
+      assertEquals(
+        appendDependencyPinningKey(
+          "/_vf_modules/components/Button.js?ssr=true",
+          "on:snapshot-a",
+        ),
+        "/_vf_modules/components/Button.js?ssr=true&pins=on%3Asnapshot-a",
+      );
+    });
+
+    it("replaces a stale key and preserves the fragment", () => {
+      assertEquals(
+        appendDependencyPinningKey(
+          "/_vf_modules/components/Button.js?pins=on%3Astale&v=source#default",
+          "on:snapshot-a",
+        ),
+        "/_vf_modules/components/Button.js?pins=on%3Asnapshot-a&v=source#default",
+      );
+    });
+
+    it("preserves the historical URL shape when pinning is off", () => {
+      assertEquals(
+        appendDependencyPinningKey("/_vf_modules/components/Button.js", "off"),
+        "/_vf_modules/components/Button.js",
+      );
+    });
+  });
+
+  describe("dependency pinning path keys", () => {
+    it("canonicalizes same-origin absolute and protocol-relative module URLs", () => {
+      assertEquals(
+        appendSameOriginDependencyPinningPathKey(
+          "https://app.example/_vf_modules/components/Absolute.js?pins=on%3Astale#entry",
+          "on:snapshot-a",
+          "https://app.example",
+        ),
+        "/_vf_modules/_pins/on%3Asnapshot-a/components/Absolute.js#entry",
+      );
+      assertEquals(
+        appendSameOriginDependencyPinningPathKey(
+          "//app.example/_vf_modules/components/Protocol.js",
+          "on:snapshot-a",
+          "https://app.example",
+        ),
+        "/_vf_modules/_pins/on%3Asnapshot-a/components/Protocol.js",
+      );
+      assertEquals(
+        appendSameOriginDependencyPinningPathKey(
+          "https://cdn.example/_vf_modules/components/Foreign.js",
+          "on:snapshot-a",
+          "https://app.example",
+        ),
+        "https://cdn.example/_vf_modules/components/Foreign.js",
+      );
+      assertEquals(
+        appendSameOriginDependencyPinningPathKey(
+          "https://app.example/_vf_modules/components/FlagOff.js",
+          "off",
+          "https://app.example",
+        ),
+        "https://app.example/_vf_modules/components/FlagOff.js",
+      );
+    });
+
+    it("preserves trailing-slash module prefix targets", () => {
+      assertEquals(
+        appendDependencyPinningPathKey(
+          "/_vf_modules/components/",
+          "on:snapshot-a",
+        ),
+        "/_vf_modules/_pins/on%3Asnapshot-a/components/",
+      );
+    });
+
+    it("supports absolute module URLs and removes ambiguous query tokens", () => {
+      assertEquals(
+        appendDependencyPinningPathKey(
+          "HTTPS://modules.example/_vf_modules/components/Button.js?ssr=true&pins=on%3Astale#default",
+          "on:snapshot-a",
+        ),
+        "HTTPS://modules.example/_vf_modules/_pins/on%3Asnapshot-a/components/Button.js?ssr=true#default",
+      );
+      assertEquals(
+        appendDependencyPinningPathKey(
+          "/_vf_modules/_pins/on%3Astale/components/Button.js",
+          "on:snapshot-a",
+        ),
+        "/_vf_modules/_pins/on%3Asnapshot-a/components/Button.js",
+      );
+      assertEquals(
+        appendDependencyPinningPathKey(
+          "/_vf_modules/_pins/project-file.js",
+          "on:snapshot-a",
+        ),
+        "/_vf_modules/_pins/on%3Asnapshot-a/_pins/project-file.js",
+      );
+    });
+
+    it("preserves flag-off and non-module targets", () => {
+      assertEquals(
+        appendDependencyPinningPathKey("/_vf_modules/components/", "off"),
+        "/_vf_modules/components/",
+      );
+      assertEquals(
+        appendDependencyPinningPathKey("https://cdn.example/components/", "on:snapshot-a"),
+        "https://cdn.example/components/",
+      );
+      assertEquals(
+        appendDependencyPinningPathKey(
+          "/_veryfront/modules/legacy/",
+          "on:snapshot-a",
+        ),
+        "/_veryfront/modules/legacy/",
+      );
+    });
+
+    it("extracts and normalizes a concrete browser-resolved prefix URL", () => {
+      assertEquals(
+        extractDependencyPinningPathKey(
+          "/_vf_modules/_pins/on%3Asnapshot-a/components/Button.js",
+        ),
+        {
+          pathname: "/_vf_modules/components/Button.js",
+          cacheKey: "on:snapshot-a",
+          found: true,
+          malformed: false,
+        },
+      );
+    });
+
+    it("distinguishes ordinary _pins source paths from valid transports", () => {
+      assertEquals(
+        extractDependencyPinningPathKey("/_vf_modules/_pins/not-terminated"),
+        {
+          pathname: "/_vf_modules/_pins/not-terminated",
+          found: false,
+          malformed: false,
+        },
+      );
+      assertEquals(
+        extractDependencyPinningPathKey(
+          "/_vf_modules/_pins/project-dir/page.js",
+        ),
+        {
+          pathname: "/_vf_modules/_pins/project-dir/page.js",
+          found: false,
+          malformed: false,
+        },
+      );
+      assertEquals(
+        extractDependencyPinningPathKey(
+          "/_vf_modules/_pins/on%3Asnapshot-a",
+        ).malformed,
+        true,
+      );
+      assertEquals(
+        extractDependencyPinningPathKey(
+          "/_vf_modules/_pins/on%3Aa/_pins/on%3Ab/page.js",
+        ).malformed,
+        true,
+      );
+      assertEquals(
+        extractDependencyPinningPathKey(
+          "/_vf_modules/_pins/%E0%A4%A/page.js",
+        ).found,
+        false,
+      );
+    });
+  });
+
   describe("buildEsmShUrl", () => {
     it("should build basic URL with package name", () => {
       assertEquals(buildEsmShUrl("lodash"), "https://esm.sh/lodash?target=es2022");
@@ -75,11 +250,16 @@ describe("transforms/import-rewriter/url-builder", () => {
         "react/jsx-runtime",
         "react/jsx-dev-runtime",
         "react/",
+        "react-dom/",
       ] as const;
 
       for (const key of keys) {
         assertEquals(typeof map[key], "string");
       }
+
+      assertEquals(map["react/"]?.endsWith("/"), true);
+      assertEquals(map["react-dom/"]?.endsWith("/"), true);
+      assertEquals(map["react-dom/"]?.includes("&external=react"), true);
     });
   });
 

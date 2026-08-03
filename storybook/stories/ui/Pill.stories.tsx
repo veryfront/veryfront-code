@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Pill } from "../../../src/react/components/chat/ui/index.ts";
+import { Pill } from "../../../src/react/components/ui/index.ts";
 import {
   DocsCode,
   DocsComposition,
@@ -10,7 +10,7 @@ import {
   DocsSection,
 } from "../../.storybook/docs";
 
-const importCode = `import { Pill } from "veryfront/chat/ui"`;
+const importCode = `import { Pill } from "veryfront/ui"`;
 
 const compositionTree =
   `Pill   <- Passive trigger pill for selection, filtering, and picker entry points`;
@@ -65,7 +65,7 @@ function PillDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/Pill",
+  title: "UI/Pill",
   component: Pill,
   tags: ["autodocs"],
   parameters: {

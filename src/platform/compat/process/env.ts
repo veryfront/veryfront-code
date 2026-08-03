@@ -1,5 +1,6 @@
 import { getDenoRuntime, isDeno as IS_DENO } from "../runtime.ts";
 import { runtimeProcess } from "./runtime-process.ts";
+import type { ProjectEnvSnapshot } from "./project-env-contract.ts";
 
 type EnvOverlayValue = string | null;
 type EnvOverlayStore = Map<string, EnvOverlayValue>;
@@ -78,51 +79,39 @@ export function getHostEnv(key: string): string | undefined {
   return undefined;
 }
 
-// Lazy-loaded references to project-env/storage.ts functions.
-// Uses globalThis to avoid circular imports (process compat is low-level, project-env is high-level).
-// IMPORTANT: Only cache when the real getter is found. If storage.ts hasn't loaded yet,
-// re-check globalThis on every call to avoid permanently caching the fallback.
-let _getProjectEnv: ((key: string) => string | undefined) | null = null;
-let _isProjectEnvActive: (() => boolean) | null = null;
+let _trustedProjectEnvSnapshot: (() => ProjectEnvSnapshot | undefined) | null = null;
 
-function getProjectEnvSafe(key: string): string | undefined {
-  if (_getProjectEnv === null) {
-    const mod = (globalThis as Record<string, unknown>).__vfProjectEnvGetter as
-      | ((key: string) => string | undefined)
-      | undefined;
-    if (mod) {
-      _getProjectEnv = mod;
-    } else {
-      return undefined;
-    }
+/**
+ * Register the server-owned project environment snapshot bridge.
+ *
+ * Kept out of the public process barrel so project code cannot replace the
+ * callback through a supported package export. Re-registering a different
+ * function is rejected rather than silently widening an isolation boundary.
+ */
+export function registerTrustedProjectEnvSnapshot(
+  getter: () => ProjectEnvSnapshot | undefined,
+): void {
+  if (_trustedProjectEnvSnapshot && _trustedProjectEnvSnapshot !== getter) {
+    throw new Error("Project environment snapshot bridge is already registered");
   }
-  return _getProjectEnv(key);
+  _trustedProjectEnvSnapshot = getter;
 }
 
-function isProjectEnvActiveSafe(): boolean {
-  if (_isProjectEnvActive === null) {
-    const mod = (globalThis as Record<string, unknown>).__vfProjectEnvActiveChecker as
-      | (() => boolean)
-      | undefined;
-    if (mod) {
-      _isProjectEnvActive = mod;
-    } else {
-      return false;
-    }
-  }
-  return _isProjectEnvActive();
+/** Return the active server-owned project env snapshot, if registered. */
+export function getTrustedProjectEnvSnapshot(): ProjectEnvSnapshot | undefined {
+  return _trustedProjectEnvSnapshot?.();
 }
 
 /** Read an environment variable from the active project scope. */
 export function getEnv(key: string): string | undefined {
-  // Check per-request project env overlay first (AsyncLocalStorage)
-  const projectValue = getProjectEnvSafe(key);
-  if (projectValue !== undefined) return projectValue;
-
-  // When a project env overlay is active (remote project request), do NOT
-  // fall through to host process env. This prevents remote projects from
-  // reading host-level secrets like AWS_SECRET_ACCESS_KEY, DATABASE_URL, etc.
-  if (isProjectEnvActiveSafe()) return undefined;
+  const projectEnv = getTrustedProjectEnvSnapshot();
+  if (projectEnv !== undefined) {
+    // The registered snapshot is authoritative even when the requested key is
+    // absent. Falling through here would expose host process configuration to
+    // a remote project. Never discover this boundary through replaceable
+    // globalThis hooks.
+    return projectEnv[key];
+  }
 
   return getHostEnv(key);
 }
@@ -159,8 +148,11 @@ export function getEnvNumber(key: string, fallback?: number): number | undefined
   const value = getEnvString(key);
   if (value === undefined) return fallback;
 
-  const parsed = Number.parseInt(value, 10);
-  if (Number.isNaN(parsed)) return fallback ?? Number.NaN;
+  const normalized = value.trim();
+  if (!/^[+-]?\d+$/.test(normalized)) return fallback ?? Number.NaN;
+
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed)) return fallback ?? Number.NaN;
   return parsed;
 }
 

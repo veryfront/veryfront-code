@@ -36,9 +36,10 @@ cli/
 ├── utils/               # General utilities
 ├── help/                # Command definitions, help formatting
 ├── discovery/           # User project file discovery (tools, agents)
-├── templates/           # Project and integration templates
-└── test-utils/          # VCR testing utilities
+└── templates/           # Project and integration templates
 ```
+
+CLI integration-test support lives outside the shipped package under `tests/support/`.
 
 ## Commands
 

@@ -11,6 +11,8 @@
  * at runtime (Deno's VFS maps them transparently).
  */
 
+import { fileURLToPath } from "node:url";
+
 /**
  * Get the framework root directory from a file path.
  * Handles both dev paths and compiled binary VFS paths.
@@ -23,8 +25,9 @@
  * /tmp/deno-compile-xxx/dist/framework-src.
  */
 export function getFrameworkRoot(filePath: string): string {
-  const denoCompileMatch = filePath.match(/^(.*[/\\]deno-compile-[^/\\]+)[/\\]/);
-  if (denoCompileMatch && denoCompileMatch[1]) {
+  const portablePath = filePath.replace(/\\/g, "/");
+  const denoCompileMatch = portablePath.match(/^(.*\/deno-compile-[^/]+)\//);
+  if (denoCompileMatch?.[1]) {
     // For compiled binaries, always return the extraction root.
     // Files included with --include are placed relative to the extraction root,
     // matching their original relative paths from the compile command's CWD.
@@ -32,10 +35,25 @@ export function getFrameworkRoot(filePath: string): string {
     return denoCompileMatch[1];
   }
 
-  // Dev mode: find the last /src/ and return the path before it
-  const parts = filePath.replace(/\\/g, "/").split("/");
-  const srcIndex = parts.lastIndexOf("src");
-  if (srcIndex > 0) return parts.slice(0, srcIndex).join("/");
+  const parts = portablePath.split("/");
+  let frameworkSourceIndex = -1;
+  for (let index = parts.length - 1; index > 0; index--) {
+    const part = parts[index];
+    if (
+      part === "src" ||
+      (part === "dist" && parts[index + 1] === "framework-src")
+    ) {
+      frameworkSourceIndex = index;
+      break;
+    }
+  }
+  if (frameworkSourceIndex > 0) {
+    return parts.slice(0, frameworkSourceIndex).join("/");
+  }
+
+  // Published packages execute from dist rather than src.
+  const distIndex = parts.lastIndexOf("dist");
+  if (distIndex > 0) return parts.slice(0, distIndex).join("/");
 
   return "";
 }
@@ -45,12 +63,13 @@ export function getFrameworkRoot(filePath: string): string {
  * Convenience wrapper for module-level initialization.
  */
 export function getFrameworkRootFromMeta(importMetaUrl: string): string {
-  const filePath = new URL(importMetaUrl).pathname;
+  const filePath = fileURLToPath(importMetaUrl);
   const root = getFrameworkRoot(filePath);
   if (root) return root;
 
-  // Go up from typical src/some/nested/module.ts structure
-  return new URL("../../..", importMetaUrl).pathname;
+  throw new Error(
+    `Cannot determine framework root from module URL: ${importMetaUrl}`,
+  );
 }
 
 /** Testable version for unit tests. */

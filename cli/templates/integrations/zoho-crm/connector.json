@@ -52,7 +52,7 @@
   ],
   "tools": [
     {
-      "id": "list_records",
+      "id": "zoho-crm__list_records",
       "name": "List Records",
       "description": "List records from a Zoho CRM module such as Leads, Contacts, Deals, or Accounts",
       "requiresWrite": false,
@@ -101,7 +101,7 @@
       }
     },
     {
-      "id": "get_record",
+      "id": "zoho-crm__get_record",
       "name": "Get Record",
       "description": "Get a single Zoho CRM record by ID from any module",
       "requiresWrite": false,
@@ -133,7 +133,7 @@
       }
     },
     {
-      "id": "search_records",
+      "id": "zoho-crm__search_records",
       "name": "Search Records",
       "description": "Search records in a Zoho CRM module by criteria, email, phone, or a free-text word",
       "requiresWrite": false,
@@ -191,7 +191,7 @@
       }
     },
     {
-      "id": "get_fields",
+      "id": "zoho-crm__get_fields",
       "name": "Get Fields Metadata",
       "description": "List the field metadata of a Zoho CRM module so agents can discover the field API names required by list, search, and write tools",
       "requiresWrite": false,
@@ -212,7 +212,7 @@
       }
     },
     {
-      "id": "coql_query",
+      "id": "zoho-crm__coql_query",
       "name": "Run COQL Query",
       "description": "Run a CRM Object Query Language (COQL) SELECT query for filtered reads, joins, and aggregation that the list and search tools cannot express",
       "requiresWrite": false,
@@ -232,7 +232,7 @@
       }
     },
     {
-      "id": "create_records",
+      "id": "zoho-crm__create_records",
       "name": "Create Records",
       "description": "Create up to 100 records in a Zoho CRM module (requires the ZohoCRM.modules.CREATE scope)",
       "requiresWrite": true,
@@ -260,7 +260,7 @@
       }
     },
     {
-      "id": "update_record",
+      "id": "zoho-crm__update_record",
       "name": "Update Record",
       "description": "Update fields on an existing Zoho CRM record (requires the ZohoCRM.modules.UPDATE scope)",
       "requiresWrite": true,

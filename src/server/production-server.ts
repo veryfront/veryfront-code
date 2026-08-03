@@ -2,15 +2,10 @@ import { serverLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
-import { requestTracker } from "./runtime-handler/request-tracker.ts";
 import { bootstrapProd, type BootstrapResult } from "./bootstrap.ts";
 import { cwd, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
-import {
-  initializeOTLPWithApis,
-  shutdownOTLP,
-  withSpan,
-} from "#veryfront/observability/tracing/otlp-setup.ts";
+import { initializeOTLPWithApis, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
   startConfiguredMemoryMonitoring,
   stopMemoryMonitoring,
@@ -26,20 +21,21 @@ import {
 } from "#veryfront/html/styles-builder/css-pregeneration.ts";
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import { setServerInitialized } from "./handlers/monitoring/health.handler.ts";
-import { markServerShuttingDown } from "./shutdown-state.ts";
+import {
+  gracefullyShutdownProductionServer,
+  parseShutdownDrainTimeoutMs,
+} from "./graceful-shutdown.ts";
 import {
   enableSSRClientOnlyFetching,
   enableSSRFetchInterception,
   setSSRServerPort,
 } from "#veryfront/rendering/ssr-globals.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
+import { snapshotNodeWebSocketServerProvider } from "#veryfront/extensions/websocket";
+import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
 
 const serverLog = logger.component("server");
 const globalLog = logger.component("global");
-
-/** Default time to wait for in-flight requests to drain during shutdown.
- *  K8s default terminationGracePeriodSeconds is 30s, so 25s leaves headroom. */
-const DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS = 25_000;
 
 /** Default port when PORT / VERYFRONT_PORT env vars are not set */
 const DEFAULT_SERVER_PORT = 3_000;
@@ -167,6 +163,12 @@ export interface StartProductionServerOptions extends ServerOptions {
 export function startProductionServer(
   options: StartProductionServerOptions,
 ): Promise<ServerHandle> {
+  const suppliedBootstrap = options.bootstrapResult;
+  const suppliedProviderSource = suppliedBootstrap?.nodeWebSocketServerProvider;
+  const suppliedNodeWebSocketServerProvider = suppliedProviderSource === undefined
+    ? undefined
+    : snapshotNodeWebSocketServerProvider(suppliedProviderSource);
+
   return withSpan(
     "server.startProductionServer",
     async () => {
@@ -181,7 +183,6 @@ export function startProductionServer(
         defaultReleaseId,
         defaultEnvironment,
         requestInterceptor,
-        bootstrapResult,
         discoveryConfig,
         localProjects,
       } = options;
@@ -192,8 +193,11 @@ export function startProductionServer(
 
       try {
         // Use pre-computed bootstrap result if provided, otherwise bootstrap here
-        const bootstrap = bootstrapResult ?? await bootstrapProd(projectDir, baseAdapter);
+        const bootstrap = suppliedBootstrap ?? await bootstrapProd(projectDir, baseAdapter);
         const adapter = bootstrap.adapter;
+        const nodeWebSocketServerProvider = suppliedBootstrap === undefined
+          ? bootstrap.nodeWebSocketServerProvider
+          : suppliedNodeWebSocketServerProvider;
 
         if (bootstrap.usingFSAdapter) {
           logger.debug("FSAdapter initialized", { type: bootstrap.fsAdapterType });
@@ -246,6 +250,7 @@ export function startProductionServer(
                 baseDir: discoveryConfig.baseDir,
                 fsAdapter: discoveryConfig.fsAdapter,
                 verbose: discoveryConfig.verbose ?? false,
+                allowHostProjectCodeExecution: true,
               });
             }
           } catch (error) {
@@ -266,7 +271,11 @@ export function startProductionServer(
           defaultReleaseId,
           defaultEnvironment,
           localProjects,
+          allowHostProjectCodeExecution: bootstrap.config.fs?.veryfront?.proxyMode !== true &&
+            !isSharedProjectRuntime({ adapter }),
         });
+
+        const coreHandler = baseHandler;
 
         // Wrap handler with interceptor if provided (for combined mode)
         // WebSocket upgrade requests MUST NOT be intercepted because the interceptor
@@ -275,12 +284,12 @@ export function startProductionServer(
           ? Object.assign(
             async (req: Request) => {
               const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
-              if (isWebSocketUpgrade) return baseHandler(req);
-              return baseHandler(await requestInterceptor(req));
+              if (isWebSocketUpgrade) return coreHandler(req);
+              return coreHandler(await requestInterceptor(req));
             },
-            { ready: baseHandler.ready },
+            { ready: coreHandler.ready },
           )
-          : baseHandler;
+          : coreHandler;
 
         let resolveListenReady: (() => void) | undefined;
         const listenReady = new Promise<void>((resolve) => {
@@ -297,6 +306,7 @@ export function startProductionServer(
           port,
           hostname: bindAddress, // Deno uses "hostname" for bind address
           signal,
+          nodeWebSocketServerProvider,
           onListen: (params) => {
             resolveListenReady?.();
             logger.info("Production server listening", params);
@@ -325,14 +335,34 @@ export function startProductionServer(
 }
 
 if (import.meta.main) {
+  const {
+    captureApplicationError,
+    flushApplicationErrors,
+  } = await import("#veryfront/observability/application-errors.ts");
+  const { initializeSentryFromEnv } = await import("#veryfront/observability/sentry.ts");
+  await initializeSentryFromEnv();
+
   // Register global error handlers FIRST to prevent process crashes from application errors
   // This ensures the renderer stays up even if user code throws unhandled exceptions
   onGlobalError((error, type) => {
     // Fatal errors that indicate corrupted process state — let the process crash
     // so the orchestrator (k8s) can restart it cleanly
-    const isFatal = (error.name === "RangeError" && error.message.includes("Maximum call stack")) ||
-      error.message.includes("out of memory") ||
+    // Stack overflow can be detected reliably via error.name + message.
+    const isStackOverflow = error.name === "RangeError" &&
+      error.message.includes("Maximum call stack");
+
+    // OOM detection relies on V8/Deno message strings which are engine implementation
+    // details (not standardized) and may change between versions. Treat as a best-effort
+    // heuristic: if these strings change, OOM errors will be absorbed as non-fatal until
+    // updated here. The OS / k8s OOMKiller will eventually terminate the process anyway.
+    const isOOM = error.message.includes("out of memory") ||
       error.message.includes("allocation failed");
+
+    const isFatal = isStackOverflow || isOOM;
+
+    captureApplicationError(error, {
+      boundary: `process.${type}`,
+    });
 
     globalLog.error(`${type}: Application error caught`, {
       message: error.message,
@@ -402,9 +432,8 @@ if (import.meta.main) {
 
     // Graceful shutdown for direct CLI execution (e.g., deno run)
     // Default drain timeout: 25 seconds (K8s default terminationGracePeriodSeconds is 30)
-    const drainTimeoutMs = parseInt(
-      adapter.env.get("SHUTDOWN_DRAIN_TIMEOUT_MS") ?? String(DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS),
-      10,
+    const drainTimeoutMs = parseShutdownDrainTimeoutMs(
+      adapter.env.get("SHUTDOWN_DRAIN_TIMEOUT_MS"),
     );
 
     let shuttingDown = false;
@@ -412,44 +441,20 @@ if (import.meta.main) {
       if (shuttingDown) return;
       shuttingDown = true;
 
-      logger.info(`Received ${signal}, initiating graceful shutdown...`, {
-        inFlightRequests: requestTracker.getInFlightCount(),
+      await gracefullyShutdownProductionServer({
+        signal,
         drainTimeoutMs,
+        abort: () => shutdownController.abort(),
+        dispose: bootstrap.dispose,
+        stop: server.stop,
+        logger,
       });
-
-      // Phase 1: Enter lame-duck mode. markServerShuttingDown() makes the
-      // agent-work handlers reject NEW requests with 503 (before any side
-      // effects) so the API can retry against another instance, even while the
-      // pod IP is still directly reachable. setServerInitialized(false) flips
-      // /readyz to not-ready so K8s stops routing Service traffic.
-      markServerShuttingDown();
-      setServerInitialized(false);
-      logger.info("Server marked as not ready, waiting for in-flight requests to drain...");
-
-      try {
-        // Phase 2: Wait for in-flight requests to complete (graceful drain)
-        const drained = await requestTracker.waitForDrain(drainTimeoutMs);
-        if (!drained) {
-          logger.warn("Drain timeout exceeded, forcing shutdown", {
-            remainingRequests: requestTracker.getInFlightCount(),
-          });
-        }
-
-        // Phase 3: Stop accepting new connections and clean up
-        requestTracker.shutdown();
-        await bootstrap.dispose?.();
-        shutdownController.abort();
-        await server.stop();
-        await shutdownOTLP();
-
-        logger.info("Graceful shutdown complete");
-      } catch (error) {
-        logger.warn("Error while shutting down production server:", error);
-      }
+      await flushApplicationErrors();
     };
 
     const handleSignal = (signal: "SIGINT" | "SIGTERM"): void => {
       void shutdown(signal).catch((error) => {
+        captureApplicationError(error, { boundary: "process.shutdown" });
         logger.warn("Unhandled error while shutting down production server", { signal, error });
       });
     };
@@ -457,6 +462,12 @@ if (import.meta.main) {
     onSignal("SIGINT", () => handleSignal("SIGINT"));
     onSignal("SIGTERM", () => handleSignal("SIGTERM"));
   } catch (e) {
+    captureApplicationError(e, { boundary: "process.startup" });
     logger.error("Failed to start production server:", e);
+    await flushApplicationErrors();
+    // Re-throw so the process exits with a non-zero code. A running process with no HTTP
+    // listener causes K8s readiness probes to fail eventually, but crashing immediately
+    // signals the orchestrator to restart the pod faster.
+    throw e;
   }
 }

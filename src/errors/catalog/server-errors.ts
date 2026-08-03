@@ -1,7 +1,7 @@
 import type { PartialErrorCatalog } from "./types.ts";
 import { createErrorSolution, createSimpleError } from "./factory.ts";
 
-export const SERVER_ERROR_CATALOG: PartialErrorCatalog = {
+export const SERVER_ERROR_CATALOG: PartialErrorCatalog = Object.freeze({
   "port-in-use": createErrorSolution("port-in-use", {
     title: "Port already in use",
     message: "Another process is using the specified port.",
@@ -10,7 +10,7 @@ export const SERVER_ERROR_CATALOG: PartialErrorCatalog = {
       "Use a different port: veryfront dev --port 3003",
       "Add port to config file",
     ],
-    example: `// veryfront.config.js
+    example: `// veryfront.config.ts
 dev: {
   port: 3003
 }`,
@@ -27,17 +27,6 @@ dev: {
     ],
   ),
 
-  "hmr-error": createSimpleError(
-    "hmr-error",
-    "Hot Module Replacement error",
-    "HMR failed to update module.",
-    [
-      "Try refreshing the page",
-      "Check for syntax errors",
-      "Restart dev server if persistent",
-    ],
-  ),
-
   "cache-error": createSimpleError(
     "cache-error",
     "Cache operation failed",
@@ -48,6 +37,19 @@ dev: {
       "Verify file permissions",
     ],
   ),
+
+  "cache-path-mismatch": createErrorSolution("cache-path-mismatch", {
+    title: "Cache path mismatch",
+    message: "Cached code contains file paths from a different environment.",
+    steps: [
+      "Stop any Veryfront processes that may still be using the stale cache",
+      "Clear the project cache with the public CLI command shown below",
+      "Rebuild the project in the environment where it will run",
+      "If a shared cache is configured, use that provider's documented invalidation workflow",
+    ],
+    example: `veryfront clean --cache
+veryfront build`,
+  }),
 
   "file-watch-error": createSimpleError(
     "file-watch-error",
@@ -92,4 +94,4 @@ dev: {
       "Check for firewall or proxy issues",
     ],
   ),
-};
+});

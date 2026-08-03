@@ -4,7 +4,7 @@ import type {
   RewriteContext,
   RewriteResult,
 } from "../types.ts";
-import { buildModuleServerUrl } from "../url-builder.ts";
+import { appendDependencyPinningPathKey, buildModuleServerUrl } from "../url-builder.ts";
 import { sanitizeVendorExportName } from "#veryfront/transforms/shared/vendor-export-name.ts";
 
 const REACT_PACKAGES = new Set([
@@ -29,9 +29,12 @@ export class VendorStrategy implements ImportRewriteStrategy {
   rewrite(info: ImportSpecifierInfo, ctx: RewriteContext): RewriteResult {
     if (!ctx.vendorBundleHash || !ctx.moduleServerUrl) return { specifier: null };
 
-    const vendorUrl = buildModuleServerUrl(
-      ctx.moduleServerUrl,
-      `_vendor.js?v=${ctx.vendorBundleHash}`,
+    const vendorUrl = appendDependencyPinningPathKey(
+      buildModuleServerUrl(
+        ctx.moduleServerUrl,
+        `_vendor.js?v=${ctx.vendorBundleHash}`,
+      ),
+      ctx.dependencyPinningCacheKey,
     );
 
     if (!info.isDynamic) return { specifier: vendorUrl };

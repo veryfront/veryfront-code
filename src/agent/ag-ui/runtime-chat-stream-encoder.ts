@@ -5,7 +5,7 @@ import {
 } from "../streaming/data-stream.ts";
 import type { AgUiRuntimeStreamEvent } from "./browser-encoder.ts";
 import type { ChatFinishReason, ChatStreamEvent } from "#veryfront/chat/protocol.ts";
-import { mapFinishReason } from "../../chat/ag-ui-helpers.ts";
+import { mapFinishReason, toRenderableCustomChunk } from "../../chat/ag-ui-helpers.ts";
 
 /** Usage metadata captured from an AG-UI runtime finish event. */
 export type AgUiRuntimeChatStreamUsage = {
@@ -61,6 +61,7 @@ type ToolPart = {
   toolName: string;
   inputText: string;
   input: Record<string, unknown>;
+  providerExecuted?: boolean;
 };
 
 type PendingToolDelta = {
@@ -96,6 +97,11 @@ function createTextDeltaChunk(
 function getStringField(event: AgUiRuntimeStreamEvent, key: string): string | undefined {
   const value = event[key];
   return typeof value === "string" ? value : undefined;
+}
+
+function getBooleanField(event: AgUiRuntimeStreamEvent, key: string): boolean | undefined {
+  const value = event[key];
+  return typeof value === "boolean" ? value : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -380,17 +386,26 @@ export function createAgUiRuntimeChatStreamEncoder(
           if (!toolCallId || !toolName) {
             return events;
           }
+          const providerExecuted = getBooleanField(event, "providerExecuted");
           const toolPart = toolParts.get(toolCallId);
           if (!toolPart) {
             toolParts.set(toolCallId, {
               toolName,
               inputText: "",
               input: {},
+              ...(providerExecuted !== undefined ? { providerExecuted } : {}),
             });
+          } else if (providerExecuted !== undefined) {
+            toolPart.providerExecuted = providerExecuted;
           }
           if (!emittedToolInputStartIds.has(toolCallId)) {
             emittedToolInputStartIds.add(toolCallId);
-            events.push({ type: "tool-input-start", toolCallId, toolName });
+            events.push({
+              type: "tool-input-start",
+              toolCallId,
+              toolName,
+              ...(providerExecuted !== undefined ? { providerExecuted } : {}),
+            });
           }
           const pendingEvents = flushPendingToolDeltas(toolCallId);
           const existingToolPart = toolParts.get(toolCallId);
@@ -453,22 +468,32 @@ export function createAgUiRuntimeChatStreamEncoder(
               ? parsedPendingInput
               : inputRecord
             : inputRecord;
+          const providerExecuted = getBooleanField(event, "providerExecuted");
 
           if (existingToolPart) {
             existingToolPart.toolName = toolName;
             existingToolPart.inputText = pendingInputText;
             existingToolPart.input = resolvedInputRecord;
+            if (providerExecuted !== undefined) {
+              existingToolPart.providerExecuted = providerExecuted;
+            }
           } else {
             toolParts.set(toolCallId, {
               toolName,
               inputText: pendingInputText,
               input: resolvedInputRecord,
+              ...(providerExecuted !== undefined ? { providerExecuted } : {}),
             });
           }
 
           if (!emittedToolInputStartIds.has(toolCallId)) {
             emittedToolInputStartIds.add(toolCallId);
-            events.push({ type: "tool-input-start", toolCallId, toolName });
+            events.push({
+              type: "tool-input-start",
+              toolCallId,
+              toolName,
+              ...(providerExecuted !== undefined ? { providerExecuted } : {}),
+            });
           }
           events.push(...flushPendingToolDeltas(toolCallId));
           events.push({
@@ -476,6 +501,7 @@ export function createAgUiRuntimeChatStreamEncoder(
             toolCallId,
             toolName,
             input: resolvedInputRecord,
+            ...(providerExecuted !== undefined ? { providerExecuted } : {}),
           });
           return events;
         }
@@ -485,7 +511,13 @@ export function createAgUiRuntimeChatStreamEncoder(
           if (!toolCallId) {
             return events;
           }
-          events.push({ type: "tool-output-available", toolCallId, output: event.output });
+          const providerExecuted = getBooleanField(event, "providerExecuted");
+          events.push({
+            type: "tool-output-available",
+            toolCallId,
+            output: event.output,
+            ...(providerExecuted !== undefined ? { providerExecuted } : {}),
+          });
           return events;
         }
         case "tool-output-error": {
@@ -495,7 +527,13 @@ export function createAgUiRuntimeChatStreamEncoder(
             return events;
           }
           const errorText = getStringField(event, "errorText") ?? "Tool execution failed";
-          events.push({ type: "tool-output-error", toolCallId, errorText });
+          const providerExecuted = getBooleanField(event, "providerExecuted");
+          events.push({
+            type: "tool-output-error",
+            toolCallId,
+            errorText,
+            ...(providerExecuted !== undefined ? { providerExecuted } : {}),
+          });
           return events;
         }
         case "data": {
@@ -505,6 +543,11 @@ export function createAgUiRuntimeChatStreamEncoder(
             : undefined;
           if (name) {
             const dataValue = data && Object.hasOwn(data, "value") ? data.value : undefined;
+            const renderableCustomChunk = toRenderableCustomChunk(dataValue);
+            if (renderableCustomChunk?.type === name) {
+              events.push(renderableCustomChunk);
+              return events;
+            }
             events.push({
               type: `data-${name}`,
               data: dataValue,
@@ -528,6 +571,11 @@ export function createAgUiRuntimeChatStreamEncoder(
           return events;
         }
         default: {
+          const renderableCustomChunk = toRenderableCustomChunk(event);
+          if (renderableCustomChunk) {
+            events.push(renderableCustomChunk);
+            return events;
+          }
           if (!event.type.startsWith("data-")) {
             return events;
           }

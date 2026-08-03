@@ -6,8 +6,20 @@ import type { DirectoryEntry } from "../shared-types.ts";
 export type { DirectoryEntry };
 
 export interface FSAdapter {
+  readonly symlinkSemantics?: "none";
+  readonly projectContextSemantics?: "fixed";
   readFile(path: string): Promise<Uint8Array | string>;
+  readFileBytes?(path: string): Promise<Uint8Array>;
+  readonly maxWholeFileReadBytes?: number;
+  readFileBytesBounded?(path: string, byteLimit: number): Promise<Uint8Array>;
+  readFileBytesWithinLimit?(path: string, byteLimit: number): Promise<Uint8Array>;
+  readFileSnapshotWithinLimit?(
+    path: string,
+    containmentRoot: string,
+    byteLimit: number,
+  ): Promise<Uint8Array>;
   readTextFile?(path: string): Promise<string>;
+  readOptionalTextFile?(path: string): Promise<string>;
   exists(path: string): Promise<boolean>;
   stat(path: string): Promise<{
     isFile: boolean;
@@ -21,6 +33,9 @@ export interface FSAdapter {
   readdir?(path: string): AsyncIterable<DirectoryEntry> | Promise<DirectoryEntry[]>;
 
   writeFile?(path: string, content: string): Promise<void>;
+  writeFileBytes?(path: string, content: Uint8Array): Promise<void>;
+  createFileBytesExclusive?(path: string, content: Uint8Array): Promise<void>;
+  rename?(from: string, to: string): Promise<void>;
   mkdir?(path: string, options?: { recursive?: boolean }): Promise<void>;
   remove?(path: string, options?: { recursive?: boolean }): Promise<void>;
 
@@ -29,6 +44,8 @@ export interface FSAdapter {
 
   resolveFile?(basePath: string, options?: ResolveFileOptions): Promise<string | null>;
   refreshSourceSnapshot?(reason?: string): Promise<void>;
+  ensureSourceSnapshotFresh?(reason?: string): Promise<void>;
+  getSourceSnapshotVersion?(): number | undefined | Promise<number | undefined>;
 }
 
 export interface ContextualFSAdapter extends FSAdapter {
@@ -107,8 +124,10 @@ export interface FSAdapterConfig {
       ttl?: number;
     };
     retry?: {
+      /** Retries after the initial request, bounded by `MAX_VERYFRONT_FILESYSTEM_RETRIES`. */
       maxRetries?: number;
-      retryDelay?: number;
+      initialDelay?: number;
+      maxDelay?: number;
     };
   };
   github?: GitHubConfig;
@@ -150,16 +169,17 @@ export interface InvalidationProjectContext {
 }
 
 export interface InvalidationCallbacks {
-  clearSSRModuleCache?: () => void;
-  clearSSRModuleCacheForProject?: (projectId: string) => void;
-  clearRouterDetectionCacheForProject?: (projectId: string) => void;
-  clearModulePathCache?: () => void;
-  invalidateModulePaths?: (changedPaths: string[]) => void;
-  clearSnippetCacheForProject?: (projectSlug: string) => void;
+  clearSSRModuleCache?: () => void | Promise<void>;
+  clearSSRModuleCacheForProject?: (projectId: string) => void | Promise<void>;
+  clearRouterDetectionCacheForProject?: (projectId: string) => void | Promise<void>;
+  clearProjectDiscoveryCacheForProject?: (projectId: string) => void | Promise<void>;
+  clearModulePathCache?: () => void | Promise<void>;
+  invalidateModulePaths?: (changedPaths: string[]) => void | Promise<void>;
+  clearSnippetCacheForProject?: (projectSlug: string) => void | Promise<void>;
   triggerReload?: (changedPaths?: string[], project?: InvalidationProjectContext) => void;
   clearRendererCacheForProject?: (projectId: string) => void | Promise<void>;
   /** Invalidate project-level CSS cache when source files change */
-  clearProjectCSSCache?: (projectSlug: string) => void;
+  clearProjectCSSCache?: (projectSlug: string) => void | Promise<void>;
   /** Clear domain lookup cache to refresh release IDs after publishing */
   clearDomainCache?: () => void;
   /** Evict the current shared proxy adapter after successful invalidation */

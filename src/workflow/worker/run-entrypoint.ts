@@ -6,6 +6,7 @@
  *
  * Environment variables:
  * - WORKFLOW_RUN_ID: The workflow run to execute
+ * - RUN_EXECUTION_ID: Immutable execution identity assigned by the run manager
  * - TENANT_PROJECT_SLUG: Tenant's project slug
  * - TENANT_TOKEN: Tenant's API token
  * - TENANT_PROJECT_ID: Tenant's project ID
@@ -28,8 +29,13 @@ import type { WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type { WorkflowDefinition } from "../types.ts";
 import {
+  requireWorkflowSourceIntegrationPolicy,
+  runWithWorkflowSourceIntegrationPolicy,
+} from "../source-integration-policy.ts";
+import {
   failRunExecution,
   getFinalRunExitCode,
+  getRunExecutionWorkerId,
   getTenantFromEnv,
   hydrateRunContextEnv,
   runWithTenantContext,
@@ -98,20 +104,21 @@ export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promi
     logger.error("Missing WORKFLOW_RUN_ID environment variable");
     return EXIT_CODES.CONFIG_ERROR;
   }
+  const expectedWorkerId = getRunExecutionWorkerId();
 
   if (debug) {
     logger.info(`Starting execution for run: ${runId}`);
   }
 
   try {
-    // Fetch the workflow run
     let run = await backend.getRun(runId);
     if (!run) {
       logger.error(`Workflow run not found: ${runId}`);
       return EXIT_CODES.NOT_FOUND;
     }
 
-    run = await hydrateRunContextEnv(backend, runId, run);
+    requireWorkflowSourceIntegrationPolicy(run);
+    run = await hydrateRunContextEnv(backend, runId, run, expectedWorkerId);
 
     // Get tenant context (from env or from stored run)
     const tenant = getTenantFromEnv() ?? run._tenant;
@@ -123,7 +130,7 @@ export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promi
 
     // Execute workflow and determine exit code based on final status
     const executeWorkflow = async (): Promise<number> => {
-      await executor.resume(runId);
+      await executor.resume(runId, undefined, expectedWorkerId);
 
       return getFinalRunExitCode(
         logger,
@@ -139,19 +146,23 @@ export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promi
       try {
         return await executeWorkflow();
       } catch (error) {
-        return await failRunExecution(backend, logger, EXIT_CODES, runId, error);
+        return await failRunExecution(
+          backend,
+          logger,
+          EXIT_CODES,
+          runId,
+          error,
+          expectedWorkerId,
+        );
       }
     };
 
-    // Run with tenant context if available
-    if (tenant) {
-      return await runWithTenantContext(tenant, safeExecute);
-    }
-
-    return await safeExecute();
+    return await runWithWorkflowSourceIntegrationPolicy(
+      run,
+      () => tenant ? runWithTenantContext(tenant, safeExecute) : safeExecute(),
+    );
   } catch (error) {
-    logger.error(`Fatal error:`, error);
-    return EXIT_CODES.WORKFLOW_FAILED;
+    return await failRunExecution(backend, logger, EXIT_CODES, runId, error, expectedWorkerId);
   }
 }
 

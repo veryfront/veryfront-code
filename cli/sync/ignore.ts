@@ -5,6 +5,7 @@
 import { join } from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
 import { cliLogger } from "#cli/utils";
+import { isNotFoundError, lstat } from "veryfront/fs";
 
 /** Default patterns always ignored */
 const DEFAULT_IGNORE_PATTERNS: readonly string[] = [
@@ -78,9 +79,24 @@ export async function loadIgnorePatterns(projectPath: string): Promise<string[]>
   const ignorePath = join(projectPath, ".vfignore");
   const patterns = [...DEFAULT_IGNORE_PATTERNS];
 
+  let ignoreInfo;
   try {
-    if (!(await fs.exists(ignorePath))) return patterns;
+    ignoreInfo = await lstat(ignorePath);
+  } catch (error) {
+    if (isNotFoundError(error)) return patterns;
+    cliLogger.debug("Failed to read .vfignore:", error);
+    throw new Error("Failed to read .vfignore. Fix the file permissions or path and try again.", {
+      cause: error,
+    });
+  }
 
+  if (ignoreInfo.isSymlink || !ignoreInfo.isFile) {
+    throw new Error(
+      ".vfignore must be a regular file inside the project and cannot be a symbolic link.",
+    );
+  }
+
+  try {
     const content = await fs.readTextFile(ignorePath);
     const customPatterns = content
       .split("\n")
@@ -90,6 +106,9 @@ export async function loadIgnorePatterns(projectPath: string): Promise<string[]>
     patterns.push(...customPatterns);
   } catch (error) {
     cliLogger.debug("Failed to read .vfignore:", error);
+    throw new Error("Failed to read .vfignore. Fix the file permissions or path and try again.", {
+      cause: error,
+    });
   }
 
   return patterns;

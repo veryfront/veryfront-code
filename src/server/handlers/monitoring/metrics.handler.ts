@@ -1,7 +1,6 @@
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
-import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
-import { snapshotRequestProfiles } from "#veryfront/observability/request-profiler.ts";
+import { metrics, snapshotRequestProfiles } from "#veryfront/observability";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
 import {
   HTTP_INTERNAL_SERVER_ERROR,
@@ -9,6 +8,10 @@ import {
   PRIORITY_HIGH,
 } from "#veryfront/utils/constants/index.ts";
 import { memoryUsage, uptime } from "#veryfront/platform/compat/process.ts";
+import {
+  createLocalControlAccessDeniedResponse,
+  isTrustedLocalControlRequest,
+} from "#veryfront/security/http/local-control-request.ts";
 
 export class MetricsHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -23,6 +26,11 @@ export class MetricsHandler extends BaseHandler {
 
     const { pathname } = new URL(req.url);
     if (pathname !== "/_metrics") return Promise.resolve(this.continue());
+    if (!isTrustedLocalControlRequest(req)) {
+      return Promise.resolve(
+        this.respond(createLocalControlAccessDeniedResponse(req, "Metrics request rejected")),
+      );
+    }
 
     const securityConfig = ctx.securityConfig ?? undefined;
     const corsConfig = ctx.securityConfig?.cors;
@@ -41,7 +49,7 @@ export class MetricsHandler extends BaseHandler {
 
       return Promise.resolve(this.respond(response));
     } catch (e) {
-      this.logWarn("metrics failed", { error: this.getErrorMessage(e) }, ctx);
+      this.logWarn("metrics failed", { error: this.getErrorMessage(e) });
 
       const response = ResponseBuilder.error(
         HTTP_INTERNAL_SERVER_ERROR,

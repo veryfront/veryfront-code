@@ -14,8 +14,10 @@ import {
   getDefaultVeryfrontCloudModel,
   getVeryfrontCloudAuthToken,
   getVeryfrontCloudBootstrap,
+  getVeryfrontCloudHostBootstrap,
   getVeryfrontCloudProjectSlug,
   isVeryfrontCloudEnabled,
+  resolveVeryfrontApiBaseUrlFromHostEnv,
 } from "./resolver.ts";
 
 const CLOUD_ENV_KEYS = [
@@ -125,6 +127,41 @@ describe("platform/cloud/resolver", () => {
     assertEquals(getVeryfrontCloudProjectSlug(), "env-project");
   });
 
+  it("does not pair a scoped endpoint with a host-owned token", () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_host_token");
+
+    runWithVeryfrontCloudContext({ apiBaseUrl: "https://untrusted.example.com" }, () => {
+      assertEquals(getVeryfrontCloudBootstrap().apiBaseUrl, "https://untrusted.example.com");
+      assertEquals(getVeryfrontCloudBootstrap().apiToken, undefined);
+      assertEquals(getVeryfrontCloudAuthToken(), undefined);
+      assertEquals(isVeryfrontCloudEnabled(), false);
+    });
+  });
+
+  it("keeps direct host bootstrap identity isolated from scoped request context", () => {
+    setEnv("VERYFRONT_API_URL", "https://api.veryfront.org");
+    setEnv("VERYFRONT_API_TOKEN", "vf_host_token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "host-project");
+
+    runWithVeryfrontCloudContext(
+      {
+        apiBaseUrl: "https://untrusted.example.com",
+        apiToken: "vf_request_token",
+        projectSlug: "request-project",
+      },
+      () => {
+        assertEquals(getVeryfrontCloudHostBootstrap(), {
+          apiBaseUrl: "https://api.veryfront.org",
+          apiToken: "vf_host_token",
+          projectSlug: "host-project",
+          serviceLayer: undefined,
+          hasRequestContext: false,
+          usesVeryfrontFs: false,
+        });
+      },
+    );
+  });
+
   it("resolves the API base URL from host env without the config bridge", () => {
     const globals = globalThis as Record<string, unknown>;
     const originalBridge = globals.__vfGetApiBaseUrlEnv;
@@ -145,6 +182,20 @@ describe("platform/cloud/resolver", () => {
         globals.__vfGetApiBaseUrlEnv = originalBridge;
       }
     }
+  });
+
+  it("normalizes API base URL host env values", () => {
+    setEnv("VERYFRONT_API_URL", " https://api.staging.veryfront.org/graphql/ ");
+    assertEquals(
+      resolveVeryfrontApiBaseUrlFromHostEnv(),
+      "https://api.staging.veryfront.org/api",
+    );
+
+    setEnv("VERYFRONT_API_BASE_URL", " http://veryfront-api.veryfront-staging.svc/ ");
+    assertEquals(
+      resolveVeryfrontApiBaseUrlFromHostEnv(),
+      "http://veryfront-api.veryfront-staging.svc",
+    );
   });
 
   it("treats scoped cloud context as sufficient runtime context even without projectSlug", () => {

@@ -9,32 +9,43 @@ export function createDefaultInvalidationCallbacks(
 ): InvalidationCallbacks {
   return {
     clearSSRModuleCache: () => {
-      void loadModule<{ clearSSRModuleCache: () => void }>(
+      return loadModule<{ clearSSRModuleCache: () => void }>(
         "#veryfront/modules/react-loader/ssr-module-loader/cache/index.ts",
       ).then((m) => m.clearSSRModuleCache());
     },
     clearModulePathCache: () => {
-      void loadModule<{ clearModulePathCache: () => void }>(
+      return loadModule<{ clearModulePathCache: () => void }>(
         "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts",
       ).then((m) => m.clearModulePathCache());
     },
     invalidateModulePaths: (changedPaths: string[]) => {
-      void loadModule<{ invalidateModulePaths: (changedPaths: string[]) => void }>(
+      return loadModule<{ invalidateModulePaths: (changedPaths: string[]) => void }>(
         "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts",
       ).then((m) => m.invalidateModulePaths(changedPaths));
     },
     clearSSRModuleCacheForProject: (projectId: string) => {
-      void loadModule<{ clearSSRModuleCacheForProject: (projectId: string) => void }>(
+      return loadModule<{ clearSSRModuleCacheForProject: (projectId: string) => void }>(
         "#veryfront/modules/react-loader/ssr-module-loader/cache/index.ts",
       ).then((m) => m.clearSSRModuleCacheForProject(projectId));
     },
-    clearRouterDetectionCacheForProject: (projectId: string) => {
-      void loadModule<{ clearRouterDetectionCacheForProject: (projectId: string) => void }>(
+    clearRouterDetectionCacheForProject: async (projectId: string) => {
+      const module = await loadModule<{
+        clearRouterDetectionCacheForProject: (projectId: string) => void;
+      }>(
         "#veryfront/rendering/router-detection.ts",
-      ).then((m) => m.clearRouterDetectionCacheForProject(projectId));
+      );
+      module.clearRouterDetectionCacheForProject(projectId);
+    },
+    clearProjectDiscoveryCacheForProject: async (projectId: string) => {
+      const module = await loadModule<{
+        clearProjectDiscoveryCacheForProject: (projectId: string) => void;
+      }>(
+        "#veryfront/server/handlers/request/api/project-discovery.ts",
+      );
+      module.clearProjectDiscoveryCacheForProject(projectId);
     },
     clearSnippetCacheForProject: (projectSlug: string) => {
-      void loadModule<{ clearSnippetCacheForProject: (projectSlug: string) => void }>(
+      return loadModule<{ clearSnippetCacheForProject: (projectSlug: string) => void }>(
         "#veryfront/rendering/snippet-renderer.ts",
       ).then((m) => m.clearSnippetCacheForProject(projectSlug));
     },

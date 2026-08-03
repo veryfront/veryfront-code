@@ -5,13 +5,21 @@ export const DEFAULT_TEMPERATURE = AGENT_DEFAULTS.temperature;
 export const MAX_STREAM_BUFFER_SIZE = STREAMING_DEFAULTS.maxBufferSize;
 export const DEFAULT_MAX_STEPS = 20;
 
-/** Max output token limits per model (normalized IDs without `veryfront-cloud/` prefix). */
+/**
+ * Max output token limits per model (normalized IDs without `veryfront-cloud/` prefix).
+ *
+ * MAINTENANCE: This table must be updated whenever a new model is added or an existing
+ * model's limit changes. Models absent from the table fall back to FALLBACK_MODEL_MAX_OUTPUT_TOKENS.
+ */
 const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
   "anthropic/claude-opus-4-8": 128_000,
   "anthropic/claude-opus-4-6": 128_000,
   "anthropic/claude-sonnet-4-6": 64_000,
   "anthropic/claude-haiku-4-5-20251001": 64_000,
   "openai/gpt-5.5": 128_000,
+  "openai/gpt-5.4": 128_000,
+  "openai/gpt-5.4-mini": 128_000,
+  "openai/gpt-5.4-nano": 128_000,
   "openai/gpt-5.2": 128_000,
   "google-ai-studio/gemini-3.1-pro-preview": 65_536,
   "google-ai-studio/gemini-3.5-flash": 65_536,
@@ -20,6 +28,9 @@ const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
   "google-ai-studio/gemini-2.5-pro": 65_536,
   "google-ai-studio/gemini-2.5-flash": 65_536,
   "mistral/mistral-large-2512": 1_024,
+  "moonshotai/kimi-k2": 32_000,
+  "moonshotai/kimi-k2.6": 32_000,
+  "moonshotai/kimi-k2.5": 32_000,
 };
 
 const MODEL_MAX_OUTPUT_TOKEN_ALIASES: Record<string, string> = {
@@ -32,10 +43,18 @@ const MODEL_MAX_OUTPUT_TOKEN_ALIASES: Record<string, string> = {
   "google/gemini-2.5-flash": "google-ai-studio/gemini-2.5-flash",
 };
 
+/**
+ * Conservative fallback max output token limit for models not in MODEL_MAX_OUTPUT_TOKENS.
+ * Using a lower bound prevents unbounded generation on unknown models; update the table
+ * with the actual limit once the model is confirmed.
+ */
+export const FALLBACK_MODEL_MAX_OUTPUT_TOKENS = 4_096;
+
 /** Look up max output tokens for a model, stripping the `veryfront-cloud/` prefix. */
-export function getModelMaxOutputTokens(modelString: string): number | undefined {
+export function getModelMaxOutputTokens(modelString: string): number {
   const normalized = modelString.startsWith("veryfront-cloud/")
     ? modelString.slice("veryfront-cloud/".length)
     : modelString;
-  return MODEL_MAX_OUTPUT_TOKENS[MODEL_MAX_OUTPUT_TOKEN_ALIASES[normalized] ?? normalized];
+  return MODEL_MAX_OUTPUT_TOKENS[MODEL_MAX_OUTPUT_TOKEN_ALIASES[normalized] ?? normalized] ??
+    FALLBACK_MODEL_MAX_OUTPUT_TOKENS;
 }

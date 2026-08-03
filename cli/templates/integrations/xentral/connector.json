@@ -28,7 +28,7 @@
   ],
   "tools": [
     {
-      "id": "list_sales_orders",
+      "id": "xentral__list_sales_orders",
       "name": "List Sales Orders",
       "description": "List sales orders in the Xentral instance with optional filtering and pagination",
       "requiresWrite": false,
@@ -76,7 +76,7 @@
       }
     },
     {
-      "id": "get_sales_order",
+      "id": "xentral__get_sales_order",
       "name": "Get Sales Order",
       "description": "Get a single sales order with its positions and financial details",
       "requiresWrite": false,
@@ -103,7 +103,7 @@
       }
     },
     {
-      "id": "list_products",
+      "id": "xentral__list_products",
       "name": "List Products",
       "description": "List products in the Xentral instance (v2 API) with optional filtering and pagination",
       "requiresWrite": false,
@@ -151,7 +151,7 @@
       }
     },
     {
-      "id": "list_customers",
+      "id": "xentral__list_customers",
       "name": "List Customers",
       "description": "List customers in the Xentral instance (v2 API) with optional filtering and pagination",
       "requiresWrite": false,
@@ -199,7 +199,7 @@
       }
     },
     {
-      "id": "create_sales_order",
+      "id": "xentral__create_sales_order",
       "name": "Create Sales Order",
       "description": "Import a new sales order into Xentral with customer, financials, delivery, and order positions",
       "requiresWrite": true,
@@ -261,7 +261,7 @@
       }
     },
     {
-      "id": "get_product",
+      "id": "xentral__get_product",
       "name": "Get Product",
       "description": "Get a single product with full details (v2 API) after finding it via List Products",
       "requiresWrite": false,
@@ -288,7 +288,7 @@
       }
     },
     {
-      "id": "get_customer",
+      "id": "xentral__get_customer",
       "name": "Get Customer",
       "description": "Get a single customer record with full details including addresses (v2 API) — useful before creating a sales order",
       "requiresWrite": false,

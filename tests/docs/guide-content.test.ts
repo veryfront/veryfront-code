@@ -1,5 +1,6 @@
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { MINIMUM_DENO_VERSION, MINIMUM_NODE_VERSION } from "../../scripts/build/runtime-support.ts";
 
 describe("guide content contracts", () => {
   it("documents the current knowledge ingest JSON result shape", async () => {
@@ -41,6 +42,31 @@ describe("guide content contracts", () => {
     assertEquals(docs.includes("removed OAuth provider exports"), false);
   });
 
+  it("documents source narrowing without conflating it with activation or credentials", async () => {
+    const guide = await Deno.readTextFile("docs/guides/integrations.md");
+
+    assertStringIncludes(guide, "agent source");
+    assertStringIncludes(guide, "integrations.allow");
+    assertStringIncludes(guide, "source-qualified and monotonic");
+    assertStringIncludes(guide, "Project integration policy");
+    assertStringIncludes(guide, "Connection inventory");
+    assertStringIncludes(guide, "Managed OAuth");
+    assertStringIncludes(guide, "cannot\nenable an integration");
+    assertStringIncludes(guide, "`scope`, `perUser`, and\n`tools` fields are rejected");
+  });
+
+  it("documents fail-closed extension activation modes", async () => {
+    const guide = await Deno.readTextFile(
+      "docs/guides/extension-authoring.md",
+    );
+
+    assertStringIncludes(guide, "`veryfront.activation`");
+    assertStringIncludes(guide, '`"auto"` or `"explicit"`');
+    assertStringIncludes(guide, "ignores the installed package until");
+    assertStringIncludes(guide, 'legacy `"auto"`\nbehavior');
+    assertStringIncludes(guide, "malformed activation metadata fails closed");
+  });
+
   it("does not document caller-provided endUserId as tool context authority", async () => {
     const guide = await Deno.readTextFile("docs/guides/tools.md");
 
@@ -52,11 +78,71 @@ describe("guide content contracts", () => {
     );
   });
 
-  it("does not claim deploy prints the production URL", async () => {
+  it("documents the exact-run writer capability migration", async () => {
+    const guide = await Deno.readTextFile(
+      "docs/guides/agent-service-runtime.md",
+    );
+    const reference = await Deno.readTextFile(
+      "docs/api-reference/veryfront/agent.md",
+    );
+
+    assertStringIncludes(guide, "## Migrate custom durable child event writers");
+    assertStringIncludes(guide, "createHostedRunEventWriterCapability");
+    assertStringIncludes(guide, "mintChildRunEventWriterCapability");
+    assertStringIncludes(guide, "runEventWriterCapability: childWriter");
+    assertStringIncludes(guide, "fails before\nprovider dispatch");
+    assertStringIncludes(guide, "must not retry by falling back to a user API token");
+    for (
+      const contract of [
+        "ParsedHostedChatRequest",
+        "PrepareHostedConversationRootRunContextInput",
+        "ExecuteHostedDurableChildForkInput",
+        "DefaultHostedInvokeAgentToolOptions",
+        "ExecuteHostedChildForkWithPreparedToolsInput",
+        "ExecuteHostedChildForkToolInputOptions",
+        "HostedDurableChildForkRunContextInput",
+        "HostedDurableRunStartExecutionInput",
+        "HostedAgentServiceDetachedExecutionInput",
+      ]
+    ) {
+      assertStringIncludes(guide, `\`${contract}\``);
+    }
+    assertStringIncludes(reference, "`HostedRunEventWriterCapability`");
+    assertStringIncludes(reference, "`createHostedRunEventWriterCapability`");
+    assertStringIncludes(
+      reference,
+      "hostedRunEventWriterCapability.mintChildRunEventWriterCapability",
+    );
+    assertStringIncludes(reference, "### `ExecuteHostedDurableChildForkInput`");
+    assertStringIncludes(reference, "### `HostedDurableRunStartExecutionInput`");
+    assertStringIncludes(reference, "### `HostedAgentServiceDetachedExecutionInput`");
+  });
+
+  it("keeps privileged MCP transport limited to deployment-owned exact endpoints", async () => {
+    const guide = await Deno.readTextFile(
+      "docs/guides/agent-service-runtime.md",
+    );
+    const reference = await Deno.readTextFile(
+      "docs/api-reference/veryfront/tool.md",
+    );
+
+    assertStringIncludes(guide, "exact allowed endpoints once at startup");
+    assertStringIncludes(guide, "createRemoteMCPToolSourceFactoryWithTransport");
+    assertStringIncludes(guide, "trustedEndpoints:");
+    assertStringIncludes(guide, "requestFetch: hostFetch");
+    assertStringIncludes(guide, "exact normalized URL match");
+    assertStringIncludes(guide, "resolver-based endpoints retain guarded");
+    assertStringIncludes(guide, "Never put a callback endpoint");
+    assertStringIncludes(
+      reference,
+      "`createRemoteMCPToolSourceFactoryWithTransport`",
+    );
+  });
+
+  it("documents deploy URL output for the first deploy path", async () => {
     const guide = await Deno.readTextFile("docs/guides/deploying.md");
 
-    assertEquals(guide.includes("deploy` prints a URL"), false);
-    assertEquals(guide.includes("CLI prints a production URL"), false);
+    assertStringIncludes(guide, "prints the environment URL");
     assertStringIncludes(guide, "veryfront open");
   });
 
@@ -72,6 +158,119 @@ describe("guide content contracts", () => {
       assertStringIncludes(text, "veryfront serve");
       assertEquals(text.includes("veryfront start"), false);
     }
+  });
+
+  it("documents single-command Deploy for interactive Veryfront Cloud paths", async () => {
+    const docs = [
+      "docs/getting-started/deploy-project.md",
+      "docs/guides/deploying.md",
+    ];
+    const deploy = "npx veryfront deploy";
+
+    for (const path of docs) {
+      const text = await Deno.readTextFile(path);
+
+      assertStringIncludes(text, deploy);
+      assertStringIncludes(text, "It does not write");
+      assertStringIncludes(text, "`veryfront.json`");
+      assertStringIncludes(text, "last verified Push receipt");
+      assertStringIncludes(text, "prints the environment URL");
+    }
+  });
+
+  it("keeps the CI deploy workflow on explicit Push before Deploy", async () => {
+    const guide = await Deno.readTextFile("docs/guides/deploy-from-ci.md");
+    const push = "veryfront push --branch main --prune --yes";
+    const deploy = "veryfront deploy --branch main --env production --yes";
+    const pushIndex = guide.indexOf(push);
+    const deployIndex = guide.indexOf(deploy);
+
+    assert(pushIndex >= 0, "CI guide must document the canonical Push command");
+    assert(deployIndex > pushIndex, "CI guide must document Deploy after Push");
+  });
+
+  it("keeps the CI workflow serialized, auditable, and rollback-safe", async () => {
+    const guide = await Deno.readTextFile("docs/guides/deploy-from-ci.md");
+
+    assertStringIncludes(guide, "same Git checkout and CI job");
+    assertStringIncludes(guide, "cancel-in-progress: false");
+    assertStringIncludes(
+      guide,
+      "repository access and deployment credentials inside",
+    );
+    assertStringIncludes(guide, "similar to a GitOps workflow");
+    assertStringIncludes(guide, "Skipping superseded main commit");
+    assertStringIncludes(guide, "working-directory: apps/storefront");
+    assertStringIncludes(guide, ".veryfront/` in `.gitignore");
+    assertStringIncludes(guide, "commit it to Git");
+    assertStringIncludes(guide, "RUNNER_TEMP");
+    assertStringIncludes(guide, "NDJSON records");
+    assertStringIncludes(guide, "git revert");
+    assertStringIncludes(guide, "Start with staging");
+    assertStringIncludes(guide, "veryfront push --branch main --prune --dry-run");
+    assertStringIncludes(guide, "preserves remote-only files");
+    assertStringIncludes(guide, "does not create a missing project or branch");
+    assertStringIncludes(guide, "veryfront deploy --branch main --env staging --yes");
+    assertStringIncludes(guide, "veryfront open --env staging");
+    assertStringIncludes(guide, "Do not edit or publish directly from Studio `main`");
+    assertStringIncludes(guide, "before anyone starts new Studio work");
+    assertStringIncludes(guide, "supported text files only");
+    assertStringIncludes(guide, "Binary images, fonts, archives");
+    assertEquals(guide.includes("--quiet"), false);
+    assertEquals(guide.includes("--release-name <previous>"), false);
+  });
+
+  it("uses an immutable release for the Studio-to-Git handoff", async () => {
+    const guide = await Deno.readTextFile(
+      "docs/guides/move-studio-changes-to-git.md",
+    );
+
+    assertStringIncludes(guide, "immutable release");
+    assertStringIncludes(guide, "publish it to a non-production environment");
+    assertStringIncludes(guide, "Open the Releases panel in Studio");
+    assertStringIncludes(guide, ".veryfront/` in `.gitignore");
+    assertStringIncludes(
+      guide,
+      'veryfront pull --release "$VERYFRONT_RELEASE" --prune --dry-run',
+    );
+    assertStringIncludes(guide, "Resolve conflicts in Git");
+    assertStringIncludes(guide, "failure can leave a partial Git diff");
+    assertStringIncludes(guide, "BASE_GIT_SHA");
+    assertStringIncludes(guide, "gh pr create");
+    assertStringIncludes(guide, "--base main");
+    assertStringIncludes(guide, "full managed-source snapshot");
+    assertStringIncludes(guide, "does not perform a three-way merge");
+    assertStringIncludes(guide, "Do not edit");
+    assertStringIncludes(guide, "directly from Studio `main`");
+    assertStringIncludes(guide, "before anyone starts another Studio change");
+    assertStringIncludes(guide, "--yes` and `--force` skip");
+    assertStringIncludes(guide, "does not write or delete");
+    assertStringIncludes(guide, "local files");
+    assertStringIncludes(guide, "git merge origin/main");
+    assertEquals(guide.includes("veryfront pull --branch"), false);
+  });
+
+  it("keeps the Pull safety contract in command help", async () => {
+    const help = await Deno.readTextFile("cli/commands/pull/command-help.ts");
+
+    assertStringIncludes(help, "full managed-source snapshot");
+    assertStringIncludes(help, "does not perform a Git merge");
+    assertStringIncludes(help, "--yes and --force skip confirmation only");
+    assertStringIncludes(help, "never writes or deletes local files");
+    assertStringIncludes(help, "preserves remote bytes exactly");
+    assertStringIncludes(help, "symlink-traversing remote paths fail");
+    assertStringIncludes(help, "A fetch failure causes no writes or pruning");
+  });
+
+  it("never recommends exposing a secret to verify environment config", async () => {
+    const guide = await Deno.readTextFile("docs/guides/configuration.md");
+
+    assertStringIncludes(guide, "VERYFRONT_CONFIG_CHECK=enabled");
+    assertStringIncludes(guide, "Never return API tokens");
+    assertEquals(
+      guide.includes('return `getEnv("VERYFRONT_API_TOKEN")`'),
+      false,
+    );
   });
 
   it("documents the MCP session header for post-init tool calls", async () => {
@@ -116,5 +315,30 @@ describe("guide content contracts", () => {
       assertEquals(text.includes("Node.js 18"), false);
       assertEquals(text.includes("Node.js 18+"), false);
     }
+  });
+
+  it("states the supported runtime floors in the getting-started docs", async () => {
+    for (
+      const path of [
+        "docs/getting-started/installation.md",
+        "docs/getting-started/quickstart.md",
+      ]
+    ) {
+      const text = await Deno.readTextFile(path);
+      assertStringIncludes(
+        text,
+        `Node.js ${MINIMUM_NODE_VERSION.replace(/\.0$/, "")} or later`,
+      );
+      assertEquals(text.includes("Node.js 18"), false);
+    }
+
+    const installation = await Deno.readTextFile(
+      "docs/getting-started/installation.md",
+    );
+    assertStringIncludes(
+      installation,
+      `Deno ${MINIMUM_DENO_VERSION.replace(/\.0$/, "")} or later`,
+    );
+    assertEquals(installation.includes("Deno 1.45"), false);
   });
 });

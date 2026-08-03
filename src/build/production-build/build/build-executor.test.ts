@@ -5,8 +5,23 @@ import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { VeryfrontRenderer } from "#veryfront/rendering/index.ts";
 import type { BuildExecutorOptions, BuildResult } from "./build-executor.ts";
+import { executeBuild } from "./build-executor.ts";
+import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  clearReactVersionCache,
+  getDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
 
 const baseConfig: VeryfrontConfig = {};
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    deleteEnv(name);
+  } else {
+    setEnv(name, value);
+  }
+}
 
 function createRenderer(): VeryfrontRenderer {
   return new VeryfrontRenderer({
@@ -149,6 +164,163 @@ describe("BuildExecutor", () => {
       assertEquals(combined.pages, 0);
       assertEquals(combined.totalSize, 0);
       assertEquals(combined.ssgPaths.length, 0);
+    });
+  });
+
+  describe("build-wide dependency snapshot", () => {
+    it("uses one immutable package snapshot across the route fanout", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-build-snapshot-" });
+      const packageJsonPath = `${projectDir}/package.json`;
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      const observed: Array<{
+        cacheKey?: string;
+        dependencies?: Readonly<Record<string, string>>;
+      }> = [];
+
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        clearReactVersionCache();
+        await Deno.writeTextFile(
+          packageJsonPath,
+          JSON.stringify({ dependencies: { react: "18.3.1", lodash: "1.0.0" } }),
+        );
+        const snapshotA = await getDependencyPinningSnapshot(projectDir);
+        const renderer = {
+          renderPage: async (
+            _slug: string,
+            options?: {
+              dependencyPinningCacheKey?: string;
+              dependencyPinningDependencies?: Readonly<Record<string, string>>;
+            },
+          ) => {
+            observed.push({
+              cacheKey: options?.dependencyPinningCacheKey,
+              dependencies: options?.dependencyPinningDependencies,
+            });
+            if (observed.length === 1) {
+              await Deno.writeTextFile(
+                packageJsonPath,
+                JSON.stringify({
+                  dependencies: { react: "19.2.4", lodash: "2.0.0" },
+                }),
+              );
+              const future = new Date(Date.now() + 2_000);
+              await Deno.utime(packageJsonPath, future, future);
+              await getDependencyPinningSnapshot(projectDir);
+            }
+            return {
+              html:
+                '<html><head><script type="importmap">{"imports":{}}</script></head><body></body></html>',
+            };
+          },
+        } as unknown as VeryfrontRenderer;
+
+        await executeBuild(
+          [
+            { slug: "first", path: "/first", file: "pages/first.tsx" },
+            { slug: "second", path: "/second", file: "pages/second.tsx" },
+          ],
+          [],
+          {
+            adapter: createMockAdapter(),
+            projectDir,
+            outputDir: "/output",
+            renderer,
+            config: baseConfig,
+            enablePrefetch: false,
+            chunkManifest: null,
+            baseUrl: "",
+            dryRun: true,
+          },
+        );
+
+        assertEquals(observed.length, 2);
+        assertEquals(
+          observed.every(
+            (value) =>
+              value.cacheKey === snapshotA.cacheKey &&
+              value.dependencies?.lodash === "1.0.0",
+          ),
+          true,
+        );
+        assertEquals(observed[0]?.dependencies, observed[1]?.dependencies);
+        assertEquals(Object.isFrozen(observed[0]?.dependencies), true);
+      } finally {
+        restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+        clearReactVersionCache();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("captures direct executor pins from an adapter-backed project source", async () => {
+      const projectDir = "/virtual/build-project";
+      const packageJsonPath = `${projectDir}/package.json`;
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      const adapter = createMockAdapter();
+      const stableMtime = new Date(1_000);
+      const stat = adapter.fs.stat.bind(adapter.fs);
+      adapter.fs.stat = async (path) => ({
+        ...await stat(path),
+        mtime: stableMtime,
+      });
+      let observedCacheKey: string | undefined;
+      let observedDependencies: Readonly<Record<string, string>> | undefined;
+
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        clearReactVersionCache();
+        await adapter.fs.writeFile(
+          packageJsonPath,
+          JSON.stringify({
+            dependencies: {
+              react: "18.3.1",
+              lodash: "1.0.0",
+            },
+          }),
+        );
+        const renderer = {
+          renderPage: (
+            _slug: string,
+            options?: {
+              dependencyPinningCacheKey?: string;
+              dependencyPinningDependencies?: Readonly<Record<string, string>>;
+            },
+          ) => {
+            observedCacheKey = options?.dependencyPinningCacheKey;
+            observedDependencies = options?.dependencyPinningDependencies;
+            return Promise.resolve({
+              html:
+                '<html><head><script type="importmap">{"imports":{}}</script></head><body></body></html>',
+            });
+          },
+        } as unknown as VeryfrontRenderer;
+
+        await executeBuild(
+          [{ slug: "index", path: "/", file: "pages/index.tsx" }],
+          [],
+          {
+            adapter,
+            projectDir,
+            outputDir: "/output",
+            renderer,
+            config: {
+              react: { version: "19.2.4" },
+            } as VeryfrontConfig,
+            enablePrefetch: false,
+            chunkManifest: null,
+            baseUrl: "",
+            dryRun: true,
+            isLocalProject: false,
+          },
+        );
+
+        assertEquals(observedCacheKey?.startsWith("on:"), true);
+        assertEquals(observedDependencies?.react, "19.2.4");
+        assertEquals(observedDependencies?.lodash, "1.0.0");
+      } finally {
+        restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+        clearReactVersionCache();
+      }
     });
   });
 

@@ -1,12 +1,12 @@
 import { rendererLogger as logger } from "#veryfront/utils";
 import { join } from "#veryfront/compat/path/index.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { getReactUrls } from "#veryfront/transforms/esm/package-registry.ts";
+import { createError, toError } from "#veryfront/errors";
+import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { getReactUrls } from "#veryfront/transforms/esm/react-cdn.ts";
 import {
   REACT_VERSION_17,
   REACT_VERSION_18_2,
-  REACT_VERSION_19_RC,
+  REACT_VERSION_19,
 } from "#veryfront/utils/constants/cdn.ts";
 
 export type ReactVersion = "17" | "18" | "19";
@@ -36,10 +36,28 @@ export const REACT_CONFIGS: Record<ReactVersion, ReactVersionConfig> = {
   },
   "19": {
     version: "19",
-    exact: REACT_VERSION_19_RC,
-    imports: getReactUrls(REACT_VERSION_19_RC),
+    exact: REACT_VERSION_19,
+    imports: getReactUrls(REACT_VERSION_19),
   },
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getImportMap(
+  value: unknown,
+  source: string,
+): Record<string, string> {
+  if (value === undefined) return {};
+  if (
+    !isRecord(value) ||
+    Object.values(value).some((specifier) => typeof specifier !== "string")
+  ) {
+    throw new TypeError(`${source} imports must be an object with string values`);
+  }
+  return value as Record<string, string>;
+}
 
 function getReactConfig(version: ReactVersion): ReactVersionConfig {
   const config = REACT_CONFIGS[version];
@@ -65,21 +83,28 @@ export async function generateReactVersionConfig(
 
   let baseConfig: Record<string, unknown> = {};
   try {
-    baseConfig = JSON.parse(await fs.readTextFile(baseConfigPath));
+    const parsed: unknown = JSON.parse(await fs.readTextFile(baseConfigPath));
+    if (!isRecord(parsed)) {
+      throw new TypeError(`Base config at ${baseConfigPath} must contain a JSON object`);
+    }
+    baseConfig = parsed;
   } catch (error) {
-    logger.warn(`Could not read base config from ${baseConfigPath}`, error);
+    if (!isNotFoundError(error)) throw error;
+    logger.warn(`Base config not found at ${baseConfigPath}; generating without it`);
   }
 
-  const baseImports = (baseConfig.imports as Record<string, string> | undefined) ?? {};
-  const additionalImports = (options.additional?.imports as Record<string, string> | undefined) ??
-    {};
+  const baseImports = getImportMap(baseConfig.imports, `Base config at ${baseConfigPath}`);
+  const additionalImports = getImportMap(
+    options.additional?.imports,
+    "Additional config",
+  );
 
   const versionConfig = {
     ...baseConfig,
     imports: {
       ...baseImports,
-      ...config.imports,
       ...additionalImports,
+      ...config.imports,
     },
   };
 
@@ -108,27 +133,22 @@ export async function detectReactVersionFromConfig(
   const configPath = join(projectDir, "deno.json");
 
   try {
-    const config = JSON.parse(await fs.readTextFile(configPath)) as {
-      imports?: { react?: string };
-    };
-
-    const reactImport = config.imports?.react;
+    const parsed: unknown = JSON.parse(await fs.readTextFile(configPath));
+    if (!isRecord(parsed)) {
+      throw new TypeError(`React config at ${configPath} must contain a JSON object`);
+    }
+    const reactImport = getImportMap(
+      parsed.imports,
+      `React config at ${configPath}`,
+    ).react;
     if (!reactImport) return null;
 
-    for (const [version, versionConfig] of Object.entries(REACT_CONFIGS)) {
-      if (reactImport.includes(`@${versionConfig.exact}`)) {
-        return version as ReactVersion;
-      }
-    }
-
-    if (reactImport.includes("@17")) return "17";
-    if (reactImport.includes("@18")) return "18";
-    if (reactImport.includes("@19")) return "19";
-
-    return null;
+    const match = /(?:^|[/:])react@(\d+)(?=$|[.\-+/?#&:])/u.exec(reactImport);
+    const major = match?.[1];
+    return major === "17" || major === "18" || major === "19" ? major : null;
   } catch (error) {
-    logger.error("Failed to detect React version from config", error);
-    return null;
+    if (isNotFoundError(error)) return null;
+    throw error;
   }
 }
 

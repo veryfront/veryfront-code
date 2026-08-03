@@ -1,9 +1,12 @@
 import { cliLogger } from "#cli/utils";
-import { exitProcess } from "#cli/utils";
+import { INVALID_ARGUMENT, RESOURCE_NOT_FOUND } from "veryfront/errors";
 import { withProjectSourceContext } from "#cli/shared/project-source-context";
 import { agentRegistry } from "../../../src/agent/composition/index.ts";
-import { discoverProjectAgentRuntime } from "../../../src/agent/project/agent-runtime.ts";
-import type { DiscoveryResult } from "../../../src/discovery/types.ts";
+import {
+  discoverProjectAgentRuntime,
+  type ProjectAgentRuntimeDiscovery,
+  runWithProjectAgentRuntime,
+} from "../../../src/agent/project/agent-runtime.ts";
 import { toolRegistry } from "../../../src/tool/registry.ts";
 import type { WorkflowClientConfig } from "../../../src/workflow/api/workflow-client.ts";
 import { sanitizeRunOutputForLogging } from "../../utils/sanitize-run-output.ts";
@@ -135,16 +138,16 @@ export async function runWorkflowCommand(
   dependencies: WorkflowCommandDependencies = {},
 ): Promise<void> {
   if (options.action !== "run") {
-    cliLogger.error(`Unknown workflow action: ${options.action}`);
-    exitProcess(1);
-    return;
+    throw INVALID_ARGUMENT.create({
+      detail: `Unknown workflow action: ${options.action}. Supported actions: run`,
+    });
   }
 
   const workflowId = options.name;
   if (!workflowId) {
-    cliLogger.error("Workflow ID is required. Usage: veryfront workflow run <id>");
-    exitProcess(1);
-    return;
+    throw INVALID_ARGUMENT.create({
+      detail: "Workflow ID is required. Usage: veryfront workflow run <id>",
+    });
   }
 
   let input: Record<string, unknown> = {};
@@ -152,9 +155,9 @@ export async function runWorkflowCommand(
     try {
       input = JSON.parse(options.input);
     } catch {
-      cliLogger.error("Invalid --input JSON");
-      exitProcess(1);
-      return;
+      throw INVALID_ARGUMENT.create({
+        detail: "Invalid --input JSON: must be a valid JSON object",
+      });
     }
   }
 
@@ -162,7 +165,7 @@ export async function runWorkflowCommand(
 
   const discoverRuntime: (
     input: Parameters<typeof discoverProjectAgentRuntime>[0],
-  ) => Promise<DiscoveryResult> = dependencies.discoverProjectAgentRuntime ??
+  ) => Promise<ProjectAgentRuntimeDiscovery> = dependencies.discoverProjectAgentRuntime ??
     discoverProjectAgentRuntime;
 
   await withProjectSourceContext(projectDir, async (context) => {
@@ -194,7 +197,6 @@ export async function runWorkflowCommand(
 
     const workflow = workflows.find((candidate) => candidate.id === workflowId);
     if (!workflow) {
-      cliLogger.error(`Workflow "${workflowId}" not found.`);
       if (discovery.errors.length > 0 && !options.debug) {
         cliLogger.warn("Some workflow files could not be loaded:");
         const errors = discovery.errors.map(formatRuntimeDiscoveryError);
@@ -210,25 +212,22 @@ export async function runWorkflowCommand(
       } else {
         cliLogger.info("No workflows found. Create a workflow file in workflows/.");
       }
-      exitProcess(1);
-      return;
+      throw RESOURCE_NOT_FOUND.create({ detail: `Workflow "${workflowId}" not found.` });
     }
 
-    const client = await createWorkflowClient({ debug: options.debug });
+    await runWithProjectAgentRuntime(discovery, async () => {
+      const client = await createWorkflowClient({ debug: options.debug });
 
-    try {
-      client.register(workflow.definition);
-      cliLogger.info(`Running workflow: ${workflow.id}`);
-      cliLogger.info("");
+      try {
+        client.register(workflow.definition);
+        cliLogger.info(`Running workflow: ${workflow.id}`);
+        cliLogger.info("");
 
-      const handle = await client.start(workflow.id, input);
-      await waitForWorkflowExit(client, handle.runId);
-    } finally {
-      await client.destroy();
-    }
-  }).catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
-    cliLogger.error(message);
-    exitProcess(1);
+        const handle = await client.start(workflow.id, input);
+        await waitForWorkflowExit(client, handle.runId);
+      } finally {
+        await client.destroy();
+      }
+    });
   });
 }

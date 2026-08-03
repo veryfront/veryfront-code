@@ -64,6 +64,27 @@ describe("build/production-build/manifest", () => {
       assertEquals(second.path, "/about");
     });
 
+    it("omits routes that were not generated", () => {
+      const result = generateManifest({
+        ...baseOptions,
+        appRoutes: [
+          {
+            path: "/app-only",
+            pageFile: "app/app-only/page.tsx",
+            segments: ["app-only"],
+            segmentDirs: ["app", "app-only"],
+          },
+        ],
+        stats: {
+          ...baseOptions.stats,
+          pages: 1,
+          ssgPaths: ["/"],
+        },
+      });
+
+      assertEquals(result.routes.map((route) => route.path), ["/"]);
+    });
+
     it("should include appRoutes", () => {
       const result = generateManifest({
         ...baseOptions,

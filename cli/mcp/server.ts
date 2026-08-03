@@ -2,23 +2,27 @@
  * MCP Dev Server
  *
  * Exposes dev server functionality via MCP (Model Context Protocol).
- * Supports both stdio transport (for local editors like Claude Code)
- * and HTTP transport (for remote access).
+ * Supports stdio transport for local editors and loopback HTTP transport for
+ * browser integrations during `veryfront dev`.
  */
 
 import { cwd, readTextFile } from "veryfront/platform";
 import { createHttpServer, type HttpServer } from "veryfront/platform/http";
 import type { StdinReader } from "veryfront/platform";
+import { cliLogger } from "#cli/utils";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { createIssuesManager } from "veryfront/issues";
 import type { ToolListEntry } from "veryfront/mcp";
 import { getErrorCollector, getLogBuffer } from "veryfront/observability";
+import { isRequestBodyTooLargeError, readBodyWithLimit } from "veryfront/security";
 import { zodToJsonSchema } from "veryfront/tool/schema";
 import { allTools, getTool, setServerStartTime } from "./tools.ts";
 import { startStdioJsonRpc } from "./stdio.ts";
 import {
   buildInitializeResult,
   errorResponse,
+  internalError,
+  invalidRequestError,
   JsonRpcError,
   type JSONRPCRequest,
   JSONRPCRequestSchema,
@@ -30,10 +34,28 @@ import {
   ToolsCallParamsSchema,
 } from "./jsonrpc.ts";
 
+const ALLOWED_HTTP_ORIGIN_HOSTS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "[::1]",
+  "veryfront.me",
+]);
+
+function isAllowedHttpOrigin(origin: string): boolean {
+  if (!origin) return true;
+
+  try {
+    const url = new URL(origin);
+    return url.protocol === "http:" && ALLOWED_HTTP_ORIGIN_HOSTS.has(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
 export interface MCPServerConfig {
   /** Enable stdio transport (for Claude Code, Cursor, etc.) */
   stdio?: boolean;
-  /** HTTP port for remote MCP access */
+  /** Loopback HTTP port used by local development integrations. */
   httpPort?: number;
   /** Server name for MCP protocol */
   serverName?: string;
@@ -46,6 +68,7 @@ export class MCPDevServer {
   private running = false;
   private stdinReader: StdinReader | null = null;
   private httpServer: HttpServer | null = null;
+  private httpServePromise: Promise<void> | null = null;
 
   constructor(config: MCPServerConfig = {}) {
     this.config = {
@@ -67,7 +90,9 @@ export class MCPDevServer {
         isRunning: () => this.running,
         parseRequest: (payload) => JSONRPCRequestSchema.parse(payload),
         handleRequest: (request) => this.handleRequest(request),
-        toErrorResponse: (error) => parseError(error),
+        toParseErrorResponse: (error) => parseError(error),
+        toInvalidRequestResponse: (error) => invalidRequestError(error),
+        toErrorResponse: (_error, request) => internalError(request.id),
       });
     }
     if (this.config.httpPort) this.startHTTP(this.config.httpPort);
@@ -79,23 +104,26 @@ export class MCPDevServer {
     this.stdinReader?.releaseLock();
     this.stdinReader = null;
 
-    if (!this.httpServer) return;
-    await this.httpServer.close();
+    const httpServer = this.httpServer;
+    const httpServePromise = this.httpServePromise;
     this.httpServer = null;
+    this.httpServePromise = null;
+
+    if (!httpServer) return;
+    await httpServer.close();
+    await httpServePromise?.catch(() => undefined);
   }
 
   private startHTTP(port: number): void {
-    this.httpServer = createHttpServer();
+    const httpServer = createHttpServer();
+    this.httpServer = httpServer;
 
     const handler = async (req: Request): Promise<Response> => {
       const url = new URL(req.url);
 
       // CORS headers - allow localhost and veryfront dev domains
       const origin = req.headers.get("Origin") ?? "";
-      const isAllowedOrigin = origin === "" ||
-        origin.startsWith("http://localhost") ||
-        origin.startsWith("http://127.0.0.1") ||
-        origin.startsWith("http://veryfront.me");
+      const isAllowedOrigin = isAllowedHttpOrigin(origin);
 
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
@@ -133,16 +161,78 @@ export class MCPDevServer {
         });
       }
 
+      const contentLength = req.headers.get("content-length");
+      if (contentLength && Number(contentLength) > 1_048_576) {
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: null,
+            error: { code: -32600, message: "Request body too large" },
+          }),
+          { status: 413, headers },
+        );
+      }
+
+      let bodyText: string;
       try {
-        const body = JSONRPCRequestSchema.parse(await req.json());
+        bodyText = await readBodyWithLimit(req, 1_048_576);
+      } catch (e) {
+        if (isRequestBodyTooLargeError(e)) {
+          return new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: null,
+              error: { code: -32600, message: "Request body too large" },
+            }),
+            { status: 413, headers },
+          );
+        }
+        return new Response(JSON.stringify(invalidRequestError(e)), {
+          status: 400,
+          headers,
+        });
+      }
+
+      let payload: unknown;
+      try {
+        payload = JSON.parse(bodyText);
+      } catch (error) {
+        return new Response(JSON.stringify(parseError(error)), { status: 400, headers });
+      }
+
+      let body: JSONRPCRequest;
+      try {
+        body = JSONRPCRequestSchema.parse(payload);
+      } catch (error) {
+        return new Response(JSON.stringify(invalidRequestError(error)), {
+          status: 400,
+          headers,
+        });
+      }
+
+      try {
         const response = await this.handleRequest(body);
         return new Response(JSON.stringify(response), { headers });
-      } catch (e) {
-        return new Response(JSON.stringify(parseError(e)), { status: 400, headers });
+      } catch (_error) {
+        return new Response(JSON.stringify(internalError(body.id)), {
+          status: 500,
+          headers,
+        });
       }
     };
 
-    this.httpServer.serve(handler, { port, onListen: () => {} });
+    const servePromise = httpServer.serve(handler, { port, onListen: () => {} });
+    this.httpServePromise = servePromise;
+    void servePromise.catch(() => {
+      if (!this.running) return;
+      cliLogger.warn(
+        `Veryfront could not start the local MCP server on port ${port}. Local MCP tools are disabled for this dev session.`,
+      );
+      if (this.httpServer === httpServer) {
+        this.httpServer = null;
+        this.httpServePromise = null;
+      }
+    });
   }
 
   private handleRequest(request: JSONRPCRequest): Promise<JSONRPCResponse> {
@@ -299,8 +389,8 @@ export class MCPDevServer {
         },
         {
           uri: "veryfront://config",
-          name: "Project Config",
-          description: "Resolved project configuration",
+          name: "Runtime Config",
+          description: "Non-sensitive runtime configuration",
           mimeType: "application/json",
         },
         {
@@ -384,11 +474,23 @@ export class MCPDevServer {
         if (uri === "veryfront://config") {
           const { getEnvironmentConfig } = await import("veryfront/config");
           const config = getEnvironmentConfig();
+          const safeConfig = {
+            nodeEnv: config.nodeEnv,
+            veryfrontEnv: config.veryfrontEnv,
+            veryfrontMode: config.veryfrontMode,
+            proxyMode: config.proxyMode,
+            debug: config.debug,
+            ci: config.ci,
+            denoTesting: config.denoTesting,
+            perfEnabled: config.perfEnabled,
+            experimentalRsc: config.experimentalRsc,
+            port: config.port,
+          };
           return {
             contents: [{
               uri,
               mimeType: "application/json",
-              text: JSON.stringify(config, null, 2),
+              text: JSON.stringify(safeConfig, null, 2),
             }],
           };
         }

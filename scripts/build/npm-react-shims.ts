@@ -5,6 +5,17 @@ const SCHEDULER_ROOT_PREFIX = "scheduler@";
 export function normalizeEsmShReactNpmShims(root: string): number {
   let patchedCount = 0;
 
+  // With react/react-dom mapped straight to the bare npm peers (see the
+  // `./react/*.ts` mappings in build-npm-dnt.ts), dnt no longer downloads any
+  // esm.sh React build into `deps/esm.sh`, so the directory may be absent.
+  // Nothing to normalize in that case.
+  try {
+    Deno.statSync(root);
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return 0;
+    throw error;
+  }
+
   for (const entry of Deno.readDirSync(root)) {
     if (
       entry.isFile && entry.name.startsWith(REACT_ROOT_PREFIX) &&

@@ -4,7 +4,8 @@ import type {
   RewriteContext,
   RewriteResult,
 } from "../types.ts";
-import { normalizeExtension } from "../url-builder.ts";
+import { appendDependencyPinningPathKey, normalizeExtension } from "../url-builder.ts";
+import { getProjectRelativePath } from "../project-paths.ts";
 
 export class AliasStrategy implements ImportRewriteStrategy {
   readonly name = "alias";
@@ -21,9 +22,12 @@ export class AliasStrategy implements ImportRewriteStrategy {
     if (ctx.target === "ssr") {
       let normalizedPath = normalizeExtension(path);
       // Add .js if no extension present
-      if (!/\.(tsx?|jsx?|mjs|cjs|mdx|css|js)$/.test(normalizedPath)) {
+      if (!/\.(tsx?|jsx?|mjs|cjs|mdx|css)$/.test(normalizedPath)) {
         normalizedPath = `${normalizedPath}.js`;
       }
+      // The SSR adapter adds `ssr`, routing, cache-buster, and dependency
+      // snapshot params together after this strategy runs. Keeping this URL
+      // query-free ensures its `.js` matcher still sees the edge.
       return { specifier: `/_vf_modules/${normalizedPath}` };
     }
 
@@ -33,46 +37,34 @@ export class AliasStrategy implements ImportRewriteStrategy {
     // but module path is "_vf_modules/components/elements/Textarea.js").
     if (ctx.moduleServerUrl) {
       let normalizedPath = normalizeExtension(path);
-      if (!/\.(tsx?|jsx?|mjs|cjs|mdx|css|js)$/.test(normalizedPath)) {
+      if (!/\.(tsx?|jsx?|mjs|cjs|mdx|css)$/.test(normalizedPath)) {
         normalizedPath = `${normalizedPath}.js`;
       }
-      return { specifier: `${ctx.moduleServerUrl}/${normalizedPath}` };
+      return {
+        specifier: appendDependencyPinningPathKey(
+          `${ctx.moduleServerUrl}/${normalizedPath}`,
+          ctx.dependencyPinningCacheKey,
+        ),
+      };
     }
 
     // Fallback: Use relative paths when no module server is configured.
     // This is used for local development without a module server.
-    const relativeFilePath = this.getRelativeFilePath(ctx.filePath, ctx.projectDir);
+    const relativeFilePath = getProjectRelativePath(ctx.filePath, ctx.projectDir);
     const fileDir = relativeFilePath.substring(0, relativeFilePath.lastIndexOf("/"));
     const depth = fileDir.split("/").filter(Boolean).length;
 
-    let relativePath = depth === 0 ? `./${path}` : `${"../".repeat(depth)}${path}`;
+    const prefix = depth === 0 ? "./" : "../".repeat(depth);
+    let relativePath = normalizeExtension(`${prefix}${path}`);
 
     if (!/\.(tsx?|jsx?|mjs|cjs|mdx|css)$/.test(relativePath)) {
       relativePath = `${relativePath}.js`;
     }
 
+    // Browser-relative edges inherit the snapshot from the path-scoped parent
+    // module URL. Adding a query token here would create an ambiguous
+    // path+query request at the strict module endpoint.
     return { specifier: relativePath };
-  }
-
-  private getRelativeFilePath(filePath: string, projectDir: string): string {
-    const normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
-
-    if (filePath.startsWith(normalizedProjectDir)) {
-      return filePath.substring(normalizedProjectDir.length + 1);
-    }
-
-    if (!filePath.startsWith("/")) return filePath;
-
-    const pathParts = filePath.split("/");
-    const projectParts = normalizedProjectDir.split("/");
-    const lastProjectPart = projectParts.at(-1);
-    const projectIndex = lastProjectPart ? pathParts.indexOf(lastProjectPart) : -1;
-
-    if (projectIndex >= 0) {
-      return pathParts.slice(projectIndex + 1).join("/");
-    }
-
-    return filePath;
   }
 }
 

@@ -26,6 +26,22 @@ describe("transforms/mdx/esm-module-loader/metadata/extractor", () => {
       assertEquals(extractFrontmatter(code), undefined);
     });
 
+    it("handles URL values without corrupting the colon", () => {
+      // The old key-quoting regex matched `https:` inside the URL value as a
+      // key and corrupted it.  The fix restricts quoting to {/,  positions.
+      const code = `export const frontmatter = { url: "https://example.com" };`;
+      const result = extractFrontmatter(code);
+      assertEquals(result?.url, "https://example.com");
+    });
+
+    it("handles multiple keys with URL values", () => {
+      const code =
+        `export const frontmatter = { title: "Hello", link: "https://example.com/a:b" };`;
+      const result = extractFrontmatter(code);
+      assertEquals(result?.title, "Hello");
+      assertEquals(result?.link, "https://example.com/a:b");
+    });
+
     it("handles export const syntax", () => {
       const code = `export const frontmatter = { draft: true };`;
       const result = extractFrontmatter(code);
@@ -80,6 +96,28 @@ describe("transforms/mdx/esm-module-loader/metadata/extractor", () => {
       const code = `const tags = ["a", "b"];`;
       const result = extractMetadata(code);
       assertEquals(result.tags, ["a", "b"]);
+    });
+
+    it("extracts headings with nested structure (multiple objects)", () => {
+      // Non-greedy [\s\S]*?] stopped at the first ] inside inner arrays.
+      // extractBalancedBlock handles arbitrary nesting.
+      const code = `const headings = [{id:"a",text:"A"},{id:"b",text:"B"}];`;
+      const result = extractMetadata(code);
+      assertEquals(Array.isArray(result.headings), true);
+      assertEquals((result.headings as Array<{ id: string }>).length, 2);
+    });
+
+    it("extracts headings with children arrays (deeply nested)", () => {
+      const code = `const headings = [{id:"h1",children:[{id:"h2"}]}];`;
+      const result = extractMetadata(code);
+      assertEquals(Array.isArray(result.headings), true);
+      assertEquals((result.headings as Array<unknown>).length, 1);
+    });
+
+    it("extracts nested object", () => {
+      const code = `const nested = {section:{items:[1,2]},count:2};`;
+      const result = extractMetadata(code);
+      assertEquals(typeof result.nested, "object");
     });
 
     it("returns empty object when no metadata found", () => {

@@ -9,9 +9,9 @@ import { DEFAULT_DASHBOARD_PORT, rendererLogger } from "#veryfront/utils";
 import { rewriteNpmImports } from "#veryfront/transforms/npm-import-rewrites.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
-import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createError, RENDER_ERROR, toError } from "#veryfront/errors";
 import { flattenRouteParams } from "#veryfront/routing";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { escapeHtml } from "#veryfront/html/html-escape.ts";
 import type {
   ComponentProps,
   EntityInfo,
@@ -23,7 +23,7 @@ import type {
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { computeHash } from "./utils/index.ts";
-import { type HTMLGenerationOptions, wrapInHTMLShell } from "#veryfront/html";
+import { buildImportMapJson, type HTMLGenerationOptions, wrapInHTMLShell } from "#veryfront/html";
 import { extractHTMLMetadata, injectHTMLContent, isFullHTMLDocument } from "#veryfront/html";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
@@ -45,6 +45,9 @@ interface ScriptPageOptions {
   url?: URL;
   props?: ComponentProps;
   nonce?: string;
+  /** Immutable dependency snapshot that owns all browser work for this document. */
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
 }
 
 const ESBUILD_EXTERNALS = [
@@ -88,7 +91,11 @@ async function collectModuleMetadata(
     const error = e instanceof Error ? e : new Error(String(e));
     logger.warn("generateMetadata threw for TS/JS page", error);
 
-    if (error.message.includes("ReferenceError") || error.message.includes("SyntaxError")) {
+    if (error instanceof ReferenceError || error instanceof SyntaxError) {
+      throw error;
+    }
+    // Fallback for cross-realm errors where instanceof checks fail
+    if (error.name === "ReferenceError" || error.name === "SyntaxError") {
       throw error;
     }
     return {};
@@ -109,8 +116,10 @@ function extractHtmlAndMetadata(output: ScriptModuleOutput): {
   }
 
   if (output && typeof output === "object") {
+    // HTML-escape the serialized output: object values may contain user-controlled
+    // strings with markup (e.g. "<script>"), which would otherwise be injected unescaped.
     return {
-      htmlBody: `<pre>${JSON.stringify(output, null, 2)}</pre>`,
+      htmlBody: `<pre>${escapeHtml(JSON.stringify(output, null, 2))}</pre>`,
       outputMetadata: {},
     };
   }
@@ -223,23 +232,46 @@ async function generateFullHtml(
   },
 ): Promise<string> {
   const { mergedFrontmatter, outputMetadata, pageInfo, slug, appComponentPath, options } = context;
+  const hasEnabledDependencySnapshot =
+    options.dependencyPinningCacheKey?.startsWith("on:") === true;
 
   if (isFullHTMLDocument(htmlBody)) {
     const metadata = extractHTMLMetadata(mergedFrontmatter, undefined);
+    const importMapJson = hasEnabledDependencySnapshot
+      ? await buildImportMapJson({
+        projectDir: options.projectDir,
+        config: options.config,
+        moduleServerOrigin: options.url?.origin,
+        dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+        dependencyPinningDependencies: options.dependencyPinningDependencies,
+      })
+      : undefined;
     return injectHTMLContent(htmlBody, "", metadata, {
       mode: options.mode,
       slug,
       devPort: options.config?.dev?.port ?? DEFAULT_DASHBOARD_PORT,
+      pagePath: pageInfo.entity.path,
+      projectDir: options.projectDir,
       nonce: options.nonce,
+      importMapJson,
+      dependencyPinningCacheKey: options.dependencyPinningCacheKey,
     });
   }
 
   const htmlOptions: HTMLGenerationOptions = {
     mode: options.mode as "development" | "production",
     config: options.config,
+    moduleServerOrigin: options.url?.origin,
     nestedLayouts: [],
     appPath: appComponentPath,
     nonce: options.nonce,
+    ...(hasEnabledDependencySnapshot
+      ? {
+        projectDir: options.projectDir,
+        dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+        dependencyPinningDependencies: options.dependencyPinningDependencies,
+      }
+      : {}),
   };
 
   return wrapInHTMLShell(
@@ -383,5 +415,5 @@ async function loadScriptModule(
   const transpiled = await transpileWithEsbuild(source, modulePath, resolveDir);
   logger.debug(`Transpiled ${modulePath}`);
 
-  return importFromTempFile(fs, rewriteNpmImports(transpiled));
+  return importFromTempFile(fs, rewriteNpmImports(transpiled, projectDir));
 }

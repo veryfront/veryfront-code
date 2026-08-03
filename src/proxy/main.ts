@@ -13,41 +13,58 @@
  * - VERYFRONT_SERVER_URL: URL of the production server service
  * - VERYFRONT_PROXY_URL: Optional proxy bind URL (e.g. http://0.0.0.0:8080)
  * - LOCAL_PROJECTS: JSON map of slug → filesystem path (for dev)
- * - CACHE_TYPE: "memory" (default) or "redis"
- * - REDIS_URL: Redis connection URL (required if CACHE_TYPE=redis)
+ * - CACHE_TYPE: "memory" (default) or "extension"
+ * - VERYFRONT_PROXY_EXPECTED_REPLICAS: Minimum proxy replicas required to acknowledge routing changes
+ * - VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET: HMAC secret for Redis routing events and acknowledgements
  * - VERYFRONT_API_INTERNAL_URL: API URL for internal endpoints (falls back to VERYFRONT_PROXY_API_BASE_URL)
  * - VERYFRONT_API_INTERNAL_USER: Basic auth user for internal API
  * - VERYFRONT_API_INTERNAL_PASS: Basic auth pass for internal API
+ * - SHUTDOWN_DRAIN_TIMEOUT_MS: Time to wait for active SSE responses during shutdown
+ * - SHUTDOWN_CLEANUP_TIMEOUT_MS: Total time allowed for post-drain cleanup
  */
 
-import { createProxyHandler, INTERNAL_PROXY_HEADERS, type ProxyConfig } from "./handler.ts";
+import { createProxyHandler, type ProxyConfig } from "./handler.ts";
 import { createCacheFromEnv } from "./cache/index.ts";
-import { isRetryableConnectionError } from "./retry.ts";
+import { acquireExtensionTokenCacheStoreFromEnv } from "./cache/extension-store.ts";
 import {
+  getReplayableRequestBodies,
+  getUpstreamRetryCount,
+  shouldRetryUpstreamRequest,
+} from "./retry.ts";
+import {
+  authorizeWebSocketRequest,
   closeBridgePeer,
   createProxyClientWebSocketUpgradeOptions,
+  getClientWebSocketErrorLogLevel,
   getServerWebSocketErrorLogLevel,
 } from "./websocket-bridge.ts";
 import { register } from "../extensions/contracts.ts";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
+import { ENV_VAR_MISSING, INITIALIZATION_ERROR } from "#veryfront/errors";
 import type { AuthProvider } from "#veryfront/extensions/auth/index.ts";
 import {
   endSpan,
   extractContext,
   initializeOTLPWithApis,
-  injectContext,
   ProxySpanNames,
   shutdownOTLP,
   startServerSpan,
   withContext,
   withSpan,
 } from "./tracing.ts";
+import { settleProxyShutdownHooksOrThrow } from "./shutdown-hooks.ts";
+import {
+  DEFAULT_PROXY_SHUTDOWN_CLEANUP_TIMEOUT_MS,
+  parseProxyShutdownCleanupTimeoutMs,
+  type ProxyShutdownFailure,
+  runProxyShutdownSteps,
+} from "./shutdown-lifecycle.ts";
 import { proxyLogger, runWithProxyRequestContext } from "./logger.ts";
 import { getProxyFailureLogLevel } from "./log-noise.ts";
-import { RendererRouter } from "./renderer-router.ts";
+import { createRendererRouterFromEnvironment } from "./renderer-router.ts";
 import { ServerResolver } from "./server-resolver.ts";
-import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
+import { isProduction } from "#veryfront/platform/environment.ts";
 import { createHttpServer, upgradeWebSocket } from "#veryfront/platform/compat/http/index.ts";
 import { createProxyErrorResponse, jsonErrorResponse } from "./error-response.ts";
 import { handleReleaseAssetRequest, isReleaseAssetPath } from "./asset-handler.ts";
@@ -65,6 +82,26 @@ import {
   withProxyServerTimingHeader,
 } from "./server-timing.ts";
 import { removeStickyCookieFromPublicCacheableResponse } from "./response-headers.ts";
+import {
+  closeProxyServerWithin,
+  createProxyDrainingResponse,
+  parseProxyDrainTimeoutMs,
+  ProxyRequestDrainTracker,
+} from "./request-drain.ts";
+import {
+  handleProxyRoutingInvalidationRequest,
+  PROXY_ROUTING_INVALIDATION_PATH,
+} from "./routing-invalidation.ts";
+import { startProxyRoutingInvalidationBus } from "./routing-invalidation-redis.ts";
+import {
+  captureApplicationError,
+  flushApplicationErrors,
+} from "#veryfront/observability/application-errors.ts";
+import { initializeSentryFromEnv } from "#veryfront/observability/sentry.ts";
+import { getTraceContext } from "./tracing.ts";
+import { createSplitForwardRequestInit } from "./split-forward-request.ts";
+
+await initializeSentryFromEnv("veryfront-proxy");
 
 type AuthJwtExtensionModule = {
   createAuthProvider: (options?: Record<string, unknown>) => AuthProvider;
@@ -102,17 +139,17 @@ function resolveProxyBinding(): { hostname: string; port: number } {
   return { hostname, port };
 }
 
-const PRODUCTION_SERVER_URL = getEnv("VERYFRONT_SERVER_URL") || "http://localhost:3001";
+const serverUrlFromEnv = getEnv("VERYFRONT_SERVER_URL");
+// Fail closed in production: never silently forward to localhost.
+if (!serverUrlFromEnv && isProduction()) {
+  throw ENV_VAR_MISSING.create({
+    detail:
+      "VERYFRONT_SERVER_URL is required in production: refusing to fall back to http://localhost:3001.",
+  });
+}
+const PRODUCTION_SERVER_URL = serverUrlFromEnv || "http://localhost:3001";
 
-const discoveryHost = getEnv("VERYFRONT_SERVER_DISCOVERY_HOST");
-const staticTargets = getEnv("VERYFRONT_SERVER_TARGETS");
-const rendererRouter = (discoveryHost || staticTargets)
-  ? new RendererRouter(
-    discoveryHost || "static-targets",
-    PRODUCTION_SERVER_URL,
-    parseInt(getEnv("VERYFRONT_SERVER_DISCOVERY_INTERVAL_MS") || "15000") || 15_000,
-  )
-  : null;
+const rendererRouter = createRendererRouterFromEnvironment(PRODUCTION_SERVER_URL);
 
 // Dedicated server resolver: routes environments to their dedicated server if assigned
 const apiInternalUrl = getEnv("VERYFRONT_API_INTERNAL_URL") || config.apiBaseUrl;
@@ -124,6 +161,8 @@ const { hostname: HOST, port: PORT } = resolveProxyBinding();
 const WS_CONNECT_TIMEOUT_MS = 30_000;
 // Timeout for forwarding requests to production server (SSR can take time on cold start)
 const DEFAULT_SERVER_REQUEST_TIMEOUT_MS = 90_000;
+const DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS = 25_000;
+const PROXY_SERVER_CLOSE_TIMEOUT_MS = 1_000;
 const VERYFRONT_SERVER_REQUEST_TIMEOUT_MS = parseInt(
   getEnv("VERYFRONT_SERVER_REQUEST_TIMEOUT_MS") || String(DEFAULT_SERVER_REQUEST_TIMEOUT_MS),
 );
@@ -136,32 +175,81 @@ const VERYFRONT_SERVER_RETRY_COUNT = parseInt(
 const VERYFRONT_SERVER_RETRY_DELAY_MS = parseInt(
   getEnv("VERYFRONT_SERVER_RETRY_DELAY_MS") || String(DEFAULT_SERVER_RETRY_DELAY_MS),
 );
+const SHUTDOWN_DRAIN_TIMEOUT_MS = parseProxyDrainTimeoutMs(
+  getEnv("SHUTDOWN_DRAIN_TIMEOUT_MS"),
+  DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS,
+);
+const SHUTDOWN_CLEANUP_TIMEOUT_MS = parseProxyShutdownCleanupTimeoutMs(
+  getEnv("SHUTDOWN_CLEANUP_TIMEOUT_MS"),
+  DEFAULT_PROXY_SHUTDOWN_CLEANUP_TIMEOUT_MS,
+);
+const routingInvalidationSecret = getEnv("VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET") ?? "";
+const routingInvalidationSecretBytes =
+  new TextEncoder().encode(routingInvalidationSecret).byteLength;
+const expectedReplicasRaw = getEnv("VERYFRONT_PROXY_EXPECTED_REPLICAS");
+const expectedReplicas = Number(expectedReplicasRaw);
+const hasValidExpectedReplicas = Number.isInteger(expectedReplicas) && expectedReplicas > 0;
+if (isProduction() && !hasValidExpectedReplicas) {
+  throw new Error("VERYFRONT_PROXY_EXPECTED_REPLICAS must be a positive integer in production");
+}
+if (isProduction() && routingInvalidationSecretBytes < 32) {
+  throw new Error(
+    "VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET must contain at least 32 bytes in production",
+  );
+}
+const proxyRequestDrainTracker = new ProxyRequestDrainTracker();
+let shuttingDown = false;
 
 const { createAuthProvider } = await importFirstPartyExtensionModule<AuthJwtExtensionModule>(
   "ext-auth-jwt",
   "@veryfront/ext-auth-jwt",
 ).catch((error) => {
-  throw new Error(
-    `The Veryfront proxy requires the ext-auth-jwt extension. In npm deployments install @veryfront/ext-auth-jwt alongside veryfront. ${
-      error instanceof Error ? error.message : String(error)
-    }`,
-    { cause: error },
-  );
+  throw INITIALIZATION_ERROR.create({
+    detail:
+      `The Veryfront proxy requires the ext-auth-jwt extension. In npm deployments install @veryfront/ext-auth-jwt alongside veryfront. ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    cause: error,
+  });
 });
 register("AuthProvider", createAuthProvider({}));
 
 // Initialize cache and proxy handler
-const cache = await createCacheFromEnv();
+const extensionStore = await acquireExtensionTokenCacheStoreFromEnv();
+const cache = await createCacheFromEnv({ extensionStore });
+const routingInvalidationLogger = {
+  debug: (msg: string, extra?: Record<string, unknown>) => proxyLogger.debug(msg, extra),
+  info: (msg: string, extra?: Record<string, unknown>) => proxyLogger.info(msg, extra),
+  warn: (msg: string, extra?: Record<string, unknown>) => proxyLogger.warn(msg, extra),
+  error: (msg: string, error?: unknown, extra?: Record<string, unknown>) =>
+    proxyLogger.error(msg, extra ?? {}, error),
+};
 const proxyHandler = createProxyHandler({
   config,
   cache,
-  logger: {
-    debug: (msg, extra) => proxyLogger.debug(msg, extra),
-    info: (msg, extra) => proxyLogger.info(msg, extra),
-    warn: (msg, extra) => proxyLogger.warn(msg, extra),
-    error: (msg, error, extra) => proxyLogger.error(msg, extra ?? {}, error),
-  },
+  logger: routingInvalidationLogger,
 });
+const routingInvalidationBus = await startProxyRoutingInvalidationBus({
+  expectedReplicas: hasValidExpectedReplicas ? expectedReplicas : undefined,
+  integritySecret: routingInvalidationSecret,
+  logger: routingInvalidationLogger,
+  onInvalidate: proxyHandler.invalidateAndConfirmRoutingLookup,
+}).catch((error) => {
+  if (isProduction()) {
+    throw new Error("Proxy routing invalidation bus failed to start", { cause: error });
+  }
+  proxyLogger.error(
+    "Proxy routing invalidation bus failed; TTL recovery remains active",
+    {},
+    error instanceof Error ? error : new Error(String(error)),
+  );
+  return null;
+});
+if (isProduction() && !routingInvalidationBus) {
+  throw new Error(
+    "Proxy routing invalidation bus requires REDIS_URL and a valid VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET in production",
+  );
+}
 
 // Validate configuration on startup
 const missingCredentials = proxyHandler.validateConfig();
@@ -181,12 +269,18 @@ if (Object.keys(proxyHandler.localProjects).length > 0) {
  * Handle WebSocket upgrade requests.
  * Bridges browser WebSocket to server HMR WebSocket endpoint.
  */
-function handleWebSocketUpgrade(req: Request, url: URL): Response {
-  const host = req.headers.get("host") || "";
+async function handleWebSocketUpgrade(req: Request, url: URL): Promise<Response> {
+  const authorization = await authorizeWebSocketRequest(
+    req,
+    url,
+    proxyHandler.processRequest,
+  );
+  if (!authorization.allowed) return createProxyErrorResponse(authorization.error);
 
-  const parsed = parseProjectDomain(host);
-  const scope = parsed.environment === "preview" ? "preview" : "production";
-  const projectSlug = parsed.slug || undefined;
+  const { context } = authorization;
+  const host = context.host;
+  const scope = context.environment;
+  const projectSlug = context.projectSlug;
 
   const serverWsUrl = PRODUCTION_SERVER_URL.replace(/^http/, "ws");
   const safePath = url.pathname.replace(/^\/\/+/, "/");
@@ -199,7 +293,7 @@ function handleWebSocketUpgrade(req: Request, url: URL): Response {
     path: url.pathname,
     projectSlug,
     environment: scope,
-    parsedEnvironment: parsed.environment,
+    parsedEnvironment: context.parsedDomain.environment,
     targetUrl: targetUrl.toString(),
   });
 
@@ -299,8 +393,10 @@ function handleWebSocketUpgrade(req: Request, url: URL): Response {
 
   clientSocket.onerror = (event) => {
     clearConnectTimeout();
-    proxyLogger.error("[WebSocket] Client connection error", {
-      error: event instanceof ErrorEvent ? event.message : "Unknown error",
+    const error = event instanceof ErrorEvent ? event.message : "Unknown error";
+    const logLevel = getClientWebSocketErrorLogLevel(error);
+    proxyLogger[logLevel]("[WebSocket] Client connection error", {
+      error,
     });
   };
 
@@ -360,25 +456,12 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
             env: ctx.environment,
           });
 
-          const newHeaders = new Headers(req.headers);
-          for (const header of INTERNAL_PROXY_HEADERS) newHeaders.delete(header);
-          if (ctx.token) newHeaders.set("x-token", ctx.token);
-          newHeaders.set("x-project-slug", ctx.projectSlug || "");
-          newHeaders.set("x-environment", ctx.environment);
-          newHeaders.set("x-forwarded-host", ctx.host);
-          if (ctx.localPath) newHeaders.set("x-project-path", ctx.localPath);
-          if (ctx.projectId) newHeaders.set("x-project-id", ctx.projectId);
-          if (ctx.releaseId) newHeaders.set("x-release-id", ctx.releaseId);
-          if (ctx.environmentId) newHeaders.set("x-environment-id", ctx.environmentId);
-          if (ctx.branchId) newHeaders.set("x-branch-id", ctx.branchId);
-          if (ctx.branchName) newHeaders.set("x-branch-name", ctx.branchName);
-          newHeaders.delete("host");
-
-          injectContext(newHeaders);
-
-          // Only retry idempotent methods (GET, HEAD, OPTIONS)
-          const isIdempotent = ["GET", "HEAD", "OPTIONS"].includes(req.method);
-          const maxRetries = isIdempotent ? VERYFRONT_SERVER_RETRY_COUNT : 0;
+          const maxRetries = getUpstreamRetryCount(
+            req,
+            url.pathname,
+            VERYFRONT_SERVER_RETRY_COUNT,
+          );
+          const upstreamBodies = getReplayableRequestBodies(req, maxRetries);
           let lastError: Error | null = null;
           // After a retryable connection error to a dedicated server, fall back to shared pool
           let skipDedicated = false;
@@ -429,13 +512,15 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
                   withSpan(
                     ProxySpanNames.HTTP_CLIENT_FETCH,
                     () =>
-                      fetch(serverUrl.toString(), {
-                        method: req.method,
-                        headers: newHeaders,
-                        body: req.body,
-                        redirect: "manual",
-                        signal: abortController.signal,
-                      }),
+                      fetch(
+                        serverUrl.toString(),
+                        createSplitForwardRequestInit(
+                          req,
+                          ctx,
+                          upstreamBodies[attempt] ?? null,
+                          abortController.signal,
+                        ),
+                      ),
                     {
                       "http.method": req.method,
                       "http.url": serverUrl.toString(),
@@ -486,7 +571,10 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
               }
 
               // Check if this is a retryable error and we have retries left
-              if (isRetryableConnectionError(error) && attempt < maxRetries) {
+              if (
+                shouldRetryUpstreamRequest(req, url.pathname, error) &&
+                attempt < maxRetries
+              ) {
                 // If we were targeting a dedicated server, fall back to shared pool on retry
                 if (dedicatedServerUrl) {
                   skipDedicated = true;
@@ -533,12 +621,19 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
       );
     } catch (error) {
       const ms = Math.round(performance.now() - startTime);
+      captureApplicationError(error, {
+        boundary: "proxy.request",
+        method: req.method,
+        ...getTraceContext(),
+      });
       proxyLogger.error(`500 ${req.method} ${url.pathname}`, { ms }, error as Error);
       lifecycle.end(500, error as Error);
       return withProxyTiming(
         jsonErrorResponse(500, {
+          // Real error logged above via proxyLogger.error; keep body generic so
+          // internal hostnames/paths in error.message are not leaked to clients.
           error: "Internal Proxy Error",
-          message: error instanceof Error ? error.message : "Unknown error",
+          message: "Internal Proxy Error",
         }),
       );
     }
@@ -609,8 +704,10 @@ async function handleApiProxy(req: Request, url: URL): Promise<Response> {
     });
   } catch (error) {
     proxyLogger.error("API proxy error", error as Error);
+    // Real error logged above; keep body generic so internal hostnames/paths in
+    // error.message are not leaked to clients.
     return jsonErrorResponse(502, {
-      error: error instanceof Error ? error.message : "API request failed",
+      error: "Bad Gateway",
     });
   }
 }
@@ -618,56 +715,157 @@ async function handleApiProxy(req: Request, url: URL): Promise<Response> {
 /**
  * Main router.
  */
-function router(req: Request): Promise<Response> {
+async function router(req: Request): Promise<Response> {
   const url = new URL(req.url);
 
-  if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
-    return Promise.resolve(handleWebSocketUpgrade(req, url));
+  if (url.pathname === "/_proxy/health") {
+    return Response.json({ service: "veryfront-proxy", status: "ok" });
   }
+  if (shuttingDown) return createProxyDrainingResponse();
 
-  switch (url.pathname) {
-    case "/_proxy/stats":
-      if (Object.keys(proxyHandler.localProjects).length === 0) {
-        return Promise.resolve(new Response("Forbidden", { status: 403 }));
-      }
-      return handleStats();
-    case "/_proxy/health":
-      return Promise.resolve(
-        Response.json({ service: "veryfront-proxy", status: "ok" }),
-      );
+  const requestId = crypto.randomUUID();
+  proxyRequestDrainTracker.start(requestId, req.method, url.pathname);
+
+  try {
+    let response: Response;
+    if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+      response = await handleWebSocketUpgrade(req, url);
+    } else if (url.pathname === PROXY_ROUTING_INVALIDATION_PATH) {
+      response = await handleProxyRoutingInvalidationRequest(req, {
+        publisher: routingInvalidationBus,
+      });
+    } else if (url.pathname === "/_proxy/stats") {
+      response = Object.keys(proxyHandler.localProjects).length === 0
+        ? new Response("Forbidden", { status: 403 })
+        : await handleStats();
+    } else if (url.pathname.startsWith("/_vf/api/")) {
+      response = await handleApiProxy(req, url);
+    } else if (isReleaseAssetPath(url.pathname)) {
+      response = await handleReleaseAssetRequest(req, url, { apiBaseUrl: config.apiBaseUrl }) ??
+        await forwardToServer(req, url);
+    } else {
+      response = await forwardToServer(req, url);
+    }
+
+    return proxyRequestDrainTracker.completeOnResponseEnd(requestId, response);
+  } catch (error) {
+    proxyRequestDrainTracker.complete(requestId);
+    throw error;
   }
-
-  if (url.pathname.startsWith("/_vf/api/")) return handleApiProxy(req, url);
-
-  if (isReleaseAssetPath(url.pathname)) {
-    return handleReleaseAssetRequest(url, { apiBaseUrl: config.apiBaseUrl }).then((res) =>
-      res ?? forwardToServer(req, url)
-    );
-  }
-
-  return forwardToServer(req, url);
 }
 
 // Create server before signal registration so early SIGTERM/SIGINT can close it safely.
 const server = createHttpServer();
 
 // Graceful shutdown
-let shuttingDown = false;
 async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
 
-  proxyLogger.info(`Received ${signal}, shutting down`);
+  proxyLogger.info(`Received ${signal}, initiating graceful shutdown`, {
+    inFlightRequests: proxyRequestDrainTracker.getInFlightCount(),
+    drainTimeoutMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
+    cleanupTimeoutMs: SHUTDOWN_CLEANUP_TIMEOUT_MS,
+  });
+
+  const reportShutdownFailure = ({ step, error, timedOut }: ProxyShutdownFailure): void => {
+    try {
+      captureApplicationError(error, { boundary: `process.shutdown.${step}` });
+    } catch (reportingError) {
+      try {
+        proxyLogger.error(
+          "Failed to capture proxy shutdown error",
+          { step },
+          reportingError,
+        );
+      } catch {
+        // Diagnostics must never skip later cleanup owners.
+      }
+    }
+    try {
+      proxyLogger.error(
+        timedOut ? "Proxy shutdown step timed out" : "Proxy shutdown step failed",
+        { step, timedOut },
+        error,
+      );
+    } catch {
+      // Diagnostics must never skip later cleanup owners.
+    }
+  };
 
   try {
-    await server.close();
-    rendererRouter?.close();
-    serverResolver.close();
-    await proxyHandler.close();
-    await shutdownOTLP();
-    proxyLogger.info("Closed connections");
+    // New requests receive the draining response after shuttingDown is set.
+    // Keep this replica subscribed while already-started responses finish.
+    let drained = false;
+    try {
+      drained = await proxyRequestDrainTracker.waitForDrain(SHUTDOWN_DRAIN_TIMEOUT_MS);
+    } catch (error) {
+      reportShutdownFailure({ step: "request_drain", error, timedOut: false });
+    }
+    if (!drained) {
+      const now = performance.now();
+      proxyLogger.warn("Proxy drain timeout exceeded, forcing shutdown", {
+        remainingRequests: proxyRequestDrainTracker.getInFlightRequests().slice(0, 10).map(
+          ({ requestId, method, path, startTime }) => ({
+            requestId,
+            method,
+            path,
+            elapsedMs: Math.round(now - startTime),
+          }),
+        ),
+      });
+    }
+
+    const cleanupFailures = await runProxyShutdownSteps([
+      {
+        name: "routing_invalidation_bus",
+        run: () => routingInvalidationBus?.close(),
+      },
+      {
+        name: "http_server",
+        run: async () => {
+          const closed = await closeProxyServerWithin(
+            () => server.close(),
+            PROXY_SERVER_CLOSE_TIMEOUT_MS,
+          );
+          if (!closed) {
+            proxyLogger.warn(
+              "Proxy server close timed out; process exit will close remaining connections",
+              { closeTimeoutMs: PROXY_SERVER_CLOSE_TIMEOUT_MS },
+            );
+          }
+        },
+      },
+      { name: "renderer_router", run: () => rendererRouter?.close() },
+      { name: "server_resolver", run: () => serverResolver.close() },
+      { name: "proxy_handler", run: () => proxyHandler.close() },
+      {
+        name: "extension_owners",
+        requires: ["proxy_handler"],
+        run: () => settleProxyShutdownHooksOrThrow(),
+      },
+      { name: "telemetry", run: () => shutdownOTLP() },
+      {
+        name: "application_error_flush",
+        run: async () => {
+          await flushApplicationErrors();
+        },
+      },
+    ], {
+      timeoutMs: SHUTDOWN_CLEANUP_TIMEOUT_MS,
+      onFailure: reportShutdownFailure,
+    });
+    if (cleanupFailures.length === 0) {
+      proxyLogger.info("Closed connections");
+    } else {
+      proxyLogger.warn("Proxy shutdown completed with cleanup failures", {
+        failureCount: cleanupFailures.length,
+      });
+    }
   } catch (error) {
+    captureApplicationError(error, { boundary: "process.shutdown" });
     proxyLogger.error("Error while shutting down proxy", error);
+    await flushApplicationErrors();
   } finally {
     exit(0);
   }
@@ -675,8 +873,9 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
 
 const handleSignal = (signal: "SIGINT" | "SIGTERM"): void => {
   void shutdown(signal).catch((error) => {
+    captureApplicationError(error, { boundary: "process.shutdown" });
     proxyLogger.error("Unhandled shutdown error", { signal }, error);
-    exit(1);
+    void flushApplicationErrors().finally(() => exit(1));
   });
 };
 

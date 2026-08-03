@@ -173,11 +173,6 @@ defineConfig({
         paths: ["workflows"],
       },
     },
-    work: {
-      discovery: {
-        paths: ["work"],
-      },
-    },
     tasks: {
       discovery: {
         paths: ["tasks"],
@@ -190,8 +185,11 @@ defineConfig({
 Notes:
 
 - `paths` are relative to your project root.
-- Defaults are `tools`, `agents`, `skills`, `prompts`, `resources`, `workflows`, `work`, and `tasks`.
+- Defaults are `tools`, `agents`, `skills`, `prompts`, `resources`, `workflows`, and `tasks`.
 - Set `enabled: false` to disable discovery for that primitive.
+- Eval, task, trigger, and workflow definitions with filenames containing
+  `.test.` or `.spec.` are ignored during discovery. Rename production
+  definitions that use those filename segments before upgrading.
 
 ### AI providers and MCP
 
@@ -275,6 +273,7 @@ After editing `veryfront.config.ts`, restart `veryfront dev`. The dev banner
 prints the resolved `title`, output directory, and router mode. Set a
 distinctive `title` and check that the document title in the browser matches.
 
-For environment variables, read them back from a temporary API route. For
-example, return `getEnv("VERYFRONT_API_TOKEN")` from a debug route and remove
-it once you have confirmed the value resolves.
+For environment variables, set a temporary non-secret value such as
+`VERYFRONT_CONFIG_CHECK=enabled` and read that value from a temporary API route.
+Never return API tokens, provider keys, or other secrets from a route. Remove
+the route and temporary value after confirming the configuration resolves.

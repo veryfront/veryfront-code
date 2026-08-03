@@ -19,6 +19,9 @@
  * @module observability/tracing/api-shim
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
+import { runSyncWithContextFallback } from "./context-callback.ts";
+
 // ---------------------------------------------------------------------------
 // Tracing types
 // ---------------------------------------------------------------------------
@@ -26,7 +29,8 @@
 // OTel SDK types `AttributeValue | undefined` on setAttribute/setAttributes so
 // indexed lookups into partial attribute records don't require null-filtering
 // at every call site. Mirror that loose typing here so callers match the SDK.
-export type AttributeValue = string | number | boolean | undefined;
+export type AttributePrimitive = string | number | boolean;
+export type AttributeValue = AttributePrimitive | readonly AttributePrimitive[] | undefined;
 
 export interface Span {
   setAttribute(key: string, value: AttributeValue): Span;
@@ -100,6 +104,17 @@ export interface TextMapPropagator {
   fields(): string[];
 }
 
+export interface ContextAccessor {
+  active(): Context;
+  with<T>(ctx: Context, fn: () => T): T;
+}
+
+export interface ActiveSpanAccessor {
+  getActiveSpan(): Span | undefined;
+  getSpan(ctx: Context): Span | undefined;
+  setSpan?(ctx: Context, span: Span): Context;
+}
+
 // ---------------------------------------------------------------------------
 // Span kind + status constants
 // ---------------------------------------------------------------------------
@@ -144,6 +159,7 @@ export interface Histogram {
 
 export interface ObservableGauge {
   addCallback(callback: (result: ObservableResult) => void): void;
+  removeCallback?(callback: (result: ObservableResult) => void): void;
 }
 
 export interface Meter {
@@ -175,23 +191,31 @@ export interface MetricsAPI {
 // No-op provider (default when ext-observability-opentelemetry is not installed)
 // ---------------------------------------------------------------------------
 
-function createNoopContext(): Context {
-  return {
-    getValue: () => undefined,
-    setValue(_key, _value) {
-      return this;
+function createNoopContext(
+  entries: ReadonlyMap<symbol, unknown> = new Map(),
+): Context {
+  const store = new Map(entries);
+  return Object.freeze({
+    getValue: (key: symbol) => store.get(key),
+    setValue(key: symbol, value: unknown) {
+      const next = new Map(store);
+      next.set(key, value);
+      return createNoopContext(next);
     },
-    deleteValue(_key) {
-      return this;
+    deleteValue(key: symbol) {
+      const next = new Map(store);
+      next.delete(key);
+      return createNoopContext(next);
     },
-  };
+  });
 }
 
-const NOOP_CONTEXT: Context = createNoopContext();
+const EMPTY_TRACE_ID = "00000000000000000000000000000000";
+const EMPTY_SPAN_ID = "0000000000000000";
 
 const NOOP_SPAN_CONTEXT: SpanContext = {
-  traceId: "00000000000000000000000000000000",
-  spanId: "0000000000000000",
+  traceId: EMPTY_TRACE_ID,
+  spanId: EMPTY_SPAN_ID,
   traceFlags: 0,
 };
 
@@ -248,20 +272,223 @@ function createNoopProvider(): TracerProvider {
 // Global provider state
 // ---------------------------------------------------------------------------
 
-let _provider: TracerProvider = createNoopProvider();
-let _providerRevision = 0;
-let _activeContext: Context = NOOP_CONTEXT;
-let _propagator: TextMapPropagator | null = null;
+const ACTIVE_SPAN_CONTEXT_KEY = Symbol.for("veryfront.observability.active_span");
+
+/** Complete provider facade installed into the process-wide telemetry shim. */
+export interface GlobalTelemetryAPIConfig {
+  tracerProvider?: TracerProvider | null;
+  metricsApi?: MetricsAPI | null;
+  contextAccessor?: ContextAccessor | null;
+  activeSpanAccessor?: ActiveSpanAccessor | null;
+  propagator?: TextMapPropagator | null;
+}
+
+/** Opaque ownership identity for one installed telemetry generation. */
+export interface GlobalTelemetryAPIOwner {
+  readonly generation: number;
+  readonly token: symbol;
+}
+
+/** Handle returned by an atomic telemetry API installation. */
+export interface GlobalTelemetryAPIInstallation extends GlobalTelemetryAPIOwner {
+  /** Clear this generation if it is still current. Stale handles return false. */
+  dispose(): boolean;
+}
+
+/** Immutable point-in-time view of the currently installed telemetry facade. */
+export interface GlobalTelemetryAPISnapshot {
+  readonly generation: number;
+  readonly tracerProviderRevision: number;
+  readonly metricsApiRevision: number;
+  readonly tracerProviderInstalled: boolean;
+  readonly tracerProvider: TracerProvider;
+  readonly metricsApi: MetricsAPI | null;
+  readonly contextAccessor: ContextAccessor | null;
+  readonly activeSpanAccessor: ActiveSpanAccessor | null;
+  readonly propagator: TextMapPropagator | null;
+}
+
+interface GlobalTelemetryAPIState extends GlobalTelemetryAPISnapshot {
+  readonly ownerToken: symbol;
+}
+
+function createEmptyTelemetryState(
+  generation = 0,
+  tracerProviderRevision = 0,
+  metricsApiRevision = 0,
+): GlobalTelemetryAPIState {
+  return Object.freeze({
+    generation,
+    tracerProviderRevision,
+    metricsApiRevision,
+    tracerProviderInstalled: false,
+    tracerProvider: createNoopProvider(),
+    metricsApi: null,
+    contextAccessor: null,
+    activeSpanAccessor: null,
+    propagator: null,
+    ownerToken: Symbol("veryfront.telemetry.empty"),
+  });
+}
+
+let telemetryState = createEmptyTelemetryState();
 
 /**
- * Optional accessor for the currently active span. Wired by
- * ext-observability-opentelemetry (via `setGlobalActiveSpanAccessor`) so `trace.getActiveSpan()`
- * and `trace.getSpan()` return the real SDK span once the extension is active.
+ * Async-scoped fallback context used until a real context accessor is installed.
+ *
+ * Async-local storage keeps an activation visible across the awaits of the work
+ * it wraps without leaking into concurrent work, so span attributes recorded
+ * after an await still reach the span that is active for that request.
  */
-let _activeSpanAccessor: {
-  getActiveSpan(): Span | undefined;
-  getSpan(ctx: Context): Span | undefined;
-} | null = null;
+const fallbackContextStorage = new AsyncLocalStorage<Context>();
+let _rootContext: Context = createNoopContext();
+
+function resetFallbackContext(): void {
+  _rootContext = createNoopContext();
+}
+
+function getFallbackContext(): Context {
+  try {
+    return fallbackContextStorage.getStore() ?? _rootContext;
+  } catch (_) {
+    return _rootContext;
+  }
+}
+
+function assertOptionalMethod(
+  value: object | null | undefined,
+  method: string,
+  label: string,
+): void {
+  if (value === null || value === undefined) return;
+  if (typeof (value as Record<string, unknown>)[method] !== "function") {
+    throw new TypeError(`${label} must implement ${method}()`);
+  }
+}
+
+function preReadTelemetryConfig(config: GlobalTelemetryAPIConfig): {
+  tracerProvider: TracerProvider;
+  tracerProviderInstalled: boolean;
+  metricsApi: MetricsAPI | null;
+  contextAccessor: ContextAccessor | null;
+  activeSpanAccessor: ActiveSpanAccessor | null;
+  propagator: TextMapPropagator | null;
+} {
+  // Read every potentially accessor-backed property before mutating global
+  // state. A hostile or partially constructed facade therefore cannot leave
+  // the shim half-installed.
+  const suppliedTracerProvider = config.tracerProvider;
+  const metricsApi = config.metricsApi ?? null;
+  const contextAccessor = config.contextAccessor ?? null;
+  const activeSpanAccessor = config.activeSpanAccessor ?? null;
+  const propagator = config.propagator ?? null;
+
+  assertOptionalMethod(suppliedTracerProvider, "getTracer", "tracerProvider");
+  assertOptionalMethod(metricsApi, "getMeter", "metricsApi");
+  assertOptionalMethod(contextAccessor, "active", "contextAccessor");
+  assertOptionalMethod(contextAccessor, "with", "contextAccessor");
+  assertOptionalMethod(activeSpanAccessor, "getActiveSpan", "activeSpanAccessor");
+  assertOptionalMethod(activeSpanAccessor, "getSpan", "activeSpanAccessor");
+  assertOptionalMethod(propagator, "inject", "propagator");
+  assertOptionalMethod(propagator, "extract", "propagator");
+
+  return {
+    tracerProvider: suppliedTracerProvider ?? createNoopProvider(),
+    tracerProviderInstalled: suppliedTracerProvider !== null &&
+      suppliedTracerProvider !== undefined,
+    metricsApi,
+    contextAccessor,
+    activeSpanAccessor,
+    propagator,
+  };
+}
+
+function installTelemetryState(
+  config: ReturnType<typeof preReadTelemetryConfig>,
+): GlobalTelemetryAPIInstallation {
+  const previous = telemetryState;
+  const generation = previous.generation + 1;
+  const token = Symbol(`veryfront.telemetry.${generation}`);
+  telemetryState = Object.freeze({
+    generation,
+    tracerProviderRevision: previous.tracerProviderRevision + 1,
+    metricsApiRevision: previous.metricsApiRevision + 1,
+    ...config,
+    ownerToken: token,
+  });
+  resetFallbackContext();
+
+  return Object.freeze({
+    generation,
+    token,
+    dispose: () => clearGlobalTelemetryAPI({ generation, token }),
+  });
+}
+
+/** Atomically install one complete telemetry facade and return its owner handle. */
+export function installGlobalTelemetryAPI(
+  config: GlobalTelemetryAPIConfig,
+): GlobalTelemetryAPIInstallation {
+  return installTelemetryState(preReadTelemetryConfig(config));
+}
+
+/** Clear the current generation without allowing stale owners to clobber it. */
+export function clearGlobalTelemetryAPI(owner: GlobalTelemetryAPIOwner): boolean {
+  const current = telemetryState;
+  if (owner.generation !== current.generation || owner.token !== current.ownerToken) {
+    return false;
+  }
+
+  telemetryState = createEmptyTelemetryState(
+    current.generation + 1,
+    current.tracerProviderRevision + 1,
+    current.metricsApiRevision + 1,
+  );
+  resetFallbackContext();
+  return true;
+}
+
+/** Read one internally consistent telemetry facade snapshot. */
+export function getGlobalTelemetryAPISnapshot(): GlobalTelemetryAPISnapshot {
+  const current = telemetryState;
+  return Object.freeze({
+    generation: current.generation,
+    tracerProviderRevision: current.tracerProviderRevision,
+    metricsApiRevision: current.metricsApiRevision,
+    tracerProviderInstalled: current.tracerProviderInstalled,
+    tracerProvider: current.tracerProvider,
+    metricsApi: current.metricsApi,
+    contextAccessor: current.contextAccessor,
+    activeSpanAccessor: current.activeSpanAccessor,
+    propagator: current.propagator,
+  });
+}
+
+function updateTelemetryState(
+  patch: Partial<
+    Pick<
+      GlobalTelemetryAPIState,
+      | "tracerProvider"
+      | "tracerProviderInstalled"
+      | "metricsApi"
+      | "contextAccessor"
+      | "activeSpanAccessor"
+      | "propagator"
+    >
+  >,
+  revisions: { tracer?: boolean; metrics?: boolean } = {},
+): void {
+  const current = telemetryState;
+  telemetryState = Object.freeze({
+    ...current,
+    ...patch,
+    generation: current.generation + 1,
+    tracerProviderRevision: current.tracerProviderRevision + (revisions.tracer ? 1 : 0),
+    metricsApiRevision: current.metricsApiRevision + (revisions.metrics ? 1 : 0),
+    ownerToken: Symbol("veryfront.telemetry.legacy-install"),
+  });
+  resetFallbackContext();
+}
 
 /**
  * Register the real OTel trace API's span accessors. Called by the
@@ -269,9 +496,18 @@ let _activeSpanAccessor: {
  * `trace.getActiveSpan()` / `trace.getSpan()` can return real spans.
  */
 export function setGlobalActiveSpanAccessor(
-  accessor: { getActiveSpan(): Span | undefined; getSpan(ctx: Context): Span | undefined },
+  accessor: ActiveSpanAccessor,
 ): void {
-  _activeSpanAccessor = accessor;
+  updateTelemetryState({ activeSpanAccessor: accessor });
+}
+
+/**
+ * Register the real OTel context API. This lets the shim preserve active span
+ * context across async boundaries once the extension has installed the SDK's
+ * AsyncLocalStorageContextManager.
+ */
+export function setGlobalContextAccessor(accessor: ContextAccessor): void {
+  updateTelemetryState({ contextAccessor: accessor });
 }
 
 /**
@@ -279,16 +515,15 @@ export function setGlobalActiveSpanAccessor(
  * Called from `src/server/bootstrap.ts` after `orchestrateExtensions()` runs.
  */
 export function setGlobalTracerProvider(p: TracerProvider): void {
-  _provider = p;
-  _providerRevision++;
+  updateTelemetryState({ tracerProvider: p, tracerProviderInstalled: true }, { tracer: true });
 }
 
 export function getGlobalTracerProvider(): TracerProvider {
-  return _provider;
+  return telemetryState.tracerProvider;
 }
 
 export function getTracerProviderRevision(): number {
-  return _providerRevision;
+  return telemetryState.tracerProviderRevision;
 }
 
 /**
@@ -296,7 +531,7 @@ export function getTracerProviderRevision(): number {
  * Returns the no-op tracer when ext-observability-opentelemetry is not installed.
  */
 export function getTracer(name: string, version?: string): Tracer {
-  return _provider.getTracer(name, version);
+  return telemetryState.tracerProvider.getTracer(name, version);
 }
 
 // ---------------------------------------------------------------------------
@@ -305,16 +540,24 @@ export function getTracer(name: string, version?: string): Tracer {
 
 export const context = {
   active(): Context {
-    return _activeContext;
+    try {
+      return telemetryState.contextAccessor?.active() ?? getFallbackContext();
+    } catch (_) {
+      return getFallbackContext();
+    }
   },
   with<T>(ctx: Context, fn: () => T): T {
-    const prev = _activeContext;
-    _activeContext = ctx;
-    try {
-      return fn();
-    } finally {
-      _activeContext = prev;
+    const accessor = telemetryState.contextAccessor;
+    if (accessor) {
+      return runSyncWithContextFallback(
+        (callback) => accessor.with(ctx, callback),
+        fn,
+      );
     }
+
+    // run() invokes fn exactly once and propagates its result or failure
+    // unchanged, so application outcomes never depend on activation.
+    return fallbackContextStorage.run(ctx, fn);
   },
   setGlobalContextManager(_mgr: unknown): void {
     // no-op in shim; real SDK sets this via the real OTel API
@@ -327,23 +570,45 @@ export const context = {
 
 export const trace = {
   getTracer(name: string, version?: string): Tracer {
-    return _provider.getTracer(name, version);
+    return telemetryState.tracerProvider.getTracer(name, version);
   },
   setGlobalTracerProvider(p: TracerProvider): void {
-    _provider = p;
-    _providerRevision++;
+    setGlobalTracerProvider(p);
   },
   getGlobalTracerProvider(): TracerProvider {
-    return _provider;
+    return telemetryState.tracerProvider;
   },
   setSpan(ctx: Context, _span: Span): Context {
-    return ctx;
+    try {
+      const spanContext = _span.spanContext();
+      if (spanContext.traceId === EMPTY_TRACE_ID || spanContext.spanId === EMPTY_SPAN_ID) {
+        return ctx;
+      }
+    } catch {
+      // Keep structural test doubles usable even when they omit spanContext().
+    }
+    try {
+      const accessor = telemetryState.activeSpanAccessor;
+      if (accessor?.setSpan) return accessor.setSpan(ctx, _span);
+      return ctx.setValue(ACTIVE_SPAN_CONTEXT_KEY, _span);
+    } catch (_) {
+      return ctx;
+    }
   },
   getSpan(ctx: Context): Span | undefined {
-    return _activeSpanAccessor?.getSpan(ctx);
+    try {
+      return telemetryState.activeSpanAccessor?.getSpan(ctx) ??
+        (ctx.getValue(ACTIVE_SPAN_CONTEXT_KEY) as Span | undefined);
+    } catch (_) {
+      return undefined;
+    }
   },
   getActiveSpan(): Span | undefined {
-    return _activeSpanAccessor?.getActiveSpan();
+    try {
+      return telemetryState.activeSpanAccessor?.getActiveSpan() ?? trace.getSpan(context.active());
+    } catch (_) {
+      return undefined;
+    }
   },
 };
 
@@ -353,15 +618,17 @@ export const trace = {
 
 export const propagation = {
   setGlobalPropagator(p: TextMapPropagator): void {
-    _propagator = p;
+    updateTelemetryState({ propagator: p });
   },
   extract<C>(ctx: Context, carrier: C, getter?: TextMapGetter<C>): Context {
-    if (!_propagator) return ctx;
-    return _propagator.extract(ctx, carrier, getter as TextMapGetter<unknown> | undefined);
+    const propagator = telemetryState.propagator;
+    if (!propagator) return ctx;
+    return propagator.extract(ctx, carrier, getter as TextMapGetter<unknown> | undefined);
   },
   inject<C>(ctx: Context, carrier: C, setter?: TextMapSetter<C>): void {
-    if (!_propagator) return;
-    _propagator.inject(ctx, carrier, setter as TextMapSetter<unknown> | undefined);
+    const propagator = telemetryState.propagator;
+    if (!propagator) return;
+    propagator.inject(ctx, carrier, setter as TextMapSetter<unknown> | undefined);
   },
 };
 
@@ -388,19 +655,22 @@ export const defaultTextMapSetter: TextMapSetter<Record<string, string>> = {
 // Metrics API registry (injected by ext-observability-opentelemetry when active)
 // ---------------------------------------------------------------------------
 
-let _metricsApi: MetricsAPI | null = null;
-
 /**
  * Register the OTel Metrics API (from the SDK).
  * Called by ext-observability-opentelemetry in its setup hook so the metrics subsystem
  * can use `getMeter()` when available.
  */
 export function setGlobalMetricsAPI(api: MetricsAPI): void {
-  _metricsApi = api;
+  updateTelemetryState({ metricsApi: api }, { metrics: true });
 }
 
 export function getGlobalMetricsAPI(): MetricsAPI | null {
-  return _metricsApi;
+  return telemetryState.metricsApi;
+}
+
+/** Monotonic revision used by lazy instruments to detect provider changes. */
+export function getMetricsApiRevision(): number {
+  return telemetryState.metricsApiRevision;
 }
 
 // ---------------------------------------------------------------------------
@@ -408,10 +678,11 @@ export function getGlobalMetricsAPI(): MetricsAPI | null {
 // ---------------------------------------------------------------------------
 
 export function _resetShimForTests(): void {
-  _provider = createNoopProvider();
-  _providerRevision++;
-  _activeContext = NOOP_CONTEXT;
-  _propagator = null;
-  _metricsApi = null;
-  _activeSpanAccessor = null;
+  const current = telemetryState;
+  telemetryState = createEmptyTelemetryState(
+    current.generation + 1,
+    current.tracerProviderRevision + 1,
+    current.metricsApiRevision + 1,
+  );
+  resetFallbackContext();
 }

@@ -5,10 +5,9 @@ import { zodToJsonSchema } from "#veryfront/tool/schema/index.ts";
 import { resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
 import type { MCPServerConfig, ToolListEntry } from "./types.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { CONFIG_INVALID, createError, toError } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
-import type { IntegrationRuntimeConfig } from "#veryfront/integrations/types.ts";
 import { logger as baseLogger } from "#veryfront/utils";
 import { createMCPHTTPHandler } from "./http-transport.ts";
 import { SessionManager } from "./session.ts";
@@ -88,11 +87,21 @@ function pendingRequestKey(requestId: string | number, sessionId?: string): stri
   return JSON.stringify([sessionId ?? null, typeof requestId, requestId]);
 }
 
-/** Configuration used by integration loader. */
-export interface IntegrationLoaderConfig {
-  integrations: Record<string, IntegrationRuntimeConfig | undefined>;
-  apiBaseUrl: string;
-  apiToken?: string;
+/**
+ * Whether an Origin header points at the local loopback interface (any port).
+ * Used as the default Origin allowlist when none is configured.
+ */
+function isLoopbackOrigin(origin: string): boolean {
+  let hostname: string;
+  try {
+    hostname = new URL(origin).hostname;
+  } catch {
+    return false;
+  }
+  return hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]";
 }
 
 const MCP_SUPPORTED_VERSIONS = ["2025-11-25", "2024-11-05"];
@@ -111,8 +120,6 @@ export class MCPServer {
   ] as const;
   private logLevel: typeof MCPServer.LOG_LEVELS[number] = "warning";
   private config: MCPServerConfig;
-  private integrationLoader?: IntegrationLoaderConfig;
-  private integrationsLoaded = false;
   private sessionManager = new SessionManager();
   private taskStore = new TaskStore();
   private pendingTasks = new Map<string, PendingTaskRun>();
@@ -150,17 +157,17 @@ export class MCPServer {
     const auth = (config as { auth?: unknown }).auth;
 
     if (auth === undefined || auth === null) {
-      throw new Error(
-        "MCP auth must be configured. For local dev, pass " +
+      throw CONFIG_INVALID.create({
+        detail: "MCP auth must be configured. For local dev, pass " +
           "{ auth: { type: 'none', allowUnauthenticated: true } } explicitly.",
-      );
+      });
     }
 
     if (typeof auth !== "object") {
-      throw new Error(
-        "MCP auth must be an object. For local dev, pass " +
+      throw CONFIG_INVALID.create({
+        detail: "MCP auth must be an object. For local dev, pass " +
           "{ auth: { type: 'none', allowUnauthenticated: true } } explicitly.",
-      );
+      });
     }
 
     const type = (auth as { type?: unknown }).type;
@@ -168,10 +175,10 @@ export class MCPServer {
     if (type === "none") {
       const allow = (auth as { allowUnauthenticated?: unknown }).allowUnauthenticated;
       if (allow !== true) {
-        throw new Error(
-          "MCP auth type 'none' requires allowUnauthenticated: true to acknowledge " +
+        throw CONFIG_INVALID.create({
+          detail: "MCP auth type 'none' requires allowUnauthenticated: true to acknowledge " +
             "the server will accept all requests.",
-        );
+        });
       }
       return;
     }
@@ -180,11 +187,11 @@ export class MCPServer {
       return;
     }
 
-    throw new Error(
-      `MCP auth type '${String(type)}' is not supported. Use 'bearer' ` +
+    throw CONFIG_INVALID.create({
+      detail: `MCP auth type '${String(type)}' is not supported. Use 'bearer' ` +
         "or { type: 'none', allowUnauthenticated: true } for explicit opt-in to " +
         "unauthenticated traffic.",
-    );
+    });
   }
 
   notifyToolsChanged(): void {
@@ -197,14 +204,6 @@ export class MCPServer {
 
   notifyPromptsChanged(): void {
     this.onNotification?.({ jsonrpc: "2.0", method: "notifications/prompts/list_changed" });
-  }
-
-  /**
-   * Configure API-backed integration tool loading.
-   */
-  setIntegrationLoader(config: IntegrationLoaderConfig): void {
-    this.integrationLoader = config;
-    this.integrationsLoaded = false;
   }
 
   clientSupportsElicitation(mode: "form" | "url", sessionId?: string): boolean {
@@ -331,18 +330,6 @@ export class MCPServer {
   }
 
   private async listTools(_params?: JSONRPCParams): Promise<{ tools: ToolListEntry[] }> {
-    // Sync integration config to API on first tools/list call
-    if (this.integrationLoader && !this.integrationsLoaded) {
-      try {
-        this.integrationsLoaded = await this.loadRemoteIntegrationTools(this.integrationLoader);
-      } catch (error) {
-        // Config sync failed — non-fatal, integration tools from API won't reflect config
-        logger.debug("Failed to sync integration config to API during tools/list", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-
     const registry = getMCPRegistry();
     const tools: ToolListEntry[] = [];
 
@@ -390,6 +377,12 @@ export class MCPServer {
     const tool = registry.tools.get(toolName);
     if (!tool) {
       throw new JsonRpcError(-32602, `Unknown tool: ${toolName}`);
+    }
+
+    // Tools disabled for MCP are hidden from tools/list; reject calls to them
+    // too so a client can't invoke a capability it was never offered.
+    if (tool.mcp?.enabled === false) {
+      throw new JsonRpcError(-32601, `Unknown tool: ${toolName}`);
     }
 
     if (tool.inputSchema && typeof tool.inputSchema.parse === "function") {
@@ -657,6 +650,26 @@ export class MCPServer {
     });
   }
 
+  /**
+   * Emit a `notifications/message` log entry to the connected MCP client,
+   * but only if `level` meets the minimum threshold set via `logging/setLevel`.
+   * This is what makes `this.logLevel` functional rather than a no-op field.
+   */
+  private emitLogNotification(
+    level: typeof MCPServer.LOG_LEVELS[number],
+    message: string,
+    data?: Record<string, unknown>,
+  ): void {
+    const emitIdx = MCPServer.LOG_LEVELS.indexOf(level);
+    const minIdx = MCPServer.LOG_LEVELS.indexOf(this.logLevel);
+    if (emitIdx < minIdx) return;
+    this.onNotification?.({
+      jsonrpc: "2.0",
+      method: "notifications/message",
+      params: { level, logger: "veryfront-mcp", data: { message, ...data } },
+    });
+  }
+
   private setLogLevel(
     params: JSONRPCParams | undefined,
   ): Promise<Record<string, unknown>> {
@@ -724,12 +737,12 @@ export class MCPServer {
     if (!taskId) {
       throw new JsonRpcError(-32602, "taskId is required");
     }
-    const cancelled = this.taskStore.cancel(String(taskId));
-    if (!cancelled) {
+    const id = String(taskId);
+    const task = this.taskStore.get(id);
+    if (!task || !this.taskStore.cancel(id)) {
       throw new JsonRpcError(-32002, `Cannot cancel task: ${taskId}`);
     }
-    this.pendingTasks.get(String(taskId))?.abortController.abort();
-    const task = this.taskStore.get(String(taskId));
+    this.pendingTasks.get(id)?.abortController.abort();
     return Promise.resolve({ ...task });
   }
 
@@ -750,11 +763,7 @@ export class MCPServer {
       handleRequest: (request, context, sessionId) =>
         this.handleRequest(request, context, sessionId),
       extractRequestContext: (request) => this.extractRequestContext(request),
-      isOriginAllowed: (requestOrigin) =>
-        !requestOrigin ||
-        !this.config.cors?.enabled ||
-        !this.config.cors.origins?.length ||
-        this.config.cors.origins.includes(requestOrigin),
+      isOriginAllowed: (requestOrigin) => this.isOriginAllowed(requestOrigin),
       sessionCapabilities: this.sessionCapabilities,
       sessionManager: this.sessionManager,
     });
@@ -771,6 +780,25 @@ export class MCPServer {
     return Object.keys(context).length > 0 ? context : undefined;
   }
 
+  /**
+   * Origin allowlist for the HTTP transport, enforced independently of the CORS
+   * response configuration to defend against DNS-rebinding attacks. Non-browser
+   * clients (no Origin header) are permitted. When explicit origins are
+   * configured they are the allowlist; otherwise only loopback origins are
+   * accepted so a default `auth: "none"` local server is not reachable from an
+   * attacker-controlled page.
+   */
+  private isOriginAllowed(requestOrigin?: string | null): boolean {
+    if (!requestOrigin) return true;
+
+    const configuredOrigins = this.config.cors?.origins;
+    if (configuredOrigins && configuredOrigins.length > 0) {
+      return configuredOrigins.includes(requestOrigin);
+    }
+
+    return isLoopbackOrigin(requestOrigin);
+  }
+
   private async validateAuth(request: Request): Promise<boolean> {
     const auth = this.config.auth;
     if (auth.type === "none") return true;
@@ -778,7 +806,12 @@ export class MCPServer {
     const authHeader = request.headers.get("Authorization");
     if (!authHeader) return false;
 
-    const token = authHeader.replace("Bearer ", "");
+    // Parse strictly: accept only "Bearer <token>" (scheme case-insensitive) and
+    // reject other/no-scheme headers rather than passing a malformed value on.
+    const bearerMatch = /^Bearer\s+(.+)$/i.exec(authHeader.trim());
+    if (!bearerMatch) return false;
+    const token = (bearerMatch[1] ?? "").trim();
+    if (!token) return false;
 
     // When bearer auth is configured without a validate function, reject all requests
     if (!auth.validate) {
@@ -810,36 +843,6 @@ export class MCPServer {
       "Access-Control-Allow-Headers": "Content-Type, Authorization, MCP-Session-Id, X-Project-Id",
       "Vary": "Origin",
     };
-  }
-
-  private async loadRemoteIntegrationTools(config: IntegrationLoaderConfig): Promise<boolean> {
-    const { apiBaseUrl, apiToken } = config;
-    if (!apiToken) return false; // No token means we can't call the API
-
-    const { syncIntegrationConfig } = await import(
-      "../integrations/remote-tools.ts"
-    );
-
-    // Sync config to API — this is the only responsibility of the MCP server path.
-    // Actual tool discovery happens per-request in the agent runtime (getAvailableTools)
-    // and the API's MCP tools/list handler.
-    const integrationConfigs: Record<string, { scope?: string; tools?: string[] }> = {};
-    for (const [name, cfg] of Object.entries(config.integrations)) {
-      integrationConfigs[name] = {
-        scope: cfg?.scope ?? (cfg?.perUser ? "endUser" : "project"),
-        tools: cfg?.tools,
-      };
-    }
-    await syncIntegrationConfig(apiBaseUrl, apiToken, integrationConfigs);
-    try {
-      this.notifyToolsChanged();
-    } catch (error) {
-      // Notification delivery failure is non-fatal — sync already succeeded
-      logger.debug("Failed to notify clients of tools/list_changed after integration sync", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-    return true;
   }
 }
 

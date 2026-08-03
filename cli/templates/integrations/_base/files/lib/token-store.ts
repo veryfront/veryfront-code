@@ -1,289 +1,316 @@
-/********************************************************************************
- * OAuth Token Store
+/**
+ * Shared OAuth token store for generated integrations.
  *
- * Manages OAuth tokens for connected services.
+ * The same store owns authorization state and tokens. This is required for
+ * callbacks and token refresh to work across production workers. Configure a
+ * durable, extension-owned RefreshCapableTokenStore before the first OAuth
+ * request in production. The built-in memory store is for development and test.
  *
- * ## Storage Modes
- *
- * **Development (default)**: In-memory storage - tokens are lost on restart.
- * **Production**: Configure via environment variables:
- *   - DATABASE_URL: Uses database storage (Postgres, SQLite, MySQL)
- *   - KV_REST_API_URL + KV_REST_API_TOKEN: Uses Vercel KV
- *   - REDIS_URL: Uses Redis
- *   - TOKEN_ENCRYPTION_KEY: Enables AES-256-GCM encryption (recommended)
- *
- * ## Security
- *
- * Tokens contain sensitive OAuth credentials. In production:
- * 1. Always use encrypted storage (set TOKEN_ENCRYPTION_KEY)
- * 2. Use HTTPS for all connections
- * 3. Implement proper access control
- * 4. Rotate encryption keys periodically
- *
- * @see lib/token-store-examples.ts for complete production implementations
- ********************************************************************************/
+ * To build that durable store on top of a plain key-value service with
+ * AES-256-GCM encryption at rest, see `encrypted-token-store.ts` (reference
+ * backends live in `token-store-examples.ts`).
+ */
 
-export interface OAuthToken {
-  accessToken: string;
-  refreshToken?: string;
-  expiresAt?: number;
-  tokenType?: string;
-  scope?: string;
+import {
+  MemoryTokenStore,
+  type OAuthTokens,
+  type OAuthTokenSnapshot,
+  type RefreshCapableTokenStore,
+  type StoredOAuthState,
+} from "veryfront/oauth";
+
+export type OAuthToken = OAuthTokens;
+
+/**
+ * Application-facing store used by both Veryfront OAuth handlers and the
+ * generated integration clients.
+ */
+export interface TokenStore extends RefreshCapableTokenStore {
+  getToken(userId: string, serviceId: string): Promise<OAuthToken | null>;
+  setToken(userId: string, serviceId: string, token: OAuthToken): Promise<void>;
+  revokeToken(userId: string, serviceId: string): Promise<void>;
+  isConnected(userId: string, serviceId: string): Promise<boolean>;
 }
 
-export interface TokenStore {
-  getToken(userId: string, service: string): Promise<OAuthToken | null>;
-  setToken(userId: string, service: string, token: OAuthToken): Promise<void>;
-  revokeToken(userId: string, service: string): Promise<void>;
-  isConnected(userId: string, service: string): Promise<boolean>;
+const REQUIRED_STORE_METHODS = [
+  "getTokens",
+  "getTokenSnapshot",
+  "setTokens",
+  "compareAndSetTokens",
+  "withTokenRefreshLock",
+  "clearTokens",
+  "setState",
+  "consumeState",
+] as const;
+const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1_000;
+
+function runtimeMode(): string | undefined {
+  try {
+    if (typeof process !== "undefined" && process.env) return process.env.NODE_ENV;
+  } catch {
+    // Deno exposes the Node-compatible `process` global even when env access
+    // is denied. Preserve the fail-closed mode decision in that runtime.
+    return undefined;
+  }
+  try {
+    return (globalThis as { Deno?: { env?: { get?: (name: string) => string | undefined } } })
+      .Deno?.env?.get?.("NODE_ENV");
+  } catch {
+    return undefined;
+  }
 }
 
-/** Token store configuration for production backends */
-export interface TokenStoreConfig {
-  get: (key: string) => Promise<string | null>;
-  set: (key: string, value: string) => Promise<void>;
-  delete: (key: string) => Promise<void>;
+function allowsProcessLocalStorage(): boolean {
+  const mode = runtimeMode();
+  return mode === "development" || mode === "test";
 }
 
-const AUTO_KEY_STORAGE = "__veryfront_auto_encryption_key__";
-const TOKENS_KEY = "__veryfront_oauth_tokens__";
+function assertRefreshCapableStore(
+  store: RefreshCapableTokenStore,
+): asserts store is RefreshCapableTokenStore {
+  if (!store || typeof store !== "object") {
+    throw new TypeError("OAuth token store must be an object");
+  }
 
-const globalStore = globalThis as Record<string, unknown>;
-
-// ============================================================================
-// Encryption Utilities
-// ============================================================================
-
-export async function encryptToken(token: OAuthToken): Promise<string> {
-  const key = getEncryptionKey();
-  if (!key) return JSON.stringify(token);
-
-  const data = new TextEncoder().encode(JSON.stringify(token));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const rawKey = new Uint8Array(key).buffer;
-
-  const cryptoKey = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt"]);
-  const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, cryptoKey, data);
-
-  const combined = new Uint8Array(iv.length + encrypted.byteLength);
-  combined.set(iv);
-  combined.set(new Uint8Array(encrypted), iv.length);
-
-  return `encrypted:${btoa(String.fromCharCode(...combined))}`;
-}
-
-export async function decryptToken(encrypted: string): Promise<OAuthToken | null> {
-  if (!encrypted.startsWith("encrypted:")) {
-    try {
-      return JSON.parse(encrypted) as OAuthToken;
-    } catch {
-      return null;
+  for (const method of REQUIRED_STORE_METHODS) {
+    if (typeof store[method] !== "function") {
+      throw new TypeError(`OAuth token store must implement ${method}()`);
     }
   }
-
-  const key = getEncryptionKey();
-  if (!key) {
-    console.error("[Token Store] Cannot decrypt: TOKEN_ENCRYPTION_KEY not set");
-    return null;
-  }
-
-  try {
-    const base64 = encrypted.slice("encrypted:".length);
-    const combined = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-
-    const iv = combined.slice(0, 12);
-    const ciphertext = combined.slice(12);
-    const rawKey = new Uint8Array(key).buffer;
-
-    const cryptoKey = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["decrypt"]);
-    const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, cryptoKey, ciphertext);
-
-    return JSON.parse(new TextDecoder().decode(decrypted)) as OAuthToken;
-  } catch {
-    console.error("[Token Store] Decryption failed");
-    return null;
-  }
 }
 
-export function generateEncryptionKey(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
+/**
+ * Add the generated client aliases to a production-grade Veryfront OAuth
+ * store. The adapter delegates every concurrency and state operation to the
+ * supplied store; it never emulates distributed behavior in process memory.
+ */
+export function createTokenStore(store: RefreshCapableTokenStore): TokenStore {
+  assertRefreshCapableStore(store);
 
-function getEnvVar(name: string): string | undefined {
-  if (typeof process !== "undefined") return process.env?.[name];
-  return (globalThis as { Deno?: { env?: { get?: (key: string) => string | undefined } } }).Deno
-    ?.env?.get?.(name);
-}
-
-function hexToKeyBytes(keyHex: string): Uint8Array | null {
-  if (keyHex.length !== 64) {
-    console.error("[Token Store] TOKEN_ENCRYPTION_KEY must be 64 hex characters (32 bytes)");
-    return null;
-  }
-
-  const key = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) {
-    key[i] = parseInt(keyHex.slice(i * 2, i * 2 + 2), 16);
-  }
-  return key;
-}
-
-/** Get encryption key from environment or auto-generate for development */
-function getEncryptionKey(): Uint8Array | null {
-  const keyHex = getEnvVar("TOKEN_ENCRYPTION_KEY");
-  if (keyHex) return hexToKeyBytes(keyHex);
-
-  if (!globalStore[AUTO_KEY_STORAGE]) {
-    globalStore[AUTO_KEY_STORAGE] = generateEncryptionKey();
-  }
-
-  return hexToKeyBytes(globalStore[AUTO_KEY_STORAGE] as string);
-}
-
-// ============================================================================
-// Storage Mode Detection
-// ============================================================================
-
-export type StorageMode = "memory" | "database" | "kv" | "redis" | "custom";
-
-export function getStorageMode(): StorageMode {
-  const env = typeof process !== "undefined"
-    ? process.env
-    : (globalThis as { Deno?: { env?: { toObject?: () => Record<string, string> } } }).Deno?.env
-      ?.toObject?.() ?? {};
-
-  if (env.DATABASE_URL) return "database";
-  if (env.KV_REST_API_URL) return "kv";
-  if (env.REDIS_URL) return "redis";
-  return "memory";
-}
-
-export function isEncryptionEnabled(): boolean {
-  return getEncryptionKey() !== null;
-}
-
-function isProductionRuntime(): boolean {
-  return getEnvVar("NODE_ENV") === "production";
-}
-
-// ============================================================================
-// In-Memory Store (Development)
-// ============================================================================
-
-const tokens = (globalStore[TOKENS_KEY] as Map<string, OAuthToken> | undefined) ??
-  new Map<string, OAuthToken>();
-globalStore[TOKENS_KEY] = tokens;
-
-function getKey(userId: string, service: string): string {
-  return `${userId}:${service}`;
-}
-
-async function isConnected(
-  store: Pick<TokenStore, "getToken">,
-  userId: string,
-  service: string,
-): Promise<boolean> {
-  const token = await store.getToken(userId, service);
-  return !!token && (!token.expiresAt || token.expiresAt > Date.now());
-}
-
-const inMemoryStore: TokenStore = {
-  async getToken(userId: string, service: string): Promise<OAuthToken | null> {
-    return tokens.get(getKey(userId, service)) ?? null;
-  },
-
-  async setToken(userId: string, service: string, token: OAuthToken): Promise<void> {
-    tokens.set(getKey(userId, service), token);
-  },
-
-  async revokeToken(userId: string, service: string): Promise<void> {
-    tokens.delete(getKey(userId, service));
-  },
-
-  async isConnected(userId: string, service: string): Promise<boolean> {
-    return isConnected(this, userId, service);
-  },
-};
-
-// ============================================================================
-// Token Store Factory
-// ============================================================================
-
-export function createTokenStore(config: TokenStoreConfig): TokenStore {
   return {
-    async getToken(userId: string, service: string): Promise<OAuthToken | null> {
-      const data = await config.get(getKey(userId, service));
-      if (!data) return null;
-      return decryptToken(data);
+    getTokens(serviceId: string, userId: string): Promise<OAuthTokens | null> {
+      return store.getTokens(serviceId, userId);
     },
 
-    async setToken(userId: string, service: string, token: OAuthToken): Promise<void> {
-      await config.set(getKey(userId, service), await encryptToken(token));
+    getTokenSnapshot(
+      serviceId: string,
+      userId: string,
+    ): Promise<OAuthTokenSnapshot | null> {
+      return store.getTokenSnapshot(serviceId, userId);
     },
 
-    async revokeToken(userId: string, service: string): Promise<void> {
-      await config.delete(getKey(userId, service));
+    setTokens(serviceId: string, userId: string, tokens: OAuthTokens): Promise<void> {
+      return store.setTokens(serviceId, userId, tokens);
     },
 
-    async isConnected(userId: string, service: string): Promise<boolean> {
-      return isConnected(this, userId, service);
+    compareAndSetTokens(
+      serviceId: string,
+      userId: string,
+      expectedRevision: string,
+      tokens: OAuthTokens,
+    ): Promise<boolean> {
+      return store.compareAndSetTokens(serviceId, userId, expectedRevision, tokens);
+    },
+
+    withTokenRefreshLock<T>(
+      serviceId: string,
+      userId: string,
+      operation: () => Promise<T>,
+    ): Promise<T> {
+      return store.withTokenRefreshLock(serviceId, userId, operation);
+    },
+
+    clearTokens(serviceId: string, userId: string): Promise<void> {
+      return store.clearTokens(serviceId, userId);
+    },
+
+    setState(state: string, metadata: StoredOAuthState): Promise<void> {
+      return store.setState(state, metadata);
+    },
+
+    consumeState(state: string): Promise<StoredOAuthState | null> {
+      return store.consumeState(state);
+    },
+
+    getToken(userId: string, serviceId: string): Promise<OAuthToken | null> {
+      return store.getTokens(serviceId, userId);
+    },
+
+    setToken(userId: string, serviceId: string, token: OAuthToken): Promise<void> {
+      return store.setTokens(serviceId, userId, token);
+    },
+
+    revokeToken(userId: string, serviceId: string): Promise<void> {
+      return store.clearTokens(serviceId, userId);
+    },
+
+    async isConnected(userId: string, serviceId: string): Promise<boolean> {
+      const token = await store.getTokens(serviceId, userId);
+      return !!token && (token.expiresAt === undefined || token.expiresAt > Date.now());
     },
   };
 }
 
-// ============================================================================
-// Default Export (Auto-detects environment)
-// ============================================================================
+function unexpiredAccessToken(token: OAuthToken, now = Date.now()): string | null {
+  return token.expiresAt === undefined || now < token.expiresAt ? token.accessToken : null;
+}
 
-export function createDefaultTokenStore(): TokenStore {
-  if (isProductionRuntime()) {
+/**
+ * Resolve an access token, refreshing it under the store's distributed lock.
+ * Revisioned compare-and-set prevents a refresh from overwriting a concurrent
+ * reconnect or revocation that did not participate in the refresh lock.
+ */
+export async function getRefreshableAccessToken(
+  store: TokenStore,
+  serviceId: string,
+  userId: string,
+  refresh: (refreshToken: string) => Promise<OAuthToken>,
+): Promise<string | null> {
+  const initial = await store.getTokenSnapshot(serviceId, userId);
+  if (!initial) return null;
+
+  const initialToken = initial.tokens;
+  const now = Date.now();
+  if (
+    initialToken.expiresAt === undefined ||
+    now < initialToken.expiresAt - TOKEN_REFRESH_BUFFER_MS
+  ) {
+    return initialToken.accessToken;
+  }
+  if (!initialToken.refreshToken) return unexpiredAccessToken(initialToken, now);
+
+  return await store.withTokenRefreshLock(serviceId, userId, async () => {
+    // Another worker may have refreshed this slot while this caller waited.
+    const current = await store.getTokenSnapshot(serviceId, userId);
+    if (!current) return null;
+
+    const token = current.tokens;
+    const lockedNow = Date.now();
+    if (
+      token.expiresAt === undefined ||
+      lockedNow < token.expiresAt - TOKEN_REFRESH_BUFFER_MS
+    ) {
+      return token.accessToken;
+    }
+    if (!token.refreshToken) return unexpiredAccessToken(token, lockedNow);
+
+    let refreshed: OAuthToken;
+    try {
+      refreshed = await refresh(token.refreshToken);
+    } catch {
+      // A provider failure must not unconditionally delete a row that may
+      // have been replaced by a concurrent reconnect outside the lock.
+      const latest = await store.getTokens(serviceId, userId);
+      return latest ? unexpiredAccessToken(latest) : null;
+    }
+
+    if (refreshed.refreshToken === undefined) {
+      refreshed = { ...refreshed, refreshToken: token.refreshToken };
+    }
+
+    const replaced = await store.compareAndSetTokens(
+      serviceId,
+      userId,
+      current.revision,
+      refreshed,
+    );
+    if (replaced) return refreshed.accessToken;
+
+    const latest = await store.getTokens(serviceId, userId);
+    return latest ? unexpiredAccessToken(latest) : null;
+  });
+}
+
+let configuredTokenStore: TokenStore | null = null;
+let defaultTokenStore: TokenStore | null = null;
+
+/**
+ * Configure the shared production store before the first OAuth request.
+ *
+ * Production stores must persist state and tokens across workers, implement
+ * atomic compare-and-set, and use a bounded, crash-recoverable distributed
+ * lease for withTokenRefreshLock(). Storage extensions are responsible for
+ * encryption and backend-specific concurrency guarantees.
+ */
+export function configureTokenStore(store: RefreshCapableTokenStore): void {
+  if (configuredTokenStore || defaultTokenStore) {
+    throw new Error("OAuth token store must be configured exactly once before first use");
+  }
+  if (!allowsProcessLocalStorage() && store instanceof MemoryTokenStore) {
     throw new Error(
-      "In-memory token storage is not allowed in production. " +
-        "Configure DATABASE_URL, KV_REST_API_URL, or REDIS_URL and wire a durable store from " +
-        "lib/token-store-examples.ts.",
+      "MemoryTokenStore is allowed only when NODE_ENV is explicitly development or test",
+    );
+  }
+  configuredTokenStore = createTokenStore(store);
+}
+
+/** Resolve the development default without doing work during module import. */
+export function createDefaultTokenStore(): TokenStore {
+  if (!allowsProcessLocalStorage()) {
+    throw new Error(
+      "OAuth token storage is not configured. The in-memory default is allowed " +
+        "only when NODE_ENV is explicitly development or test. " +
+        "Configure an extension-owned RefreshCapableTokenStore with " +
+        "configureTokenStore() before the first OAuth request.",
     );
   }
 
-  // The starter keeps the development store explicit. Production adapters in
-  // token-store-examples.ts require provider-specific clients and credentials.
-  return inMemoryStore;
+  console.warn(
+    "[Token Store] Using development-only in-memory OAuth storage. " +
+      "State and tokens will be lost on restart.",
+  );
+  return createTokenStore(new MemoryTokenStore());
 }
 
-let defaultTokenStore: TokenStore | null = null;
-
 function getDefaultTokenStore(): TokenStore {
-  defaultTokenStore ??= createDefaultTokenStore();
+  defaultTokenStore ??= configuredTokenStore ?? createDefaultTokenStore();
   return defaultTokenStore;
 }
 
+/**
+ * Lazy proxy shared by every generated OAuth route and integration client.
+ * Importing a route never initializes storage or throws.
+ */
 export const tokenStore: TokenStore = {
-  getToken(userId: string, service: string): Promise<OAuthToken | null> {
-    return getDefaultTokenStore().getToken(userId, service);
+  getTokens(serviceId, userId) {
+    return getDefaultTokenStore().getTokens(serviceId, userId);
   },
-
-  setToken(userId: string, service: string, token: OAuthToken): Promise<void> {
-    return getDefaultTokenStore().setToken(userId, service, token);
+  getTokenSnapshot(serviceId, userId) {
+    return getDefaultTokenStore().getTokenSnapshot(serviceId, userId);
   },
-
-  revokeToken(userId: string, service: string): Promise<void> {
-    return getDefaultTokenStore().revokeToken(userId, service);
+  setTokens(serviceId, userId, tokens) {
+    return getDefaultTokenStore().setTokens(serviceId, userId, tokens);
   },
-
-  isConnected(userId: string, service: string): Promise<boolean> {
-    return getDefaultTokenStore().isConnected(userId, service);
+  compareAndSetTokens(serviceId, userId, expectedRevision, tokens) {
+    return getDefaultTokenStore().compareAndSetTokens(
+      serviceId,
+      userId,
+      expectedRevision,
+      tokens,
+    );
+  },
+  withTokenRefreshLock(serviceId, userId, operation) {
+    return getDefaultTokenStore().withTokenRefreshLock(serviceId, userId, operation);
+  },
+  clearTokens(serviceId, userId) {
+    return getDefaultTokenStore().clearTokens(serviceId, userId);
+  },
+  setState(state, metadata) {
+    return getDefaultTokenStore().setState(state, metadata);
+  },
+  consumeState(state) {
+    return getDefaultTokenStore().consumeState(state);
+  },
+  getToken(userId, serviceId) {
+    return getDefaultTokenStore().getToken(userId, serviceId);
+  },
+  setToken(userId, serviceId, token) {
+    return getDefaultTokenStore().setToken(userId, serviceId, token);
+  },
+  revokeToken(userId, serviceId) {
+    return getDefaultTokenStore().revokeToken(userId, serviceId);
+  },
+  isConnected(userId, serviceId) {
+    return getDefaultTokenStore().isConnected(userId, serviceId);
   },
 };
-
-if (
-  !isProductionRuntime() &&
-  getStorageMode() === "memory"
-) {
-  console.warn(
-    "[Token Store] Using in-memory storage (development mode). " +
-      "Tokens will be lost on restart. " +
-      "Set DATABASE_URL, KV_REST_API_URL, or REDIS_URL for production.",
-  );
-}

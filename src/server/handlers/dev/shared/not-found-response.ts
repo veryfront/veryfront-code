@@ -1,5 +1,4 @@
-import { PAGE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
-import { createErrorResponse } from "#veryfront/errors/http-error.ts";
+import { createErrorResponse, PAGE_NOT_FOUND } from "#veryfront/errors";
 
 export function createDevNotFoundResponse(): Response {
   const error = PAGE_NOT_FOUND.create({

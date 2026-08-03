@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { searchIssues } from "../../lib/linear-client.ts";
+import { searchIssues } from "../lib/linear-client.ts";
 
 export default tool({
-  id: "search-issues",
+  id: "linear-search-issues",
   description:
     "Search for Linear issues by title or description. Returns matching issues with their details including status, assignee, and team.",
   inputSchema: defineSchema((v) => v.object({

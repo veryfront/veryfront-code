@@ -19,7 +19,7 @@ export {
   registerModelProvider,
   resolveModel,
 } from "./model-registry.ts";
-export type { ModelProviderFactory } from "./model-registry.ts";
+export type { ModelProviderFactory, ModelProviderRegistrationDisposer } from "./model-registry.ts";
 export type { ModelRuntime } from "./types.ts";
 export {
   getCurrentVeryfrontCloudContext,
@@ -30,7 +30,7 @@ export {
 export type { VeryfrontCloudContext } from "./veryfront-cloud/context.ts";
 export { getVeryfrontCloudBootstrap } from "../platform/cloud/resolver.ts";
 export type { VeryfrontCloudBootstrap } from "../platform/cloud/resolver.ts";
-export type { VeryfrontCloudProviderId } from "./veryfront-cloud/shared.ts";
+export type { VeryfrontCloudProviderId } from "./veryfront-cloud/model-catalog.ts";
 export {
   DEFAULT_VERYFRONT_CLOUD_MODEL_ID,
   findVeryfrontCloudModel,

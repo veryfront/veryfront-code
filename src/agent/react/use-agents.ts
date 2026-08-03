@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import { INPUT_VALIDATION_FAILED } from "#veryfront/errors/error-registry/general.ts";
+import { NETWORK_ERROR } from "#veryfront/errors/error-registry/server.ts";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import { type AgentMetadata, normalizeAgentMetadata } from "./use-agent-metadata.ts";
 
@@ -32,7 +34,9 @@ function isRecord(value: unknown): value is RecordValue {
 /** Normalize the wire response from `GET /api/agents`. */
 export function normalizeAgentsListResponse(value: unknown): AgentMetadata[] {
   if (!isRecord(value) || !Array.isArray(value.agents)) {
-    throw new Error("Invalid agents list response: agents must be an array");
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: "Invalid agents list response: agents must be an array",
+    });
   }
   return value.agents.map(normalizeAgentMetadata);
 }
@@ -78,7 +82,7 @@ export function useAgents(options: UseAgentsOptions = {}): UseAgentsResult {
         });
 
         if (!response.ok) {
-          throw new Error(`Agents list request failed: ${response.status}`);
+          throw NETWORK_ERROR.create({ detail: `Agents list request failed: ${response.status}` });
         }
 
         setAgents(normalizeAgentsListResponse(await response.json()));

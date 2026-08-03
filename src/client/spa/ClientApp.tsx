@@ -1,21 +1,28 @@
-import { type ComponentType, Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { type Router, RouterProvider } from "veryfront/router";
+import {
+  Component,
+  type ComponentType,
+  type ErrorInfo,
+  type ReactElement,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { RouterProvider, type RouterValue } from "veryfront/router";
 import { PageContextProvider, type PageContextValue } from "veryfront/context";
 import { type LayoutInfo, LayoutShell } from "./LayoutShell.tsx";
 import { getCachedComponent, loadComponent, preloadComponent } from "./component-loader.ts";
-import { PAGE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
+import { type PageDataResponse, snapshotPageData } from "./page-data.ts";
+import {
+  INPUT_VALIDATION_FAILED,
+  LAYOUT_NOT_FOUND,
+  PAGE_NOT_FOUND,
+  RENDER_ERROR,
+} from "#veryfront/errors/error-registry.ts";
 
-export interface PageDataResponse {
-  slug: string;
-  pagePath: string;
-  pageType: "mdx" | "md" | "tsx" | "jsx" | "ts" | "js";
-  layouts: LayoutInfo[];
-  providers: string[];
-  frontmatter: Record<string, unknown>;
-  props: Record<string, unknown>;
-  params: Record<string, string | string[]>;
-  layoutProps: Record<string, Record<string, unknown>>;
-}
+export type { PageDataResponse } from "./page-data.ts";
 
 type PageComponentProps = { params?: Record<string, string | string[]>; [key: string]: unknown };
 type PageComponentType = ComponentType<PageComponentProps>;
@@ -30,22 +37,114 @@ interface ClientAppState {
   frontmatter: Record<string, unknown>;
   isNavigating: boolean;
   error: Error | null;
+  renderVersion: number;
 }
 
 interface ClientAppProps {
   initialData: PageDataResponse;
 }
 
-declare global {
-  interface Window {
-    __VERYFRONT_SPA_NAVIGATE__?: (data: PageDataResponse) => Promise<void>;
-    veryFrontRouter?: {
-      registerNavigationHandler?: (handler: (data: PageDataResponse) => Promise<void>) => void;
+interface ClientRouterBridge {
+  navigate?: (url: string, push?: boolean) => Promise<void>;
+  registerNavigationHandler?: (
+    handler: (data: PageDataResponse) => Promise<void>,
+  ) => void | (() => void);
+}
+
+const clientGlobal = globalThis as typeof globalThis & {
+  __VERYFRONT_SPA_NAVIGATE__?: (data: PageDataResponse) => Promise<void>;
+  veryFrontRouter?: ClientRouterBridge;
+};
+
+type SpaNavigationHandler = (data: PageDataResponse) => Promise<void>;
+interface GlobalNavigationRegistration {
+  handler: SpaNavigationHandler;
+}
+
+interface GlobalNavigationRegistry {
+  registrations: GlobalNavigationRegistration[];
+  fallbackHandler?: SpaNavigationHandler;
+}
+
+const GLOBAL_NAVIGATION_REGISTRY_KEY = Symbol.for(
+  "veryfront.spa-navigation.registrations.v1",
+);
+
+interface InitialPageDataCapture {
+  data: PageDataResponse;
+  error: Error | null;
+}
+
+function captureInitialPageData(data: PageDataResponse): InitialPageDataCapture {
+  try {
+    return { data: snapshotPageData(data), error: null };
+  } catch {
+    return {
+      data: {
+        slug: "/",
+        pagePath: "",
+        pageType: "tsx",
+        layouts: [],
+        providers: [],
+        frontmatter: {},
+        props: {},
+        params: {},
+        layoutProps: {},
+      },
+      error: INPUT_VALIDATION_FAILED.create({ detail: "Invalid SPA page data" }),
     };
   }
 }
 
-function PageLoading(): JSX.Element {
+function getGlobalNavigationRegistry(): GlobalNavigationRegistry {
+  const holder = globalThis as Record<symbol, unknown>;
+  const existing = holder[GLOBAL_NAVIGATION_REGISTRY_KEY];
+  if (
+    typeof existing === "object" &&
+    existing !== null &&
+    Array.isArray((existing as GlobalNavigationRegistry).registrations)
+  ) {
+    return existing as GlobalNavigationRegistry;
+  }
+
+  const registry: GlobalNavigationRegistry = { registrations: [] };
+  holder[GLOBAL_NAVIGATION_REGISTRY_KEY] = registry;
+  return registry;
+}
+
+function registerGlobalNavigationHandler(handler: SpaNavigationHandler): () => void {
+  const registry = getGlobalNavigationRegistry();
+  const { registrations } = registry;
+  if (registrations.length === 0) {
+    registry.fallbackHandler = clientGlobal.__VERYFRONT_SPA_NAVIGATE__;
+  }
+  const registration = { handler };
+  registrations.push(registration);
+  clientGlobal.__VERYFRONT_SPA_NAVIGATE__ = handler;
+
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+
+    const registrationIndex = registrations.indexOf(registration);
+    if (registrationIndex !== -1) registrations.splice(registrationIndex, 1);
+
+    if (clientGlobal.__VERYFRONT_SPA_NAVIGATE__ !== handler) {
+      if (registrations.length === 0) registry.fallbackHandler = undefined;
+      return;
+    }
+    const previous = registrations.at(-1)?.handler;
+    if (typeof previous === "function") clientGlobal.__VERYFRONT_SPA_NAVIGATE__ = previous;
+    else if (typeof registry.fallbackHandler === "function") {
+      clientGlobal.__VERYFRONT_SPA_NAVIGATE__ = registry.fallbackHandler;
+    } else delete clientGlobal.__VERYFRONT_SPA_NAVIGATE__;
+
+    if (registrations.length === 0) registry.fallbackHandler = undefined;
+  };
+}
+
+function PageLoading(): ReactElement {
   return (
     <div className="veryfront-page-loading" aria-busy="true" aria-live="polite">
       <span className="sr-only">Loading page...</span>
@@ -53,7 +152,7 @@ function PageLoading(): JSX.Element {
   );
 }
 
-function PageError({ error, onRetry }: { error: Error; onRetry: () => void }): JSX.Element {
+function PageError({ error, onRetry }: { error: Error; onRetry: () => void }): ReactElement {
   return (
     <div className="veryfront-page-error">
       <h1>Something went wrong</h1>
@@ -63,6 +162,40 @@ function PageError({ error, onRetry }: { error: Error; onRetry: () => void }): J
       </button>
     </div>
   );
+}
+
+interface ClientRenderBoundaryProps {
+  children: ReactElement;
+  onRetry: () => void;
+}
+
+interface ClientRenderBoundaryState {
+  error: Error | null;
+}
+
+class ClientRenderBoundary extends Component<
+  ClientRenderBoundaryProps,
+  ClientRenderBoundaryState
+> {
+  override state: ClientRenderBoundaryState = { error: null };
+
+  static getDerivedStateFromError(): ClientRenderBoundaryState {
+    return {
+      error: RENDER_ERROR.create({ detail: "The page could not be rendered" }),
+    };
+  }
+
+  override componentDidCatch(error: unknown, _errorInfo: ErrorInfo): void {
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    console.error(`[Veryfront SPA] Render failed (${errorName})`);
+  }
+
+  override render(): ReactElement {
+    if (this.state.error) {
+      return <PageError error={this.state.error} onRetry={this.props.onRetry} />;
+    }
+    return this.props.children;
+  }
 }
 
 function normalizeParams(params: Record<string, string | string[]>): Record<string, string> {
@@ -80,18 +213,8 @@ function getDomain(): string {
   return globalThis.location?.hostname ?? "";
 }
 
-function getUrl(path: string | { pathname: string }): string {
-  return typeof path === "string" ? path : path.pathname;
-}
-
 async function navigateViaRouter(url: string, push?: boolean): Promise<void> {
-  const router = globalThis.veryFrontRouter;
-  if (!router || !("navigate" in router)) return;
-
-  await (router as { navigate: (url: string, push?: boolean) => Promise<void> }).navigate(
-    url,
-    push,
-  );
+  await clientGlobal.veryFrontRouter?.navigate?.(url, push);
 }
 
 function createClientAppState(
@@ -108,6 +231,7 @@ function createClientAppState(
     frontmatter: data.frontmatter ?? {},
     isNavigating: false,
     error: null,
+    renderVersion: 0,
   };
 }
 
@@ -115,49 +239,101 @@ function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
-export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
-  const [state, setState] = useState<ClientAppState>(() =>
-    createClientAppState(
-      initialData,
-      getCachedComponent(initialData.pagePath),
-    )
-  );
+export function ClientApp({ initialData }: ClientAppProps): ReactElement {
+  const initialCaptureRef = useRef<InitialPageDataCapture | null>(null);
+  if (initialCaptureRef.current === null) {
+    initialCaptureRef.current = captureInitialPageData(initialData);
+  }
+  const initialCapture = initialCaptureRef.current;
+  const capturedInitialData = initialCapture.data;
+
+  const [state, setState] = useState<ClientAppState>(() => {
+    const initialState = createClientAppState(
+      capturedInitialData,
+      getCachedComponent(capturedInitialData.pagePath),
+    );
+    return initialCapture.error ? { ...initialState, error: initialCapture.error } : initialState;
+  });
 
   const [isMounted, setIsMounted] = useState(false);
+  const navigationSequence = useRef(0);
 
   useEffect(() => {
-    if (state.pageComponent || !initialData.pagePath) return;
+    if (initialCapture.error) return;
+    if (state.pageComponent) return;
+    if (!capturedInitialData.pagePath) {
+      setState((prev) => ({
+        ...prev,
+        error: PAGE_NOT_FOUND.create({ detail: "Page component path is missing" }),
+      }));
+      return;
+    }
+    const initialLoadNavigationId = navigationSequence.current;
+    let cancelled = false;
 
-    (async () => {
-      const Component = await loadComponent(initialData.pagePath);
-      if (!Component) return;
-      setState((prev) => ({ ...prev, pageComponent: Component }));
+    void (async () => {
+      const Component = await loadComponent(capturedInitialData.pagePath);
+      if (cancelled || initialLoadNavigationId !== navigationSequence.current) return;
+      if (!Component) {
+        setState((prev) => ({
+          ...prev,
+          error: PAGE_NOT_FOUND.create({
+            detail: `Failed to load page component: ${capturedInitialData.pagePath}`,
+          }),
+        }));
+        return;
+      }
+      setState((prev) => ({ ...prev, pageComponent: Component, error: null }));
     })();
-  }, [initialData.pagePath, state.pageComponent]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [capturedInitialData.pagePath, initialCapture.error, state.pageComponent]);
 
   useEffect(() => {
-    for (const layout of initialData.layouts || []) preloadComponent(layout.path);
-  }, [initialData.layouts]);
+    if (initialCapture.error) return;
+    for (const layout of capturedInitialData.layouts) void preloadComponent(layout.path);
+  }, [capturedInitialData.layouts, initialCapture.error]);
 
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
   const handleNavigate = useCallback(async (data: PageDataResponse): Promise<void> => {
+    const navigationId = ++navigationSequence.current;
     setState((prev) => ({ ...prev, isNavigating: true, error: null }));
 
     try {
-      const layoutPreloads = (data.layouts || []).map((l) => preloadComponent(l.path));
-      const [PageComponent] = await Promise.all([loadComponent(data.pagePath), ...layoutPreloads]);
+      const snapshot = snapshotPageData(data);
+      const [PageComponent, ...LayoutComponents] = await Promise.all([
+        loadComponent(snapshot.pagePath),
+        ...snapshot.layouts.map((layout) => loadComponent(layout.path)),
+      ]);
+      if (navigationId !== navigationSequence.current) return;
 
       if (!PageComponent) {
-        throw PAGE_NOT_FOUND.create({ detail: `Failed to load page component: ${data.pagePath}` });
+        throw PAGE_NOT_FOUND.create({
+          detail: `Failed to load page component: ${snapshot.pagePath}`,
+        });
       }
 
-      if (data.frontmatter?.title) document.title = String(data.frontmatter.title);
+      const failedLayoutIndex = LayoutComponents.findIndex((Component) => Component === null);
+      if (failedLayoutIndex !== -1) {
+        const failedLayout = snapshot.layouts[failedLayoutIndex];
+        throw LAYOUT_NOT_FOUND.create({
+          detail: `Failed to load layout component: ${failedLayout?.path ?? "unknown"}`,
+        });
+      }
 
-      setState(createClientAppState(data, PageComponent));
+      document.title = String(snapshot.frontmatter.title ?? "Veryfront App");
+
+      setState((previous) => ({
+        ...createClientAppState(snapshot, PageComponent),
+        renderVersion: previous.renderVersion + 1,
+      }));
     } catch (error) {
+      if (navigationId !== navigationSequence.current) return;
       console.error("[Veryfront SPA] Navigation failed:", error);
       setState((prev) => ({
         ...prev,
@@ -168,87 +344,44 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
   }, []);
 
   useEffect(() => {
-    globalThis.__VERYFRONT_SPA_NAVIGATE__ = handleNavigate;
-    globalThis.veryFrontRouter?.registerNavigationHandler?.(handleNavigate);
+    const unregisterGlobal = registerGlobalNavigationHandler(handleNavigate);
+    const unregisterRouter = clientGlobal.veryFrontRouter?.registerNavigationHandler?.(
+      handleNavigate,
+    );
 
     return () => {
-      delete globalThis.__VERYFRONT_SPA_NAVIGATE__;
+      navigationSequence.current++;
+      unregisterGlobal();
+      unregisterRouter?.();
     };
   }, [handleNavigate]);
 
   const normalizedParams = useMemo(() => normalizeParams(state.params), [state.params]);
 
-  // Keep the router's URL view (pathname + query) in lock-step with the live URL.
-  // The router changes the URL via `history.pushState`, which fires no event and
-  // only reflects into `state.currentPath` after an async page load, so `pathname`
-  // and `query` would lag a navigation by a beat (the "two clicks" tab/thread bug,
-  // where the view changes but the active tab/link doesn't). We hold the live
-  // pathname+search in state and refresh them by patching pushState/replaceState
-  // (plus popstate for back/forward), so they update the instant the URL does.
-  const [liveUrl, setLiveUrl] = useState(() =>
-    typeof globalThis.location === "undefined"
-      ? { pathname: state.currentPath, search: "" }
-      : { pathname: globalThis.location.pathname, search: globalThis.location.search }
-  );
-  useEffect(() => {
-    if (typeof globalThis.location === "undefined") return;
-    const sync = () =>
-      setLiveUrl({
-        pathname: globalThis.location.pathname,
-        search: globalThis.location.search,
-      });
-    const { history } = globalThis;
-    const originalPush = history.pushState;
-    const originalReplace = history.replaceState;
-    history.pushState = function (
-      this: History,
-      ...args: Parameters<History["pushState"]>
-    ): void {
-      originalPush.apply(this, args);
-      sync();
-    };
-    history.replaceState = function (
-      this: History,
-      ...args: Parameters<History["replaceState"]>
-    ): void {
-      originalReplace.apply(this, args);
-      sync();
-    };
-    globalThis.addEventListener("popstate", sync);
-    sync();
-    return () => {
-      history.pushState = originalPush;
-      history.replaceState = originalReplace;
-      globalThis.removeEventListener("popstate", sync);
-    };
-  }, []);
-  const query = useMemo(() => getQuery(), [liveUrl.search]);
-  // Use the live pathname once mounted so tabs/links reflect navigation immediately;
-  // fall back to the SSR path for the first (hydrating) render.
-  const activePathname = isMounted ? liveUrl.pathname : state.currentPath;
+  const query = useMemo(() => getQuery(), [state.currentPath]);
 
   // Seed snapshot for `RouterProvider` — one `RouterValue` carrying everything
   // the route match knows. On the client the provider derives the live
   // `pathname`/`query` from the navigation store; `params`/`domain`/`isPreview`
   // are seeded from here.
-  const routerValue: Router = {
+  const routerValue: RouterValue = {
     domain: getDomain(),
-    path: activePathname,
-    pathname: activePathname,
+    path: state.currentPath,
+    pathname: state.currentPath,
     params: normalizedParams,
     query,
     isPreview: false,
     isMounted,
-    navigate: async (path, _options) => {
-      await navigateViaRouter(getUrl(path));
+    navigate: async (path) => {
+      await navigateViaRouter(path);
     },
-    push: async (path, _options) => {
-      await navigateViaRouter(getUrl(path));
+    push: async (path) => {
+      await navigateViaRouter(path);
     },
-    replace: async (path, _options) => {
-      await navigateViaRouter(getUrl(path), false);
+    replace: async (path) => {
+      await navigateViaRouter(path, false);
     },
-    reload: () => {
+    reload: async () => {
       globalThis.location.reload();
     },
   };
@@ -261,6 +394,7 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
     params: normalizedParams,
     query,
     frontmatter: state.frontmatter,
+    data: state.pageProps,
     headings: [],
     mdxHeadings: [],
   };
@@ -269,7 +403,7 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
     globalThis.location.reload();
   }, []);
 
-  function renderPageContent(): JSX.Element {
+  function renderPageContent(): ReactElement {
     if (state.error) return <PageError error={state.error} onRetry={handleRetry} />;
     if (!state.pageComponent) return <PageLoading />;
 
@@ -289,9 +423,14 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
           className={`veryfront-app ${state.isNavigating ? "veryfront-navigating" : ""}`}
           data-navigating={state.isNavigating}
         >
-          <LayoutShell layouts={state.layouts} layoutProps={state.layoutProps}>
-            {renderPageContent()}
-          </LayoutShell>
+          <ClientRenderBoundary
+            key={`${state.currentPath}:${state.renderVersion}`}
+            onRetry={handleRetry}
+          >
+            <LayoutShell layouts={state.layouts} layoutProps={state.layoutProps}>
+              {renderPageContent()}
+            </LayoutShell>
+          </ClientRenderBoundary>
         </div>
       </PageContextProvider>
     </RouterProvider>

@@ -14,7 +14,13 @@ describe("LRUCache", () => {
   });
 
   function createCache<K, V>(
-    options?: { maxEntries?: number; ttlMs?: number; cleanupIntervalMs?: number },
+    options?: {
+      maxEntries?: number;
+      maxSizeBytes?: number;
+      ttlMs?: number;
+      cleanupIntervalMs?: number;
+      estimateSizeOf?: (value: V) => number;
+    },
   ): LRUCache<K, V> {
     const cache = new LRUCache<K, V>(options);
     caches.push(cache);
@@ -58,6 +64,18 @@ describe("LRUCache", () => {
       cache.set("exists", "value");
       assertEquals(cache.delete("exists"), true);
       assertEquals(cache.delete("exists"), false);
+    });
+
+    it("tracks membership for an undefined value", (): void => {
+      const cache = createCache<string, undefined>({ maxEntries: 3 });
+
+      cache.set("present", undefined);
+
+      assertEquals(cache.get("present"), undefined);
+      assertEquals(cache.has("present"), true);
+      assertEquals(cache.delete("present"), true);
+      assertEquals(cache.has("present"), false);
+      assertEquals(cache.delete("present"), false);
     });
 
     it("clear and size", (): void => {
@@ -120,6 +138,20 @@ describe("LRUCache", () => {
   });
 
   describe("LRU eviction", () => {
+    it("uses the configured value-size estimator for byte-bound eviction", (): void => {
+      const cache = createCache<string, { retainedBytes: number }>({
+        maxEntries: 3,
+        maxSizeBytes: 10,
+        estimateSizeOf: (value) => value.retainedBytes,
+      });
+
+      cache.set("a", { retainedBytes: 6 });
+      cache.set("b", { retainedBytes: 6 });
+
+      assertEquals(cache.get("a"), undefined);
+      assertEquals(cache.get("b"), { retainedBytes: 6 });
+    });
+
     it("prune respects maxEntries (LRU order)", async (): Promise<void> => {
       const cache = createCache<string, number>({ maxEntries: 2, ttlMs: 1000 });
 

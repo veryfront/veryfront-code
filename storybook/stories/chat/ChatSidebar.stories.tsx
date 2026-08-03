@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import * as React from "react";
 import { ChatSidebar } from "veryfront/chat";
+import { DropdownMenuItem } from "veryfront/ui";
 import {
   DocsCode,
   DocsComposition,
@@ -14,6 +15,22 @@ import { conversations } from "../fixtures/chat";
 import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 
 const importCode = `import { ChatSidebar } from "veryfront/chat"`;
+
+// Customization: add a menu entry without re-implementing the row (the acid test).
+const customMenuCode = `import { ChatSidebar } from "veryfront/chat";
+import { DropdownMenuItem } from "veryfront/ui";
+
+<ChatSidebar.Item conversation={conversation}>
+  <ChatSidebar.Item.Menu>
+    {/* Built-ins keep working, unchanged: */}
+    <ChatSidebar.Item.Rename />
+    <ChatSidebar.Item.Delete />
+    {/* ...plus your own entry, with no row re-implementation: */}
+    <DropdownMenuItem onSelect={() => archive(conversation.id)}>
+      Archive
+    </DropdownMenuItem>
+  </ChatSidebar.Item.Menu>
+</ChatSidebar.Item>`;
 
 const compositionTree =
   `ChatSidebar            <- one-shot preset: Root + NewButton + auto List
@@ -50,7 +67,7 @@ const compositionCode = `import { ChatSidebar } from "veryfront/chat";
 
 const customGroupsCode = `import { ChatSidebar } from "veryfront/chat";
 
-// Group conversations however you like — Item pulls select/rename/delete from Root.
+// Group conversations however you like. Item pulls select/rename/delete from Root.
 <ChatSidebar.Root {...ctx}>
   <ChatSidebar.NewButton />
   <ChatSidebar.List>
@@ -68,7 +85,7 @@ function ChatSidebarDocsPage() {
     <DocsPage>
       <DocsHero
         title="ChatSidebar"
-        lead="A conversation rail — lists conversations grouped by recency, with select, rename, delete, and new-conversation actions. Inside a `ConversationsProvider` it needs no props."
+        lead="A conversation rail that lists conversations grouped by recency, with select, rename, delete, and new-conversation actions. Inside a `ConversationsProvider` it needs no props."
       />
 
       <DocsSection
@@ -87,14 +104,14 @@ function ChatSidebarDocsPage() {
 
       <DocsSection
         title="Loading"
-        description="Pass `loading` to show a skeleton in place of the list — e.g. while threads are being fetched. The auto `List` also shows this on its own until the client mounts, so threads loading from `localStorage` never flash the empty state."
+        description="Pass `loading` to show a skeleton in place of the list, for example while threads are being fetched. The auto `List` also shows this on its own until the client mounts, so threads loading from `localStorage` never flash the empty state."
       >
         <DocsExampleAuto of={Loading} />
       </DocsSection>
 
       <DocsSection
         title="Composition"
-        description="`ChatSidebar` is also a compound. `ChatSidebar.Root` holds the shared state; the parts (`NewButton`, `List`, `Group`, `Item`, `Empty`) read it from context — so you can reorder, restyle, or swap any piece without a render prop."
+        description="`ChatSidebar` is also a compound. `ChatSidebar.Root` holds the shared state; the parts (`NewButton`, `List`, `Group`, `Item`, `Empty`) read it from context, so you can reorder, restyle, or swap any piece without a render prop."
       >
         <DocsExampleAuto of={Composed} />
         <DocsCode code={compositionCode} />
@@ -109,6 +126,14 @@ function ChatSidebarDocsPage() {
         <DocsCode code={customGroupsCode} />
       </DocsSection>
 
+      <DocsSection
+        title="Custom row menu"
+        description="The row's `…` menu is itself a compound: `ChatSidebar.Item.Menu` with `.Rename` / `.Delete` leaves. Compose your own entries alongside the built-ins and they keep working, with no row re-implementation (the acid test). Each leaf also takes an `icon` prop."
+      >
+        <DocsExampleAuto of={CustomRowMenu} />
+        <DocsCode code={customMenuCode} />
+      </DocsSection>
+
       <DocsSection title="Import">
         <DocsCode code={importCode} />
       </DocsSection>
@@ -116,7 +141,7 @@ function ChatSidebarDocsPage() {
       <DocsSection title="API Reference">
         <DocsPropsTable
           component="ChatSidebar"
-          description="Conversation list rail. All props are optional — inside a ConversationsProvider they default from context."
+          description="Conversation list rail. All props are optional. Inside a ConversationsProvider they default from context."
           props={[
             {
               name: "conversations",
@@ -412,7 +437,7 @@ export const Loading: Story = {
   tags: ["!dev"],
   render: () => (
     <StoryFrame maxWidth="240px">
-      <ReviewSurface label="Loading state — `<ChatSidebar loading />` (auto until the client mounts)">
+      <ReviewSurface label="Loading state: `<ChatSidebar loading />` (auto until the client mounts)">
         <div className="h-[520px] overflow-hidden bg-[var(--sidebar-background)]">
           <ChatSidebar
             fill
@@ -427,4 +452,58 @@ export const Loading: Story = {
       </ReviewSurface>
     </StoryFrame>
   ),
+};
+
+export const CustomRowMenu: Story = {
+  name: "Custom row menu",
+  tags: ["!dev", "acid-test"],
+  parameters: {
+    docs: { source: { code: customMenuCode } },
+  },
+  render: () => {
+    const [activeThreadId, setActiveThreadId] = React.useState(
+      conversations[0]?.id ?? null,
+    );
+    const [items, setItems] = React.useState(conversations);
+    const [archived, setArchived] = React.useState<string[]>([]);
+
+    return (
+      <StoryFrame maxWidth="240px">
+        <ReviewSurface label="Open a row's `…` menu: Rename/Delete plus a custom Archive">
+          <div className="h-[520px] overflow-hidden bg-[var(--sidebar-background)]">
+            <ChatSidebar.Root
+              fill
+              conversations={items}
+              activeId={activeThreadId}
+              onSelect={setActiveThreadId}
+              onDelete={(id) =>
+                setItems((current) => current.filter((item) => item.id !== id))}
+              onRename={(id, title) =>
+                setItems((current) =>
+                  current.map((item) => item.id === id ? { ...item, title } : item)
+                )}
+              onNew={() => undefined}
+            >
+              <ChatSidebar.NewButton />
+              <ChatSidebar.List>
+                {items.map((t) => (
+                  <ChatSidebar.Item key={t.id} conversation={t}>
+                    <ChatSidebar.Item.Menu>
+                      <ChatSidebar.Item.Rename />
+                      <ChatSidebar.Item.Delete />
+                      <DropdownMenuItem
+                        onSelect={() => setArchived((cur) => [...cur, t.id])}
+                      >
+                        {archived.includes(t.id) ? "Archived ✓" : "Archive"}
+                      </DropdownMenuItem>
+                    </ChatSidebar.Item.Menu>
+                  </ChatSidebar.Item>
+                ))}
+              </ChatSidebar.List>
+            </ChatSidebar.Root>
+          </div>
+        </ReviewSurface>
+      </StoryFrame>
+    );
+  },
 };

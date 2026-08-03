@@ -99,7 +99,7 @@ Layout content`,
       const file2 = join(pagesDir, "index.mdx");
       await createTestFile(file2, "# Home");
 
-      const info2 = await getEntityInfo(file2);
+      const info2 = await getEntityInfo(file2, undefined, { routeRoot: pagesDir });
       assertExists(info2);
       assertEquals(info2.entity.slug, "");
 
@@ -230,6 +230,7 @@ describe("getEntityBySlug", () => {
       const pagesDir = join(context.projectDir, "pages");
       await createTestFile(join(pagesDir, "test.jsx"), "// JSX file");
       await createTestFile(join(pagesDir, "another.ts"), "// TS file");
+      await createTestFile(join(pagesDir, "plain.js"), "// JS file");
       await createTestFile(join(pagesDir, "contact", "index.jsx"), "// Contact JSX");
 
       const jsxInfo = await getEntityBySlug(context.projectDir, "test");
@@ -239,6 +240,10 @@ describe("getEntityBySlug", () => {
       const tsInfo = await getEntityBySlug(context.projectDir, "another");
       assertExists(tsInfo);
       assertEquals(tsInfo.entity.content, "// TS file");
+
+      const jsInfo = await getEntityBySlug(context.projectDir, "plain");
+      assertExists(jsInfo);
+      assertEquals(jsInfo.entity.content, "// JS file");
 
       const contactInfo = await getEntityBySlug(context.projectDir, "contact");
       assertExists(contactInfo);
@@ -268,6 +273,10 @@ describe("getEntityBySlug", () => {
         join(pagesDir, "Layout.tsx"),
         `export default function Layout() { /* empty */ }`,
       );
+      await createTestFile(
+        join(pagesDir, "chat", "layout.tsx"),
+        `export default function ChatLayout() { /* empty */ }`,
+      );
 
       await createTestFile(
         join(pagesDir, "page.tsx"),
@@ -276,6 +285,9 @@ describe("getEntityBySlug", () => {
 
       const layoutInfo = await getEntityBySlug(context.projectDir, "Layout");
       assertEquals(layoutInfo, null);
+
+      const nestedLayoutInfo = await getEntityBySlug(context.projectDir, "chat/layout");
+      assertEquals(nestedLayoutInfo, null);
 
       const pageInfo = await getEntityBySlug(context.projectDir, "page");
       assertExists(pageInfo);
@@ -432,6 +444,27 @@ Default nested layout`,
       assertExists(layout);
       assertEquals(layout.entity.isLayout, true);
       assertEquals(layout.entity.content.includes("Default nested layout"), true);
+    });
+  });
+
+  it("resolves an optional catch-all at its own root (/optional and deeper)", async () => {
+    await withTestContext("entity-optional-catch-all-root", async (context) => {
+      await createTestFile(
+        join(context.projectDir, "pages", "optional", "[[...slug]].tsx"),
+        `export default function Optional() { return null; }`,
+      );
+
+      // Regression: the bare parent path must resolve the optional catch-all
+      // matching zero remaining segments, not 404. Before the fix the dynamic
+      // resolver never looked inside pages/optional/ for /optional, so only
+      // /optional/a/b worked.
+      const root = await getEntityBySlug(context.projectDir, "optional");
+      assertExists(root);
+      assertEquals(root.entity.isPage, true);
+
+      const deep = await getEntityBySlug(context.projectDir, "optional/a/b");
+      assertExists(deep);
+      assertEquals(deep.entity.isPage, true);
     });
   });
 });

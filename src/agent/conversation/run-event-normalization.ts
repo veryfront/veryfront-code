@@ -1,4 +1,11 @@
-export const MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES = 240 * 1024;
+import { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "./run-event-limits.ts";
+import {
+  DurableRunEventPersistenceError,
+  hasPrivateConversationRunEventType,
+  isPrivateConversationRunEvent,
+} from "./private-run-event.ts";
+
+export { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "./run-event-limits.ts";
 const OMITTED_CONVERSATION_RUN_EVENT_TYPE = "CUSTOM";
 const MAX_SUMMARY_DEPTH = 4;
 const MAX_SUMMARY_ARRAY_ITEMS = 8;
@@ -29,6 +36,12 @@ export function getConversationRunEventJsonByteLength(value: unknown): number {
 export function normalizeConversationRunEvent(
   event: ConversationRunEventRecord,
 ): ConversationRunEventRecord[] {
+  if (hasPrivateConversationRunEventType(event)) {
+    if (!isPrivateConversationRunEvent(event)) {
+      throw new DurableRunEventPersistenceError("Invalid private run event shape");
+    }
+    return [event];
+  }
   if (getConversationRunEventJsonByteLength(event) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES) {
     return [event];
   }

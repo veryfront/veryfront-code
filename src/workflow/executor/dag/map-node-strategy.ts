@@ -10,6 +10,8 @@ import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { NodeExecutionResult } from "./types.ts";
 import { deriveNodeStatus } from "./utils.ts";
 import type { NodeStrategyRuntime } from "./node-strategy-types.ts";
+import { captureWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
+import { applyRecordPatch, createRecordPatch, createSetContextPatch } from "./context-patch.ts";
 
 interface ExecuteMapNodeStrategyInput {
   node: WorkflowNode;
@@ -17,6 +19,7 @@ interface ExecuteMapNodeStrategyInput {
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
   runtime: NodeStrategyRuntime;
+  abortSignal?: AbortSignal;
 }
 
 function isWorkflowDefinition(processor: unknown): processor is WorkflowDefinition {
@@ -58,9 +61,11 @@ export async function executeMapNodeStrategy(
   input: ExecuteMapNodeStrategyInput,
 ): Promise<NodeExecutionResult> {
   const { node, config, context, nodeStates, runtime } = input;
+  runtime.abortSignal?.throwIfAborted();
   const startTime = Date.now();
 
   const items = typeof config.items === "function" ? await config.items(context) : config.items;
+  runtime.abortSignal?.throwIfAborted();
 
   if (!Array.isArray(items)) {
     throw INVALID_ARGUMENT.create({ detail: `Map node "${node.id}" items must be an array` });
@@ -75,7 +80,7 @@ export async function executeMapNodeStrategy(
       startedAt: new Date(startTime),
       completedAt: new Date(),
     };
-    return { state, contextUpdates: { [node.id]: [] }, waiting: false };
+    return { state, contextPatch: createSetContextPatch({ [node.id]: [] }), waiting: false };
   }
 
   const childNodes = createMapChildNodes(node, config, items);
@@ -95,11 +100,13 @@ export async function executeMapNodeStrategy(
       checkpoints: [],
       pendingApprovals: [],
       createdAt: new Date(),
+      sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
     },
     config.concurrency ? { maxConcurrency: config.concurrency } : undefined,
   );
+  runtime.abortSignal?.throwIfAborted();
 
-  Object.assign(nodeStates, result.nodeStates);
+  applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
 
   const outputs = childNodes.map((child) => result.nodeStates[child.id]?.output);
 
@@ -117,7 +124,7 @@ export async function executeMapNodeStrategy(
 
   return {
     state,
-    contextUpdates: result.completed ? { [node.id]: outputs } : {},
+    contextPatch: createSetContextPatch(result.completed ? { [node.id]: outputs } : {}),
     waiting: result.waiting,
   };
 }

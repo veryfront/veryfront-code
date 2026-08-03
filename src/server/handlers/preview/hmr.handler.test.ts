@@ -238,7 +238,7 @@ describe("server/handlers/preview/hmr.handler", () => {
       assertEquals(result.continue, false);
     });
 
-    it("proceeds when x-environment=preview query param is set", async () => {
+    it("does not let x-environment=preview query param unlock HMR", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://example.com/_ws?x-environment=preview");
       const ctx = makeCtx({
@@ -246,10 +246,10 @@ describe("server/handlers/preview/hmr.handler", () => {
         adapter: createMockAdapter({ upgradeWebSocket: undefined }),
       });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, false);
+      assertEquals(result.continue, true);
     });
 
-    it("proceeds when host header is localhost", async () => {
+    it("does not treat a client-controlled localhost Host as local-project proof", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://example.com/_ws", {
         headers: { host: "localhost:3000" },
@@ -259,16 +259,15 @@ describe("server/handlers/preview/hmr.handler", () => {
         adapter: createMockAdapter({ upgradeWebSocket: undefined }),
       });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, false);
+      assertEquals(result.continue, true);
     });
 
-    it("proceeds when x-forwarded-host is a local preview host AND request is proxy-trusted", async () => {
+    it("does not infer preview authorization from forwarded host inside the handler", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://example.com/_ws", {
         headers: {
           host: "internal.proxy:3000",
           "x-forwarded-host": "preview.veryfront.me:3000",
-          "x-veryfront-dispatch-jws": await mintTrustedDispatchJws(),
         },
       });
       const ctx = makeCtx({
@@ -276,7 +275,7 @@ describe("server/handlers/preview/hmr.handler", () => {
         adapter: createMockAdapter({ upgradeWebSocket: undefined }),
       });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, false);
+      assertEquals(result.continue, true);
     });
 
     it("continues when x-forwarded-host is external even if host header is localhost", async () => {
@@ -285,7 +284,6 @@ describe("server/handlers/preview/hmr.handler", () => {
         headers: {
           host: "localhost:3000",
           "x-forwarded-host": "evil.example.com",
-          "x-veryfront-dispatch-jws": await mintTrustedDispatchJws(),
         },
       });
       const ctx = makeCtx({
@@ -331,7 +329,7 @@ describe("server/handlers/preview/hmr.handler", () => {
       assertEquals(result.continue, true);
     });
 
-    it("HONOURS x-forwarded-host: localhost when request IS proxy-trusted", async () => {
+    it("does not let a valid dispatch JWS promote forwarded-host trust", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://internal.proxy/_ws", {
         headers: {
@@ -342,11 +340,10 @@ describe("server/handlers/preview/hmr.handler", () => {
       });
       const ctx = makeCtx({
         isLocalProject: false,
-        adapter: createMockAdapter({ upgradeWebSocket: undefined }),
+        requestContext: { mode: "production" } as any,
       });
       const result = await handler.handle(req, ctx);
-      // Handler path entered — not short-circuited.
-      assertEquals(result.continue, false);
+      assertEquals(result.continue, true);
     });
 
     it(
@@ -375,7 +372,7 @@ describe("server/handlers/preview/hmr.handler", () => {
       },
     );
 
-    it("HONOURS raw Host: localhost even without proxy trust (bare-metal local dev)", async () => {
+    it("does not let raw Host localhost replace local-project resolution", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://localhost:3000/_ws", {
         headers: { host: "localhost:3000" },
@@ -385,7 +382,7 @@ describe("server/handlers/preview/hmr.handler", () => {
         adapter: createMockAdapter({ upgradeWebSocket: undefined }),
       });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, false);
+      assertEquals(result.continue, true);
     });
 
     it('treats "localhost.evil.com" as non-local (must not match by prefix)', async () => {
@@ -446,6 +443,31 @@ describe("server/handlers/preview/hmr.handler", () => {
       assertEquals(Object.is(result.response, upgradeResponse), true);
       assertEquals(result.response instanceof Response, false);
       assertEquals(result.response!.status, 101);
+    });
+
+    it("disables runtime idle timeout for upstream HMR WebSocket upgrades", async () => {
+      const handler = new HMRHandler();
+      const mock = createMockSocket();
+      let upgradeOptions: unknown;
+      const req = new Request("http://localhost/_ws", {
+        headers: { upgrade: "websocket" },
+      });
+      const ctx = makeCtx({
+        isLocalProject: true,
+        adapter: createMockAdapter({
+          upgradeWebSocket: (_request: Request, options?: unknown) => {
+            upgradeOptions = options;
+            return {
+              socket: mock.socket,
+              response: createWebSocketUpgradeResponse(),
+            };
+          },
+        }),
+      });
+
+      await handler.handle(req, ctx);
+
+      assertEquals(upgradeOptions, { idleTimeout: 0 });
     });
 
     it("preserves data from structurally compatible message events", async () => {

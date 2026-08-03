@@ -28,7 +28,7 @@
   ],
   "tools": [
     {
-      "id": "list_datacenters",
+      "id": "ionos__list_datacenters",
       "name": "List Data Centers",
       "description": "List virtual data centers in the account; each data center contains servers, volumes, and networks",
       "requiresWrite": false,
@@ -71,7 +71,7 @@
       }
     },
     {
-      "id": "list_servers",
+      "id": "ionos__list_servers",
       "name": "List Servers",
       "description": "List servers inside a virtual data center",
       "requiresWrite": false,
@@ -120,7 +120,7 @@
       }
     },
     {
-      "id": "get_server",
+      "id": "ionos__get_server",
       "name": "Get Server",
       "description": "Get a server in a data center, including name, vmState, cores, RAM, and boot device",
       "requiresWrite": false,
@@ -150,7 +150,7 @@
       }
     },
     {
-      "id": "start_server",
+      "id": "ionos__start_server",
       "name": "Start Server",
       "description": "Start (power on) an Enterprise server; CUBE servers cannot be started with this endpoint (they use suspend/resume instead)",
       "requiresWrite": true,
@@ -174,7 +174,7 @@
       }
     },
     {
-      "id": "stop_server",
+      "id": "ionos__stop_server",
       "name": "Stop Server",
       "description": "Stop (power off) an Enterprise server; the server is forcefully powered off and billing for compute stops; public IPv4 addresses that are not reserved are returned to the IPv4 pool (reserved IPs are kept). CUBE servers cannot be stopped with this endpoint (they use suspend/resume instead)",
       "requiresWrite": true,
@@ -198,7 +198,7 @@
       }
     },
     {
-      "id": "reboot_server",
+      "id": "ionos__reboot_server",
       "name": "Reboot Server",
       "description": "Force a hard reboot of a server (equivalent to powering it down and back on) — recovers hung servers without a separate stop/start cycle; not a graceful OS reboot",
       "requiresWrite": true,
@@ -222,7 +222,7 @@
       }
     },
     {
-      "id": "get_request_status",
+      "id": "ionos__get_request_status",
       "name": "Get Request Status",
       "description": "Poll the status of an asynchronous write operation (202 Accepted responses) until it reports DONE or FAILED; the request ID comes from the Location response header of the write call",
       "requiresWrite": false,

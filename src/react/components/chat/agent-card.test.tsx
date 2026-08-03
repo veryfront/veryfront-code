@@ -71,6 +71,31 @@ describe("AgentCard — composability contract", () => {
     assertStringIncludes(html, "check_release");
   });
 
+  it("lets a compound child replace the tool list", () => {
+    function CustomTools() {
+      const { toolCalls: calls } = useAgentCard();
+      return (
+        <div className="vf-custom-tools">
+          {calls.map((tool) => <span key={tool.id}>{`Custom ${tool.name}`}</span>)}
+        </div>
+      );
+    }
+
+    const html = renderToString(
+      <AgentCard.Root
+        name="Release Agent"
+        status="completed"
+        toolCalls={toolCalls}
+      >
+        <AgentCard.Header />
+        <CustomTools />
+      </AgentCard.Root>,
+    );
+
+    assertStringIncludes(html, "vf-custom-tools");
+    assertStringIncludes(html, "Custom check_release");
+  });
+
   it("useAgentCard throws outside an AgentCard", () => {
     function Orphan() {
       useAgentCard();

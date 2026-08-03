@@ -1,4 +1,4 @@
-import { createError, toError } from "#veryfront/errors";
+import { FILE_NOT_FOUND } from "#veryfront/errors";
 import { logger } from "#veryfront/utils";
 import {
   buildGitHubResolveCacheKey,
@@ -10,6 +10,7 @@ import type { FileCache } from "../cache/file-cache.ts";
 import type { GitHubApiClient } from "./github-api-client.ts";
 import type { FileIndexEntry, FileInfo, GitHubTreeEntry, ResolvedGitHubConfig } from "./types.ts";
 import { normalizeGitHubPath } from "./path-utils.ts";
+import { buildGitHubCacheRef } from "./cache-scope.ts";
 
 const LOG_PREFIX = "[GitHubStatOperations]";
 const RESOLVE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"];
@@ -84,11 +85,15 @@ export class GitHubStatOperations {
     this.directoryIndex.add("");
 
     for (const entry of entries) {
+      // Git represents symbolic links as blob entries with mode 120000. This
+      // virtual adapter never follows them: omit them entirely so every path it
+      // admits has symlink-free storage semantics.
+      if (entry.mode === "120000") continue;
       if (entry.type === "blob") {
         this.fileIndex.set(entry.path, {
           path: entry.path,
           sha: entry.sha,
-          size: entry.size ?? 0,
+          ...(entry.size === undefined ? {} : { size: entry.size }),
           type: "blob",
         });
         this.addDirectoryHierarchy(entry.path);
@@ -124,7 +129,10 @@ export class GitHubStatOperations {
       indexSize: this.fileIndex.size,
     });
 
-    const cacheKey = buildGitHubStatCacheKey(this.config.ref, normalizedPath);
+    const cacheKey = buildGitHubStatCacheKey(
+      buildGitHubCacheRef(this.config),
+      normalizedPath,
+    );
     const cached = this.cache.get<FileInfo>(cacheKey);
     if (cached) return cached;
 
@@ -134,7 +142,7 @@ export class GitHubStatOperations {
         isFile: true,
         isDirectory: false,
         isSymlink: false,
-        size: fileEntry.size,
+        size: fileEntry.size ?? 0,
         mtime: null,
       };
       this.cache.set(cacheKey, info);
@@ -158,13 +166,10 @@ export class GitHubStatOperations {
       indexSize: this.fileIndex.size,
     });
 
-    throw toError(
-      createError({
-        type: "file",
-        message: `File not found: ${normalizedPath}`,
-        context: { path: normalizedPath, operation: "read" },
-      }),
-    );
+    throw FILE_NOT_FOUND.create({
+      detail: `File not found: ${normalizedPath}`,
+      context: { path: normalizedPath, operation: "read" },
+    });
   }
 
   async exists(path: string): Promise<boolean> {
@@ -181,7 +186,10 @@ export class GitHubStatOperations {
     await this.ensureIndex();
 
     const normalizedPath = normalizeGitHubPath(basePath, this.projectDir);
-    const cacheKey = buildGitHubResolveCacheKey(this.config.ref, normalizedPath);
+    const cacheKey = buildGitHubResolveCacheKey(
+      buildGitHubCacheRef(this.config),
+      normalizedPath,
+    );
     const cached = this.cache.get<string | null>(cacheKey);
     if (cached !== undefined) return cached;
 

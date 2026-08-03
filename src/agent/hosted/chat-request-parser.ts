@@ -1,9 +1,13 @@
 import type {
   ChatRequestContext,
   ChatRuntimeOverrides,
+  ChatToolPartState,
   ChatUiMessage,
+  ChatUiMessagePart,
+  ChatUiMessageRole,
   DurableRootRunDescriptor,
 } from "#veryfront/chat/types.ts";
+import { stringifyUnknown } from "#veryfront/chat/conversation.ts";
 import {
   buildHostedChatRequestInputFromRuntimeAgentInvocation,
   type HostedChatRequest,
@@ -11,6 +15,20 @@ import {
 } from "./chat-request.ts";
 import { RuntimeAgentRunInvocationSchema } from "../runtime/agent-invocation-contract.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
+import {
+  isRequestBodyTooLargeError,
+  readBodyWithLimit,
+} from "#veryfront/security/input-validation/limits.ts";
+import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
+import {
+  type HostedRuntimeSourceIdentity,
+  verifyHostedRuntimeSourceBinding,
+} from "./runtime-source-binding.ts";
+import { getHostedChatUiToolIdentity } from "./chat-request-tool-part.ts";
+import { registerHostedRunEventWriterToken } from "./child-run-event-writer-token.ts";
+
+/** Internal control-plane credential for exact-run durable event appends. */
+export const RUN_EVENT_APPEND_TOKEN_HEADER = "X-Veryfront-Run-Event-Token";
 
 /** Public API contract for hosted chat request principal. */
 export type HostedChatRequestPrincipal = {
@@ -27,14 +45,21 @@ export type HostedChatProjectAccessError = {
 
 /** Result returned from hosted chat project access. */
 export type HostedChatProjectAccessResult =
-  | { success: true }
+  | { success: true; projectSlug?: string }
   | { success: false; error: HostedChatProjectAccessError };
 
-/** Request payload for parsed hosted chat. */
+/**
+ * Request payload for parsed hosted chat.
+ *
+ * Verified run-event credentials remain in process-private ingress state and
+ * are never exposed on this application-facing request value.
+ */
 export type ParsedHostedChatRequest = {
   agentId: string | undefined;
   userId: string;
   authToken: string;
+  /** True only after a server envelope credential is verified and bound to this run. */
+  serverEnvelopeVerified?: true;
   messages: ChatUiMessage[];
   validatedContext: ChatRequestContext;
   projectId: string | null;
@@ -60,10 +85,41 @@ export type ParseHostedChatRequestOptions = {
     projectId: string;
     authToken: string;
   }) => Promise<HostedChatProjectAccessResult>;
+  verifyRunEventAppendToken?: (input: {
+    token: string;
+    projectId: string;
+    runId: string;
+  }) => Promise<boolean>;
 };
 
-async function parseRequestJson(request: Request): Promise<unknown> {
-  return await request.json().catch((): null => null);
+/** Options accepted when parsing a signed control-plane runtime invocation. */
+export type ParseRuntimeAgentRunInvocationHostedChatRequestOptions =
+  & ParseHostedChatRequestOptions
+  & {
+    runtimeSource: HostedRuntimeSourceIdentity | undefined;
+  };
+
+async function parseRequestJson(request: Request): Promise<unknown | Response> {
+  let body: string;
+  try {
+    body = await readBodyWithLimit(request, DEFAULT_MAX_BODY_SIZE_BYTES);
+  } catch (error) {
+    if (isRequestBodyTooLargeError(error)) {
+      return Response.json(
+        {
+          errorCode: "REQUEST_TOO_LARGE",
+          message: `Request body exceeds ${DEFAULT_MAX_BODY_SIZE_BYTES} bytes`,
+        },
+        { status: 413 },
+      );
+    }
+    return null;
+  }
+  try {
+    return JSON.parse(body);
+  } catch {
+    return null;
+  }
 }
 
 function createValidationErrorResponse(input: {
@@ -79,17 +135,194 @@ function createValidationErrorResponse(input: {
   );
 }
 
+async function withVerifiedRunEventAppendToken(
+  request: Request,
+  parsedRequest: ParsedHostedChatRequest,
+  verifyRunEventAppendToken: ParseHostedChatRequestOptions["verifyRunEventAppendToken"],
+  trustServerEnvelope: boolean,
+): Promise<ParsedHostedChatRequest | Response> {
+  const token = request.headers.get(RUN_EVENT_APPEND_TOKEN_HEADER)?.trim();
+  if (!token) {
+    return {
+      ...parsedRequest,
+      forwardedProps: stripUnverifiedServerResolvedForwardedProps(
+        parsedRequest.forwardedProps,
+      ),
+    };
+  }
+
+  const projectId = parsedRequest.projectId;
+  const runId = parsedRequest.durableRootRun?.runId;
+  if (
+    !projectId ||
+    !runId ||
+    !verifyRunEventAppendToken ||
+    !await verifyRunEventAppendToken({ token, projectId, runId })
+  ) {
+    return Response.json(
+      { errorCode: "INVALID_RUN_EVENT_APPEND_TOKEN" },
+      { status: 403 },
+    );
+  }
+
+  const verifiedRequest: ParsedHostedChatRequest = {
+    ...parsedRequest,
+    ...(trustServerEnvelope ? { serverEnvelopeVerified: true as const } : {}),
+    forwardedProps: trustServerEnvelope
+      ? parsedRequest.forwardedProps
+      : stripUnverifiedServerResolvedForwardedProps(parsedRequest.forwardedProps),
+  };
+  registerHostedRunEventWriterToken(
+    verifiedRequest,
+    {
+      token,
+      projectId,
+      runId,
+    },
+  );
+  return verifiedRequest;
+}
+
+function stripUnverifiedServerResolvedForwardedProps(
+  forwardedProps: ParsedHostedChatRequest["forwardedProps"],
+): ParsedHostedChatRequest["forwardedProps"] {
+  if (!forwardedProps) return undefined;
+  const sanitized = Object.fromEntries(
+    Object.entries(forwardedProps).filter(([key]) => !key.startsWith("serverResolved")),
+  );
+  return Object.keys(sanitized).length > 0 ? sanitized : undefined;
+}
+
 function getValidationErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "validation failed";
+}
+
+function normalizeProjectSlug(projectSlug: string | undefined): string | undefined {
+  const normalized = projectSlug?.trim();
+  return normalized || undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function mapRawToolCallState(state: string): ChatToolPartState {
+  switch (state) {
+    case "streaming":
+      return "input-streaming";
+    case "pending":
+      return "pending";
+    case "error":
+      return "completed";
+    default:
+      return "completed";
+  }
+}
+
+function normalizeHostedChatRequestMessages(
+  messages: HostedChatRequest["messages"],
+): ChatUiMessage[] {
+  const knownToolNames = new Map<string, string>();
+  const knownToolInputs = new Map<string, Record<string, unknown>>();
+
+  return messages.map((message) => {
+    const parts: ChatUiMessagePart[] = [];
+    const partIndexByToolCallId = new Map<string, number>();
+
+    for (const part of message.parts) {
+      const uiToolIdentity = getHostedChatUiToolIdentity(part);
+      if (uiToolIdentity) {
+        knownToolNames.set(uiToolIdentity.toolCallId, uiToolIdentity.toolName);
+        const input = isRecord(part as unknown)
+          ? (part as Record<string, unknown>)["input"]
+          : undefined;
+        if (isRecord(input)) {
+          knownToolInputs.set(uiToolIdentity.toolCallId, input);
+        }
+        partIndexByToolCallId.set(uiToolIdentity.toolCallId, parts.length);
+      }
+
+      if (isRecord(part) && part.type === "tool_call" && "id" in part && "name" in part) {
+        const rawPart: Record<string, unknown> = part;
+        const rawId = rawPart["id"];
+        const rawName = rawPart["name"];
+        const toolCallId = typeof rawId === "string" ? rawId : "";
+        const toolName = typeof rawName === "string" ? rawName : "";
+        const state = typeof part.state === "string" ? part.state : "completed";
+        if (!toolCallId || !toolName) continue;
+
+        const input = isRecord(part.input) ? part.input : {};
+        knownToolNames.set(toolCallId, toolName);
+        knownToolInputs.set(toolCallId, input);
+        partIndexByToolCallId.set(toolCallId, parts.length);
+        parts.push({
+          type: "tool_call",
+          toolCallId,
+          toolName,
+          input,
+          state: mapRawToolCallState(state),
+        });
+        continue;
+      }
+
+      if (isRecord(part) && part.type === "tool_result") {
+        const toolCallId = typeof part.tool_call_id === "string" ? part.tool_call_id : "";
+        const explicitToolName = typeof part.tool_name === "string" ? part.tool_name : "";
+        const toolName = explicitToolName || knownToolNames.get(toolCallId);
+        if (!toolCallId || !toolName) continue;
+
+        const resultPart: ChatUiMessagePart = {
+          type: "tool_call",
+          toolCallId,
+          toolName,
+          input: knownToolInputs.get(toolCallId) ?? {},
+          state: part.is_error === true ? "output-error" : "output-available",
+          output: part.output,
+          ...(part.is_error === true
+            ? { errorText: stringifyUnknown(part.output ?? "Tool error") }
+            : {}),
+        };
+
+        const existingIndex = partIndexByToolCallId.get(toolCallId);
+        if (existingIndex !== undefined) {
+          const existingPart = parts[existingIndex];
+          if (existingPart && isRecord(existingPart)) {
+            parts[existingIndex] = {
+              ...existingPart,
+              state: resultPart.state,
+              output: resultPart.output,
+              ...(resultPart.errorText ? { errorText: resultPart.errorText } : {}),
+            } as ChatUiMessagePart;
+          }
+        } else {
+          parts.push(resultPart);
+        }
+        continue;
+      }
+
+      parts.push(part as ChatUiMessagePart);
+    }
+
+    return {
+      ...message,
+      role: message.role as ChatUiMessageRole,
+      parts,
+    };
+  });
+}
+
+function isBlankProjectSlug(projectSlug: string | undefined): boolean {
+  return projectSlug !== undefined && !normalizeProjectSlug(projectSlug);
 }
 
 async function verifyHostedChatProjectAccess(input: {
   projectId: string | null;
   authToken: string;
+  requestedProjectSlug?: string;
   verifyProjectAccess?: ParseHostedChatRequestOptions["verifyProjectAccess"];
-}): Promise<Response | undefined> {
+}): Promise<{ projectSlug?: string } | Response> {
   if (!input.projectId || !input.verifyProjectAccess) {
-    return undefined;
+    return { projectSlug: normalizeProjectSlug(input.requestedProjectSlug) };
   }
 
   const access = await input.verifyProjectAccess({
@@ -97,7 +330,22 @@ async function verifyHostedChatProjectAccess(input: {
     authToken: input.authToken,
   });
   if (access.success) {
-    return undefined;
+    const requestedProjectSlug = normalizeProjectSlug(input.requestedProjectSlug);
+    const verifiedProjectSlug = normalizeProjectSlug(access.projectSlug);
+    if (
+      requestedProjectSlug &&
+      verifiedProjectSlug &&
+      requestedProjectSlug !== verifiedProjectSlug
+    ) {
+      return Response.json(
+        {
+          errorCode: "FORBIDDEN",
+          message: "Project slug does not match verified project access",
+        },
+        { status: 403 },
+      );
+    }
+    return { projectSlug: verifiedProjectSlug };
   }
 
   return Response.json(
@@ -128,6 +376,20 @@ export async function buildParsedHostedChatRequest(input: {
   const projectSlug = chatContext.projectSlug;
   const conversationId = chatContext.conversationId;
 
+  if (isBlankProjectSlug(projectSlug)) {
+    return createValidationErrorResponse({
+      messagePrefix: "Invalid request",
+      validationMessage: "context.projectSlug cannot be blank",
+    });
+  }
+
+  if (input.verifyProjectAccess && !projectId && normalizeProjectSlug(projectSlug)) {
+    return createValidationErrorResponse({
+      messagePrefix: "Invalid request",
+      validationMessage: "context.projectSlug requires verified context.projectId",
+    });
+  }
+
   if (input.agentConfig && input.agentId && input.agentConfig.id !== input.agentId) {
     return createValidationErrorResponse({
       messagePrefix: "Invalid runtime agent invocation",
@@ -135,23 +397,29 @@ export async function buildParsedHostedChatRequest(input: {
     });
   }
 
-  const accessError = await verifyHostedChatProjectAccess({
+  const access = await verifyHostedChatProjectAccess({
     projectId,
     authToken: input.authToken,
+    requestedProjectSlug: projectSlug,
     verifyProjectAccess: input.verifyProjectAccess,
   });
-  if (accessError) {
-    return accessError;
+  if (access instanceof Response) {
+    return access;
   }
+  const verifiedProjectSlug = access.projectSlug;
+  const validatedContext: ChatRequestContext = {
+    ...chatContext,
+    projectSlug: verifiedProjectSlug,
+  };
 
   return {
     agentId: input.agentId,
     userId: input.userId,
     authToken: input.authToken,
-    messages: messages as ChatUiMessage[],
-    validatedContext: chatContext,
+    messages: normalizeHostedChatRequestMessages(messages),
+    validatedContext,
     projectId,
-    projectSlug,
+    projectSlug: verifiedProjectSlug,
     conversationId,
     parentRunId: durableRootRun?.runId,
     upstreamParentConversationId: durableRootRun?.parentConversationId,
@@ -177,7 +445,10 @@ export async function parseHostedChatRequestFromRequest(
     return authenticatedRequest;
   }
 
-  const parsed = hostedChatRequestSchema.safeParse(await parseRequestJson(request));
+  const requestBody = await parseRequestJson(request);
+  if (requestBody instanceof Response) return requestBody;
+
+  const parsed = hostedChatRequestSchema.safeParse(requestBody);
   if (!parsed.success) {
     return createValidationErrorResponse({
       messagePrefix: "Invalid request",
@@ -185,25 +456,38 @@ export async function parseHostedChatRequestFromRequest(
     });
   }
 
-  return await buildParsedHostedChatRequest({
+  const parsedRequest = await buildParsedHostedChatRequest({
     authToken: authenticatedRequest.authToken,
     userId: authenticatedRequest.userId,
     chatRequest: parsed.data,
     verifyProjectAccess: options.verifyProjectAccess,
   });
+  if (parsedRequest instanceof Response) {
+    return parsedRequest;
+  }
+
+  return await withVerifiedRunEventAppendToken(
+    request,
+    parsedRequest,
+    options.verifyRunEventAppendToken,
+    false,
+  );
 }
 
 /** Request payload for parse runtime agent run invocation hosted chat request from. */
 export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
   request: Request,
-  options: ParseHostedChatRequestOptions,
+  options: ParseRuntimeAgentRunInvocationHostedChatRequestOptions,
 ): Promise<ParsedHostedChatRequest | Response> {
   const authenticatedRequest = await options.authenticate(request);
   if (authenticatedRequest instanceof Response) {
     return authenticatedRequest;
   }
 
-  const invocation = RuntimeAgentRunInvocationSchema.safeParse(await parseRequestJson(request));
+  const requestBody = await parseRequestJson(request);
+  if (requestBody instanceof Response) return requestBody;
+
+  const invocation = RuntimeAgentRunInvocationSchema.safeParse(requestBody);
   if (!invocation.success) {
     return createValidationErrorResponse({
       messagePrefix: "Invalid runtime agent invocation",
@@ -221,7 +505,7 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     });
   }
 
-  return await buildParsedHostedChatRequest({
+  const parsedRequest = await buildParsedHostedChatRequest({
     authToken: authenticatedRequest.authToken,
     userId: invocation.data.run.requestedByUserId,
     chatRequest: chatRequest.data,
@@ -229,4 +513,25 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     agentConfig: invocation.data.agentConfig,
     verifyProjectAccess: options.verifyProjectAccess,
   });
+  if (parsedRequest instanceof Response) {
+    return parsedRequest;
+  }
+
+  const sourceBindingError = verifyHostedRuntimeSourceBinding(
+    options.runtimeSource,
+    invocation.data.agentSource,
+  );
+  if (sourceBindingError) {
+    return Response.json(
+      { errorCode: sourceBindingError.errorCode },
+      { status: sourceBindingError.status },
+    );
+  }
+
+  return await withVerifiedRunEventAppendToken(
+    request,
+    parsedRequest,
+    options.verifyRunEventAppendToken,
+    true,
+  );
 }

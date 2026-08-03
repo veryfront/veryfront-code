@@ -8,10 +8,19 @@
  */
 
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
+import { fromFileUrl } from "#veryfront/compat/path/index.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 
 /** Max entries in the verified HTTP bundle paths LRU cache */
 const VERIFIED_BUNDLE_CACHE_MAX_ENTRIES = 2_000;
+
+function decodeFileUrlPath(path: string): string | null {
+  try {
+    return fromFileUrl(`file://${path}`);
+  } catch (_) {
+    return null;
+  }
+}
 
 /**
  * Extract VF module paths (veryfront-mdx-esm/*.mjs) from code.
@@ -24,12 +33,11 @@ function extractVfModulePaths(code: string): string[] {
   const seen = new Set<string>();
   let match;
   while ((match = vfModulePattern.exec(code)) !== null) {
-    const path = match[1] as string;
-    // Strip query params for path comparison
-    const cleanPath = path.replace(/\?.*$/, "");
-    if (!seen.has(cleanPath)) {
-      seen.add(cleanPath);
-      paths.push(cleanPath);
+    const path = decodeFileUrlPath(match[1] as string);
+    if (!path) continue;
+    if (!seen.has(path)) {
+      seen.add(path);
+      paths.push(path);
     }
   }
   return paths;
@@ -106,15 +114,14 @@ export async function extractAllHttpBundlePathsRecursive(
 /** Extract HTTP bundle paths from transformed code for proactive recovery */
 export function extractHttpBundlePaths(code: string): Array<{ path: string; hash: string }> {
   // Create regex per call to avoid shared lastIndex state across concurrent calls.
-  // Note: The hash is a decimal number from simpleHash(), not hex, so we match \d+ not [a-f0-9]+
   const bundles: Array<{ path: string; hash: string }> = [];
   const seen = new Set<string>();
 
   // Match absolute file:// paths (legacy format)
-  const absolutePattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-(\d+)\.mjs)/gi;
+  const absolutePattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
   let match: RegExpExecArray | null;
   while ((match = absolutePattern.exec(code)) !== null) {
-    const path = match[1];
+    const path = match[1] ? decodeFileUrlPath(match[1]) : null;
     const hash = match[2];
     if (!path || !hash || seen.has(hash)) continue;
     seen.add(hash);
@@ -123,7 +130,7 @@ export function extractHttpBundlePaths(code: string): Array<{ path: string; hash
 
   // Match relative paths (new portable format): ./http-{hash}.mjs
   // These are used when HTTP bundles import other HTTP bundles for cross-environment portability
-  const relativePattern = /["']\.\/http-(\d+)\.mjs["']/gi;
+  const relativePattern = /["']\.\/http-([a-f0-9]+)\.mjs["']/gi;
   while ((match = relativePattern.exec(code)) !== null) {
     const hash = match[1];
     if (!hash || seen.has(hash)) continue;
@@ -143,16 +150,17 @@ export function extractHttpBundlePaths(code: string): Array<{ path: string; hash
  */
 export function extractAllFilePaths(code: string): string[] {
   // Create regex per call to avoid shared lastIndex state across concurrent calls.
-  const allFilePathsPattern = /file:\/\/([^"'\s]+\.(?:mjs|js|tsx|ts|jsx)(?:\?[^"'\s]*)?)/gi;
+  const allFilePathsPattern = /file:\/\/(\/[^"'\s]+)/gi;
+  const supportedPathPattern = /\.(?:mjs|js|tsx|ts|jsx)(?:\.src)?$/i;
 
   const paths: string[] = [];
   const seen = new Set<string>();
 
   let match: RegExpExecArray | null;
   while ((match = allFilePathsPattern.exec(code)) !== null) {
-    const path = match[1]?.replace(/\?.*$/, "");
+    const path = match[1] ? decodeFileUrlPath(match[1]) : null;
 
-    if (!path || seen.has(path)) continue;
+    if (!path || !supportedPathPattern.test(path) || seen.has(path)) continue;
 
     seen.add(path);
     paths.push(path);

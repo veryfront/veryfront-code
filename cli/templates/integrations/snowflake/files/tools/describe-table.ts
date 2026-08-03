@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { describeTable, getTableRowCount } from "../../lib/snowflake-client.ts";
+import { describeTable, getTableRowCount } from "../lib/snowflake-client.ts";
 
 export default tool({
-  id: "describe-table",
+  id: "snowflake-describe-table",
   description:
     "Get detailed schema information about a specific table in Snowflake. Returns column names, data types, constraints, and table statistics.",
   inputSchema: defineSchema((v) => v.object({

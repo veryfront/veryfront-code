@@ -1,4 +1,6 @@
 import type { DurableRunCanaryMessage, DurableRunCanaryRunSummary } from "./runner.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { stringifyEvalError } from "../../validation.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -31,11 +33,11 @@ function hasCreateFileInput(value: unknown): boolean {
 /** Assert that a durable run canary completed successfully. */
 export function assertCompleted(run: DurableRunCanaryRunSummary): void {
   if (run.status !== "completed") {
-    throw new Error(
-      `Expected completed run, got ${run.status} (${run.terminalErrorCode ?? "no-code"}: ${
+    throw INVALID_ARGUMENT.create({
+      detail: `Expected completed run, got ${run.status} (${run.terminalErrorCode ?? "no-code"}: ${
         run.terminalErrorMessage ?? "no message"
       })`,
-    );
+    });
   }
 }
 
@@ -46,25 +48,19 @@ export function findAssistantMessage(
 ): DurableRunCanaryMessage {
   const message = messages.find((candidate) => candidate.id === messageId);
   if (!message) {
-    throw new Error(`Assistant message ${messageId} was not persisted`);
+    throw INVALID_ARGUMENT.create({ detail: `Assistant message ${messageId} was not persisted` });
   }
   if (message.role !== "assistant") {
-    throw new Error(`Expected assistant message ${messageId}, got role ${message.role}`);
+    throw INVALID_ARGUMENT.create({
+      detail: `Expected assistant message ${messageId}, got role ${message.role}`,
+    });
   }
   return message;
 }
 
 /** Stringify unknown helper. */
 export function stringifyUnknown(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
-
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
+  return stringifyEvalError(value);
 }
 
 /** Collect assistant text helper. */
@@ -84,7 +80,9 @@ export function assertNoMalformedCreateFileToolCalls(messages: DurableRunCanaryM
       }
 
       if (!hasCreateFileInput(part.input)) {
-        throw new Error("Expected create_file tool_call input to include a path and content");
+        throw INVALID_ARGUMENT.create({
+          detail: "Expected create_file tool_call input to include a path and content",
+        });
       }
     }
   }

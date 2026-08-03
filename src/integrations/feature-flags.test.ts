@@ -2,11 +2,16 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  DECLARED_INTEGRATION_NAMES,
   EXPERIMENTAL_INTEGRATIONS_ENV,
   filterVisibleIntegrations,
+  INTEGRATIONS_REQUIRING_PROVIDER_ADAPTER,
+  isExperimentalIntegrationEnabled,
   isSupportedIntegration,
   isVisibleIntegration,
+  SUPPORTED_INTEGRATION_NAMES,
 } from "./feature-flags.ts";
+import { ALL_INTEGRATION_NAMES } from "./schema.ts";
 
 function setFlag(value: string | undefined): void {
   if (value === undefined) {
@@ -31,18 +36,20 @@ describe("integration feature flags", () => {
     assertEquals(isVisibleIntegration("salesforce"), false);
   });
 
-  it("exposes a comma-listed unsupported integration", () => {
+  it("exposes eligible experimental integrations but not adapter-only providers", () => {
     setFlag("salesforce, stripe");
 
-    assertEquals(isVisibleIntegration("salesforce"), true);
+    assertEquals(isExperimentalIntegrationEnabled("salesforce"), false);
+    assertEquals(isExperimentalIntegrationEnabled("stripe"), true);
+    assertEquals(isVisibleIntegration("salesforce"), false);
     assertEquals(isVisibleIntegration("stripe"), true);
     assertEquals(isVisibleIntegration("pipedrive"), false);
   });
 
-  it("exposes all declared integrations when explicitly enabled", () => {
+  it("keeps adapter-only providers unavailable when all experiments are enabled", () => {
     setFlag("all");
 
-    assertEquals(isVisibleIntegration("salesforce"), true);
+    assertEquals(isVisibleIntegration("salesforce"), false);
     assertEquals(isVisibleIntegration("stripe"), true);
     assertEquals(isVisibleIntegration("not-a-provider"), false);
   });
@@ -55,5 +62,26 @@ describe("integration feature flags", () => {
       ]).map((item) => item.id),
       ["figma"],
     );
+  });
+});
+
+describe("integration name registry", () => {
+  it("derives the declared integration list from the canonical registry", () => {
+    assertEquals(
+      new Set<string>(DECLARED_INTEGRATION_NAMES),
+      new Set<string>(ALL_INTEGRATION_NAMES),
+    );
+  });
+
+  it("keeps every supported integration within the canonical registry", () => {
+    const registry = new Set<string>(ALL_INTEGRATION_NAMES);
+    const missing = SUPPORTED_INTEGRATION_NAMES.filter((name) => !registry.has(name));
+    assertEquals(missing, []);
+  });
+
+  it("keeps every provider-adapter-only integration within the canonical registry", () => {
+    const registry = new Set<string>(ALL_INTEGRATION_NAMES);
+    const missing = INTEGRATIONS_REQUIRING_PROVIDER_ADAPTER.filter((name) => !registry.has(name));
+    assertEquals(missing, []);
   });
 });

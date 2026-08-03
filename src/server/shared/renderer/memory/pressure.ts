@@ -36,6 +36,10 @@ function parseEnvThreshold(name: string, fallback: number): number {
   return fallback;
 }
 
+// Thresholds are computed once at module load time. If MEMORY_*_THRESHOLD env vars are
+// set after this module is first imported (e.g., via late .env loading), the defaults
+// will be used for the lifetime of the process. Ensure these vars are exported before
+// the first import of this module (typically via bootstrap / env loading on startup).
 const THRESHOLDS = {
   WARNING: parseEnvThreshold("MEMORY_WARNING_THRESHOLD", 65),
   HIGH: parseEnvThreshold("MEMORY_HIGH_THRESHOLD", 75),

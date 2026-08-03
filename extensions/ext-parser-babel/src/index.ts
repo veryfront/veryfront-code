@@ -14,20 +14,20 @@
  * @module extensions/ext-parser-babel
  */
 
-import * as parser from "@babel/parser";
 import * as traverseModule from "@babel/traverse";
 import * as generateModule from "@babel/generator";
 import type { ExtensionFactory } from "veryfront/extensions";
 import type {
   ASTNode,
   CodeParser,
+  FunctionDirectiveOptions,
   GenerateOptions,
   GenerateResult,
   InjectJsxNodePositionsOptions,
-  ParseOptions,
   TraverseVisitor,
 } from "veryfront/extensions/parser";
 import { injectNodePositions } from "./inject-node-positions.ts";
+import { BabelParseOnlyParser } from "./parser-only.ts";
 
 type TraverseFunction = (ast: unknown, opts: Record<string, unknown>) => void;
 type GenerateFunction = (
@@ -49,25 +49,41 @@ function resolveDefaultExport<T>(mod: unknown): T {
   return mod as T;
 }
 
-const traverse: TraverseFunction = resolveDefaultExport<TraverseFunction>(traverseModule);
-const generate: GenerateFunction = resolveDefaultExport<GenerateFunction>(generateModule);
+const traverse: TraverseFunction = resolveDefaultExport<TraverseFunction>(
+  traverseModule,
+);
+const generate: GenerateFunction = resolveDefaultExport<GenerateFunction>(
+  generateModule,
+);
 
-function pickPlugins(filePath?: string): parser.ParserPlugin[] {
-  const isTypeScript = filePath?.endsWith(".ts") || filePath?.endsWith(".tsx");
-  const plugins: parser.ParserPlugin[] = ["jsx"];
-  if (isTypeScript || !filePath) plugins.push("typescript");
-  return plugins;
+const FUNCTION_NODE_TYPES = [
+  "ArrowFunctionExpression",
+  "ClassMethod",
+  "ClassPrivateMethod",
+  "FunctionDeclaration",
+  "FunctionExpression",
+  "ObjectMethod",
+] as const;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-class BabelCodeParser implements CodeParser {
-  parse(options: ParseOptions): Promise<ASTNode> {
-    const ast = parser.parse(options.code, {
-      sourceType: "module",
-      plugins: pickPlugins(options.filePath),
-    });
-    return Promise.resolve(ast as unknown as ASTNode);
+function functionHasDirective(node: ASTNode, directive: string): boolean {
+  const body = node.body;
+  if (
+    !isRecord(body) || body.type !== "BlockStatement" ||
+    !Array.isArray(body.directives)
+  ) {
+    return false;
   }
 
+  return body.directives.some((entry) =>
+    isRecord(entry) && isRecord(entry.value) && entry.value.value === directive
+  );
+}
+
+class BabelCodeParser extends BabelParseOnlyParser implements CodeParser {
   traverse(ast: ASTNode, visitor: TraverseVisitor): void {
     traverse(ast, visitor as unknown as Record<string, unknown>);
   }
@@ -83,7 +99,26 @@ class BabelCodeParser implements CodeParser {
     });
   }
 
-  injectJsxNodePositions(source: string, options: InjectJsxNodePositionsOptions): string {
+  async hasFunctionDirective(
+    options: FunctionDirectiveOptions,
+  ): Promise<boolean> {
+    const ast = await this.parse(options);
+    let found = false;
+    const visit = (path: { node: ASTNode }) => {
+      if (!found && functionHasDirective(path.node, options.directive)) {
+        found = true;
+      }
+    };
+    const visitor: TraverseVisitor = {};
+    for (const nodeType of FUNCTION_NODE_TYPES) visitor[nodeType] = visit;
+    this.traverse(ast, visitor);
+    return found;
+  }
+
+  injectJsxNodePositions(
+    source: string,
+    options: InjectJsxNodePositionsOptions,
+  ): string {
     return injectNodePositions(source, options);
   }
 }
@@ -99,7 +134,7 @@ const extBabel: ExtensionFactory = () => {
     capabilities: [],
     setup(ctx) {
       ctx.provide("CodeParser", impl);
-      ctx.logger.info("[ext-parser-babel] CodeParser registered");
+      ctx.logger.debug("[ext-parser-babel] CodeParser registered");
     },
     teardown() {
       // No resources to release.

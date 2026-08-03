@@ -3,10 +3,24 @@ import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/a
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
-import { join } from "#veryfront/compat/path/index.ts";
-import { reactReExportToEsmUrl, transformFrameworkCode } from "./transform.ts";
-import { FRAMEWORK_ROOT, MAX_RELATIVE_IMPORT_DEPTH } from "./constants.ts";
+import { fromFileUrl, join } from "#veryfront/compat/path/index.ts";
+import {
+  isCyclePlaceholder,
+  reactReExportToEsmUrl,
+  resolveAndTransformVeryfrontImport,
+  stripJsonAttributesFromModuleImports,
+  transformFrameworkCode,
+} from "./transform.ts";
+import {
+  buildFrameworkTransformCacheKey,
+  FRAMEWORK_ROOT,
+  frameworkFileCache,
+  MAX_RELATIVE_IMPORT_DEPTH,
+  veryfrontTransformCache,
+} from "./constants.ts";
 import { buildReactUrl } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import { resolveVeryfrontSourcePath } from "./path-resolver.ts";
+import { fnv1aHash, hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 
 describe("reactReExportToEsmUrl", () => {
   const reactPath = (name: string) => join(FRAMEWORK_ROOT, "react", name);
@@ -74,6 +88,281 @@ describe("transformFrameworkCode depth-limit fallback", {
 }, () => {
   afterAll(async () => {
     await stopEsbuild();
+  });
+
+  it("isolates cached framework transforms by React version", async () => {
+    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-react-cache-" });
+    const sourcePath = `${tmp}/framework-module.js`;
+    const source = "export const marker = 1;\n";
+
+    try {
+      await transformFrameworkCode(
+        source,
+        sourcePath,
+        { reactVersion: "18.3.1", projectDir: tmp, fs: createFileSystem() },
+      );
+      await transformFrameworkCode(
+        source,
+        sourcePath,
+        { reactVersion: "19.2.4", projectDir: tmp, fs: createFileSystem() },
+      );
+
+      const matchingKeys = [...frameworkFileCache.keys()].filter((key) => key.includes(sourcePath));
+      assertEquals(matchingKeys.length, 2);
+    } finally {
+      for (const key of frameworkFileCache.keys()) {
+        if (key.includes(sourcePath)) frameworkFileCache.delete(key);
+      }
+      await Deno.remove(tmp, { recursive: true });
+    }
+  });
+
+  it("isolates cache and singleflight keys by project scope", async () => {
+    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-project-cache-" });
+    const sourcePath = `${tmp}/framework-module.js`;
+    const projectA = `${tmp}/project-a`;
+    const projectB = `${tmp}/project-b`;
+    const source = "export const marker = 1;\n";
+
+    await Deno.mkdir(projectA);
+    await Deno.mkdir(projectB);
+
+    const keyA = buildFrameworkTransformCacheKey(sourcePath, "19.2.4", projectA, source);
+    const keyB = buildFrameworkTransformCacheKey(sourcePath, "19.2.4", projectB, source);
+
+    const importMapKeyA = buildFrameworkTransformCacheKey(
+      sourcePath,
+      "19.2.4",
+      projectA,
+      source,
+      "import-map-v1",
+    );
+    const importMapKeyB = buildFrameworkTransformCacheKey(
+      sourcePath,
+      "19.2.4",
+      projectA,
+      source,
+      "import-map-v2",
+    );
+
+    try {
+      assertEquals(keyA === keyB, false);
+      assertEquals(importMapKeyA === importMapKeyB, false);
+
+      await transformFrameworkCode(
+        source,
+        sourcePath,
+        { reactVersion: "19.2.4", projectDir: projectA, fs: createFileSystem() },
+      );
+      await transformFrameworkCode(
+        source,
+        sourcePath,
+        { reactVersion: "19.2.4", projectDir: projectB, fs: createFileSystem() },
+      );
+
+      assertEquals(frameworkFileCache.has(keyA), true);
+      assertEquals(frameworkFileCache.has(keyB), true);
+    } finally {
+      frameworkFileCache.delete(keyA);
+      frameworkFileCache.delete(keyB);
+      await Deno.remove(tmp, { recursive: true });
+    }
+  });
+
+  it("preserves framed cache-key bytes under inherited Array.prototype.toJSON", () => {
+    const identifier = '/framework/quoted"module.ts';
+    const reactVersion = "19.2.4";
+    const projectDir = "/projects/line\nbreak";
+    const source = 'export const marker = "quoted";\n';
+    const importMapFingerprint = "import-map-v2";
+    const contentFingerprint = `${source.length}:${hashCodeHex(source)}:${fnv1aHash(source)}`;
+    const expectedLegacy = JSON.stringify([
+      projectDir,
+      reactVersion,
+      identifier,
+      contentFingerprint,
+    ]);
+    const expectedScoped = JSON.stringify([
+      projectDir,
+      reactVersion,
+      importMapFingerprint,
+      identifier,
+      contentFingerprint,
+    ]);
+    const originalToJson = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+    let poisonedLegacy: string | undefined;
+    let poisonedScoped: string | undefined;
+    let distinctScoped: string | undefined;
+
+    try {
+      Object.defineProperty(Array.prototype, "toJSON", {
+        configurable: true,
+        value: () => [],
+      });
+      poisonedLegacy = buildFrameworkTransformCacheKey(
+        identifier,
+        reactVersion,
+        projectDir,
+        source,
+      );
+      poisonedScoped = buildFrameworkTransformCacheKey(
+        identifier,
+        reactVersion,
+        projectDir,
+        source,
+        importMapFingerprint,
+      );
+      distinctScoped = buildFrameworkTransformCacheKey(
+        identifier,
+        reactVersion,
+        projectDir,
+        source,
+        "import-map-v3",
+      );
+    } finally {
+      if (originalToJson) Object.defineProperty(Array.prototype, "toJSON", originalToJson);
+      else Reflect.deleteProperty(Array.prototype, "toJSON");
+    }
+
+    assertEquals(poisonedLegacy, expectedLegacy);
+    assertEquals(poisonedScoped, expectedScoped);
+    assertEquals(poisonedScoped === distinctScoped, false);
+  });
+
+  it("coalesces concurrent transforms instead of reporting a false cycle", async () => {
+    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-concurrent-" });
+    const sourcePath = `${tmp}/framework-module.ts`;
+    const source = [
+      'import { FNV1A_PRIME_32 } from "#veryfront/utils/constants/crypto.ts";',
+      "export const marker = FNV1A_PRIME_32;",
+    ].join("\n");
+    const baseFs = createFileSystem();
+
+    let releaseRead!: () => void;
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    let signalReadStarted!: () => void;
+    const readStarted = new Promise<void>((resolve) => {
+      signalReadStarted = resolve;
+    });
+    let blocked = false;
+    const fs = new Proxy(baseFs, {
+      get(target, property, receiver) {
+        if (property === "readTextFile") {
+          return async (path: string) => {
+            if (!blocked && path.includes("/utils/constants/crypto.ts")) {
+              blocked = true;
+              signalReadStarted();
+              await readGate;
+            }
+            return await target.readTextFile(path);
+          };
+        }
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const ctx = { reactVersion: "19.2.4", projectDir: tmp, fs };
+
+    try {
+      const first = transformFrameworkCode(source, sourcePath, ctx);
+      await readStarted;
+      const second = transformFrameworkCode(source, sourcePath, ctx);
+      releaseRead();
+
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+      assertEquals(isCyclePlaceholder(firstResult), false);
+      assertEquals(isCyclePlaceholder(secondResult), false);
+      assertEquals(secondResult, firstResult);
+    } finally {
+      releaseRead();
+      for (const key of frameworkFileCache.keys()) {
+        if (key.includes(tmp)) frameworkFileCache.delete(key);
+      }
+      for (const key of veryfrontTransformCache.keys()) {
+        if (key.includes(tmp)) veryfrontTransformCache.delete(key);
+      }
+      await Deno.remove(tmp, { recursive: true });
+    }
+  });
+
+  it("returns immediately when traversal ancestry identifies a real cycle", async () => {
+    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-real-cycle-" });
+    const sourcePath = `${tmp}/framework-module.js`;
+    const source = "export const marker = 1;\n";
+    const transformKey = buildFrameworkTransformCacheKey(
+      sourcePath,
+      "19.2.4",
+      tmp,
+      source,
+    );
+
+    try {
+      const result = await transformFrameworkCode(source, sourcePath, {
+        reactVersion: "19.2.4",
+        projectDir: tmp,
+        fs: createFileSystem(),
+        transformAncestry: new Set([transformKey]),
+      });
+
+      assertEquals(isCyclePlaceholder(result), true);
+    } finally {
+      await Deno.remove(tmp, { recursive: true });
+    }
+  });
+
+  it("invalidates a same-path transform when its source content changes", async () => {
+    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-source-cache-" });
+    const sourcePath = `${tmp}/framework-module.js`;
+    const ctx = { reactVersion: "19.2.4", projectDir: tmp, fs: createFileSystem() };
+
+    try {
+      const first = await transformFrameworkCode(
+        "export const marker = 1;\n",
+        sourcePath,
+        ctx,
+      );
+      const second = await transformFrameworkCode(
+        "export const marker = 2;\n",
+        sourcePath,
+        ctx,
+      );
+
+      assertStringIncludes(first, "marker = 1");
+      assertStringIncludes(second, "marker = 2");
+      assertEquals(second === first, false);
+    } finally {
+      for (const key of frameworkFileCache.keys()) {
+        if (key.includes(tmp)) frameworkFileCache.delete(key);
+      }
+      await Deno.remove(tmp, { recursive: true });
+    }
+  });
+
+  it("uses the TypeScript loader for embedded .ts.src modules", async () => {
+    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-main-ts-src-" });
+    const sourcePath = `${tmp}/framework-module.ts.src`;
+    const source = [
+      "const value: unknown = 1;",
+      "const typed = <number> value;",
+      "export { typed };",
+    ].join("\n");
+
+    try {
+      const transformed = await transformFrameworkCode(
+        source,
+        sourcePath,
+        { reactVersion: "19.2.4", projectDir: tmp, fs: createFileSystem() },
+      );
+
+      assertStringIncludes(transformed, "typed = value");
+    } finally {
+      for (const key of frameworkFileCache.keys()) {
+        if (key.includes(tmp)) frameworkFileCache.delete(key);
+      }
+      await Deno.remove(tmp, { recursive: true });
+    }
   });
 
   it("rewrites relative imports in the fallback to absolute file:// URLs so the cached output is loadable", async () => {
@@ -188,12 +477,21 @@ describe("transformFrameworkCode depth-limit fallback", {
       // the same dep would receive degraded output.
       const newKeys = [...frameworkFileCache.keys()].filter((k) => !cacheKeysBefore.has(k));
       assertEquals(
-        newKeys.includes(depPath),
+        newKeys.includes(
+          buildFrameworkTransformCacheKey(
+            depPath,
+            "19.1.1",
+            tmp,
+            "export const X = 1;\n",
+          ),
+        ),
         false,
         `fallback poisoned frameworkFileCache with ${depPath}`,
       );
       assertEquals(
-        newKeys.includes(ownerPath),
+        newKeys.includes(
+          buildFrameworkTransformCacheKey(ownerPath, "19.1.1", tmp, ownerContent),
+        ),
         false,
         `fallback poisoned frameworkFileCache with ${ownerPath}`,
       );
@@ -242,7 +540,13 @@ describe("transformFrameworkCode depth-limit fallback", {
     await Deno.writeTextFile(depPath, "export const X = 42;\n");
     // Simulate the main path having pre-cached a cycle placeholder for this dep
     const placeholder = `/* Cycle detected: ${depPath} */\nexport {};`;
-    frameworkFileCache.set(depPath, placeholder);
+    const depCacheKey = buildFrameworkTransformCacheKey(
+      depPath,
+      "19.1.1",
+      tmp,
+      "export const X = 42;\n",
+    );
+    frameworkFileCache.set(depCacheKey, placeholder);
 
     const ownerPath = `${srcDir}/owner.ts.src`;
     const ownerContent = 'import { X } from "./dep.js"; export const y = X;';
@@ -271,7 +575,41 @@ describe("transformFrameworkCode depth-limit fallback", {
       );
       assertStringIncludes(written, "X = 42");
     } finally {
-      frameworkFileCache.delete(depPath);
+      frameworkFileCache.delete(depCacheKey);
+      await Deno.remove(tmp, { recursive: true });
+    }
+  });
+
+  it("rematerializes a cached #veryfront file URL when the target file is missing", async () => {
+    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-stale-url-" });
+    const specifier = "#veryfront/utils/hash-utils.ts";
+    const sourcePath = await resolveVeryfrontSourcePath(specifier);
+    assert(sourcePath, `${specifier} did not resolve to a framework source file`);
+    const content = await Deno.readTextFile(sourcePath);
+    const transformKey = buildFrameworkTransformCacheKey(
+      `${specifier}:${sourcePath}`,
+      "19.2.4",
+      tmp,
+      content,
+    );
+    const missingPath = `${tmp}/framework/vfmod-vf-framework-stale.mjs`;
+    const staleFileUrl = `file://${missingPath}`;
+    veryfrontTransformCache.set(transformKey, staleFileUrl);
+
+    try {
+      const resolved = await resolveAndTransformVeryfrontImport(specifier, {
+        reactVersion: "19.2.4",
+        projectDir: tmp,
+        fs: createFileSystem(),
+      });
+
+      assert(resolved, "resolver did not return a file URL");
+      assertEquals(resolved === staleFileUrl, false);
+      const resolvedPath = fromFileUrl(resolved);
+      const stat = await Deno.stat(resolvedPath);
+      assertEquals(stat.isFile, true);
+    } finally {
+      veryfrontTransformCache.delete(transformKey);
       await Deno.remove(tmp, { recursive: true });
     }
   });
@@ -385,5 +723,59 @@ describe("transformFrameworkCode depth-limit fallback", {
     } finally {
       await Deno.remove(tmp, { recursive: true });
     }
+  });
+});
+
+describe("stripJsonAttributesFromModuleImports", () => {
+  // A framework `.json` import is resolved by compiling the JSON into a cached
+  // `.mjs` that default-exports the data. The attribute describes the original
+  // target, so leaving it makes the runtime reject the rewritten import with
+  // "Expected a Json module, but identified a Mjs module".
+  it("drops the attribute when the target is now an .mjs", async () => {
+    const code = `import m from "file:///cache/framework/vfmod-abc.mjs" with { type: "json" };`;
+    assertEquals(
+      await stripJsonAttributesFromModuleImports(code),
+      `import m from "file:///cache/framework/vfmod-abc.mjs";`,
+    );
+  });
+
+  it("drops the attribute from a dynamic import of a rewritten module", async () => {
+    const code =
+      `export async function load() { return import("file:///cache/a.mjs", { with: { type: "json" } }); }`;
+    assertEquals(
+      await stripJsonAttributesFromModuleImports(code),
+      `export async function load() { return import("file:///cache/a.mjs"); }`,
+    );
+  });
+
+  it("keeps the attribute on a genuine .json target", async () => {
+    const code = `import m from "./manifest.json" with { type: "json" };`;
+    assertEquals(await stripJsonAttributesFromModuleImports(code), code);
+  });
+
+  it("handles single quotes and extra whitespace", async () => {
+    const code = `import m from 'file:///cache/a.mjs'  with  { type: 'json' };`;
+    assertStringIncludes(
+      await stripJsonAttributesFromModuleImports(code),
+      `from 'file:///cache/a.mjs';`,
+    );
+  });
+
+  it("leaves plain module imports untouched", async () => {
+    const code = `import { a } from "file:///cache/a.mjs";`;
+    assertEquals(await stripJsonAttributesFromModuleImports(code), code);
+  });
+
+  // The framework embeds module source in string literals (the `#deno-config`
+  // stub, the generated RSC bundles). Rewriting those corrupts the payload and
+  // the corruption is content-hashed straight into the cache.
+  it("leaves import-like text inside a string literal alone", async () => {
+    const code = 'export const TPL = `import d from "file:///cache/a.mjs" with { type: "json" };`;';
+    assertEquals(await stripJsonAttributesFromModuleImports(code), code);
+  });
+
+  it("keeps an attribute clause that is not a json type", async () => {
+    const code = `import m from "file:///cache/a.mjs" with { type: "css" };`;
+    assertEquals(await stripJsonAttributesFromModuleImports(code), code);
   });
 });

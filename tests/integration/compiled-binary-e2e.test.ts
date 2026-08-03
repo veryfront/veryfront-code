@@ -53,7 +53,68 @@ try {
   // .env file doesn't exist - that's fine
 }
 
-describe("Compiled Binary E2E", { sanitizeOps: false, sanitizeResources: false, timeout: 600_000 }, () => {
+const COMPILED_BINARY_E2E_OPTIONS = {
+  sanitizeOps: false,
+  sanitizeResources: false,
+  timeout: 600_000,
+};
+
+// Proxy startup requires an explicit API origin. Requests in these tests are
+// rejected by the proxy guard before this deterministic loopback URL is used.
+const UNREACHABLE_LOCAL_PROXY_API_BASE_URL = "http://127.0.0.1:1";
+
+const BROWSER_ESM_CSP = {
+  "default-src": ["'self'"],
+  "script-src": ["'self'", "'nonce-{NONCE}'", "https://esm.sh"],
+  "style-src": ["'self'", "'unsafe-inline'"],
+  "style-src-elem": ["'self'", "'unsafe-inline'"],
+  "style-src-attr": ["'unsafe-inline'"],
+  "img-src": ["'self'", "data:"],
+  "font-src": ["'self'", "data:"],
+  "connect-src": ["'self'"],
+  "media-src": ["'self'", "blob:"],
+  "worker-src": ["'self'", "blob:"],
+  "object-src": ["'none'"],
+  "frame-src": ["'self'"],
+  "frame-ancestors": ["'none'"],
+  "base-uri": ["'self'"],
+  "form-action": ["'self'"],
+} as const;
+
+function assertInlineScriptHasNonce(html: string, marker: string, message: string): void {
+  const markerIndex = html.indexOf(marker);
+  assert(markerIndex >= 0, `${message}: marker was not rendered`);
+  const openingTagStart = html.lastIndexOf("<script", markerIndex);
+  const openingTagEnd = html.indexOf(">", openingTagStart);
+  assert(openingTagStart >= 0 && openingTagEnd > openingTagStart, `${message}: tag is malformed`);
+  assertStringIncludes(
+    html.slice(openingTagStart, openingTagEnd + 1),
+    'nonce="',
+    `${message}: response nonce is missing`,
+  );
+}
+
+async function configureBrowserEsmProject(
+  projectDir: string,
+  additionalConfig: Record<string, unknown> = {},
+): Promise<void> {
+  await Deno.writeTextFile(
+    join(projectDir, "veryfront.config.ts"),
+    `export default ${
+      JSON.stringify(
+        {
+          fs: { type: "local" },
+          ...additionalConfig,
+          security: { csp: BROWSER_ESM_CSP },
+        },
+        null,
+        2,
+      )
+    };`,
+  );
+}
+
+describe("Compiled Binary E2E", COMPILED_BINARY_E2E_OPTIONS, () => {
   beforeAll(async () => {
     await ensureBinaryCompiled();
   });
@@ -69,16 +130,21 @@ describe("Compiled Binary E2E", { sanitizeOps: false, sanitizeResources: false, 
     }
   });
 
-  it("should render page with veryfront/head import correctly", async () => {
+  it("should render Head and UI nonce consumers through compiled framework sources", async () => {
     const projectDir = await createTestProject(
       "head-test",
       `
 import { Head } from "veryfront/head";
+import { ColorModeScript } from "veryfront/ui";
 
 export default function Home() {
   return (
     <>
-      <Head><title>Head Component Test</title></Head>
+      <Head>
+        <title>Head Component Test</title>
+        <script id="head-nonce-probe">{"globalThis.__vfHeadNonceProbe=true"}</script>
+      </Head>
+      <ColorModeScript storageKey="vf-binary-color-mode" />
       <div id="content">Head import works</div>
     </>
   );
@@ -95,6 +161,16 @@ export default function Home() {
         "Should not have module errors",
       );
       assertStringIncludes(html, "Head import works", "Should render content");
+      assertInlineScriptHasNonce(
+        html,
+        'id="head-nonce-probe"',
+        "Managed Head inline script",
+      );
+      assertInlineScriptHasNonce(
+        html,
+        'localStorage.getItem("vf-binary-color-mode")',
+        "ColorModeScript",
+      );
 
       const errorLogs = server.logs.filter((l) =>
         l.includes("esm.sh/_vf_modules") || l.includes("dual React") ||
@@ -549,6 +625,61 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     });
   });
 
+  it("should expose getServerData props to a layout via usePageContext().data at SSR", async () => {
+    const projectDir = await createTestProject(
+      "page-context-server-data-test",
+      `
+import type { DataContext } from "veryfront";
+
+export async function getServerData(_ctx: DataContext) {
+  return { props: { greeting: "hello-from-server-data" } };
+}
+
+export default function Home() {
+  return <div id="page-content">page</div>;
+}
+`,
+      {
+        "pages/layout.tsx": `
+import { usePageContext } from "veryfront/context";
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // The layout was never passed the page's server data as a prop; it reads it
+  // from the page context. This must work during the server render.
+  const ctx = usePageContext();
+  const greeting = (ctx?.data?.greeting as string) || "MISSING";
+  return (
+    <div id="layout-wrapper">
+      <header id="layout-data">Layout data: {greeting}</header>
+      <main>{children}</main>
+    </div>
+  );
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      const html = await response.text();
+
+      assertEquals(
+        response.status,
+        200,
+        `Should return 200\n${server.logs.join("").slice(-16000)}`,
+      );
+      const normalizedHtml = stripReactSSRMarkers(html);
+      // The layout rendered the page's getServerData value at SSR — proving
+      // server data reaches a layout via usePageContext().data without drilling.
+      assertStringIncludes(normalizedHtml, "Layout data: hello-from-server-data");
+
+      const errors = server.logs.filter((l) =>
+        l.includes("Invalid hook call") || l.includes("Module not found")
+      );
+      assertEquals(errors.length, 0, `Should have no errors: ${errors.join("\n")}`);
+    });
+  });
+
   it("should handle API routes returning JSON", async () => {
     const projectDir = await createTestProject(
       "api-json-test",
@@ -568,16 +699,113 @@ export function GET() {
 
     await withServer(projectDir, async (server) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/api/hello`);
-      const json = await response.json();
+      const body = await response.text();
 
-      assertEquals(response.status, 200, "Should return 200");
+      assertEquals(
+        response.status,
+        200,
+        `Should return 200\nResponse body: ${body}\n${server.logs.join("").slice(-16000)}`,
+      );
       assertEquals(
         response.headers.get("content-type")?.includes("application/json"),
         true,
         "Should be JSON",
       );
+      const json = JSON.parse(body);
       assertEquals(json.message, "Hello from API", "Should return correct message");
       assert(json.timestamp > 0, "Should have timestamp");
+    });
+  });
+
+  it("should drain an active SSE response before production serve exits on SIGTERM", async () => {
+    const projectDir = await createTestProject(
+      "sigterm-drain-test",
+      `
+export default function Home() {
+  return <div>Home Page</div>;
+}
+`,
+      {
+        "pages/api/events.ts": `
+const encoder = new TextEncoder();
+
+export function GET() {
+  return new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode("data: open\\n\\n"));
+      setTimeout(() => {
+        controller.enqueue(encoder.encode("data: complete\\n\\n"));
+        controller.close();
+      }, 1500);
+    },
+  }), {
+    headers: { "content-type": "text/event-stream" },
+  });
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/events`);
+      assertEquals(
+        response.status,
+        200,
+        `Should start the SSE response\n${server.logs.join("").slice(-16000)}`,
+      );
+
+      const reader = response.body?.getReader();
+      assert(reader, "Should expose the SSE response body");
+      const firstChunk = await reader.read();
+      assertEquals(firstChunk.done, false, "Should keep the SSE response open");
+
+      let processExited = false;
+      const statusPromise = server.process.status.then((status) => {
+        processExited = true;
+        return status;
+      });
+
+      server.process.kill("SIGTERM");
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      assertEquals(
+        processExited,
+        false,
+        `Production serve exited before the active SSE response drained:\n${server.logs.join("")}`,
+      );
+
+      while (!(await reader.read()).done) {
+        // Consume the body so request tracking can observe stream completion.
+      }
+
+      const status = await Promise.race([
+        statusPromise,
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("Production serve did not exit after SSE drain")),
+            10_000,
+          )
+        ),
+      ]);
+      assertEquals(status.success, true, "Production serve should exit successfully after drain");
+
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (server.logs.join("").includes("Graceful shutdown complete")) break;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+
+      const logs = server.logs.join("");
+      const receivedSignalIndex = logs.indexOf(
+        "Received SIGTERM, initiating graceful shutdown...",
+      );
+      const drainedIndex = logs.indexOf("All requests drained successfully");
+      const shutdownCompleteIndex = logs.indexOf("Graceful shutdown complete");
+
+      assert(receivedSignalIndex >= 0, `Should log SIGTERM handling:\n${logs}`);
+      assert(drainedIndex > receivedSignalIndex, `Should drain after SIGTERM:\n${logs}`);
+      assert(
+        shutdownCompleteIndex > drainedIndex,
+        `Should complete shutdown after the SSE response drains:\n${logs}`,
+      );
     });
   });
 
@@ -600,11 +828,89 @@ export function GET() {
 
     await withServer(projectDir, async (server) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/api/users/list`);
-      assertEquals(response.status, 200, "Should return 200");
+      assertEquals(
+        response.status,
+        200,
+        `Should return 200\n${server.logs.join("").slice(-16000)}`,
+      );
 
       const json = await response.json();
       assertEquals(json.count, 2, "Should return user count");
       assertEquals(json.users.length, 2, "Should return users array");
+    });
+  });
+
+  it("should load a TypeScript middleware.ts in the compiled binary (issue #206)", async () => {
+    const projectDir = await createTestProject(
+      "ts-middleware",
+      `export default function Home() { return <div id="content">home</div>; }`,
+      {
+        "middleware.ts": `
+export default async function middleware(
+  c: { req: Request },
+  next: () => Promise<Response | undefined>,
+): Promise<Response | undefined> {
+  const response = await next();
+  response?.headers.set("x-vf-middleware", new URL(c.req.url).pathname);
+  return response;
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      await response.body?.cancel();
+      // Before the fix, the compiled binary raw-import()s the .ts source and
+      // every route 500s with "Unexpected token ':'". Transpiling the source
+      // (shared with the virtual-FS loader) before import fixes it.
+      assertEquals(
+        response.status,
+        200,
+        `TS middleware.ts should not 500 the route in the compiled binary.\nLogs:\n${
+          server.logs.join("\n").slice(-4000)
+        }`,
+      );
+      assertEquals(
+        response.headers.get("x-vf-middleware"),
+        "/",
+        "TS middleware should have run and stamped the response header",
+      );
+    });
+  });
+
+  it("should resolve a sibling import from a compiled-binary middleware.ts (issue #206)", async () => {
+    const projectDir = await createTestProject(
+      "ts-middleware-sibling",
+      `export default function Home() { return <div id="content">home</div>; }`,
+      {
+        "mw-marker.mjs": `export const MARKER = "sibling-import-ok";`,
+        "middleware.ts": `
+import { MARKER } from "./mw-marker.mjs";
+export default async function middleware(
+  c: { req: Request },
+  next: () => Promise<Response | undefined>,
+): Promise<Response | undefined> {
+  const response = await next();
+  response?.headers.set("x-vf-sibling", MARKER);
+  return response;
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      await response.body?.cancel();
+      assertEquals(response.status, 200, "Route should load");
+      // The transpiled middleware is written ADJACENT to the source so its
+      // relative sibling imports resolve exactly as the original would; an
+      // OS-temp write would break this specifier.
+      assertEquals(
+        response.headers.get("x-vf-sibling"),
+        "sibling-import-ok",
+        "Sibling import from the transpiled middleware should resolve",
+      );
     });
   });
 
@@ -1491,19 +1797,22 @@ export default function ClientPage() {
       ),
     );
 
-    await Deno.writeTextFile(
-      join(projectDir, "veryfront.config.ts"),
-      `export default {
-  fs: { type: "local" },
-  experimental: { rsc: true }
-};`,
-    );
+    await configureBrowserEsmProject(projectDir, {
+      experimental: { rsc: true },
+    });
 
     await Deno.mkdir(join(projectDir, "app"), { recursive: true });
     await Deno.writeTextFile(
       join(projectDir, "app", "layout.tsx"),
       `export default function RootLayout({ children }: { children: React.ReactNode }) {
-  return <html><body>{children}</body></html>;
+  return (
+    <html>
+      <body>
+        <header id="server-layout-header">Server layout header</header>
+        <main id="server-layout-main">{children}</main>
+      </body>
+    </html>
+  );
 }
 `,
     );
@@ -1541,6 +1850,14 @@ export default function ClientPage() {
           expectedPagePath: "app/page.tsx",
           expectedModulePath: "/_veryfront/rsc/module",
           expectedCounterCount: 1,
+          assertBeforeClick: async () => {
+            assertEquals(await page.textContent("#server-layout-header"), "Server layout header");
+            assertEquals(await page.locator("#server-layout-main #counter").count(), 1);
+          },
+          assertAfterClick: async () => {
+            assertEquals(await page.textContent("#server-layout-header"), "Server layout header");
+            assertEquals(await page.locator("#server-layout-main #counter").count(), 1);
+          },
         });
 
         assertNoBrowserHydrationErrors(diagnostics, "Unexpected hydration errors");
@@ -1650,7 +1967,7 @@ export default function HomePage() {
     });
   });
 
-  it("should hydrate pages-router client pages under strict CSP in the compiled binary", async () => {
+  it("should hydrate pages-router client pages under an explicit dependency CSP", async () => {
     const projectDir = await createTestProject(
       "pages-browser-csp-hydration",
       `
@@ -1685,6 +2002,7 @@ export default function HomePage() {
 }
 `,
     );
+    await configureBrowserEsmProject(projectDir);
 
     await withServer(projectDir, async (server) => {
       await withBrowserPageAgainstServer(server, async ({ page, response, diagnostics }) => {
@@ -1702,32 +2020,39 @@ export default function HomePage() {
           `style-src should not mix unsafe-inline with a nonce, got: ${csp}`,
         );
 
-        await assertCounterHydration(page, {
-          assertBeforeClick: async () => {
-            const initialBackground = await page.$eval(
-              "#counter",
-              (element) => globalThis.getComputedStyle(element).backgroundColor,
-            );
-            const initialPadding = await page.$eval(
-              "#counter",
-              (element) => globalThis.getComputedStyle(element).paddingTop,
-            );
-            assertEquals(initialBackground, "rgb(37, 99, 235)");
-            assertEquals(initialPadding, "12px");
-          },
-          assertAfterClick: async () => {
-            const clickedBackground = await page.$eval(
-              "#counter",
-              (element) => globalThis.getComputedStyle(element).backgroundColor,
-            );
-            const clickedPadding = await page.$eval(
-              "#counter",
-              (element) => globalThis.getComputedStyle(element).paddingTop,
-            );
-            assertEquals(clickedBackground, "rgb(22, 101, 52)");
-            assertEquals(clickedPadding, "13px");
-          },
-        });
+        try {
+          await assertCounterHydration(page, {
+            assertBeforeClick: async () => {
+              const initialBackground = await page.$eval(
+                "#counter",
+                (element) => globalThis.getComputedStyle(element).backgroundColor,
+              );
+              const initialPadding = await page.$eval(
+                "#counter",
+                (element) => globalThis.getComputedStyle(element).paddingTop,
+              );
+              assertEquals(initialBackground, "rgb(37, 99, 235)");
+              assertEquals(initialPadding, "12px");
+            },
+            assertAfterClick: async () => {
+              const clickedBackground = await page.$eval(
+                "#counter",
+                (element) => globalThis.getComputedStyle(element).backgroundColor,
+              );
+              const clickedPadding = await page.$eval(
+                "#counter",
+                (element) => globalThis.getComputedStyle(element).paddingTop,
+              );
+              assertEquals(clickedBackground, "rgb(22, 101, 52)");
+              assertEquals(clickedPadding, "13px");
+            },
+          });
+        } catch (error) {
+          throw new Error(
+            `${String(error)}\nBrowser diagnostics:\n${JSON.stringify(diagnostics, null, 2)}`,
+            { cause: error },
+          );
+        }
 
         assertNoBrowserHydrationErrors(diagnostics);
         assertNoServerLogErrors(
@@ -1743,7 +2068,7 @@ export default function HomePage() {
     });
   });
 
-  it("should allow hydrated client inline styles under the default CSP in the compiled binary", async () => {
+  it("should allow hydrated client inline styles under an explicit dependency CSP", async () => {
     const projectDir = await createTestProject(
       "pages-browser-csp-inline-style",
       `
@@ -1770,10 +2095,18 @@ export default function HomePage() {
 }
 `,
     );
+    await configureBrowserEsmProject(projectDir);
 
     await withServer(projectDir, async (server) => {
       await withBrowserPageAgainstServer(server, async ({ page, response, diagnostics }) => {
-        await page.waitForSelector('#styled-box[data-hydrated="yes"]');
+        try {
+          await page.waitForSelector('#styled-box[data-hydrated="yes"]');
+        } catch (error) {
+          throw new Error(
+            `${String(error)}\nBrowser diagnostics:\n${JSON.stringify(diagnostics, null, 2)}`,
+            { cause: error },
+          );
+        }
 
         const csp = response?.headers()["content-security-policy"] ?? "";
         const styleSources = getDirectiveSources(csp, "style-src");
@@ -1973,7 +2306,11 @@ export function GET() {
 
     await withServer(projectDir, async (server) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/api/status`);
-      assertEquals(response.status, 201, "Should return custom status 201");
+      assertEquals(
+        response.status,
+        201,
+        `Should return custom status 201\n${server.logs.join("").slice(-16000)}`,
+      );
 
       const json = await response.json();
       assertEquals(json.status, "ok", "Should return ok status");
@@ -2445,7 +2782,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     });
   });
 
-  // Test: Layout at components/layouts/ path via config (mimics codersociety production setup)
+  // Test: Layout at components/layouts/ path via config (mirrors a production setup)
   // Regression test: layout at components/layouts/DefaultLayout.tsx was not found due to
   // path normalization double-stripping in getEntityInfo (components/ prefix matched, then
   // layouts/ prefix matched again, corrupting the path).
@@ -2691,7 +3028,7 @@ export default function Home() {
   });
 
   // Test: MDX layout at components/layouts/ path via config
-  // Tests the exact codersociety pattern: config layout using .mdx file in components/layouts/
+  // Tests the production pattern: config layout using .mdx file in components/layouts/
   it("should render MDX layout from components/layouts/ via config", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-mdx-components-layout-test-" });
 
@@ -2828,10 +3165,9 @@ export default function Blog() {
     );
   });
 
-  // Test: Layout rendering with PROXY_MODE=1 (simulates split mode production server)
-  // Regression test: In split:binary mode, the production server runs with PROXY_MODE=1.
-  // Without proxy headers, it should fall back to local config and still render layouts.
-  it("should render layout when PROXY_MODE=1 without proxy headers", async () => {
+  // Regression test: split-mode production must not fall back to local layout
+  // files when the proxy omits its project identity and authentication context.
+  it("should fail closed before loading a local layout when PROXY_MODE=1", async () => {
     const projectDir = await createTestProject(
       "proxy-mode-layout-test",
       `
@@ -2853,51 +3189,31 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 `,
       },
     );
+    await Deno.writeTextFile(join(projectDir, "veryfront.config.ts"), "export default {};");
 
     await withServer(
       projectDir,
       async (server) => {
         const response = await fetch(`http://127.0.0.1:${server.port}/`);
-        const html = await response.text();
-
-        assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
-        assertStringIncludes(
-          html,
-          "proxy-layout-wrapper",
-          "Should have layout wrapper in proxy mode",
-        );
-        assertStringIncludes(
-          html,
-          "Proxy Mode Layout Header",
-          "Should render layout header in proxy mode",
-        );
-        assertStringIncludes(
-          html,
-          "Proxy Mode Layout Footer",
-          "Should render layout footer in proxy mode",
-        );
-        assertStringIncludes(
-          html,
-          "Proxy mode page content",
-          "Should render page content in proxy mode",
-        );
+        assertEquals(response.status, 502);
+        assertEquals(await response.json(), {
+          error: "Missing project context",
+          detail: "x-project-slug header is required in proxy mode",
+        });
       },
       "production",
-      // Clear API env vars to test pure local filesystem fallback
       {
         PROXY_MODE: "1",
         PRODUCTION_MODE: "1",
-        VERYFRONT_API_BASE_URL: "",
+        VERYFRONT_TRUST_FORWARDED_HEADERS: "1",
+        VERYFRONT_API_BASE_URL: UNREACHABLE_LOCAL_PROXY_API_BASE_URL,
         VERYFRONT_API_TOKEN: "",
       },
     );
   });
 
-  // Test: Config layout with PROXY_MODE=1 and components/layouts/ path
-  // Regression test: In split:binary mode, the production server gets PROXY_MODE=1 and must resolve
-  // config-based layout paths through the API adapter. Without proxy headers, it should
-  // fall back to local filesystem and still render the config layout.
-  it("should render config layout in PROXY_MODE=1 with components/layouts/ path", async () => {
+  // Configured component layouts obey the same fail-closed proxy boundary.
+  it("should fail closed before loading a configured layout when PROXY_MODE=1", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-proxy-config-layout-test-" });
 
     await Deno.writeTextFile(
@@ -2916,7 +3232,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     await Deno.writeTextFile(
       join(projectDir, "veryfront.config.ts"),
       `export default {
-  fs: { type: "local" },
   layout: "components/layouts/DefaultLayout.tsx"
 };`,
     );
@@ -2951,32 +3266,18 @@ export default function Home() {
       projectDir,
       async (server) => {
         const response = await fetch(`http://127.0.0.1:${server.port}/`);
-        const html = await response.text();
-
-        assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
-        assertStringIncludes(
-          html,
-          "proxy-config-layout",
-          "Should have config layout in PROXY_MODE=1",
-        );
-        assertStringIncludes(html, "Proxy Config Nav", "Should render nav from config layout");
-        assertStringIncludes(
-          html,
-          "Proxy Config Footer",
-          "Should render footer from config layout",
-        );
-        assertStringIncludes(
-          html,
-          "Proxy config layout page",
-          "Should render page content",
-        );
+        assertEquals(response.status, 502);
+        assertEquals(await response.json(), {
+          error: "Missing project context",
+          detail: "x-project-slug header is required in proxy mode",
+        });
       },
       "production",
-      // Clear API env vars to test pure local filesystem fallback
       {
         PROXY_MODE: "1",
         PRODUCTION_MODE: "1",
-        VERYFRONT_API_BASE_URL: "",
+        VERYFRONT_TRUST_FORWARDED_HEADERS: "1",
+        VERYFRONT_API_BASE_URL: UNREACHABLE_LOCAL_PROXY_API_BASE_URL,
         VERYFRONT_API_TOKEN: "",
       },
     );

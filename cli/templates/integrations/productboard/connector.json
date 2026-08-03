@@ -41,7 +41,7 @@
   ],
   "tools": [
     {
-      "id": "list_notes",
+      "id": "productboard__list_notes",
       "name": "List Notes",
       "description": "List customer feedback notes in the Productboard workspace",
       "requiresWrite": false,
@@ -109,7 +109,7 @@
       }
     },
     {
-      "id": "get_note",
+      "id": "productboard__get_note",
       "name": "Get Note",
       "description": "Get a Productboard note by ID",
       "requiresWrite": false,
@@ -127,7 +127,7 @@
       }
     },
     {
-      "id": "create_note",
+      "id": "productboard__create_note",
       "name": "Create Note",
       "description": "Create a feedback note in Productboard",
       "requiresWrite": true,
@@ -144,7 +144,7 @@
       }
     },
     {
-      "id": "list_entities",
+      "id": "productboard__list_entities",
       "name": "List Entities",
       "description": "List product hierarchy entities (features, components, initiatives, releases, etc.)",
       "requiresWrite": false,
@@ -214,7 +214,7 @@
       }
     },
     {
-      "id": "get_entity",
+      "id": "productboard__get_entity",
       "name": "Get Entity",
       "description": "Get a hierarchy entity (e.g. a feature) by ID",
       "requiresWrite": false,
@@ -232,7 +232,7 @@
       }
     },
     {
-      "id": "create_entity",
+      "id": "productboard__create_entity",
       "name": "Create Entity",
       "description": "Create a hierarchy entity such as a feature or initiative",
       "requiresWrite": true,
@@ -249,7 +249,7 @@
       }
     },
     {
-      "id": "update_entity",
+      "id": "productboard__update_entity",
       "name": "Update Entity",
       "description": "Update fields of a hierarchy entity (e.g. rename a feature or change its status)",
       "requiresWrite": true,

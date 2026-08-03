@@ -14,9 +14,19 @@ import type {
   WorkflowQueueItem,
   WorkflowRun,
 } from "../types.ts";
-import type { BackendConfig, WorkflowBackend } from "./types.ts";
+import {
+  assertWorkflowRunUpdate,
+  type BackendConfig,
+  type WorkflowBackend,
+  type WorkflowRunUpdate,
+} from "./types.ts";
 import { requeueRun } from "./shared/requeue-run.ts";
+import {
+  appendRetainedCheckpoint,
+  deleteOldestCheckpointOccurrences,
+} from "./checkpoint-retention.ts";
 import { ORCHESTRATION_ERROR, RESOURCE_NOT_FOUND } from "#veryfront/errors";
+import { requireWorkflowSourceIntegrationPolicy } from "../source-integration-policy.ts";
 
 const logger = baseLogger.component("memory-backend");
 
@@ -56,7 +66,13 @@ export class MemoryBackend implements WorkflowBackend {
 
   createRun(run: WorkflowRun): Promise<void> {
     logger.debug(`Creating run: ${run.id}`);
-    this.runs.set(run.id, structuredClone(run));
+    let sourceIntegrationPolicy;
+    try {
+      sourceIntegrationPolicy = requireWorkflowSourceIntegrationPolicy(run);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    this.runs.set(run.id, structuredClone({ ...run, sourceIntegrationPolicy }));
     return Promise.resolve();
   }
 
@@ -65,9 +81,19 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve(run ? structuredClone(run) : null);
   }
 
-  updateRun(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
+  updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void> {
     const run = this.runs.get(runId);
-    if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+    // Reject rather than throw synchronously so callers see a rejected Promise
+    // consistently (matching the Redis backend's async error paths).
+    if (!run) {
+      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    }
+
+    try {
+      assertWorkflowRunUpdate(patch);
+    } catch (error) {
+      return Promise.reject(error);
+    }
 
     logger.debug(`Updating run: ${runId}`, patch);
 
@@ -86,6 +112,39 @@ export class MemoryBackend implements WorkflowBackend {
     }
 
     return Promise.resolve();
+  }
+
+  updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    const run = this.runs.get(runId);
+    if (!run) {
+      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    }
+    if (!expectedStatuses.includes(run.status)) return Promise.resolve(false);
+
+    // updateRun mutates synchronously before returning, so the status check and
+    // patch are one atomic operation for this in-memory backend.
+    return this.updateRun(runId, patch).then(() => true);
+  }
+
+  updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    const run = this.runs.get(runId);
+    if (!run) {
+      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    }
+    if (!expectedStatuses.includes(run.status) || run.workerId !== expectedWorkerId) {
+      return Promise.resolve(false);
+    }
+
+    return this.updateRun(runId, patch).then(() => true);
   }
 
   deleteRun(runId: string): Promise<void> {
@@ -127,9 +186,22 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve(runs.map((r) => structuredClone(r)));
   }
 
-  async countRuns(filter: RunFilter): Promise<number> {
-    const runs = await this.listRuns({ ...filter, limit: undefined, offset: undefined });
-    return runs.length;
+  countRuns(filter: RunFilter): Promise<number> {
+    // Count in place — no structuredClone per run (unlike listRuns).
+    const statuses = filter.status
+      ? Array.isArray(filter.status) ? filter.status : [filter.status]
+      : null;
+
+    let count = 0;
+    for (const run of this.runs.values()) {
+      if (filter.workflowId && run.workflowId !== filter.workflowId) continue;
+      if (statuses && !statuses.includes(run.status)) continue;
+      if (filter.createdAfter && run.createdAt < filter.createdAfter) continue;
+      if (filter.createdBefore && run.createdAt > filter.createdBefore) continue;
+      count++;
+    }
+
+    return Promise.resolve(count);
   }
 
   // =========================================================================
@@ -139,9 +211,29 @@ export class MemoryBackend implements WorkflowBackend {
   saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void> {
     logger.debug("Saving checkpoint", { checkpointId: checkpoint.id, runId });
     const checkpoints = this.checkpoints.get(runId) ?? [];
-    checkpoints.push(structuredClone(checkpoint));
+    appendRetainedCheckpoint(checkpoints, checkpoint);
     this.checkpoints.set(runId, checkpoints);
     return Promise.resolve();
+  }
+
+  saveCheckpointIfStatusAndWorker(
+    storageRunId: string,
+    ownershipRunId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    checkpoint: Checkpoint,
+  ): Promise<boolean> {
+    const run = this.runs.get(ownershipRunId);
+    if (
+      !run || !expectedStatuses.includes(run.status) || run.workerId !== expectedWorkerId
+    ) {
+      return Promise.resolve(false);
+    }
+
+    const checkpoints = this.checkpoints.get(storageRunId) ?? [];
+    appendRetainedCheckpoint(checkpoints, checkpoint);
+    this.checkpoints.set(storageRunId, checkpoints);
+    return Promise.resolve(true);
   }
 
   getLatestCheckpoint(runId: string): Promise<Checkpoint | null> {
@@ -173,8 +265,7 @@ export class MemoryBackend implements WorkflowBackend {
     const checkpoints = this.checkpoints.get(runId);
     if (!checkpoints) return Promise.resolve();
 
-    const idsToDelete = new Set(checkpointIds);
-    this.checkpoints.set(runId, checkpoints.filter((c) => !idsToDelete.has(c.id)));
+    this.checkpoints.set(runId, deleteOldestCheckpointOccurrences(checkpoints, checkpointIds));
 
     logger.debug("Deleted checkpoints", { count: checkpointIds.length });
     return Promise.resolve();
@@ -189,6 +280,46 @@ export class MemoryBackend implements WorkflowBackend {
     const approvals = this.approvals.get(runId) ?? [];
     approvals.push(structuredClone(approval));
     this.approvals.set(runId, approvals);
+    return Promise.resolve();
+  }
+
+  savePendingApprovalIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    approval: PendingApproval,
+  ): Promise<boolean> {
+    const run = this.runs.get(runId);
+    if (
+      !run || !expectedStatuses.includes(run.status) || run.workerId !== expectedWorkerId
+    ) {
+      return Promise.resolve(false);
+    }
+
+    const approvals = this.approvals.get(runId) ?? [];
+    approvals.push(structuredClone(approval));
+    this.approvals.set(runId, approvals);
+    return Promise.resolve(true);
+  }
+
+  updatePendingApproval(
+    runId: string,
+    approvalId: string,
+    patch: Partial<PendingApproval>,
+  ): Promise<void> {
+    const approvals = this.approvals.get(runId);
+    const index = approvals?.findIndex((approval) => approval.id === approvalId) ?? -1;
+    if (!approvals || index === -1) {
+      return Promise.reject(
+        RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` }),
+      );
+    }
+
+    approvals[index] = {
+      ...approvals[index]!,
+      ...structuredClone(patch),
+      id: approvalId,
+    };
     return Promise.resolve();
   }
 
@@ -209,7 +340,7 @@ export class MemoryBackend implements WorkflowBackend {
     runId: string,
     approvalId: string,
     decision: ApprovalDecision,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const approvals = this.approvals.get(runId);
     if (!approvals) {
       throw RESOURCE_NOT_FOUND.create({ detail: `No approvals found for run: ${runId}` });
@@ -220,12 +351,19 @@ export class MemoryBackend implements WorkflowBackend {
       throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
     }
 
+    // Pending-precondition gate: only the first decision wins. A concurrent
+    // decision on an already-resolved approval is reported as skipped so callers
+    // can treat this return value as the authoritative gate.
+    if (approval.status !== "pending") {
+      return Promise.resolve(false);
+    }
+
     logger.debug("Updating approval", { approvalId, decision });
     approval.status = decision.approved ? "approved" : "rejected";
     approval.decidedBy = decision.approver;
     approval.decidedAt = new Date();
     approval.comment = decision.comment;
-    return Promise.resolve();
+    return Promise.resolve(true);
   }
 
   listPendingApprovals(filter?: {
@@ -310,29 +448,39 @@ export class MemoryBackend implements WorkflowBackend {
   // Distributed Locking
   // =========================================================================
 
-  acquireLock(runId: string, duration: number): Promise<boolean> {
+  acquireLock(runId: string, duration: number): Promise<string | null> {
     const existing = this.locks.get(runId);
     const now = Date.now();
 
-    if (existing && existing.expiresAt > now) return Promise.resolve(false);
+    if (existing && existing.expiresAt > now) return Promise.resolve(null);
 
     logger.debug(`Acquiring lock for: ${runId}`);
 
-    this.locks.set(runId, { lockId: crypto.randomUUID(), expiresAt: now + duration });
-    return Promise.resolve(true);
+    const lockId = crypto.randomUUID();
+    this.locks.set(runId, { lockId, expiresAt: now + duration });
+    return Promise.resolve(lockId);
   }
 
-  releaseLock(runId: string): Promise<void> {
+  releaseLock(runId: string, lockId?: string): Promise<void> {
     logger.debug(`Releasing lock for: ${runId}`);
+
+    // Compare-and-delete: a stalled worker whose lock already expired and was
+    // re-acquired by another owner must not delete the new owner's lock.
+    const existing = this.locks.get(runId);
+    if (lockId !== undefined && existing && existing.lockId !== lockId) {
+      return Promise.resolve();
+    }
+
     this.locks.delete(runId);
     return Promise.resolve();
   }
 
-  extendLock(runId: string, duration: number): Promise<boolean> {
+  extendLock(runId: string, duration: number, lockId?: string): Promise<boolean> {
     const existing = this.locks.get(runId);
     const now = Date.now();
 
     if (!existing || existing.expiresAt <= now) return Promise.resolve(false);
+    if (lockId !== undefined && existing.lockId !== lockId) return Promise.resolve(false);
 
     existing.expiresAt = now + duration;
     return Promise.resolve(true);

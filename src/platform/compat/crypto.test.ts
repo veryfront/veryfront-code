@@ -227,7 +227,9 @@ describe("Crypto Compat", () => {
         ["encrypt", "decrypt"],
       );
 
-      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const iv = crypto.getRandomValues(
+        new Uint8Array(new ArrayBuffer(12)),
+      );
       const data = new TextEncoder().encode("Secret message");
 
       const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, data);
@@ -260,7 +262,9 @@ describe("Crypto Compat", () => {
 
     it("importKey/exportKey", async () => {
       const crypto = createCrypto();
-      const keyData = crypto.getRandomValues(new Uint8Array(32));
+      const keyData = crypto.getRandomValues(
+        new Uint8Array(new ArrayBuffer(32)),
+      );
 
       const key = await crypto.subtle.importKey(
         "raw",
@@ -287,7 +291,9 @@ describe("Crypto Compat", () => {
       const crypto = createCrypto();
 
       const password = new TextEncoder().encode("password");
-      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const salt = crypto.getRandomValues(
+        new Uint8Array(new ArrayBuffer(16)),
+      );
 
       const baseKey = await crypto.subtle.importKey("raw", password, "PBKDF2", false, [
         "deriveBits",

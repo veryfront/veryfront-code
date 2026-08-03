@@ -1,4 +1,4 @@
-import { join, relative } from "#std/path.ts";
+import { join, relative } from "veryfront/platform/path";
 import { runtime } from "veryfront/platform";
 import { getConfig } from "veryfront/config";
 import { cliLogger } from "#cli/utils";

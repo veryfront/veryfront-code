@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_datasets",
+      "id": "axiom__list_datasets",
       "name": "List Datasets",
       "description": "List datasets in the Axiom organization",
       "requiresWrite": false,
@@ -49,7 +49,7 @@
       }
     },
     {
-      "id": "get_dataset",
+      "id": "axiom__get_dataset",
       "name": "Get Dataset",
       "description": "Get a dataset's details",
       "requiresWrite": false,
@@ -67,7 +67,7 @@
       }
     },
     {
-      "id": "query_apl",
+      "id": "axiom__query_apl",
       "name": "Run APL Query",
       "description": "Run an APL (Axiom Processing Language) query across datasets",
       "requiresWrite": false,
@@ -100,7 +100,7 @@
       }
     },
     {
-      "id": "ingest_events",
+      "id": "axiom__ingest_events",
       "name": "Ingest Events",
       "description": "Ingest a batch of JSON events into a dataset",
       "requiresWrite": true,

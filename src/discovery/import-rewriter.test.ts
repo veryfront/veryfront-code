@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { relative } from "#veryfront/compat/path/index.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { rewriteDiscoveryImports, rewriteForDeno } from "./import-rewriter.ts";
@@ -12,8 +13,8 @@ describe("discovery/import-rewriter", () => {
         'import { tool } from "veryfront/tool";',
         'import { projectKnowledge } from "veryfront/knowledge";',
         'import { step, workflow } from "veryfront/workflow";',
-        'import { work } from "veryfront/work";',
         'import { evalAgent } from "veryfront/eval";',
+        'import { executeRemoteIntegrationTool } from "veryfront/integrations";',
       ].join("\n"),
       "/project/workflows",
     );
@@ -22,8 +23,8 @@ describe("discovery/import-rewriter", () => {
     assertStringIncludes(transformed, import.meta.resolve("veryfront/tool"));
     assertStringIncludes(transformed, import.meta.resolve("veryfront/knowledge"));
     assertStringIncludes(transformed, import.meta.resolve("veryfront/workflow"));
-    assertStringIncludes(transformed, import.meta.resolve("veryfront/work"));
     assertStringIncludes(transformed, import.meta.resolve("veryfront/eval"));
+    assertStringIncludes(transformed, import.meta.resolve("veryfront/integrations"));
     assertEquals(transformed.includes('from "veryfront/'), false);
   });
 
@@ -34,8 +35,8 @@ describe("discovery/import-rewriter", () => {
         'import { tool } from "veryfront/tool";',
         'import { projectKnowledge } from "veryfront/knowledge";',
         'import { step, workflow } from "veryfront/workflow";',
-        'import { work } from "veryfront/work";',
         'import { evalAgent } from "veryfront/eval";',
+        'import { executeRemoteIntegrationTool } from "veryfront/integrations";',
       ].join("\n"),
       "/project/workflows",
       { compiled: true },
@@ -59,11 +60,11 @@ describe("discovery/import-rewriter", () => {
     );
     assertStringIncludes(
       transformed,
-      'const { work } = globalThis.__VERYFRONT_MODULES__["veryfront/work"]',
+      'const { evalAgent } = globalThis.__VERYFRONT_MODULES__["veryfront/eval"]',
     );
     assertStringIncludes(
       transformed,
-      'const { evalAgent } = globalThis.__VERYFRONT_MODULES__["veryfront/eval"]',
+      'const { executeRemoteIntegrationTool } = globalThis.__VERYFRONT_MODULES__["veryfront/integrations"]',
     );
     assertEquals(transformed.includes('from "veryfront/'), false);
   });
@@ -419,6 +420,261 @@ describe("discovery/import-rewriter", () => {
       // bare (or otherwise NOT point at the file outside the package dir).
       assertEquals(transformed.includes("SECRET.js"), false);
       assertStringIncludes(transformed, 'from "evil"');
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("prefers project-local veryfront exports over runtime resolution in the Node discovery path", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
+    const veryfrontDir = `${projectDir}/node_modules/veryfront`;
+    await Deno.mkdir(`${veryfrontDir}/local`, { recursive: true });
+    await Deno.writeTextFile(
+      `${veryfrontDir}/package.json`,
+      JSON.stringify({
+        name: "veryfront",
+        version: "0.0.0-project-local",
+        exports: {
+          "./schemas": "./local/schemas.js",
+          "./tool": "./local/tool.js",
+        },
+      }),
+    );
+    await Deno.writeTextFile(`${veryfrontDir}/local/schemas.js`, "");
+    await Deno.writeTextFile(`${veryfrontDir}/local/tool.js`, "");
+
+    try {
+      const transformed = await rewriteDiscoveryImports(
+        [
+          'import { defineSchema } from "veryfront/schemas";',
+          'import { tool } from "veryfront/tool";',
+        ].join("\n"),
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/app`,
+      );
+
+      assertStringIncludes(transformed, `${projectDir}/node_modules/veryfront/local/schemas.js`);
+      assertStringIncludes(transformed, `${projectDir}/node_modules/veryfront/local/tool.js`);
+      assertEquals(transformed.includes(import.meta.resolve("veryfront/schemas")), false);
+      assertEquals(transformed.includes(import.meta.resolve("veryfront/tool")), false);
+      assertEquals(transformed.includes('from "veryfront/'), false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("resolves project-local veryfront exports when projectDir is relative", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
+    const veryfrontDir = `${projectDir}/node_modules/veryfront`;
+    await Deno.mkdir(`${veryfrontDir}/local`, { recursive: true });
+    await Deno.writeTextFile(
+      `${veryfrontDir}/package.json`,
+      JSON.stringify({
+        name: "veryfront",
+        exports: {
+          "./schemas": "./local/schemas.js",
+        },
+      }),
+    );
+    await Deno.writeTextFile(`${veryfrontDir}/local/schemas.js`, "");
+
+    try {
+      const transformed = await rewriteDiscoveryImports(
+        'import { defineSchema } from "veryfront/schemas";',
+        relative(Deno.cwd(), projectDir),
+        createFileSystem(),
+        `${projectDir}/app`,
+      );
+
+      assertStringIncludes(transformed, `${projectDir}/node_modules/veryfront/local/schemas.js`);
+      assertEquals(transformed.includes(import.meta.resolve("veryfront/schemas")), false);
+      assertEquals(transformed.includes('from "veryfront/schemas"'), false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("does not fall back to runtime veryfront resolution when local package directory has no package.json", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
+    const veryfrontDir = `${projectDir}/node_modules/veryfront`;
+    await Deno.mkdir(veryfrontDir, { recursive: true });
+
+    try {
+      const transformed = await rewriteDiscoveryImports(
+        'import { defineSchema } from "veryfront/schemas";',
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/app`,
+      );
+
+      assertEquals(transformed.includes(import.meta.resolve("veryfront/schemas")), false);
+      assertStringIncludes(transformed, 'from "veryfront/schemas"');
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("does not fall back to runtime veryfront resolution when local package.json cannot be read", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
+    const veryfrontDir = `${projectDir}/node_modules/veryfront`;
+    const packageJsonPath = `${veryfrontDir}/package.json`;
+    await Deno.mkdir(veryfrontDir, { recursive: true });
+    await Deno.writeTextFile(
+      packageJsonPath,
+      JSON.stringify({
+        name: "veryfront",
+        exports: {
+          "./schemas": "./local/schemas.js",
+        },
+      }),
+    );
+
+    const unreadablePackageJsonFs = createFileSystem();
+    const readTextFile = unreadablePackageJsonFs.readTextFile.bind(unreadablePackageJsonFs);
+    unreadablePackageJsonFs.readTextFile = async (path: string): Promise<string> => {
+      if (path === packageJsonPath) {
+        throw new Error("forced package.json read failure");
+      }
+      return readTextFile(path);
+    };
+
+    try {
+      const transformed = await rewriteDiscoveryImports(
+        'import { defineSchema } from "veryfront/schemas";',
+        projectDir,
+        unreadablePackageJsonFs,
+        `${projectDir}/app`,
+      );
+
+      assertEquals(transformed.includes(import.meta.resolve("veryfront/schemas")), false);
+      assertStringIncludes(transformed, 'from "veryfront/schemas"');
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("does not fall back to runtime veryfront resolution when local package stat fails for a non-not-found reason", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
+    const veryfrontDir = `${projectDir}/node_modules/veryfront`;
+    await Deno.mkdir(veryfrontDir, { recursive: true });
+
+    const statFailureFs = createFileSystem();
+    const stat = statFailureFs.stat.bind(statFailureFs);
+    statFailureFs.stat = async (path: string) => {
+      if (path === veryfrontDir) {
+        throw Object.assign(new Error("forced stat permission failure"), { code: "EACCES" });
+      }
+      return stat(path);
+    };
+
+    try {
+      const transformed = await rewriteDiscoveryImports(
+        'import { defineSchema } from "veryfront/schemas";',
+        projectDir,
+        statFailureFs,
+        `${projectDir}/app`,
+      );
+
+      assertEquals(transformed.includes(import.meta.resolve("veryfront/schemas")), false);
+      assertStringIncludes(transformed, 'from "veryfront/schemas"');
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects project-local veryfront exports that escape the package directory", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
+    const veryfrontDir = `${projectDir}/node_modules/veryfront`;
+    await Deno.mkdir(veryfrontDir, { recursive: true });
+    await Deno.writeTextFile(
+      `${veryfrontDir}/package.json`,
+      JSON.stringify({
+        name: "veryfront",
+        exports: {
+          "./schemas": "../../outside.js",
+        },
+      }),
+    );
+    await Deno.writeTextFile(`${projectDir}/outside.js`, "");
+
+    try {
+      const transformed = await rewriteDiscoveryImports(
+        'import { defineSchema } from "veryfront/schemas";',
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/app`,
+      );
+
+      assertEquals(transformed.includes("outside.js"), false);
+      assertEquals(transformed.includes(import.meta.resolve("veryfront/schemas")), false);
+      assertStringIncludes(transformed, 'from "veryfront/schemas"');
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects unsupported project-local veryfront export entries without runtime fallback", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
+    const veryfrontDir = `${projectDir}/node_modules/veryfront`;
+    await Deno.mkdir(veryfrontDir, { recursive: true });
+    await Deno.writeTextFile(
+      `${veryfrontDir}/package.json`,
+      JSON.stringify({
+        name: "veryfront",
+        exports: {
+          "./schemas": { browser: "./browser-only.js" },
+        },
+      }),
+    );
+    await Deno.writeTextFile(`${veryfrontDir}/browser-only.js`, "");
+
+    try {
+      const transformed = await rewriteDiscoveryImports(
+        'import { defineSchema } from "veryfront/schemas";',
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/app`,
+      );
+
+      assertEquals(transformed.includes("browser-only.js"), false);
+      assertEquals(transformed.includes(import.meta.resolve("veryfront/schemas")), false);
+      assertStringIncludes(transformed, 'from "veryfront/schemas"');
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("does not fall back to runtime veryfront resolution for missing project-local subpaths", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
+    const veryfrontDir = `${projectDir}/node_modules/veryfront`;
+    await Deno.mkdir(`${veryfrontDir}/local`, { recursive: true });
+    await Deno.writeTextFile(
+      `${veryfrontDir}/package.json`,
+      JSON.stringify({
+        name: "veryfront",
+        exports: {
+          "./tool": "./local/tool.js",
+        },
+      }),
+    );
+    await Deno.writeTextFile(`${veryfrontDir}/local/tool.js`, "");
+
+    try {
+      const transformed = await rewriteDiscoveryImports(
+        [
+          'import { defineSchema } from "veryfront/schemas";',
+          'import { tool } from "veryfront/tool";',
+        ].join("\n"),
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/app`,
+      );
+
+      assertStringIncludes(transformed, `${projectDir}/node_modules/veryfront/local/tool.js`);
+      assertEquals(transformed.includes(import.meta.resolve("veryfront/schemas")), false);
+      assertStringIncludes(transformed, 'from "veryfront/schemas"');
+      assertEquals(transformed.includes('from "veryfront/tool"'), false);
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }

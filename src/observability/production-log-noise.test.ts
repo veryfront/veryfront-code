@@ -25,6 +25,25 @@ const recoverableWarnSites = [
   },
 ];
 
+const hostedProductionRequestObservabilitySites = [
+  {
+    path: "src/server/runtime-handler/request-tracker.ts",
+    snippet: 'logger.warn("Slow request detected"',
+  },
+  {
+    path: "src/server/runtime-handler/request-tracker.ts",
+    snippet: 'logger.error("Very slow request - likely stuck"',
+  },
+  {
+    path: "src/server/runtime-handler/timeout-manager.ts",
+    snippet: 'logger.warn("Request timed out"',
+  },
+  {
+    path: "src/server/runtime-handler/timeout-manager.ts",
+    snippet: 'logger.error("Unhandled error in request handler"',
+  },
+];
+
 Deno.test("recoverable render cache events do not emit production warning logs", async () => {
   for (const site of recoverableWarnSites) {
     const source = await Deno.readTextFile(site.path);
@@ -32,6 +51,17 @@ Deno.test("recoverable render cache events do not emit production warning logs",
       source.includes(site.snippet),
       false,
       `${site.path} should not warn for recoverable/no-op production events`,
+    );
+  }
+});
+
+Deno.test("hosted production request failures and slow requests keep warning/error observability", async () => {
+  for (const site of hostedProductionRequestObservabilitySites) {
+    const source = await Deno.readTextFile(site.path);
+    assertEquals(
+      source.includes(site.snippet),
+      true,
+      `${site.path} must retain warning/error logging for failed or slow hosted requests`,
     );
   }
 });

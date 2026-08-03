@@ -87,6 +87,10 @@ function buildNodeArgs(files, perShardConcurrency) {
 }
 
 const env = { ...process.env };
+// Match the Deno test tasks' explicit host-test contract. This keeps guarded
+// outbound consumers on deterministic injected transports in Node tests while
+// production processes, which never run through this harness, remain pinned.
+env.DENO_TESTING = "1";
 if (!env.VF_DISABLE_LRU_INTERVAL) env.VF_DISABLE_LRU_INTERVAL = "1";
 if (!env.NODE_ENV) env.NODE_ENV = "production";
 if (!env.LOG_FORMAT) env.LOG_FORMAT = "text";

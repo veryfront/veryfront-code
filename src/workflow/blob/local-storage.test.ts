@@ -1,9 +1,21 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertInstanceOf,
+  assertRejects,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#veryfront/compat/path";
 import { remove, stat } from "#veryfront/compat/fs.ts";
+import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 import { LocalBlobStorage } from "./local-storage.ts";
 
 async function withTempStorage(
@@ -50,6 +62,59 @@ describe("LocalBlobStorage", () => {
       // Compare as arrays to handle Buffer vs Uint8Array differences
       assertEquals([...retrieved], [...data]);
     });
+  });
+
+  it("rejects blob IDs containing path traversal sequences", async () => {
+    await withTempStorage(async (storage) => {
+      await assertRejects(
+        () => storage.put("hello", { id: "../../outside" }),
+        Error,
+        "Invalid blob id",
+      );
+      await assertRejects(
+        () => storage.getText("../secret"),
+        Error,
+        "Invalid blob id",
+      );
+      await assertRejects(
+        () => storage.stat("nested/blob"),
+        Error,
+        "Invalid blob id",
+      );
+      await assertRejects(
+        () => storage.delete(".."),
+        Error,
+        "Invalid blob id",
+      );
+    });
+  });
+
+  it("sanitizes local read failures", async () => {
+    const storage = new LocalBlobStorage(".");
+    (storage as unknown as { fs: FileSystem }).fs = {
+      readTextFile: () => Promise.reject(new Error("read exposed <TOKEN> at <LOCAL_PATH>")),
+      readFile: () => Promise.reject(new Error("read exposed <TOKEN> at <LOCAL_PATH>")),
+    } as unknown as FileSystem;
+    const entries: LogEntry[] = [];
+    __registerLogRecordEmitter((entry) => entries.push(entry));
+
+    try {
+      const textError = await assertRejects(() => storage.getText("blob-id"));
+      const bytesError = await assertRejects(() => storage.getBytes("blob-id"));
+      assertInstanceOf(textError, Error);
+      assertInstanceOf(bytesError, Error);
+      assertEquals(textError.message, "Failed to read blob text from local storage");
+      assertEquals(bytesError.message, "Failed to read blob bytes from local storage");
+    } finally {
+      __resetLogRecordEmitterForTests();
+    }
+
+    assertEquals(entries.map((entry) => entry.context), [
+      { errorName: "Error" },
+      { errorName: "Error" },
+    ]);
+    assertEquals(JSON.stringify(entries).includes("<TOKEN>"), false);
+    assertEquals(JSON.stringify(entries).includes("<LOCAL_PATH>"), false);
   });
 
   it("put with TTL and cleanup", async () => {

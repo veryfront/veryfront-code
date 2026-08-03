@@ -120,6 +120,62 @@ isLayout: true
     }
   });
 
+  for (
+    const testCase of [
+      { router: "app" as const, directoryKey: "app" as const, directory: "src/routes" },
+      { router: "pages" as const, directoryKey: "pages" as const, directory: "src/legacy" },
+    ]
+  ) {
+    it(`collects nested layouts from the configured ${testCase.router} directory`, async () => {
+      const projectDir = await createTestProjectDir();
+      const routeRoot = join(projectDir, testCase.directory);
+      const nestedRoot = join(routeRoot, "blog");
+
+      try {
+        await mkdir(nestedRoot, { recursive: true });
+        await writeTextFile(
+          join(routeRoot, "layout.tsx"),
+          `export default function RootLayout({ children }) { return children; }`,
+        );
+        await writeTextFile(
+          join(nestedRoot, "layout.tsx"),
+          `export default function BlogLayout({ children }) { return children; }`,
+        );
+
+        const pagePath = join(nestedRoot, testCase.router === "app" ? "page.tsx" : "post.tsx");
+        const pageInfo: EntityInfo = {
+          entity: {
+            id: pagePath,
+            path: pagePath,
+            slug: "blog/post",
+            type: "page",
+            content: "export default () => null;",
+            frontmatter: {},
+          },
+        };
+        const adapter = await getAdapter();
+        const collector = new LayoutCollector({
+          projectDir,
+          adapter,
+          config: {
+            router: testCase.router,
+            directories: { [testCase.directoryKey]: testCase.directory },
+          },
+          compileMDX: createMockCompileMDX(),
+        });
+
+        const result = await collector.collectLayouts(pageInfo);
+
+        assertEquals(
+          result.nestedLayouts.map((layout) => layout.path).sort(),
+          [join(routeRoot, "layout.tsx"), join(nestedRoot, "layout.tsx")].sort(),
+        );
+      } finally {
+        await cleanupTestDir(projectDir);
+      }
+    });
+  }
+
   it("respects layout: false in frontmatter", async () => {
     const projectDir = await createTestProjectDir();
 

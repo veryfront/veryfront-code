@@ -35,10 +35,19 @@ import {
   resolveHostedRuntimeAllowedToolNames,
 } from "./runtime-essential-tools.ts";
 import type { HostedSubmittedFormInputResult } from "./chat-runtime-contract.ts";
+import type { RuntimeToolDiscoveryContext } from "../runtime/tool-discovery-context.ts";
+import {
+  applySourceIntegrationPolicy,
+  isIntegrationToolAllowedBySourcePolicy,
+  type SourceIntegrationPolicyManifest,
+} from "#veryfront/integrations/source-policy.ts";
+import type { RuntimeToolLoadingMode } from "../runtime/runtime-tool-config.ts";
+import { TOOL_SEARCH_TOOL_NAME } from "../runtime/tool-exposure.ts";
 
 /** Context for hosted chat runtime tool assembly. */
 export type HostedChatRuntimeToolAssemblyContext = DefaultResearchArtifactContext & {
   authToken: string;
+  agentId?: string;
   projectId?: string | null;
   branchId?: string | null;
   model?: string;
@@ -52,14 +61,23 @@ export type HostedChatRuntimeToolAssemblyContext = DefaultResearchArtifactContex
 /** Public API contract for hosted chat runtime allowed tool names. */
 export type HostedChatRuntimeAllowedToolNames = HostedRuntimeAllowedToolNames;
 
+/** Service-operator authorization ceiling for Framework-owned host tools. */
+export type HostedHostToolPolicy = {
+  readonly allow: readonly string[];
+};
+
 /** Result returned from hosted chat runtime tool assembly. */
 export type HostedChatRuntimeToolAssemblyResult = {
+  /** Exact project-source restriction captured for this runtime assembly. */
+  readonly sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   runtimeTools: ToolSet;
   remoteToolSources: RemoteToolSource[];
   localToolNames: string[];
   remoteToolNames: string[];
   providerToolNames: string[];
   availableToolNames: string[];
+  modelVisibleToolNames?: string[];
+  toolLoadingMode: RuntimeToolLoadingMode;
   compatibleRemoteToolNames: string[];
   systemInstructions: string;
 };
@@ -70,13 +88,20 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
 > = {
   taskContext: HostedChatRuntimeToolAssemblyContext;
   instructions: string | readonly ChatSystemMessage[];
+  /** Re-render instructions after final source/provider tool visibility is known. */
+  renderInstructions?: (
+    modelVisibleToolNames: readonly string[],
+  ) => string | readonly ChatSystemMessage[];
   localTools: HostToolSet;
+  hostToolPolicy?: HostedHostToolPolicy;
   apiUrl: string;
   apiMcpUrl: string;
   studioMcpUrl?: string | null;
   mcpServers?: readonly AgentServiceMcpServerConfig[];
   conversationId?: string;
   allowedToolNames?: HostedChatRuntimeAllowedToolNames;
+  allowedProviderToolNames?: HostedChatRuntimeAllowedToolNames;
+  includeRuntimeEssentialToolsWhenEmpty?: boolean;
   sourceProviderToolNames?: readonly string[];
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
   createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
@@ -88,7 +113,32 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   onSteeringMutation?: HostedProjectRemoteToolSourceMutationHandler;
   onStudioProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler;
   preloadLatestConversationUserText?: boolean;
+  /**
+   * Per-run tool discovery context. When provided, its `activatedRemoteToolNames`
+   * Set is passed (by reference) to every remote tool source as the live
+   * execution gate. The same Set is mutated by `load_tools`, so newly activated
+   * tools become executable without re-creating the sources.
+   */
+  toolDiscoveryContext?: RuntimeToolDiscoveryContext;
+  /** Exact project-source restriction applied before tool inventory is exposed. */
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
 };
+
+function applyHostedHostToolPolicy(
+  tools: HostToolSet,
+  policy: HostedHostToolPolicy | undefined,
+): HostToolSet {
+  if (policy === undefined) {
+    return tools;
+  }
+  const allowed = new Set(policy.allow);
+  return Object.fromEntries(
+    Object.entries(tools).filter(([registeredName, tool]) =>
+      allowed.has(registeredName) ||
+      (tool.shortName !== undefined && allowed.has(tool.shortName))
+    ),
+  );
+}
 
 function activeProjectId(taskContext: HostedChatRuntimeToolAssemblyContext): string | null {
   return taskContext.projectId || null;
@@ -118,6 +168,51 @@ function filterPostFormInputLocalTools(
   );
 }
 
+function resolveOwnerScopedToolName(input: {
+  toolName: string;
+  agentId?: string;
+  localTools: HostToolSet;
+}): string {
+  if (input.agentId === undefined) {
+    return input.toolName;
+  }
+
+  for (const [registeredName, tool] of Object.entries(input.localTools)) {
+    if (
+      tool.ownerAgentId === input.agentId &&
+      tool.shortName === input.toolName
+    ) {
+      return registeredName;
+    }
+  }
+
+  return input.toolName;
+}
+
+function resolveOwnerScopedToolNames(input: {
+  toolNames: HostedChatRuntimeAllowedToolNames | undefined;
+  agentId?: string;
+  localTools: HostToolSet;
+}): HostedChatRuntimeAllowedToolNames | undefined {
+  const toolNames = normalizeHostedRuntimeAllowedToolNames(input.toolNames);
+  if (toolNames === null) {
+    return input.toolNames;
+  }
+
+  const resolvedToolNames = new Set<string>();
+  for (const toolName of toolNames) {
+    resolvedToolNames.add(
+      resolveOwnerScopedToolName({
+        toolName,
+        agentId: input.agentId,
+        localTools: input.localTools,
+      }),
+    );
+  }
+
+  return resolvedToolNames;
+}
+
 /** Filter hosted chat runtime local tools. */
 export function filterHostedChatRuntimeLocalTools(input: {
   tools: HostToolSet;
@@ -132,22 +227,84 @@ export function filterHostedChatRuntimeLocalTools(input: {
   return Object.fromEntries(entries.sort(([left], [right]) => left.localeCompare(right)));
 }
 
+function shouldIncludeHostedWebFetchFallback(input: {
+  localTools: HostToolSet;
+  sourceProviderToolNames: Set<string>;
+  allowedToolNames: ReadonlySet<string> | null;
+  allowedProviderToolNames: ReadonlySet<string> | null;
+  providerNativeToolNames: readonly string[];
+}): boolean {
+  if (!Object.hasOwn(input.localTools, "web_fetch")) {
+    return false;
+  }
+  if (input.providerNativeToolNames.includes("web_fetch")) {
+    return false;
+  }
+  if (input.allowedProviderToolNames !== null) {
+    return input.allowedProviderToolNames.has("web_fetch");
+  }
+  if (input.allowedToolNames !== null) {
+    return input.allowedToolNames.has("web_fetch");
+  }
+  return input.sourceProviderToolNames.has("web_fetch");
+}
+
 /** Prepare hosted chat runtime tool assembly. */
 export async function prepareHostedChatRuntimeToolAssembly<
   TTraceAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 >(
   input: PrepareHostedChatRuntimeToolAssemblyInput<TTraceAttributes>,
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
-  const allowedToolNames = resolveHostedRuntimeAllowedToolNames({
-    allowedToolNames: input.allowedToolNames,
-    localToolNames: Object.keys(input.localTools),
-    availableSkillIds: input.taskContext.availableSkillIds,
+  const authorizedLocalTools = applyHostedHostToolPolicy(
+    input.localTools,
+    input.hostToolPolicy,
+  );
+  const ownerScopedAllowedToolNames = resolveOwnerScopedToolNames({
+    toolNames: input.allowedToolNames,
+    agentId: input.taskContext.agentId,
+    localTools: authorizedLocalTools,
   });
-  const sortedLocalTools = filterHostedChatRuntimeLocalTools({
-    tools: filterPostFormInputLocalTools(input.localTools, input.taskContext),
+  const allowedToolNames = resolveHostedRuntimeAllowedToolNames({
+    allowedToolNames: ownerScopedAllowedToolNames,
+    localToolNames: Object.keys(authorizedLocalTools),
+    availableSkillIds: input.taskContext.availableSkillIds,
+    includeRuntimeEssentialToolsWhenEmpty: input.includeRuntimeEssentialToolsWhenEmpty,
+  });
+  const postFormInputLocalTools = filterPostFormInputLocalTools(
+    authorizedLocalTools,
+    input.taskContext,
+  );
+  const selectedLocalTools = filterHostedChatRuntimeLocalTools({
+    tools: postFormInputLocalTools,
     allowedToolNames,
     sourceProviderToolNames: input.sourceProviderToolNames,
   });
+  const sourceProviderToolNames = new Set(input.sourceProviderToolNames ?? []);
+  const allowedProviderToolNames = normalizeHostedRuntimeAllowedToolNames(
+    input.allowedProviderToolNames,
+  );
+  const providerNativeToolNames = getProviderNativeToolNames({ model: input.taskContext.model });
+  const sortedLocalToolEntries = Object.entries(selectedLocalTools).filter(([toolName]) =>
+    isIntegrationToolAllowedBySourcePolicy(toolName, input.sourceIntegrationPolicy)
+  );
+  if (
+    !Object.hasOwn(selectedLocalTools, "web_fetch") &&
+    shouldIncludeHostedWebFetchFallback({
+      localTools: postFormInputLocalTools,
+      sourceProviderToolNames,
+      allowedToolNames,
+      allowedProviderToolNames,
+      providerNativeToolNames,
+    }) && isIntegrationToolAllowedBySourcePolicy("web_fetch", input.sourceIntegrationPolicy)
+  ) {
+    const hostedWebFetchTool = postFormInputLocalTools.web_fetch;
+    if (hostedWebFetchTool !== undefined) {
+      sortedLocalToolEntries.push(["web_fetch", hostedWebFetchTool]);
+    }
+  }
+  const sortedLocalTools = Object.fromEntries(
+    sortedLocalToolEntries.sort(([left], [right]) => left.localeCompare(right)),
+  );
   const localHostTools = input.traceLocalTools
     ? traceHostTools(sortedLocalTools, input.traceLocalTools)
     : sortedLocalTools;
@@ -164,41 +321,75 @@ export async function prepareHostedChatRuntimeToolAssembly<
     getActiveBranchId: input.getActiveBranchId ?? (() => activeBranchId(input.taskContext)),
     conversationId: input.conversationId,
     allowedToolNames,
+    ...(input.toolDiscoveryContext?.activatedRemoteToolNames !== undefined
+      ? { activatedRemoteToolNames: input.toolDiscoveryContext.activatedRemoteToolNames }
+      : {}),
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
     prepareToolInput: input.prepareRemoteToolInput,
     shouldRetryWithTool: input.shouldRetryWithRemoteTool,
     onSteeringMutation: input.onSteeringMutation,
     onStudioProjectSwitch: input.onStudioProjectSwitch,
   });
-  const remoteToolNames = await listProjectScopedRemoteToolNames(remoteToolSources, {
+  const listedRemoteToolNames = await listProjectScopedRemoteToolNames(remoteToolSources, {
     projectId: activeProjectId(input.taskContext),
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
   });
-  const sourceProviderToolNames = new Set(input.sourceProviderToolNames ?? []);
-  const localProviderToolNames = new Set(
-    Object.keys(sortedLocalTools).filter((toolName) => sourceProviderToolNames.has(toolName)),
+  const remoteToolNames = applySourceIntegrationPolicy(
+    listedRemoteToolNames,
+    input.sourceIntegrationPolicy,
   );
-  const providerToolNames = getProviderNativeToolNames({ model: input.taskContext.model }).filter(
+  const localProviderToolNames = new Set(
+    Object.keys(sortedLocalTools).filter((toolName) => providerNativeToolNames.includes(toolName)),
+  );
+  const selectedProviderToolNames = providerNativeToolNames.filter(
     (toolName) =>
       !localProviderToolNames.has(toolName) &&
-      (allowedToolNames ? allowedToolNames.has(toolName) : sourceProviderToolNames.has(toolName)),
+      (allowedProviderToolNames
+        ? allowedProviderToolNames.has(toolName)
+        : allowedToolNames
+        ? allowedToolNames.has(toolName)
+        : sourceProviderToolNames.has(toolName)),
+  );
+  const providerToolNames = applySourceIntegrationPolicy(
+    selectedProviderToolNames,
+    input.sourceIntegrationPolicy,
   );
   const localToolNames = Object.keys(localHostTools);
-  const availableToolNames = selectProviderCompatibleToolNames(
-    [...new Set([...localToolNames, ...remoteToolNames, ...providerToolNames])].sort(),
-    {
+  const toolLoadingMode: RuntimeToolLoadingMode = input.allowedToolNames === null
+    ? "deferred"
+    : "eager";
+  const authorizedToolNames = [
+    ...new Set([...localToolNames, ...providerToolNames, ...remoteToolNames]),
+  ].sort();
+  // Deferred mode sends only bootstrap/search plus explicitly loaded schemas to
+  // the model, so the provider schema limit must not truncate its searchable or
+  // executable authorization catalog. Eager mode still needs an up-front cap.
+  const availableToolNames = toolLoadingMode === "deferred"
+    ? authorizedToolNames
+    : selectProviderCompatibleToolNames(authorizedToolNames, {
       model: input.taskContext.model,
       requiredToolNames: localToolNames,
-    },
-  );
+    });
   const compatibleToolNames = new Set(availableToolNames);
-  const compatibleRemoteToolNames = remoteToolNames.filter((toolName) =>
-    compatibleToolNames.has(toolName)
+  const compatibleRemoteToolNames = toolLoadingMode === "deferred"
+    ? remoteToolNames
+    : remoteToolNames.filter((toolName) => compatibleToolNames.has(toolName));
+  const bootstrapToolNames = availableToolNames.filter((toolName) =>
+    toolName === "form_input" || toolName === "load_skill"
   );
+  const hasDeferredTools = availableToolNames.length > bootstrapToolNames.length;
+  const modelVisibleToolNames = toolLoadingMode === "deferred"
+    ? [
+      ...bootstrapToolNames,
+      ...(hasDeferredTools ? [TOOL_SEARCH_TOOL_NAME] : []),
+    ].sort()
+    : availableToolNames;
 
-  input.taskContext.availableToolNames = availableToolNames;
+  input.taskContext.availableToolNames = modelVisibleToolNames;
+  const modelInstructions = input.renderInstructions?.(modelVisibleToolNames) ??
+    input.instructions;
   const systemInstructions = flattenSystemInstructions(
-    withRuntimeToolInventory(input.instructions, availableToolNames),
+    withRuntimeToolInventory(modelInstructions, modelVisibleToolNames),
   );
 
   if (input.preloadLatestConversationUserText !== false) {
@@ -215,12 +406,15 @@ export async function prepareHostedChatRuntimeToolAssembly<
   }
 
   return {
+    sourceIntegrationPolicy: input.sourceIntegrationPolicy,
     runtimeTools: createToolsFromHostDefinitions(localHostTools),
     remoteToolSources,
     localToolNames,
     remoteToolNames,
     providerToolNames,
     availableToolNames,
+    modelVisibleToolNames,
+    toolLoadingMode,
     compatibleRemoteToolNames,
     systemInstructions,
   };

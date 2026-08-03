@@ -1,6 +1,7 @@
 import { serverLogger } from "#veryfront/utils";
 import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import {
+  type Context,
   context as otContext,
   propagation,
   type Span,
@@ -9,11 +10,57 @@ import {
   trace,
 } from "#veryfront/observability/tracing/api-shim.ts";
 import type { ErrorAttributes, HttpAttributes } from "./types.ts";
+import { sanitizeErrorForTelemetry, sanitizeTelemetryAttributes } from "../telemetry-error.ts";
+import { runAsyncWithContextFallback } from "../tracing/context-callback.ts";
 
 const logger = serverLogger.component("auto-instrument");
 
 function getHttpTracer() {
   return trace.getTracer("veryfront-http");
+}
+
+function reportTelemetryFailure(failureMessage: string, error: unknown): void {
+  try {
+    logger.debug(failureMessage, error);
+  } catch (_) {
+    /* expected: telemetry and logging failures must not affect application work */
+  }
+}
+
+function runTelemetryOperation(operation: () => void, failureMessage: string): void {
+  try {
+    operation();
+  } catch (error) {
+    reportTelemetryFailure(failureMessage, error);
+  }
+}
+
+async function runWithActiveSpanFallback<T>(
+  activate: (callback: (span: Span) => Promise<T>) => Promise<T> | T,
+  operation: (span: Span | null) => Promise<T>,
+  failureMessage: string,
+): Promise<T> {
+  let selectedSpan: Span | null = null;
+  let spanSelected = false;
+
+  return await runAsyncWithContextFallback(
+    async (invoke) => {
+      return await activate((candidate) => {
+        if (!spanSelected) {
+          spanSelected = true;
+          selectedSpan = candidate ?? null;
+        } else if (candidate && candidate !== selectedSpan) {
+          runTelemetryOperation(
+            () => candidate.end(),
+            "Failed to end duplicate active span",
+          );
+        }
+        return invoke();
+      });
+    },
+    () => operation(selectedSpan),
+    (error) => reportTelemetryFailure(failureMessage, error),
+  );
 }
 
 const headersGetter = {
@@ -25,12 +72,12 @@ const headersGetter = {
   },
 };
 
-function extractParentContext(headers: Headers) {
+function extractParentContext(headers: Headers): Context | undefined {
   try {
     return propagation.extract(otContext.active(), headers, headersGetter);
   } catch (error) {
-    logger.debug("Failed to extract parent context", error);
-    return otContext.active();
+    reportTelemetryFailure("Failed to extract parent context", error);
+    return undefined;
   }
 }
 
@@ -41,34 +88,41 @@ export function instrumentHttpHandler(
   return async function instrumentedHttpHandler(request: Request): Promise<Response> {
     const startTime = performance.now();
     const url = new URL(request.url);
-    const httpAttrs = buildHttpAttributes(request, url);
+    const httpAttrs = sanitizeTelemetryAttributes(
+      buildHttpAttributes(request, url),
+    );
     const parentContext = extractParentContext(request.headers);
-
-    try {
-      return await getHttpTracer().startActiveSpan(
-        "http.server.request",
-        { kind: SpanKind.SERVER, attributes: httpAttrs },
-        parentContext,
-        async (span) => {
-          try {
-            const response = await handler(request);
-            recordResponseSuccess(span, response, performance.now() - startTime, httpAttrs);
-            return response;
-          } catch (error) {
-            recordResponseError(span, error, performance.now() - startTime, httpAttrs);
-            throw error;
-          } finally {
-            span.end();
-          }
-        },
-      );
-    } catch (error) {
-      logger.debug(
-        "[auto-instrument] HTTP handler span failed, falling back to raw handler",
-        error,
-      );
-      return await handler(request);
-    }
+    const runHandler = async (span: Span | null): Promise<Response> => {
+      try {
+        const response = await handler(request);
+        runTelemetryOperation(
+          () => recordResponseSuccess(span, response, performance.now() - startTime, httpAttrs),
+          "Failed to record HTTP server response",
+        );
+        return response;
+      } catch (error) {
+        runTelemetryOperation(
+          () => recordResponseError(span, error, performance.now() - startTime, httpAttrs),
+          "Failed to record HTTP server error",
+        );
+        throw error;
+      } finally {
+        if (span) {
+          runTelemetryOperation(() => span.end(), "Failed to end HTTP server span");
+        }
+      }
+    };
+    const spanOptions = { kind: SpanKind.SERVER, attributes: httpAttrs };
+    return await runWithActiveSpanFallback(
+      (callback) => {
+        const tracer = getHttpTracer();
+        return parentContext
+          ? tracer.startActiveSpan("http.server.request", spanOptions, parentContext, callback)
+          : tracer.startActiveSpan("http.server.request", spanOptions, callback);
+      },
+      runHandler,
+      "[auto-instrument] HTTP handler span failed, falling back to raw handler",
+    );
   };
 }
 /** Create a fetch implementation instrumented with observability spans. */
@@ -81,7 +135,7 @@ export function createInstrumentedFetch(
   ): Promise<Response> {
     const startTime = performance.now();
     const urlString = extractFetchUrl(input);
-    const method = init?.method ?? "GET";
+    const method = init?.method ?? (input instanceof Request ? input.method : "GET");
     const spanUrl = sanitizeUrlForSpan(urlString);
 
     const fetchAttrs: HttpAttributes = {
@@ -100,33 +154,68 @@ export function createInstrumentedFetch(
     } catch (_) {
       /* expected: relative URLs cannot be parsed, leave defaults */
     }
+    const sanitizedFetchAttrs = sanitizeTelemetryAttributes(fetchAttrs);
 
-    try {
-      return await getHttpTracer().startActiveSpan(
-        "http.client.fetch",
-        { kind: SpanKind.CLIENT, attributes: fetchAttrs },
-        async (span) => {
-          try {
-            const headers = new Headers(init?.headers);
-            propagation.inject(otContext.active(), headers, {
-              set: (h, k, v) => h.set(k, v),
-            });
-
-            const response = await baseFetch(input, { ...init, headers });
-            recordResponseSuccess(span, response, performance.now() - startTime, fetchAttrs);
-            return response;
-          } catch (error) {
-            recordResponseError(span, error, performance.now() - startTime, fetchAttrs);
-            throw error;
-          } finally {
-            span.end();
+    return await runWithActiveSpanFallback(
+      (callback) =>
+        getHttpTracer().startActiveSpan(
+          "http.client.fetch",
+          { kind: SpanKind.CLIENT, attributes: sanitizedFetchAttrs },
+          callback,
+        ),
+      async (span) => {
+        try {
+          let effectiveInit = init;
+          if (span) {
+            try {
+              const headers = new Headers(
+                init?.headers ?? (input instanceof Request ? input.headers : undefined),
+              );
+              runTelemetryOperation(
+                () =>
+                  propagation.inject(otContext.active(), headers, {
+                    set: (h, k, v) => h.set(k, v),
+                  }),
+                "Failed to inject fetch trace context",
+              );
+              effectiveInit = { ...init, headers };
+            } catch (error) {
+              reportTelemetryFailure("Failed to prepare fetch trace context", error);
+            }
           }
-        },
-      );
-    } catch (error) {
-      logger.debug("Fetch span failed, falling back to base fetch", error);
-      return await baseFetch(input, init);
-    }
+
+          const response = await baseFetch(input, effectiveInit);
+          runTelemetryOperation(
+            () =>
+              recordResponseSuccess(
+                span,
+                response,
+                performance.now() - startTime,
+                sanitizedFetchAttrs,
+              ),
+            "Failed to record HTTP client response",
+          );
+          return response;
+        } catch (error) {
+          runTelemetryOperation(
+            () =>
+              recordResponseError(
+                span,
+                error,
+                performance.now() - startTime,
+                sanitizedFetchAttrs,
+              ),
+            "Failed to record HTTP client error",
+          );
+          throw error;
+        } finally {
+          if (span) {
+            runTelemetryOperation(() => span.end(), "Failed to end HTTP client span");
+          }
+        }
+      },
+      "Fetch span failed, falling back to base fetch",
+    );
   };
 }
 
@@ -148,25 +237,32 @@ function recordResponseSuccess(
 ): void {
   if (!span) return;
 
-  span.setAttributes({
-    "http.status_code": response.status,
-    "http.response.size": Number(response.headers.get("content-length") ?? 0),
-    "http.duration_ms": Math.round(duration),
-  });
+  const contentLength = Number(response.headers.get("content-length") ?? 0);
+  runTelemetryOperation(
+    () =>
+      span.setAttributes(
+        sanitizeTelemetryAttributes({
+          "http.status_code": response.status,
+          "http.response.size": Number.isFinite(contentLength) && contentLength >= 0
+            ? contentLength
+            : 0,
+          "http.duration_ms": Math.max(0, Math.round(duration)),
+          "http.method": httpAttrs["http.method"],
+          "http.target": httpAttrs["http.target"],
+        }),
+      ),
+    "Failed to record HTTP response attributes",
+  );
 
-  if (response.status >= 500) {
-    span.setStatus({ code: SpanStatusCode.ERROR });
-  } else if (response.status >= 400) {
-    span.setStatus({ code: SpanStatusCode.UNSET, message: `HTTP ${response.status}` });
-  } else {
-    span.setStatus({ code: SpanStatusCode.OK });
-  }
-
-  // Preserve original request method/path for downstream analysis
-  span.setAttributes({
-    "http.method": httpAttrs["http.method"],
-    "http.target": httpAttrs["http.target"],
-  });
+  runTelemetryOperation(() => {
+    if (response.status >= 500) {
+      span.setStatus({ code: SpanStatusCode.ERROR });
+    } else if (response.status >= 400) {
+      span.setStatus({ code: SpanStatusCode.UNSET, message: `HTTP ${response.status}` });
+    } else {
+      span.setStatus({ code: SpanStatusCode.OK });
+    }
+  }, "Failed to record HTTP response status");
 }
 
 function recordResponseError(
@@ -177,17 +273,32 @@ function recordResponseError(
 ): void {
   if (!span) return;
 
-  span.recordException(error as Error);
-  span.setAttributes({
-    ...buildErrorAttributes(error),
-    "http.duration_ms": Math.round(duration),
-    "http.method": httpAttrs["http.method"],
-    "http.target": httpAttrs["http.target"],
-  });
-  span.setStatus({
-    code: SpanStatusCode.ERROR,
-    message: error instanceof Error ? error.message : String(error),
-  });
+  const telemetryError = sanitizeErrorForTelemetry(error);
+
+  runTelemetryOperation(
+    () => span.recordException(telemetryError),
+    "Failed to record HTTP exception",
+  );
+  runTelemetryOperation(
+    () =>
+      span.setAttributes(
+        sanitizeTelemetryAttributes({
+          ...buildErrorAttributes(error),
+          "http.duration_ms": Math.max(0, Math.round(duration)),
+          "http.method": httpAttrs["http.method"],
+          "http.target": httpAttrs["http.target"],
+        }),
+      ),
+    "Failed to record HTTP error attributes",
+  );
+  runTelemetryOperation(
+    () =>
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: telemetryError.message,
+      }),
+    "Failed to record HTTP error status",
+  );
 }
 
 function extractFetchUrl(input: RequestInfo | URL): string {
@@ -197,17 +308,10 @@ function extractFetchUrl(input: RequestInfo | URL): string {
 }
 
 function buildErrorAttributes(error: unknown): ErrorAttributes {
-  if (error instanceof Error) {
-    return {
-      error: "true",
-      "error.type": error.constructor.name,
-      "error.message": error.message,
-    };
-  }
-
+  const telemetryError = sanitizeErrorForTelemetry(error);
   return {
     error: "true",
-    "error.type": "Unknown",
-    "error.message": String(error),
+    "error.type": telemetryError.name,
+    "error.message": telemetryError.message,
   };
 }

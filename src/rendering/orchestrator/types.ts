@@ -3,12 +3,15 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import type { RenderResult } from "#veryfront/types";
 import type { BuildVersion } from "#veryfront/utils/version.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 
 export type { RenderResult };
 
 export interface RendererOptions {
   projectDir: string;
   mode: "development" | "production";
+  /** Whether browser-facing local filesystem module URLs are trusted. */
+  isLocalProject?: boolean;
   port?: number;
   adapter?: RuntimeAdapter;
   moduleServerUrl?: string;
@@ -30,8 +33,14 @@ export interface RenderOptions {
   params?: Record<string, string | string[]>;
   props?: Record<string, unknown>;
   delivery?: "string" | "stream";
+  /** Set on the SSR error path: absolute path to the app-router error.tsx to hydrate. */
+  errorPath?: string;
   request?: Request;
+  /** Internal signal for the render owner's total deadline. */
+  abortSignal?: AbortSignal;
   url?: URL;
+  /** Restrict data fetching to static hooks, even when a request context exists. */
+  staticDataOnly?: boolean;
   /** Optional cache key override; defaults to slug + normalized query params (without page/theme prefix) */
   cacheKey?: string;
   nonce?: string;
@@ -49,6 +58,12 @@ export interface RenderOptions {
   projectSlug?: string;
   /** Content source identifier for cache isolation (branch name or release ID) */
   contentSourceId?: string;
+  /** Internal request-scoped dependency-pinning state for render/transform caches. */
+  dependencyPinningCacheKey?: string;
+  /** Immutable package map paired with dependencyPinningCacheKey. */
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  /** Exact package source namespace paired with the immutable snapshot. */
+  dependencyPinningSource?: DependencyPinningSourceInput;
   /** Release ID for production renders (drives release asset manifest consumption) */
   releaseId?: string;
   /** Request-scoped ready release asset manifest, shared by cache keys and HTML generation. */
@@ -63,6 +78,13 @@ export interface RenderOptions {
   forceProductionScripts?: boolean;
   /** Internal SSR module-tracking session id for first-response manifest preloads */
   renderSessionId?: string;
+  /** Project-relative layout props serialized for browser reconstruction. */
+  layoutProps?: Record<string, Record<string, unknown>>;
+  /** Internal server/client ownership plan for App Router page hydration. */
+  clientPageIsland?: {
+    clientLayoutPaths: string[];
+    hasServerLayouts: boolean;
+  };
 }
 
 export interface RenderContext {
@@ -82,7 +104,15 @@ export interface PageDataResponse {
   params: Record<string, string | string[]>;
   layoutProps: Record<string, Record<string, unknown>>;
   buildVersion: BuildVersion;
+  /** Dependency snapshot token for browser module cache identity. */
+  dependencyPinningCacheKey?: string;
   appPath?: string;
+  /** Project-relative path to the app-router error.tsx that wraps the page (client boundary). */
+  errorPath?: string;
+  /** Page and client layout modules render inside a server-owned layout island. */
+  isolatedClientPage?: boolean;
+  /** Server-owned layout markup requires a document navigation for this target. */
+  requiresFullDocumentNavigation?: boolean;
   /** Production release id used to version fallback module URLs. */
   releaseId?: string;
   /** Production release asset URLs keyed by logical source path. */

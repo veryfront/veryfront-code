@@ -5,6 +5,7 @@ import {
   type RemoteMCPToolSourceConfig,
   type RemoteToolSource,
 } from "#veryfront/tool";
+import { AGENT_ERROR } from "#veryfront/errors";
 import {
   type AgentServiceMcpServerConfig,
   createAgentServiceRemoteMcpConfig,
@@ -28,7 +29,9 @@ import {
   buildDefaultHostedChildForkToolSet,
   type DefaultHostedChildForkToolAssemblySourceResult,
 } from "./child-requested-tools.ts";
+import { createMcpToolPolicyGate, wrapHostToolSetWithMcpPolicy } from "../mcp-tool-policy.ts";
 import { filterVeryfrontApiToolDefinitionsWithAccessProfile } from "./veryfront-api-tool-access.ts";
+import { createHostedMcpToolPolicySource } from "./project-remote-tool-source.ts";
 
 /** Public API contract for hosted child fork tool sources logger. */
 export type HostedChildForkToolSourcesLogger = {
@@ -108,9 +111,16 @@ export async function prepareDefaultHostedChildForkToolSources(
             ? { createRemoteToolSource: input.createRemoteToolSource }
             : {}),
         });
+        const policyTools = wrapHostToolSetWithMcpPolicy(
+          studioTools.tools,
+          server.toolPolicy,
+          {
+            deniedDetail: (toolName) => `Tool "${toolName}" is not allowed for this MCP server`,
+          },
+        );
         studioMcpTools = {
           ...studioMcpTools,
-          ...studioTools.tools,
+          ...policyTools,
         };
         closeStudioMcpTools = studioTools.close;
         continue;
@@ -125,18 +135,22 @@ export async function prepareDefaultHostedChildForkToolSources(
       if (!remoteConfig) {
         continue;
       }
-      const remoteSource = createRemoteToolSource(remoteConfig);
-      const rawDefinitions = await remoteSource.listTools();
-      const definitions = server.kind === "veryfront-api"
+      const rawSource = createRemoteToolSource(remoteConfig);
+      const policySource = createHostedMcpToolPolicySource(rawSource, server.toolPolicy);
+      const rawDefinitions = await rawSource.listTools();
+      const accessFilteredDefinitions = server.kind === "veryfront-api"
         ? await filterVeryfrontApiToolDefinitionsWithAccessProfile({
-          source: remoteSource,
+          source: rawSource,
           toolDefinitions: rawDefinitions,
           projectId: input.getProjectId() ?? null,
         })
         : rawDefinitions;
+      const definitions = createMcpToolPolicyGate(server.toolPolicy).filterDefinitions(
+        accessFilteredDefinitions,
+      );
       remoteMcpTools = {
         ...remoteMcpTools,
-        ...materializeRemoteTools(remoteSource, definitions),
+        ...materializeRemoteTools(policySource, definitions),
       };
     }
   } catch (error) {
@@ -207,7 +221,13 @@ export async function prepareDefaultHostedChildForkSandboxToolSources(
       globalTools: mergedGlobalTools,
     });
     if (!toolSources.ok) {
-      await sandboxResult.closeSandbox();
+      try {
+        await sandboxResult.closeSandbox();
+      } catch (closeError) {
+        input.logger?.error("Failed to close sandbox during child fork tool source cleanup", {
+          errorName: closeError instanceof Error ? closeError.name : typeof closeError,
+        });
+      }
       return toolSources;
     }
 
@@ -218,7 +238,14 @@ export async function prepareDefaultHostedChildForkSandboxToolSources(
       closeTooling: toolSources.closeStudioMcpTools,
     };
   } catch (error) {
-    await sandboxResult.closeSandbox();
+    // Never let a close failure mask the original error that triggered cleanup.
+    try {
+      await sandboxResult.closeSandbox();
+    } catch (closeError) {
+      input.logger?.error("Failed to close sandbox during child fork tool source cleanup", {
+        errorName: closeError instanceof Error ? closeError.name : typeof closeError,
+      });
+    }
     throw error;
   }
 }
@@ -233,5 +260,5 @@ function throwIfAborted(abortSignal: AbortSignal | undefined): void {
     throw reason;
   }
 
-  throw new Error("Child fork aborted");
+  throw AGENT_ERROR.create({ detail: "Child fork aborted" });
 }

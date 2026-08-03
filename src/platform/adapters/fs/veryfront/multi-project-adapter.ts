@@ -5,6 +5,8 @@ import type { FileInfo, ResolveFileOptions } from "../../base.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
 import type { VeryfrontFSAdapter } from "./adapter.ts";
 import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
+import { requireBoundedFileReadLimit } from "../../bounded-file-read.ts";
+import { captureByteReadCapabilities } from "../../file-system-capabilities.ts";
 import {
   asyncLocalStorage,
   clearRequestScopedFileCache,
@@ -27,6 +29,7 @@ const DEFAULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1_000;
 const DEFAULT_MAX_IDLE_MS = 30 * 60 * 1_000;
 
 export class MultiProjectFSAdapter implements FSAdapter {
+  readonly symlinkSemantics = "none" as const;
   private manager: ProxyFSAdapterManager;
   private defaultAdapter?: VeryfrontFSAdapter;
 
@@ -180,9 +183,30 @@ export class MultiProjectFSAdapter implements FSAdapter {
     return adapter.readFile(path);
   }
 
+  async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    const admittedLimit = requireBoundedFileReadLimit(byteLimit);
+    const adapter = await this.getAdapter();
+    const readers = captureByteReadCapabilities(
+      adapter,
+      "Selected Veryfront filesystem adapter",
+    );
+    if (readers.exact !== undefined) return readers.exact(path, admittedLimit);
+    if (readers.whole !== undefined && readers.whole.maximumBytes <= admittedLimit) {
+      return readers.whole.read(path);
+    }
+    throw new TypeError(
+      `Veryfront filesystem requires an exact bounded reader or a whole-file ceiling no larger than ${admittedLimit} bytes`,
+    );
+  }
+
   async readTextFile(path: string): Promise<string> {
     const adapter = await this.getAdapter();
     return adapter.readTextFile(path);
+  }
+
+  async readOptionalTextFile(path: string): Promise<string> {
+    const adapter = await this.getAdapter();
+    return adapter.readOptionalTextFile(path);
   }
 
   async exists(path: string): Promise<boolean> {
@@ -229,6 +253,36 @@ export class MultiProjectFSAdapter implements FSAdapter {
         cleared,
       });
     }
+  }
+
+  async ensureSourceSnapshotFresh(reason?: string): Promise<void> {
+    const adapter = await this.getAdapter();
+    if (typeof adapter.ensureSourceSnapshotFresh !== "function") return;
+
+    const previousVersion = await adapter.getSourceSnapshotVersion?.();
+    await adapter.ensureSourceSnapshotFresh(reason);
+    const currentVersion = await adapter.getSourceSnapshotVersion?.();
+    const sourceMayHaveChanged = previousVersion === undefined ||
+      currentVersion === undefined ||
+      previousVersion !== currentVersion;
+    if (!sourceMayHaveChanged) return;
+
+    const cleared = clearRequestScopedFileCache();
+    if (cleared > 0) {
+      logger.debug("Cleared request-scoped file cache after source freshness changed", {
+        reason,
+        cleared,
+        previousVersion,
+        currentVersion,
+      });
+    }
+  }
+
+  async getSourceSnapshotVersion(): Promise<number | undefined> {
+    const adapter = await this.getAdapter();
+    return typeof adapter.getSourceSnapshotVersion === "function"
+      ? await adapter.getSourceSnapshotVersion()
+      : undefined;
   }
 
   dispose(): void {

@@ -1,5 +1,6 @@
 import { createEvalCheckContext } from "./expect.ts";
-import { createEvalReport } from "./report.ts";
+import { isEvalDefinition } from "./factory.ts";
+import { createEvalDatasetMetadata, createEvalReport } from "./report.ts";
 import { createEvalRunId } from "./run-id.ts";
 import { metrics as runtimeMetrics } from "#veryfront/metrics";
 import {
@@ -18,24 +19,141 @@ import type {
   EvalMetricResult,
   EvalRecord,
   EvalReportExportConfig,
+  EvalToolAdapterResult,
+  EvalToolCall,
   EvalTrace,
   EvalUsage,
   RunEvalOptions,
 } from "./types.ts";
+import {
+  assertFiniteEvalNumber,
+  createEvalValidationError,
+  isEvalArray,
+  isEvalRecord,
+  normalizeEvalExamples,
+  normalizeEvalString,
+  stringifyEvalError,
+} from "./validation.ts";
+
+const UNMAPPED_TOOL_INPUT = Symbol("unmapped-tool-input");
+const USAGE_NUMERIC_KEYS = [
+  "inputTokens",
+  "outputTokens",
+  "totalTokens",
+  "billableInputTokens",
+  "billableOutputTokens",
+  "cachedInputTokens",
+  "cacheCreationInputTokens",
+  "cacheReadInputTokens",
+  "reasoningTokens",
+  "costUsd",
+  "providerInputCostUsd",
+  "providerOutputCostUsd",
+  "providerCostUsd",
+  "veryfrontInputChargeUsd",
+  "veryfrontOutputChargeUsd",
+  "veryfrontChargeUsd",
+  "veryfrontBilledUsd",
+  "costCredits",
+] as const satisfies readonly (keyof EvalUsage)[];
 
 function normalizeTrace(trace?: Partial<EvalTrace>): EvalTrace {
+  if (trace !== undefined && !isEvalRecord(trace)) {
+    throw createEvalValidationError("Eval adapter trace must be an object");
+  }
+  if (trace?.events !== undefined && !isEvalArray(trace.events)) {
+    throw createEvalValidationError("Eval adapter trace events must be an array");
+  }
+  if (trace?.toolCalls !== undefined && !isEvalArray(trace.toolCalls)) {
+    throw createEvalValidationError("Eval adapter trace toolCalls must be an array");
+  }
   return {
-    events: trace?.events ?? [],
-    toolCalls: trace?.toolCalls ?? [],
+    events: [...(trace?.events ?? [])],
+    toolCalls: (trace?.toolCalls ?? []).map((toolCall, index) => {
+      if (!isEvalRecord(toolCall)) {
+        throw createEvalValidationError(
+          `Eval adapter trace toolCalls[${index}] must be an object`,
+        );
+      }
+      const name = normalizeEvalString(
+        toolCall.name,
+        `Eval adapter trace toolCalls[${index}] name`,
+      );
+      if (
+        toolCall.status !== undefined &&
+        toolCall.status !== "ok" &&
+        toolCall.status !== "error" &&
+        toolCall.status !== "skipped" &&
+        toolCall.status !== "denied"
+      ) {
+        throw createEvalValidationError(
+          `Eval adapter trace toolCalls[${index}] has an invalid status`,
+        );
+      }
+      return { ...toolCall, name } as EvalToolCall;
+    }),
   };
 }
 
 function normalizeUsage(usage?: EvalUsage): EvalUsage {
-  return usage ?? {};
+  if (usage === undefined) return {};
+  if (!isEvalRecord(usage)) {
+    throw createEvalValidationError("Eval adapter usage must be an object");
+  }
+  const normalized = { ...usage } as EvalUsage;
+  for (const key of USAGE_NUMERIC_KEYS) {
+    const value = normalized[key];
+    if (value !== undefined) {
+      assertFiniteEvalNumber(value, `Eval adapter usage ${key}`, { min: 0 });
+    }
+  }
+  return normalized;
 }
 
-function normalizeAdapterResult(result: string | EvalAgentAdapterResult): EvalAgentAdapterResult {
-  return typeof result === "string" ? { text: result } : result;
+function normalizeAgentAdapterResult(
+  result: string | EvalAgentAdapterResult,
+): EvalAgentAdapterResult {
+  if (typeof result === "string") return { text: result };
+  if (!isEvalRecord(result)) {
+    throw createEvalValidationError("Eval agent adapter must return a string or result object");
+  }
+  validateAdapterResultFields(result, "agent");
+  return {
+    ...result,
+    ...(result.trace === undefined
+      ? {}
+      : { trace: normalizeTrace(result.trace as Partial<EvalTrace>) }),
+    ...(result.usage === undefined ? {} : { usage: normalizeUsage(result.usage as EvalUsage) }),
+  };
+}
+
+function normalizeToolAdapterResult(result: EvalToolAdapterResult): EvalToolAdapterResult {
+  if (!isEvalRecord(result)) {
+    throw createEvalValidationError("Eval tool adapter must return a result object");
+  }
+  validateAdapterResultFields(result, "tool");
+  return {
+    ...result,
+    ...(result.trace === undefined
+      ? {}
+      : { trace: normalizeTrace(result.trace as Partial<EvalTrace>) }),
+    ...(result.usage === undefined ? {} : { usage: normalizeUsage(result.usage as EvalUsage) }),
+  } as EvalToolAdapterResult;
+}
+
+function validateAdapterResultFields(
+  result: Record<string, unknown>,
+  kind: "agent" | "tool",
+): void {
+  if (result.completed !== undefined && typeof result.completed !== "boolean") {
+    throw createEvalValidationError(`Eval ${kind} adapter completed must be a boolean`);
+  }
+  if (result.error !== undefined && typeof result.error !== "string") {
+    throw createEvalValidationError(`Eval ${kind} adapter error must be a string`);
+  }
+  if (result.durationMs !== undefined) {
+    assertFiniteEvalNumber(result.durationMs, `Eval ${kind} adapter durationMs`, { min: 0 });
+  }
 }
 
 function normalizeOutput(result: EvalAgentAdapterResult): unknown {
@@ -43,6 +161,72 @@ function normalizeOutput(result: EvalAgentAdapterResult): unknown {
   if (Object.hasOwn(result, "json")) return { json: result.json };
   if (Object.hasOwn(result, "text")) return { text: result.text };
   return result;
+}
+
+function normalizeToolTargetName(target: string): string {
+  return target.startsWith("tool:") ? target.slice("tool:".length) : target;
+}
+
+function createDirectToolTraceCall(
+  definition: EvalDefinition,
+  input: unknown,
+  result: EvalToolAdapterResult,
+): EvalToolCall {
+  return {
+    ...(result.toolCallId ? { id: result.toolCallId } : {}),
+    name: normalizeToolTargetName(definition.target),
+    status: result.error || result.completed === false ? "error" : "ok",
+    input,
+    output: result.output,
+    ...(result.error ? { error: result.error } : {}),
+    ...(result.durationMs !== undefined ? { metadata: { durationMs: result.durationMs } } : {}),
+  };
+}
+
+function normalizeToolTrace(
+  definition: EvalDefinition,
+  input: unknown,
+  result: EvalToolAdapterResult,
+): EvalTrace {
+  const trace = normalizeTrace(result.trace);
+  if (trace.toolCalls.length > 0) return trace;
+  return {
+    ...trace,
+    toolCalls: [createDirectToolTraceCall(definition, input, result)],
+  };
+}
+
+async function runAgentTarget(
+  definition: EvalDefinition,
+  options: RunEvalOptions,
+  example: Awaited<ReturnType<EvalDefinition["dataset"]["load"]>>[number],
+  repetition: number,
+): Promise<EvalAgentAdapterResult> {
+  const adapter = options.adapters.agent;
+  if (!adapter) {
+    throw new Error(`No agent adapter configured for eval target "${definition.target}".`);
+  }
+  return normalizeAgentAdapterResult(await adapter({ definition, example, repetition }));
+}
+
+async function runToolTarget(
+  definition: EvalDefinition,
+  options: RunEvalOptions,
+  example: Awaited<ReturnType<EvalDefinition["dataset"]["load"]>>[number],
+  repetition: number,
+  runId: string,
+  markInvoked?: () => void,
+): Promise<{ input: unknown; result: EvalToolAdapterResult }> {
+  const adapter = options.adapters.tool;
+  if (!adapter) {
+    throw new Error(`No tool adapter configured for eval target "${definition.target}".`);
+  }
+  const input = definition.input ? await definition.input(example) : example.input;
+  markInvoked?.();
+  const result = normalizeToolAdapterResult(
+    await adapter({ definition, example, repetition, runId, input }),
+  );
+  return { input, result };
 }
 
 function isBlockingFailure(record: EvalRecord): boolean {
@@ -136,11 +320,75 @@ function createMissingExporterResult(exporterId: string): EvalReportExportResult
   };
 }
 
+function metricEvaluationFailure(
+  metric: EvalDefinition["metrics"][number],
+  error: unknown,
+): EvalMetricResult {
+  return {
+    name: metric.name,
+    family: metric.family,
+    severity: metric.severity,
+    pass: false,
+    explanation: `Metric evaluation failed: ${stringifyEvalError(error)}`,
+  };
+}
+
+function normalizeMetricResult(
+  metric: EvalDefinition["metrics"][number],
+  result: unknown,
+): EvalMetricResult {
+  if (!isEvalRecord(result)) {
+    throw createEvalValidationError(`Metric "${metric.name}" must return a result object`);
+  }
+  if (result.score !== undefined) {
+    assertFiniteEvalNumber(result.score, `Metric "${metric.name}" score`);
+  }
+  if (result.pass !== undefined && typeof result.pass !== "boolean") {
+    throw createEvalValidationError(`Metric "${metric.name}" pass must be a boolean`);
+  }
+  if (result.skipped !== undefined && typeof result.skipped !== "boolean") {
+    throw createEvalValidationError(`Metric "${metric.name}" skipped must be a boolean`);
+  }
+  return {
+    ...result,
+    name: metric.name,
+    family: metric.family,
+    severity: metric.severity,
+  } as EvalMetricResult;
+}
+
+function createExporterFailureResult(
+  exporterId: string,
+  error: unknown,
+): EvalReportExportResult {
+  return {
+    exporterId,
+    ok: false,
+    error: stringifyEvalError(error),
+  };
+}
+
+function createExporterFailureResults(
+  exporterIds: string[],
+  error: unknown,
+): EvalReportExportResult[] {
+  const ids = exporterIds.length > 0 ? exporterIds : [EvalReportExporterRegistryName];
+  return ids.map((exporterId) => createExporterFailureResult(exporterId, error));
+}
+
 function resolveExporterRegistry(
   config: EvalReportExportConfig,
 ): EvalReportExporterRegistry | undefined {
   return config.registry ??
     tryResolve<EvalReportExporterRegistry>(EvalReportExporterRegistryName);
+}
+
+function listRegisteredExporterIds(registry: EvalReportExporterRegistry): string[] {
+  try {
+    return registry.list().map((exporter) => exporter.id).filter((id) => id.length > 0);
+  } catch {
+    return [];
+  }
 }
 
 function isEmptyTraceId(value: string | undefined): boolean {
@@ -179,19 +427,24 @@ async function exportWithSelectedExporter(
   config: EvalReportExportConfig,
   exporterId: string,
 ): Promise<EvalReportExportResult> {
-  const exporter = registry.get(exporterId);
-  if (!exporter) return createMissingExporterResult(exporterId);
+  try {
+    const exporter = registry.get(exporterId);
+    if (!exporter) return createMissingExporterResult(exporterId);
 
-  const selectedRegistry = createEvalReportExporterRegistry();
-  selectedRegistry.register(exporter);
-  const [result] = await selectedRegistry.export(report, withActiveTraceContext(config.context));
-  return result ?? {
-    exporterId,
-    ok: false,
-    error: `EvalReportExporter "${exporterId}" did not return an export result.`,
-  };
+    const selectedRegistry = createEvalReportExporterRegistry();
+    selectedRegistry.register(exporter);
+    const [result] = await selectedRegistry.export(report, withActiveTraceContext(config.context));
+    return result ?? {
+      exporterId,
+      ok: false,
+      error: `EvalReportExporter "${exporterId}" did not return an export result.`,
+    };
+  } catch (error) {
+    return createExporterFailureResult(exporterId, error);
+  }
 }
 
+/** Export an eval report through the configured eval report exporter registry. */
 export async function exportEvalReport(
   report: ReturnType<typeof createEvalReport>,
   config?: EvalReportExportConfig,
@@ -199,11 +452,20 @@ export async function exportEvalReport(
   if (!config) return undefined;
 
   const exporterIds = config.exporterIds?.filter((id) => id.length > 0) ?? [];
-  const registry = resolveExporterRegistry(config);
+  let registry: EvalReportExporterRegistry | undefined;
+  try {
+    registry = resolveExporterRegistry(config);
+  } catch (error) {
+    return createExporterFailureResults(exporterIds, error);
+  }
   if (!registry) return createMissingRegistryResults(exporterIds);
 
   if (exporterIds.length === 0) {
-    return registry.export(report, withActiveTraceContext(config.context));
+    try {
+      return await registry.export(report, withActiveTraceContext(config.context));
+    } catch (error) {
+      return createExporterFailureResults(listRegisteredExporterIds(registry), error);
+    }
   }
 
   const results: EvalReportExportResult[] = [];
@@ -218,33 +480,60 @@ async function runRecord(
   options: RunEvalOptions,
   example: Awaited<ReturnType<EvalDefinition["dataset"]["load"]>>[number],
   repetition: number,
+  runId: string,
 ): Promise<EvalRecord> {
   const started = Date.now();
-  let result: EvalAgentAdapterResult;
+  let result: EvalAgentAdapterResult | EvalToolAdapterResult;
+  let toolInput: unknown = UNMAPPED_TOOL_INPUT;
+  let toolInvoked = false;
 
   try {
-    result = normalizeAdapterResult(
-      await options.adapters.agent({ definition, example, repetition }),
-    );
+    if (definition.targetKind === "tool") {
+      const toolRun = await runToolTarget(definition, options, example, repetition, runId, () => {
+        toolInvoked = true;
+      });
+      result = toolRun.result;
+      toolInput = toolRun.input;
+    } else {
+      result = await runAgentTarget(definition, options, example, repetition);
+    }
   } catch (error) {
     result = {
-      text: "",
+      ...(definition.targetKind === "tool" ? { output: undefined } : { text: "" }),
       completed: false,
-      error: error instanceof Error ? error.message : String(error),
+      error: stringifyEvalError(error),
     };
   }
 
-  const output = normalizeOutput(result);
+  const output = definition.targetKind === "tool"
+    ? (result as EvalToolAdapterResult).output
+    : normalizeOutput(result as EvalAgentAdapterResult);
+  const agentResult = definition.targetKind === "agent"
+    ? result as EvalAgentAdapterResult
+    : undefined;
   const record: EvalRecord = {
     id: `${example.id}:${repetition}`,
     evalId: definition.id,
     exampleId: example.id,
     repetition,
     input: example.input,
+    ...(definition.targetKind === "tool" && toolInvoked
+      ? { executionInput: toolInput === UNMAPPED_TOOL_INPUT ? example.input : toolInput }
+      : {}),
     output,
     ...(Object.hasOwn(example, "reference") ? { reference: example.reference } : {}),
     metadata: example.metadata ?? {},
-    trace: normalizeTrace(result.trace),
+    ...(agentResult?.retrievedContext ? { retrievedContext: agentResult.retrievedContext } : {}),
+    ...(agentResult?.citations ? { citations: agentResult.citations } : {}),
+    trace: definition.targetKind === "tool"
+      ? (toolInvoked
+        ? normalizeToolTrace(
+          definition,
+          toolInput === UNMAPPED_TOOL_INPUT ? example.input : toolInput,
+          result as EvalToolAdapterResult,
+        )
+        : normalizeTrace((result as EvalToolAdapterResult).trace))
+      : normalizeTrace(result.trace),
     usage: normalizeUsage(result.usage),
     durationMs: result.durationMs ?? Date.now() - started,
     completed: result.completed ?? !result.error,
@@ -252,25 +541,39 @@ async function runRecord(
   };
 
   const metricResults = [];
+  const evaluationErrors: string[] = [];
   for (const metric of definition.metrics) {
-    metricResults.push(await metric.evaluate(record));
+    try {
+      metricResults.push(normalizeMetricResult(metric, await metric.evaluate(record)));
+    } catch (error) {
+      const failure = metricEvaluationFailure(metric, error);
+      metricResults.push(failure);
+      evaluationErrors.push(failure.explanation ?? `${metric.name} evaluation failed`);
+    }
   }
   record.metrics = metricResults;
 
   const checks: EvalMetricResult[] = [];
   if (definition.check) {
-    await definition.check(createEvalCheckContext({
-      definition,
-      example,
-      repetition,
-      record,
-      checks,
-    }));
+    try {
+      await definition.check(createEvalCheckContext({
+        definition,
+        example,
+        repetition,
+        record,
+        checks,
+      }));
+    } catch (error) {
+      evaluationErrors.push(`Eval check failed: ${stringifyEvalError(error)}`);
+    }
   }
   record.checks = checks;
 
-  if (isBlockingFailure(record)) {
-    record.completed = record.completed && true;
+  if (evaluationErrors.length > 0) {
+    record.error = [record.error, ...evaluationErrors].filter(Boolean).join("; ");
+    record.completed = false;
+  } else if (isBlockingFailure(record)) {
+    record.completed = false;
   }
 
   return record;
@@ -281,24 +584,42 @@ export async function runEval(
   definition: EvalDefinition,
   options: RunEvalOptions,
 ) {
+  if (!isEvalDefinition(definition)) {
+    throw createEvalValidationError("runEval requires a valid eval definition");
+  }
   const startedAt = options.now?.() ?? new Date();
+  if (!(startedAt instanceof Date) || !Number.isFinite(startedAt.getTime())) {
+    throw createEvalValidationError("Eval start time must be a valid Date");
+  }
+  const runId = options.runId === undefined
+    ? createEvalRunId(startedAt)
+    : normalizeEvalString(options.runId, "Eval run id");
   const baseDir = options.baseDir ?? Deno.cwd();
-  const examples = await definition.dataset.load({ baseDir });
+  const loadedExamples = await definition.dataset.load({ baseDir });
+  const examples = normalizeEvalExamples(
+    loadedExamples,
+    `dataset "${definition.dataset.path ?? definition.dataset.kind}"`,
+  );
+  const dataset = await createEvalDatasetMetadata(definition.dataset, examples);
   const records: EvalRecord[] = [];
 
   for (const example of examples) {
     for (let repetition = 1; repetition <= definition.repetitions; repetition += 1) {
-      records.push(await runRecord(definition, options, example, repetition));
+      records.push(await runRecord(definition, options, example, repetition, runId));
     }
   }
 
   const endedAt = options.now?.() ?? new Date();
+  if (!(endedAt instanceof Date) || !Number.isFinite(endedAt.getTime())) {
+    throw createEvalValidationError("Eval end time must be a valid Date");
+  }
   const report = createEvalReport({
     definition,
     records,
-    runId: options.runId ?? createEvalRunId(startedAt),
+    runId,
     startedAt,
     endedAt,
+    dataset,
     metadata: options.metadata,
   });
   emitEvalRuntimeMetrics(report);

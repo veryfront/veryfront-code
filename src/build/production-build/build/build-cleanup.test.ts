@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   cleanupCaches,
@@ -49,6 +49,24 @@ describe("build/production-build/build/build-cleanup", () => {
       } as unknown as import("#veryfront/rendering/index.ts").VeryfrontRenderer;
       await performCleanup(renderer);
       assertEquals(destroyCalled, true);
+    });
+
+    it("does not mask an active build failure when renderer cleanup also fails", async () => {
+      const buildError = new Error("build failed");
+      const renderer = {
+        destroy: () => Promise.reject(new Error("cleanup failed")),
+        renderPage: () => Promise.resolve({ html: "" }),
+      } as unknown as import("#veryfront/rendering/index.ts").VeryfrontRenderer;
+
+      const error = await assertRejects(async () => {
+        try {
+          throw buildError;
+        } finally {
+          await performCleanup(renderer);
+        }
+      });
+
+      assertEquals(error, buildError);
     });
   });
 

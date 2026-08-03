@@ -82,6 +82,26 @@ export default agent({
 });
 ```
 
+## Enable OpenAI-hosted web search
+
+Declare `web_search` in the agent's provider tools. Veryfront routes the call
+through OpenAI's Responses API, including for models that otherwise use Chat
+Completions:
+
+```ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  model: "openai/gpt-4.1",
+  providerTools: ["web_search"],
+});
+```
+
+This tool requires an OpenAI endpoint that implements the Responses and hosted
+web-search contracts. See the
+[`ext-llm-openai` reference](../../extensions/ext-llm-openai/README.md#hosted-web-search)
+for supported identifiers, arguments, and replay limits.
+
 ## Explicit local AI
 
 Local inference is explicit. Use a `local/*` model when you want the server to
@@ -170,7 +190,7 @@ For providers not covered by env vars, use `registerModelProvider()`:
 ```ts
 import { registerModelProvider } from "veryfront/provider";
 
-registerModelProvider("ollama", (id) => {
+const unregisterOllama = registerModelProvider("ollama", (id) => {
   // Return a framework-compatible model runtime for this model ID.
   // Prefer built-in providers when possible; custom registration is an
   // advanced interop surface for non-standard backends. The runtime must
@@ -186,6 +206,13 @@ agent({ model: "ollama/llama3.2" });
 The factory receives the model ID and must return a framework-compatible model
 runtime with the generation surface the framework expects, including
 `doGenerate()` and `doStream()`.
+
+Registration inside a project source context is isolated to that project.
+Registration during application bootstrap, outside a project context, becomes
+the default for every project unless a project registers an override. The
+returned disposer removes only the registration created by that call.
+Call `unregisterOllama()` during application teardown when the registration is
+no longer needed.
 
 ## Direct model resolution
 

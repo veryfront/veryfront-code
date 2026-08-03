@@ -1,3 +1,4 @@
+import { SECURITY_VIOLATION } from "#veryfront/errors";
 import type { Agent } from "#veryfront/agent/types.ts";
 import type { HandlerContext } from "#veryfront/types/server.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
@@ -6,6 +7,14 @@ import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 
 const SIGNATURE_SKEW_SECONDS = 5;
+const MAX_SIGNATURE_JWS_CODE_UNITS = 16 * 1024;
+const MAX_SIGNATURE_PUBLIC_KEY_CODE_UNITS = 8 * 1024;
+const MAX_SIGNED_REQUEST_METHOD_CODE_UNITS = 32;
+const MAX_SIGNED_REQUEST_PATH_CODE_UNITS = 4 * 1024;
+const SIGNED_REQUEST_PATH_BASE = "https://control-plane.invalid";
+const SIGNED_REQUEST_METHOD_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Z]+$/u;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const SafeURL = URL;
 
 /** Shared control plane agents list path value. */
 export const CONTROL_PLANE_AGENTS_LIST_PATH = "/api/control-plane/agents/list";
@@ -13,6 +22,37 @@ export const CONTROL_PLANE_AGENTS_LIST_PATH = "/api/control-plane/agents/list";
 export const CONTROL_PLANE_RUNS_PATH_PREFIX = "/api/control-plane/runs/";
 /** Shared control plane run stream path value. */
 export const CONTROL_PLANE_RUN_STREAM_PATH = "/api/control-plane/runs/:runId/stream";
+
+const CONTROL_PLANE_RUN_ID_PATH_SEGMENT = "[^/]+";
+const CONTROL_PLANE_RUNS_REGEX_PREFIX = CONTROL_PLANE_RUNS_PATH_PREFIX.replaceAll("/", "\\/");
+
+/**
+ * True for control-plane run surfaces that can dispatch without project config.
+ *
+ * Stream/resume/cancel use signed request payload/session state and must not be
+ * blocked by stale release config bootstraps. Execute deliberately remains
+ * strict because it can consume project config for React/CSS build inputs.
+ */
+export function isConfigOptionalControlPlaneRunRequest(
+  method: string,
+  pathname: string | undefined,
+): boolean {
+  const normalizedMethod = method.toUpperCase();
+  const requestPath = pathname ?? "";
+
+  if (normalizedMethod === "DELETE") {
+    return new RegExp(`^${CONTROL_PLANE_RUNS_REGEX_PREFIX}${CONTROL_PLANE_RUN_ID_PATH_SEGMENT}$`)
+      .test(requestPath);
+  }
+
+  if (normalizedMethod !== "POST") {
+    return false;
+  }
+
+  return new RegExp(
+    `^${CONTROL_PLANE_RUNS_REGEX_PREFIX}${CONTROL_PLANE_RUN_ID_PATH_SEGMENT}\\/(?:stream|resume)$`,
+  ).test(requestPath);
+}
 
 const getCompactJwsHeaderSchema = defineSchema((v) =>
   v.object({
@@ -137,6 +177,8 @@ const getControlPlaneClaimsSchema = defineSchema((v) =>
     surface: getControlPlaneSurfaceSchema(),
     project_id: v.string(),
     request_hash: v.string(),
+    request_method: v.string().min(1).max(MAX_SIGNED_REQUEST_METHOD_CODE_UNITS),
+    request_path: v.string().min(1).max(MAX_SIGNED_REQUEST_PATH_CODE_UNITS),
     iat: v.number().int(),
     exp: v.number().int(),
   })
@@ -209,6 +251,174 @@ function parseCompactJwsPart<T>(encodedPart: string): T {
   return JSON.parse(new TextDecoder().decode(base64urlDecodeToBytes(encodedPart))) as T;
 }
 
+function parseCompactJwsObject(
+  encodedPart: string,
+  label: string,
+): Record<string, unknown> {
+  const value = parseCompactJwsPart<unknown>(encodedPart);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`Compact JWS ${label} must be a JSON object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function readCompactJwsString(
+  value: Record<string, unknown>,
+  field: string,
+): string {
+  const descriptor = ObjectGetOwnPropertyDescriptor(value, field);
+  const candidate = descriptor && "value" in descriptor ? descriptor.value : undefined;
+  if (typeof candidate !== "string") {
+    throw new TypeError(`Compact JWS field "${field}" must be a string`);
+  }
+  return candidate;
+}
+
+function readCompactJwsInteger(
+  value: Record<string, unknown>,
+  field: string,
+): number {
+  const descriptor = ObjectGetOwnPropertyDescriptor(value, field);
+  const candidate = descriptor && "value" in descriptor ? descriptor.value : undefined;
+  if (typeof candidate !== "number" || !Number.isInteger(candidate)) {
+    throw new TypeError(`Compact JWS field "${field}" must be an integer`);
+  }
+  return candidate;
+}
+
+function requireCanonicalSignedRequestMethod(value: string): string {
+  if (
+    value.length === 0 ||
+    value.length > MAX_SIGNED_REQUEST_METHOD_CODE_UNITS ||
+    !SIGNED_REQUEST_METHOD_PATTERN.test(value)
+  ) {
+    throw new TypeError('Compact JWS field "request_method" must be a canonical HTTP method');
+  }
+  return value;
+}
+
+function requireCanonicalSignedRequestPath(value: string): string {
+  if (
+    value.length === 0 ||
+    value.length > MAX_SIGNED_REQUEST_PATH_CODE_UNITS ||
+    value[0] !== "/"
+  ) {
+    throw new TypeError('Compact JWS field "request_path" must be a canonical URL pathname');
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new SafeURL(value, SIGNED_REQUEST_PATH_BASE);
+  } catch {
+    throw new TypeError('Compact JWS field "request_path" must be a canonical URL pathname');
+  }
+  if (
+    parsed.origin !== SIGNED_REQUEST_PATH_BASE ||
+    parsed.pathname !== value ||
+    parsed.search !== "" ||
+    parsed.hash !== ""
+  ) {
+    throw new TypeError('Compact JWS field "request_path" must be a canonical URL pathname');
+  }
+  return value;
+}
+
+function requireSignedRequestBinding(
+  claims: SignedRequestClaims,
+  requestMethod: string,
+  requestPath: string,
+): void {
+  const expectedMethod = requireCanonicalSignedRequestMethod(requestMethod);
+  const expectedPath = requireCanonicalSignedRequestPath(requestPath);
+  if (claims.request_method !== expectedMethod) {
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane request method mismatch" });
+  }
+  if (claims.request_path !== expectedPath) {
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane request path mismatch" });
+  }
+}
+
+function readExpectedRequestBinding(options: object): {
+  method: string;
+  path: string;
+} {
+  const methodDescriptor = ObjectGetOwnPropertyDescriptor(options, "requestMethod");
+  const pathDescriptor = ObjectGetOwnPropertyDescriptor(options, "requestPath");
+  if (
+    !methodDescriptor ||
+    !("value" in methodDescriptor) ||
+    typeof methodDescriptor.value !== "string" ||
+    !pathDescriptor ||
+    !("value" in pathDescriptor) ||
+    typeof pathDescriptor.value !== "string"
+  ) {
+    throw new TypeError("Control-plane request binding must use string data properties");
+  }
+  return {
+    method: methodDescriptor.value,
+    path: pathDescriptor.value,
+  };
+}
+
+function parseSignatureProtectedHeader(encodedHeader: string): void {
+  const header = parseCompactJwsObject(encodedHeader, "protected header");
+  if (header.alg !== "EdDSA" || "crit" in header) {
+    throw new TypeError("Compact JWS protected header is not supported");
+  }
+  if (header.typ !== undefined && typeof header.typ !== "string") {
+    throw new TypeError('Compact JWS field "typ" must be a string');
+  }
+  if (header.kid !== undefined && typeof header.kid !== "string") {
+    throw new TypeError('Compact JWS field "kid" must be a string');
+  }
+}
+
+function parseSignatureBaseClaims(encodedPayload: string): {
+  claims: Record<string, unknown>;
+  base: SignedRequestClaims;
+} {
+  const claims = parseCompactJwsObject(encodedPayload, "payload");
+  return {
+    claims,
+    base: {
+      iss: readCompactJwsString(claims, "iss"),
+      aud: readCompactJwsString(claims, "aud"),
+      sub: readCompactJwsString(claims, "sub"),
+      project_id: readCompactJwsString(claims, "project_id"),
+      iat: readCompactJwsInteger(claims, "iat"),
+      exp: readCompactJwsInteger(claims, "exp"),
+    },
+  };
+}
+
+function parseDispatchSignatureClaims(encodedPayload: string): SignedRequestClaims {
+  const { claims, base } = parseSignatureBaseClaims(encodedPayload);
+  return {
+    ...base,
+    platform: readCompactJwsString(claims, "platform"),
+    body_sha256: readCompactJwsString(claims, "body_sha256"),
+  };
+}
+
+function parseControlPlaneSignatureClaims(encodedPayload: string): SignedRequestClaims {
+  const { claims, base } = parseSignatureBaseClaims(encodedPayload);
+  const surface = readCompactJwsString(claims, "surface");
+  if (!CONTROL_PLANE_SURFACES.includes(surface as ControlPlaneSurface)) {
+    throw new TypeError('Compact JWS field "surface" is not supported');
+  }
+  return {
+    ...base,
+    surface,
+    request_hash: readCompactJwsString(claims, "request_hash"),
+    request_method: requireCanonicalSignedRequestMethod(
+      readCompactJwsString(claims, "request_method"),
+    ),
+    request_path: requireCanonicalSignedRequestPath(
+      readCompactJwsString(claims, "request_path"),
+    ),
+  };
+}
+
 function pemToDer(pem: string, label: string): ArrayBuffer {
   const body = pem
     .replace(`-----BEGIN ${label}-----`, "")
@@ -218,14 +428,29 @@ function pemToDer(pem: string, label: string): ArrayBuffer {
   return toArrayBuffer(Uint8Array.from(atob(body), (char) => char.charCodeAt(0)));
 }
 
-async function importEd25519PublicKey(pem: string): Promise<CryptoKey> {
-  return crypto.subtle.importKey(
+let cachedEd25519PublicKey:
+  | { pem: string; promise: Promise<CryptoKey> }
+  | undefined;
+
+function importEd25519PublicKey(pem: string): Promise<CryptoKey> {
+  if (cachedEd25519PublicKey?.pem === pem) {
+    return cachedEd25519PublicKey.promise;
+  }
+
+  const promise = crypto.subtle.importKey(
     "spki",
     pemToDer(pem, "PUBLIC KEY"),
     "Ed25519",
     false,
     ["verify"],
   );
+  cachedEd25519PublicKey = { pem, promise };
+  void promise.catch(() => {
+    if (cachedEd25519PublicKey?.promise === promise) {
+      cachedEd25519PublicKey = undefined;
+    }
+  });
+  return promise;
 }
 
 async function sha256Base64url(body: string): Promise<string> {
@@ -244,6 +469,11 @@ async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
     hashClaimKey: keyof TClaims & string;
     maxAgeSeconds: number;
     publicKeyPem: string;
+    parseClaims: (encodedPayload: string) => SignedRequestClaims;
+    requestBinding?: {
+      method: string;
+      path: string;
+    };
     scopedClaim?: {
       key: keyof TClaims & string;
       label: string;
@@ -253,18 +483,21 @@ async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
 ): Promise<TClaims> {
   const parts = jws.split(".");
   if (parts.length !== 3) {
-    throw new Error("Control-plane signature must be a compact JWS");
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature must be a compact JWS" });
   }
 
   const encodedHeader = parts[0];
   const encodedPayload = parts[1];
   const encodedSignature = parts[2];
   if (!encodedHeader || !encodedPayload || !encodedSignature) {
-    throw new Error("Control-plane signature must include header, payload, and signature");
+    throw SECURITY_VIOLATION.create({
+      detail: "Control-plane signature must include header, payload, and signature",
+    });
   }
 
   compactJwsHeaderSchema.parse(parseCompactJwsPart(encodedHeader));
   const claims = options.claimsSchema.parse(parseCompactJwsPart(encodedPayload));
+  const claimSnapshot = options.parseClaims(encodedPayload);
 
   const signingInput = new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`);
   const signature = base64urlDecodeToBytes(encodedSignature);
@@ -272,64 +505,74 @@ async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
   const verified = await crypto.subtle.verify("Ed25519", publicKey, signature, signingInput);
 
   if (!verified) {
-    throw new Error("Control-plane signature verification failed");
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature verification failed" });
   }
 
-  if (claims.iss !== "veryfront-api") {
-    throw new Error("Control-plane issuer mismatch");
+  if (claimSnapshot.iss !== "veryfront-api") {
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane issuer mismatch" });
   }
 
-  if (claims.aud !== options.audience) {
-    throw new Error("Control-plane audience mismatch");
+  if (claimSnapshot.aud !== options.audience) {
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane audience mismatch" });
   }
 
-  if (options.expectedProjectId && claims.project_id !== options.expectedProjectId) {
-    throw new Error("Control-plane project mismatch");
+  if (options.expectedProjectId && claimSnapshot.project_id !== options.expectedProjectId) {
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane project mismatch" });
   }
 
-  if (options.expectedSubject && claims.sub !== options.expectedSubject) {
-    throw new Error("Control-plane subject mismatch");
+  if (options.expectedSubject && claimSnapshot.sub !== options.expectedSubject) {
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane subject mismatch" });
   }
 
-  if (options.scopedClaim && claims[options.scopedClaim.key] !== options.scopedClaim.value) {
-    throw new Error(`Control-plane ${options.scopedClaim.label} mismatch`);
+  if (
+    options.scopedClaim &&
+    claimSnapshot[options.scopedClaim.key] !== options.scopedClaim.value
+  ) {
+    throw SECURITY_VIOLATION.create({
+      detail: `Control-plane ${options.scopedClaim.label} mismatch`,
+    });
+  }
+
+  if (options.requestBinding) {
+    requireSignedRequestBinding(
+      claimSnapshot,
+      options.requestBinding.method,
+      options.requestBinding.path,
+    );
   }
 
   const now = Math.floor(Date.now() / 1000);
-  if (claims.exp <= now) {
-    throw new Error("Control-plane signature expired");
+  if (claimSnapshot.exp <= now) {
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature expired" });
   }
 
-  if (claims.iat > now + SIGNATURE_SKEW_SECONDS) {
-    throw new Error("Control-plane signature issued in the future");
+  if (claimSnapshot.iat > now + SIGNATURE_SKEW_SECONDS) {
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature issued in the future" });
   }
 
-  if (now - claims.iat > options.maxAgeSeconds) {
-    throw new Error("Control-plane signature is too old");
+  if (now - claimSnapshot.iat > options.maxAgeSeconds) {
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature is too old" });
   }
 
-  const requestHash = claims[options.hashClaimKey];
+  const requestHash = claimSnapshot[options.hashClaimKey];
   if (typeof requestHash !== "string") {
-    throw new Error("Control-plane request hash is missing");
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane request hash is missing" });
   }
 
   const bodyHash = await sha256Base64url(body);
   if (requestHash !== bodyHash) {
-    throw new Error("Control-plane body hash mismatch");
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane body hash mismatch" });
   }
 
   return claims;
 }
 
 export function resolveAgentSkills(agent: Agent): RuntimeAgentSkill[] {
-  if (!agent.config.skills) {
-    return [];
-  }
-
   // Owner-aware: the agent's metadata advertises exactly what the agent can
   // resolve at runtime — unowned skills plus its own.
+  const skillsConfig = agent.config.skills === false ? [] : agent.config.skills ?? true;
   return Array.from(
-    skillRegistry.resolveForAgent(agent.config.skills, { agentId: agent.id }).values(),
+    skillRegistry.resolveForAgent(skillsConfig, { agentId: agent.id }).values(),
   )
     .map((skill) =>
       RuntimeAgentSkillSchema.parse({
@@ -341,6 +584,47 @@ export function resolveAgentSkills(agent: Agent): RuntimeAgentSkill[] {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeConfiguredSuggestion(value: unknown): unknown {
+  if (typeof value === "string") {
+    return {
+      type: "prompt",
+      title: value,
+      prompt: value,
+    };
+  }
+
+  if (
+    isRecord(value) &&
+    value.type === undefined &&
+    typeof value.title === "string" &&
+    typeof value.prompt === "string"
+  ) {
+    return {
+      type: "prompt",
+      title: value.title,
+      prompt: value.prompt,
+    };
+  }
+
+  return value;
+}
+
+function normalizeConfiguredSuggestions(value: unknown): unknown {
+  const wrapped = Array.isArray(value) ? { suggestions: value } : value;
+  if (!isRecord(wrapped) || !Array.isArray(wrapped.suggestions)) {
+    return wrapped;
+  }
+
+  return {
+    ...wrapped,
+    suggestions: wrapped.suggestions.map(normalizeConfiguredSuggestion),
+  };
+}
+
 /** Get browser-safe runtime metadata for an agent. */
 export function getRuntimeAgentPublicMetadata(
   id: string,
@@ -349,7 +633,9 @@ export function getRuntimeAgentPublicMetadata(
   const rawConfig = agent.config as unknown as Record<string, unknown>;
   const suggestionsParseResult = rawConfig.suggestions === undefined
     ? null
-    : RuntimeSuggestionsSchema.safeParse(rawConfig.suggestions);
+    : RuntimeSuggestionsSchema.safeParse(
+      normalizeConfiguredSuggestions(rawConfig.suggestions),
+    );
   const suggestions = suggestionsParseResult?.success ? suggestionsParseResult.data : undefined;
   const avatarUrl = typeof rawConfig.avatarUrl === "string" && rawConfig.avatarUrl.trim().length > 0
     ? rawConfig.avatarUrl
@@ -416,18 +702,131 @@ export async function listRuntimeAgents(
 export async function verifyDispatchJwsSignature(
   jws: string,
   options: {
+    audience?: string;
+    expectedProjectId?: string;
     publicKeyPem: string;
     maxAgeSeconds: number;
   },
 ): Promise<boolean> {
+  return await verifySignedRequestJwsSignature(jws, parseDispatchSignatureClaims, options);
+}
+
+/**
+ * Verify the signature, freshness, and exact HTTP operation binding of a
+ * control-plane JWS without granting body or subject authorization.
+ *
+ * This is still not sufficient to authorize a request. Request handlers must
+ * use {@link verifyControlPlaneJws} to bind the signature to the request body.
+ */
+export async function verifyControlPlaneJwsSignature(
+  jws: string,
+  options: {
+    audience?: string;
+    expectedProjectId?: string;
+    publicKeyPem: string;
+    maxAgeSeconds: number;
+    requestMethod: string;
+    requestPath: string;
+  },
+): Promise<boolean> {
+  let requestBinding: { method: string; path: string };
   try {
+    requestBinding = readExpectedRequestBinding(options);
+  } catch {
+    return false;
+  }
+  return await verifySignedRequestJwsSignature(
+    jws,
+    parseControlPlaneSignatureClaims,
+    {
+      audience: options.audience,
+      expectedProjectId: options.expectedProjectId,
+      maxAgeSeconds: options.maxAgeSeconds,
+      publicKeyPem: options.publicKeyPem,
+      requestBinding,
+    },
+  );
+}
+
+/**
+ * Verify a control-plane JWS against its request body without depending on the
+ * extension-backed schema registry.
+ *
+ * The split proxy uses this after it has resolved the project audience. It
+ * needs the signed body binding before it may turn target metadata in the body
+ * into trusted downstream headers, while the authoritative request handler
+ * still performs the full schema-backed verification.
+ */
+export async function verifyControlPlaneJwsRequestSignature(
+  jws: string,
+  body: string,
+  options: {
+    audience: string;
+    expectedProjectId?: string;
+    publicKeyPem: string;
+    maxAgeSeconds: number;
+    requestMethod: string;
+    requestPath: string;
+  },
+): Promise<boolean> {
+  let requestBinding: { method: string; path: string };
+  try {
+    requestBinding = readExpectedRequestBinding(options);
+  } catch {
+    return false;
+  }
+
+  return await verifySignedRequestJwsSignature(
+    jws,
+    parseControlPlaneSignatureClaims,
+    {
+      audience: options.audience,
+      expectedProjectId: options.expectedProjectId,
+      maxAgeSeconds: options.maxAgeSeconds,
+      publicKeyPem: options.publicKeyPem,
+      requestBinding,
+      expectedRequestHash: await sha256Base64url(body),
+      requestHashClaimKey: "request_hash",
+    },
+  );
+}
+
+async function verifySignedRequestJwsSignature(
+  jws: string,
+  parseClaims: (encodedPayload: string) => SignedRequestClaims,
+  options: {
+    audience?: string;
+    expectedProjectId?: string;
+    publicKeyPem: string;
+    maxAgeSeconds: number;
+    expectedRequestHash?: string;
+    requestHashClaimKey?: string;
+    requestBinding?: {
+      method: string;
+      path: string;
+    };
+  },
+): Promise<boolean> {
+  try {
+    if (
+      jws.length > MAX_SIGNATURE_JWS_CODE_UNITS ||
+      options.publicKeyPem.length > MAX_SIGNATURE_PUBLIC_KEY_CODE_UNITS ||
+      !Number.isSafeInteger(options.maxAgeSeconds) ||
+      options.maxAgeSeconds < 0
+    ) {
+      return false;
+    }
+
     const parts = jws.split(".");
     if (parts.length !== 3) return false;
     const [encodedHeader, encodedPayload, encodedSignature] = parts;
     if (!encodedHeader || !encodedPayload || !encodedSignature) return false;
 
-    compactJwsHeaderSchema.parse(parseCompactJwsPart(encodedHeader));
-    const claims = dispatchClaimsSchema.parse(parseCompactJwsPart(encodedPayload));
+    // Proxy authenticity checks must remain available before extension-backed
+    // schema registration. Authoritative request handlers still use the shared
+    // schemas below for full body/audience/project authorization.
+    parseSignatureProtectedHeader(encodedHeader);
+    const claims = parseClaims(encodedPayload);
 
     const signingInput = new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`);
     const signature = base64urlDecodeToBytes(encodedSignature);
@@ -436,6 +835,36 @@ export async function verifyDispatchJwsSignature(
     if (!verified) return false;
 
     if (claims.iss !== "veryfront-api") return false;
+    if (options.audience !== undefined && claims.aud !== options.audience) return false;
+    if (
+      options.expectedProjectId !== undefined &&
+      claims.project_id !== options.expectedProjectId
+    ) {
+      return false;
+    }
+    if (options.requestBinding) {
+      requireSignedRequestBinding(
+        claims,
+        options.requestBinding.method,
+        options.requestBinding.path,
+      );
+    }
+    if (
+      options.expectedRequestHash !== undefined &&
+      (
+        options.requestHashClaimKey === undefined ||
+        claims[options.requestHashClaimKey] !== options.expectedRequestHash
+      )
+    ) {
+      return false;
+    }
+    if (
+      !Number.isSafeInteger(claims.iat) ||
+      !Number.isSafeInteger(claims.exp) ||
+      claims.exp <= claims.iat
+    ) {
+      return false;
+    }
 
     const now = Math.floor(Date.now() / 1000);
     if (claims.exp <= now) return false;
@@ -468,6 +897,7 @@ export async function verifyDispatchJws(
     ...(options.expectedSubject ? { expectedSubject: options.expectedSubject } : {}),
     hashClaimKey: "body_sha256",
     maxAgeSeconds: options.maxAgeSeconds,
+    parseClaims: parseDispatchSignatureClaims,
     publicKeyPem: options.publicKeyPem,
     ...(options.expectedPlatform
       ? {
@@ -481,7 +911,7 @@ export async function verifyDispatchJws(
   });
 }
 
-/** Verify control plane JWS. */
+/** Verify a control-plane JWS against its body and canonical HTTP operation. */
 export async function verifyControlPlaneJws(
   jws: string,
   body: string,
@@ -492,8 +922,11 @@ export async function verifyControlPlaneJws(
     expectedSurface?: ControlPlaneSurface;
     maxAgeSeconds: number;
     publicKeyPem: string;
+    requestMethod: string;
+    requestPath: string;
   },
 ): Promise<ControlPlaneClaims> {
+  const requestBinding = readExpectedRequestBinding(options);
   return verifySignedRequestJws(jws, body, {
     audience: options.audience,
     claimsSchema: controlPlaneClaimsSchema,
@@ -501,7 +934,9 @@ export async function verifyControlPlaneJws(
     ...(options.expectedSubject ? { expectedSubject: options.expectedSubject } : {}),
     hashClaimKey: "request_hash",
     maxAgeSeconds: options.maxAgeSeconds,
+    parseClaims: parseControlPlaneSignatureClaims,
     publicKeyPem: options.publicKeyPem,
+    requestBinding,
     ...(options.expectedSurface
       ? {
         scopedClaim: {

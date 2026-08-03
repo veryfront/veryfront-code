@@ -9,7 +9,7 @@ import type { AppState, StateUpdater } from "../state.ts";
 import { navigateTo } from "../state.ts";
 import { moveDown, moveUp } from "../components/list-select.ts";
 import type { InitTemplate } from "../../commands/init/types.ts";
-import { login } from "../../auth/login.ts";
+import { isApiKeyIdentity, login } from "../../auth/login.ts";
 import { fetchRemoteProjects } from "../../sync/index.ts";
 import { addLog, updateRemote } from "../state.ts";
 
@@ -152,7 +152,7 @@ export function handleAuthKey(
 
   void (async () => {
     const user = await login(provider);
-    if (user) {
+    if (user && !isApiKeyIdentity(user)) {
       const result = await fetchRemoteProjects();
       update(
         updateRemote({

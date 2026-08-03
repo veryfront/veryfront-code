@@ -6,6 +6,9 @@ import type { GitHubApiClient } from "./github-api-client.ts";
 import type { GitHubStatOperations } from "./stat-operations.ts";
 import type { GitHubContentItem, ResolvedGitHubConfig } from "./types.ts";
 import { normalizeGitHubPath } from "./path-utils.ts";
+import { buildGitHubCacheRef } from "./cache-scope.ts";
+import { requireBoundedFileReadLimit } from "../../bounded-file-read.ts";
+import { copyFixedUint8ArrayWithinLimit } from "../../bounded-text-reader.ts";
 
 const LOG_PREFIX = "[GitHubReadOperations]";
 
@@ -35,7 +38,10 @@ export class GitHubReadOperations {
 
   async readTextFile(path: string): Promise<string> {
     const normalizedPath = normalizeGitHubPath(path, this.projectDir);
-    const cacheKey = buildGitHubContentCacheKey(this.config.ref, normalizedPath);
+    const cacheKey = buildGitHubContentCacheKey(
+      buildGitHubCacheRef(this.config),
+      normalizedPath,
+    );
     const cached = this.cache.get<string>(cacheKey);
     if (cached !== undefined) return cached;
 
@@ -52,7 +58,10 @@ export class GitHubReadOperations {
 
   async readFile(path: string): Promise<Uint8Array> {
     const normalizedPath = normalizeGitHubPath(path, this.projectDir);
-    const cacheKey = buildGitHubBytesCacheKey(this.config.ref, normalizedPath);
+    const cacheKey = buildGitHubBytesCacheKey(
+      buildGitHubCacheRef(this.config),
+      normalizedPath,
+    );
     const cached = this.cache.get<Uint8Array>(cacheKey);
     if (cached !== undefined) return cached;
 
@@ -65,6 +74,60 @@ export class GitHubReadOperations {
 
     this.cache.set(cacheKey, bytes);
     return bytes;
+  }
+
+  async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    const admittedLimit = requireBoundedFileReadLimit(byteLimit);
+    const normalizedPath = normalizeGitHubPath(path, this.projectDir);
+    const fileEntry = this.statOps.getFileEntry(normalizedPath);
+    if (fileEntry === undefined) {
+      // Preserve the adapter's established not-found/directory classification.
+      await this.statOps.stat(normalizedPath);
+      throw new TypeError(`GitHub path is not a readable file: ${normalizedPath}`);
+    }
+    if (
+      fileEntry.size === undefined ||
+      !Number.isSafeInteger(fileEntry.size) ||
+      fileEntry.size < 0
+    ) {
+      throw new TypeError(`GitHub file size is unavailable for bounded read: ${normalizedPath}`);
+    }
+    if (fileEntry.size > admittedLimit) {
+      throw new RangeError(`GitHub file exceeds ${admittedLimit} bytes: ${normalizedPath}`);
+    }
+
+    const cacheKey = `${
+      buildGitHubBytesCacheKey(buildGitHubCacheRef(this.config), normalizedPath)
+    }:exact:${fileEntry.sha}`;
+    const cached = this.cache.get<Uint8Array>(cacheKey);
+    if (cached !== undefined) {
+      const bytes = copyFixedUint8ArrayWithinLimit(
+        cached,
+        admittedLimit,
+        "Cached GitHub file",
+      );
+      if (bytes.byteLength !== fileEntry.size) {
+        throw new TypeError(
+          `Cached GitHub file size does not match its tree entry: ${normalizedPath}`,
+        );
+      }
+      return bytes;
+    }
+
+    // The recursive tree binds an admitted size to an immutable blob SHA. The
+    // API client streams that raw SHA into an exact-size buffer, avoiding both
+    // mutable branch reads and oversized JSON/base64 intermediates.
+    const admittedBytes = copyFixedUint8ArrayWithinLimit(
+      await this.client.getBlobBytesWithinLimit(
+        fileEntry.sha,
+        fileEntry.size,
+        admittedLimit,
+      ),
+      admittedLimit,
+      "GitHub file",
+    );
+    this.cache.set(cacheKey, admittedBytes.slice());
+    return admittedBytes;
   }
 
   private async readContentsFile(path: string): Promise<string> {

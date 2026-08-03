@@ -7,6 +7,7 @@ import {
   buildCSP,
   generateNonce,
   getSecurityHeader,
+  SECURITY_POLICY_RESPONSE_HEADER_NAMES,
 } from "./security-handler.ts";
 import type { SecurityConfig } from "./types.ts";
 
@@ -269,9 +270,7 @@ describe("security/http/response/security-handler", () => {
         [
           "'self'",
           "https://veryfront.com",
-          "https://studio.veryfront.com",
           "https://veryfront.org",
-          "https://studio.veryfront.org",
         ],
         "frame-ancestors must be the explicit Studio allowlist",
       );
@@ -281,60 +280,31 @@ describe("security/http/response/security-handler", () => {
       );
     });
 
-    it("default CSP should allow WebSocket connections for HMR", () => {
-      const connectSources = parseDirectiveSources(buildCSP(false, "nonce", null), "connect-src");
-      assert(connectSources.includes("wss:"), "should allow wss for WebSocket");
-      assert(connectSources.includes("https:"), "should allow https for fetch/XHR");
-    });
-
-    it("default CSP should allow Google Fonts", () => {
+    it("default CSP admits no remote hosts or broad network schemes", () => {
       const csp = buildCSP(false, "nonce", null);
-      const styleHosts = parseDirectiveRemoteHosts(csp, "style-src");
-      const fontHosts = parseDirectiveRemoteHosts(csp, "font-src");
-      assertEquals(
-        styleHosts.filter((host) => host === "fonts.googleapis.com"),
-        ["fonts.googleapis.com"],
-        "should allow Google Fonts styles",
-      );
-      assertEquals(
-        fontHosts.filter((host) => host === "fonts.gstatic.com"),
-        ["fonts.gstatic.com"],
-        "should allow Google Fonts files",
-      );
-    });
-
-    it("default CSP should allow jsdelivr CDN scripts", () => {
-      const scriptHosts = parseDirectiveRemoteHosts(buildCSP(false, "nonce", null), "script-src");
-      assertEquals(
-        scriptHosts.filter((host) => host === "cdn.jsdelivr.net"),
-        ["cdn.jsdelivr.net"],
-        "should allow jsdelivr for Scalar API docs, html2canvas, React UMD",
-      );
-    });
-
-    it("default CSP should allow esm.sh scripts for browser ESM hydration", () => {
-      const scriptHosts = parseDirectiveRemoteHosts(buildCSP(false, "nonce", null), "script-src");
-      assertEquals(
-        scriptHosts.filter((host) => host === "esm.sh"),
-        ["esm.sh"],
-        "should allow esm.sh for the pages-router/browser ESM hydration path",
-      );
-    });
-
-    it("default CSP should allow veryfront CDN styles and fonts", () => {
-      const csp = buildCSP(false, "nonce", null);
-      const styleHosts = parseDirectiveRemoteHosts(csp, "style-src");
-      const fontHosts = parseDirectiveRemoteHosts(csp, "font-src");
-      assertEquals(
-        styleHosts.filter((host) => host === "cdn.veryfront.com"),
-        ["cdn.veryfront.com"],
-        "veryfront CDN in style-src",
-      );
-      assertEquals(
-        fontHosts.filter((host) => host === "cdn.veryfront.com"),
-        ["cdn.veryfront.com"],
-        "veryfront CDN in font-src",
-      );
+      for (
+        const directive of [
+          "default-src",
+          "script-src",
+          "style-src",
+          "style-src-elem",
+          "img-src",
+          "font-src",
+          "connect-src",
+          "media-src",
+          "worker-src",
+          "frame-src",
+        ]
+      ) {
+        assertEquals(
+          parseDirectiveRemoteHosts(csp, directive),
+          [],
+          `${directive} must not hardcode a remote host`,
+        );
+      }
+      assertEquals(parseDirectiveSources(csp, "connect-src"), ["'self'"]);
+      assertEquals(parseDirectiveSources(csp, "img-src"), ["'self'", "data:"]);
+      assertEquals(parseDirectiveSources(csp, "font-src"), ["'self'", "data:"]);
     });
 
     it("default CSP should allow same-origin frames", () => {
@@ -365,7 +335,7 @@ describe("security/http/response/security-handler", () => {
       );
     });
 
-    it("default CSP should allow Video.js stylesheet, style elements, blob workers, and blob media", () => {
+    it("default CSP should allow inline style elements, blob workers, and blob media", () => {
       const csp = buildCSP(false, "my-nonce", null);
       const styleElemSources = parseDirectiveSources(
         csp,
@@ -373,10 +343,6 @@ describe("security/http/response/security-handler", () => {
       );
       const mediaSources = parseDirectiveSources(csp, "media-src");
       const workerSources = parseDirectiveSources(csp, "worker-src");
-      const remoteStyleElemHosts = parseDirectiveRemoteHosts(
-        csp,
-        "style-src-elem",
-      );
       assert(
         styleElemSources.includes("'unsafe-inline'"),
         "style-src-elem should allow runtime-created style tags",
@@ -385,11 +351,7 @@ describe("security/http/response/security-handler", () => {
         !styleElemSources.some((source) => source.startsWith("'nonce-")),
         "style-src-elem should not mix a nonce with unsafe-inline because browsers ignore unsafe-inline when nonce/hash sources are present",
       );
-      assertEquals(
-        remoteStyleElemHosts,
-        ["cdn.veryfront.com", "fonts.googleapis.com", "vjs.zencdn.net"],
-        "style-src-elem should allow Google Fonts, Veryfront CDN, and the Video.js stylesheet CDN",
-      );
+      assertEquals(styleElemSources, ["'self'", "'unsafe-inline'"]);
       assert(
         mediaSources.includes("blob:"),
         "media-src should allow blob media URLs generated by browser media pipelines",
@@ -417,38 +379,6 @@ describe("security/http/response/security-handler", () => {
       );
     });
 
-    it("default CSP should place jsdelivr in script-src not style-src", () => {
-      const csp = buildCSP(false, "nonce", null);
-      const scriptHosts = parseDirectiveRemoteHosts(csp, "script-src");
-      const styleHosts = parseDirectiveRemoteHosts(csp, "style-src");
-      assertEquals(
-        scriptHosts.filter((host) => host === "cdn.jsdelivr.net"),
-        ["cdn.jsdelivr.net"],
-        "jsdelivr should be in script-src",
-      );
-      assertEquals(
-        styleHosts.filter((host) => host === "cdn.jsdelivr.net"),
-        [],
-        "jsdelivr should NOT be in style-src",
-      );
-    });
-
-    it("default CSP should place esm.sh in script-src not style-src", () => {
-      const csp = buildCSP(false, "nonce", null);
-      const scriptHosts = parseDirectiveRemoteHosts(csp, "script-src");
-      const styleHosts = parseDirectiveRemoteHosts(csp, "style-src");
-      assertEquals(
-        scriptHosts.filter((host) => host === "esm.sh"),
-        ["esm.sh"],
-        "esm.sh should be in script-src",
-      );
-      assertEquals(
-        styleHosts.filter((host) => host === "esm.sh"),
-        [],
-        "esm.sh should NOT be in style-src",
-      );
-    });
-
     it("default CSP should keep the nonce on script-src but not on style-src", () => {
       const csp = buildCSP(false, "unique-nonce-123", null);
       const scriptSources = parseDirectiveSources(csp, "script-src");
@@ -461,11 +391,6 @@ describe("security/http/response/security-handler", () => {
         !styleSources.includes("'nonce-unique-nonce-123'"),
         "style-src should omit the nonce so unsafe-inline remains effective",
       );
-    });
-
-    it("default CSP should block http: in connect-src", () => {
-      const connectSources = parseDirectiveSources(buildCSP(false, "nonce", null), "connect-src");
-      assert(!connectSources.includes("http:"), "connect-src must not allow plain http");
     });
 
     it("default CSP should not include unsafe-eval", () => {
@@ -507,14 +432,25 @@ describe("security/http/response/security-handler", () => {
   });
 
   describe("applySecurityHeaders", () => {
+    it("keeps the canonical policy-owned header list aligned with production output", () => {
+      const headers = applyHeaders({
+        adapter: createMockAdapter({ VERYFRONT_COEP: "require-corp" }),
+      });
+
+      assertEquals(
+        [...headers.keys()].sort(),
+        [...SECURITY_POLICY_RESPONSE_HEADER_NAMES].sort(),
+      );
+    });
+
     it("should set X-Content-Type-Options", () => {
       const headers = applyHeaders();
       assertEquals(headers.get("X-Content-Type-Options"), "nosniff");
     });
 
-    it("should set X-XSS-Protection", () => {
+    it("should disable the obsolete XSS auditor", () => {
       const headers = applyHeaders();
-      assertEquals(headers.get("X-XSS-Protection"), "1; mode=block");
+      assertEquals(headers.get("X-XSS-Protection"), "0");
     });
 
     it("should set X-Frame-Options to DENY in production", () => {
@@ -546,9 +482,7 @@ describe("security/http/response/security-handler", () => {
         [
           "'self'",
           "https://veryfront.com",
-          "https://studio.veryfront.com",
           "https://veryfront.org",
-          "https://studio.veryfront.org",
         ],
         "frame-ancestors must be the explicit Studio allowlist (no wildcards, no tenant subdomains)",
       );
@@ -616,6 +550,30 @@ describe("security/http/response/security-handler", () => {
       };
       const headers = applyHeaders({ config });
       assertEquals(headers.get("X-Custom-Header"), "custom-value");
+    });
+
+    it("keeps Access-Control-* headers authoritative to the CORS policy layer", () => {
+      const config: SecurityConfig = {
+        headers: {
+          "X-Custom-Header": "custom-value",
+          "Access-Control-Allow-Origin": "*",
+          "aCcEsS-CoNtRoL-AlLoW-CrEdEnTiAlS": "true",
+          "Access-Control-Future-Policy": "unsafe",
+        },
+      };
+      const headers = new Headers({
+        "Access-Control-Allow-Origin": "https://policy.example",
+      });
+
+      applySecurityHeaders(headers, false, "nonce", null, config);
+
+      assertEquals(headers.get("X-Custom-Header"), "custom-value");
+      assertEquals(
+        headers.get("Access-Control-Allow-Origin"),
+        "https://policy.example",
+      );
+      assertEquals(headers.get("Access-Control-Allow-Credentials"), null);
+      assertEquals(headers.get("Access-Control-Future-Policy"), null);
     });
 
     it("should allow overriding security headers via config.headers", () => {

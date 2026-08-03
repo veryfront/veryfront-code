@@ -1,9 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 /** @module transforms/mdx/esm-module-loader/module-fetcher/index.test */
 
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { join } from "#veryfront/compat/path";
 import {
   CircularModuleDependencyError,
@@ -13,9 +14,16 @@ import {
   rewriteDntImports,
   startRenderSession,
 } from "./index.ts";
+import {
+  MAX_MDX_MODULE_GRAPH_ENTRIES,
+  ModuleGraphLimitError,
+  ModuleSourceLimitError,
+} from "./limits.ts";
+import { MAX_MDX_MODULE_CODE_BYTES } from "./limits.ts";
 import { FRAMEWORK_ROOT, HASH_SEED_FNV1A } from "../constants.ts";
 import { resolveVeryfrontModuleUrl } from "../../../veryfront-module-urls.ts";
 import { MDX_ESM_CACHE_NAMESPACE } from "../cache-format.ts";
+import { normalizePath } from "./module-cache.ts";
 
 function getTransformCacheKey(
   projectId: string,
@@ -36,26 +44,6 @@ function rewriteVeryfrontImports(code: string): string {
     const mapped = resolveVeryfrontModuleUrl(specifier);
     return `from "${mapped ?? specifier}"`;
   });
-}
-
-function normalizePath(modulePath: string, parentModulePath?: string): string {
-  const stripped = modulePath.replace(/^\//, "");
-  if (!parentModulePath) return stripped;
-
-  const isRelative = modulePath.startsWith("./") || modulePath.startsWith("../");
-  if (!isRelative) return stripped;
-
-  const parentDir = parentModulePath.replace(/\/[^/]+$/, "");
-  const parts = [...parentDir.split("/"), ...modulePath.split("/")];
-
-  const resolved: string[] = [];
-  for (const part of parts) {
-    if (part === "..") resolved.pop();
-    else if (part !== ".") resolved.push(part);
-  }
-
-  const joined = resolved.join("/");
-  return joined.startsWith("_vf_modules/") ? joined : `_vf_modules/${joined}`;
 }
 
 function findNestedImports(moduleCode: string): {
@@ -218,6 +206,37 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
       assertEquals(result, "_vf_modules/lib/helper.js");
     });
 
+    it("allows relative imports that reach but do not escape the virtual root", () => {
+      const result = normalizePath("../../shared.js", "_vf_modules/a/b/page.js");
+      assertEquals(result, "_vf_modules/shared.js");
+    });
+
+    it("rejects relative imports that escape the virtual root", () => {
+      assertThrows(
+        () => normalizePath("../../secret.js", "_vf_modules/pages/index.js"),
+        TypeError,
+        "project module root",
+      );
+      assertThrows(
+        () => normalizePath("../../../secret.js", "_vf_modules/pages/index.js"),
+        TypeError,
+        "project module root",
+      );
+    });
+
+    it("rejects pre-normalized paths that escape the virtual root", () => {
+      assertThrows(
+        () => normalizePath("_vf_modules/../secret.js"),
+        TypeError,
+        "project module root",
+      );
+      assertThrows(
+        () => normalizePath("../secret.js"),
+        TypeError,
+        "project module root",
+      );
+    });
+
     it("adds _vf_modules/ prefix if missing after resolution", () => {
       const result = normalizePath("./foo.js", "bar/baz.js");
       assertEquals(result.startsWith("_vf_modules/"), true);
@@ -348,6 +367,37 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
       assertEquals(ctx.inFlightModules instanceof Map, true);
       assertEquals(ctx.inFlightModules!.size, 0);
     });
+
+    it("initializes a bounded module graph", () => {
+      const ctx = createModuleFetcherContext("/cache", mockAdapter, "/project", "proj-123");
+      assertEquals(ctx.moduleGraph instanceof Set, true);
+      assertEquals(ctx.moduleGraph!.size, 0);
+    });
+  });
+
+  it("rejects a new module after the request graph reaches its limit", async () => {
+    let resolved = false;
+    const adapter = {
+      env: { get: (_key: string) => undefined },
+      fs: {
+        resolveFile: () => {
+          resolved = true;
+          return Promise.resolve(null);
+        },
+      },
+    } as any;
+    const ctx = createModuleFetcherContext("/cache", adapter, "/project", "proj-limit", {
+      strictMissingModules: false,
+    });
+    for (let index = 0; index < MAX_MDX_MODULE_GRAPH_ENTRIES; index++) {
+      ctx.moduleGraph!.add(`_vf_modules/existing-${index}.js`);
+    }
+
+    await assertRejects(
+      () => fetchAndCacheModule("_vf_modules/one-too-many.js", ctx),
+      ModuleGraphLimitError,
+    );
+    assertEquals(resolved, false);
   });
 
   describe("strictMissingModules", () => {
@@ -402,6 +452,31 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
 
         const result = await fetchAndCacheModule("/_vf_modules/lib/utils.js", ctx);
         assertEquals(result, null, "Should return null for missing module when strict mode is off");
+      } finally {
+        await remove(esmCacheDir, { recursive: true });
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("does not downgrade an oversized source to a non-strict stub", async () => {
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-size-cache-" });
+      const projectDir = await makeTempDir({ prefix: "vf-mdx-size-proj-" });
+      const adapter = {
+        env: { get: (_key: string) => undefined },
+        fs: {
+          resolveFile: () => Promise.resolve("/virtual/oversized.ts"),
+          readFile: () => Promise.resolve("x".repeat(MAX_MDX_MODULE_CODE_BYTES + 1)),
+        },
+      } as any;
+
+      try {
+        const ctx = createModuleFetcherContext(esmCacheDir, adapter, projectDir, "proj-size", {
+          strictMissingModules: false,
+        });
+        await assertRejects(
+          () => fetchAndCacheModule("/_vf_modules/oversized.js", ctx),
+          ModuleSourceLimitError,
+        );
       } finally {
         await remove(esmCacheDir, { recursive: true });
         await remove(projectDir, { recursive: true });
@@ -473,6 +548,58 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
         const result = await fetchAndCacheModule("/_vf_modules/a.js", ctx);
         assertEquals(typeof result, "string");
         assertEquals(result?.endsWith(".mjs"), true);
+      } finally {
+        await remove(esmCacheDir, { recursive: true });
+        await remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  describe("directory barrels", () => {
+    // A page importing "@/lib" resolves to lib/index.ts, which re-exports
+    // "./constants.js". That relative import must resolve to lib/constants.ts,
+    // not to constants.ts beside the lib directory.
+    function createBarrelAdapter(): RuntimeAdapter {
+      const sourceByPath = new Map<string, string>([
+        ["/virtual/lib/index.ts", `export * from "./constants.js";`],
+        ["/virtual/lib/constants.ts", `export const COLORS = ["red", "blue"];`],
+      ]);
+
+      return {
+        env: { get: (_key: string) => undefined },
+        fs: {
+          resolveFile: (path: string) => {
+            if (path === "lib") return Promise.resolve("/virtual/lib/index.ts");
+            if (path === "lib/constants") return Promise.resolve("/virtual/lib/constants.ts");
+            return Promise.resolve(null);
+          },
+          readFile: (path: string) => {
+            const source = sourceByPath.get(path);
+            if (!source) throw new Error(`File not found: ${path}`);
+            return Promise.resolve(source);
+          },
+        },
+      } as unknown as RuntimeAdapter;
+    }
+
+    it("re-exports through a barrel's relative import", async () => {
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-barrel-cache-" });
+      const projectDir = await makeTempDir({ prefix: "vf-mdx-barrel-proj-" });
+
+      try {
+        const ctx = createModuleFetcherContext(
+          esmCacheDir,
+          createBarrelAdapter(),
+          projectDir,
+          "proj-barrel",
+          { strictMissingModules: true },
+        );
+
+        const modulePath = await fetchAndCacheModule("/_vf_modules/lib.js", ctx);
+        assertEquals(typeof modulePath, "string");
+
+        const barrel = await import(`file://${modulePath}`);
+        assertEquals(barrel.COLORS, ["red", "blue"]);
       } finally {
         await remove(esmCacheDir, { recursive: true });
         await remove(projectDir, { recursive: true });

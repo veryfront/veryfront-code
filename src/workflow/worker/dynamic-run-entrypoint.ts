@@ -10,6 +10,7 @@
  *
  * Environment variables:
  * - WORKFLOW_RUN_ID: The workflow run to execute
+ * - RUN_EXECUTION_ID: Immutable execution identity assigned by the run manager
  * - TENANT_PROJECT_SLUG: Tenant's project slug
  * - TENANT_TOKEN: Tenant's API token
  * - TENANT_PROJECT_ID: Tenant's project ID
@@ -30,13 +31,21 @@ import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
-import { discoverProjectAgentRuntime } from "#veryfront/agent/project/agent-runtime.ts";
+import {
+  discoverProjectAgentRuntime,
+  runWithProjectAgentRuntime,
+} from "#veryfront/agent/project/agent-runtime.ts";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
-import { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import {
+  requireWorkflowSourceIntegrationPolicy,
+  runWithWorkflowSourceIntegrationPolicy,
+} from "../source-integration-policy.ts";
+import {
+  createIsolatedWorkflowExecutor,
   failRunExecution,
   getFinalRunExitCode,
+  getRunExecutionWorkerId,
   getTenantFromEnv,
   hydrateRunContextEnv,
   runWithTenantContext,
@@ -88,6 +97,7 @@ export async function runDynamicWorkflowRun(
     logger.error("Missing WORKFLOW_RUN_ID environment variable");
     return DYNAMIC_EXIT_CODES.CONFIG_ERROR;
   }
+  const expectedWorkerId = getRunExecutionWorkerId();
 
   if (debug) {
     logger.info(`Starting execution for run: ${runId}`);
@@ -95,13 +105,14 @@ export async function runDynamicWorkflowRun(
 
   try {
     // Fetch the workflow run
-    let run = await backend.getRun(runId);
-    if (!run) {
+    const storedRun = await backend.getRun(runId);
+    if (!storedRun) {
       logger.error(`Workflow run not found: ${runId}`);
       return DYNAMIC_EXIT_CODES.NOT_FOUND;
     }
 
-    run = await hydrateRunContextEnv(backend, runId, run);
+    const sourceIntegrationPolicy = requireWorkflowSourceIntegrationPolicy(storedRun);
+    const run = await hydrateRunContextEnv(backend, runId, storedRun, expectedWorkerId);
 
     // Get tenant context (from env or from stored run)
     const tenant = getTenantFromEnv() ?? run._tenant;
@@ -147,6 +158,8 @@ export async function runDynamicWorkflowRun(
           fsAdapter: adapter.fs,
           cacheKey: tenant.projectId ?? tenant.projectSlug,
           verbose: debug,
+          sourceIntegrationPolicy,
+          allowHostProjectCodeExecution: true,
         });
 
         if (discoveryResult.errors.length > 0 && debug) {
@@ -181,36 +194,53 @@ export async function runDynamicWorkflowRun(
           logger.info(`Found workflow "${workflow.id}"`);
         }
 
-        // Create executor and register the workflow
-        const executor = new WorkflowExecutor({
-          backend,
-          debug,
-          stepExecutor: {
-            agentRegistry,
-            toolRegistry,
-          },
-        });
+        return await runWithWorkflowSourceIntegrationPolicy(
+          storedRun,
+          () =>
+            runWithProjectAgentRuntime(discoveryResult, async () => {
+              const executor = createIsolatedWorkflowExecutor(
+                backend,
+                debug,
+                {
+                  agentRegistry,
+                  toolRegistry,
+                },
+              );
 
-        executor.register(workflow.definition);
+              executor.register(workflow.definition);
 
-        // Execute the workflow
-        try {
-          await executor.resume(runId);
-          return getFinalRunExitCode(
-            logger,
-            DYNAMIC_EXIT_CODES,
-            runId,
-            await backend.getRun(runId),
-            debug,
-          );
-        } catch (error) {
-          return await failRunExecution(backend, logger, DYNAMIC_EXIT_CODES, runId, error);
-        }
+              try {
+                await executor.resume(runId, undefined, expectedWorkerId);
+                return getFinalRunExitCode(
+                  logger,
+                  DYNAMIC_EXIT_CODES,
+                  runId,
+                  await backend.getRun(runId),
+                  debug,
+                );
+              } catch (error) {
+                return await failRunExecution(
+                  backend,
+                  logger,
+                  DYNAMIC_EXIT_CODES,
+                  runId,
+                  error,
+                  expectedWorkerId,
+                );
+              }
+            }),
+        );
       },
     );
   } catch (error) {
-    logger.error("Fatal error:", error);
-    return DYNAMIC_EXIT_CODES.WORKFLOW_FAILED;
+    return await failRunExecution(
+      backend,
+      logger,
+      DYNAMIC_EXIT_CODES,
+      runId,
+      error,
+      expectedWorkerId,
+    );
   }
 }
 

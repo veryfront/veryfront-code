@@ -12,14 +12,14 @@ import {
 import {
   Input,
   Label,
-} from "../../../src/react/components/chat/ui/index.ts";
+} from "../../../src/react/components/ui/index.ts";
 import {
   CheckIcon,
   CopyIcon,
   SearchIcon,
-} from "../../../src/react/components/chat/icons/index.ts";
+} from "../../../src/react/components/ui/icons/index.ts";
 
-const importCode = `import { Input } from "veryfront/chat/ui"`;
+const importCode = `import { Input } from "veryfront/ui"`;
 
 function InputDocsPage() {
   return (
@@ -107,7 +107,7 @@ function InputDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/Input",
+  title: "UI/Input",
   component: Input,
   tags: ["autodocs"],
   parameters: {

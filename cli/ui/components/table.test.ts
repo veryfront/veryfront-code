@@ -4,7 +4,7 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { resetColorCache } from "../colors.ts";
 import { checkList, keyValueList, table } from "./table.ts";
@@ -13,7 +13,7 @@ describe("table", () => {
   let originalForceColor: string | undefined;
   let originalNoColor: string | undefined;
 
-  beforeAll(() => {
+  beforeEach(() => {
     originalForceColor = getEnv("FORCE_COLOR");
     originalNoColor = getEnv("NO_COLOR");
 
@@ -22,7 +22,7 @@ describe("table", () => {
     resetColorCache();
   });
 
-  afterAll(() => {
+  afterEach(() => {
     if (originalForceColor !== undefined) {
       setEnv("FORCE_COLOR", originalForceColor);
     } else {

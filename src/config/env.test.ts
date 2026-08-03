@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import type { EnvironmentConfig } from "./environment-config.ts";
 import {
@@ -13,11 +13,11 @@ import {
   getForceColorEnv,
   getGithubEnvConfig,
   getGoogleGenAIEnvConfig,
+  getMistralEnvConfig,
   getNoColorEnv,
   getOpenAIEnvConfig,
   getOtelMetricsConfig,
   getOtelTracingConfig,
-  getRedisUrlEnv,
   getSsrMaxConcurrentTransformsEnv,
   getV8FlagsEnv,
   getVeryfrontVersion,
@@ -58,8 +58,10 @@ const BASE_MOCK_ENV: EnvironmentConfig = {
   disableLruInterval: false,
   appUrl: undefined,
   port: 3000,
+  portSource: "environment",
   requestTimeoutMs: undefined,
   httpFetchTimeoutMs: undefined,
+  extensionSetupTimeoutMs: undefined,
   ssrMaxConcurrentTransforms: 3,
   otelEnabled: false,
   otelServiceName: undefined,
@@ -118,23 +120,10 @@ describe("config/env", () => {
       );
     });
 
-    it("should return default when env value is 0", () => {
+    it("should preserve 0 so callers can disable the concurrency limit", () => {
       assertEquals(
         getSsrMaxConcurrentTransformsEnv(50, createMockEnv({ ssrMaxConcurrentTransforms: 0 })),
-        50,
-      );
-    });
-  });
-
-  describe("getRedisUrlEnv", () => {
-    it("should return undefined by default", () => {
-      assertEquals(getRedisUrlEnv(createMockEnv()), undefined);
-    });
-
-    it("should return url when set", () => {
-      assertEquals(
-        getRedisUrlEnv(createMockEnv({ redisUrl: "redis://localhost:6379" })),
-        "redis://localhost:6379",
+        0,
       );
     });
   });
@@ -209,13 +198,15 @@ describe("config/env", () => {
 
   describe("getOpenAIEnvConfig", () => {
     const keys = ["OPENAI_API_KEY", "OPENAI_BASE_URL"];
-    afterEach(() => {
+    const clearKeys = () => {
       for (const k of keys) {
         try {
           deleteEnv(k);
         } catch { /* ignore */ }
       }
-    });
+    };
+    beforeEach(clearKeys);
+    afterEach(clearKeys);
 
     it("should return empty config by default", () => {
       const config = getOpenAIEnvConfig();
@@ -271,6 +262,31 @@ describe("config/env", () => {
       setEnv("GOOGLE_GENERATIVE_AI_API_KEY", "AIza-fallback");
       const config = getGoogleGenAIEnvConfig();
       assertEquals(config.apiKey, "AIza-fallback");
+    });
+  });
+
+  describe("getMistralEnvConfig", () => {
+    const keys = ["MISTRAL_API_KEY", "MISTRAL_BASE_URL"];
+    afterEach(() => {
+      for (const k of keys) {
+        try {
+          deleteEnv(k);
+        } catch { /* ignore */ }
+      }
+    });
+
+    it("uses the public Mistral endpoint by default", () => {
+      const config = getMistralEnvConfig();
+      assertEquals(config.apiKey, undefined);
+      assertEquals(config.baseURL, "https://api.mistral.ai/v1");
+    });
+
+    it("returns configured credentials and endpoint", () => {
+      setEnv("MISTRAL_API_KEY", "mistral-test");
+      setEnv("MISTRAL_BASE_URL", "https://mistral.example/v1");
+      const config = getMistralEnvConfig();
+      assertEquals(config.apiKey, "mistral-test");
+      assertEquals(config.baseURL, "https://mistral.example/v1");
     });
   });
 

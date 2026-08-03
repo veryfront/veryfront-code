@@ -1,13 +1,11 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createSheetsClient } from "../../lib/sheets-client.ts";
-
-const DEFAULT_USER_ID = "demo-user";
+import { createSheetsClient } from "../lib/sheets-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "clear-range",
-  description:
-    "Clear cell values from a Google Sheets range while preserving formatting.",
+  id: "sheets-clear-range",
+  description: "Clear cell values from a Google Sheets range while preserving formatting.",
   inputSchema: defineSchema((v) =>
     v.object({
       spreadsheetId: v.string().describe("The ID of the spreadsheet"),
@@ -16,7 +14,8 @@ export default tool({
       ),
     })
   )(),
-  execute({ spreadsheetId, range }) {
-    return createSheetsClient(DEFAULT_USER_ID).clearRange(spreadsheetId, range);
+  execute({ spreadsheetId, range }, context) {
+    const userId = requireUserIdFromContext(context);
+    return createSheetsClient(userId).clearRange(spreadsheetId, range);
   },
 });

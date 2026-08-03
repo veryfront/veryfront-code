@@ -65,7 +65,12 @@ Use this pattern to verify the tool contract before giving the tool to an agent.
 
 ## How agents use tools
 
-When you add a tool to an agent, the framework sends the input schema to the model. The model decides when to call the tool and provides the parameters:
+An explicit tool map authorizes only the selected tools and sends those schemas
+to the model immediately. Use `tools: true` for a broad authorized scope: the
+framework initially sends only bootstrap schemas and `tool_search`, then loads
+matching schemas for the next model step. Omit `tools` to expose no project
+tools. Search results contain names and descriptions, not input or output
+schemas.
 
 ```ts
 // agents/assistant.ts
@@ -73,21 +78,60 @@ import { agent } from "veryfront/agent";
 
 export default agent({
   system: "You are a weather assistant. Use the getWeather tool to answer weather questions.",
-  tools: { getWeather: true },
+  tools: true,
   maxSteps: 3,
 });
 ```
+
+Use an explicit map such as `tools: { getWeather: true }` when the model needs a
+selected schema on its first step. Schema loading and tool authorization stay
+separate, and execution rechecks authorization.
+
+`tool_search` uses deterministic, case-insensitive matching. It treats
+underscores as spaces and ranks results in this order:
+
+1. Exact tool name.
+2. Tool name substring.
+3. Tool description substring.
+4. Input parameter description substring.
+
+Equal-rank matches use ASCII tool-name order. Each search returns at most five
+matches. Results contain the tool name, description, and loading status, but no
+input or output schema. The search tool has no page or pagination parameter.
+Refine the query when the required tool is not in the first five matches.
+
+Search work is bounded to 4,096 catalog candidates. Each parameter schema is
+inspected iteratively with depth, node, and byte budgets, and the whole search
+has an aggregate schema-work budget. A malformed, cyclic, or over-budget schema
+cannot abort the search; that tool simply cannot match by parameter description.
+Name and description matching remains available for other healthy tools.
+
+The search only loads schemas from the current authorized `tools` catalog. It
+does not search or load provider-native `providerTools`. The runtime reapplies
+the current authorization policy before executing a tool and when restoring a
+loaded-tool checkpoint, so a previously loaded name cannot restore a removed
+permission.
+
+Deferred loading works with direct provider model strings and provider API
+keys. Veryfront Cloud is not required for that path. Hosted durable execution
+uses the same framework search, but it requires the Veryfront API durable
+run-event contract. Before the next model step, the hosted runtime persists a
+private loaded-tool checkpoint. It fails the continuation if required
+persistence is unavailable, and it excludes the checkpoint from public
+messages and replay.
 
 In most projects, you can omit `model` and use `openai/gpt-5.4-nano`. Set
 `model: "auto"` when you want runtime defaults to choose local or Veryfront
 Cloud inference automatically.
 
-When a user asks "What's the weather in Tokyo?", the agent:
+When a user asks "What's the weather in Tokyo?", an agent with `tools: true`:
 
-1. Sends the question to the model
-2. The model calls `getWeather({ city: "Tokyo" })`
-3. The tool returns `{ temperature: 22, conditions: "sunny" }`
-4. The model formats a natural language response
+1. Sends the question with `tool_search` to the model.
+2. The model searches for a weather capability.
+3. The framework loads the matching authorized `getWeather` schema.
+4. The next model step calls `getWeather({ city: "Tokyo" })`.
+5. The tool returns `{ temperature: 22, conditions: "sunny" }`.
+6. The model formats a natural language response.
 
 ## Tool surfaces in agent config
 
@@ -103,7 +147,8 @@ Agent config separates tools by execution boundary:
 Use `tools` for functions you define in the project. Do not add provider-native
 tools or skill loader tools to `tools`.
 
-Use `providerTools` for provider-executed capabilities:
+Use `providerTools` for provider-executed capabilities. Framework
+`tool_search` does not search this catalog:
 
 ```ts
 // agents/researcher.ts
@@ -119,6 +164,27 @@ export default agent({
 Use `mcpServers` for remote MCP tools. Put remote visibility policy on the MCP
 server. When `tools` is an explicit object, also list the remote tool name in
 `tools` so the model can use it.
+
+When `mcpServers` is omitted, explicitly named tools that are not local are
+resolved from the Veryfront API MCP server if server bootstrap credentials are
+available. This makes a project pulled from Studio runnable locally without
+duplicating transport configuration.
+
+```ts
+export default agent({
+  id: "project-reader",
+  system: "Use project evidence when answering.",
+  tools: { get_file: true, list_files: true },
+});
+```
+
+`VERYFRONT_API_URL` selects the endpoint, while `VERYFRONT_API_TOKEN` and
+`VERYFRONT_PROJECT_SLUG` provide server-side identity. Environment variables
+never grant tools: only explicitly named unresolved tools are requested, and
+the remote `tools/list` response defines their schemas. Use `mcpServers: []`
+to opt out, or declare `{ kind: "veryfront-api", toolPolicy: ... }` to make the
+connection policy explicit. Direct application routes and hosted runtimes do
+not accept browser-supplied credentials or project identity for this server.
 
 ```ts
 // agents/docs.ts

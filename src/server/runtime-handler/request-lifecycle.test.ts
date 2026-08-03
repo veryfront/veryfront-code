@@ -1,8 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   completeRequestTracking,
+  completeRequestTrackingOnResponseEnd,
   endContentMetrics,
   endRequestLifecycle,
   startContentMetrics,
@@ -12,6 +13,13 @@ import {
 import { requestTracker } from "./request-tracker.ts";
 
 describe("server/runtime-handler/request-lifecycle", () => {
+  afterEach(() => {
+    for (const tracked of requestTracker.getInFlightRequests()) {
+      requestTracker.complete(tracked.requestId, 200);
+    }
+    requestTracker.shutdown();
+  });
+
   describe("startRequestLifecycle", () => {
     it("should return context with requestId", () => {
       const req = new Request("http://localhost/test");
@@ -74,6 +82,192 @@ describe("server/runtime-handler/request-lifecycle", () => {
     it("should handle timeout flag", () => {
       startRequestTracking("lifecycle-req-2", "slug", "/path", "GET", undefined, undefined);
       completeRequestTracking("lifecycle-req-2", 504, true);
+    });
+
+    it("should keep event streams in flight until their body closes", async () => {
+      const beforeCount = requestTracker.getInFlightCount();
+      let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+      const source = new ReadableStream<Uint8Array>({
+        start(value) {
+          controller = value;
+        },
+      });
+
+      startRequestTracking(
+        "lifecycle-stream-close",
+        "slug",
+        "/api/control-plane/runs/test/stream",
+        "POST",
+        "production",
+        "rel-1",
+      );
+      const response = completeRequestTrackingOnResponseEnd(
+        "lifecycle-stream-close",
+        new Response(source, {
+          status: 202,
+          statusText: "Streaming",
+          headers: {
+            "content-type": "text/event-stream",
+            "server-timing": "total;dur=12.00",
+            "x-stream-id": "stream-1",
+          },
+        }),
+        false,
+      );
+
+      assertEquals(requestTracker.getInFlightCount(), beforeCount + 1);
+      assertEquals(response.status, 202);
+      assertEquals(response.statusText, "Streaming");
+      assertEquals(response.headers.get("server-timing"), "total;dur=12.00");
+      assertEquals(response.headers.get("x-stream-id"), "stream-1");
+
+      const reader = response.body!.getReader();
+      const firstRead = reader.read();
+      controller!.enqueue(new TextEncoder().encode("data: test\n\n"));
+      await firstRead;
+      assertEquals(requestTracker.getInFlightCount(), beforeCount + 1);
+
+      controller!.close();
+      await reader.read();
+      assertEquals(requestTracker.getInFlightCount(), beforeCount);
+    });
+
+    it("should complete event stream tracking when the client cancels", async () => {
+      const beforeCount = requestTracker.getInFlightCount();
+      let sourceCancelled = false;
+      const source = new ReadableStream<Uint8Array>({
+        cancel() {
+          sourceCancelled = true;
+        },
+      });
+
+      startRequestTracking(
+        "lifecycle-stream-cancel",
+        "slug",
+        "/api/control-plane/runs/test/stream",
+        "POST",
+        "production",
+        "rel-1",
+      );
+      const response = completeRequestTrackingOnResponseEnd(
+        "lifecycle-stream-cancel",
+        new Response(source, { headers: { "content-type": "text/event-stream; charset=utf-8" } }),
+        false,
+      );
+
+      assertEquals(requestTracker.getInFlightCount(), beforeCount + 1);
+      await response.body!.cancel("client disconnected");
+      assertEquals(sourceCancelled, true);
+      assertEquals(requestTracker.getInFlightCount(), beforeCount);
+    });
+
+    it("should complete tracking once when cancellation races a pending read", async () => {
+      const beforeCount = requestTracker.getInFlightCount();
+      const beforeCompleted = requestTracker.getStats().completed;
+      const source = new ReadableStream<Uint8Array>();
+
+      startRequestTracking(
+        "lifecycle-stream-cancel-race",
+        "slug",
+        "/api/control-plane/runs/test/stream",
+        "POST",
+        "production",
+        "rel-1",
+      );
+      const response = completeRequestTrackingOnResponseEnd(
+        "lifecycle-stream-cancel-race",
+        new Response(source, { headers: { "content-type": "text/event-stream" } }),
+        false,
+      );
+
+      const reader = response.body!.getReader();
+      const pendingRead = reader.read();
+      await reader.cancel("client disconnected");
+      assertEquals((await pendingRead).done, true);
+      assertEquals(requestTracker.getInFlightCount(), beforeCount);
+      assertEquals(requestTracker.getStats().completed, beforeCompleted + 1);
+    });
+
+    it("should complete event stream tracking when the source errors", async () => {
+      const beforeCount = requestTracker.getInFlightCount();
+      let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+      const source = new ReadableStream<Uint8Array>({
+        start(value) {
+          controller = value;
+        },
+      });
+
+      startRequestTracking(
+        "lifecycle-stream-error",
+        "slug",
+        "/api/control-plane/runs/test/stream",
+        "POST",
+        "production",
+        "rel-1",
+      );
+      const response = completeRequestTrackingOnResponseEnd(
+        "lifecycle-stream-error",
+        new Response(source, { headers: { "content-type": "text/event-stream" } }),
+        false,
+      );
+
+      const read = response.body!.getReader().read();
+      controller!.error(new Error("stream failed"));
+      await assertRejects(() => read, Error, "stream failed");
+      assertEquals(requestTracker.getInFlightCount(), beforeCount);
+    });
+
+    it("should complete non-streaming responses immediately", () => {
+      const beforeCount = requestTracker.getInFlightCount();
+      startRequestTracking(
+        "lifecycle-response",
+        "slug",
+        "/api/health",
+        "GET",
+        "production",
+        "rel-1",
+      );
+
+      const response = completeRequestTrackingOnResponseEnd(
+        "lifecycle-response",
+        new Response("ok", { status: 200 }),
+        false,
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(requestTracker.getInFlightCount(), beforeCount);
+    });
+
+    it("should keep timed-out work in flight until the handler settles", async () => {
+      const beforeCount = requestTracker.getInFlightCount();
+      let settleHandler!: () => void;
+      const handlerSettled = new Promise<void>((resolve) => {
+        settleHandler = resolve;
+      });
+      startRequestTracking(
+        "lifecycle-timeout-settlement",
+        "slug",
+        "/api/slow",
+        "POST",
+        "production",
+        "rel-1",
+      );
+
+      const response = completeRequestTrackingOnResponseEnd(
+        "lifecycle-timeout-settlement",
+        new Response("Request timeout", { status: 504 }),
+        true,
+        null,
+        handlerSettled,
+      );
+
+      assertEquals(response.status, 504);
+      assertEquals(requestTracker.getInFlightCount(), beforeCount + 1);
+
+      settleHandler();
+      await handlerSettled;
+      await Promise.resolve();
+      assertEquals(requestTracker.getInFlightCount(), beforeCount);
     });
   });
 

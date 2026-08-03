@@ -1,14 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { flattenRouteParams } from "#veryfront/routing";
-import type { LayoutApplicationOptions } from "./layout-applicator.ts";
-
-function isDotPath(pageFilePath: string): boolean {
-  return pageFilePath
-    .split("/")
-    .some((segment) => segment.startsWith(".") && segment !== "." && segment !== "..");
-}
+import { type LayoutApplicationOptions, LayoutApplicator } from "./layout-applicator.ts";
+import * as React from "react";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { createLayoutComponentCache } from "./utils/component-loader.ts";
+import {
+  __setServerModuleLoaderForTests,
+  resetReactCache,
+} from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 
 function buildSSRRouter(
   requestUrl: URL | undefined,
@@ -77,28 +78,9 @@ function buildPageContext(
 }
 
 describe("LayoutApplicator helpers", () => {
-  describe("isDotPath", () => {
-    it("should detect .veryfront paths", () => {
-      assertEquals(isDotPath("/project/.veryfront/chat/page.tsx"), true);
-    });
-
-    it("should detect hidden directory paths", () => {
-      assertEquals(isDotPath("/project/.hidden/page.tsx"), true);
-    });
-
-    it("should not flag normal paths", () => {
-      assertEquals(isDotPath("/project/pages/about.tsx"), false);
-      assertEquals(isDotPath("/project/app/blog/page.tsx"), false);
-    });
-
-    it("should not flag . or .. segments", () => {
-      assertEquals(isDotPath("./relative/path.tsx"), false);
-      assertEquals(isDotPath("../parent/path.tsx"), false);
-    });
-
-    it("should handle root-level dot paths", () => {
-      assertEquals(isDotPath(".config/page.tsx"), true);
-    });
+  afterEach(() => {
+    resetReactCache();
+    __setServerModuleLoaderForTests(null);
   });
 
   describe("buildSSRRouter", () => {
@@ -257,5 +239,49 @@ describe("LayoutApplicator helpers", () => {
       };
       assertEquals(Boolean(config.experimental?.esmLayouts), false);
     });
+  });
+
+  it("searches configured App Router directories for reserved components", async () => {
+    const reads: string[] = [];
+    const adapter = {
+      fs: {
+        readFile: (path: string) => {
+          reads.push(path);
+          return Promise.reject(new Error("not found"));
+        },
+      },
+    } as unknown as RuntimeAdapter;
+    __setServerModuleLoaderForTests(() => Promise.resolve({ default: React }));
+
+    const applicator = new LayoutApplicator({
+      projectDir: "/project",
+      projectId: "project",
+      projectSlug: "project",
+      contentSourceId: "preview-main",
+      adapter,
+      config: {
+        directories: { app: "src/site" },
+        react: { version: "18.3.1" },
+      },
+      layoutCache: createLayoutComponentCache(),
+      mergedComponents: {},
+      mode: "production",
+    });
+
+    await (applicator as unknown as {
+      wrapWithReservedComponents(
+        element: React.ReactElement,
+        path: string,
+      ): Promise<React.ReactElement>;
+    }).wrapWithReservedComponents(
+      React.createElement("main"),
+      "/project/src/site/blog/page.tsx",
+    );
+
+    assertEquals(
+      reads.some((path) => path.startsWith("/project/src/site/")),
+      true,
+    );
+    assertEquals(reads.some((path) => path.startsWith("/project/app/")), false);
   });
 });

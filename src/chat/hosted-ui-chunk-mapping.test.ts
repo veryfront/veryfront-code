@@ -4,6 +4,37 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { mapHostedStreamPartToChatUiChunks } from "./hosted-ui-chunk-mapping.ts";
 
 describe("chat/hosted-ui-chunk-mapping", () => {
+  it("suppresses the complete reasoning lifecycle when reasoning is disabled", () => {
+    const options = { sendReasoning: false };
+
+    assertEquals(
+      mapHostedStreamPartToChatUiChunks(
+        { type: "reasoning-start", id: "reasoning-1" },
+        options,
+      ),
+      [],
+    );
+    assertEquals(
+      mapHostedStreamPartToChatUiChunks(
+        { type: "reasoning-delta", id: "reasoning-1", text: "private" },
+        options,
+      ),
+      [],
+    );
+    assertEquals(
+      mapHostedStreamPartToChatUiChunks(
+        {
+          type: "reasoning-end",
+          id: "reasoning-1",
+          signature: "sig_123",
+          redactedData: "encrypted",
+        },
+        options,
+      ),
+      [],
+    );
+  });
+
   it("maps hosted stream parts into chat UI chunks", () => {
     assertEquals(mapHostedStreamPartToChatUiChunks({ type: "start" }, { messageId: "msg-1" }), [
       { type: "start", messageId: "msg-1" },
@@ -27,6 +58,49 @@ describe("chat/hosted-ui-chunk-mapping", () => {
         delta: '{"q":"voice"}',
       }),
       [{ type: "tool-input-delta", toolCallId: "tool-1", inputTextDelta: '{"q":"voice"}' }],
+    );
+
+    const knowledgePath = "knowledge/knowledge-ingest-exact.md";
+    assertEquals(
+      mapHostedStreamPartToChatUiChunks({
+        type: "tool-result",
+        toolCallId: "tool-knowledge",
+        toolName: "get_file",
+        input: { path: knowledgePath },
+        output: { path: knowledgePath, content: "# Exact source" },
+      }),
+      [
+        {
+          type: "tool-output-available",
+          toolCallId: "tool-knowledge",
+          output: { path: knowledgePath, content: "# Exact source" },
+        },
+        {
+          type: "source-document",
+          sourceId: knowledgePath,
+          mediaType: "text/markdown",
+          title: knowledgePath,
+          filename: knowledgePath,
+        },
+      ],
+    );
+
+    assertEquals(
+      mapHostedStreamPartToChatUiChunks(
+        {
+          type: "tool-result",
+          toolCallId: "tool-knowledge-hidden",
+          toolName: "get_file",
+          input: { path: knowledgePath },
+          output: { path: knowledgePath, content: "# Exact source" },
+        },
+        { sendSources: false },
+      ),
+      [{
+        type: "tool-output-available",
+        toolCallId: "tool-knowledge-hidden",
+        output: { path: knowledgePath, content: "# Exact source" },
+      }],
     );
 
     assertEquals(

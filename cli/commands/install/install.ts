@@ -7,7 +7,7 @@ import { cwd as getCwd } from "veryfront/platform";
 import { exists, mkdir, writeTextFile } from "veryfront/platform";
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
-import { bold, dim, multiSelect, type MultiSelectOption, muted, success, warning } from "#cli/ui";
+import { bold, dim, multiSelect, type MultiSelectOption, muted, warning } from "#cli/ui";
 import { detectAITools, formatDetectionHint } from "./detect.ts";
 import { AI_TOOLS, getTemplateContent, getToolById, isValidToolId } from "./registry.ts";
 import {
@@ -68,11 +68,11 @@ export async function installTargets(
     }
 
     await writeTextFile(dest, content);
-    console.log(`  ${success("✓")} ${tool.file}`);
+    console.log(`  ✓ ${tool.file}`);
   }
 
   console.log();
-  console.log("  " + success("Your AI assistants now know Veryfront!"));
+  console.log("  ✓ Your AI assistants now know Veryfront!");
   console.log("  " + dim('Try: "Add a contact form with email validation"'));
   console.log();
 }

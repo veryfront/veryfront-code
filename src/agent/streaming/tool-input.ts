@@ -1,3 +1,7 @@
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+
+const logger = serverLogger.component("agent-tool-input");
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -139,7 +143,15 @@ export function parseToolInputObject(input: unknown): Record<string, unknown> {
       if (isRecord(parsed)) {
         return parsed;
       }
-    } catch {
+      logger.warn("Tool input decoded to a non-record value; using empty object", {
+        parsedType: Array.isArray(parsed) ? "array" : typeof parsed,
+        inputLength: input.length,
+      });
+    } catch (error) {
+      logger.warn("Failed to parse tool input JSON; using empty object", {
+        errorName: error instanceof Error ? error.name : typeof error,
+        inputLength: input.length,
+      });
       return {};
     }
   }

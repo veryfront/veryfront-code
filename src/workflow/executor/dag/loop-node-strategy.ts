@@ -7,8 +7,16 @@ import type {
 } from "../../types.ts";
 import { parseDuration } from "../../types.ts";
 import type { NodeExecutionResult } from "./types.ts";
-import { sleep } from "./utils.ts";
+import { sleep } from "#veryfront/utils";
 import type { NodeStrategyRuntime } from "./node-strategy-types.ts";
+import { captureWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
+import {
+  applyContextPatch,
+  applyRecordPatch,
+  createRecordPatch,
+  createSetContextPatch,
+  mergeContextPatches,
+} from "./context-patch.ts";
 
 interface ExecuteLoopNodeStrategyInput {
   node: WorkflowNode;
@@ -16,6 +24,7 @@ interface ExecuteLoopNodeStrategyInput {
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
   runtime: NodeStrategyRuntime;
+  abortSignal?: AbortSignal;
 }
 
 interface PersistedLoopState {
@@ -28,11 +37,16 @@ export async function executeLoopNodeStrategy(
   input: ExecuteLoopNodeStrategyInput,
 ): Promise<NodeExecutionResult> {
   const { node, config, context, nodeStates, runtime } = input;
+  runtime.abortSignal?.throwIfAborted();
   const startTime = Date.now();
   const previousResults: unknown[] = [];
   let iteration = 0;
   let exitReason: "condition" | "maxIterations" | "error" = "condition";
   let lastError: string | undefined;
+  // Tracks whether the loop terminated because `while` returned false. A loop
+  // that exhausts its iteration budget never trips this, so it is relabeled as
+  // "maxIterations" below.
+  let exitedViaCondition = false;
 
   const existingLoopState = context[`${node.id}_loop_state`] as PersistedLoopState | undefined;
 
@@ -49,6 +63,7 @@ export async function executeLoopNodeStrategy(
   }
 
   while (iteration < config.maxIterations) {
+    runtime.abortSignal?.throwIfAborted();
     const loopContext: LoopExecutionContext = {
       iteration,
       totalIterations: iteration,
@@ -57,14 +72,18 @@ export async function executeLoopNodeStrategy(
       isLastAllowedIteration: iteration === config.maxIterations - 1,
     };
 
-    if (!(await config.while(context, loopContext))) {
+    const shouldContinue = await config.while(context, loopContext);
+    runtime.abortSignal?.throwIfAborted();
+    if (!shouldContinue) {
       exitReason = "condition";
+      exitedViaCondition = true;
       break;
     }
 
     const steps = typeof config.steps === "function"
       ? config.steps(context, loopContext)
       : config.steps;
+    runtime.abortSignal?.throwIfAborted();
 
     // On resume, rehydrate the in-flight iteration's child node states so its
     // already-completed steps are skipped instead of re-executed (H9).
@@ -85,10 +104,12 @@ export async function executeLoopNodeStrategy(
       checkpoints: [],
       pendingApprovals: [],
       createdAt: new Date(),
+      sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
     });
+    runtime.abortSignal?.throwIfAborted();
 
     if (result.waiting) {
-      Object.assign(nodeStates, result.nodeStates);
+      applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
 
       const state: NodeState = {
         nodeId: node.id,
@@ -100,16 +121,18 @@ export async function executeLoopNodeStrategy(
 
       return {
         state,
-        contextUpdates: {
-          ...result.context,
-          [`${node.id}_loop_state`]: {
-            iteration,
-            previousResults,
-            // Persist the in-flight iteration's child states so completed
-            // steps are not re-executed when this iteration resumes (H9).
-            iterationNodeStates: result.nodeStates,
-          },
-        },
+        contextPatch: mergeContextPatches(
+          result.contextPatch,
+          createSetContextPatch({
+            [`${node.id}_loop_state`]: {
+              iteration,
+              previousResults,
+              // Persist the in-flight iteration's child states so completed
+              // steps are not re-executed when this iteration resumes (H9).
+              iterationNodeStates: result.nodeStates,
+            },
+          }),
+        ),
         waiting: true,
       };
     }
@@ -121,18 +144,18 @@ export async function executeLoopNodeStrategy(
     }
 
     previousResults.push(result.context);
-    Object.assign(context, result.context);
-    Object.assign(nodeStates, result.nodeStates);
+    applyContextPatch(context, result.contextPatch);
+    applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
 
     if (config.delay && iteration < config.maxIterations - 1) {
       const delayMs = typeof config.delay === "number" ? config.delay : parseDuration(config.delay);
-      await sleep(delayMs);
+      await sleep(delayMs, runtime.abortSignal);
     }
 
     iteration++;
   }
 
-  if (iteration >= config.maxIterations && exitReason !== "condition") {
+  if (exitReason !== "error" && !exitedViaCondition) {
     exitReason = "maxIterations";
   }
 
@@ -147,8 +170,10 @@ export async function executeLoopNodeStrategy(
   let completionUpdates: Record<string, unknown> = {};
   if (exitReason === "maxIterations" && config.onMaxIterations) {
     completionUpdates = await config.onMaxIterations(context, finalLoopContext);
+    runtime.abortSignal?.throwIfAborted();
   } else if (exitReason === "condition" && config.onComplete) {
     completionUpdates = await config.onComplete(context, finalLoopContext);
+    runtime.abortSignal?.throwIfAborted();
   }
 
   const output = {
@@ -172,10 +197,10 @@ export async function executeLoopNodeStrategy(
 
   return {
     state,
-    contextUpdates: {
+    contextPatch: createSetContextPatch({
       [node.id]: output,
       ...completionUpdates,
-    },
+    }),
     waiting: false,
   };
 }

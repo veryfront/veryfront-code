@@ -19,6 +19,7 @@ import {
   defaultTextMapSetter,
   propagation as shimPropagation,
   setGlobalActiveSpanAccessor,
+  setGlobalContextAccessor,
   setGlobalMetricsAPI,
   setGlobalTracerProvider,
   type Span,
@@ -27,7 +28,7 @@ import {
   trace as shimTrace,
   type Tracer,
 } from "#veryfront/observability/tracing/api-shim.ts";
-import { getHostTelemetryEnv } from "#veryfront/observability/tracing/telemetry-env.ts";
+import { getHostTelemetryEnv } from "#veryfront/observability";
 import type { TracingExporter } from "#veryfront/extensions/observability/tracing-exporter.ts";
 import {
   importFirstPartyExtensionModule,
@@ -167,6 +168,12 @@ export async function initializeOTLPWithApis(
     if (traceApi) {
       setGlobalActiveSpanAccessor(
         traceApi as Parameters<typeof setGlobalActiveSpanAccessor>[0],
+      );
+    }
+    const contextApi = exporterImpl.getContextAPI?.();
+    if (contextApi) {
+      setGlobalContextAccessor(
+        contextApi as Parameters<typeof setGlobalContextAccessor>[0],
       );
     }
 

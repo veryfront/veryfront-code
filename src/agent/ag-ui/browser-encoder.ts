@@ -638,6 +638,12 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
   }
 
   switch (event.type) {
+    case "source-document":
+    case "source-url":
+    case "file":
+      state.sawVisibleOutput = true;
+      return [createCustomDataEvent(event.type, event)];
+
     case "message-start":
       getMessageId(state, event);
       return [];

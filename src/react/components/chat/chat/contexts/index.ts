@@ -17,13 +17,21 @@ export {
 export {
   MessageContextProvider,
   type MessageContextValue,
+  type MessagePartsData,
+  useMessageBranches,
+  type UseMessageBranchesResult,
   useMessageContext,
   useMessageContextOptional,
+  useMessageParts,
 } from "./message-context.tsx";
 
 export {
+  ChatInputContextProvider,
+  type ChatInputContextValue,
   ComposerContextProvider,
   type ComposerContextValue,
+  useChatInputContext,
+  useChatInputContextOptional,
   useComposerContext,
   useComposerContextOptional,
 } from "./composer-context.tsx";

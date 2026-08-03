@@ -2,10 +2,17 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import {
   DEFAULT_HOSTED_CHILD_AGENT_ID,
+  getHostedChildForkToolInputSchema,
   hostedChildForkToolInputSchema,
+  MAX_HOSTED_CHILD_DELEGATION_DEPTH,
+  MAX_HOSTED_CHILD_PROJECT_REFERENCE_INPUT_CODE_UNITS,
   resolveHostedChildForkRuntimeConfig,
   resolveHostedChildForkThinkingOverride,
+  withHostedChildInvocationContext,
 } from "./child-tool-input.ts";
+import { schemaToJsonSchema } from "#veryfront/schemas/index.ts";
+import { INVALID_AGENT_PROJECT_REFERENCE_MESSAGE } from "../project/context.ts";
+import { MAX_OPAQUE_ID_CODE_UNITS } from "#veryfront/utils/project-identity.ts";
 
 Deno.test("hostedChildForkToolInputSchema accepts the hosted child fork fields", () => {
   const parsed = hostedChildForkToolInputSchema.parse({
@@ -18,7 +25,7 @@ Deno.test("hostedChildForkToolInputSchema accepts the hosted child fork fields",
         amount: 2180,
       },
     },
-    project_id: "project-123",
+    project_reference: "project-123",
     tools: ["readFile", "bash"],
     model: "sonnet",
     thinking: 1024,
@@ -35,7 +42,7 @@ Deno.test("hostedChildForkToolInputSchema accepts the hosted child fork fields",
         amount: 2180,
       },
     },
-    project_id: "project-123",
+    project_reference: "project-123",
     tools: ["readFile", "bash"],
     model: "sonnet",
     thinking: 1024,
@@ -141,6 +148,79 @@ Deno.test("hostedChildForkToolInputSchema rejects negative thinking budgets", ()
   assertEquals(result.success, false);
 });
 
+Deno.test("hostedChildForkToolInputSchema rejects unsafe project references", () => {
+  for (
+    const projectReference of [
+      "",
+      "project-\n123",
+      "p".repeat(MAX_OPAQUE_ID_CODE_UNITS + 1),
+    ]
+  ) {
+    const result = hostedChildForkToolInputSchema.safeParse({
+      description: "invalid project",
+      prompt: "Try an invalid project reference.",
+      context: {},
+      project_reference: projectReference,
+    });
+
+    assertEquals(result.success, false);
+    if (result.success) {
+      throw new Error("Expected invalid hosted child fork input");
+    }
+    const error = result.error as { issues?: Array<{ message?: string }> };
+    assertEquals(
+      error.issues?.[0]?.message,
+      projectReference.length > MAX_OPAQUE_ID_CODE_UNITS
+        ? `Too big: expected string to have <=${MAX_OPAQUE_ID_CODE_UNITS} characters`
+        : INVALID_AGENT_PROJECT_REFERENCE_MESSAGE,
+    );
+  }
+});
+
+Deno.test("hostedChildForkToolInputSchema trims project references", () => {
+  const result = hostedChildForkToolInputSchema.parse({
+    description: "switch project",
+    prompt: "Open the requested project.",
+    project_reference: "  project-123  ",
+  });
+
+  assertEquals(result.project_reference, "project-123");
+});
+
+Deno.test("hostedChildForkToolInputSchema trims project references before enforcing canonical length", () => {
+  const canonicalReference = "p".repeat(MAX_OPAQUE_ID_CODE_UNITS);
+  const result = hostedChildForkToolInputSchema.parse({
+    description: "switch project",
+    prompt: "Open the requested project.",
+    project_reference: ` ${canonicalReference} `,
+  });
+
+  assertEquals(result.project_reference, canonicalReference);
+});
+
+Deno.test("hostedChildForkToolInputSchema rejects raw project-reference payloads beyond the DoS bound", () => {
+  const result = hostedChildForkToolInputSchema.safeParse({
+    description: "switch project",
+    prompt: "Open the requested project.",
+    project_reference: `${
+      " ".repeat(MAX_HOSTED_CHILD_PROJECT_REFERENCE_INPUT_CODE_UNITS)
+    }project-123`,
+  });
+
+  assertEquals(result.success, false);
+});
+
+Deno.test("hosted child fork JSON Schema exposes project-reference input bounds", () => {
+  const schema = schemaToJsonSchema(getHostedChildForkToolInputSchema());
+  const projectReference = schema.properties?.project_reference as
+    | Record<string, unknown>
+    | undefined;
+
+  assertEquals(projectReference?.type, "string");
+  assertEquals(projectReference?.minLength, 1);
+  assertEquals(projectReference?.maxLength, MAX_HOSTED_CHILD_PROJECT_REFERENCE_INPUT_CODE_UNITS);
+});
+
 Deno.test("DEFAULT_HOSTED_CHILD_AGENT_ID names the hosted child runtime agent", () => {
   assertEquals(DEFAULT_HOSTED_CHILD_AGENT_ID, "invoke-agent-child");
 });
@@ -152,6 +232,159 @@ Deno.test("resolveHostedChildForkThinkingOverride maps child fork thinking value
     enabled: true,
     budgetTokens: 2048,
   });
+});
+
+Deno.test("withHostedChildInvocationContext starts trusted root lineage and ignores model-supplied root resets", () => {
+  const result = withHostedChildInvocationContext(
+    {
+      description: "review child task",
+      prompt: "Review the delegated task.",
+      context: {
+        veryfront_invocation_context: {
+          root_conversation_id: "model-root-conversation",
+          root_run_id: "model-root-run",
+          root_message_id: "model-root-message",
+          delegation_depth: 99,
+        },
+      },
+    },
+    {
+      parentConversationId: "root-conversation",
+      conversationId: "root-conversation",
+      parentRunId: "root-run",
+      parentMessageId: "root-message",
+      toolCallId: "tool-call-1",
+    },
+  );
+
+  assertEquals(result.context?.veryfront_invocation_context, {
+    root_conversation_id: "root-conversation",
+    parent_conversation_id: "root-conversation",
+    root_run_id: "root-run",
+    root_message_id: "root-message",
+    parent_run_id: "root-run",
+    parent_message_id: "root-message",
+    tool_call_id: "tool-call-1",
+    delegation_depth: 1,
+  });
+});
+
+Deno.test("withHostedChildInvocationContext preserves root lineage and advances immediate parent for grandchildren", () => {
+  const child = withHostedChildInvocationContext(
+    {
+      description: "child task",
+      prompt: "Handle child work.",
+      context: {},
+    },
+    {
+      parentConversationId: "root-conversation",
+      conversationId: "root-conversation",
+      parentRunId: "root-run",
+      parentMessageId: "root-message",
+      toolCallId: "tool-call-child",
+    },
+  );
+
+  const grandchild = withHostedChildInvocationContext(
+    {
+      description: "grandchild task",
+      prompt: "Handle grandchild work.",
+      context: {},
+    },
+    {
+      parentConversationId: "child-conversation",
+      conversationId: "legacy-conversation-value",
+      parentRunId: "child-run",
+      parentMessageId: "child-message",
+      toolCallId: "tool-call-grandchild",
+      trustedInvocationContext: child.context?.veryfront_invocation_context as never,
+    },
+  );
+
+  assertEquals(grandchild.context?.veryfront_invocation_context, {
+    root_conversation_id: "root-conversation",
+    parent_conversation_id: "child-conversation",
+    root_run_id: "root-run",
+    root_message_id: "root-message",
+    parent_run_id: "child-run",
+    parent_message_id: "child-message",
+    tool_call_id: "tool-call-grandchild",
+    delegation_depth: 2,
+  });
+});
+
+Deno.test("withHostedChildInvocationContext clamps negative trusted delegation depth", () => {
+  const result = withHostedChildInvocationContext(
+    {
+      description: "child task",
+      prompt: "Handle child work.",
+      context: {},
+    },
+    {
+      parentConversationId: "child-conversation",
+      parentRunId: "child-run",
+      parentMessageId: "child-message",
+      toolCallId: "tool-call-child",
+      trustedInvocationContext: {
+        root_conversation_id: "root-conversation",
+        root_run_id: "root-run",
+        root_message_id: "root-message",
+        parent_conversation_id: "parent-conversation",
+        parent_run_id: "parent-run",
+        parent_message_id: "parent-message",
+        tool_call_id: "tool-call-parent",
+        delegation_depth: -4,
+      },
+    },
+  );
+
+  assertEquals(result.context?.veryfront_invocation_context, {
+    root_conversation_id: "root-conversation",
+    parent_conversation_id: "child-conversation",
+    root_run_id: "root-run",
+    root_message_id: "root-message",
+    parent_run_id: "child-run",
+    parent_message_id: "child-message",
+    tool_call_id: "tool-call-child",
+    delegation_depth: 1,
+  });
+});
+
+Deno.test("withHostedChildInvocationContext enforces the delegation depth cap", () => {
+  let message = "";
+
+  try {
+    withHostedChildInvocationContext(
+      {
+        description: "too deep",
+        prompt: "This should not run.",
+        context: {},
+      },
+      {
+        conversationId: "child-conversation",
+        parentRunId: "child-run",
+        parentMessageId: "child-message",
+        toolCallId: "tool-call-deep",
+        trustedInvocationContext: {
+          root_conversation_id: "root-conversation",
+          root_run_id: "root-run",
+          root_message_id: "root-message",
+          parent_conversation_id: "parent-conversation",
+          parent_run_id: "parent-run",
+          parent_message_id: "parent-message",
+          tool_call_id: "tool-call-parent",
+          delegation_depth: MAX_HOSTED_CHILD_DELEGATION_DEPTH,
+        },
+      },
+    );
+  } catch (error) {
+    message = error instanceof Error ? error.message : String(error);
+  }
+
+  assertEquals(
+    message,
+    `invoke_agent delegation depth limit exceeded: maximum depth is ${MAX_HOSTED_CHILD_DELEGATION_DEPTH}.`,
+  );
 });
 
 Deno.test("resolveHostedChildForkRuntimeConfig resolves reusable child fork runtime options", () => {

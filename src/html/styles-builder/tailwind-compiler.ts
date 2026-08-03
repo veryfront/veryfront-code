@@ -1,17 +1,44 @@
-import { serverLogger } from "#veryfront/utils";
-import { COMPILATION_ERROR } from "#veryfront/errors";
+/**
+ * Provider-neutral CSS generation and cache orchestration.
+ *
+ * Tailwind-named exports remain as compatibility aliases, but core neither
+ * imports nor discovers Tailwind. An explicit CSSProcessor owns compilation;
+ * an explicit CSSOptimizationEngine owns minification.
+ */
+
+import { resolve } from "#veryfront/extensions/contracts.ts";
+import {
+  captureCSSOptimizationEngine,
+  type CSSOptimizationEngine,
+  CSSOptimizationEngineName,
+} from "#veryfront/extensions/css/index.ts";
+import {
+  freezeExtensionContract,
+  getExtensionOwnPropertyDescriptor,
+  isDataPropertyDescriptor,
+  isExtensionArray,
+} from "#veryfront/extensions/property-inspection.ts";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import { minifyCSS } from "#veryfront/build/asset-pipeline/tailwind-processor/css-utils.ts";
-import { hashCSS } from "./candidate-extractor.ts";
+import { assertCSSPipelineIdentity, serverLogger } from "#veryfront/utils";
+import { normalizeCSSCandidates } from "#veryfront/utils/css-candidate-admission.ts";
+import {
+  assertCSSFileContent,
+  assertCSSOutputContent,
+} from "#veryfront/utils/css-content-admission.ts";
+import { isProxy as isProxyWithoutHooks } from "node:util/types";
 import { formatCSSErrorMessage } from "./tailwind-compiler-utils.ts";
-import { getCompiler } from "./tailwind-compiler-cache.ts";
+import {
+  acquireCSSCompilationSession,
+  buildCSSWithSession,
+  type CSSCompilationSession,
+} from "./tailwind-compiler-cache.ts";
 import {
   type CSSCacheEntry,
-  DEFAULT_STYLESHEET,
   persistRegeneratedCSSEntry,
   resolveRegenerationInputs,
 } from "./css-hash-cache.ts";
+import { hashCSS, hashString, isCSSContentHash } from "./css-identity.ts";
 import {
   createProjectCSSRequestContext,
   initializeProjectCSSCache,
@@ -21,21 +48,15 @@ import {
   tryGetProjectCSSFromLocalFallback,
 } from "./project-css-cache.ts";
 
-// Re-export extracted modules for backward compatibility
-export { extractCandidates, extractCandidatesFromFiles, hashCSS } from "./candidate-extractor.ts";
-export { loadModuleFromEsmSh } from "./plugin-loader.ts";
+// Re-export provider-neutral helpers under their established public names.
+export { extractCandidates, extractCandidatesFromFiles } from "./candidate-extractor.ts";
+export { hashCSS } from "./css-identity.ts";
 export {
-  clearPluginCache,
   getCompilerCacheStats,
+  getCSSCompilationCacheIdentity,
   invalidateCompiler,
 } from "./tailwind-compiler-cache.ts";
-export {
-  cacheCSSAsync,
-  cacheCSSInputsAsync,
-  clearCSSCache,
-  getCSSByHash,
-  getCSSByHashAsync,
-} from "./css-hash-cache.ts";
+export { cacheCSSAsync, clearCSSCache, getCSSByHash, getCSSByHashAsync } from "./css-hash-cache.ts";
 export {
   initializeProjectCSSCache,
   invalidateProjectCSS,
@@ -43,24 +64,37 @@ export {
   isProjectCSSCacheDistributed,
 } from "./project-css-cache.ts";
 
-const logger = serverLogger.component("tailwind");
+const logger = serverLogger.component("css-compiler");
+const apply = Reflect.apply;
+const weakSetAdd = WeakSet.prototype.add;
+const weakSetHas = WeakSet.prototype.has;
+const CSS_PIPELINE_IDENTITY_SCHEMA = "veryfront.css-pipeline.v2";
+const cssGenerationSessions = new WeakSet<object>();
 const inFlightProjectCSS = new Map<
   string,
   Promise<{ css: string; hash: string; fromCache: boolean }>
 >();
+const inFlightProjectCSSOwners = new Map<string, object>();
 const inFlightRegeneration = new Map<string, Promise<string | undefined>>();
+const inFlightRegenerationOwners = new Map<string, object>();
 
-export interface TailwindResult {
-  css: string;
-  error?: string;
+export interface CSSGenerationResult {
+  readonly css: string;
+  readonly cacheIdentity: string;
 }
 
-export interface GenerateOptions {
+/** Backward-compatible name for a provider-neutral CSS generation result. */
+export type TailwindResult = CSSGenerationResult;
+
+export interface CSSGenerationOptions {
   minify?: boolean;
   environment?: string;
   buildMode?: "development" | "production";
   projectSlug?: string;
 }
+
+/** Backward-compatible name for provider-neutral CSS generation options. */
+export type GenerateOptions = CSSGenerationOptions;
 
 export interface CSSErrorInfo {
   title: string;
@@ -68,204 +102,281 @@ export interface CSSErrorInfo {
   suggestion: string;
 }
 
-// ============================================================================
+export interface CSSGenerationSession {
+  readonly minify: boolean;
+  readonly cacheIdentity: string;
+  readonly compilationSession: CSSCompilationSession;
+  readonly optimizationEngine?: CSSOptimizationEngine;
+}
+
+export interface CSSGenerationDependencies {
+  readonly generationSession?: CSSGenerationSession;
+}
+
+function getCSSPipelineCacheIdentity(
+  compilationIdentity: string,
+  optimizationIdentity: string | undefined,
+): string {
+  return assertCSSPipelineIdentity(
+    `${CSS_PIPELINE_IDENTITY_SCHEMA}:${hashString(compilationIdentity)}:${
+      optimizationIdentity === undefined ? "unminified" : hashString(optimizationIdentity)
+    }`,
+    "CSS pipeline identity",
+  );
+}
+
+/** Capture all output-affecting providers before the operation performs an await. */
+export function acquireCSSGenerationSession(minify: boolean): CSSGenerationSession {
+  const compilationSession = acquireCSSCompilationSession();
+  const optimizationEngine = minify
+    ? captureCSSOptimizationEngine(resolve<unknown>(CSSOptimizationEngineName))
+    : undefined;
+  const session: CSSGenerationSession = {
+    minify,
+    compilationSession,
+    optimizationEngine,
+    cacheIdentity: getCSSPipelineCacheIdentity(
+      compilationSession.cacheIdentity,
+      optimizationEngine?.cacheIdentity,
+    ),
+  };
+  apply(weakSetAdd, cssGenerationSessions, [session]);
+  return freezeExtensionContract(session);
+}
+
+function resolveGenerationSession(
+  minify: boolean,
+  session: CSSGenerationSession | undefined,
+): CSSGenerationSession {
+  const resolved = session ?? acquireCSSGenerationSession(minify);
+  if (!apply(weakSetHas, cssGenerationSessions, [resolved])) {
+    throw new TypeError("CSS generation session was not acquired by core");
+  }
+  if (resolved.minify !== minify) {
+    throw new TypeError("CSS generation session minification mode does not match the request");
+  }
+  return resolved;
+}
+
+function readOptimizedCSS(value: unknown): string {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    isExtensionArray(value) ||
+    isProxyWithoutHooks(value)
+  ) {
+    throw new TypeError("CSSOptimizationEngine result must be a non-Proxy object");
+  }
+  let cssDescriptor: PropertyDescriptor | undefined;
+  let sourceMapDescriptor: PropertyDescriptor | undefined;
+  try {
+    cssDescriptor = getExtensionOwnPropertyDescriptor(value, "css");
+    sourceMapDescriptor = getExtensionOwnPropertyDescriptor(value, "sourceMap");
+  } catch (cause) {
+    throw new TypeError("CSSOptimizationEngine result could not be inspected", { cause });
+  }
+  if (!isDataPropertyDescriptor(cssDescriptor) || typeof cssDescriptor.value !== "string") {
+    throw new TypeError("CSSOptimizationEngine result.css must be an own string data property");
+  }
+  if (
+    sourceMapDescriptor !== undefined &&
+    (!isDataPropertyDescriptor(sourceMapDescriptor) ||
+      (sourceMapDescriptor.value !== undefined && typeof sourceMapDescriptor.value !== "string"))
+  ) {
+    throw new TypeError(
+      "CSSOptimizationEngine result.sourceMap must be an own string data property when present",
+    );
+  }
+  assertCSSOutputContent(cssDescriptor.value, "CSS optimizer output");
+  return cssDescriptor.value;
+}
+
+function optimizeCSS(
+  engine: CSSOptimizationEngine,
+  css: string,
+  projectSlug: string | undefined,
+): string {
+  const request = freezeExtensionContract({
+    css,
+    sourcePath: projectSlug === undefined
+      ? "veryfront://runtime/styles.css"
+      : `veryfront://project/${hashString(projectSlug)}/styles.css`,
+    minify: true,
+    sourceMap: false,
+  });
+  return readOptimizedCSS(engine.optimize(request));
+}
+
+// ---------------------------------------------------------------------------
 // Project CSS orchestration
-// ============================================================================
+// ---------------------------------------------------------------------------
 
 export async function getProjectCSS(
   projectSlug: string,
   stylesheet: string | undefined,
-  candidates: Set<string>,
-  options?: GenerateOptions,
+  candidates: string[] | Set<string>,
+  options?: CSSGenerationOptions,
+  dependencies: CSSGenerationDependencies = {},
 ): Promise<{ css: string; hash: string; fromCache: boolean }> {
-  const context = createProjectCSSRequestContext(projectSlug, stylesheet, candidates, {
-    minify: options?.minify,
-    environment: options?.environment,
-    buildMode: options?.buildMode,
-  });
+  const admittedCandidates = normalizeCSSCandidates(candidates);
+  const minify = options?.minify === true;
+  const generationSession = resolveGenerationSession(
+    minify,
+    dependencies.generationSession,
+  );
+  const resolvedStylesheet = stylesheet ?? generationSession.compilationSession.defaultStylesheet;
+  assertCSSFileContent(resolvedStylesheet, "Project CSS stylesheet");
+  const context = createProjectCSSRequestContext(
+    projectSlug,
+    resolvedStylesheet,
+    admittedCandidates,
+    {
+      cssPipelineIdentity: generationSession.cacheIdentity,
+      minify,
+      environment: options?.environment,
+      buildMode: options?.buildMode,
+    },
+  );
 
-  const localHit = await tryGetProjectCSSFromLocalFallback(context, candidates);
+  const localHit = await tryGetProjectCSSFromLocalFallback(context, admittedCandidates);
   if (localHit) return localHit;
 
-  if (!isProjectCSSInitialized()) {
-    await initializeProjectCSSCache();
-  }
-
-  const distributedHit = await tryGetProjectCSSFromDistributedCache(context, candidates);
+  if (!isProjectCSSInitialized()) await initializeProjectCSSCache();
+  const distributedHit = await tryGetProjectCSSFromDistributedCache(
+    context,
+    admittedCandidates,
+  );
   if (distributedHit) return distributedHit;
 
-  const inFlight = inFlightProjectCSS.get(context.cacheKey);
-  if (inFlight) {
-    logger.debug("Project CSS compile single-flight hit", {
-      projectSlug: context.projectSlug,
-      cacheKeySuffix: context.cacheKey.slice(-24),
-    });
-    return inFlight;
-  }
+  const pending = inFlightProjectCSS.get(context.cacheKey);
+  if (pending) return await pending;
 
-  const generationPromise = (async () => {
-    // Generate fresh CSS
-    const result = await generateTailwindCSS(context.stylesheet, candidates, {
-      ...options,
-      projectSlug,
-    });
-
-    if (result.error) {
-      const formatted = formatCSSError(result.error);
-      logger.error("Project CSS generation failed", {
-        projectSlug: context.projectSlug,
-        error: formatted.message,
-        suggestion: formatted.suggestion,
-      });
-      throw COMPILATION_ERROR.create({
-        detail:
-          `[tailwind] ${formatted.title}: ${formatted.message} Suggestion: ${formatted.suggestion}`,
-      });
-    }
-
+  const generation = (async () => {
+    const result = await generateTailwindCSS(
+      context.stylesheet,
+      admittedCandidates,
+      { ...options, projectSlug },
+      { generationSession },
+    );
     const hash = hashCSS(result.css);
     await storeProjectCSS(
       context,
       { css: result.css, hash, candidatesHash: context.candidatesHash },
-      candidates,
+      admittedCandidates,
     );
-
-    logger.debug("Project CSS generated", {
-      projectSlug: context.projectSlug,
-      hash,
-      cssLength: result.css.length,
-      candidateCount: candidates.size,
-    });
-
     return { css: result.css, hash, fromCache: false };
   })();
-
-  inFlightProjectCSS.set(context.cacheKey, generationPromise);
-
+  const owner = {};
+  inFlightProjectCSS.set(context.cacheKey, generation);
+  inFlightProjectCSSOwners.set(context.cacheKey, owner);
   try {
-    return await generationPromise;
+    return await generation;
   } finally {
-    inFlightProjectCSS.delete(context.cacheKey);
+    if (inFlightProjectCSSOwners.get(context.cacheKey) === owner) {
+      inFlightProjectCSS.delete(context.cacheKey);
+      inFlightProjectCSSOwners.delete(context.cacheKey);
+    }
   }
 }
 
-// ============================================================================
+// ---------------------------------------------------------------------------
 // CSS JIT regeneration
-// ============================================================================
+// ---------------------------------------------------------------------------
 
-/**
- * Regenerate CSS by hash using cached inputs.
- * This is the JIT regeneration path - any pod can regenerate without fetching files.
- *
- * Tries unified cache (CSS + inputs together) first, then falls back to legacy
- * separate inputs cache for backward compatibility with existing cached data.
- *
- * @param expectedHash - The CSS hash to regenerate
- * @returns The regenerated CSS if inputs are cached and hash matches, undefined otherwise
- */
 export async function regenerateCSSByHash(
   expectedHash: string,
   projectSlug: string | undefined,
 ): Promise<string | undefined> {
-  const inFlight = inFlightRegeneration.get(expectedHash);
-  if (inFlight) return await inFlight;
+  if (!isCSSContentHash(expectedHash)) return undefined;
+  const generationSession = acquireCSSGenerationSession(true);
+  const inFlightKey = `${hashString(generationSession.cacheIdentity)}:${expectedHash}`;
+  const pending = inFlightRegeneration.get(inFlightKey);
+  if (pending) return await pending;
 
-  const regenerationPromise = withSpan(
+  const regeneration = withSpan(
     SpanNames.HTML_REGENERATE_CSS_BY_HASH,
     async () => {
-      const inputs = await resolveRegenerationInputs(expectedHash);
-      if (!inputs || inputs.candidates.length === 0) {
-        logger.debug("Cannot regenerate CSS - no cached inputs", { hash: expectedHash });
-        return undefined;
-      }
+      const inputs = await resolveRegenerationInputs(
+        expectedHash,
+        generationSession.cacheIdentity,
+      );
+      if (!inputs || inputs.candidates.length === 0) return undefined;
 
-      const result = await generateTailwindCSS(inputs.stylesheet, inputs.candidates, {
-        minify: true,
-        projectSlug,
-      });
+      const result = await generateTailwindCSS(
+        inputs.stylesheet,
+        inputs.candidates,
+        { minify: true, projectSlug },
+        { generationSession },
+      );
+      if (hashCSS(result.css) !== expectedHash) return undefined;
 
-      if (result.error) {
-        logger.warn("CSS regeneration failed", {
-          hash: expectedHash,
-          error: result.error,
-        });
-        return undefined;
-      }
-
-      const regeneratedHash = hashCSS(result.css);
-      if (regeneratedHash !== expectedHash) {
-        logger.debug("CSS regeneration hash mismatch", {
-          expected: expectedHash,
-          got: regeneratedHash,
-        });
-        return undefined;
-      }
-
-      const regeneratedEntry: CSSCacheEntry = {
+      const entry: CSSCacheEntry = {
         css: result.css,
         candidates: inputs.candidates,
         stylesheet: inputs.stylesheet,
+        pipelineIdentity: generationSession.cacheIdentity,
       };
-      await persistRegeneratedCSSEntry(regeneratedHash, regeneratedEntry);
-
-      logger.info("CSS regenerated via JIT", {
-        hash: expectedHash,
-        cssLength: result.css.length,
-        candidateCount: inputs.candidates.length,
-      });
-
+      await persistRegeneratedCSSEntry(expectedHash, entry);
       return result.css;
     },
     { "css.hash": expectedHash },
   );
-
-  inFlightRegeneration.set(expectedHash, regenerationPromise);
-
+  const owner = {};
+  inFlightRegeneration.set(inFlightKey, regeneration);
+  inFlightRegenerationOwners.set(inFlightKey, owner);
   try {
-    return await regenerationPromise;
+    return await regeneration;
   } finally {
-    inFlightRegeneration.delete(expectedHash);
+    if (inFlightRegenerationOwners.get(inFlightKey) === owner) {
+      inFlightRegeneration.delete(inFlightKey);
+      inFlightRegenerationOwners.delete(inFlightKey);
+    }
   }
 }
 
-// ============================================================================
-// Core Tailwind CSS generation
-// ============================================================================
+// ---------------------------------------------------------------------------
+// Provider-neutral generation (legacy name retained for API compatibility)
+// ---------------------------------------------------------------------------
 
 export async function generateTailwindCSS(
   stylesheet: string | undefined,
   candidates: string[] | Set<string>,
-  options?: GenerateOptions,
-): Promise<TailwindResult> {
-  const candidateArray = Array.isArray(candidates) ? candidates : [...candidates];
+  options?: CSSGenerationOptions,
+  dependencies: CSSGenerationDependencies = {},
+): Promise<CSSGenerationResult> {
+  const admittedCandidates = normalizeCSSCandidates(candidates);
+  const minify = options?.minify === true;
+  const generationSession = resolveGenerationSession(
+    minify,
+    dependencies.generationSession,
+  );
+  const resolvedStylesheet = stylesheet ?? generationSession.compilationSession.defaultStylesheet;
+  assertCSSFileContent(resolvedStylesheet, "CSS generation stylesheet");
 
   return await withSpan(
     SpanNames.HTML_GENERATE_TAILWIND_CSS,
     async () => {
-      const css = stylesheet ?? DEFAULT_STYLESHEET;
-
-      try {
-        const comp = await getCompiler(css, options?.projectSlug);
-        let output = comp.build(candidateArray);
-
-        if (options?.minify) output = minifyCSS(output);
-
-        logger.debug("Generated CSS", {
-          candidateCount: candidateArray.length,
-          outputLength: output.length,
-        });
-
-        return { css: output };
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        logger.error("Compilation failed", { error: errorMessage });
-        return { css: "", error: errorMessage };
-      }
+      const compiled = await buildCSSWithSession(
+        generationSession.compilationSession,
+        resolvedStylesheet,
+        options?.projectSlug,
+        admittedCandidates,
+      );
+      const css = generationSession.optimizationEngine
+        ? optimizeCSS(generationSession.optimizationEngine, compiled, options?.projectSlug)
+        : compiled;
+      assertCSSOutputContent(css, "Generated CSS output");
+      logger.debug("Generated CSS", {
+        candidateCount: admittedCandidates.length,
+        outputLength: css.length,
+        minified: minify,
+      });
+      return { css, cacheIdentity: generationSession.cacheIdentity };
     },
     {
-      "tailwind.candidate_count": candidateArray.length,
-      "tailwind.has_stylesheet": !!stylesheet,
-      "tailwind.minify": options?.minify ?? false,
+      "tailwind.candidate_count": admittedCandidates.length,
+      "tailwind.has_stylesheet": stylesheet !== undefined,
+      "tailwind.minify": minify,
     },
   );
 }

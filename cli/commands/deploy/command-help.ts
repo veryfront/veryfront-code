@@ -3,7 +3,7 @@ import type { CommandHelp } from "../../help/types.ts";
 export const deployHelp: CommandHelp = {
   name: "deploy",
   category: "deploy",
-  description: "Create a release and deploy to an environment",
+  description: "Promote a branch to an environment",
   usage: "veryfront deploy [options]",
   options: [
     {
@@ -11,7 +11,7 @@ export const deployHelp: CommandHelp = {
       description: "Branch to release from (default: main)",
     },
     {
-      flag: "--env <name>",
+      flag: "-e, --env, --environment <name>",
       description: "Environment to deploy to (default: production)",
     },
     {
@@ -19,24 +19,27 @@ export const deployHelp: CommandHelp = {
       description: "Custom release name (auto-generated if omitted)",
     },
     {
-      flag: "-f, --force",
-      description: "Deploy without confirmation",
-    },
-    {
       flag: "--dry-run",
       description: "Preview without executing",
+    },
+    {
+      flag: "-q, --quiet",
+      description: "Suppress progress and summary output",
     },
   ],
   examples: [
     "veryfront deploy",
-    "veryfront deploy --env staging",
-    "veryfront deploy --branch feature-x --env preview",
+    "veryfront deploy --environment staging",
+    "veryfront deploy --branch feature-x --environment staging",
     "veryfront deploy --release-name v1.2.0",
     "veryfront deploy --dry-run",
   ],
   notes: [
-    "Requires VERYFRONT_API_TOKEN env var or veryfront.json config",
-    "Creates a new release from the specified branch",
-    "Deploys the release to the target environment",
+    "Requires VERYFRONT_API_TOKEN or an authenticated Veryfront login",
+    "Creates or links a project when veryfront.json is not present",
+    "Promotes main when --branch is omitted",
+    "Pushes main before the first deploy when no verified push exists",
+    "Creates a new release from the resolved branch",
+    "Verifies the target environment points to the created deployment before succeeding",
   ],
 };

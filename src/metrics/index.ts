@@ -19,8 +19,12 @@ import {
   getGlobalMetricsAPI,
   type Histogram,
   type ObservableGauge,
-} from "#veryfront/observability/tracing/api-shim.ts";
+} from "#veryfront/observability";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { encodeBase64 } from "#veryfront/utils";
+import { isProjectEnvActive } from "#veryfront/server/project-env/storage.ts";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 
 export type MetricAttributeValue = string | number | boolean | null | undefined;
 export type MetricAttributes = Record<string, MetricAttributeValue>;
@@ -150,11 +154,28 @@ function getGauge(name: string, options?: MetricInstrumentOptions) {
 }
 
 function readEnv(name: string): string | undefined {
-  try {
-    return Deno.env.get(name);
-  } catch {
-    return undefined;
-  }
+  return getEnv(name);
+}
+
+function readHostEnv(name: string): string | undefined {
+  return getHostEnv(name);
+}
+
+function readProjectEnv(name: string): string | undefined {
+  return isProjectEnvActive() ? getEnv(name) : undefined;
+}
+
+function isDedicatedRuntime(): boolean {
+  return Boolean(readHostEnv("SERVER_ID") && readHostEnv("ENVIRONMENT_IDS"));
+}
+
+function resolveProjectOtlpMetricsUrl(): string | null {
+  if (readProjectEnv("OTEL_METRICS_ENABLED") !== "true") return null;
+  const endpoint = readProjectEnv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") ??
+    readProjectEnv("OTEL_EXPORTER_OTLP_ENDPOINT");
+  if (!endpoint) return null;
+  const trimmed = endpoint.replace(/\/$/, "");
+  return trimmed.endsWith("/v1/metrics") ? trimmed : `${trimmed}/v1/metrics`;
 }
 
 function resolveOtlpMetricsUrl(): string | null {
@@ -167,17 +188,17 @@ function resolveOtlpMetricsUrl(): string | null {
 }
 
 function resolveInternalMetricsUrl(): string | null {
-  if (readEnv("OTEL_METRICS_ENABLED") !== "true") return null;
-  const apiBaseUrl = readEnv("VERYFRONT_API_BASE_URL") ?? readEnv("VERYFRONT_API_URL");
-  const username = readEnv("VERYFRONT_API_INTERNAL_USER");
-  const password = readEnv("VERYFRONT_API_INTERNAL_PASS");
+  if (readHostEnv("OTEL_METRICS_ENABLED") !== "true") return null;
+  const apiBaseUrl = readHostEnv("VERYFRONT_API_BASE_URL") ?? readHostEnv("VERYFRONT_API_URL");
+  const username = readHostEnv("VERYFRONT_API_INTERNAL_USER");
+  const password = readHostEnv("VERYFRONT_API_INTERNAL_PASS");
   if (!apiBaseUrl || !username || !password) return null;
   return `${apiBaseUrl.replace(/\/$/, "")}/internal/metrics/otlp/v1/metrics`;
 }
 
 function buildBasicAuth(username: string, password: string): string {
   const credentials = `${username}:${password}`;
-  return `Basic ${globalThis.btoa(credentials)}`;
+  return `Basic ${encodeBase64(credentials)}`;
 }
 
 function parseHeaders(headerInput: string | undefined): Record<string, string> {
@@ -198,14 +219,25 @@ function parseHeaders(headerInput: string | undefined): Record<string, string> {
 }
 
 function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
+  const projectOtlpUrl = resolveProjectOtlpMetricsUrl();
+  if (isDedicatedRuntime() && projectOtlpUrl) {
+    return {
+      url: projectOtlpUrl,
+      headers: parseHeaders(
+        readProjectEnv("OTEL_EXPORTER_OTLP_METRICS_HEADERS") ??
+          readProjectEnv("OTEL_EXPORTER_OTLP_HEADERS"),
+      ),
+    };
+  }
+
   const internalUrl = resolveInternalMetricsUrl();
   if (internalUrl) {
     return {
       url: internalUrl,
       headers: {
         Authorization: buildBasicAuth(
-          readEnv("VERYFRONT_API_INTERNAL_USER") ?? "",
-          readEnv("VERYFRONT_API_INTERNAL_PASS") ?? "",
+          readHostEnv("VERYFRONT_API_INTERNAL_USER") ?? "",
+          readHostEnv("VERYFRONT_API_INTERNAL_PASS") ?? "",
         ),
       },
     };
@@ -215,7 +247,10 @@ function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
   if (!otlpUrl) return null;
   return {
     url: otlpUrl,
-    headers: parseHeaders(readEnv("OTEL_EXPORTER_OTLP_HEADERS")),
+    headers: parseHeaders(
+      readEnv("OTEL_EXPORTER_OTLP_METRICS_HEADERS") ??
+        readEnv("OTEL_EXPORTER_OTLP_HEADERS"),
+    ),
   };
 }
 
@@ -334,8 +369,11 @@ function buildDirectOtlpBody(samples: DirectMetricSample[]) {
 }
 
 function logDirectExportFailure(error: unknown): void {
-  if (readEnv("VERYFRONT_DEBUG") !== "1") return;
-  console.warn("[metrics] direct OTLP export failed", error);
+  // debug level — suppressed at default INFO threshold, visible with --debug / LOG_LEVEL=DEBUG.
+  serverLogger.debug(
+    "metrics: direct OTLP export failed",
+    error instanceof Error ? error : { reason: String(error) },
+  );
 }
 
 async function flushDirectMetrics(): Promise<void> {

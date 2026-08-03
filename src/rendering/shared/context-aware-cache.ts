@@ -1,19 +1,24 @@
 import { rendererLogger } from "#veryfront/utils";
-import { markRequestProfilePhase } from "#veryfront/observability/request-profiler.ts";
-import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
+import { markRequestProfilePhase, metrics, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { RenderResult } from "../orchestrator/types.ts";
-import type { CacheStore } from "../cache/types.ts";
+import type { CachePayload, CacheStore } from "../cache/types.ts";
 import type { CacheLookupStatus } from "../cache/cache-coordinator.ts";
 import { MemoryCacheStore, type MemoryCacheStoreOptions } from "../cache/stores/index.ts";
 import type { RenderContext } from "../context/render-context.ts";
 import { createCacheKey } from "../context/render-context.ts";
+import {
+  bindHtmlNonceFromCache,
+  isHtmlNonceCacheCompatible,
+  sealHtmlNonceForCache,
+} from "#veryfront/html/nonce-injection.ts";
 
 const logger = rendererLogger.component("context-aware-cache");
 
 /** Default TTL for context-aware cache entries (5 minutes) */
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1_000;
+/** Default stale window for expired public render entries (30 minutes). */
+const DEFAULT_CACHE_STALE_MS = 30 * 60 * 1_000;
 /** Default max entries for the in-memory cache store */
 const DEFAULT_MAX_ENTRIES = 500;
 
@@ -21,14 +26,7 @@ export interface ContextAwareCacheOptions {
   store?: CacheStore;
   memory?: MemoryCacheStoreOptions;
   ttlMs?: number;
-}
-
-interface CachePayload {
-  result: RenderResult;
-  storedAt: number;
-  expiresAt?: number;
-  /** Optional serialized form of result.nodeMap for JSON-based stores */
-  nodeMapEntries?: Array<[number, unknown]>;
+  staleMs?: number;
 }
 
 export interface ContextAwareCacheLookupResult {
@@ -42,10 +40,12 @@ export interface ContextAwareCacheLookupResult {
 export class ContextAwareCacheCoordinator {
   private store: CacheStore;
   private ttlMs: number | undefined;
+  private staleMs: number;
   private readonly defaultTtlMs = DEFAULT_CACHE_TTL_MS;
 
   constructor(options: ContextAwareCacheOptions = {}) {
     this.ttlMs = options.ttlMs ?? this.defaultTtlMs;
+    this.staleMs = options.staleMs ?? DEFAULT_CACHE_STALE_MS;
     this.store = options.store ??
       new MemoryCacheStore({
         maxEntries: options.memory?.maxEntries ?? DEFAULT_MAX_ENTRIES,
@@ -59,6 +59,7 @@ export class ContextAwareCacheCoordinator {
     ctx: RenderContext,
     colorScheme?: "light" | "dark",
     cacheKeyOverride?: string,
+    nonce?: string,
   ): Promise<ContextAwareCacheLookupResult> {
     const cacheKey = this.getCacheKey(slug, ctx, colorScheme, cacheKeyOverride);
 
@@ -81,7 +82,46 @@ export class ContextAwareCacheCoordinator {
           return { cacheKey, hit: false, status: "miss", lookupDurationMs };
         }
 
+        if (!isHtmlNonceCacheCompatible(cached.htmlNoncePlaceholder, nonce)) {
+          await this.store.delete(cacheKey);
+          const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
+          recordCacheLookup("miss", lookupDurationMs);
+          logger.debug("Rejected unsealed nonce cache entry", {
+            slug,
+            cacheKey,
+            projectId: ctx.projectId,
+            environment: ctx.environment,
+            lookupDurationMs,
+          });
+          return { cacheKey, hit: false, status: "miss", lookupDurationMs };
+        }
+
         if (this.isExpired(cached)) {
+          if (this.isStaleUsable(cached, ctx)) {
+            const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
+            recordCacheLookup("stale", lookupDurationMs);
+            logger.debug("Cache stale hit", {
+              slug,
+              cacheKey,
+              projectId: ctx.projectId,
+              environment: ctx.environment,
+              lookupDurationMs,
+            });
+
+            return {
+              cachedResult: this.cloneResult(
+                cached.result,
+                cached.nodeMapEntries,
+                cached.htmlNoncePlaceholder,
+                nonce,
+              ),
+              cacheKey,
+              hit: true,
+              status: "stale",
+              lookupDurationMs,
+            };
+          }
+
           await this.store.delete(cacheKey);
 
           const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
@@ -107,7 +147,12 @@ export class ContextAwareCacheCoordinator {
         });
 
         return {
-          cachedResult: this.cloneResult(cached.result, cached.nodeMapEntries),
+          cachedResult: this.cloneResult(
+            cached.result,
+            cached.nodeMapEntries,
+            cached.htmlNoncePlaceholder,
+            nonce,
+          ),
           cacheKey,
           hit: true,
           status: "hit",
@@ -130,17 +175,27 @@ export class ContextAwareCacheCoordinator {
     ctx: RenderContext,
     colorScheme?: "light" | "dark",
     cacheKeyOverride?: string,
+    nonce?: string,
   ): Promise<void> {
     if (!result || result.stream) return;
 
     const cacheKey = this.getCacheKey(slug, ctx, colorScheme, cacheKeyOverride);
     const now = Date.now();
 
+    const cachedResult = this.cloneResult(result);
+    const sealedHtml = sealHtmlNonceForCache(result.html, nonce);
+    cachedResult.html = sealedHtml.html;
     await this.store.set(cacheKey, {
-      result: this.cloneResult(result),
+      result: cachedResult,
+      ...(sealedHtml.placeholder === undefined
+        ? {}
+        : { htmlNoncePlaceholder: sealedHtml.placeholder }),
       nodeMapEntries: result.nodeMap ? Array.from(result.nodeMap.entries()) : undefined,
       storedAt: now,
       expiresAt: this.ttlMs ? now + this.ttlMs : undefined,
+      staleUntil: this.shouldServeStale(ctx) && this.ttlMs && this.staleMs > 0
+        ? now + this.ttlMs + this.staleMs
+        : undefined,
     });
 
     logger.debug("Cached result", {
@@ -260,9 +315,21 @@ export class ContextAwareCacheCoordinator {
     return typeof entry.expiresAt === "number" && Date.now() > entry.expiresAt;
   }
 
+  private isStaleUsable(entry: CachePayload, ctx: RenderContext): boolean {
+    return this.shouldServeStale(ctx) &&
+      typeof entry.staleUntil === "number" &&
+      Date.now() <= entry.staleUntil;
+  }
+
+  private shouldServeStale(ctx: RenderContext): boolean {
+    return ctx.environment === "production" && ctx.mode === "production";
+  }
+
   private cloneResult(
     result: RenderResult,
     nodeMapEntries?: Array<[number, unknown]>,
+    htmlNoncePlaceholder?: string,
+    nonce?: string,
   ): RenderResult {
     let nodeMap: Map<number, unknown> | undefined;
     if (nodeMapEntries) {
@@ -279,7 +346,7 @@ export class ContextAwareCacheCoordinator {
     }
 
     const cloned: RenderResult = {
-      html: result.html,
+      html: bindHtmlNonceFromCache(result.html, htmlNoncePlaceholder, nonce),
       css: result.css,
       frontmatter: { ...result.frontmatter },
       headings: result.headings ? [...result.headings] : [],
@@ -303,5 +370,5 @@ function roundDurationMs(value: number): number {
 function recordCacheLookup(status: CacheLookupStatus, durationMs: number): void {
   markRequestProfilePhase("render.cache_lookup", durationMs);
   markRequestProfilePhase(`render.cache_${status}`);
-  metrics.recordCacheGet(status === "hit");
+  metrics.recordCacheGet(status === "hit" || status === "stale");
 }

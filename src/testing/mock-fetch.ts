@@ -1,4 +1,39 @@
+import { __runWithOutboundFetchTransportForTests } from "#veryfront/security/http/outbound-fetch.ts";
+
 type FetchMock = typeof globalThis.fetch | undefined;
+
+/** Standard request-init fields that tests may need to observe from a fetch mock. */
+export interface ObservedFetchRequestInit {
+  body?: BodyInit | null;
+  headers?: HeadersInit;
+  method?: string;
+  redirect?: RequestRedirect;
+  signal?: AbortSignal | null;
+}
+
+/**
+ * Read standard request-init fields without assuming that the ambient fetch
+ * implementation uses the DOM `RequestInit` type exclusively.
+ */
+export function observeFetchRequestInit(
+  init: Parameters<typeof globalThis.fetch>[1],
+): ObservedFetchRequestInit {
+  if (init === undefined) return {};
+
+  const headers = "headers" in init ? init.headers : undefined;
+  const method = "method" in init ? init.method : undefined;
+  const redirect = "redirect" in init ? init.redirect : undefined;
+  const signal = "signal" in init ? init.signal : undefined;
+  const body = "body" in init ? init.body : undefined;
+
+  return {
+    body: body as BodyInit | null | undefined,
+    headers: headers as HeadersInit | undefined,
+    method: typeof method === "string" ? method : undefined,
+    redirect: redirect as RequestRedirect | undefined,
+    signal: signal as AbortSignal | null | undefined,
+  };
+}
 
 const FETCH_MOCK_QUEUE_KEY = "__vfTestFetchMockQueue";
 
@@ -33,7 +68,16 @@ export async function withMockFetch<T>(
   });
 
   try {
-    return await fn();
+    if (typeof mockFetch !== "function") {
+      return await fn();
+    }
+    return await __runWithOutboundFetchTransportForTests(
+      {
+        fetch: mockFetch,
+        pinnedFetch: (url, _addresses, init) => mockFetch(url, init),
+      },
+      fn,
+    );
   } finally {
     Object.defineProperty(globalThis, "fetch", {
       value: originalFetch,

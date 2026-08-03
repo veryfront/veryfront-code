@@ -36,7 +36,7 @@
   ],
   "tools": [
     {
-      "id": "list_expenses",
+      "id": "moss__list_expenses",
       "name": "List Expenses",
       "description": "List expenses — card transactions, invoices, and reimbursements — with status, export status, and date filters; the basis for accounting exports",
       "requiresWrite": false,
@@ -112,7 +112,7 @@
       }
     },
     {
-      "id": "search_bank_transactions",
+      "id": "moss__search_bank_transactions",
       "name": "Search Bank Transactions",
       "description": "Search bank transactions of a Moss bank account within a booking-date window (read-only search query)",
       "requiresWrite": false,
@@ -137,7 +137,7 @@
       }
     },
     {
-      "id": "list_bank_accounts",
+      "id": "moss__list_bank_accounts",
       "name": "List Bank Accounts",
       "description": "List the company's bank accounts in Moss (use the IDs with Search Bank Transactions)",
       "requiresWrite": false,
@@ -147,7 +147,7 @@
       }
     },
     {
-      "id": "search_receipt_files",
+      "id": "moss__search_receipt_files",
       "name": "Search Receipt Files",
       "description": "Find receipt and invoice files attached to specific expenses (read-only search query); download via the returned file IDs",
       "requiresWrite": false,
@@ -168,7 +168,7 @@
       }
     },
     {
-      "id": "list_expense_accounts",
+      "id": "moss__list_expense_accounts",
       "name": "List Expense Accounts",
       "description": "List the chart of accounts used for ledger posting, for mapping expenses into your accounting system",
       "requiresWrite": false,
@@ -197,7 +197,7 @@
       }
     },
     {
-      "id": "list_suppliers",
+      "id": "moss__list_suppliers",
       "name": "List Suppliers",
       "description": "List supplier master data for spend-by-vendor analysis and accounting export enrichment",
       "requiresWrite": false,
@@ -236,7 +236,7 @@
       }
     },
     {
-      "id": "get_file_content",
+      "id": "moss__get_file_content",
       "name": "Get File Content",
       "description": "Download the binary content of a receipt or invoice file (application/octet-stream) using a file ID from Search Receipt Files",
       "requiresWrite": false,
@@ -254,7 +254,7 @@
       }
     },
     {
-      "id": "get_bank_account_balance",
+      "id": "moss__get_bank_account_balance",
       "name": "Get Bank Account Balance",
       "description": "Get the current balance of a Moss bank account for liquidity overviews",
       "requiresWrite": false,
@@ -272,7 +272,7 @@
       }
     },
     {
-      "id": "list_tax_rates",
+      "id": "moss__list_tax_rates",
       "name": "List Tax Rates",
       "description": "List VAT/tax rate master data for mapping expenses into the accounting system",
       "requiresWrite": false,

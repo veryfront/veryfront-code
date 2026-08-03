@@ -14,13 +14,18 @@ import {
   startTimer,
   timeAsync,
 } from "#veryfront/utils";
-import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
+import { metrics } from "#veryfront/observability";
+import type { RequestProfileRecord } from "#veryfront/observability";
 import {
   endRequestMetrics,
   startRequestMetrics,
 } from "#veryfront/platform/adapters/fs/veryfront/read-operations.ts";
 import { requestTracker } from "./request-tracker.ts";
 import { generateRequestId } from "#veryfront/utils/request-id.ts";
+import {
+  completeOnResponseBodySettlement,
+  isEventStreamResponse,
+} from "#veryfront/platform/compat/http/response-lifecycle.ts";
 
 interface RequestLifecycleContext {
   /** Request ID for tracking */
@@ -70,6 +75,7 @@ export function startRequestTracking(
   method: string,
   environment: string | undefined,
   releaseId: string | undefined,
+  productionRuntime = false,
 ): void {
   requestTracker.start(
     requestId,
@@ -78,6 +84,7 @@ export function startRequestTracking(
     method,
     environment,
     releaseId,
+    productionRuntime,
   );
 }
 
@@ -106,8 +113,40 @@ export function completeRequestTracking(
   requestId: string,
   status: number,
   isTimeout: boolean,
+  profile?: RequestProfileRecord | null,
 ): void {
-  requestTracker.complete(requestId, status, isTimeout);
+  requestTracker.complete(requestId, status, isTimeout, profile);
+}
+
+/**
+ * Keep streaming responses in the shutdown drain set until their body settles.
+ * Handler completion only means response headers are ready; an SSE body may
+ * continue producing events for several minutes after that point.
+ */
+export function completeRequestTrackingOnResponseEnd(
+  requestId: string,
+  response: Response,
+  isTimeout: boolean,
+  profile?: RequestProfileRecord | null,
+  handlerSettled?: Promise<void>,
+): Response {
+  if (isTimeout && handlerSettled) {
+    void handlerSettled.then(
+      () => completeRequestTracking(requestId, response.status, true, profile),
+      () => completeRequestTracking(requestId, response.status, true, profile),
+    );
+    return response;
+  }
+
+  if (!isEventStreamResponse(response)) {
+    completeRequestTracking(requestId, response.status, isTimeout, profile);
+    return response;
+  }
+
+  requestTracker.markLongLived(requestId);
+  return completeOnResponseBodySettlement(response, () => {
+    completeRequestTracking(requestId, response.status, isTimeout, profile);
+  });
 }
 
 /**

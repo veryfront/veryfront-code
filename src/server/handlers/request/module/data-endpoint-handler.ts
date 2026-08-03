@@ -4,6 +4,18 @@ import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { getRendererForProject } from "../../../shared/renderer-factory.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { serverLogger } from "#veryfront/utils";
+import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
+import {
+  applySnapshotResponseHeaders,
+  readSnapshotHeader,
+  resolveSnapshotForRequest,
+  snapshotConflictResponse,
+  stripSnapshotHeader,
+} from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
+import { resolveSSRControlOutcome } from "#veryfront/rendering/ssr-outcome.ts";
+import { shouldHideRouteInProduction } from "../route-visibility-policy.ts";
+
+const DATA_ENDPOINT_PREFIX = "/_veryfront/data/";
 
 export function handleDataEndpoint(
   req: Request,
@@ -17,22 +29,69 @@ export function handleDataEndpoint(
     "module.data.handle",
     async () => {
       try {
-        const rawSlug = pathname.replace("/_veryfront/data/", "").replace(/\.json$/, "");
+        // Anchored at the prefix rather than replacing its first occurrence,
+        // so a slug that repeats the namespace keeps its own path.
+        const rawSlug = pathname.slice(DATA_ENDPOINT_PREFIX.length).replace(/\.json$/, "");
         const encSlug = rawSlug === "index" ? "" : rawSlug;
+
+        // Mirrors the dot-segment rejection the SSR handler applies before
+        // rendering the same slug; this endpoint reaches renderPage too.
+        if (shouldHideRouteInProduction(ctx, encSlug)) {
+          serverLogger.warn("[data-endpoint] Dot path blocked in production", { pathname });
+          const builder = createResponseBuilder(ctx)
+            .withCORS(req, ctx.securityConfig?.cors)
+            .withSecurity(ctx.securityConfig ?? undefined, req);
+          applySnapshotResponseHeaders(builder.headers);
+          return respond(builder.json({ error: "Page not found", status: 404 }, 404));
+        }
+        const requestUrl = new URL(req.url);
+        const dependencySource = createHandlerDependencyPinningSource(ctx);
+        const resolution = await resolveSnapshotForRequest(
+          dependencySource,
+          readSnapshotHeader(req.headers),
+        );
+        if (resolution.kind === "conflict") {
+          return respond(
+            snapshotConflictResponse(createResponseBuilder(ctx), req, ctx.securityConfig),
+          );
+        }
+        const dependencySnapshot = resolution.snapshot;
+
+        // The transport token must participate in framework caches without
+        // leaking into application-visible request/query state.
+        const applicationUrl = new URL(requestUrl);
+        applicationUrl.pathname = encSlug ? `/${encSlug}` : "/";
+        const applicationHeaders = stripSnapshotHeader(req.headers);
+        const applicationRequest = new Request(applicationUrl, {
+          method: req.method,
+          headers: applicationHeaders,
+          signal: req.signal,
+        });
+
         const renderer = await getRendererForProject(ctx);
-        const result = await renderer.renderPage(encSlug);
+        const result = await renderer.renderPage(encSlug, {
+          request: applicationRequest,
+          url: applicationUrl,
+          dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+          dependencyPinningDependencies: dependencySnapshot.dependencies,
+          dependencyPinningSource: dependencySource,
+        });
 
         const data = {
           slug: encSlug,
           frontmatter: result.frontmatter,
           headings: result.headings,
           html: result.html,
+          ...(dependencySnapshot.cacheKey === "off"
+            ? {}
+            : { dependencyPinningCacheKey: dependencySnapshot.cacheKey }),
         };
 
         const body = JSON.stringify(data);
         const etag = computeEtag(body);
 
         const builder = createResponseBuilder(ctx).withCORS(req, ctx.securityConfig?.cors);
+        applySnapshotResponseHeaders(builder.headers, dependencySnapshot.cacheKey);
 
         if (hasMatchingEtag(req, etag)) {
           return respond(builder.notModified(etag));
@@ -47,10 +106,7 @@ export function handleDataEndpoint(
         );
       } catch (e) {
         const errorMessage = getErrorMessage(e);
-        const lower = errorMessage.toLowerCase();
-        const isNotFound = lower.includes("not found") ||
-          lower.includes("404") ||
-          (e instanceof Error && e.message.toLowerCase().includes("no page"));
+        const isNotFound = resolveSSRControlOutcome(e)?.kind === "not-found";
         const status = isNotFound ? 404 : 500;
 
         serverLogger.error("[data-endpoint] Failed to resolve data", {
@@ -59,15 +115,14 @@ export function handleDataEndpoint(
           status,
         });
 
+        const builder = createResponseBuilder(ctx)
+          .withCORS(req, ctx.securityConfig?.cors)
+          .withSecurity(ctx.securityConfig ?? undefined, req);
+        applySnapshotResponseHeaders(builder.headers);
         return respond(
-          ResponseBuilder.json(
+          builder.json(
             { error: isNotFound ? "Page not found" : "Internal server error", status },
-            req,
-            {
-              securityConfig: ctx.securityConfig,
-              corsConfig: ctx.securityConfig?.cors,
-              status,
-            },
+            status,
           ),
         );
       }

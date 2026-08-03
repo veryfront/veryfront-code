@@ -1,5 +1,5 @@
 import { computeHash, rendererLogger } from "#veryfront/utils";
-import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
+import { RENDER_ERROR } from "#veryfront/errors";
 import type { RenderMetadata } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { wrapInHTMLShell } from "#veryfront/html/html-shell-generator.ts";
@@ -12,6 +12,13 @@ import {
   MemoryCacheBackend,
 } from "#veryfront/cache/backend.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import {
+  createDependencyPinningSource,
+  type DependencyPinningSource,
+  getDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import { appendDependencyPinningKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 const logger = rendererLogger.component("snippet-renderer");
 
@@ -23,6 +30,12 @@ const SNIPPET_CACHE_CLEANUP_INTERVAL_MS = 60_000;
 export interface SnippetRenderOptions {
   mode: "development" | "production";
   projectDir: string;
+  adapter?: RuntimeAdapter;
+  isLocalProject?: boolean;
+  projectId?: string;
+  contentSourceId?: string;
+  /** Canonical request-scoped dependency source supplied by server handlers. */
+  dependencyPinningSource?: DependencyPinningSource;
   filePath?: string;
   nonce?: string;
   /** Base URL for module server (e.g., http://localhost:3002) */
@@ -38,6 +51,18 @@ export interface SnippetRenderOptions {
 export interface SnippetRenderResult {
   html: string;
   frontmatter: Record<string, unknown>;
+}
+
+export function buildSnippetModuleUrl(
+  moduleServerBase: string,
+  hash: string,
+  cacheBuster: number,
+  dependencyPinningCacheKey?: string,
+): string {
+  return appendDependencyPinningKey(
+    `${moduleServerBase}/_vf_modules/_snippets/${hash}.js?ssr=true&v=${cacheBuster}`,
+    dependencyPinningCacheKey,
+  );
 }
 
 interface SnippetCacheEntry {
@@ -171,9 +196,17 @@ export function clearSnippetCacheForProject(projectSlug: string): void {
 function getModuleServerBase(moduleServerUrl?: string): string {
   if (!moduleServerUrl) return "http://localhost:3002";
 
-  if (moduleServerUrl.startsWith("http://")) return moduleServerUrl;
-  if (moduleServerUrl.startsWith("https://")) return moduleServerUrl;
+  if (moduleServerUrl.startsWith("http://") || moduleServerUrl.startsWith("https://")) {
+    return moduleServerUrl;
+  }
 
+  // The provided URL is not an http(s) URL (e.g. a bare hostname, ws:// address,
+  // or typo). Falling back silently to localhost:3002 would mask the
+  // misconfiguration with a confusing connection error — warn explicitly instead.
+  logger.warn(
+    "[SnippetRenderer] moduleServerUrl has an unrecognised scheme, falling back to localhost:3002",
+    { moduleServerUrl },
+  );
   return "http://localhost:3002";
 }
 
@@ -200,6 +233,22 @@ export function renderSnippet(
         contentLength: mdxContent.length,
         filePath: options.filePath,
       });
+
+      const dependencySnapshot = await getDependencyPinningSnapshot(
+        options.dependencyPinningSource ??
+          createDependencyPinningSource({
+            projectDir: options.projectDir,
+            adapter: options.adapter,
+            isLocalProject: options.isLocalProject,
+            projectId: options.projectId,
+            projectSlug: options.projectSlug,
+            contentSourceId: options.contentSourceId,
+            config: options.config,
+          }),
+      );
+      if (dependencySnapshot.cacheKey === "on:unknown") {
+        throw new Error("Dependency pinning snapshot is unavailable: on:unknown");
+      }
 
       try {
         const { compileContent } = await import(
@@ -253,8 +302,12 @@ export function renderSnippet(
 
         const moduleServerBase = getModuleServerBase(options.moduleServerUrl);
         const cacheBuster = Date.now();
-        const snippetUrl =
-          `${moduleServerBase}/_vf_modules/_snippets/${hash}.js?ssr=true&v=${cacheBuster}`;
+        const snippetUrl = buildSnippetModuleUrl(
+          moduleServerBase,
+          hash,
+          cacheBuster,
+          dependencySnapshot.cacheKey,
+        );
 
         logger.debug("Loading snippet module", {
           snippetUrl,
@@ -300,10 +353,13 @@ export function renderSnippet(
           mode: options.mode,
           config: snippetConfig,
           projectDir: options.projectDir,
+          moduleServerOrigin: new URL(moduleServerBase).origin,
           nonce: options.nonce,
           studioEmbed: true,
           pagePath: `_snippets/${hash}`,
           pageId: options.pageId,
+          dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+          dependencyPinningDependencies: dependencySnapshot.dependencies,
         });
 
         return { html, frontmatter };

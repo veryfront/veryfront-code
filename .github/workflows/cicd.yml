@@ -4,6 +4,9 @@ on:
   workflow_dispatch:
   pull_request:
     branches: [main]
+  # Required for merge-queue entries: queued runs report checks via merge_group.
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
 
@@ -11,8 +14,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow, github.ref) || format('{0}-{1}-{2}', github.workflow, github.ref, github.sha) }}
+  # Only cancel superseded pull_request runs. Never cancel push runs on main:
+  # a push run can be publishing a stable release (npm publish, git tag, GitHub
+  # release, downstream deploy dispatch), and cancelling it mid-publish leaves a
+  # partially released version. Push runs also need unique groups because
+  # GitHub keeps at most one pending run per concurrency group; a later main
+  # push can otherwise replace an earlier queued release run even when
+  # cancel-in-progress is false. See veryfront-studio#5544.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # ============================================
@@ -26,13 +36,13 @@ jobs:
       matrix:
         check: [format, lint, typecheck]
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-deno
       - name: Run ${{ matrix.check }}
         run: |
           case "${{ matrix.check }}" in
             format) deno fmt --check ;;
-            lint) deno task lint && deno task lint:core-deps && deno task lint:dependency-boundaries && deno task lint:extension-contracts && deno task lint:extension-capabilities && deno task lint:ban-test-only && deno task lint:sanitizer-baseline && deno task lint:skipped-tests ;;
+            lint) deno task lint && deno task lint:core-deps && deno task lint:dependency-boundaries && deno task lint:module-boundaries && deno task lint:extension-contracts && deno task lint:extension-capabilities && deno task lint:ban-test-only && deno task lint:sanitizer-baseline && deno task lint:skipped-tests && deno task lint:chat-ratchets && deno task lint:esm-sh-codemod && deno task lint:test-typecheck && deno task storybook:check ;;
             typecheck) deno task typecheck ;;
           esac
 
@@ -44,27 +54,25 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        suite: [unit, integration]
+    name: tests (integration)
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-deno
         with:
           warm-cache: "true"
           warm-redis-cache: "true"
-      - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
-          timeout_minutes: ${{ matrix.suite == 'integration' && 10 || 5 }}
+          node-version: "24"
+          package-manager-cache: false
+      - name: Run Node cache-link compatibility tests
+        run: node ./tests/node/run-tests.mjs 'src/utils/cache-dir.test.ts'
+      - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          timeout_minutes: 10
           max_attempts: 3
           retry_wait_seconds: 10
-          command: |
-            if [ "${{ matrix.suite }}" = "integration" ]; then
-              VF_DISABLE_LRU_INTERVAL=1 deno task test:integration --no-lock
-            else
-              deno task test:unit --no-lock
-            fi
+          command: VF_DISABLE_LRU_INTERVAL=1 deno task test:integration --no-lock
 
   coverage-shards:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -76,7 +84,7 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-deno
         with:
           warm-cache: "true"
@@ -89,13 +97,29 @@ jobs:
           echo "duration=$(($(date +%s) - START))s" >> "$GITHUB_OUTPUT"
       - name: Upload unit coverage lcov
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-shard-${{ matrix.shard }}
           path: coverage-shard-${{ matrix.shard }}/lcov.info
           retention-days: 1
       - name: Add coverage shard summary
         run: echo "### Coverage shard ${{ matrix.shard }}/8 completed in ${{ steps.coverage.outputs.duration }}" >> "$GITHUB_STEP_SUMMARY"
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    name: tests (unit)
+    needs: [coverage-shards]
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    steps:
+      - name: Require all unit test shards
+        env:
+          COVERAGE_SHARDS_RESULT: ${{ needs.coverage-shards.result }}
+        run: |
+          if [ "$COVERAGE_SHARDS_RESULT" != "success" ]; then
+            echo "::error::Unit test shards finished with $COVERAGE_SHARDS_RESULT"
+            exit 1
+          fi
 
   coverage:
     runs-on: ubuntu-latest
@@ -112,10 +136,10 @@ jobs:
             echo "::error::Coverage shards finished with $COVERAGE_SHARDS_RESULT"
             exit 1
           fi
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-deno
       - name: Download unit coverage lcov files
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: coverage-profiles
           pattern: coverage-shard-*
@@ -134,7 +158,7 @@ jobs:
     timeout-minutes: 25
     name: tests (rsc browser e2e)
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-deno
         with:
           warm-cache: "true"
@@ -164,7 +188,7 @@ jobs:
 
           for attempt in 1 2 3; do
             wait_for_apt_locks
-            deno run -A npm:playwright install --with-deps chromium && exit 0
+            timeout 10m deno run -A npm:playwright install --with-deps chromium && exit 0
             status=$?
 
             if [ "$attempt" -eq 3 ]; then
@@ -176,7 +200,7 @@ jobs:
             sudo rm -rf /var/lib/apt/lists/* || true
             sleep $((attempt * 20))
           done
-      - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
+      - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
         with:
           timeout_minutes: 10
           max_attempts: 2
@@ -193,7 +217,7 @@ jobs:
     timeout-minutes: 60
     name: tests (binary e2e)
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-deno
         with:
           warm-cache: "true"
@@ -223,7 +247,7 @@ jobs:
 
           for attempt in 1 2 3; do
             wait_for_apt_locks
-            deno run -A npm:playwright install --with-deps chromium && exit 0
+            timeout 10m deno run -A npm:playwright install --with-deps chromium && exit 0
             status=$?
 
             if [ "$attempt" -eq 3 ]; then
@@ -235,7 +259,7 @@ jobs:
             sudo rm -rf /var/lib/apt/lists/* || true
             sleep $((attempt * 20))
           done
-      - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
+      - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
         with:
           timeout_minutes: 30
           max_attempts: 2
@@ -248,26 +272,45 @@ jobs:
   # ============================================
 
   # Clean-room install of the generated npm packages under Node: bare-install
-  # CLI startup, optional-peer metadata, missing-extension error quality, and
-  # extension package loading (see scripts/test/npm-install-smoke.sh).
+  # CLI startup, optional-peer metadata, extension package loading, and a real
+  # starter dev-server render (see scripts/test/npm-install-smoke.sh).
   tests-npm-install-smoke:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     name: tests (npm install smoke)
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-deno
         with:
           warm-cache: "true"
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "24"
           package-manager-cache: false
-      - name: Build npm packages
-        run: deno task build:npm
+      - name: Install TypeScript toolchain
+        run: npm --prefix storybook ci --ignore-scripts
+      - name: Check published package types
+        run: deno task typecheck:consumer
       - name: Clean-room install/import smoke
         run: bash scripts/test/npm-install-smoke.sh
+
+  tests-sentry-runtime-packages:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    name: tests (sentry runtime packages)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-deno
+        with:
+          warm-cache: "true"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Check Sentry runtime package variants
+        run: deno task test:sentry-runtime-packages
 
   # ============================================
   # CI: Split Mode Test
@@ -280,7 +323,7 @@ jobs:
     name: tests (split mode)
     continue-on-error: true
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-deno
 
       - name: Compile binary
@@ -336,16 +379,30 @@ jobs:
     outputs:
       version: ${{ steps.check.outputs.version }}
       is_stable: ${{ steps.check.outputs.is_stable }}
+      stable_release_requested: ${{ steps.check.outputs.stable_release_requested }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - name: Detect release type
         id: check
         run: |
           VERSION=$(jq -r '.version' deno.json)
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+          STABLE_RELEASE_REQUESTED=$(bash scripts/ci/stable-release-requested.sh \
+            "${{ github.event_name }}" \
+            "$VERSION" \
+            "${{ github.event.before }}")
+          echo "stable_release_requested=${STABLE_RELEASE_REQUESTED}" >> $GITHUB_OUTPUT
+
           if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "is_stable=true" >> $GITHUB_OUTPUT
-            echo "::notice::Stable version detected: $VERSION → will publish as latest"
+            if [[ "$STABLE_RELEASE_REQUESTED" == "true" ]]; then
+              echo "::notice::Stable release requested: $VERSION → will publish as latest"
+            else
+              echo "::notice::Stable version unchanged: $VERSION → skipping publication"
+            fi
           else
             echo "is_stable=false" >> $GITHUB_OUTPUT
             echo "::notice::Pre-release version detected: $VERSION → will publish as rc"
@@ -356,42 +413,105 @@ jobs:
   # Version comes directly from deno.json
   # ============================================
 
+  tests-proxy-binary:
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-deno
+      - run: deno task build:prepare
+      - name: Verify proxy dependency lock is current
+        run: |
+          deno task build:proxy-lock
+          git diff --exit-code -- scripts/build/proxy-deno.lock
+      - name: Compile proxy binary
+        run: |
+          deno run -A scripts/build/compile-binary.ts \
+            --entrypoint cli/proxy-main.ts \
+            --profile proxy \
+            --target x86_64-unknown-linux-gnu \
+            --output veryfront-proxy-linux-x64
+      - name: Smoke test proxy binary
+        run: bash scripts/build/smoke-proxy-binary.sh ./veryfront-proxy-linux-x64
+      - name: Enforce proxy memory limit
+        run: bash scripts/build/smoke-proxy-memory.sh ./veryfront-proxy-linux-x64
+
   build-binaries:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' }}
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ contains(matrix.os, 'windows') }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: macos-latest
             target: aarch64-apple-darwin
             name: veryfront-macos-arm64
+            entrypoint: cli/main.ts
+            profile: full
           - os: macos-latest
             target: x86_64-apple-darwin
             name: veryfront-macos-x64
+            entrypoint: cli/main.ts
+            profile: full
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             name: veryfront-linux-x64
+            entrypoint: cli/main.ts
+            profile: full
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             name: veryfront-linux-arm64
+            entrypoint: cli/main.ts
+            profile: full
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: veryfront-proxy-linux-x64
+            entrypoint: cli/proxy-main.ts
+            profile: proxy
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            name: veryfront-proxy-linux-arm64
+            entrypoint: cli/proxy-main.ts
+            profile: proxy
           - os: windows-2022
             target: x86_64-pc-windows-msvc
             name: veryfront-windows-x64.exe
+            entrypoint: cli/main.ts
+            profile: full
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-deno
 
       - run: deno task build:prepare
+
+      - name: Verify proxy dependency lock is current
+        if: matrix.profile == 'proxy'
+        shell: bash
+        run: |
+          deno task build:proxy-lock
+          git diff --exit-code -- scripts/build/proxy-deno.lock
 
       - name: Compile binary
         shell: bash
         run: |
           deno run -A scripts/build/compile-binary.ts \
+            --entrypoint ${{ matrix.entrypoint }} \
+            --profile ${{ matrix.profile }} \
             --target ${{ matrix.target }} \
             --output ${{ matrix.name }}
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      - name: Smoke test proxy binary
+        if: matrix.name == 'veryfront-proxy-linux-x64'
+        shell: bash
+        run: bash scripts/build/smoke-proxy-binary.sh ./${{ matrix.name }}
+
+      - name: Enforce proxy memory limit
+        if: matrix.name == 'veryfront-proxy-linux-x64'
+        shell: bash
+        run: bash scripts/build/smoke-proxy-memory.sh ./veryfront-proxy-linux-x64
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.name }}
           path: ${{ matrix.name }}
@@ -405,18 +525,27 @@ jobs:
 
   prerelease:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'false' }}
-    needs: [ci, tests, coverage, tests-binary-e2e, tests-npm-install-smoke, build-binaries, version-check]
+    needs: [
+      ci,
+      tests,
+      coverage,
+      tests-binary-e2e,
+      tests-npm-install-smoke,
+      tests-sentry-runtime-packages,
+      build-binaries,
+      version-check,
+    ]
     runs-on: ubuntu-latest
     environment: production
     permissions:
       contents: write
       id-token: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: ./.github/actions/setup-deno
 
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
@@ -437,18 +566,20 @@ jobs:
           deno task build:npm
           scripts/ci/publish-npm-packages.sh rc-publish
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: binaries
 
       - name: Generate SBOM
         env:
           VERSION: ${{ steps.version.outputs.version }}
-        run: deno task sbom:all --output-dir "dist/sbom-${VERSION}"
+        run: |
+          deno task sbom:all --output-dir "dist/sbom-${VERSION}"
+          deno task sbom --lock scripts/build/proxy-deno.lock --output "dist/sbom-${VERSION}/proxy.json"
 
       - name: Create release GitHub App token
         id: release-app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}
@@ -493,7 +624,7 @@ jobs:
             $SBOMS
 
       - name: Trigger server deploy
-        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4.0.1
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
           token: ${{ steps.release-app-token.outputs.token }}
           repository: veryfront/veryfront-server
@@ -501,7 +632,7 @@ jobs:
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
 
       - name: Trigger job-runner deploy
-        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4.0.1
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
           token: ${{ steps.release-app-token.outputs.token }}
           repository: veryfront/veryfront-job-runner
@@ -509,7 +640,7 @@ jobs:
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
 
       - name: Trigger sandbox deploy
-        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4.0.1
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
           token: ${{ steps.release-app-token.outputs.token }}
           repository: veryfront/veryfront-sandbox
@@ -518,20 +649,29 @@ jobs:
 
   # ============================================
   # CD: Stable Release (clean semver only)
-  # Runs when deno.json version is X.Y.Z (no suffix)
+  # Runs when deno.json changes to X.Y.Z (no suffix), or on manual dispatch
   # Publishes with --tag latest, creates git tag, updates Homebrew
   # ============================================
 
   release:
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'true' }}
-    needs: [ci, tests, coverage, tests-binary-e2e, tests-npm-install-smoke, build-binaries, version-check]
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'true' && needs.version-check.outputs.stable_release_requested == 'true' }}
+    needs: [
+      ci,
+      tests,
+      coverage,
+      tests-binary-e2e,
+      tests-npm-install-smoke,
+      tests-sentry-runtime-packages,
+      build-binaries,
+      version-check,
+    ]
     runs-on: ubuntu-latest
     environment: production
     permissions:
       contents: write
       id-token: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Read version
         id: version
@@ -541,7 +681,7 @@ jobs:
 
       - name: Create release GitHub App token
         id: release-app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}
@@ -576,7 +716,7 @@ jobs:
 
       - uses: ./.github/actions/setup-deno
 
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
@@ -589,14 +729,16 @@ jobs:
           deno task build:npm
           scripts/ci/publish-npm-packages.sh release-publish
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: binaries
 
       - name: Generate SBOM
         env:
           VERSION: ${{ steps.version.outputs.version }}
-        run: deno task sbom:all --output-dir "dist/sbom-${VERSION}"
+        run: |
+          deno task sbom:all --output-dir "dist/sbom-${VERSION}"
+          deno task sbom --lock scripts/build/proxy-deno.lock --output "dist/sbom-${VERSION}/proxy.json"
 
       - name: Create git tag
         env:
@@ -658,7 +800,7 @@ jobs:
             --notes "Binaries available at: https://github.com/veryfront/veryfront/releases/tag/v${VERSION}"
 
       - name: Trigger server deploy
-        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4.0.1
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
           token: ${{ steps.release-app-token.outputs.token }}
           repository: veryfront/veryfront-server
@@ -666,7 +808,7 @@ jobs:
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
 
       - name: Trigger job-runner deploy
-        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4.0.1
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
           token: ${{ steps.release-app-token.outputs.token }}
           repository: veryfront/veryfront-job-runner
@@ -674,7 +816,7 @@ jobs:
           client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
 
       - name: Trigger sandbox deploy
-        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4.0.1
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
           token: ${{ steps.release-app-token.outputs.token }}
           repository: veryfront/veryfront-sandbox
@@ -691,11 +833,11 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Create Homebrew tap GitHub App token
         id: homebrew-app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.HOMEBREW_TAP_APP_CLIENT_ID }}
           private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
@@ -705,7 +847,7 @@ jobs:
           permission-pull-requests: write
 
       - name: Update Homebrew tap
-        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
         env:
           HOMEBREW_TAP_TOKEN: ${{ steps.homebrew-app-token.outputs.token }}
         with:
@@ -713,6 +855,8 @@ jobs:
           max_attempts: 3
           retry_wait_seconds: 10
           command: |
+            set -euo pipefail
+
             VERSION="${{ needs.version-check.outputs.version }}"
 
             # Download binaries and calculate checksums
@@ -746,47 +890,52 @@ jobs:
             git commit -m "Update veryfront to v${VERSION}"
             git push -u origin "${BRANCH}" || git push -u origin "${BRANCH}" --force-with-lease
 
-            PR_NUMBER=$(GH_TOKEN="${HOMEBREW_TAP_TOKEN}" gh api \
+            export GH_TOKEN="${HOMEBREW_TAP_TOKEN}"
+            PR_NUMBER=$(gh api repos/veryfront/homebrew-tap/pulls \
               --method GET \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "/repos/veryfront/homebrew-tap/pulls?state=open&head=veryfront:${BRANCH}&base=main&per_page=1" \
+              -f state=open \
+              -f head="veryfront:${BRANCH}" \
+              -f base=main \
               --jq '.[0].number // empty')
 
             if [ -z "${PR_NUMBER}" ]; then
-              CREATE_PR_OUTPUT=$(GH_TOKEN="${HOMEBREW_TAP_TOKEN}" gh api \
-                --method POST \
-                -H "X-GitHub-Api-Version: 2022-11-28" \
-                "/repos/veryfront/homebrew-tap/pulls" \
-                -f title="Update veryfront to v${VERSION}" \
-                -f base="main" \
-                -f head="${BRANCH}" \
-                -f body="Automated update from CI - veryfront v${VERSION}" \
-                --jq '.number' 2>&1) || {
-                  if echo "${CREATE_PR_OUTPUT}" | grep -q "Resource not accessible by personal access token"; then
+              CREATE_PR_OUTPUT=$(gh pr create \
+                --repo veryfront/homebrew-tap \
+                --title "Update veryfront to v${VERSION}" \
+                --base main \
+                --head "${BRANCH}" \
+                --body "Automated update from CI - veryfront v${VERSION}" 2>&1) || {
+                  if echo "${CREATE_PR_OUTPUT}" | grep -Eq "Resource not accessible by (integration|personal access token)"; then
                     echo "::error::Homebrew tap update requires a GitHub App token with Pull requests: write and Contents: write on veryfront/homebrew-tap."
                   fi
                   echo "${CREATE_PR_OUTPUT}"
                   exit 1
                 }
-              PR_NUMBER="${CREATE_PR_OUTPUT}"
+
+              PR_URL=$(printf '%s\n' "${CREATE_PR_OUTPUT}" | tail -n 1)
+              PR_NUMBER="${PR_URL##*/}"
+              if ! [[ "${PR_NUMBER}" =~ ^[0-9]+$ ]]; then
+                echo "::error::Created Homebrew tap PR but could not read its number."
+                echo "${CREATE_PR_OUTPUT}"
+                exit 1
+              fi
             fi
 
             # GitHub can report mergeability as unknown immediately after PR creation or a force-push.
             MERGEABLE=""
             MERGEABLE_STATE=""
             for attempt in {1..24}; do
-              PR_JSON=$(GH_TOKEN="${HOMEBREW_TAP_TOKEN}" gh api \
-                --method GET \
-                -H "X-GitHub-Api-Version: 2022-11-28" \
-                "/repos/veryfront/homebrew-tap/pulls/${PR_NUMBER}")
+              PR_JSON=$(gh pr view "${PR_NUMBER}" \
+                --repo veryfront/homebrew-tap \
+                --json mergeable,mergeStateStatus)
               MERGEABLE=$(echo "${PR_JSON}" | jq -r '.mergeable')
-              MERGEABLE_STATE=$(echo "${PR_JSON}" | jq -r '.mergeable_state')
+              MERGEABLE_STATE=$(echo "${PR_JSON}" | jq -r '.mergeStateStatus')
 
-              if [ "${MERGEABLE}" = "true" ] && [ "${MERGEABLE_STATE}" = "clean" ]; then
+              if [ "${MERGEABLE}" = "MERGEABLE" ] && [ "${MERGEABLE_STATE}" = "CLEAN" ]; then
                 break
               fi
 
-              if [ "${MERGEABLE}" = "false" ]; then
+              if [ "${MERGEABLE}" = "CONFLICTING" ]; then
                 echo "::error::Homebrew tap PR #${PR_NUMBER} is not mergeable (state=${MERGEABLE_STATE})."
                 exit 1
               fi
@@ -794,13 +943,11 @@ jobs:
               sleep 5
             done
 
-            if [ "${MERGEABLE}" != "true" ] || [ "${MERGEABLE_STATE}" != "clean" ]; then
+            if [ "${MERGEABLE}" != "MERGEABLE" ] || [ "${MERGEABLE_STATE}" != "CLEAN" ]; then
               echo "::error::Timed out waiting for Homebrew tap PR #${PR_NUMBER} to become mergeable (mergeable=${MERGEABLE}, state=${MERGEABLE_STATE})."
               exit 1
             fi
 
-            GH_TOKEN="${HOMEBREW_TAP_TOKEN}" gh api \
-              --method PUT \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "/repos/veryfront/homebrew-tap/pulls/${PR_NUMBER}/merge" \
-              -f merge_method="merge"
+            gh pr merge "${PR_NUMBER}" \
+              --repo veryfront/homebrew-tap \
+              --merge

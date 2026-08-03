@@ -13,8 +13,34 @@ import {
   PRIORITY_MEDIUM_DEV_FILES,
 } from "#veryfront/utils/constants/index.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import {
+  type DependencyPinningSnapshot,
+  type DependencyPinningSourceInput,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
+import {
+  readSnapshotQuery,
+  resolveSnapshotForRequest,
+  snapshotConflictResponse,
+} from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
+import {
+  createLocalControlAccessDeniedResponse,
+  isTrustedLocalControlRequest,
+} from "#veryfront/security/http/local-control-request.ts";
+
+type DevFileBundler = (
+  absPath: string,
+  ctx: HandlerContext,
+  dependencySnapshot?: DependencyPinningSnapshot,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
+) => Promise<string>;
 
 export class DevFileHandler extends BaseHandler {
+  constructor(private readonly bundleFile: DevFileBundler = bundleDevFile) {
+    super();
+  }
+
   metadata: HandlerMetadata = {
     name: "DevFileHandler",
     priority: PRIORITY_MEDIUM_DEV_FILES as HandlerPriority,
@@ -31,6 +57,11 @@ export class DevFileHandler extends BaseHandler {
 
     if (req.method !== "GET" || !pathname.startsWith("/_veryfront/fs/")) {
       return this.continue();
+    }
+    if (!isTrustedLocalControlRequest(req)) {
+      return this.respond(
+        createLocalControlAccessDeniedResponse(req, "Development file request rejected"),
+      );
     }
 
     const fsAdapter = ctx.adapter.fs;
@@ -55,16 +86,39 @@ export class DevFileHandler extends BaseHandler {
     ctx: HandlerContext,
   ): Promise<HandlerResult> {
     const encoded = pathname.slice("/_veryfront/fs/".length).replace(/\.js$/, "");
-    const absPath = await validateDevFilePath(encoded, ctx);
+    const validation = await validateDevFilePath(encoded, ctx);
 
-    if (absPath.startsWith("Error:")) {
-      const message = absPath.slice("Error: ".length);
-      this.logDebug("dev fs validation failed", { message }, ctx);
-      return this.respond(this.createErrorModule(message, HTTP_NOT_FOUND));
+    if (validation.kind === "rejected") {
+      this.logDebug("dev fs validation failed", { message: validation.message }, ctx);
+      return this.respond(this.createErrorModule(validation.message, HTTP_NOT_FOUND));
     }
+    const absPath = validation.path;
 
     try {
-      const code = await bundleDevFile(absPath, ctx);
+      const requestUrl = new URL(req.url);
+      const dependencyPinningSource = createHandlerDependencyPinningSource(ctx);
+      const resolution = await resolveSnapshotForRequest(
+        dependencyPinningSource,
+        readSnapshotQuery(requestUrl),
+      );
+      if (resolution.kind === "conflict") {
+        return this.respond(
+          snapshotConflictResponse(
+            this.createResponseBuilder(ctx),
+            req,
+            ctx.securityConfig,
+          ),
+        );
+      }
+      const dependencySnapshot = resolution.snapshot;
+
+      const code = await this.bundleFile(
+        absPath,
+        ctx,
+        dependencySnapshot,
+        dependencyPinningSource,
+        requestUrl.origin,
+      );
       const response = this.createResponseBuilder(ctx)
         .withCORS(req, ctx.securityConfig?.cors)
         .withSecurity(ctx.securityConfig ?? undefined, req)
@@ -74,7 +128,7 @@ export class DevFileHandler extends BaseHandler {
       return this.respond(response);
     } catch (error) {
       const reason = this.getErrorMessage(error);
-      this.logDebug("esbuild failed for dev fs", { path: absPath, reason }, ctx);
+      this.logDebug("dev fs request failed", { path: absPath, reason }, ctx);
       return this.respond(
         this.createErrorModule(
           `Build error: ${reason}`,
@@ -87,7 +141,10 @@ export class DevFileHandler extends BaseHandler {
   private createErrorModule(message: string, status: number): Response {
     return new Response(`export default null; // ${message}`, {
       status,
-      headers: { "content-type": "application/javascript" },
+      headers: {
+        "cache-control": "no-store",
+        "content-type": "application/javascript",
+      },
     });
   }
 }

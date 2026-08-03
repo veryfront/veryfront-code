@@ -5,7 +5,7 @@
 
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import { CheckCircleIcon, SparklesIcon, XCircleIcon } from "../../icons/index.ts";
+import { CheckCircleIcon, SparklesIcon, XCircleIcon } from "../../../ui/icons/index.ts";
 import type { ChatDynamicToolPart, ChatToolPart } from "#veryfront/agent/react";
 
 /** Props accepted by skill badge. */

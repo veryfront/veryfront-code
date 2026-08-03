@@ -4,8 +4,16 @@
  * @module server/project-env/fetcher
  */
 
-import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
-import { NETWORK_ERROR } from "#veryfront/errors";
+import { encodeBase64, getBaseLogger } from "#veryfront/utils";
+import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
+import {
+  AUTHENTICATION_REQUIRED,
+  isVeryfrontError,
+  NETWORK_ERROR,
+  PERMISSION_DENIED,
+} from "#veryfront/errors";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { createProjectEnvSnapshot } from "./snapshot.ts";
 
 const baseLogger = getBaseLogger("PROJECT-ENV");
 
@@ -13,11 +21,173 @@ const logger = baseLogger.component("project-env");
 
 /** Max env vars per request. API enforces a hard cap of 100. */
 const ENV_VARS_FETCH_LIMIT = 100;
+const MASKED_ENV_VALUE = "********";
+/** Hard ceiling for the complete JSON envelope returned by the env API. */
+export const PROJECT_ENV_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
+const UTF8_ENCODER = new TextEncoder();
+
+function discardResponseBody(response: Response): void {
+  try {
+    void response.body?.cancel().catch(() => {});
+  } catch {
+    // Best-effort cleanup; admission has already failed closed.
+  }
+}
+
+function parseDeclaredContentLength(response: Response): number | undefined {
+  const raw = response.headers.get("content-length");
+  if (raw === null || !/^(0|[1-9]\d*)$/.test(raw)) return undefined;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) ? value : undefined;
+}
+
+function invalidEnvironmentResponse(detail: string, cause?: unknown): Error {
+  return NETWORK_ERROR.create({ detail, cause });
+}
+
+async function readBoundedEnvironmentResponse(
+  response: Response,
+  signal?: AbortSignal,
+): Promise<string> {
+  const declaredLength = parseDeclaredContentLength(response);
+  if (declaredLength !== undefined && declaredLength > PROJECT_ENV_RESPONSE_MAX_BYTES) {
+    discardResponseBody(response);
+    throw invalidEnvironmentResponse("Project environment response exceeded its size limit");
+  }
+
+  const { text, truncated } = await readResponseTextPrefix(
+    response,
+    PROJECT_ENV_RESPONSE_MAX_BYTES + 1,
+    signal,
+    { fatalUtf8: true },
+  );
+  if (
+    truncated || UTF8_ENCODER.encode(text).byteLength > PROJECT_ENV_RESPONSE_MAX_BYTES
+  ) {
+    throw invalidEnvironmentResponse("Project environment response exceeded its size limit");
+  }
+  return text;
+}
+
+function parseEnvironmentResponse(text: string): Readonly<Record<string, string>> {
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch (cause) {
+    throw invalidEnvironmentResponse("Project environment response was not valid JSON", cause);
+  }
+
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    throw invalidEnvironmentResponse("Project environment response must be an object");
+  }
+  const data = (body as { data?: unknown }).data;
+  if (!Array.isArray(data)) {
+    throw invalidEnvironmentResponse("Project environment response must contain a data array");
+  }
+  if (data.length > ENV_VARS_FETCH_LIMIT) {
+    throw invalidEnvironmentResponse("Project environment response contained too many entries");
+  }
+
+  const result = Object.create(null) as Record<string, string>;
+  const keys = new Set<string>();
+  for (const entry of data) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      throw invalidEnvironmentResponse("Project environment response contained an invalid entry");
+    }
+    const key = (entry as { key?: unknown }).key;
+    const value = (entry as { value?: unknown }).value;
+    if (typeof key !== "string" || typeof value !== "string") {
+      throw invalidEnvironmentResponse(
+        "Project environment response entries must contain string keys and values",
+      );
+    }
+    if (keys.has(key)) {
+      throw invalidEnvironmentResponse("Project environment response contained a duplicate key");
+    }
+    keys.add(key);
+    if (value === MASKED_ENV_VALUE) {
+      throw invalidEnvironmentResponse("Refusing masked environment variable response");
+    }
+    result[key] = value;
+  }
+
+  try {
+    return createProjectEnvSnapshot(result);
+  } catch (cause) {
+    throw invalidEnvironmentResponse("Project environment response violated runtime limits", cause);
+  }
+}
+
+function getInternalAuthorization(): string | undefined {
+  const username = getHostEnv("VERYFRONT_API_INTERNAL_USER");
+  const password = getHostEnv("VERYFRONT_API_INTERNAL_PASS");
+  if (!username || !password) return undefined;
+  return `Basic ${encodeBase64(`${username}:${password}`)}`;
+}
+
+async function fetchEnvironmentVariables(
+  url: string,
+  authorization: string,
+  projectSlug: string,
+  environmentId: string,
+  signal?: AbortSignal,
+  headers: HeadersInit = {},
+): Promise<Response> {
+  try {
+    return await fetch(url, {
+      headers: {
+        Authorization: authorization,
+        Accept: "application/json",
+        ...headers,
+      },
+      redirect: "error",
+      signal,
+    });
+  } catch (error) {
+    logger.error("Env var fetch network error", {
+      projectSlug,
+      environmentId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error
+        ? signal.reason
+        : new DOMException("Project environment request was cancelled", "AbortError");
+    }
+    if (isVeryfrontError(error)) throw error;
+    throw NETWORK_ERROR.create({
+      detail: "Project environment request failed",
+      cause: error,
+    });
+  }
+}
+
+function projectAuthorizationError(status: number): Error {
+  if (status === 401) {
+    return AUTHENTICATION_REQUIRED.create({
+      detail: "Project credential was rejected",
+    });
+  }
+  if (status === 403 || status === 404) {
+    return PERMISSION_DENIED.create({
+      detail: "Project credential is not authorized for the requested environment",
+    });
+  }
+  return NETWORK_ERROR.create({
+    detail: "Project environment authorization request failed",
+  });
+}
 
 /**
  * Fetch environment variables for a project from the Veryfront API.
  *
- * Calls: GET {apiBaseUrl}/projects/{projectSlug}/environment-variables?environment_id={environmentId}&limit=100
+ * The caller's project credential is always checked against the project-scoped
+ * management endpoint before host-level internal credentials may retrieve secret
+ * values. This prevents a tenant-controlled environment ID from turning the
+ * runtime's internal credentials into a cross-project confused deputy.
+ *
+ * Deployments that configure internal credentials must expose the internal
+ * endpoint. There is intentionally no fallback after that privileged path fails.
  * Response: { data: [{ key: string, value: string }] }
  */
 export async function fetchProjectEnvVars(
@@ -25,41 +195,64 @@ export async function fetchProjectEnvVars(
   projectSlug: string,
   environmentId: string,
   token: string,
+  signal?: AbortSignal,
 ): Promise<Record<string, string>> {
-  const url = `${apiBaseUrl}/projects/${
+  const managementUrl = `${apiBaseUrl}/projects/${
     encodeURIComponent(projectSlug)
   }/environment-variables?environment_id=${
     encodeURIComponent(environmentId)
   }&limit=${ENV_VARS_FETCH_LIMIT}`;
+  const internalUrl = `${apiBaseUrl}/internal/project-environment-variables?environment_id=${
+    encodeURIComponent(environmentId)
+  }&project_slug=${encodeURIComponent(projectSlug)}`;
+
+  let response = await fetchEnvironmentVariables(
+    managementUrl,
+    `Bearer ${token}`,
+    projectSlug,
+    environmentId,
+    signal,
+  );
+
+  if (!response.ok) {
+    discardResponseBody(response);
+    logger.warn("Project credential cannot access requested environment", {
+      projectSlug,
+      environmentId,
+      status: response.status,
+    });
+    throw projectAuthorizationError(response.status);
+  }
+
+  // Do not even materialize the host credential until the tenant credential
+  // has proved access to this canonical project/environment pair.
+  const internalAuthorization = getInternalAuthorization();
+  if (internalAuthorization) {
+    discardResponseBody(response);
+    response = await fetchEnvironmentVariables(
+      internalUrl,
+      internalAuthorization,
+      projectSlug,
+      environmentId,
+      signal,
+      { "x-project-slug": projectSlug },
+    );
+  }
+
+  if (!response.ok) {
+    discardResponseBody(response);
+    logger.warn("Failed to fetch env vars", {
+      projectSlug,
+      environmentId,
+      status: response.status,
+    });
+    throw NETWORK_ERROR.create({ detail: "Internal project environment request failed" });
+  }
 
   try {
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-      },
-    });
-
-    if (!response.ok) {
-      await response.body?.cancel();
-      logger.warn("Failed to fetch env vars", {
-        projectSlug,
-        environmentId,
-        status: response.status,
-      });
-      throw NETWORK_ERROR.create({ detail: `Failed to fetch env vars: ${response.status}` });
-    }
-
-    const body = await response.json() as {
-      data?: Array<{ key: string; value: string }>;
-    };
-
-    const result: Record<string, string> = {};
-    if (body.data) {
-      for (const entry of body.data) {
-        result[entry.key] = entry.value;
-      }
-    }
+    const result = parseEnvironmentResponse(
+      await readBoundedEnvironmentResponse(response, signal),
+    );
 
     logger.debug("Fetched env vars", {
       projectSlug,
@@ -69,10 +262,7 @@ export async function fetchProjectEnvVars(
 
     return result;
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("Failed to fetch env vars")) {
-      throw error;
-    }
-    logger.error("Env var fetch error", {
+    logger.error("Env var fetch parse error", {
       projectSlug,
       environmentId,
       error: error instanceof Error ? error.message : String(error),

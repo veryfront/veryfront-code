@@ -1,5 +1,4 @@
 import type { ComponentProps } from "#veryfront/types";
-import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolver.ts";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
 import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
@@ -20,7 +19,18 @@ function toProjectRelativePath(absolutePath: string, projectDir?: string): strin
 
   if (!projectDir) return normalizedPath.replace(/^\//, "");
 
-  return resolveRelativePath(normalizedPath, projectDir);
+  if (!normalizedPath.startsWith("/") && !/^[A-Za-z]:\//.test(normalizedPath)) {
+    const relativePath = normalizedPath.replace(/^\.\//, "");
+    return relativePath === ".." || relativePath.startsWith("../") ? "" : relativePath;
+  }
+
+  const normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+  const projectPrefix = normalizedProjectDir.endsWith("/")
+    ? normalizedProjectDir
+    : `${normalizedProjectDir}/`;
+
+  if (!normalizedPath.startsWith(projectPrefix)) return "";
+  return normalizedPath.slice(projectPrefix.length);
 }
 
 const PAGE_TYPE_EXTENSIONS = new Set(["mdx", "tsx", "jsx", "ts", "js"] as const);
@@ -44,7 +54,7 @@ export function generateHydrationData(
   params: Record<string, string | string[]>,
   props: ComponentProps,
   options: HydrationOptions,
-  serializeOptions?: { pretty?: boolean },
+  serializeOptions?: { pretty?: boolean; managedHeadPayload?: string },
 ): string {
   const layouts = (options.nestedLayouts ?? [])
     .map((layout) => {
@@ -68,10 +78,18 @@ export function generateHydrationData(
     params: params || {},
     layouts,
     appPath: options.appPath
-      ? toProjectRelativePath(options.appPath, options.projectDir)
+      ? toProjectRelativePath(options.appPath, options.projectDir) || undefined
       : undefined,
+    errorPath: options.errorPath
+      ? toProjectRelativePath(options.errorPath, options.projectDir) || undefined
+      : undefined,
+    appRouterRoot: toProjectRelativePath(
+      options.config?.directories?.app ?? "app",
+      options.projectDir,
+    ).replace(/^\/+|\/+$/g, ""),
+    isolatedClientPage: options.isolatedClientPage,
     pagePath: options.pagePath
-      ? toProjectRelativePath(options.pagePath, options.projectDir)
+      ? toProjectRelativePath(options.pagePath, options.projectDir) || undefined
       : undefined,
     // `options.pageType`/`options.environment` are validated against literal
     // enum schemas (see html.schema.ts), but the schema inference widens them
@@ -82,9 +100,14 @@ export function generateHydrationData(
       isLocalProject: options.isLocalProject,
       environment: options.environment as HydrationEnvironment | undefined,
     }),
+    ...(options.dependencyPinningCacheKey &&
+        options.dependencyPinningCacheKey !== "off"
+      ? { dependencyPinningCacheKey: options.dependencyPinningCacheKey }
+      : {}),
     releaseId: options.releaseId,
     releaseAssetModules: buildReleaseAssetModules(options.releaseAssetManifest),
     frontmatter: options.frontmatter,
+    managedHeadPayload: serializeOptions?.managedHeadPayload,
     layoutProps: options.layoutProps,
     // In dev mode, client uses createRoot instead of hydrateRoot to avoid
     // hydration mismatches from compilation differences between SSR and client

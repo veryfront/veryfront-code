@@ -18,6 +18,7 @@ Primary source areas:
 - [`src/extensions/cache/`](../../src/extensions/cache/)
 - [`src/extensions/llm/`](../../src/extensions/llm/)
 - [`src/extensions/observability/`](../../src/extensions/observability/)
+- [`src/extensions/websocket/`](../../src/extensions/websocket/)
 
 ## Runtime flow
 
@@ -28,6 +29,25 @@ Primary source areas:
 5. Capability-specific contracts provide auth, bundler, cache, database,
    content, CSS, LLM, embedding, sandbox, and observability behavior.
 
+## Node.js WebSocket transport boundary
+
+Core owns the security-sensitive parts of a Node.js WebSocket upgrade: HTTP
+request classification, application authorization, request-to-socket
+correlation, cancellation, and shutdown ownership. Those responsibilities do
+not require a WebSocket protocol package and remain in the runtime adapter.
+
+The wire-protocol implementation is supplied by the default
+`@veryfront/ext-node-websocket-ws` package through the dependency-free
+`NodeWebSocketServerProvider` contract. Bootstrap snapshots one immutable
+provider generation before it starts a listener, so later mutation or extension
+reload cannot change the implementation underneath a running server.
+
+The standard npm/CLI distribution installs and auto-activates the extension;
+custom service distributions install the package for Node WebSocket support.
+Core does not import `ws`, probe for it, or substitute another implementation.
+A Node HTTP server can run without the provider, but an authorized WebSocket
+upgrade fails closed and identifies the extension needed to restore the feature.
+
 ## Boundaries
 
 - Extensions provide framework capabilities. Integrations expose third-party
@@ -36,6 +56,8 @@ Primary source areas:
   [discovery and registries](./16-discovery-and-registries.md).
 - Provider runtime can consume extension-provided provider contracts, but model
   request translation remains provider runtime work.
+- Node runtime adapters own WebSocket upgrade authorization and lifecycle, while
+  explicit extensions own third-party WebSocket protocol implementations.
 
 ## Change checks
 

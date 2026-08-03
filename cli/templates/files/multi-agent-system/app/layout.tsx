@@ -10,6 +10,7 @@ export default function RootLayout({
     <>
       <Head>
         <title>Multi-Agent System</title>
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
       </Head>
       <div className="flex flex-col h-screen bg-white dark:bg-neutral-950">
         <header className="flex-shrink-0 border-b border-neutral-200 dark:border-neutral-800">

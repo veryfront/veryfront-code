@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_models",
+      "id": "replicate__list_models",
       "name": "List Models",
       "description": "List public models available on Replicate",
       "requiresWrite": false,
@@ -50,7 +50,7 @@
       }
     },
     {
-      "id": "get_model",
+      "id": "replicate__get_model",
       "name": "Get Model",
       "description": "Get details about a model, including its latest version ID",
       "requiresWrite": false,
@@ -74,7 +74,7 @@
       }
     },
     {
-      "id": "create_prediction",
+      "id": "replicate__create_prediction",
       "name": "Create Prediction",
       "description": "Run a model by creating a prediction from a version ID and input object",
       "requiresWrite": true,
@@ -105,7 +105,7 @@
       }
     },
     {
-      "id": "get_prediction",
+      "id": "replicate__get_prediction",
       "name": "Get Prediction",
       "description": "Get the status and output of a prediction",
       "requiresWrite": false,
@@ -123,7 +123,7 @@
       }
     },
     {
-      "id": "cancel_prediction",
+      "id": "replicate__cancel_prediction",
       "name": "Cancel Prediction",
       "description": "Cancel a running prediction",
       "requiresWrite": true,

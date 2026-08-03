@@ -94,7 +94,7 @@ export type {
 // =============================================================================
 // Backend
 // =============================================================================
-export type { BackendConfig, WorkflowBackend } from "./backends/types.ts";
+export type { BackendConfig, WorkflowBackend, WorkflowRunUpdate } from "./backends/types.ts";
 export { hasWorkerSupport } from "./backends/types.ts";
 
 export { MemoryBackend } from "./backends/memory.ts";

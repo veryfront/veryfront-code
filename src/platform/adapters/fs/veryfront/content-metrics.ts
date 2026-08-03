@@ -3,7 +3,7 @@ import { logger as baseLogger } from "#veryfront/utils";
 import {
   recordContentCacheHit,
   recordContentNetworkFetch,
-} from "#veryfront/observability/simple-metrics/index.ts";
+} from "#veryfront/observability/simple-metrics/metrics-recorder.ts";
 
 const logger = baseLogger.component("content-metrics");
 

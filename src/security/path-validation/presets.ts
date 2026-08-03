@@ -1,4 +1,4 @@
-import type { ValidationOptions } from "./types.ts";
+import type { PathValidationPolicyOptions } from "./types.ts";
 
 const USER_INPUT_ALLOWED_DIRS = [
   "app",
@@ -20,30 +20,30 @@ const USER_INPUT_ALLOWED_DIRS = [
 
 function createPreset(
   baseDir: string,
-  options: Omit<ValidationOptions, "baseDir">,
-): ValidationOptions {
+  options: Omit<PathValidationPolicyOptions, "baseDir">,
+): PathValidationPolicyOptions {
   return {
     baseDir,
     ...options,
   };
 }
 
-const INTERNAL_PRESET: Omit<ValidationOptions, "baseDir"> = {
+const INTERNAL_PRESET: Omit<PathValidationPolicyOptions, "baseDir"> = {
   level: "normal",
   followSymlinks: false,
   checkExists: false,
   allowAbsolute: false,
 };
 
-const BUILD_PRESET: Omit<ValidationOptions, "baseDir"> = {
-  level: "permissive",
+const BUILD_PRESET: Omit<PathValidationPolicyOptions, "baseDir"> = {
+  level: "normal",
   followSymlinks: true,
   checkExists: false,
   allowAbsolute: true,
 };
 
 export const ValidationPresets = {
-  userInput(baseDir: string): ValidationOptions {
+  userInput(baseDir: string): PathValidationPolicyOptions {
     return createPreset(baseDir, {
       level: "strict",
       allowedDirs: [...USER_INPUT_ALLOWED_DIRS],
@@ -53,15 +53,15 @@ export const ValidationPresets = {
     });
   },
 
-  internal(baseDir: string): ValidationOptions {
+  internal(baseDir: string): PathValidationPolicyOptions {
     return createPreset(baseDir, INTERNAL_PRESET);
   },
 
-  build(baseDir: string): ValidationOptions {
+  build(baseDir: string): PathValidationPolicyOptions {
     return createPreset(baseDir, BUILD_PRESET);
   },
 
-  static(baseDir: string): ValidationOptions {
+  static(baseDir: string): PathValidationPolicyOptions {
     return createPreset(baseDir, {
       level: "normal",
       allowedDirs: ["dist", "public"],

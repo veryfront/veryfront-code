@@ -1,17 +1,110 @@
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
-import type { Agent, AgentMessage } from "#veryfront/agent";
+import { type Agent, agent as createAgent, type AgentMessage } from "#veryfront/agent";
+import {
+  _resetShimForTests,
+  type AttributeValue,
+  setGlobalTracerProvider,
+  type Span,
+  type SpanContext,
+  type Tracer,
+} from "#veryfront/observability/tracing/api-shim.ts";
 import type {
   AgentServiceSandboxToolsOptions,
   AgentServiceSandboxToolsResult,
   CreateSandboxBashTool,
 } from "#veryfront/sandbox";
-import { type RemoteToolSource, type Tool, toolRegistry } from "#veryfront/tool";
+import { registerSkill } from "#veryfront/skill/registry.ts";
+import type { RemoteToolSource, Tool } from "#veryfront/tool";
 import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { AgentRunSessionManager } from "./session-manager.ts";
-import { createRuntimeAgentStreamResponse } from "./run-stream.ts";
+import { buildMergedTools, createRuntimeAgentStreamResponse } from "./run-stream.ts";
+
+class RecordingSpan implements Span {
+  readonly attributes: Record<string, AttributeValue> = {};
+  readonly events: Array<{ name: string; attrs?: Record<string, AttributeValue> }> = [];
+  status: { code: number; message?: string } | undefined;
+  ended = false;
+
+  constructor(readonly name: string) {}
+
+  setAttribute(key: string, value: AttributeValue): Span {
+    this.attributes[key] = value;
+    return this;
+  }
+
+  setAttributes(attrs: Record<string, AttributeValue>): Span {
+    Object.assign(this.attributes, attrs);
+    return this;
+  }
+
+  setStatus(status: { code: number; message?: string }): Span {
+    this.status = status;
+    return this;
+  }
+
+  recordException(): void {}
+
+  addEvent(name: string, attrs?: Record<string, AttributeValue>): Span {
+    this.events.push({ name, attrs });
+    return this;
+  }
+
+  end(): void {
+    this.ended = true;
+  }
+
+  spanContext(): SpanContext {
+    return {
+      traceId: "00000000000000000000000000000001",
+      spanId: "0000000000000001",
+      traceFlags: 1,
+    };
+  }
+
+  updateName(): void {}
+}
+
+function installRecordingTracer(): RecordingSpan[] {
+  const spans: RecordingSpan[] = [];
+  const tracer: Tracer = {
+    startSpan(name) {
+      const span = new RecordingSpan(name);
+      spans.push(span);
+      return span;
+    },
+    startActiveSpan<T>(
+      name: string,
+      optionsOrFn: ((span: Span) => T) | {
+        kind?: number;
+        attributes?: Record<string, AttributeValue>;
+      },
+      contextOrFn?: unknown,
+      fn?: (span: Span) => T,
+    ): T {
+      const span = this.startSpan(name);
+      const callback: ((span: Span) => T) | undefined = typeof optionsOrFn === "function"
+        ? optionsOrFn
+        : typeof contextOrFn === "function"
+        ? contextOrFn as (span: Span) => T
+        : fn;
+      if (!callback) {
+        throw new Error("Expected an active span callback");
+      }
+      try {
+        return callback(span);
+      } finally {
+        span.end();
+      }
+    },
+  };
+  setGlobalTracerProvider({ getTracer: () => tracer });
+  return spans;
+}
 
 function remoteToolSource(toolNames: string[]): RemoteToolSource {
   return {
@@ -71,6 +164,347 @@ async function withJsonDebugLogFormat<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 describe("internal-agents/run-stream", () => {
+  afterEach(() => {
+    _resetShimForTests();
+    skillRegistryInternal.clearAll();
+  });
+
+  it("includes skill infrastructure for tools: true agents without a skills selector", () => {
+    toolRegistryInternal.clearAll();
+    try {
+      const runtimeAgent = createAgent({
+        id: "universal-skill-agent",
+        system: "Use available skills.",
+        tools: true,
+      });
+      const mergedTools = buildMergedTools(
+        runtimeAgent,
+        {
+          runId: "run_1",
+          threadId: crypto.randomUUID(),
+          messages: [],
+          tools: [],
+          context: [],
+        } as Parameters<typeof buildMergedTools>[1],
+        new AgentRunSessionManager(),
+      );
+
+      assertEquals(Object.keys(mergedTools ?? {}).sort(), [
+        "execute_skill_script",
+        "load_skill",
+        "load_skill_reference",
+      ]);
+    } finally {
+      toolRegistryInternal.clearAll();
+    }
+  });
+
+  it("keeps injected studio waits authoritative over same-named registry tools", () => {
+    const sessionManager = new AgentRunSessionManager();
+    const projectTool = {
+      id: "number-generator",
+      type: "function",
+      description: "Generate a number",
+      inputSchema: {} as never,
+      execute: () => ({ randomNumber: 7 }),
+    } as unknown as Tool;
+
+    toolRegistryInternal.register("number-generator", projectTool);
+    try {
+      const runtimeAgent = {
+        id: "random",
+        config: {
+          id: "random",
+          system: "test",
+          tools: { "number-generator": true },
+        },
+      } as unknown as Agent;
+      const mergedTools = buildMergedTools(
+        runtimeAgent,
+        {
+          runId: "run_1",
+          threadId: crypto.randomUUID(),
+          messages: [],
+          tools: [{
+            name: "number-generator",
+            description: "Caller-supplied shadow definition",
+          }],
+          context: [],
+        } as Parameters<typeof buildMergedTools>[1],
+        sessionManager,
+      );
+
+      const entry = mergedTools?.["number-generator"];
+      assertEquals(typeof entry, "object");
+      assertEquals((entry as Tool).description, "Caller-supplied shadow definition");
+      assertEquals(entry === projectTool, false);
+    } finally {
+      toolRegistryInternal.delete("number-generator");
+    }
+  });
+
+  it("keeps injected studio waits authoritative for tools: true agents", () => {
+    const sessionManager = new AgentRunSessionManager();
+    const projectTool = {
+      id: "number-generator",
+      type: "function",
+      description: "Generate a number",
+      inputSchema: {} as never,
+      execute: () => ({ randomNumber: 7 }),
+    } as unknown as Tool;
+
+    toolRegistryInternal.register("number-generator", projectTool);
+    try {
+      const runtimeAgent = {
+        id: "random",
+        config: {
+          id: "random",
+          system: "test",
+          tools: true,
+        },
+      } as unknown as Agent;
+      const mergedTools = buildMergedTools(
+        runtimeAgent,
+        {
+          runId: "run_1",
+          threadId: crypto.randomUUID(),
+          messages: [],
+          tools: [{
+            name: "number-generator",
+            description: "Caller-supplied shadow definition",
+          }],
+          context: [],
+        } as Parameters<typeof buildMergedTools>[1],
+        sessionManager,
+      );
+
+      const entry = mergedTools?.["number-generator"];
+      assertEquals(typeof entry, "object");
+      assertEquals((entry as Tool).description, "Caller-supplied shadow definition");
+    } finally {
+      toolRegistryInternal.delete("number-generator");
+    }
+  });
+
+  it("keeps registry tools authoritative for server-resolved project tool names", () => {
+    const sessionManager = new AgentRunSessionManager();
+    const projectTool = {
+      id: "number-generator",
+      type: "function",
+      description: "Generate a number",
+      inputSchema: {} as never,
+      execute: () => ({ randomNumber: 7 }),
+    } as unknown as Tool;
+
+    toolRegistryInternal.register("number-generator", projectTool);
+    try {
+      const runtimeAgent = {
+        id: "random",
+        config: {
+          id: "random",
+          system: "test",
+          tools: { "number-generator": true },
+        },
+      } as unknown as Agent;
+      const mergedTools = buildMergedTools(
+        runtimeAgent,
+        {
+          runId: "run_1",
+          threadId: crypto.randomUUID(),
+          messages: [],
+          tools: [{
+            name: "number-generator",
+            description: "Caller-supplied shadow definition",
+          }],
+          context: [],
+          forwardedProps: {
+            runtimeOverrides: {
+              serverResolvedProjectTools: ["number-generator"],
+            },
+          },
+        } as Parameters<typeof buildMergedTools>[1],
+        sessionManager,
+      );
+
+      assertEquals(mergedTools?.["number-generator"], projectTool);
+    } finally {
+      toolRegistryInternal.delete("number-generator");
+    }
+  });
+
+  it("forwards the scheduled output-token cap to the internal runtime", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedMaxOutputTokens: number | undefined;
+    const agent = {
+      id: "test",
+      config: {
+        id: "test",
+        model: "anthropic/claude-sonnet-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: "test",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: { maxOutputTokens: 1200 },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async (_messages, _context, _callbacks, _modelOverride, maxOutputTokens) => {
+          capturedMaxOutputTokens = maxOutputTokens;
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+
+    assertEquals(capturedMaxOutputTokens, 1200);
+  });
+
+  it("composes the runtime system prompt with project, environment, and tool context", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedAgent: Agent | undefined;
+    const agent = {
+      id: "custom",
+      config: {
+        id: "custom",
+        model: "openai/gpt-5.4-nano",
+        system: "You are Custom Agent.",
+        tools: { create_file: { id: "create_file", type: "function", execute: () => "" } },
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: "custom",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [
+        {
+          type: "json",
+          title: "studio_context",
+          data: {
+            projectId: "ignored-when-sandbox-set",
+            branchId: null,
+            environmentContext: "<layout_context>\nVisible panels: [chat]\n</layout_context>",
+          },
+        },
+      ],
+      forwardedProps: {
+        runtimeOverrides: {
+          allowedTools: ["outlook__send_email"],
+          integrationToolDefinitions: [
+            {
+              name: "outlook__send_email",
+              description: "Send an Outlook email",
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      projectAgentSandbox: { projectId: "project-1" },
+      createRuntime: (runtimeAgent) => {
+        capturedAgent = runtimeAgent;
+        return {
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+        };
+      },
+    });
+
+    const system = capturedAgent?.config.system;
+    assertEquals(typeof system, "string");
+    const prompt = system as string;
+    assertStringIncludes(prompt, "You are Custom Agent.");
+    assertStringIncludes(prompt, 'project_reference: "project-1"');
+    assertStringIncludes(prompt, "branch_id: main (no branch_id needed for file operations)");
+    assertStringIncludes(prompt, "<environment_context>");
+    assertStringIncludes(prompt, "Visible panels: [chat]");
+    assertStringIncludes(prompt, '<runtime_info>\nmodel: "openai/gpt-5.4-nano"\n</runtime_info>');
+    assertStringIncludes(prompt, "Current run tool inventory:");
+    assertStringIncludes(prompt, "- create_file");
+    assertStringIncludes(prompt, "- outlook__send_email");
+  });
+
+  it("includes the resolved system prompt in message compaction overhead", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedMessages: AgentMessage[] = [];
+    const agent = {
+      id: "large-context-agent",
+      config: {
+        id: "large-context-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: `System context\n${"s".repeat(120_000)}`,
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_compaction_overhead",
+      messages: [
+        {
+          id: "oldest",
+          role: "user",
+          content: `oldest-turn\n${"a".repeat(200_000)}`,
+        },
+        {
+          id: "middle",
+          role: "user",
+          content: `middle-turn\n${"b".repeat(200_000)}`,
+        },
+        {
+          id: "latest",
+          role: "user",
+          content: `latest-turn\n${"c".repeat(200_000)}`,
+        },
+      ],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async (messages) => {
+          capturedMessages = messages;
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+    await response.text();
+
+    const firstMessage = capturedMessages[0];
+    assertEquals(firstMessage?.role, "user");
+    const firstText = (firstMessage as unknown as {
+      parts?: Array<{ type?: string; text?: string }>;
+    })?.parts?.find((part) => part.type === "text")?.text;
+    assertEquals(
+      firstText?.startsWith("[Compressed: oldest-turn"),
+      true,
+    );
+  });
+
   it("filters unavailable boolean source tool declarations before constructing the runtime", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedToolNames: string[] = [];
@@ -410,7 +844,7 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedToolNames, ["read_baseline"]);
   });
 
-  it("preserves skill runtime tools for skill-enabled agents under toolAllowlist", async () => {
+  it("preserves skill runtime tools for every agent under toolAllowlist", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedToolNames: string[] = [];
 
@@ -420,7 +854,6 @@ describe("internal-agents/run-stream", () => {
         id: "ops-agent",
         model: "anthropic/claude-opus-4-6",
         system: "test",
-        skills: true,
         tools: {
           read_baseline: { description: "Read the telemetry baseline" },
           create_issue: { description: "File a GitHub issue" },
@@ -631,6 +1064,7 @@ describe("internal-agents/run-stream", () => {
   it("does not treat forwarded integration defs as grants without allowedTools", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedAllowedRemoteTools: string[] | undefined;
+    let runtimeSystem: unknown;
 
     const agent = {
       id: "ops-agent",
@@ -656,7 +1090,6 @@ describe("internal-agents/run-stream", () => {
           // The caller forwarded a definition for gmail__list_emails, so the
           // runtime can render metadata if it is otherwise granted, but the
           // definition itself is not the grant channel.
-          toolAllowlist: ["gmail__list_emails"],
           integrationToolDefinitions: [
             {
               name: "gmail__list_emails",
@@ -674,6 +1107,7 @@ describe("internal-agents/run-stream", () => {
       {
         sessionManager,
         createRuntime: (runtimeAgent) => {
+          runtimeSystem = runtimeAgent.config.system;
           capturedAllowedRemoteTools = (
             runtimeAgent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] }
           ).__vfAllowedRemoteTools;
@@ -689,12 +1123,16 @@ describe("internal-agents/run-stream", () => {
       },
     );
 
-    assertEquals(capturedAllowedRemoteTools, []);
+    assertEquals(capturedAllowedRemoteTools, undefined);
+    assertEquals(typeof runtimeSystem, "string");
+    const prompt = runtimeSystem as string;
+    assertEquals(prompt.includes("- gmail__list_emails"), false);
   });
 
   it("keeps allowlisted forwarded integration tools granted by allowedTools", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedAllowedRemoteTools: string[] | undefined;
+    let runtimeSystem: unknown;
 
     const agent = {
       id: "ops-agent",
@@ -725,6 +1163,11 @@ describe("internal-agents/run-stream", () => {
               description: "List emails",
               parameters: { type: "object", properties: {} },
             },
+            {
+              name: "gmail__delete_email",
+              description: "Delete an email",
+              parameters: { type: "object", properties: {} },
+            },
           ],
         },
       },
@@ -736,6 +1179,7 @@ describe("internal-agents/run-stream", () => {
       {
         sessionManager,
         createRuntime: (runtimeAgent) => {
+          runtimeSystem = runtimeAgent.config.system;
           capturedAllowedRemoteTools = (
             runtimeAgent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] }
           ).__vfAllowedRemoteTools;
@@ -752,6 +1196,10 @@ describe("internal-agents/run-stream", () => {
     );
 
     assertEquals(capturedAllowedRemoteTools, ["gmail__list_emails"]);
+    assertEquals(typeof runtimeSystem, "string");
+    const prompt = runtimeSystem as string;
+    assertStringIncludes(prompt, "- gmail__list_emails");
+    assertEquals(prompt.includes("- gmail__delete_email"), false);
   });
 
   it("allows a toolAllowlist subset of declared remote-source tools named like integrations", async () => {
@@ -915,7 +1363,107 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedProviderTools, []);
   });
 
-  it("preserves invoke_agent delegation for skill-enabled agents under toolAllowlist", async () => {
+  it("keeps provider tools supported by the configured OpenAI model in the inventory", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let runtimeSystem: unknown;
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "openai/gpt-5.4-nano",
+        system: "test",
+        providerTools: ["web_search", "web_fetch"],
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {},
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: (runtimeAgent) => {
+        runtimeSystem = runtimeAgent.config.system;
+        return {
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+        };
+      },
+    });
+
+    assertEquals(typeof runtimeSystem, "string");
+    const prompt = runtimeSystem as string;
+    // OpenAI exposes a native web_search but no native web_fetch, so only the
+    // supported half may reach the inventory.
+    assertEquals(prompt.includes("- web_search"), true);
+    assertEquals(prompt.includes("- web_fetch"), false);
+  });
+
+  it("keeps local tools required without protecting remote placeholders from provider caps", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const remoteToolNames = Array.from(
+      { length: 150 },
+      (_, index) => `remote_${String(index).padStart(3, "0")}`,
+    );
+    let runtimeSystem: unknown;
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "openai/gpt-5.4-nano",
+        system: "test",
+        tools: Object.fromEntries([
+          ...remoteToolNames.map((toolName) => [toolName, true] as const),
+          ["zzz_local", { description: "Keep this local tool available" }],
+        ]),
+        __vfAllowedRemoteTools: [...remoteToolNames, "zzz_local"],
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {},
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: (runtimeAgent) => {
+        runtimeSystem = runtimeAgent.config.system;
+        return {
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+        };
+      },
+    });
+
+    assertEquals(typeof runtimeSystem, "string");
+    const prompt = runtimeSystem as string;
+    assertStringIncludes(prompt, "- zzz_local");
+    assertEquals(prompt.includes("- remote_127"), false);
+  });
+
+  it("withholds invoke_agent delegation for default-skilled agents with no visible skills", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedToolNames: string[] = [];
 
@@ -925,7 +1473,66 @@ describe("internal-agents/run-stream", () => {
         id: "ops-agent",
         model: "anthropic/claude-opus-4-6",
         system: "test",
-        skills: true,
+        tools: {
+          read_baseline: { description: "Read the telemetry baseline" },
+          invoke_agent: { description: "Delegate to another agent" },
+        },
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {
+        runtimeOverrides: {
+          toolAllowlist: ["read_baseline"],
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        createRuntime: (_agent, mergedTools) => {
+          capturedToolNames = Object.keys(mergedTools ?? {}).sort();
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    assertEquals(capturedToolNames, ["read_baseline"]);
+  });
+
+  it("preserves invoke_agent delegation when visible skills are hidden from the catalog", async () => {
+    registerSkill("handoff", {
+      id: "handoff",
+      metadata: { name: "handoff", description: "Delegate safely" },
+      rootPath: "/test/skills/handoff",
+    });
+
+    const sessionManager = new AgentRunSessionManager();
+    let capturedToolNames: string[] = [];
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        skills: [],
         tools: {
           read_baseline: { description: "Read the telemetry baseline" },
           create_issue: { description: "File a GitHub issue" },
@@ -967,9 +1574,6 @@ describe("internal-agents/run-stream", () => {
       },
     );
 
-    // Documented semantics (see applyRuntimeToolAllowlist): delegation tools
-    // survive the allowlist for skill-enabled agents, and child runs are NOT
-    // capped by this run's allowlist.
     assertEquals(capturedToolNames, ["invoke_agent", "read_baseline"]);
   });
 
@@ -1039,10 +1643,16 @@ describe("internal-agents/run-stream", () => {
     assertStringIncludes(JSON.stringify(capturedMessages), "Continue and finish the diagram.");
   });
 
-  it("materializes explicitly configured sandbox bash before constructing the runtime", async () => {
+  it("materializes explicitly configured sandbox tools before constructing the runtime", async () => {
     const sessionManager = new AgentRunSessionManager();
     const sandboxInputs: AgentServiceSandboxToolsOptions[] = [];
     let capturedToolNames: string[] = [];
+    let capturedTools: Agent["config"]["tools"];
+    const inputSchemaJson = {
+      type: "object" as const,
+      properties: {},
+      additionalProperties: true,
+    };
 
     const agent = {
       id: "builder-agent",
@@ -1052,6 +1662,8 @@ describe("internal-agents/run-stream", () => {
         system: "test",
         tools: {
           bash: true,
+          sandbox_read_file: true,
+          sandbox_write_file: true,
           missing_tool: true,
         },
         sandbox: {
@@ -1087,11 +1699,18 @@ describe("internal-agents/run-stream", () => {
             tools: {
               bash: {
                 description: "Run bash",
+                inputSchemaJson,
                 execute: async () => ({ stdout: "ok", stderr: "", exitCode: 0 }),
               },
               sandbox_read_file: {
                 description: "Read sandbox file",
+                inputSchemaJson,
                 execute: async () => "",
+              },
+              sandbox_write_file: {
+                description: "Write sandbox file",
+                inputSchemaJson,
+                execute: async () => undefined,
               },
             },
             sandbox: {} as AgentServiceSandboxToolsResult["sandbox"],
@@ -1099,6 +1718,7 @@ describe("internal-agents/run-stream", () => {
           });
         },
         createRuntime: (_agent, mergedTools) => {
+          capturedTools = mergedTools;
           capturedToolNames = Object.keys(mergedTools ?? {}).sort();
           return {
             stream: async () =>
@@ -1112,7 +1732,26 @@ describe("internal-agents/run-stream", () => {
       },
     );
 
-    assertEquals(capturedToolNames, ["bash"]);
+    assertEquals(capturedToolNames, ["bash", "sandbox_read_file", "sandbox_write_file"]);
+    if (!capturedTools || capturedTools === true) {
+      throw new Error("Expected materialized sandbox tools");
+    }
+    for (const toolName of ["bash", "sandbox_read_file", "sandbox_write_file"]) {
+      const runtimeTool = capturedTools[toolName];
+      if (!runtimeTool || runtimeTool === true) {
+        throw new Error(`Expected materialized ${toolName}`);
+      }
+      assertEquals(runtimeTool.type, "dynamic");
+    }
+    const bash = capturedTools.bash;
+    if (!bash || bash === true || !bash.execute) {
+      throw new Error("Expected executable bash tool");
+    }
+    assertEquals(await bash.execute({}, { toolCallId: "bash-call" }), {
+      stdout: "ok",
+      stderr: "",
+      exitCode: 0,
+    });
     assertEquals(
       sandboxInputs.map((sandboxInput) => ({
         apiUrl: sandboxInput.apiUrl,
@@ -1133,6 +1772,175 @@ describe("internal-agents/run-stream", () => {
         },
       ],
     );
+  });
+
+  it("clears run admission when sandbox setup rejects", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "sandbox-failure-agent",
+      config: {
+        id: "sandbox-failure-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: { bash: true },
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_sandbox_setup_failure",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await assertRejects(
+      () =>
+        createRuntimeAgentStreamResponse(input, agent, {
+          sessionManager,
+          createBashTool: (() => Promise.resolve({ tools: {} })) as CreateSandboxBashTool,
+          createAgentServiceSandboxTools: () => Promise.reject(new Error("sandbox setup failed")),
+        }),
+      Error,
+      "sandbox setup failed",
+    );
+
+    assertEquals(sessionManager.getRunStatus(input.runId), null);
+  });
+
+  it("closes an acquired sandbox once after runtime construction fails and permits retry", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let closeSandboxCalls = 0;
+    const inputSchemaJson = {
+      type: "object" as const,
+      properties: {},
+      additionalProperties: true,
+    };
+    const sandboxAgent = {
+      id: "sandbox-runtime-failure-agent",
+      config: {
+        id: "sandbox-runtime-failure-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: { bash: true },
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: sandboxAgent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_runtime_setup_failure",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await assertRejects(
+      () =>
+        createRuntimeAgentStreamResponse(input, sandboxAgent, {
+          sessionManager,
+          createBashTool: (() => Promise.resolve({ tools: {} })) as CreateSandboxBashTool,
+          createAgentServiceSandboxTools: () =>
+            Promise.resolve({
+              tools: {
+                bash: {
+                  description: "Run bash",
+                  inputSchemaJson,
+                  execute: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+                },
+              },
+              sandbox: {} as AgentServiceSandboxToolsResult["sandbox"],
+              closeSandbox: () => {
+                closeSandboxCalls++;
+                return Promise.resolve();
+              },
+            }),
+          createRuntime: () => {
+            throw new Error("runtime construction failed");
+          },
+        }),
+      Error,
+      "runtime construction failed",
+    );
+
+    assertEquals(sessionManager.getRunStatus(input.runId), null);
+    assertEquals(closeSandboxCalls, 1);
+
+    const retryAgent = {
+      id: sandboxAgent.id,
+      config: {
+        id: sandboxAgent.id,
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const retryResponse = await createRuntimeAgentStreamResponse(input, retryAgent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () =>
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          }),
+      }),
+    });
+    await retryResponse.text();
+
+    assertEquals(sessionManager.getRunStatus(input.runId), null);
+    assertEquals(closeSandboxCalls, 1);
+  });
+
+  it("rejects a locked runtime stream during setup and releases acquired resources", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let closeSandboxCalls = 0;
+    const lockedStream = new ReadableStream<Uint8Array>();
+    const lockedReader = lockedStream.getReader();
+    const agent = {
+      id: "locked-stream-agent",
+      config: {
+        id: "locked-stream-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: { bash: true },
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_locked_stream",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    try {
+      await assertRejects(
+        () =>
+          createRuntimeAgentStreamResponse(input, agent, {
+            sessionManager,
+            createBashTool: (() => Promise.resolve({ tools: {} })) as CreateSandboxBashTool,
+            createAgentServiceSandboxTools: () =>
+              Promise.resolve({
+                tools: {},
+                sandbox: {} as AgentServiceSandboxToolsResult["sandbox"],
+                closeSandbox: () => {
+                  closeSandboxCalls++;
+                  return Promise.resolve();
+                },
+              }),
+            createRuntime: () => ({
+              stream: () => Promise.resolve(lockedStream),
+            }),
+          }),
+        TypeError,
+        "Internal agent runtime returned a locked stream",
+      );
+    } finally {
+      lockedReader.releaseLock();
+    }
+
+    assertEquals(sessionManager.getRunStatus(input.runId), null);
+    assertEquals(closeSandboxCalls, 1);
   });
 
   it("does not materialize sandbox bash without an explicit bash tool declaration", async () => {
@@ -1280,7 +2088,7 @@ describe("internal-agents/run-stream", () => {
     } as unknown as Tool;
     let capturedToolEntry: Tool | boolean | undefined;
 
-    toolRegistry.register("number-generator", projectTool);
+    toolRegistryInternal.register("number-generator", projectTool);
     try {
       const agent = {
         id: "random",
@@ -1335,10 +2143,151 @@ describe("internal-agents/run-stream", () => {
         },
       );
     } finally {
-      toolRegistry.delete("number-generator");
+      toolRegistryInternal.delete("number-generator");
     }
 
     assertEquals(capturedToolEntry, projectTool);
+  });
+
+  it("records completed runtime token usage on the agent.run span", async () => {
+    const spans = installRecordingTracer();
+
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_usage",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    const response = await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        createRuntime: () => ({
+          stream: async (_messages, _context, callbacks) => {
+            callbacks?.onFinish?.({
+              text: "done",
+              messages: [],
+              toolCalls: [],
+              status: "completed",
+              usage: {
+                promptTokens: 17,
+                completionTokens: 11,
+                totalTokens: 28,
+                cachedInputTokens: 5,
+                cacheCreationInputTokens: 2,
+                cacheReadInputTokens: 3,
+                reasoningTokens: 4,
+                billableInputTokens: 15,
+                billableOutputTokens: 10,
+                providerCostUsd: 0.012,
+                veryfrontChargeUsd: 0.014,
+                costCredits: 2,
+                costSource: "gateway",
+                billingMode: "deferred",
+                usageCaptureStatus: "complete",
+              },
+            });
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    [
+                      'data: {"type":"message-start","messageId":"assistant-1"}',
+                      'data: {"type":"text-start","id":"text-1"}',
+                      'data: {"type":"text-delta","id":"text-1","delta":"done"}',
+                      'data: {"type":"text-end","id":"text-1"}',
+                      "",
+                      "",
+                    ].join("\n\n"),
+                  ),
+                );
+                controller.close();
+              },
+            });
+          },
+        }),
+      },
+    );
+
+    await response.text();
+
+    const runSpan = spans.find((span) => span.name === "agent.run");
+    assertEquals(runSpan?.ended, true);
+    assertEquals(runSpan?.attributes["agent.run.final_status"], "completed");
+    assertEquals(runSpan?.attributes["gen_ai.usage.input_tokens"], 17);
+    assertEquals(runSpan?.attributes["gen_ai.usage.output_tokens"], 11);
+    assertEquals(runSpan?.attributes["gen_ai.usage.total_tokens"], 28);
+    assertEquals(runSpan?.attributes["gen_ai.usage.cache_creation.input_tokens"], 2);
+    assertEquals(runSpan?.attributes["gen_ai.usage.cache_read.input_tokens"], 3);
+    assertEquals(runSpan?.attributes["gen_ai.usage.reasoning.output_tokens"], 4);
+    assertEquals(runSpan?.attributes["agent.usage.billable_input_tokens"], 15);
+    assertEquals(runSpan?.attributes["agent.usage.billable_output_tokens"], 10);
+    assertEquals(runSpan?.attributes["agent.usage.provider_cost_usd"], 0.012);
+    assertEquals(runSpan?.attributes["agent.usage.veryfront_charge_usd"], 0.014);
+    assertEquals(runSpan?.attributes["agent.usage.cost_credits"], 2);
+    assertEquals(runSpan?.attributes["agent.usage.cost_source"], "gateway");
+    assertEquals(runSpan?.attributes["agent.usage.billing_mode"], "deferred");
+    assertEquals(runSpan?.attributes["agent.usage.capture_status"], "complete");
+  });
+
+  it("records terminal runtime error events as failed instead of completed", async () => {
+    const spans = installRecordingTracer();
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "failing-agent",
+      config: {
+        id: "failing-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_terminal_error",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () =>
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  'data: {"type":"error","error":"provider stream failed"}\n\n',
+                ),
+              );
+              controller.close();
+            },
+          }),
+      }),
+    });
+    const body = await response.text();
+
+    assertStringIncludes(body, "event: RunError");
+    assertEquals(body.includes("event: RunFinished"), false);
+    const runSpan = spans.find((span) => span.name === "agent.run");
+    assertEquals(runSpan?.attributes["agent.run.final_status"], "failed");
+    assertEquals(runSpan?.events.some((event) => event.name === "agent.run.failed"), true);
+    assertEquals(runSpan?.events.some((event) => event.name === "agent.run.completed"), false);
   });
 
   it("emits comment heartbeats while the runtime stream is idle", async () => {
@@ -1401,6 +2350,98 @@ describe("internal-agents/run-stream", () => {
     await reader.cancel();
   });
 
+  it("cancels and releases a runtime reader when the run is already aborted", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "pre-aborted-agent",
+      config: {
+        id: "pre-aborted-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_pre_aborted",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+    let runtimeCancelCalls = 0;
+    let runtimeStream: ReadableStream<Uint8Array> | undefined;
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () => {
+          sessionManager.cancelRun(input.runId);
+          runtimeStream = new ReadableStream<Uint8Array>({
+            cancel() {
+              runtimeCancelCalls++;
+            },
+          });
+          return runtimeStream;
+        },
+      }),
+    });
+    await response.text();
+
+    assertEquals(runtimeCancelCalls, 1);
+    assertEquals(runtimeStream?.locked, false);
+    assertEquals(sessionManager.getRunStatus(input.runId), null);
+  });
+
+  it("cancels and releases a runtime reader after a non-EOF mapping failure", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "mapping-failure-agent",
+      config: {
+        id: "mapping-failure-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_mapping_failure",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+    let runtimeCancelCalls = 0;
+    let runtimeStream: ReadableStream<Uint8Array> | undefined;
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () => {
+          runtimeStream = new ReadableStream<Uint8Array>({
+            pull(controller) {
+              sessionManager.failRun(input.runId);
+              controller.enqueue(
+                new TextEncoder().encode(
+                  'data: {"type":"tool-input-start","toolCallId":"tool-1","toolName":"bash"}\n\n',
+                ),
+              );
+            },
+            cancel() {
+              runtimeCancelCalls++;
+            },
+          });
+          return runtimeStream;
+        },
+      }),
+    });
+    const body = await response.text();
+
+    assertStringIncludes(body, "event: RunError");
+    assertEquals(runtimeCancelCalls, 1);
+    assertEquals(runtimeStream?.locked, false);
+    assertEquals(sessionManager.getRunStatus(input.runId), null);
+  });
+
   it("cancels an active runtime stream when the client disconnects before a tool wait", async () => {
     const sessionManager = new AgentRunSessionManager();
     const agent = {
@@ -1456,7 +2497,7 @@ describe("internal-agents/run-stream", () => {
     assertEquals(sessionManager.getRunStatus(input.runId), null);
   });
 
-  it("debug logs runtime reader cancellation failures during abort cleanup", async () => {
+  it("debug logs runtime reader cancellation failures during cleanup", async () => {
     const logs = captureConsoleJsonLogs();
     try {
       await withJsonDebugLogFormat(async () => {
@@ -1516,7 +2557,7 @@ describe("internal-agents/run-stream", () => {
 
     const debugEntry = logs.getEntries().find((entry) =>
       entry.level === "debug" &&
-      entry.message === "Internal agent runtime reader cancellation failed during abort cleanup"
+      entry.message === "Internal agent runtime reader cancellation failed during cleanup"
     );
     assertEquals(debugEntry?.component, "internal-agent-run-stream");
   });

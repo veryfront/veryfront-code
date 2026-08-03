@@ -1,15 +1,174 @@
 import "#veryfront/schemas/_test-setup.ts";
+import "#veryfront/transforms/mdx/compiler/__tests__/content-processor-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import {
+  buildEmbeddedPreset,
   isPageFile,
   normalizeAppRoutePath,
   normalizePageRoutePath,
   presetBasename,
   presetDirname,
 } from "./preset.ts";
+import { join } from "#veryfront/compat/path/index.ts";
+import { createRequire } from "node:module";
+
+const childProcess = createRequire(import.meta.url)("node:child_process") as {
+  spawn: typeof import("node:child_process").spawn;
+};
+
+function observeEsbuildServices(): {
+  services: Array<{
+    child: ReturnType<typeof childProcess.spawn>;
+    closed: boolean;
+    close: Promise<void>;
+  }>;
+  restore: () => void;
+} {
+  const previousSpawn = childProcess.spawn;
+  const services: Array<{
+    child: ReturnType<typeof childProcess.spawn>;
+    closed: boolean;
+    close: Promise<void>;
+  }> = [];
+  const observingSpawn = ((...spawnArgs: unknown[]) => {
+    const child = Reflect.apply(previousSpawn, childProcess, spawnArgs);
+    const args = spawnArgs[1];
+    if (
+      Array.isArray(args) &&
+      args.some((arg) => typeof arg === "string" && arg.startsWith("--service=")) &&
+      args.includes("--ping")
+    ) {
+      const close = Promise.withResolvers<void>();
+      const service = { child, closed: false, close: close.promise };
+      services.push(service);
+      child.once("close", () => {
+        service.closed = true;
+        close.resolve();
+      });
+    }
+    return child;
+  }) as typeof childProcess.spawn;
+  childProcess.spawn = observingSpawn;
+
+  return {
+    services,
+    restore() {
+      if (childProcess.spawn === observingSpawn) childProcess.spawn = previousSpawn;
+    },
+  };
+}
 
 describe("build/embedded/preset", () => {
+  it("builds entries and routes from configured app and pages directories", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-embedded-custom-routes-" });
+    const projectDir = join(root, "project");
+    const outDir = join(root, "dist");
+    try {
+      await Deno.mkdir(join(projectDir, "src/app/docs"), { recursive: true });
+      await Deno.mkdir(join(projectDir, "src/pages"), { recursive: true });
+      await Deno.writeTextFile(join(projectDir, "src/app/page.md"), "# Home");
+      await Deno.writeTextFile(join(projectDir, "src/app/docs/page.md"), "# Docs");
+      await Deno.writeTextFile(join(projectDir, "src/pages/about.md"), "# About");
+
+      const result = await buildEmbeddedPreset({
+        projectDir,
+        outDir,
+        runtime: "deno",
+        config: {
+          directories: { app: "src/app", pages: "src/pages" },
+        },
+      });
+
+      assertEquals(result.manifest.routes.some((route) => route.path === "/docs"), true);
+      assertEquals(result.manifest.routes.some((route) => route.path === "/about"), true);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("stops the bundler when the embedded app bundle fails", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-embedded-failed-bundle-" });
+    const projectDir = join(root, "project");
+    const outDir = join(root, "dist");
+    const observation = observeEsbuildServices();
+    const { services } = observation;
+    let buildError: unknown;
+
+    try {
+      await Deno.mkdir(join(projectDir, "app"), { recursive: true });
+      await Deno.writeTextFile(join(projectDir, "app/page.md"), "# Home");
+      await Deno.mkdir(join(outDir, "embedded", "manifest.json"), { recursive: true });
+
+      try {
+        await buildEmbeddedPreset({
+          projectDir,
+          outDir,
+          runtime: "deno",
+          config: {},
+        });
+      } catch (error) {
+        buildError = error;
+      }
+
+      assertEquals(buildError instanceof Error, true);
+      assertEquals(services.length >= 1, true);
+      assertEquals(services.every((service) => service.closed), true);
+    } finally {
+      for (const service of services) service.child.ref();
+      try {
+        const { stop } = await import("veryfront/extensions/bundler");
+        await stop();
+        await Promise.all(services.map((service) => service.close));
+      } finally {
+        for (const service of services) service.child.unref();
+        observation.restore();
+        await Deno.remove(root, { recursive: true });
+      }
+    }
+  });
+
+  it("stops an active bundler when config resolution fails", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-embedded-invalid-config-" });
+    const projectDir = join(root, "project");
+    const outDir = join(root, "dist");
+    const observation = observeEsbuildServices();
+    const { services } = observation;
+    let buildError: unknown;
+
+    try {
+      await Deno.mkdir(projectDir, { recursive: true });
+      await Deno.writeTextFile(
+        join(projectDir, "veryfront.config.ts"),
+        "export default { invalid: ; };",
+      );
+
+      const { transform } = await import("veryfront/extensions/bundler");
+      await transform("export const warm: number = 1;", { loader: "ts" });
+
+      try {
+        await buildEmbeddedPreset({ projectDir, outDir, runtime: "deno" });
+      } catch (error) {
+        buildError = error;
+      }
+
+      assertEquals(buildError instanceof Error, true);
+      assertEquals(services.length >= 1, true);
+      assertEquals(services.every((service) => service.closed), true);
+    } finally {
+      for (const service of services) service.child.ref();
+      try {
+        const { stop } = await import("veryfront/extensions/bundler");
+        await stop();
+        await Promise.all(services.map((service) => service.close));
+      } finally {
+        for (const service of services) service.child.unref();
+        observation.restore();
+        await Deno.remove(root, { recursive: true });
+      }
+    }
+  });
+
   describe("presetDirname", () => {
     it("should return parent directory for nested path", () => {
       assertEquals(presetDirname("/home/user/file.ts"), "/home/user", "should strip filename");

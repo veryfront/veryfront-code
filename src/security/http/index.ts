@@ -19,5 +19,4 @@ export type {
   CSPDirectives,
   SecurityConfig,
 } from "./middleware/index.ts";
-export { isValidSecurityConfig, loadSecurityConfig } from "./middleware/index.ts";
 export { setCors } from "./middleware/index.ts";

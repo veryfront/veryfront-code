@@ -3,12 +3,60 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { injectHTMLContent } from "./html-injection.ts";
 import type { HTMLMetadata } from "#veryfront/transforms/mdx/types.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 const baseTemplate = `<!DOCTYPE html>
 <html><head>{{ meta }}</head>
 <body>{{ content }}</body></html>`;
 
 const minMeta: HTMLMetadata = { title: "Test", description: "Desc" };
+const PAGE_HASH = "a".repeat(64);
+const UNUSED_HASH = "b".repeat(64);
+const ABOUT_HASH = "c".repeat(64);
+
+function releaseManifest(): ReleaseAssetManifest {
+  return {
+    schemaVersion: 2,
+    projectId: "project-id",
+    releaseId: "release-id",
+    releaseVersion: 1,
+    manifestVersion: 1,
+    builderVersion: "0.1.765",
+    sourceContentHash: "a".repeat(64),
+    createdAt: "2026-07-27T00:00:00.000Z",
+    assetBasePath: "/_vf/assets",
+    modules: {
+      "app/page.tsx": { contentHash: PAGE_HASH, size: 1, contentType: "text/javascript" },
+      "components/Unused.tsx": {
+        contentHash: UNUSED_HASH,
+        size: 1,
+        contentType: "text/javascript",
+      },
+    },
+    css: [],
+    routes: { "/": { modules: ["app/page.tsx"], css: [] } },
+    dependencies: {},
+    dependencyMode: "immutable",
+  };
+}
+
+function customDirectoryReleaseManifest(): ReleaseAssetManifest {
+  return {
+    ...releaseManifest(),
+    modules: {
+      "src/site/page.tsx": { contentHash: PAGE_HASH, size: 1, contentType: "text/javascript" },
+      "src/pages/about.tsx": {
+        contentHash: ABOUT_HASH,
+        size: 1,
+        contentType: "text/javascript",
+      },
+    },
+    routes: {
+      "/": { modules: ["src/site/page.tsx"], css: [] },
+      "/about": { modules: ["src/pages/about.tsx"], css: [] },
+    },
+  };
+}
 
 function extractHydrationData(html: string): Record<string, unknown> {
   const match = html.match(
@@ -78,6 +126,27 @@ describe("html/html-injection", () => {
       assertEquals(html.includes("my-slug"), false);
     });
 
+    it("should escape script-closing sequences in prebuilt import maps", () => {
+      const hostileImportMap = JSON.stringify({
+        imports: {
+          hostile: "</script><script>globalThis.__veryfrontImportMapBreakout = true</script>",
+        },
+      });
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          slug: "test",
+          importMapJson: hostileImportMap,
+        },
+      );
+
+      assertEquals(html.includes("</script><script>"), false);
+      assertEquals(html.includes("\\u003c/script"), true);
+    });
+
     it("should clear dev placeholders in production mode", () => {
       const html = injectHTMLContent(
         "<div>{{ devScripts }}{{ devStyles }}</div><body></body>",
@@ -106,6 +175,93 @@ describe("html/html-injection", () => {
       const hydrationData = extractHydrationData(html);
       assertEquals(hydrationData.pagePath, "app/page.tsx");
       assertEquals(hydrationData.clientModuleStrategy, "rsc-module");
+      assertEquals(
+        html.indexOf('id="veryfront-hydration-data"') < html.indexOf("<p>content</p>"),
+        true,
+      );
+    });
+
+    it("injects a minimal dependency snapshot for non-client full documents", () => {
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          slug: "test",
+          dependencyPinningCacheKey: "on:snapshot-a",
+        },
+      );
+
+      assertEquals(extractHydrationData(html), {
+        dependencyPinningCacheKey: "on:snapshot-a",
+      });
+      assertEquals(html.includes("/_veryfront/rsc/client.js"), true);
+    });
+
+    it("keeps non-client full documents byte-identical when pinning is off", () => {
+      const unkeyed = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        { mode: "production", slug: "test" },
+      );
+      const flagOff = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          slug: "test",
+          dependencyPinningCacheKey: "off",
+        },
+      );
+
+      assertEquals(flagOff, unkeyed);
+      assertEquals(flagOff.includes("veryfront-hydration-data"), false);
+    });
+
+    it("injects route-scoped release asset modules into full-document client page hydration data", () => {
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          slug: "test",
+          pagePath: "/project/app/page.tsx",
+          projectDir: "/project",
+          isClientPage: true,
+          releaseAssetManifest: releaseManifest(),
+        },
+      );
+
+      const hydrationData = extractHydrationData(html);
+      assertEquals(hydrationData.releaseAssetModules, {
+        "app/page.tsx": `/_vf/assets/${PAGE_HASH}.js`,
+      });
+    });
+
+    it("uses configured route directories for route-scoped release asset modules", () => {
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          slug: "about",
+          pagePath: "/project/src/pages/about.tsx",
+          projectDir: "/project",
+          isClientPage: true,
+          directories: { app: "src/site", pages: "src/pages" },
+          releaseAssetManifest: customDirectoryReleaseManifest(),
+        },
+      );
+
+      const hydrationData = extractHydrationData(html);
+      assertEquals(hydrationData.releaseAssetModules, {
+        "src/pages/about.tsx": `/_vf/assets/${ABOUT_HASH}.js`,
+      });
     });
 
     it("seeds route params into client-page hydration data (issue #2741)", () => {
@@ -299,7 +455,7 @@ describe("html/html-injection", () => {
         },
       );
 
-      assertEquals(html.includes('id="vf-tailwind-css"'), true);
+      assertEquals(html.includes('id="vf-project-css"'), true);
       assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
     });
 
@@ -317,6 +473,91 @@ describe("html/html-injection", () => {
       );
 
       assertEquals(html.includes('<link rel="stylesheet" href="/_vf/css/abc123.css">'), true);
+    });
+
+    it("skips stylesheet injection only for real stylesheet markup", () => {
+      const alreadyLinked = `<!DOCTYPE html>
+<html><head><link id="vf-project-css" rel="stylesheet" href="/_vf_styles/styles.css"></head>
+<body>{{ content }}</body></html>`;
+
+      const deduped = injectHTMLContent(alreadyLinked, "<p>content</p>", minMeta, {
+        mode: "production",
+        environment: "preview",
+        slug: "test",
+        projectStylesheetHref: "/_vf/css/abc123.css",
+      });
+      assertEquals(deduped.includes("/_vf/css/abc123.css"), false);
+      assertEquals(deduped.includes("styles.css?t="), false);
+
+      // Lookalike substrings — data-* attributes, non-link CSS URLs, and the
+      // id in ordinary text — must not suppress the required injection.
+      const lookalikes = `<!DOCTYPE html>
+<html><head><meta data-id="vf-project-css" data-href="/_vf_styles/styles.css">
+<a href="/_vf/css/decoy.css">id="vf-tailwind-css"</a></head>
+<body>{{ content }}</body></html>`;
+
+      const injected = injectHTMLContent(lookalikes, "<p>content</p>", minMeta, {
+        mode: "production",
+        environment: "preview",
+        slug: "test",
+        projectStylesheetHref: "/_vf/css/abc123.css",
+      });
+      assertEquals(
+        injected.includes('<link rel="stylesheet" href="/_vf/css/abc123.css">'),
+        true,
+      );
+    });
+
+    it("does not treat preload or data attributes as an applied project stylesheet", () => {
+      for (
+        const lookalike of [
+          '<link rel="preload" href="/_vf/css/decoy.css">',
+          '<link rel="preload" id="vf-project-css" href="/decoy.css">',
+          '<link rel="stylesheet" data-href="/_vf/css/decoy.css" href="/decoy.css">',
+          '<style data-id="vf-project-css">body { color: red; }</style>',
+        ]
+      ) {
+        const html = injectHTMLContent(
+          `<!DOCTYPE html><html><head>${lookalike}</head><body>{{ content }}</body></html>`,
+          "<p>content</p>",
+          minMeta,
+          {
+            mode: "production",
+            environment: "production",
+            slug: "test",
+            projectStylesheetHref: "/_vf/css/required.css",
+          },
+        );
+
+        assertEquals(
+          html.includes('<link rel="stylesheet" href="/_vf/css/required.css">'),
+          true,
+          lookalike,
+        );
+      }
+    });
+
+    it("recognizes mixed-case stylesheet rel tokens and genuine project style elements", () => {
+      for (
+        const existingStylesheet of [
+          '<link rel="preload StyleSheet" href="/_vf/css/existing.css">',
+          '<style id = "vf-project-css">body { color: red; }</style>',
+        ]
+      ) {
+        const html = injectHTMLContent(
+          `<!DOCTYPE html><html><head>${existingStylesheet}</head><body>{{ content }}</body></html>`,
+          "<p>content</p>",
+          minMeta,
+          {
+            mode: "production",
+            environment: "production",
+            slug: "test",
+            projectStylesheetHref: "/_vf/css/duplicate.css",
+          },
+        );
+
+        assertEquals(html.includes("/_vf/css/duplicate.css"), false, existingStylesheet);
+      }
     });
   });
 });

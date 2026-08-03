@@ -1,12 +1,17 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
-import { extractRequest } from "./request-shared.ts";
+import {
+  createAgUiBodyLimitErrorResponse,
+  extractRequest,
+  parseAgUiJsonBody,
+} from "./request-shared.ts";
 import {
   RunNotActiveError,
   RunResumeSessionManager,
   WaitConflictError,
   WaitNotPendingError,
 } from "../runtime/resume-session.ts";
+import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
 
 const RESUME_PATH_REGEX = /^\/api\/runs\/([^/]+)\/resume$/;
 const CANCEL_PATH_REGEX = /^\/api\/runs\/([^/]+)$/;
@@ -56,12 +61,15 @@ export interface AgUiCancelHandlerOptions<T = unknown> extends AgUiRunControlHan
 }
 
 async function resolveRunId(
-  requestOrCtx: unknown,
   request: Request,
   options: AgUiRunControlHandlerOptions | undefined,
   regex: RegExp,
 ): Promise<string | null> {
-  const explicit = await options?.resolveRunId?.({ request, requestOrCtx });
+  const applicationRequest = options?.resolveRunId ? createApplicationRequest(request) : request;
+  const explicit = await options?.resolveRunId?.({
+    request: applicationRequest,
+    requestOrCtx: applicationRequest,
+  });
   if (explicit) return explicit;
   return getRunId(new URL(request.url).pathname, regex);
 }
@@ -72,14 +80,14 @@ export function createAgUiResumeHandler(
 ): (requestOrCtx: unknown) => Promise<Response> {
   return async function POST(requestOrCtx: unknown): Promise<Response> {
     const request = extractRequest(requestOrCtx);
-    const runId = await resolveRunId(requestOrCtx, request, options, RESUME_PATH_REGEX);
+    const runId = await resolveRunId(request, options, RESUME_PATH_REGEX);
 
     if (!runId) {
       return Response.json({ error: "Run not found" }, { status: 404 });
     }
 
     try {
-      const parsed = getAgUiResumeSignalSchema().parse(await request.json());
+      const parsed = getAgUiResumeSignalSchema().parse(await parseAgUiJsonBody(request));
       const outcome = options.sessionManager.submitSignal(runId, {
         waitKey: parsed.toolCallId,
         value: {
@@ -90,6 +98,12 @@ export function createAgUiResumeHandler(
 
       return Response.json(outcome, { status: 200 });
     } catch (error) {
+      const bodyLimitError = createAgUiBodyLimitErrorResponse(
+        error,
+        "Invalid AG-UI resume request",
+      );
+      if (bodyLimitError) return bodyLimitError;
+
       if (
         error instanceof Error &&
         "issues" in error &&
@@ -136,7 +150,7 @@ export function createAgUiCancelHandler<T = unknown>(
 ): (requestOrCtx: unknown) => Promise<Response> {
   return async function DELETE(requestOrCtx: unknown): Promise<Response> {
     const request = extractRequest(requestOrCtx);
-    const runId = await resolveRunId(requestOrCtx, request, options, CANCEL_PATH_REGEX);
+    const runId = await resolveRunId(request, options, CANCEL_PATH_REGEX);
 
     if (!runId) {
       return Response.json({ error: "Run not found" }, { status: 404 });

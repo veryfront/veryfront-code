@@ -14,21 +14,24 @@ async function writeModule(
   relativePath: string,
   source: string,
 ): Promise<void> {
-  const filePath = `${tempDir}/${relativePath}`;
+  // The file URL fixture models the module server after source compilation:
+  // authored source paths are requested through one canonical `.js` endpoint.
+  const compiledPath = relativePath.replace(/\.(?:tsx|ts|jsx|mdx|md)$/, ".js");
+  const filePath = `${tempDir}/${compiledPath}`;
   const directory = filePath.slice(0, filePath.lastIndexOf("/"));
   await mkdir(directory, { recursive: true });
   await writeTextFile(filePath, source);
 }
 
 async function withModuleServerUrl<T>(tempDir: string, fn: () => Promise<T>): Promise<T> {
-  const globalRecord = globalThis as typeof globalThis & {
+  const globalRecord = globalThis as unknown as {
     MODULE_SERVER_URL?: string;
-    window?: typeof globalThis;
+    window?: unknown;
   };
-  const previousModuleServerUrl = globalThis.MODULE_SERVER_URL;
+  const previousModuleServerUrl = globalRecord.MODULE_SERVER_URL;
   const previousWindow = globalRecord.window;
   globalRecord.window = globalThis;
-  globalThis.MODULE_SERVER_URL = createFileModuleServerUrl(tempDir);
+  globalRecord.MODULE_SERVER_URL = createFileModuleServerUrl(tempDir);
   clearComponentCache();
 
   try {
@@ -37,9 +40,9 @@ async function withModuleServerUrl<T>(tempDir: string, fn: () => Promise<T>): Pr
     clearComponentCache();
 
     if (previousModuleServerUrl === undefined) {
-      delete globalThis.MODULE_SERVER_URL;
+      delete globalRecord.MODULE_SERVER_URL;
     } else {
-      globalThis.MODULE_SERVER_URL = previousModuleServerUrl;
+      globalRecord.MODULE_SERVER_URL = previousModuleServerUrl;
     }
 
     if (previousWindow === undefined) {
@@ -55,12 +58,12 @@ describe("client/spa/ClientApp", () => {
     await withTempDir(async (tempDir) => {
       await writeModule(
         tempDir,
-        "pages/docs.js",
+        "pages/docs.tsx",
         "export default function Page(props) { return JSON.stringify({ title: props.title, params: props.params }); }",
       );
       await writeModule(
         tempDir,
-        "layouts/main.js",
+        "layouts/main.tsx",
         "export default function Layout(props) { return [String(props.theme), props.children]; }",
       );
 

@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_docs",
+      "id": "coda__list_docs",
       "name": "List Docs",
       "description": "List Coda docs accessible to the token",
       "requiresWrite": false,
@@ -97,7 +97,7 @@
       }
     },
     {
-      "id": "get_doc",
+      "id": "coda__get_doc",
       "name": "Get Doc",
       "description": "Get metadata for a Coda doc",
       "requiresWrite": false,
@@ -115,7 +115,7 @@
       }
     },
     {
-      "id": "create_doc",
+      "id": "coda__create_doc",
       "name": "Create Doc",
       "description": "Create a new Coda doc, optionally copying an existing doc",
       "requiresWrite": true,
@@ -139,7 +139,7 @@
       }
     },
     {
-      "id": "list_pages",
+      "id": "coda__list_pages",
       "name": "List Pages",
       "description": "List pages in a Coda doc",
       "requiresWrite": false,
@@ -205,7 +205,7 @@
       }
     },
     {
-      "id": "get_page",
+      "id": "coda__get_page",
       "name": "Get Page",
       "description": "Get metadata for a page in a Coda doc",
       "requiresWrite": false,
@@ -229,7 +229,7 @@
       }
     },
     {
-      "id": "update_page",
+      "id": "coda__update_page",
       "name": "Update Page",
       "description": "Update a page's name, subtitle, or content in a Coda doc",
       "requiresWrite": true,

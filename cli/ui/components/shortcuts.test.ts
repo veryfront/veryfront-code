@@ -4,7 +4,7 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { resetColorCache } from "../colors.ts";
 import {
@@ -19,7 +19,7 @@ describe("shortcuts", () => {
   let originalForceColor: string | undefined;
   let originalNoColor: string | undefined;
 
-  beforeAll(() => {
+  beforeEach(() => {
     originalForceColor = getEnv("FORCE_COLOR");
     originalNoColor = getEnv("NO_COLOR");
 
@@ -28,7 +28,7 @@ describe("shortcuts", () => {
     resetColorCache();
   });
 
-  afterAll(() => {
+  afterEach(() => {
     if (originalForceColor !== undefined) {
       setEnv("FORCE_COLOR", originalForceColor);
     } else {
@@ -47,17 +47,27 @@ describe("shortcuts", () => {
   describe("DEV_SHORTCUTS", () => {
     it("is an array of shortcuts", () => {
       assertEquals(Array.isArray(DEV_SHORTCUTS), true);
-      assertEquals(DEV_SHORTCUTS.length, 3);
+      assertEquals(DEV_SHORTCUTS.length, 9);
     });
 
-    it("contains open, clear, and quit shortcuts", () => {
+    it("contains every available dev shortcut", () => {
       const keys = DEV_SHORTCUTS.map((s) => s.key);
-      assertEquals(keys, ["o", "c", "q"]);
+      assertEquals(keys, ["?", "o", "l", "s", "p", "u", "a", "c", "q"]);
     });
 
     it("has correct labels", () => {
       const labels = DEV_SHORTCUTS.map((s) => s.label);
-      assertEquals(labels, ["open", "clear", "quit"]);
+      assertEquals(labels, [
+        "shortcuts",
+        "open",
+        "verbose logs",
+        "projects",
+        "pull",
+        "push",
+        "account",
+        "clear",
+        "quit",
+      ]);
     });
   });
 
@@ -95,6 +105,10 @@ describe("shortcuts", () => {
 
       assertStringIncludes(result, "o");
       assertStringIncludes(result, "open");
+      assertStringIncludes(result, "l");
+      assertStringIncludes(result, "verbose logs");
+      assertStringIncludes(result, "s");
+      assertStringIncludes(result, "projects");
       assertStringIncludes(result, "c");
       assertStringIncludes(result, "clear");
       assertStringIncludes(result, "q");

@@ -321,6 +321,15 @@ describe("agent runtime streamed tool result collection", () => {
     );
   });
 
+  it("classifies only canonical returned tool error markers", () => {
+    assertEquals(getToolResultError({ error: null }), undefined);
+    assertEquals(getToolResultError({ error: false }), undefined);
+    assertEquals(
+      getToolResultError({ isError: true, message: "Remote tool failed" }),
+      "Remote tool failed",
+    );
+  });
+
   it("collects the latest generated tool result from direct model output", () => {
     const generatedToolResults = collectGeneratedToolResults([
       {

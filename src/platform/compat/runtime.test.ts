@@ -8,6 +8,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  classifyRuntimeSignals,
   isBrowserEnvironment,
   isBun,
   isCloudflare,
@@ -28,9 +29,39 @@ describe("Runtime Detection", () => {
       assertEquals(typeof isCloudflare, "boolean");
     });
 
-    it("should have exactly one main runtime active (excluding Cloudflare)", () => {
-      const activeCount = [isDeno, isNode, isBun].filter(Boolean).length;
-      assertEquals(activeCount, 1, "Exactly one main runtime should be detected");
+    it("should have exactly one host runtime active", () => {
+      const activeCount = [isDeno, isNode, isBun, isCloudflare].filter(Boolean).length;
+      assertEquals(activeCount, 1, "Exactly one host runtime should be detected");
+    });
+  });
+
+  describe("overlapping compatibility signals", () => {
+    it("prefers Bun over its Node compatibility globals", () => {
+      assertEquals(
+        classifyRuntimeSignals({ bun: true, cloudflare: false, deno: false, node: true }),
+        "bun",
+      );
+    });
+
+    it("prefers Cloudflare over nodejs_compat globals", () => {
+      assertEquals(
+        classifyRuntimeSignals({ bun: false, cloudflare: true, deno: false, node: true }),
+        "cloudflare",
+      );
+    });
+
+    it("keeps Node ahead of a Deno compatibility shim", () => {
+      assertEquals(
+        classifyRuntimeSignals({ bun: false, cloudflare: false, deno: true, node: true }),
+        "node",
+      );
+    });
+
+    it("returns unknown when no supported host signal exists", () => {
+      assertEquals(
+        classifyRuntimeSignals({ bun: false, cloudflare: false, deno: false, node: false }),
+        "unknown",
+      );
     });
   });
 
@@ -75,6 +106,19 @@ describe("Runtime Detection", () => {
   });
 
   describe("testDenoCompiledDetection (binary name detection)", () => {
+    it("prefers Deno's standalone runtime signal over the executable name", () => {
+      assertEquals(
+        testDenoCompiledDetection("/opt/homebrew/bin/deno", true),
+        true,
+        "Deno.build.standalone is authoritative for compiled executables",
+      );
+      assertEquals(
+        testDenoCompiledDetection("/usr/local/bin/custom-deno-name", false),
+        false,
+        "a non-standalone Deno runtime is not compiled even when renamed",
+      );
+    });
+
     it("should NOT detect standard Deno runtime (binary named 'deno')", () => {
       const denoPaths = [
         "/home/user/.deno/bin/deno",

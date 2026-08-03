@@ -1,5 +1,5 @@
 import { computeShortContentHash } from "../esm/transform-utils.ts";
-import { DEFAULT_REACT_VERSION } from "../esm/package-registry.ts";
+import { DEFAULT_REACT_VERSION } from "../esm/react-cdn.ts";
 import type {
   TransformContext,
   TransformOptions,
@@ -27,6 +27,7 @@ function buildContext(
     dev: options.dev ?? true,
     contentHash,
     moduleServerUrl: options.moduleServerUrl,
+    moduleServerOrigin: options.moduleServerOrigin,
     vendorBundleHash: options.vendorBundleHash,
     apiBaseUrl: options.apiBaseUrl,
     jsxImportSource: options.jsxImportSource ?? "react",
@@ -35,6 +36,11 @@ function buildContext(
     metadata: new Map(),
     studioEmbed: options.studioEmbed,
     reactVersion,
+    dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+    dependencyPinningDependencies: options.dependencyPinningDependencies,
+    dependencyPinningSource: options.dependencyPinningSource,
+    onDependencyResolutionObserved: options.onDependencyResolutionObserved,
+    onProgress: options.onProgress,
   };
 }
 

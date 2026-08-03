@@ -4,21 +4,86 @@
  */
 
 import { HTTP_SERVER_ERROR, isRSCEnabled, serverLogger } from "#veryfront/utils";
-import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
+import { metrics } from "#veryfront/observability";
 import { HttpStatus, jsonErrorResponse } from "#veryfront/http/responses";
 import { isWithinDirectory, joinPath, normalizePath } from "#veryfront/utils/path-utils.ts";
 import { escapeHtml } from "#veryfront/html/html-escape.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { bundleBrowserModule } from "#veryfront/server/shared/browser-module-bundler.ts";
+import {
+  type BrowserModuleBundle,
+  BrowserModuleDependencySnapshotError,
+  BrowserModuleEntryRejectedError,
+  bundleBrowserModuleWithMetadata,
+  validateBrowserModuleBundle,
+} from "#veryfront/server/shared/browser-module-bundler.ts";
+import {
+  BrowserModuleBuildCoordinator,
+  type BrowserModuleBuildCoordinatorOptions,
+  BrowserModuleCapacityError,
+} from "#veryfront/server/shared/browser-module-availability.ts";
+import {
+  createDependencyPinningSource,
+  type DependencyPinningSourceInput,
+  resolveRequestedDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import { isDependencyPinningEnabled } from "#veryfront/transforms/esm/npm-registry-client.ts";
+import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
 import type { RSCDevServerHandler } from "../orchestrators/index.ts";
 import { handleActionRequest } from "./action-handler.ts";
 import { getRSCHandler } from "./handler-registry.ts";
 import { handleClientScript, handleDomScript } from "./script-handlers.ts";
 import type { RSCEndpointParams } from "./types.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import {
+  createErrorResponseFromDefinition,
+  PROJECT_EXECUTION_UNAVAILABLE,
+} from "#veryfront/errors";
+import { classifyBrowserModuleAbsoluteSourcePath } from "#veryfront/modules/server/browser-module-admission.ts";
+import { isCanonicalDependencyPinningCacheKey } from "#veryfront/cache/keys/dependency-pinning.ts";
 
 const rscEndpointRouterLog = serverLogger.component("rsc-endpoint-router");
 const rscLog = serverLogger.component("rsc");
+const MODULE_CACHE_CONTROL = "private, no-cache, must-revalidate";
+let browserModuleBuilds = new BrowserModuleBuildCoordinator<BrowserModuleBundle>();
+let browserModuleBuilder = bundleBrowserModuleWithMetadata;
+let browserModuleAdapterIds = new WeakMap<RuntimeAdapter, number>();
+let nextBrowserModuleAdapterId = 1;
+
+function hasProtectedBrowserModuleDependency(
+  bundle: BrowserModuleBundle,
+  projectDir: string,
+  config?: VeryfrontConfig,
+): boolean {
+  return bundle.dependencies.some((dependency) =>
+    classifyBrowserModuleAbsoluteSourcePath(
+      dependency.path,
+      projectDir,
+      { config, rscEnabled: true },
+    ).protectionReason !== null
+  );
+}
+
+export function resetBrowserModuleEndpointStateForTesting(
+  options: BrowserModuleBuildCoordinatorOptions = {},
+): void {
+  browserModuleBuilds.resetForTesting();
+  browserModuleBuilds = new BrowserModuleBuildCoordinator<BrowserModuleBundle>(options);
+  browserModuleBuilder = bundleBrowserModuleWithMetadata;
+  browserModuleAdapterIds = new WeakMap<RuntimeAdapter, number>();
+  nextBrowserModuleAdapterId = 1;
+}
+
+/** Override the browser module builder for focused endpoint tests. */
+export function setBrowserModuleBuilderForTesting(
+  builder?: typeof bundleBrowserModuleWithMetadata,
+): void {
+  browserModuleBuilder = builder ?? bundleBrowserModuleWithMetadata;
+}
+
+export function getBrowserModuleEndpointStatsForTesting() {
+  return browserModuleBuilds.getStatsForTesting();
+}
 
 /**
  * Handle RSC endpoints
@@ -26,7 +91,23 @@ const rscLog = serverLogger.component("rsc");
  * @returns Response or null if not an RSC endpoint
  */
 export async function handleRSCEndpoint(
-  { req, pathname, projectDir, projectId, adapter, config, nonce }: RSCEndpointParams,
+  {
+    req,
+    pathname,
+    projectDir,
+    projectId,
+    projectSlug,
+    contentSourceId,
+    releaseId,
+    branch,
+    dependencyPinningSource: providedDependencyPinningSource,
+    adapter,
+    config,
+    isLocalProject,
+    allowHostProjectCodeExecution,
+    mode,
+    nonce,
+  }: RSCEndpointParams,
 ): Promise<Response | null> {
   if (!pathname.startsWith("/_veryfront/rsc/")) {
     return null;
@@ -53,15 +134,57 @@ export async function handleRSCEndpoint(
     return new Response("Flight endpoint removed. Use custom RSC endpoints.", { status: 410 });
   }
 
+  // These transports import or evaluate project-owned server modules. Until
+  // the generation-owned isolated RSC graph is connected to the worker
+  // renderer, requests without an explicit host capability must not fall back
+  // to the host realm.
+  if (!allowHostProjectCodeExecution && isRscServerExecutionEndpoint(sub)) {
+    const unavailable = createErrorResponseFromDefinition(
+      PROJECT_EXECUTION_UNAVAILABLE,
+      {
+        detail: "RSC server execution requires a dedicated isolated project runtime",
+        instance: pathname,
+      },
+    );
+    unavailable.headers.set("cache-control", "no-store");
+    unavailable.headers.set("retry-after", "1");
+    return req.method === "HEAD"
+      ? new Response(null, {
+        status: unavailable.status,
+        statusText: unavailable.statusText,
+        headers: unavailable.headers,
+      })
+      : unavailable;
+  }
+
   const url = new URL(req.url);
+  const dependencyPinningSource = providedDependencyPinningSource ??
+    createDependencyPinningSource({
+      projectDir,
+      adapter,
+      isLocalProject,
+      projectId,
+      projectSlug,
+      contentSourceId,
+      releaseId,
+      branch,
+      config,
+    });
 
   try {
     // App-router client-page hydration imports browser-safe page modules from
     // this endpoint even when the broader RSC transport is not enabled.
     if (sub === "module") {
       return await handleModuleEndpoint({
+        req,
         searchParams: url.searchParams,
         projectDir,
+        projectId,
+        projectSlug,
+        contentSourceId,
+        releaseId,
+        branch,
+        dependencyPinningSource,
         adapter,
         config,
       });
@@ -71,7 +194,32 @@ export async function handleRSCEndpoint(
       return null;
     }
 
-    const handler = getRSCHandler(projectDir, projectId);
+    const snapshotBoundEndpoint = isDependencySnapshotBoundEndpoint(sub);
+    if (snapshotBoundEndpoint) {
+      const dependencySnapshotError = await validateRequestedDependencySnapshot(
+        dependencyPinningSource,
+        req,
+      );
+      if (dependencySnapshotError) return dependencySnapshotError;
+    }
+    const validatedDependencyPinningCacheKey = snapshotBoundEndpoint
+      ? req.headers.get(RSC_DEPENDENCY_PINNING_HEADER) ?? undefined
+      : undefined;
+
+    const handler = getRSCHandler(projectDir, projectId, {
+      adapter,
+      config,
+      contentSourceId,
+      isLocalProject,
+      mode,
+      projectId,
+      projectSlug,
+      releaseId,
+      branch,
+      dependencyPinningEnabled: isDependencyPinningEnabled(),
+      dependencyPinningCacheKey: validatedDependencyPinningCacheKey,
+      dependencyPinningSource,
+    });
 
     if (sub.startsWith("render/")) {
       return handler.handleRender(sub.replace("render/", ""), url.searchParams, req);
@@ -85,7 +233,7 @@ export async function handleRSCEndpoint(
     }
     if (sub.startsWith("stream/")) {
       metrics.recordRSC("stream");
-      return handler.handleStream(sub.replace("stream/", ""), url.searchParams);
+      return handler.handleStream(sub.replace("stream/", ""), url.searchParams, req);
     }
 
     if (sub === "probe") {
@@ -97,29 +245,53 @@ export async function handleRSCEndpoint(
 
     if (sub === "action") {
       if (req.method !== "POST") {
-        return new Response("Method Not Allowed", { status: 405 });
+        return withDependencyPinningVary(
+          new Response("Method Not Allowed", {
+            status: HttpStatus.METHOD_NOT_ALLOWED,
+          }),
+        );
       }
 
       metrics.recordRSC("action");
       try {
-        return await handleActionRequest({ req, projectDir, adapter });
+        return await handleActionRequest({
+          req,
+          projectDir,
+          projectId,
+          projectSlug,
+          contentSourceId,
+          releaseId,
+          branch,
+          isLocalProject,
+          dependencyPinningSource,
+          adapter,
+          config,
+          mode,
+        });
       } catch (e) {
         metrics.recordRSC("error");
-        return jsonErrorResponse(
-          HttpStatus.INTERNAL_SERVER_ERROR,
-          e instanceof Error ? e.message : String(e),
+        rscEndpointRouterLog.error("action request failed", {
+          errorName: e instanceof Error ? e.name : "UnknownError",
+        });
+        return withDependencyPinningVary(
+          jsonErrorResponse(
+            HttpStatus.INTERNAL_SERVER_ERROR,
+            "action failed",
+          ),
         );
       }
     }
 
     if (sub === "manifest") {
       metrics.recordRSC("manifest");
-      return handler.handleManifest();
+      return handler.handleManifest(
+        req.headers.get(RSC_DEPENDENCY_PINNING_HEADER) ?? undefined,
+      );
     }
 
     if (sub === "payload") {
       metrics.recordRSC("page");
-      return handlePayloadEndpoint({ handler, searchParams: url.searchParams });
+      return handlePayloadEndpoint({ handler, searchParams: url.searchParams, request: req });
     }
 
     if (sub === "page") {
@@ -129,7 +301,7 @@ export async function handleRSCEndpoint(
 
     if (sub === "stream") {
       metrics.recordRSC("stream");
-      return handleStreamEndpoint(url.searchParams);
+      return handleStreamEndpoint(url.searchParams, req);
     }
 
     return null;
@@ -148,19 +320,91 @@ export async function handleRSCEndpoint(
       rscEndpointRouterLog.debug("Failed to record metrics", metricsError);
     }
 
-    rscLog.debug("[dev] endpoint failed", e);
-    return new Response("Internal Error", { status: HTTP_SERVER_ERROR });
+    rscLog.debug("[dev] endpoint failed", {
+      errorName: e instanceof Error ? e.name : "UnknownError",
+    });
+    return new Response("Internal Error", {
+      status: HTTP_SERVER_ERROR,
+      headers: {
+        "cache-control": "no-store",
+        ...(isDependencySnapshotBoundEndpoint(sub) ? { vary: RSC_DEPENDENCY_PINNING_HEADER } : {}),
+      },
+    });
   }
 }
 
+function isRscServerExecutionEndpoint(sub: string): boolean {
+  return sub === "action" ||
+    sub === "payload" ||
+    sub === "render" ||
+    sub.startsWith("render/") ||
+    sub === "stream" ||
+    sub.startsWith("stream/");
+}
+
+function isDependencySnapshotBoundEndpoint(sub: string): boolean {
+  return sub === "render" ||
+    sub.startsWith("render/") ||
+    sub === "manifest" ||
+    sub === "payload" ||
+    sub === "stream" ||
+    sub.startsWith("stream/");
+}
+
+async function validateRequestedDependencySnapshot(
+  dependencyPinningSource: DependencyPinningSourceInput,
+  request: Request,
+): Promise<Response | null> {
+  const requestedPinKey = request.headers.get(RSC_DEPENDENCY_PINNING_HEADER);
+  if (requestedPinKey !== null && !requestedPinKey.startsWith("on:")) {
+    return unknownDependencySnapshotResponse();
+  }
+
+  const snapshot = await resolveRequestedDependencyPinningSnapshot(
+    dependencyPinningSource,
+    requestedPinKey,
+  );
+  if (
+    !snapshot ||
+    (requestedPinKey === null && snapshot.cacheKey !== "off")
+  ) {
+    return unknownDependencySnapshotResponse();
+  }
+  return null;
+}
+
+function unknownDependencySnapshotResponse(): Response {
+  return new Response("Unknown dependency snapshot", {
+    status: HttpStatus.CONFLICT,
+    headers: {
+      "cache-control": "no-store",
+      vary: RSC_DEPENDENCY_PINNING_HEADER,
+    },
+  });
+}
+
 async function handleModuleEndpoint({
+  req,
   searchParams,
   projectDir,
+  projectId,
+  projectSlug,
+  contentSourceId,
+  releaseId,
+  branch,
+  dependencyPinningSource,
   adapter,
   config,
 }: {
+  req: Request;
   searchParams: URLSearchParams;
   projectDir: string;
+  projectId?: string;
+  projectSlug?: string;
+  contentSourceId?: string;
+  releaseId?: string;
+  branch?: string | null;
+  dependencyPinningSource: DependencyPinningSourceInput;
   adapter: RuntimeAdapter;
   config?: VeryfrontConfig;
 }): Promise<Response> {
@@ -168,7 +412,7 @@ async function handleModuleEndpoint({
   if (!relParam) {
     return new Response("Missing rel query parameter", {
       status: HttpStatus.BAD_REQUEST,
-      headers: { "content-type": "text/plain" },
+      headers: { "content-type": "text/plain", "cache-control": "no-store" },
     });
   }
 
@@ -177,66 +421,268 @@ async function handleModuleEndpoint({
   if (relSegments.includes("..")) {
     return new Response("Invalid rel query parameter", {
       status: HttpStatus.BAD_REQUEST,
-      headers: { "content-type": "text/plain" },
+      headers: { "content-type": "text/plain", "cache-control": "no-store" },
     });
   }
 
   const rel = normalizedRel.startsWith("/") ? normalizedRel : `/${normalizedRel}`;
-  const modulePath = await resolveModuleEndpointPath(rel, projectDir, adapter);
-  if (!modulePath) {
-    return new Response("Not Found", { status: 404 });
+  const requestedPinKeys = searchParams.getAll("pins");
+  const hasMalformedPinKey = requestedPinKeys.length > 1 ||
+    (requestedPinKeys.length === 1 &&
+      !isCanonicalDependencyPinningCacheKey(requestedPinKeys[0] ?? ""));
+  const requestedPinKey = requestedPinKeys[0];
+  if (hasMalformedPinKey || (requestedPinKeys.length === 0 && isDependencyPinningEnabled())) {
+    return new Response("Unknown dependency snapshot", {
+      status: HttpStatus.CONFLICT,
+      headers: { "cache-control": "no-store" },
+    });
   }
 
   try {
-    const source = await bundleBrowserModule(modulePath, {
-      adapter,
+    const moduleServerOrigin = new URL(req.url).origin;
+    const modulePath = resolveModuleEndpointPath(rel, projectDir, config);
+    if (!modulePath) {
+      return new Response("Not Found", {
+        status: 404,
+        headers: { "cache-control": "no-store" },
+      });
+    }
+    const entryPolicy = classifyBrowserModuleAbsoluteSourcePath(
+      modulePath,
       projectDir,
-      config,
+      { config, rscEnabled: true },
+    );
+    if (entryPolicy.protectionReason) {
+      return new Response("Not Found", {
+        status: HttpStatus.NOT_FOUND,
+        headers: { "cache-control": "no-store" },
+      });
+    }
+
+    const adapterId = getBrowserModuleAdapterId(adapter);
+    const configHash = await computeHash(stableSerialize(config ?? null));
+    const dependencyPinningCacheKey = requestedPinKey ?? "off";
+    const projectKey = projectId ?? projectSlug ?? projectDir;
+    const cacheKey = buildBrowserModuleCacheKey({
+      adapterId,
+      projectKey,
+      contentSourceId,
+      releaseId,
+      branch,
+      configHash,
+      moduleServerOrigin,
+      dependencyPinningCacheKey,
+      modulePath,
     });
-    return new Response(source, {
+    const result = await browserModuleBuilds.getOrBuild({
+      cacheKey,
+      projectKey,
+      build: async () => {
+        const bundle = await browserModuleBuilder(modulePath, {
+          adapter,
+          projectDir,
+          projectId: projectId ?? projectSlug,
+          config,
+          projectSlug,
+          moduleServerOrigin,
+          ...(requestedPinKey
+            ? { requestedDependencyPinningCacheKey: requestedPinKey }
+            : { dependencyPinningCacheKey }),
+          dependencyPinningSource,
+          signal: req.signal,
+          requireClientBoundary: true,
+        });
+        if (hasProtectedBrowserModuleDependency(bundle, projectDir, config)) {
+          throw new BrowserModuleEntryRejectedError();
+        }
+        if (bundle.dependencyPinningCacheKey !== dependencyPinningCacheKey) {
+          throw new BrowserModuleDependencySnapshotError();
+        }
+        return bundle;
+      },
+      validate: async (bundle) => {
+        if (hasProtectedBrowserModuleDependency(bundle, projectDir, config)) return false;
+        if (
+          bundle.dependencyPinningCacheKey !== dependencyPinningCacheKey ||
+          (dependencyPinningCacheKey.startsWith("on:") &&
+            bundle.dependencyPinningDependencies === undefined)
+        ) {
+          return false;
+        }
+        return validateBrowserModuleBundle(bundle, {
+          adapter,
+          projectDir,
+          signal: req.signal,
+          importMap: {
+            config,
+            moduleServerOrigin,
+            dependencyPinningCacheKey: bundle.dependencyPinningCacheKey,
+            dependencyPinningDependencies: bundle.dependencyPinningDependencies,
+            dependencyPinningSource,
+          },
+        });
+      },
+      sizeOf: estimateBrowserModuleBundleSize,
+    });
+    const etag = `"${result.value.contentHash}"`;
+    const headers = {
+      "cache-control": MODULE_CACHE_CONTROL,
+      "etag": etag,
+      "x-content-type-options": "nosniff",
+    };
+    if (ifNoneMatch(req.headers.get("if-none-match"), etag)) {
+      return new Response(null, { status: HttpStatus.NOT_MODIFIED, headers });
+    }
+
+    return new Response(result.value.source, {
       status: 200,
       headers: {
+        ...headers,
         "content-type": "application/javascript; charset=utf-8",
-        "cache-control": "public, max-age=0",
       },
     });
   } catch (error) {
-    rscEndpointRouterLog.debug("module lookup failed", { modulePath, error });
-    return new Response("Internal Error", { status: HTTP_SERVER_ERROR });
+    if (error instanceof BrowserModuleDependencySnapshotError) {
+      return new Response("Unknown dependency snapshot", {
+        status: HttpStatus.CONFLICT,
+        headers: { "cache-control": "no-store" },
+      });
+    }
+    if (error instanceof BrowserModuleEntryRejectedError) {
+      return new Response("Not Found", {
+        status: HttpStatus.NOT_FOUND,
+        headers: { "cache-control": "no-store" },
+      });
+    }
+    if (error instanceof BrowserModuleCapacityError) {
+      rscEndpointRouterLog.debug("module build capacity exhausted", {
+        errorName: error.name,
+      });
+      return new Response("Service Unavailable", {
+        status: HttpStatus.SERVICE_UNAVAILABLE,
+        headers: {
+          "cache-control": "no-store",
+          "retry-after": "1",
+        },
+      });
+    }
+
+    rscEndpointRouterLog.debug("module build failed", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+    return new Response("Internal Error", {
+      status: HTTP_SERVER_ERROR,
+      headers: { "cache-control": "no-store" },
+    });
   }
 }
 
-async function resolveModuleEndpointPath(
-  rel: string,
-  projectDir: string,
-  adapter: RuntimeAdapter,
-): Promise<string | null> {
-  const candidateRoots = [
-    joinPath(projectDir, "app"),
-    joinPath(projectDir, "components"),
-    joinPath(projectDir, "src"),
-    projectDir,
+interface BrowserModuleCacheKeyOptions {
+  adapterId: number;
+  projectKey: string;
+  contentSourceId?: string;
+  releaseId?: string;
+  branch?: string | null;
+  configHash: string;
+  moduleServerOrigin?: string;
+  dependencyPinningCacheKey?: string;
+  modulePath: string;
+}
+
+export function buildBrowserModuleCacheKey(
+  options: BrowserModuleCacheKeyOptions,
+): string {
+  const legacyFields = [
+    options.adapterId,
+    options.projectKey,
+    options.contentSourceId ?? "",
+    options.releaseId ?? "",
+    options.configHash,
+    options.modulePath,
   ];
-
-  for (const root of candidateRoots) {
-    const modulePath = normalizePath(joinPath(root, rel));
-    if (!isWithinDirectory(root, modulePath)) {
-      continue;
-    }
-
-    try {
-      if (!(await adapter.fs.exists(modulePath))) {
-        continue;
-      }
-    } catch (error) {
-      rscEndpointRouterLog.debug("module lookup failed", { modulePath, error });
-      throw error;
-    }
-
-    return modulePath;
+  if (!options.dependencyPinningCacheKey?.startsWith("on:")) {
+    return legacyFields.join("\0");
   }
 
-  return null;
+  return [
+    options.adapterId,
+    options.projectKey,
+    options.contentSourceId ?? "",
+    options.releaseId ?? "",
+    options.branch ?? "",
+    options.configHash,
+    options.moduleServerOrigin ?? "",
+    options.dependencyPinningCacheKey,
+    options.modulePath,
+  ].join("\0");
+}
+
+function getBrowserModuleAdapterId(adapter: RuntimeAdapter): number {
+  const existing = browserModuleAdapterIds.get(adapter);
+  if (existing !== undefined) return existing;
+  const id = nextBrowserModuleAdapterId++;
+  browserModuleAdapterIds.set(adapter, id);
+  return id;
+}
+
+function stableSerialize(value: unknown, seen = new WeakSet<object>()): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? String(value);
+  }
+  if (seen.has(value)) return '"[Circular]"';
+  seen.add(value);
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableSerialize(entry, seen)).join(",")}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => `${JSON.stringify(key)}:${stableSerialize(entry, seen)}`);
+  return `{${entries.join(",")}}`;
+}
+
+function estimateBrowserModuleBundleSize(bundle: BrowserModuleBundle): number {
+  let size = new TextEncoder().encode(bundle.source).byteLength +
+    bundle.contentHash.length + bundle.importMapHash.length +
+    (bundle.dependencyPinningCacheKey?.length ?? 0);
+  for (const [name, declaration] of Object.entries(bundle.dependencyPinningDependencies ?? {})) {
+    size += name.length + declaration.length;
+  }
+  for (const dependency of bundle.dependencies) {
+    size += dependency.path.length + dependency.contentHash.length + 8;
+  }
+  for (const probe of bundle.resolutionProbes) {
+    size += probe.path.length + probe.state.length;
+  }
+  return size;
+}
+
+function ifNoneMatch(header: string | null, etag: string): boolean {
+  if (!header) return false;
+  return header.split(",").some((candidate) => {
+    const value = candidate.trim();
+    return value === "*" || value === etag || value === `W/${etag}`;
+  });
+}
+
+function resolveModuleEndpointPath(
+  rel: string,
+  projectDir: string,
+  config?: VeryfrontConfig,
+): string | null {
+  const normalizedRel = rel.replace(/^\/+/, "");
+  if (!/\.(?:[jt]sx?|[cm][jt]s)$/i.test(normalizedRel)) return null;
+
+  const rootRelative = normalizePath(config?.directories?.app ?? "app").replace(/^\/+/, "");
+  const root = normalizePath(joinPath(projectDir, rootRelative));
+  if (!rootRelative || !isWithinDirectory(projectDir, root)) return null;
+
+  const pathRelativeToRoot = normalizedRel.startsWith(`${rootRelative}/`)
+    ? normalizedRel.slice(rootRelative.length + 1)
+    : normalizedRel;
+  const modulePath = normalizePath(joinPath(root, pathRelativeToRoot));
+  if (!isWithinDirectory(root, modulePath)) return null;
+
+  return modulePath;
 }
 
 /** Extract name parameter with fallback to "World" */
@@ -247,52 +693,16 @@ function getNameParam(searchParams: URLSearchParams): string {
 async function handlePayloadEndpoint({
   handler,
   searchParams,
+  request,
 }: {
   handler: RSCDevServerHandler;
   searchParams: URLSearchParams;
+  request: Request;
 }): Promise<Response> {
-  let modules: string[] = [];
-
-  try {
-    const manifestResponse = await handler.handleManifest();
-    if (manifestResponse.ok) {
-      const manifestData = await manifestResponse.json();
-      const componentPaths = manifestData?.components;
-
-      if (componentPaths && typeof componentPaths === "object") {
-        modules = Object.values(componentPaths).filter(
-          (value): value is string => typeof value === "string" && value.length > 0,
-        );
-      }
-    }
-  } catch (error) {
-    rscEndpointRouterLog.debug("failed to read manifest for payload", error);
-  }
-
-  if (modules.length === 0) {
-    modules = ["__veryfront_rsc_root__"];
-  }
-
-  const name = getNameParam(searchParams);
-  const rootHtml = `<div data-slot="root">Hello ${escapeHtml(name)}</div>`;
-
-  return new Response(
-    JSON.stringify({
-      html: rootHtml,
-      modules,
-      slots: { root: rootHtml },
-    }),
-    {
-      status: 200,
-      headers: {
-        "content-type": "application/json",
-        "cache-control": "no-cache",
-      },
-    },
-  );
+  return handler.handleRender("/", searchParams, request);
 }
 
-function handleStreamEndpoint(searchParams: URLSearchParams): Response {
+function handleStreamEndpoint(searchParams: URLSearchParams, request: Request): Response {
   const escapedName = escapeHtml(getNameParam(searchParams));
   const includeBadLine = searchParams.has("bad");
 
@@ -317,6 +727,30 @@ function handleStreamEndpoint(searchParams: URLSearchParams): Response {
     headers: {
       "content-type": "application/x-ndjson",
       "cache-control": "no-cache",
+      vary: RSC_DEPENDENCY_PINNING_HEADER,
+      ...(request.headers.get(RSC_DEPENDENCY_PINNING_HEADER)?.startsWith("on:")
+        ? {
+          [RSC_DEPENDENCY_PINNING_HEADER]: request.headers.get(RSC_DEPENDENCY_PINNING_HEADER)!,
+        }
+        : {}),
     },
   });
+}
+
+function withDependencyPinningVary(response: Response): Response {
+  appendVaryHeader(response.headers, RSC_DEPENDENCY_PINNING_HEADER);
+  response.headers.set("cache-control", "no-store");
+  return response;
+}
+
+function appendVaryHeader(headers: Headers, fieldName: string): void {
+  const values = (headers.get("vary") ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (values.includes("*")) return;
+  if (!values.some((value) => value.toLowerCase() === fieldName.toLowerCase())) {
+    values.push(fieldName);
+  }
+  headers.set("vary", values.join(", "));
 }

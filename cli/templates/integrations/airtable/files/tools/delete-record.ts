@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { deleteRecord } from "../../lib/airtable-client.ts";
+import { deleteRecord } from "../lib/airtable-client.ts";
 
 export default tool({
-  id: "delete-record",
+  id: "airtable-delete-record",
   description:
     "Delete an Airtable record from a table. Returns Airtable's deletion confirmation.",
   inputSchema: defineSchema((v) =>

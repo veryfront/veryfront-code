@@ -1,8 +1,12 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import type { ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
 import type { HostedAgentRunSpan, HostedAgentRunTracer } from "./agent-run-lifecycle.ts";
-import type { HostedChatRuntimeToUiMessageStreamOptions } from "./chat-runtime-contract.ts";
+import type {
+  HostedChatRuntimeAgent,
+  HostedChatRuntimeToUiMessageStreamOptions,
+} from "./chat-runtime-contract.ts";
 import type { HostedConversationRootRunContext } from "../conversation/root-run-lifecycle.ts";
 import type { AgUiRuntimeRequest } from "../runtime/ag-ui-contract.ts";
 import {
@@ -18,6 +22,7 @@ function createRootRunContext(): HostedConversationRootRunContext {
   return {
     durableRootRun: null,
     durableRunMirror: null,
+    privateDurableRunMirror: null,
   };
 }
 
@@ -81,6 +86,7 @@ function createRuntimeOptions(input?: {
       get lastTimeoutState() {
         return null;
       },
+      keepAlive: () => {},
       observe: () => {},
       dispose: () => {},
     }),
@@ -102,17 +108,18 @@ function createPreparedExecution(input?: {
   captureStreamOptions?: (options?: HostedChatRuntimeToUiMessageStreamOptions) => void;
   waitForSteps?: Promise<readonly unknown[]>;
   cleanup?: () => Promise<void>;
+  stream?: HostedChatRuntimeAgent["stream"];
 }): PreparedHostedChatExecution {
   return {
     authToken: "auth-token",
     agent: {
-      stream: async () => ({
+      stream: input?.stream ?? (async () => ({
         steps: input?.waitForSteps ?? Promise.resolve([{}]),
         toUIMessageStream: (options) => {
           input?.captureStreamOptions?.(options);
           return emptyStream();
         },
-      }),
+      })),
     },
     agentId: "agent-1",
     modelId: "openai/gpt-test",
@@ -177,5 +184,115 @@ describe("agent/prepared-hosted-chat-execution", () => {
 
     assertEquals(traces, ["chat.runDetached"]);
     assertEquals(cleanupCount, 1);
+  });
+
+  it("passes bootstrap keepalive settings to the bootstrapped runtime", async () => {
+    using time = new FakeTime();
+    let keepAliveCount = 0;
+    let observeCount = 0;
+    let releaseStream!: () => void;
+    const streamGate = new Promise<void>((resolve) => {
+      releaseStream = resolve;
+    });
+
+    const responsePromise = streamPreparedHostedChatExecutionToAgUiResponse({
+      execution: {
+        ...createPreparedExecution({
+          stream: async () => {
+            await streamGate;
+            return {
+              steps: Promise.resolve([{}]),
+              toUIMessageStream: () => emptyStream(),
+            };
+          },
+        }),
+        requestAbortSignal: new AbortController().signal,
+        agUiInput: createAgUiInput(),
+      },
+      runtime: {
+        ...createRuntimeOptions(),
+        streamBootstrapKeepaliveIntervalMs: 1,
+        createRootStreamWatchdog: () => ({
+          signal: new AbortController().signal,
+          get lastTimeoutState() {
+            return null;
+          },
+          keepAlive: () => {
+            keepAliveCount += 1;
+          },
+          observe: () => {
+            observeCount += 1;
+          },
+          dispose: () => {},
+        }),
+      },
+    });
+
+    try {
+      time.tick(1);
+      await Promise.resolve();
+
+      assertEquals(keepAliveCount > 0, true);
+      assertEquals(observeCount, 0);
+    } finally {
+      releaseStream();
+      const response = await responsePromise;
+      await response.body?.cancel();
+    }
+  });
+
+  it("preserves bootstrap keepalive settings from prepared execution input", async () => {
+    using time = new FakeTime();
+    let keepAliveCount = 0;
+    let observeCount = 0;
+    let releaseStream!: () => void;
+    const streamGate = new Promise<void>((resolve) => {
+      releaseStream = resolve;
+    });
+
+    const responsePromise = streamPreparedHostedChatExecutionToAgUiResponse({
+      execution: {
+        ...createPreparedExecution({
+          stream: async () => {
+            await streamGate;
+            return {
+              steps: Promise.resolve([{}]),
+              toUIMessageStream: () => emptyStream(),
+            };
+          },
+        }),
+        streamBootstrapKeepaliveIntervalMs: 1,
+        requestAbortSignal: new AbortController().signal,
+        agUiInput: createAgUiInput(),
+      },
+      runtime: {
+        ...createRuntimeOptions(),
+        createRootStreamWatchdog: () => ({
+          signal: new AbortController().signal,
+          get lastTimeoutState() {
+            return null;
+          },
+          keepAlive: () => {
+            keepAliveCount += 1;
+          },
+          observe: () => {
+            observeCount += 1;
+          },
+          dispose: () => {},
+        }),
+      },
+    });
+
+    try {
+      time.tick(1);
+      await Promise.resolve();
+
+      assertEquals(keepAliveCount > 0, true);
+      assertEquals(observeCount, 0);
+    } finally {
+      releaseStream();
+      const response = await responsePromise;
+      await response.body?.cancel();
+    }
   });
 });

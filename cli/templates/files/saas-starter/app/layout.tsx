@@ -10,6 +10,7 @@ export default function RootLayout({
     <>
       <Head>
         <title>AI SaaS</title>
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
       </Head>
       <div className="antialiased">
         {children}

@@ -2,6 +2,16 @@
 
 Durable, DAG-based workflows with automatic crash recovery and multi-tenant isolation.
 
+## Execution-stack migration boundary
+
+Workflow definition limits, source authority, public run projections, runtime-state
+contracts, and Claude Code wire events are owned by this module. Changes to the
+workflow client, executor admission/lifecycle, run control, and backend atomic
+operations must be migrated together: those surfaces share compare-and-set,
+lease, cancellation, and ownership invariants and are not independently
+replaceable. Backend implementations remain extension-owned; core depends only
+on their contracts.
+
 ## Quick Start (Local Development)
 
 ```bash
@@ -69,7 +79,7 @@ workflowClient.register(contentPipeline);
 if (process.env.WORKER_ENABLED !== "false") {
   const worker = new WorkflowWorker({
     backend,
-    resumeFn: (runId) => workflowClient.resume(runId),
+    resumeFn: (runId, expectedWorkerId) => workflowClient.resume(runId, expectedWorkerId),
     pollInterval: 5000,
     stalledThreshold: 30000, // 30s for dev (faster detection)
   });
@@ -264,12 +274,31 @@ client.register(myWorkflow);
 // Optional: Start worker (if not using CLI)
 const worker = new WorkflowWorker({
   backend,
-  resumeFn: (runId) => client.resume(runId),
+  resumeFn: (runId, expectedWorkerId) => client.resume(runId, expectedWorkerId),
   pollInterval: 5000,
   stalledThreshold: 60000,
 });
 worker.start();
 ```
+
+Custom backends used by `WorkflowWorker` must implement the queue, lock, and stalled-run methods in
+`WorkflowBackend`. They must also implement `updateRunIfStatusAndWorker`,
+`saveCheckpointIfStatusAndWorker`, and `savePendingApprovalIfStatusAndWorker`. Each of these methods
+must compare the run status and worker ID atomically with its write. `WorkflowWorker` rejects a
+backend that omits these owner-fencing operations because an older worker could otherwise overwrite
+a replacement worker's progress.
+
+### Redis schema cutovers
+
+`RedisBackend` preserves the configured key, stream, and consumer-group values as deployment base
+names and appends a versioned storage namespace (currently `schema-v1`) to run, index, checkpoint,
+approval, lock, claim, queue, and consumer-group state. Readers and workers inspect only their exact
+schema namespace. They do not read, migrate, or backfill unversioned rows or queue entries.
+
+Before releasing a storage-schema change, stop new workflow intake, let the old workers drain every
+pending or running workflow in the old namespace, and then stop those workers. Deploy all Redis
+workflow readers and writers together only after that drain completes. Old rows remain intentionally
+invisible to the new release and may be removed later according to the deployment's retention policy.
 
 ### Run Executors
 
@@ -386,6 +415,16 @@ On recovery, the workflow resumes from the last checkpoint:
 - Completed steps are skipped
 - Failed steps can be retried
 - Waiting steps (approval) continue waiting
+
+### Source integration policy snapshots
+
+Every new workflow run stores the normalized source integration policy that was active when the
+run started. Resume, worker, and process entrypoints require this snapshot and restore it before
+executing workflow code.
+
+If dynamic discovery reloads a narrower source policy, the runtime intersects it with the stored
+snapshot. A reload cannot widen the run's original integration or tool access. Runs without a
+snapshot are rejected; missing state never implies unrestricted access.
 
 ### Heartbeat & Stalled Detection
 

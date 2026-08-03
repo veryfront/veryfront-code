@@ -12,5 +12,4 @@ export type {
   CSPDirectives,
   SecurityConfig,
 } from "./types.ts";
-export { isValidSecurityConfig, loadSecurityConfig } from "./config-loader.ts";
 export { setCors } from "./cors-handler.ts";

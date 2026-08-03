@@ -12,10 +12,10 @@
  */
 
 import { rendererLogger } from "#veryfront/utils";
-import { INITIALIZATION_ERROR } from "#veryfront/errors/error-registry.ts";
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import { initializeTransform, isUsingEsbuild } from "#veryfront/platform/compat/transform.ts";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { ElementValidator, type ValidationOptions } from "../element-validator/index.ts";
 import { type CompileMDXFunction, CompilerService } from "../orchestrator/compiler-service.ts";
 

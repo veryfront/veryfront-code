@@ -193,7 +193,26 @@ Deno.test("selectDefaultHostedChildForkRuntimeTools ignores parent-only delegati
 
   assertEquals(result, {
     ok: true,
-    forkTools,
+    forkTools: {},
+    availableToolNames: [],
+  });
+});
+
+Deno.test("selectDefaultHostedChildForkRuntimeTools preserves an explicit empty tool grant", () => {
+  const result = selectDefaultHostedChildForkRuntimeTools({
+    provider: "anthropic",
+    forkModel: "claude-sonnet-4-5-20250929",
+    forkTools: {
+      web_fetch: { description: "Fetch a URL" },
+    },
+    effectivePrompt: "Answer from existing context",
+    requestedTools: [],
+  });
+
+  assertEquals(result, {
+    ok: true,
+    forkTools: {},
+    availableToolNames: [],
   });
 });
 

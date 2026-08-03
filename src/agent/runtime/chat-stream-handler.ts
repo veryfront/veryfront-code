@@ -17,22 +17,55 @@ import {
   stripLeadingEmptyObjectPlaceholder,
 } from "../streaming/data-stream.ts";
 import { isDynamicTool } from "./tool-helpers.ts";
+import {
+  getStreamErrorMessage,
+  hasCompletedStepSignal,
+  isLateProviderBodyReadError,
+} from "../streaming/stream-outcome.ts";
 import { serverLogger } from "#veryfront/utils";
 import { isAnyDebugEnabled } from "#veryfront/utils/constants/env.ts";
-import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { setActiveSpanAttributes, SpanKind } from "#veryfront/observability";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { withToolInputStatusTransitions } from "#veryfront/provider/runtime-loader/tool-input-status.ts";
+import {
+  applyLifecycleSnapshotToChatStreamState,
+  createRuntimeStreamProviderAdapter,
+  createStreamLifecycleLiveAdapter,
+  createStreamLifecycleObserver,
+  resolveStreamLifecyclePolicy,
+  runStreamLifecycle,
+  StreamLifecycleFailure,
+  type StreamLifecyclePolicy,
+  type StreamOutcome,
+  toLegacyRuntimeUsage,
+} from "#veryfront/agent/streaming/lifecycle/index.ts";
+import type { StreamLifecycleMode } from "./stream-lifecycle-mode.ts";
+import {
+  createStreamLifecycleShadow,
+  type StreamLifecycleShadowDivergence,
+  type StreamLifecycleShadowReport,
+} from "./stream-lifecycle-shadow.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
 import {
   redactSensitive,
   sanitizeSerializedError,
   sanitizeUrlCredentials,
 } from "#veryfront/utils/logger/redact.ts";
+import { buildRuntimeUsageTraceAttributes } from "./trace-usage.ts";
+import {
+  getToolResultError,
+  isIntegrationAuthenticationActionResult,
+} from "#veryfront/tool/result.ts";
 
 const logger = serverLogger.component("agent");
 const LOCAL_TOOL_COMMIT_GRACE_MS = 250;
 const LOCAL_TOOL_INPUT_IDLE_MS = 15_000;
 const STREAM_START_IDLE_MS = 60_000;
 const STREAM_OUTPUT_IDLE_MS = 15_000;
+
+type TraceAttributePrimitive = string | number | boolean;
+type TraceAttributeValue = TraceAttributePrimitive | readonly TraceAttributePrimitive[];
 
 export interface StreamingToolCall {
   id: string;
@@ -92,6 +125,7 @@ export interface ChatStreamState {
     billingMode?: "direct" | "deferred";
     usageCaptureStatus?: "complete" | "partial" | "missing";
   };
+  streamOutcome?: StreamOutcome;
 }
 
 export interface ChatStreamCallbacks {
@@ -123,6 +157,11 @@ export interface ChatStreamCallbacks {
   availableToolNames?: readonly string[];
   localToolInputIdleTimeoutMs?: number;
   streamIdleTimeoutMs?: number;
+  streamLifecycleMode?: StreamLifecycleMode;
+  streamLifecyclePolicy?: Partial<StreamLifecyclePolicy>;
+  onLifecycleShadowReport?: (report: StreamLifecycleShadowReport) => void;
+  traceSpanName?: string;
+  traceAttributes?: Record<string, TraceAttributeValue>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -179,22 +218,6 @@ function resolveToolResultOutput(part: RuntimeStreamPart): unknown {
   return undefined;
 }
 
-function getMcpToolErrorMessage(value: unknown): string | undefined {
-  if (!isRecord(value)) {
-    return undefined;
-  }
-
-  if (typeof value.error !== "string" || value.error.length === 0) {
-    return undefined;
-  }
-
-  if (typeof value.message === "string" && value.message.trim().length > 0) {
-    return value.message;
-  }
-
-  return value.error;
-}
-
 function logProviderToolPart(
   partType: "tool-result" | "tool-error",
   part: {
@@ -236,42 +259,6 @@ function logProviderToolPart(
     error: summarizeProviderToolDebugValue(part.error),
     input: summarizeProviderToolDebugValue(part.input),
   });
-}
-
-function getStreamErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  if (typeof error === "string") {
-    return error;
-  }
-
-  if (
-    typeof error === "object" && error !== null && "message" in error &&
-    typeof error.message === "string"
-  ) {
-    return error.message;
-  }
-
-  return String(error);
-}
-
-function isLateProviderBodyReadError(error: unknown): boolean {
-  return /error reading a body from connection/i.test(getStreamErrorMessage(error));
-}
-
-function hasCompletedStepSignal(finishReason: string | null): boolean {
-  switch (finishReason) {
-    case "stop":
-    case "length":
-    case "tool-calls":
-    case "content-filter":
-    case "other":
-      return true;
-    default:
-      return false;
-  }
 }
 
 function hasStreamOutput(state: ChatStreamState): boolean {
@@ -362,8 +349,138 @@ export function createStreamState(): ChatStreamState {
  * - tool-call → tool-input-available SSE (accumulated input)
  * - finish → captures finishReason and usage
  */
-export function processStream(
+export interface RuntimeStreamSource {
+  open(signal: AbortSignal): RuntimeStreamResult;
+}
+
+export function createRuntimeStreamSource(
+  open: (signal: AbortSignal) => RuntimeStreamResult,
+): RuntimeStreamSource {
+  return { open };
+}
+
+export function isRuntimeStreamSource(
+  value: RuntimeStreamResult | RuntimeStreamSource,
+): value is RuntimeStreamSource {
+  return typeof value === "object" && value !== null &&
+    "open" in value && typeof value.open === "function";
+}
+
+export function resolveRuntimeLifecyclePolicy(
+  callbacks?: ChatStreamCallbacks,
+): StreamLifecyclePolicy {
+  const compatibility: Partial<StreamLifecyclePolicy> = {
+    ...(callbacks?.streamIdleTimeoutMs === undefined ? {} : {
+      firstProgressTimeoutMs: callbacks.streamIdleTimeoutMs,
+      semanticIdleTimeoutMs: callbacks.streamIdleTimeoutMs,
+    }),
+    ...(callbacks?.localToolInputIdleTimeoutMs === undefined
+      ? {}
+      : { toolInputIdleTimeoutMs: callbacks.localToolInputIdleTimeoutMs }),
+  };
+  return resolveStreamLifecyclePolicy({
+    ...compatibility,
+    ...callbacks?.streamLifecyclePolicy,
+  });
+}
+
+function wrapLegacyRuntimeStreamResult(
   result: RuntimeStreamResult,
+): RuntimeStreamResult {
+  return {
+    ...result,
+    fullStream: withToolInputStatusTransitions(result.fullStream),
+  };
+}
+
+function readTraceAttributeString(
+  attributes: Record<string, TraceAttributeValue> | undefined,
+  key: string,
+): string | undefined {
+  const value = attributes?.[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+async function processActiveStream(
+  source: RuntimeStreamSource,
+  state: ChatStreamState,
+  controller: ReadableStreamDefaultController,
+  encoder: TextEncoder,
+  textPartId: string | undefined,
+  callbacks: ChatStreamCallbacks | undefined,
+  abortSignal: AbortSignal | undefined,
+): Promise<void> {
+  const adapter = createRuntimeStreamProviderAdapter({
+    open: (signal) => source.open(signal).fullStream,
+    options: {
+      availableToolNames: callbacks?.availableToolNames
+        ? new Set(callbacks.availableToolNames)
+        : null,
+      providerExecutedToolNames: new Set(
+        callbacks?.providerExecutedToolNames ?? [],
+      ),
+    },
+  });
+  const run = runStreamLifecycle({
+    provider: adapter,
+    policy: resolveRuntimeLifecyclePolicy(callbacks),
+    cancellations: abortSignal ? [{ source: "runtime", signal: abortSignal }] : [],
+    observer: createStreamLifecycleObserver({
+      provider: readTraceAttributeString(
+        callbacks?.traceAttributes,
+        "gen_ai.provider.name",
+      ),
+      model: readTraceAttributeString(callbacks?.traceAttributes, "gen_ai.response.model") ??
+        readTraceAttributeString(callbacks?.traceAttributes, "gen_ai.request.model"),
+      mode: "active",
+    }),
+  });
+  const live = createStreamLifecycleLiveAdapter({ textPartId });
+  let deliveryError: unknown;
+  let streamOutcome!: StreamOutcome;
+  try {
+    for await (const frame of run.frames) {
+      if (frame.class === "semantic" && frame.event.type === "text_content") {
+        callbacks?.onChunk?.(frame.event.delta);
+      }
+      if (frame.class === "semantic" && frame.event.type === "usage") {
+        callbacks?.onUsage?.(toLegacyRuntimeUsage(frame.event.usage));
+      }
+      for (const event of live.encode(frame)) {
+        sendSSE(controller, encoder, event);
+      }
+    }
+  } catch (error) {
+    // A delivery failure is the primary run-finalization error. The
+    // consumer_stopped Stream Outcome recorded below is secondary cleanup
+    // evidence and must never replace it.
+    deliveryError = error;
+    throw error;
+  } finally {
+    streamOutcome = await run.outcome;
+    state.streamOutcome = streamOutcome;
+    if (deliveryError === undefined) {
+      applyLifecycleSnapshotToChatStreamState(state, streamOutcome.snapshot);
+    }
+  }
+  if (streamOutcome.status === "failed") {
+    throw new StreamLifecycleFailure(streamOutcome.error);
+  }
+  if (streamOutcome.status === "cancelled" && abortSignal?.aborted) {
+    throw abortSignal.reason;
+  }
+}
+
+interface ProcessStreamInternals {
+  createShadow: typeof createStreamLifecycleShadow;
+}
+
+const defaultProcessStreamInternals: ProcessStreamInternals = {
+  createShadow: createStreamLifecycleShadow,
+};
+
+export function processStream(
+  result: RuntimeStreamResult | RuntimeStreamSource,
   state: ChatStreamState,
   controller: ReadableStreamDefaultController,
   encoder: TextEncoder,
@@ -371,8 +488,77 @@ export function processStream(
   callbacks?: ChatStreamCallbacks,
   abortSignal?: AbortSignal,
 ): Promise<void> {
-  return withSpan("agent.runtime.processStream", async () => {
+  return processStreamInternal(
+    result,
+    state,
+    controller,
+    encoder,
+    textPartId,
+    callbacks,
+    abortSignal,
+    defaultProcessStreamInternals,
+  );
+}
+
+export function processStreamInternal(
+  resultOrSource: RuntimeStreamResult | RuntimeStreamSource,
+  state: ChatStreamState,
+  controller: ReadableStreamDefaultController,
+  encoder: TextEncoder,
+  textPartId: string | undefined,
+  callbacks: ChatStreamCallbacks | undefined,
+  abortSignal: AbortSignal | undefined,
+  internals: ProcessStreamInternals,
+): Promise<void> {
+  const traceAttributes = {
+    "gen_ai.operation.name": "chat",
+    "gen_ai.request.stream": true,
+    ...(callbacks?.traceAttributes ?? {}),
+  };
+  const traceSpanName = callbacks?.traceSpanName ?? "agent.runtime.processStream";
+
+  if (callbacks?.streamLifecycleMode === "active") {
+    if (!isRuntimeStreamSource(resultOrSource)) {
+      return Promise.reject(
+        new TypeError("Active stream lifecycle mode requires a RuntimeStreamSource"),
+      );
+    }
+    return withSpan(
+      traceSpanName,
+      () =>
+        processActiveStream(
+          resultOrSource,
+          state,
+          controller,
+          encoder,
+          textPartId,
+          callbacks,
+          abortSignal,
+        ),
+      traceAttributes,
+      { kind: SpanKind.CLIENT },
+    );
+  }
+
+  // Production legacy streams previously received status parts from the
+  // provider wrappers. After Gate 2 the extensions emit raw streams, so the
+  // legacy compatibility boundary reinstates the wrapper for source-opened
+  // streams only; pre-opened results keep their historical unwrapped shape.
+  const result = isRuntimeStreamSource(resultOrSource)
+    ? wrapLegacyRuntimeStreamResult(
+      resultOrSource.open(abortSignal ?? new AbortController().signal),
+    )
+    : resultOrSource;
+
+  const process = async () => {
     let eventCount = 0;
+    let shadowLifecycle = callbacks?.streamLifecycleMode === "shadow"
+      ? internals.createShadow({
+        availableToolNames: callbacks?.availableToolNames ?? null,
+        providerExecutedToolNames: callbacks?.providerExecutedToolNames ?? [],
+      })
+      : null;
+    let shadowLifecycleFailed = false;
     let textOpen = false;
     let activeReasoningId: string | null = null;
     const reasoningParts = new Map<string, StreamingReasoningPart>();
@@ -640,6 +826,12 @@ export function processStream(
 
       const part = next.value;
       throwIfAborted(abortSignal);
+      try {
+        shadowLifecycle?.observePart(part);
+      } catch {
+        shadowLifecycleFailed = true;
+        shadowLifecycle = null;
+      }
       eventCount++;
 
       if (!isRecord(part) || typeof part.type !== "string") {
@@ -904,12 +1096,13 @@ export function processStream(
             dynamic: typedPart.dynamic,
           });
           const toolResultOutput = resolveToolResultOutput(typedPart);
-          const mcpToolErrorMessage = getMcpToolErrorMessage(toolResultOutput);
-          const isExplicitError = typedPart.isError === true;
-          const isError = isExplicitError || mcpToolErrorMessage !== undefined;
+          const inferredToolError = getToolResultError(toolResultOutput);
+          const isExplicitError = typedPart.isError === true &&
+            !isIntegrationAuthenticationActionResult(toolResultOutput);
+          const isError = isExplicitError || inferredToolError !== undefined;
           const toolResultError = isExplicitError
             ? toolResultOutput
-            : mcpToolErrorMessage ?? toolResultOutput;
+            : inferredToolError ?? toolResultOutput;
           logProviderToolPart("tool-result", {
             toolCallId: typedPart.toolCallId,
             toolName: typedPart.toolName,
@@ -1000,6 +1193,11 @@ export function processStream(
           closeTextSegment();
           closeReasoningSegment();
           state.finishReason = typedPart.finishReason ?? null;
+          if (state.finishReason) {
+            setActiveSpanAttributes({
+              "gen_ai.response.finish_reasons": [state.finishReason],
+            });
+          }
           if (state.finishReason === "tool-calls") {
             commitParseablePendingToolInputs();
           }
@@ -1064,6 +1262,7 @@ export function processStream(
                 : {}),
             };
             callbacks?.onUsage?.(state.usage);
+            setActiveSpanAttributes(buildRuntimeUsageTraceAttributes(state.usage));
           }
           break;
         }
@@ -1091,10 +1290,34 @@ export function processStream(
 
     throwIfAborted(abortSignal);
 
+    if (callbacks?.streamLifecycleMode === "shadow") {
+      let observed: StreamLifecycleShadowReport = { count: 0, categories: [] };
+      try {
+        observed = shadowLifecycle?.compareLegacySnapshot(state) ?? observed;
+      } catch {
+        shadowLifecycleFailed = true;
+      }
+      const categories = new Set<StreamLifecycleShadowDivergence>(
+        observed.categories,
+      );
+      if (shadowLifecycleFailed) categories.add("shadow_error");
+      const report: StreamLifecycleShadowReport = {
+        count: categories.size,
+        categories: [...categories].sort(),
+      };
+      callbacks.onLifecycleShadowReport?.(report);
+      setActiveSpanAttributes({
+        "stream.lifecycle_shadow.divergence_count": report.count,
+        "stream.lifecycle_shadow.divergence_categories": [...report.categories],
+      });
+    }
+
     setActiveSpanAttributes({
       "stream.event_count": eventCount,
       "stream.tool_calls": state.toolCalls.size,
       "stream.text_length": state.accumulatedText.length,
     });
-  });
+  };
+
+  return withSpan(traceSpanName, process, traceAttributes, { kind: SpanKind.CLIENT });
 }

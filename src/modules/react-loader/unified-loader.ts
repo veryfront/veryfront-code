@@ -6,12 +6,11 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getProjectTmpDir } from "./temp-directory.ts";
 import type { ComponentMap, ComponentSource, LoadComponentOptions } from "./types.ts";
-import {
-  DEFAULT_REACT_VERSION,
-  getReactImportMap,
-} from "#veryfront/transforms/esm/package-registry.ts";
+import { resolveDependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
+import { DEFAULT_REACT_VERSION, getReactImportMap } from "#veryfront/transforms/esm/react-cdn.ts";
 
 type TransformedComponent = { name: string; code: string };
+type ComponentTransformer = typeof transformToESM;
 
 export function loadComponentsUnified(
   components: ComponentSource[],
@@ -23,16 +22,11 @@ export function loadComponentsUnified(
     "modules.loadComponentsUnified",
     async () => {
       const projectId = options?.projectId ?? projectDir;
-      const dev = options?.dev ?? true;
-      const moduleServerUrl = options?.moduleServerUrl;
       const reactVersion = options?.reactVersion;
-
-      const transformOpts: TransformOptions = {
-        projectId,
-        dev,
-        moduleServerUrl,
-        reactVersion,
-      };
+      const transformOpts = await resolveUnifiedTransformOptions(
+        projectDir,
+        options,
+      );
 
       const transformedComponents = await transformAllComponents(
         components,
@@ -58,19 +52,48 @@ export function loadComponentsUnified(
   );
 }
 
+async function resolveUnifiedTransformOptions(
+  projectDir: string,
+  options?: LoadComponentOptions,
+): Promise<TransformOptions> {
+  const dependencyPinningSource = options?.dependencyPinningSource ?? projectDir;
+  const dependencySnapshot = await resolveDependencyPinningSnapshot(
+    dependencyPinningSource,
+    options?.dependencyPinningCacheKey,
+    options?.dependencyPinningDependencies,
+  );
+  return {
+    projectId: options?.projectId ?? projectDir,
+    dev: options?.dev ?? true,
+    moduleServerUrl: options?.moduleServerUrl,
+    moduleServerOrigin: dependencySnapshot.cacheKey.startsWith("on:")
+      ? options?.moduleServerOrigin
+      : undefined,
+    reactVersion: options?.reactVersion,
+    dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+    dependencyPinningDependencies: dependencySnapshot.dependencies,
+    dependencyPinningSource,
+  };
+}
+
+export { resolveUnifiedTransformOptions as _resolveUnifiedTransformOptionsForTest };
+
 async function transformAllComponents(
   components: ComponentSource[],
   projectDir: string,
   adapter: RuntimeAdapter,
   transformOpts: TransformOptions,
+  transform: ComponentTransformer = transformToESM,
 ): Promise<TransformedComponent[]> {
   return await Promise.all(
     components.map(async (comp) => ({
       name: comp.name,
-      code: await transformToESM(comp.source, comp.filePath, projectDir, adapter, transformOpts),
+      code: await transform(comp.source, comp.filePath, projectDir, adapter, transformOpts),
     })),
   );
 }
+
+export { transformAllComponents as _transformAllComponentsForTest };
 
 async function createTempDir(projectId: string, adapter: RuntimeAdapter): Promise<string> {
   const baseTmp = await getProjectTmpDir(projectId);

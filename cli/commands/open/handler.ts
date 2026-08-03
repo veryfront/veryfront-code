@@ -1,6 +1,7 @@
 import type { ParsedArgs } from "#cli/shared/types";
 import { parseArgsOrThrow } from "#cli/shared/args";
-import { cliLogger, exitProcess } from "#cli/utils";
+import { exitProcess, logUsageError } from "#cli/utils";
+import { brand } from "../../ui/colors.ts";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 import { buildUrl, parseOpenArgs } from "./command.ts";
 
@@ -18,8 +19,9 @@ export async function handleOpenCommand(args: ParsedArgs): Promise<void> {
   }
 
   if (!projectSlug) {
-    cliLogger.error(
-      "No project found. Run from a project directory or use --project-slug",
+    logUsageError(
+      "No project found.",
+      "Run from a project directory or set --project / VERYFRONT_PROJECT_SLUG",
     );
     exitProcess(1);
     return;
@@ -34,5 +36,5 @@ export async function handleOpenCommand(args: ParsedArgs): Promise<void> {
 
   const { openBrowser } = await import("../../auth/browser.ts");
   await openBrowser(url);
-  console.log(`  Opening ${url}`);
+  console.log("  " + brand("●") + " Opening " + brand(url));
 }

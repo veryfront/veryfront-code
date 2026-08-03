@@ -1,4 +1,7 @@
-import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
+import {
+  getVeryfrontCloudBootstrap,
+  getVeryfrontCloudHostBootstrap,
+} from "#veryfront/platform/cloud/resolver.ts";
 import {
   requestWithRetry,
   type RetryConfig,
@@ -16,12 +19,16 @@ import {
   type RunList,
   RunListSchema,
   RunSchema,
+  ScheduleReferenceListSchema,
+  type ScheduleRunCreateResponse,
+  ScheduleRunCreateResponseSchema,
 } from "./schemas.ts";
 
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
 const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
 const DEFAULT_KNOWLEDGE_INGEST_RUN_NAME = "Ingest knowledge";
+const GENERATED_SCHEDULE_RUN_IDEMPOTENCY_PREFIX = "schedule-run";
 
 /** Configuration used by the Veryfront runs client. */
 export interface VeryfrontRunsClientConfig {
@@ -74,6 +81,30 @@ export interface CreateEvalRunInput extends RunCreateBaseInput, RunRuntimeTarget
   input?: Record<string, unknown>;
   config?: Record<string, unknown>;
   startMode?: string;
+}
+
+/** Input for triggering one persisted schedule by its canonical UUID. */
+export interface CreateScheduleRunInput extends ProjectScopedOptions {
+  scheduleId: string;
+  runName?: string;
+  idempotencyKey?: string;
+}
+
+/** Input for resolving and triggering one pushed source-defined schedule. */
+export interface CreateScheduleRunFromSourceInput extends ProjectScopedOptions {
+  sourceTriggerId: string;
+  runName?: string;
+  idempotencyKey?: string;
+}
+
+/** Cloud schedule metadata returned with an accepted source-triggered run. */
+export interface CreateScheduleRunFromSourceResult {
+  scheduleRun: ScheduleRunCreateResponse;
+  timeoutSeconds: number;
+  target: {
+    kind: "task" | "workflow" | "agent";
+    id: string;
+  };
 }
 
 /** Input payload for knowledge ingest by upload IDs. */
@@ -265,6 +296,64 @@ export class VeryfrontRunsClient {
     });
   }
 
+  createScheduleRun(input: CreateScheduleRunInput): Promise<ScheduleRunCreateResponse> {
+    const { scheduleId, projectReference, runName, idempotencyKey } = input;
+    const project = this.resolveProjectReference(projectReference);
+    const resolvedIdempotencyKey = idempotencyKey ??
+      `${GENERATED_SCHEDULE_RUN_IDEMPOTENCY_PREFIX}:${crypto.randomUUID()}`;
+    return this.requestJson(
+      `/projects/${encodeURIComponent(project)}/schedules/${encodeURIComponent(scheduleId)}/runs`,
+      ScheduleRunCreateResponseSchema,
+      {
+        method: "POST",
+        body: {
+          run_name: runName,
+          idempotency_key: resolvedIdempotencyKey,
+        },
+      },
+    );
+  }
+
+  async createScheduleRunFromSource(
+    input: CreateScheduleRunFromSourceInput,
+  ): Promise<CreateScheduleRunFromSourceResult> {
+    const projectReference = this.resolveProjectReference(input.projectReference);
+    const listed = await this.requestJson(
+      withQuery(
+        `/projects/${encodeURIComponent(projectReference)}/schedules`,
+        toQueryParams({
+          status: "active",
+          source_trigger_id: input.sourceTriggerId,
+        }),
+      ),
+      ScheduleReferenceListSchema,
+    );
+    const schedule = listed.schedules.find((candidate) =>
+      candidate.status === "active" &&
+      candidate.definition_source === "source" &&
+      candidate.source_trigger_id === input.sourceTriggerId
+    );
+    if (!schedule) {
+      throw API_CLIENT_ERROR.create({
+        detail:
+          `Active source schedule "${input.sourceTriggerId}" not found in project "${projectReference}". Push the source schedule before running it remotely.`,
+        status: 404,
+      });
+    }
+
+    const scheduleRun = await this.createScheduleRun({
+      scheduleId: schedule.id,
+      projectReference,
+      runName: input.runName ?? schedule.name,
+      idempotencyKey: input.idempotencyKey,
+    });
+    return {
+      scheduleRun,
+      timeoutSeconds: schedule.timeout_seconds,
+      target: schedule.target,
+    };
+  }
+
   async list(options: ListRunsOptions = {}): Promise<RunList> {
     const { projectReference, cursor, limit } = options;
     return await this.requestJson(
@@ -333,15 +422,29 @@ export class VeryfrontRunsClient {
     });
   }
 
-  private resolveApiUrl(): string {
-    return this.config.apiUrl ?? getVeryfrontCloudBootstrap().apiBaseUrl;
-  }
+  private resolveConnection(): { apiUrl: string; authToken: string } {
+    if (this.config.apiUrl && !this.config.authToken) {
+      throw API_CLIENT_ERROR.create({
+        detail:
+          "Runs apiUrl requires an explicit authToken. A caller-selected endpoint cannot use request- or host-owned credentials.",
+        status: 401,
+      });
+    }
+    if (this.config.apiUrl && this.config.authToken) {
+      return { apiUrl: this.config.apiUrl, authToken: this.config.authToken };
+    }
 
-  private resolveAuthToken(): string {
-    const token = this.requestToken ?? this.config.authToken ??
-      getVeryfrontCloudBootstrap().apiToken;
-    if (token) {
-      return token;
+    const host = getVeryfrontCloudHostBootstrap();
+    if (this.config.authToken) {
+      return { apiUrl: host.apiBaseUrl, authToken: this.config.authToken };
+    }
+    if (this.requestToken) {
+      return { apiUrl: host.apiBaseUrl, authToken: this.requestToken };
+    }
+
+    const bootstrap = getVeryfrontCloudBootstrap();
+    if (bootstrap.apiToken) {
+      return { apiUrl: bootstrap.apiBaseUrl, authToken: bootstrap.apiToken };
     }
     throw API_CLIENT_ERROR.create({
       detail:
@@ -372,13 +475,22 @@ export class VeryfrontRunsClient {
       body?: Record<string, unknown>;
     } = {},
   ): Promise<T> {
+    const { apiUrl, authToken } = this.resolveConnection();
+    const apiOrigin = new URL(apiUrl).origin;
     const raw = await requestWithRetry(
-      `${this.resolveApiUrl()}${path}`,
-      this.resolveAuthToken(),
+      `${apiUrl}${path}`,
+      authToken,
       this.retryConfig,
       {
         method: options.method,
         body: options.body == null ? undefined : JSON.stringify(options.body),
+      },
+      {
+        authorizeUrl: (target) => {
+          if (target.origin !== apiOrigin) {
+            throw new Error("Runs request blocked: destination origin is not authorized");
+          }
+        },
       },
     );
     return schema.parse(raw);

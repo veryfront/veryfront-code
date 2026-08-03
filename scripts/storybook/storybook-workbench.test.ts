@@ -25,7 +25,10 @@ async function readText(path: string): Promise<string> {
 
 /** Slugify a story `title` to the id prefix Storybook derives from it. */
 function toStorybookId(title: string): string {
-  return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(
+    /^-+|-+$/g,
+    "",
+  );
 }
 
 /** Recursively yield every `*.stories.tsx` file under `dir`. */
@@ -38,7 +41,7 @@ async function* storyFiles(dir: string): AsyncGenerator<string> {
 }
 
 describe("Storybook UI workbench", () => {
-  it("Overview links every UI/Component/Composition story exactly once, in the right section", async () => {
+  it("Overview links every UI/Component story exactly once, in the right section", async () => {
     const overview = await readText("storybook/stories/Overview.stories.tsx");
 
     // All nav ids in order, plus a duplicate check (one link per story).
@@ -46,16 +49,19 @@ describe("Storybook UI workbench", () => {
       (m) => m[1],
     );
     assert(navIds.length > 0, "expected NavGrid ids in the Overview");
-    const dupes = [...new Set(navIds.filter((id, i) => navIds.indexOf(id) !== i))];
+    const dupes = [
+      ...new Set(navIds.filter((id, i) => navIds.indexOf(id) !== i)),
+    ];
     assertEquals(dupes, [], `duplicate Overview links: ${dupes.join(", ")}`);
 
-    // Every linkable docs page: an autodocs story titled under one of the three
-    // linked sections. (`Chat/Overview` and any non-autodocs story are excluded.)
+    // Every linkable docs page: an autodocs story titled under one of the two
+    // linked sections — the top-level `UI/*` primitives and `Chat/Components`.
+    // (`Chat/Overview` and any non-autodocs story are excluded.)
     const expected = new Set<string>();
     for await (const path of storyFiles("storybook/stories")) {
       const src = await readText(path);
       const title = src.match(
-        /title:\s*"(Chat\/(?:UI|Components|Composition)\/[^"]+)"/,
+        /title:\s*"((?:Chat\/Components|UI)\/[^"]+)"/,
       )?.[1];
       if (title && /tags:\s*\[[^\]]*"autodocs"/.test(src)) {
         expected.add(`${toStorybookId(title)}--docs`);
@@ -65,7 +71,11 @@ describe("Storybook UI workbench", () => {
     const navSet = new Set(navIds);
     const missing = [...expected].filter((id) => !navSet.has(id)).sort();
     const extra = [...navSet].filter((id) => !expected.has(id)).sort();
-    assertEquals(missing, [], `components with no Overview link: ${missing.join(", ")}`);
+    assertEquals(
+      missing,
+      [],
+      `components with no Overview link: ${missing.join(", ")}`,
+    );
     assertEquals(
       extra,
       [],
@@ -76,8 +86,7 @@ describe("Storybook UI workbench", () => {
     for (
       const [name, prefix] of [
         ["COMPONENTS", "chat-components-"],
-        ["COMPOSITION", "chat-composition-"],
-        ["UI", "chat-ui-"],
+        ["UI", "ui-"],
       ] as const
     ) {
       const block = overview.match(
@@ -175,6 +184,18 @@ describe("Storybook UI workbench", () => {
     );
   });
 
+  it("documents the preferred additive chat APIs", async () => {
+    const agentPicker = await readText(
+      "storybook/stories/chat/AgentPicker.stories.tsx",
+    );
+    const chat = await readText("storybook/stories/chat/Chat.stories.tsx");
+
+    assertStringIncludes(agentPicker, 'name: "avatarUrl"');
+    assertEquals(agentPicker.includes('name: "avatarSrc"'), false);
+    assertStringIncludes(chat, "onSuggestionSelect");
+    assertEquals(chat.includes("onSuggestionClick={setInput}"), false);
+  });
+
   it("covers the shipped UI families with Storybook stories that import real components", async () => {
     const requiredStories = [
       {
@@ -184,28 +205,10 @@ describe("Storybook UI workbench", () => {
         names: ["Chat", "modelOptions"],
       },
       {
-        path: "storybook/stories/chat/ChatComposition.stories.tsx",
-        title: "Chat/Composition/Anatomy",
-        imports: ['from "veryfront/chat"'],
-        names: ["ChatRoot", "ChatMessageList", "ChatInput", "Message"],
-      },
-      {
-        path: "storybook/stories/chat/ChatSubcomponents.stories.tsx",
-        title: "Chat/Composition/Subcomponents",
-        imports: ['from "veryfront/chat"'],
-        names: ["ToolCall", "Sources", "Reasoning", "MessageActionBar"],
-      },
-      {
         path: "storybook/stories/chat/ChatSidebar.stories.tsx",
         title: "Chat/Components/ChatSidebar",
         imports: ['from "veryfront/chat"'],
         names: ["ChatSidebar"],
-      },
-      {
-        path: "storybook/stories/primitives/ReactPrimitives.stories.tsx",
-        title: "Chat/Composition/React Primitives",
-        imports: ['from "../../../src/react/primitives/index.ts"'],
-        names: ["ChatContainer", "MessageList", "InputBox", "SubmitButton"],
       },
     ];
 
@@ -241,20 +244,36 @@ describe("Storybook UI workbench", () => {
     // target name. Sub-agents take one row each and turn it green.
     const target = [
       { file: "Chat", title: "Chat", names: ["Chat"] },
-      { file: "Attachment", title: "Attachment", names: ["Attachment"] },
+      {
+        file: "AttachmentPill",
+        title: "AttachmentPill",
+        names: ["AttachmentPill"],
+      },
       { file: "Markdown", title: "Markdown", names: ["Markdown"] },
       { file: "Sources", title: "Sources", names: ["Sources"] },
       { file: "Reasoning", title: "Reasoning", names: ["Reasoning"] },
       { file: "ToolCall", title: "ToolCall", names: ["ToolCall"] },
       { file: "Message", title: "Message", names: ["Message"] },
       { file: "AgentCard", title: "AgentCard", names: ["AgentCard"] },
-      { file: "AttachmentsPanel", title: "AttachmentsPanel", names: ["AttachmentsPanel"] },
+      {
+        file: "AttachmentsPanel",
+        title: "AttachmentsPanel",
+        names: ["AttachmentsPanel"],
+      },
       { file: "ChatSidebar", title: "ChatSidebar", names: ["ChatSidebar"] },
-      { file: "ModelSelector", title: "ModelSelector", names: ["ModelSelector"] },
+      {
+        file: "ModelSelector",
+        title: "ModelSelector",
+        names: ["ModelSelector"],
+      },
       { file: "AgentPicker", title: "AgentPicker", names: ["AgentPicker"] },
       { file: "ChatActions", title: "ChatActions", names: ["ChatActions"] },
       { file: "ChatInput", title: "ChatInput", names: ["ChatInput"] },
-      { file: "ChatEmptyState", title: "ChatEmptyState", names: ["ChatEmptyState"] },
+      {
+        file: "ChatEmptyState",
+        title: "ChatEmptyState",
+        names: ["ChatEmptyState"],
+      },
     ];
 
     const problems: string[] = [];
@@ -288,14 +307,14 @@ describe("Storybook UI workbench", () => {
   it("exports every target chat component from veryfront/chat (driver)", async () => {
     // The public API target. Fails until every component is exported under its
     // final name (renames landed + new components built). `\b` boundaries mean
-    // "Attachment" does NOT match "Attachment", "CodeBlock" not "RichCodeBlock".
+    // "Attachment" does not match "AttachmentPill", and "CodeBlock" does not
+    // match "RichCodeBlock".
     const publicBarrel = await readText("src/chat/index.ts");
     const targetExports = [
-      "Attachment",
+      "AttachmentPill",
       "Markdown",
       "Sources",
       "Reasoning",
-      "SkillTool",
       "ToolCall",
       "Message",
       "AgentCard",
@@ -318,22 +337,22 @@ describe("Storybook UI workbench", () => {
     );
   });
 
-  it("has a CodeBlock primitive under Chat/UI (driver)", async () => {
+  it("has a CodeBlock primitive under UI (driver)", async () => {
     // CodeBlock is the shared syntax-highlight primitive (Markdown + ToolCall).
     // Renamed from RichCodeBlock, moved to the ui barrel, shiki github-light/dark
     // + mermaid, lazy-loaded from esm.sh (no bundled dep).
     const problems: string[] = [];
 
-    const uiBarrel = await readText("src/react/components/chat/ui/index.ts");
+    const uiBarrel = await readText("src/react/components/ui/index.ts");
     if (!/\bCodeBlock\b/.test(uiBarrel)) {
-      problems.push("src/react/components/chat/ui/index.ts must export CodeBlock");
+      problems.push("src/react/components/ui/index.ts must export CodeBlock");
     }
 
     const storyPath = "storybook/stories/ui/CodeBlock.stories.tsx";
     try {
       const story = await readText(storyPath);
-      if (!story.includes("Chat/UI/CodeBlock")) {
-        problems.push(`${storyPath} must use title "Chat/UI/CodeBlock"`);
+      if (!story.includes("UI/CodeBlock")) {
+        problems.push(`${storyPath} must use title "UI/CodeBlock"`);
       }
     } catch {
       problems.push(`missing story ${storyPath}`);
@@ -343,6 +362,26 @@ describe("Storybook UI workbench", () => {
       problems,
       [],
       `CodeBlock primitive incomplete:\n  - ${problems.join("\n  - ")}`,
+    );
+  });
+
+  it("teaches the canonical `veryfront/ui` import in every UI story", async () => {
+    // The primitives are published from `veryfront/ui`; a `UI/*` story must not
+    // import them from (or advertise) `veryfront/chat` — even for re-exported
+    // leaves like CodeBlock. Guards the regression fixed in PR #2798 review.
+    const offenders: string[] = [];
+    for await (const path of storyFiles("storybook/stories/ui")) {
+      const source = await readText(path);
+      if (/veryfront\/chat/.test(source)) {
+        offenders.push(path);
+      }
+    }
+    assertEquals(
+      offenders,
+      [],
+      `UI stories must import/advertise \`veryfront/ui\`, not \`veryfront/chat\`:\n  - ${
+        offenders.join("\n  - ")
+      }`,
     );
   });
 
@@ -392,10 +431,12 @@ describe("Storybook UI workbench", () => {
       }
     }
 
-    const themeSource = await readText("src/react/components/chat/theme.ts");
+    const tokenSource = await readText(
+      "src/react/components/ui/design-tokens.ts",
+    );
     const previewSource = await readText("storybook/.storybook/preview.css");
     const bridgeSource = await readText("src/studio/bridge/bridge-styles.ts");
-    assertStringIncludes(themeSource, "font-family:Inter");
+    assertStringIncludes(tokenSource, "font-family:Inter");
     assertStringIncludes(previewSource, "Inter, ui-sans-serif");
     assertStringIncludes(bridgeSource, "font-family: Inter, ui-sans-serif");
   });
@@ -407,11 +448,60 @@ describe("Storybook UI workbench", () => {
     assertStringIncludes(main, "createVeryfrontAliases");
     assertStringIncludes(aliases, "veryfront\\/chat");
     assertStringIncludes(aliases, "#veryfront");
+    assertStringIncludes(aliases, "#deno-config");
+    assertStringIncludes(aliases, "deno.json");
     assertStringIncludes(
       aliases,
       "storybook/.storybook/shims/veryfront-utils.ts",
     );
     assertStringIncludes(aliases, "src/chat/index.ts");
     assertStringIncludes(aliases, "src/react/components/chat/index.ts");
+  });
+
+  // E7: every exported chat component ships the three documentation tiers —
+  // black-box (a render-it Story), props (a DocsPropsTable), compound (a
+  // compositionTree) — plus a one-leaf-override ACID-TEST story ("change the X
+  // on Y without re-implementing Y"), marked with the `acid-test` tag. The
+  // allowlist below MUST stay empty: a component with no honest acid test is a
+  // composition gap, not an exemption.
+  it("every chat component story ships the three tiers + a tagged acid-test story", async () => {
+    // Files temporarily exempt from the acid-test requirement. Keep EMPTY.
+    const ACID_TEST_ALLOWLIST: readonly string[] = [];
+
+    const failures: string[] = [];
+    for await (const path of storyFiles("storybook/stories/chat")) {
+      const name = path.split("/").pop()!;
+      const src = await readText(path);
+      const missing: string[] = [];
+
+      // Compound tier: a composition tree documenting the sub-parts.
+      if (!src.includes("compositionTree") && !src.includes("DocsComposition")) {
+        missing.push("compound tier (compositionTree / DocsComposition)");
+      }
+      // Props tier: the generated props table.
+      if (!src.includes("DocsPropsTable")) missing.push("props tier (DocsPropsTable)");
+      // Black-box tier: at least one render-it story.
+      if (!/export const \w+: Story\b/.test(src)) missing.push("black-box tier (a Story)");
+      // Acid-test: a one-leaf-override story, explicitly tagged.
+      const hasAcid = /tags:\s*\[[^\]]*["']acid-test["']/.test(src);
+      if (!hasAcid && !ACID_TEST_ALLOWLIST.includes(name)) {
+        missing.push('acid-test story (tags: ["acid-test"])');
+      }
+
+      if (missing.length > 0) failures.push(`${name}: missing ${missing.join(", ")}`);
+    }
+
+    assertEquals(
+      failures,
+      [],
+      `Chat stories missing E7 three-tier + acid-test coverage:\n${failures.join("\n")}`,
+    );
+
+    // The allowlist is a ratchet: it may only shrink. Guard it stays empty.
+    assertEquals(
+      ACID_TEST_ALLOWLIST.length,
+      0,
+      "The acid-test allowlist must stay empty — author the missing acid test, don't exempt it.",
+    );
   });
 });

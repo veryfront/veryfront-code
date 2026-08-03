@@ -1,7 +1,7 @@
 ---
 title: "veryfront/metrics"
 description: "Runtime/application metric hooks for project code."
-order: 17
+order: 19
 ---
 
 ## Import
@@ -31,20 +31,20 @@ metrics.gauge("vf_eval_queue_depth", 3);
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `counter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L411) |
-| `gauge` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L439) |
-| `histogram` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L425) |
+| `counter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L450) |
+| `gauge` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L478) |
+| `histogram` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L464) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `MetricAttributes` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L25) |
-| `MetricAttributeValue` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L24) |
-| `MetricInstrumentOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L27) |
+| `MetricAttributes` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L30) |
+| `MetricAttributeValue` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L29) |
+| `MetricInstrumentOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L32) |
 
 ### Constants
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `metrics` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L459) |
+| `metrics` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L498) |

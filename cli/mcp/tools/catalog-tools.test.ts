@@ -5,14 +5,57 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "veryfront/platform/path";
 import { EXPERIMENTAL_INTEGRATIONS_ENV } from "../../../src/integrations/feature-flags.ts";
 import {
+  resolveCreateProjectPaths,
   vfCreateProject,
   vfListExamples,
   vfListIntegrations,
   vfListTemplates,
   vfListUsecases,
 } from "./catalog-tools.ts";
+
+async function createFakeNpm(): Promise<string> {
+  const binDir = await Deno.makeTempDir();
+  const logPath = join(binDir, "npm.log");
+  const isWindows = Deno.build.os === "windows";
+  const npmPath = join(binDir, isWindows ? "npm.cmd" : "npm");
+  const script = isWindows
+    ? [
+      "@echo off",
+      `>>"${logPath}" echo %CD% %*`,
+      `>package-lock.json echo {"lockfileVersion":3,"packages":{}}`,
+      "exit /b 0",
+      "",
+    ].join("\r\n")
+    : `#!/usr/bin/env sh
+printf '%s\\n' "$PWD $*" >> "${logPath}"
+printf '%s\\n' '{"lockfileVersion":3,"packages":{}}' > package-lock.json
+exit 0
+`;
+
+  await Deno.writeTextFile(npmPath, script);
+  if (!isWindows) await Deno.chmod(npmPath, 0o755);
+  return binDir;
+}
+
+async function withFakeNpm(action: () => Promise<void>): Promise<void> {
+  const binDir = await createFakeNpm();
+  const pathDelimiter = Deno.build.os === "windows" ? ";" : ":";
+  const originalDenoPath = Deno.env.get("PATH");
+  const nextPath = `${binDir}${pathDelimiter}${originalDenoPath ?? ""}`;
+
+  try {
+    Deno.env.set("PATH", nextPath);
+    await action();
+  } finally {
+    if (originalDenoPath === undefined) Deno.env.delete("PATH");
+    else Deno.env.set("PATH", originalDenoPath);
+
+    await Deno.remove(binDir, { recursive: true }).catch(() => {});
+  }
+}
 
 describe("mcp/tools/catalog-tools", () => {
   afterEach(() => Deno.env.delete(EXPERIMENTAL_INTEGRATIONS_ENV));
@@ -127,6 +170,25 @@ describe("mcp/tools/catalog-tools", () => {
   });
 
   describe("vfCreateProject", () => {
+    const createdDirs: string[] = [];
+
+    afterEach(async () => {
+      for (const dir of createdDirs.splice(0)) {
+        await Deno.remove(dir, { recursive: true }).catch(() => {});
+      }
+    });
+
+    it("resolves the requested parent directory and slug once", () => {
+      assertEquals(
+        resolveCreateProjectPaths({ name: "Example App", directory: "projects" }),
+        {
+          name: "example-app",
+          parentDir: "projects",
+          projectDir: "projects/example-app",
+        },
+      );
+    });
+
     it("has correct tool name", () => {
       assertEquals(vfCreateProject.name, "vf_create_project");
     });
@@ -137,6 +199,66 @@ describe("mcp/tools/catalog-tools", () => {
 
     it("has execute function", () => {
       assertEquals(typeof vfCreateProject.execute, "function");
+    });
+
+    it("returns the created project path and first next step", async () => {
+      const parentDir = await Deno.makeTempDir();
+      createdDirs.push(parentDir);
+
+      await withFakeNpm(async () => {
+        const result = await vfCreateProject.execute({
+          name: "Example App",
+          template: "minimal",
+          directory: parentDir,
+        });
+
+        assertEquals(result.success, true);
+        assertEquals(result.projectDir, join(parentDir, "example-app"));
+        assertEquals(result.nextSteps?.[0], `cd ${join(parentDir, "example-app")}`);
+      });
+    });
+
+    it("keeps the existing-directory failure response", async () => {
+      const parentDir = await Deno.makeTempDir();
+      createdDirs.push(parentDir);
+      const projectDir = join(parentDir, "example-app");
+      await Deno.mkdir(projectDir);
+
+      const result = await vfCreateProject.execute({
+        name: "Example App",
+        template: "minimal",
+        directory: parentDir,
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(result.message, `Directory already exists: ${projectDir}`);
+    });
+
+    it("reports project-name validation failures", async () => {
+      const result = await vfCreateProject.execute({
+        name: "invalid/name",
+        template: "minimal",
+        directory: ".",
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(result.projectDir, undefined);
+      assertEquals(result.message.includes("cannot contain"), true);
+    });
+
+    it("reports an empty project name before checking the parent directory", async () => {
+      const parentDir = await Deno.makeTempDir();
+      createdDirs.push(parentDir);
+
+      const result = await vfCreateProject.execute({
+        name: "",
+        template: "minimal",
+        directory: parentDir,
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(result.projectDir, undefined);
+      assertEquals(result.message, "Failed to create project: Project name cannot be empty");
     });
   });
 });

@@ -1,5 +1,10 @@
 import { buildNonceAttribute } from "#veryfront/html/html-escape.ts";
 import { buildTrustedHtmlValidatorScript } from "#veryfront/security/client/html-sanitizer.ts";
+import type { ClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
+import {
+  HYDRATION_DATA_ID,
+  RSC_DEPENDENCY_PINNING_HEADER,
+} from "#veryfront/rendering/rsc/constants.ts";
 
 /**
  * Serialize a value as a JSON string literal that is safe to embed inside an
@@ -23,11 +28,24 @@ function jsonForScript(value: unknown): string {
 }
 
 export class PageHandler {
+  constructor(
+    private readonly isDevelopment: boolean = false,
+    private readonly reactVersion?: string,
+    private readonly clientModuleStrategy?: ClientModuleStrategy,
+    private readonly dependencyPinningCacheKey?: string,
+  ) {}
+
   handle(pathname: string, searchParams: URLSearchParams, nonce?: string): Response {
     const html = this.buildHtml(pathname, searchParams, nonce);
+    const headers: Record<string, string> = {
+      "content-type": "text/html; charset=utf-8",
+    };
+    if (this.dependencyPinningCacheKey?.startsWith("on:")) {
+      headers["cache-control"] = "no-store";
+    }
 
     return new Response(html, {
-      headers: { "content-type": "text/html; charset=utf-8" },
+      headers,
     });
   }
 
@@ -36,7 +54,20 @@ export class PageHandler {
     const renderUrl = `/_veryfront/rsc/render${pathname}${queryString ? `?${queryString}` : ""}`;
     const nonceAttr = buildNonceAttribute(nonce);
     const renderUrlJs = jsonForScript(renderUrl);
+    const transportHeadersJs = jsonForScript(
+      this.dependencyPinningCacheKey?.startsWith("on:")
+        ? { [RSC_DEPENDENCY_PINNING_HEADER]: this.dependencyPinningCacheKey }
+        : {},
+    );
     const trustedHtmlValidatorScript = buildTrustedHtmlValidatorScript();
+    const hydrationData = jsonForScript({
+      clientModuleStrategy: this.clientModuleStrategy,
+      dev: this.isDevelopment,
+      reactVersion: this.reactVersion,
+      ...(this.dependencyPinningCacheKey?.startsWith("on:")
+        ? { dependencyPinningCacheKey: this.dependencyPinningCacheKey }
+        : {}),
+    });
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -44,15 +75,54 @@ export class PageHandler {
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Veryfront RSC</title>
-  <script${nonceAttr}>window.__VERYFRONT_DEV__ = true;</script>
+  <script${nonceAttr}>window.__VERYFRONT_DEV__ = ${this.isDevelopment};</script>
 </head>
 <body>
+  <script id="${HYDRATION_DATA_ID}" type="application/json"${nonceAttr}>${hydrationData}</script>
   <div id="rsc-root"></div>
   <script type="module"${nonceAttr}>
-    async function fetchPayload(url) {
+    const DEPENDENCY_SNAPSHOT_RECOVERY_RESULT = Object.freeze({
+      dependencySnapshotRecoveryStarted: true,
+    });
+
+    async function isDependencySnapshotConflictResponse(response) {
+      if (!response || response.status !== 409) return false;
+
       try {
-        const res = await fetch(url);
-        if (!res.ok) return null;
+        return (await response.clone().text()).trim() === 'Unknown dependency snapshot';
+      } catch (_) {
+        return false;
+      }
+    }
+
+    async function recoverFromDependencySnapshotConflict(
+      response,
+      reloadDocument = () => window.location.reload(),
+      recoveryState = window,
+    ) {
+      if (!(await isDependencySnapshotConflictResponse(response))) return false;
+
+      const recoveryKey = '__VF_DEPENDENCY_SNAPSHOT_RECOVERY_STARTED__';
+      if (recoveryState[recoveryKey] === true) return true;
+
+      recoveryState[recoveryKey] = true;
+      try {
+        reloadDocument();
+      } catch (_) {
+        delete recoveryState[recoveryKey];
+        return false;
+      }
+      return true;
+    }
+
+    async function fetchPayload(url, headers) {
+      try {
+        const res = await fetch(url, { headers });
+        if (!res.ok) {
+          return await recoverFromDependencySnapshotConflict(res)
+            ? DEPENDENCY_SNAPSHOT_RECOVERY_RESULT
+            : null;
+        }
         return await res.json();
       } catch (_) {
         // expected: fetch may fail in browser context
@@ -60,15 +130,35 @@ export class PageHandler {
       }
     }
 
+    function seedDependencySnapshot(payload) {
+      const pinKey = payload?.dependencyPinningCacheKey;
+      if (typeof pinKey !== 'string' || !pinKey.startsWith('on:')) return;
+
+      const hydrationDataElement = document.getElementById('${HYDRATION_DATA_ID}');
+      if (!hydrationDataElement) return;
+
+      try {
+        const hydrationState = JSON.parse(hydrationDataElement.textContent || '{}');
+        hydrationState.dependencyPinningCacheKey = pinKey;
+        hydrationDataElement.textContent = JSON.stringify(hydrationState);
+      } catch (_) {
+        // Ignore malformed hydration state; the client will fail closed on pins.
+      }
+    }
+
     ${trustedHtmlValidatorScript}
 
     (async () => {
       const renderUrl = ${renderUrlJs};
+      const transportHeaders = ${transportHeadersJs};
+      const payloadResult = await fetchPayload(renderUrl, transportHeaders);
+      if (payloadResult === DEPENDENCY_SNAPSHOT_RECOVERY_RESULT) return;
+
       const payload =
-        (await fetchPayload(renderUrl)) ??
-        (await fetchPayload('/_veryfront/rsc/payload')) ??
+        payloadResult ??
         { html: '<p>RSC unavailable</p>', clientRefs: [] };
 
+      seedDependencySnapshot(payload);
       const safeHtml = validateTrustedHtml(String(payload.html || ''));
       document.getElementById('rsc-root').innerHTML = safeHtml;
       window.__RSC_CLIENT_REFS__ = payload.clientRefs;

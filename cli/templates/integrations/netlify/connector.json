@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_sites",
+      "id": "netlify__list_sites",
       "name": "List Sites",
       "description": "List all sites the authenticated user has access to",
       "requiresWrite": false,
@@ -99,7 +99,7 @@
       }
     },
     {
-      "id": "get_site",
+      "id": "netlify__get_site",
       "name": "Get Site",
       "description": "Get a site by ID or custom domain",
       "requiresWrite": false,
@@ -117,7 +117,7 @@
       }
     },
     {
-      "id": "list_deploys",
+      "id": "netlify__list_deploys",
       "name": "List Deploys",
       "description": "List deploys for a site",
       "requiresWrite": false,
@@ -201,7 +201,7 @@
       }
     },
     {
-      "id": "get_deploy",
+      "id": "netlify__get_deploy",
       "name": "Get Deploy",
       "description": "Get a deploy by ID",
       "requiresWrite": false,
@@ -219,7 +219,7 @@
       }
     },
     {
-      "id": "trigger_build",
+      "id": "netlify__trigger_build",
       "name": "Trigger Build",
       "description": "Trigger a new build of a site from its linked repository",
       "requiresWrite": true,
@@ -244,7 +244,7 @@
       }
     },
     {
-      "id": "list_form_submissions",
+      "id": "netlify__list_form_submissions",
       "name": "List Form Submissions",
       "description": "List verified form submissions across all forms of a site",
       "requiresWrite": false,

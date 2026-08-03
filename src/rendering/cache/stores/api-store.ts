@@ -2,6 +2,7 @@ import type { CachePayload, CacheStore, CacheStoreStats } from "../types.ts";
 import { MemoryCacheStore } from "./memory-store.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { type CacheBackend, createCacheBackend } from "#veryfront/cache/backend.ts";
+import { parseSerializedCachePayload, serializeCachePayload } from "../cache-payload.ts";
 
 const logger = rendererLogger.component("api-cache-store");
 
@@ -19,28 +20,6 @@ export interface APICacheStoreOptions {
   localMaxEntries?: number;
   /** Disable local memory cache (no in-memory fallback) */
   enableLocalCache?: boolean;
-}
-
-/**
- * Serializable version of CachePayload for JSON storage
- */
-interface SerializedCachePayload {
-  result: {
-    html: string;
-    css?: string;
-    frontmatter: Record<string, unknown>;
-    headings?: Array<{ id: string; text: string; level: number }>;
-    // nodeMap serialized as array of [key, value] pairs
-    nodeMapEntries?: Array<[number, unknown]>;
-    pageModule?: {
-      slug: string;
-      code: string;
-      type: "mdx" | "component";
-    };
-    ssrHash?: string;
-  };
-  storedAt: number;
-  expiresAt?: number;
 }
 
 export class APICacheStore implements CacheStore {
@@ -91,47 +70,6 @@ export class APICacheStore implements CacheStore {
     return this.backendInitPromise;
   }
 
-  private serialize(payload: CachePayload): string {
-    const serialized: SerializedCachePayload = {
-      result: {
-        html: payload.result.html,
-        css: payload.result.css,
-        frontmatter: payload.result.frontmatter as Record<string, unknown>,
-        headings: payload.result.headings,
-        nodeMapEntries: payload.result.nodeMap
-          ? Array.from(payload.result.nodeMap.entries())
-          : undefined,
-        pageModule: payload.result.pageModule,
-        ssrHash: payload.result.ssrHash,
-      },
-      storedAt: payload.storedAt,
-      expiresAt: payload.expiresAt,
-    };
-
-    return JSON.stringify(serialized);
-  }
-
-  private deserialize(json: string): CachePayload {
-    const serialized = JSON.parse(json) as SerializedCachePayload;
-
-    return {
-      result: {
-        html: serialized.result.html,
-        css: serialized.result.css,
-        frontmatter: serialized.result.frontmatter as CachePayload["result"]["frontmatter"],
-        headings: serialized.result.headings,
-        nodeMap: serialized.result.nodeMapEntries
-          ? new Map(serialized.result.nodeMapEntries)
-          : undefined,
-        stream: null, // Streams can't be serialized
-        pageModule: serialized.result.pageModule,
-        ssrHash: serialized.result.ssrHash,
-      },
-      storedAt: serialized.storedAt,
-      expiresAt: serialized.expiresAt,
-    };
-  }
-
   async get(key: string): Promise<CachePayload | undefined> {
     const local = await this.localCache?.get(key);
     if (local) return local;
@@ -141,7 +79,8 @@ export class APICacheStore implements CacheStore {
       const json = await backend.get(key);
       if (!json) return undefined;
 
-      const payload = this.deserialize(json);
+      const payload = parseSerializedCachePayload(json);
+      if (payload === undefined) return undefined;
       await this.localCache?.set(key, payload);
       logger.debug("Distributed cache hit", { key });
       return payload;
@@ -161,13 +100,21 @@ export class APICacheStore implements CacheStore {
 
     try {
       const backend = await this.getBackend();
-      await backend.set(key, this.serialize(value), this.ttlSeconds);
+      await backend.set(key, serializeCachePayload(value), this.resolveBackendTtlSeconds(value));
     } catch (error) {
       logger.debug(
         "[APICacheStore] Failed to store in distributed cache (no fallback)",
         { key, error },
       );
     }
+  }
+
+  private resolveBackendTtlSeconds(value: CachePayload): number {
+    if (typeof value.staleUntil !== "number") return this.ttlSeconds;
+
+    const secondsUntilStaleExpiry = Math.ceil((value.staleUntil - Date.now()) / 1_000);
+    if (secondsUntilStaleExpiry <= 0) return this.ttlSeconds;
+    return Math.max(this.ttlSeconds, secondsUntilStaleExpiry);
   }
 
   async delete(key: string): Promise<void> {

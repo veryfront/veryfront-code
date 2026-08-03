@@ -26,11 +26,11 @@ export interface RedisBackendConfig extends BackendConfig {
   hostname?: string;
   /** Redis port */
   port?: number;
-  /** Key prefix for namespacing */
+  /** Base key prefix; the backend appends its versioned storage-schema namespace. */
   prefix?: string;
-  /** Stream name for job queue */
+  /** Base stream name for the job queue; the backend appends its storage-schema version. */
   streamKey?: string;
-  /** Consumer group name */
+  /** Base consumer group name; the backend appends its storage-schema version. */
   groupName?: string;
   /** Consumer name (unique per worker) */
   consumerName?: string;

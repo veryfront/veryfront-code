@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "@std/assert";
+import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import type {
   RemoteMCPToolSourceConfig,
   RemoteToolSource,
@@ -9,6 +9,8 @@ import {
   createHostedProjectRemoteToolSource,
   createHostedProjectRemoteToolSources,
 } from "./project-remote-tool-source.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import { createUnconfirmedProjectContextSwitchResult } from "../project/context.ts";
 
 function projectFileTool(name: string): ToolDefinition {
   return {
@@ -48,9 +50,9 @@ function navigationTool(name: string): ToolDefinition {
     parameters: {
       type: "object",
       properties: {
-        project_id: { type: "string" },
+        project_reference: { type: "string" },
       },
-      required: ["project_id"],
+      required: ["project_reference"],
     },
   };
 }
@@ -93,16 +95,22 @@ Deno.test("hosted remote tool sources do not carry legacy end-user identity plum
     ["end", "user", "id"].join("_"),
   ];
   const productionFiles = [
-    "src/agent/hosted/project-remote-tool-source.ts",
-    "src/agent/hosted/chat-runtime-tool-assembly.ts",
+    {
+      label: "src/agent/hosted/project-remote-tool-source.ts",
+      url: new URL("./project-remote-tool-source.ts", import.meta.url),
+    },
+    {
+      label: "src/agent/hosted/chat-runtime-tool-assembly.ts",
+      url: new URL("./chat-runtime-tool-assembly.ts", import.meta.url),
+    },
   ];
   const offenders: string[] = [];
 
   for (const file of productionFiles) {
-    const source = await Deno.readTextFile(file);
+    const source = await Deno.readTextFile(file.url);
     for (const token of forbidden) {
       if (source.includes(token)) {
-        offenders.push(`${file}:${token}`);
+        offenders.push(`${file.label}:${token}`);
       }
     }
   }
@@ -141,6 +149,30 @@ Deno.test("createHostedProjectRemoteToolSource scopes tool listings and hydrates
       context: { projectId: "project-1" },
     },
   ]);
+});
+
+Deno.test("createHostedProjectRemoteToolSource replaces model-supplied project references", async () => {
+  let executedArgs: unknown;
+  const source = createHostedProjectRemoteToolSource({
+    source: createRemoteSource({
+      tools: [projectFileTool("update_file")],
+      execute: (_toolName, args) => {
+        executedArgs = args;
+        return { ok: true };
+      },
+    }),
+    defaultProjectId: "trusted-project",
+  });
+
+  await source.executeTool("update_file", {
+    path: "AGENTS.md",
+    project_reference: "attacker-project",
+  }, { projectId: "trusted-project" });
+
+  assertEquals(executedArgs, {
+    path: "AGENTS.md",
+    project_reference: "trusted-project",
+  });
 });
 
 Deno.test("createHostedProjectRemoteToolSource hydrates optional declared project references", async () => {
@@ -226,6 +258,49 @@ Deno.test("createHostedProjectRemoteToolSource retries configured write collisio
   assertEquals(executeCalls, ["create_file", "update_file"]);
 });
 
+Deno.test("createHostedProjectRemoteToolSource does not retry with an unadvertised tool", async () => {
+  const executeCalls: string[] = [];
+  const source = createHostedProjectRemoteToolSource({
+    source: createRemoteSource({
+      tools: [projectFileTool("create_file")],
+      execute: (toolName) => {
+        executeCalls.push(toolName);
+        return { isError: true, message: "file already exists" };
+      },
+    }),
+    defaultProjectId: "project-1",
+    shouldRetryWithTool: () => true,
+  });
+
+  await assertRejects(
+    () => source.executeTool("create_file", { path: "report.md" }),
+    Error,
+  );
+  assertEquals(executeCalls, ["create_file"]);
+});
+
+Deno.test("createHostedProjectRemoteToolSource does not retry outside the tool allowlist", async () => {
+  const executeCalls: string[] = [];
+  const source = createHostedProjectRemoteToolSource({
+    source: createRemoteSource({
+      tools: [projectFileTool("create_file"), projectFileTool("update_file")],
+      execute: (toolName) => {
+        executeCalls.push(toolName);
+        return { isError: true, message: "file already exists" };
+      },
+    }),
+    defaultProjectId: "project-1",
+    allowedToolNames: new Set(["create_file"]),
+    shouldRetryWithTool: () => true,
+  });
+
+  await assertRejects(
+    () => source.executeTool("create_file", { path: "report.md" }),
+    Error,
+  );
+  assertEquals(executeCalls, ["create_file"]);
+});
+
 Deno.test("createHostedProjectRemoteToolSource retries thrown errors and rethrows non-retry errors", async () => {
   const executeCalls: string[] = [];
   const source = createHostedProjectRemoteToolSource({
@@ -266,14 +341,14 @@ Deno.test("createHostedProjectRemoteToolSource retries thrown errors and rethrow
 });
 
 Deno.test("createHostedProjectRemoteToolSource reports project navigation and steering mutations", async () => {
-  const switchedProjects: string[] = [];
+  const switchedProjectIds: string[] = [];
   const mutations: Array<{ instructionsChanged: boolean; skillsChanged: boolean }> = [];
   const source = createHostedProjectRemoteToolSource({
     source: createRemoteSource({
       tools: [navigationTool("studio_open_project"), projectFileTool("update_file")],
       execute: (toolName) => {
         if (toolName === "studio_open_project") {
-          return { success: true, project_id: "project-2" };
+          return { success: true, project_id: "project-2", slug: "project-two" };
         }
         return { success: true };
       },
@@ -283,7 +358,7 @@ Deno.test("createHostedProjectRemoteToolSource reports project navigation and st
       projectNavigationToolNames: ["studio_open_project"],
     },
     onProjectSwitch: (projectId) => {
-      switchedProjects.push(projectId);
+      switchedProjectIds.push(projectId);
     },
     onSteeringMutation: (mutation) => {
       mutations.push({
@@ -293,11 +368,98 @@ Deno.test("createHostedProjectRemoteToolSource reports project navigation and st
     },
   });
 
-  await source.executeTool("studio_open_project", { project_id: "project-2" });
+  await source.executeTool("studio_open_project", { project_reference: "project-two" });
   await source.executeTool("update_file", { path: "AGENTS.md" });
+  await source.executeTool("update_file", {
+    path: "agents/researcher/resources/schema.json",
+  });
 
-  assertEquals(switchedProjects, ["project-2"]);
-  assertEquals(mutations, [{ instructionsChanged: true, skillsChanged: false }]);
+  assertEquals(switchedProjectIds, ["project-2"]);
+  assertEquals(mutations, [
+    { instructionsChanged: true, skillsChanged: false },
+    { instructionsChanged: false, skillsChanged: true },
+  ]);
+});
+
+Deno.test("createHostedProjectRemoteToolSource fails closed on claimed but unconfirmed navigation", async () => {
+  let switchCount = 0;
+  const source = createHostedProjectRemoteToolSource({
+    source: createRemoteSource({
+      tools: [navigationTool("studio_open_project")],
+      execute: () => ({
+        structuredContent: {
+          success: true,
+          project_id: "different-project",
+          slug: "different-project",
+        },
+      }),
+    }),
+    defaultProjectId: () => "project-1",
+    projectScopedRemoteToolOptions: {
+      projectNavigationToolNames: ["studio_open_project"],
+    },
+    onProjectSwitch: () => {
+      switchCount += 1;
+    },
+  });
+
+  assertEquals(
+    await source.executeTool("studio_open_project", { project_reference: "requested-project" }),
+    createUnconfirmedProjectContextSwitchResult(),
+  );
+  assertEquals(switchCount, 0);
+});
+
+Deno.test("createHostedProjectRemoteToolSource rejects unconfirmed claimed navigation success", async () => {
+  let switchCount = 0;
+  const source = createHostedProjectRemoteToolSource({
+    source: createRemoteSource({
+      tools: [navigationTool("studio_open_project")],
+      execute: () => ({
+        structuredContent: {
+          success: true,
+          project_id: "different-project",
+          slug: "different-project",
+        },
+      }),
+    }),
+    projectScopedRemoteToolOptions: {
+      projectNavigationToolNames: ["studio_open_project"],
+    },
+    onProjectSwitch: () => {
+      switchCount += 1;
+    },
+  });
+
+  const result = await source.executeTool("studio_open_project", {
+    project_reference: "requested-project",
+  });
+
+  assertEquals(result, createUnconfirmedProjectContextSwitchResult());
+  assertEquals(switchCount, 0);
+});
+
+Deno.test("createHostedProjectRemoteToolSource preserves upstream navigation failure", async () => {
+  const failure = { structuredContent: { success: false, message: "not found" } };
+  const source = createHostedProjectRemoteToolSource({
+    source: createRemoteSource({
+      tools: [navigationTool("studio_open_project")],
+      execute: () => failure,
+    }),
+    projectScopedRemoteToolOptions: {
+      projectNavigationToolNames: ["studio_open_project"],
+    },
+    onProjectSwitch: () => {
+      throw new Error("unexpected project switch");
+    },
+  });
+
+  assertEquals(
+    await source.executeTool("studio_open_project", {
+      project_reference: "missing-project",
+    }),
+    failure,
+  );
 });
 
 Deno.test("createHostedProjectRemoteToolSource skips mutation callbacks for failed results", async () => {
@@ -471,24 +633,53 @@ Deno.test("createHostedProjectRemoteToolSources builds API and explicit gated St
     "x-conversation-id": "conversation-1",
     "x-project-id": "project-2",
   });
+});
 
-  const blockedSources = createHostedProjectRemoteToolSources({
-    authToken: "token-1",
-    apiMcpUrl: "https://api.example/mcp",
-    studioMcpUrl: "https://studio.example/mcp",
-    mcpServers: [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }],
-    clientProfile: {
-      id: "veryfront-cli",
-      type: "cli",
-      trusted: true,
-      capabilities: [],
-    },
-    getProjectId: () => "project-1",
-    createRemoteToolSource: (config) =>
-      createRemoteSource({ id: config.id, tools: [projectFileTool(config.id ?? "tool")] }),
-  });
+Deno.test("createHostedProjectRemoteToolSources throws for explicit Studio MCP without hosted URL", () => {
+  const error = assertThrows(
+    () =>
+      createHostedProjectRemoteToolSources({
+        authToken: "token-1",
+        apiMcpUrl: "https://api.example/mcp",
+        mcpServers: [{ kind: "veryfront-studio" }],
+        clientProfile: {
+          id: "veryfront-studio",
+          type: "web",
+          trusted: true,
+          capabilities: ["ui_panels"],
+        },
+        getProjectId: () => "project-1",
+        createRemoteToolSource: (config) =>
+          createRemoteSource({ id: config.id, tools: [simpleTool("studio_todo_write")] }),
+      }),
+    VeryfrontError,
+    "studioMcpUrl was not provided",
+  );
+  assertEquals(error.slug, "config-invalid");
+});
 
-  assertEquals(blockedSources.map((source) => source.id), ["veryfront-mcp"]);
+Deno.test("createHostedProjectRemoteToolSources throws for explicit Studio MCP from disallowed client", () => {
+  const error = assertThrows(
+    () =>
+      createHostedProjectRemoteToolSources({
+        authToken: "token-1",
+        apiMcpUrl: "https://api.example/mcp",
+        studioMcpUrl: "https://studio.example/mcp",
+        mcpServers: [{ kind: "veryfront-studio" }],
+        clientProfile: {
+          id: "veryfront-cli",
+          type: "cli",
+          trusted: true,
+          capabilities: [],
+        },
+        getProjectId: () => "project-1",
+        createRemoteToolSource: (config) =>
+          createRemoteSource({ id: config.id, tools: [simpleTool("studio_todo_write")] }),
+      }),
+    VeryfrontError,
+    'client "veryfront-cli" is not allowed to use Studio MCP',
+  );
+  assertEquals(error.slug, "permission-denied");
 });
 
 Deno.test("createHostedProjectRemoteToolSources infers Studio MCP from allowed Studio tools", async () => {
@@ -497,7 +688,6 @@ Deno.test("createHostedProjectRemoteToolSources infers Studio MCP from allowed S
     authToken: "token-1",
     apiMcpUrl: "https://api.example/mcp",
     studioMcpUrl: "https://studio.example/mcp",
-    mcpServers: [{ kind: "veryfront-api" }],
     clientProfile: {
       id: "veryfront-studio",
       type: "web",
@@ -526,6 +716,107 @@ Deno.test("createHostedProjectRemoteToolSources infers Studio MCP from allowed S
   assertEquals(
     (await sources[1]?.listTools({ projectId: "project-1" }))?.map((tool) => tool.name),
     ["studio_todo_write"],
+  );
+});
+
+Deno.test("createHostedProjectRemoteToolSources does not infer Studio when explicit API-only MCP is set", () => {
+  const configs: RemoteMCPToolSourceConfig[] = [];
+  const sources = createHostedProjectRemoteToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    studioMcpUrl: "https://studio.example/mcp",
+    mcpServers: [{ kind: "veryfront-api" }],
+    clientProfile: {
+      id: "veryfront-studio",
+      type: "web",
+      trusted: true,
+      capabilities: ["ui_panels"],
+    },
+    getProjectId: () => "project-1",
+    allowedToolNames: new Set(["studio_todo_write"]),
+    createRemoteToolSource: (config) => {
+      configs.push(config);
+      return createRemoteSource({
+        id: config.id,
+        tools: [projectFileTool("update_file"), simpleTool("studio_todo_write")],
+      });
+    },
+  });
+
+  assertEquals(sources.map((source) => source.id), ["veryfront-mcp"]);
+  assertEquals(configs.map((config) => config.endpoint), ["https://api.example/mcp"]);
+});
+
+Deno.test("createHostedProjectRemoteToolSources preserves an explicit MCP opt-out", () => {
+  const configs: RemoteMCPToolSourceConfig[] = [];
+  const sources = createHostedProjectRemoteToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    studioMcpUrl: "https://studio.example/mcp",
+    mcpServers: [],
+    clientProfile: {
+      id: "veryfront-studio",
+      type: "web",
+      trusted: true,
+      capabilities: ["ui_panels"],
+    },
+    getProjectId: () => "project-1",
+    allowedToolNames: new Set(["studio_todo_write"]),
+    createRemoteToolSource: (config) => {
+      configs.push(config);
+      return createRemoteSource({ id: config.id, tools: [] });
+    },
+  });
+
+  assertEquals(sources, []);
+  assertEquals(configs, []);
+});
+
+Deno.test("createHostedProjectRemoteToolSources applies API and Studio policies without cross-granting tools", async () => {
+  const sources = createHostedProjectRemoteToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    studioMcpUrl: "https://studio.example/mcp",
+    mcpServers: [
+      { kind: "veryfront-api", toolPolicy: { allow: ["update_file"] } },
+      { kind: "veryfront-studio", toolPolicy: { allow: ["studio_open_project"] } },
+    ],
+    clientProfile: {
+      id: "veryfront-studio",
+      type: "web",
+      trusted: true,
+      capabilities: ["ui_panels"],
+    },
+    getProjectId: () => "project-1",
+    createRemoteToolSource: (config) =>
+      createRemoteSource({
+        id: config.id,
+        tools: [
+          projectFileTool("update_file"),
+          navigationTool("studio_open_project"),
+          simpleTool("delete_project"),
+        ],
+      }),
+  });
+
+  assertEquals(sources.map((source) => source.id), ["veryfront-mcp", "studio-mcp"]);
+  assertEquals(
+    (await sources[0]?.listTools({ projectId: "project-1" }))?.map((tool) => tool.name),
+    ["update_file"],
+  );
+  assertEquals(
+    (await sources[1]?.listTools({ projectId: "project-1" }))?.map((tool) => tool.name),
+    ["studio_open_project"],
+  );
+  await assertRejects(
+    () => sources[0]!.executeTool("studio_open_project", { project_reference: "project-2" }),
+    Error,
+    'Tool "studio_open_project" is not advertised by remote source "veryfront-mcp"',
+  );
+  await assertRejects(
+    () => sources[1]!.executeTool("delete_project", {}),
+    Error,
+    'Tool "delete_project" is not advertised by remote source "studio-mcp"',
   );
 });
 
@@ -617,18 +908,19 @@ Deno.test("createHostedProjectRemoteToolSources applies custom MCP server tool p
   await assertRejects(
     () => source.executeTool("delete_docs", {}),
     Error,
-    'Tool "delete_docs" is not allowed for this MCP server',
+    'Tool "delete_docs" is not advertised by remote source "docs"',
   );
   await assertRejects(
     () => source.executeTool("archive_docs", {}),
     Error,
-    'Tool "archive_docs" is not allowed for this MCP server',
+    'Tool "archive_docs" is not advertised by remote source "docs"',
   );
 });
 
 Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy to created sources", async () => {
   const executed: Array<{ toolName: string; args: unknown; context?: ToolExecutionContext }> = [];
-  const switchedProjects: string[] = [];
+  const switchedProjectIds: string[] = [];
+  const switchedProjects: Array<{ projectId: string; projectSlug?: string }> = [];
   const mutations: Array<{ instructionsChanged: boolean; skillsChanged: boolean }> = [];
   const sources = createHostedProjectRemoteToolSources({
     authToken: "token-1",
@@ -656,8 +948,11 @@ Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy t
         skillsChanged: mutation.skillsChanged,
       });
     },
-    onStudioProjectSwitch: (projectId) => {
-      switchedProjects.push(projectId);
+    onStudioProjectSwitch: (projectId, confirmedProject) => {
+      switchedProjectIds.push(projectId);
+      if (confirmedProject) {
+        switchedProjects.push(confirmedProject);
+      }
     },
     createRemoteToolSource: (config) =>
       createRemoteSource({
@@ -666,7 +961,7 @@ Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy t
         execute: (toolName, args, context) => {
           executed.push({ toolName, args, context });
           if (config.id === "studio-mcp" && toolName === "studio_open_project") {
-            return { success: true, project_id: "project-2" };
+            return { success: true, project_id: "project-2", slug: "project-two" };
           }
           return { success: true };
         },
@@ -674,7 +969,7 @@ Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy t
   });
 
   await sources[0]?.executeTool("update_file", { path: "AGENTS.md" });
-  await sources[1]?.executeTool("studio_open_project", { project_id: "project-2" });
+  await sources[1]?.executeTool("studio_open_project", { project_reference: "project-two" });
 
   assertEquals(executed, [
     {
@@ -689,12 +984,13 @@ Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy t
     },
     {
       toolName: "studio_open_project",
-      args: { prepared: true, project_id: "project-2" },
+      args: { prepared: true, project_reference: "project-two" },
       context: { projectId: "project-1" },
     },
   ]);
   assertEquals(mutations, [{ instructionsChanged: true, skillsChanged: false }]);
-  assertEquals(switchedProjects, ["project-2"]);
+  assertEquals(switchedProjectIds, ["project-2"]);
+  assertEquals(switchedProjects, [{ projectId: "project-2", projectSlug: "project-two" }]);
 });
 
 Deno.test("createHostedProjectRemoteToolSources composes API input preparation for integration tools", async () => {
@@ -737,4 +1033,37 @@ Deno.test("createHostedProjectRemoteToolSources composes API input preparation f
       context: { projectId: "project-1" },
     },
   ]);
+});
+
+Deno.test("createHostedProjectRemoteToolSource uses activatedRemoteToolNames as execution gate", async () => {
+  const activatedSet = new Set(["read_file"]);
+
+  const source = createHostedProjectRemoteToolSource({
+    source: createRemoteSource({
+      tools: [simpleTool("read_file"), simpleTool("write_file")],
+    }),
+    // allowedToolNames would normally allow both; activatedRemoteToolNames narrows to activated set
+    allowedToolNames: new Set(["read_file", "write_file"]),
+    activatedRemoteToolNames: activatedSet,
+  });
+
+  // listTools shows only activated tools
+  const listed = (await source.listTools()).map((t) => t.name);
+  assertEquals(listed, ["read_file"]);
+
+  // Execution is allowed for activated tool
+  const result = await source.executeTool("read_file", {});
+  assertEquals(result, { ok: true });
+
+  // Execution is blocked for non-activated tool (throws)
+  await assertRejects(
+    () => source.executeTool("write_file", {}),
+    Error,
+    "write_file",
+  );
+
+  // Live mutation: activating write_file makes it executable
+  activatedSet.add("write_file");
+  const resultAfter = await source.executeTool("write_file", {});
+  assertEquals(resultAfter, { ok: true });
 });

@@ -7,6 +7,7 @@
 export type {
   ASTNode,
   CodeParser,
+  FunctionDirectiveOptions,
   GenerateOptions,
   GenerateResult,
   InjectJsxNodePositionsOptions,
@@ -14,3 +15,10 @@ export type {
   ParseOptions,
   TraverseVisitor,
 } from "./code-parser.ts";
+
+export {
+  createSkillDocumentParserProvider,
+  type SkillDocumentParserProvider,
+  SkillDocumentParserProviderName,
+  snapshotSkillDocumentParserProvider,
+} from "./skill-document-parser.ts";

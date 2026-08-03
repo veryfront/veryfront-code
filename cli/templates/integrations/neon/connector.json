@@ -38,7 +38,7 @@
   },
   "tools": [
     {
-      "id": "list_projects",
+      "id": "neon__list_projects",
       "name": "List Projects",
       "description": "List all Neon projects in your account",
       "requiresWrite": false,
@@ -76,7 +76,7 @@
       }
     },
     {
-      "id": "get_project",
+      "id": "neon__get_project",
       "name": "Get Project",
       "description": "Get details of a specific Neon project",
       "requiresWrite": false,
@@ -94,7 +94,7 @@
       }
     },
     {
-      "id": "list_branches",
+      "id": "neon__list_branches",
       "name": "List Branches",
       "description": "List all branches for a specific project",
       "requiresWrite": false,
@@ -127,7 +127,7 @@
       }
     },
     {
-      "id": "create_branch",
+      "id": "neon__create_branch",
       "name": "Create Branch",
       "description": "Create a new branch in a Neon project",
       "requiresWrite": true,
@@ -155,7 +155,7 @@
       }
     },
     {
-      "id": "list_databases",
+      "id": "neon__list_databases",
       "name": "List Databases",
       "description": "List databases on a specific branch of a project",
       "requiresWrite": false,
@@ -179,19 +179,19 @@
       }
     },
     {
-      "id": "query_database",
+      "id": "neon__query_database",
       "name": "Query Database",
       "description": "Execute SQL queries against the connected database",
       "requiresWrite": false
     },
     {
-      "id": "list_tables",
+      "id": "neon__list_tables",
       "name": "List Tables",
       "description": "List all tables in the connected database",
       "requiresWrite": false
     },
     {
-      "id": "describe_table",
+      "id": "neon__describe_table",
       "name": "Describe Table",
       "description": "Get detailed schema information for a specific table",
       "requiresWrite": false

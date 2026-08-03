@@ -8,19 +8,35 @@
  * @module errors/middleware/wrap-unknown
  */
 
-import { VeryfrontError } from "../types.ts";
+import { isVeryfrontErrorInstance, snapshotKnownVeryfrontError, VeryfrontError } from "../types.ts";
 import { UNKNOWN_ERROR } from "../error-registry.ts";
-import { getErrorMessage } from "../veryfront-error.ts";
+import { snapshotKnownError } from "../veryfront-error.ts";
+import { redactForSerialization } from "#veryfront/utils/logger/redact.ts";
+import { detachThrowableForBoundary } from "../safe-diagnostics.ts";
+import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+
+const arrayIsArray = Array.isArray;
+
+function snapshotContext(
+  context: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!context) return undefined;
+  const snapshot = redactForSerialization(context);
+  return snapshot && typeof snapshot === "object" && !arrayIsArray(snapshot)
+    ? snapshot as Record<string, unknown>
+    : undefined;
+}
 
 /**
- * Wrap any unknown error as a VeryfrontError with unknown-error slug
+ * Return a detached VeryfrontError, preserving safe identity fields from valid VeryfrontError inputs
  *
  * This function is used at system boundaries (HTTP, CLI, etc.) to ensure
  * all errors have slug-based identity for consistent handling.
  *
- * @param error - Any error value (Error, VeryfrontError, string, etc.)
- * @param context - Optional context to add to the wrapped error
- * @returns VeryfrontError instance with unknown-error slug
+ * @param error - A valid VeryfrontError to detach, or another value to wrap as unknown-error
+ * @param context - Optional context added only when error is not a valid VeryfrontError
+ * @returns A detached, framework-owned VeryfrontError. Valid VeryfrontError
+ * inputs retain safe identity fields; other inputs use the unknown-error slug.
  *
  * @example
  * ```typescript
@@ -36,22 +52,29 @@ export function wrapUnknownError(
   error: unknown,
   context?: Record<string, unknown>,
 ): VeryfrontError {
-  // If already a VeryfrontError, return as-is
-  if (error instanceof VeryfrontError) {
-    return error;
+  const detached = detachThrowableForBoundary(error);
+  if (isVeryfrontErrorInstance(detached)) {
+    return detached;
   }
 
-  // Extract message from the error
-  const message = getErrorMessage(error);
-
-  // Preserve original Error as cause if available
-  const cause = error instanceof Error ? error : undefined;
-
-  // Create unknown-error with preserved information
   return UNKNOWN_ERROR.create({
-    detail: message,
-    cause,
-    context: context ? { ...context } : undefined,
+    detail: detached.message,
+    cause: isNativeErrorWithoutHooks(error) ? error : undefined,
+    context: snapshotContext(context),
+  });
+}
+
+/**
+ * Detach a thrown value at a system boundary, then normalize the stable copy.
+ *
+ * This prevents stateful Error proxies from reporting different identities to
+ * observability, formatting, and the final response.
+ */
+export function detachBoundaryError(error: unknown): VeryfrontError {
+  const detached = detachThrowableForBoundary(error);
+  return isVeryfrontErrorInstance(detached) ? detached : UNKNOWN_ERROR.create({
+    detail: detached.message,
+    cause: detached,
   });
 }
 
@@ -80,37 +103,61 @@ export function wrapWithContext(
   message: string,
   context?: Record<string, unknown>,
 ): VeryfrontError {
-  const originalMessage = getErrorMessage(error);
-  const combinedMessage = `${message}: ${originalMessage}`;
+  const extraContext = snapshotContext(context);
 
   // If already a VeryfrontError, preserve slug but update message/context
-  if (error instanceof VeryfrontError) {
+  if (isVeryfrontErrorInstance(error)) {
+    const snapshot = snapshotKnownVeryfrontError(error);
+    if (!snapshot) {
+      return UNKNOWN_ERROR.create({
+        detail: `${message}: Unknown error`,
+        context: extraContext,
+      });
+    }
+    const combinedMessage = `${message}: ${snapshot.message}`;
+    const originalContext = snapshot.context && typeof snapshot.context === "object"
+      ? snapshotContext(snapshot.context as Record<string, unknown>)
+      : undefined;
+
     return new VeryfrontError(combinedMessage, {
-      slug: error.slug,
-      category: error.category,
-      status: error.status,
-      title: error.title,
-      suggestion: error.suggestion,
+      slug: snapshot.slug,
+      category: snapshot.category,
+      status: snapshot.status,
+      title: snapshot.title,
+      suggestion: snapshot.suggestion,
+      exitCode: snapshot.exitCode,
       detail: combinedMessage,
-      cause: error.cause,
-      instance: error.instance,
+      cause: snapshot.cause,
+      instance: snapshot.instance,
       context: {
-        ...(error.context as Record<string, unknown> ?? {}),
-        ...context,
+        ...originalContext,
+        ...extraContext,
         originalError: {
-          message: error.message,
-          slug: error.slug,
+          message: snapshot.message,
+          slug: snapshot.slug,
         },
       },
     });
   }
 
-  // Wrap as unknown-error
+  if (isNativeErrorWithoutHooks(error)) {
+    const snapshot = snapshotKnownError(error);
+    const originalMessage = snapshot?.message ?? "Unknown error";
+    return UNKNOWN_ERROR.create({
+      detail: `${message}: ${originalMessage}`,
+      cause: snapshot ? error : undefined,
+      context: {
+        ...extraContext,
+        originalMessage,
+      },
+    });
+  }
+
+  const originalMessage = detachThrowableForBoundary(error).message;
   return UNKNOWN_ERROR.create({
-    detail: combinedMessage,
-    cause: error instanceof Error ? error : undefined,
+    detail: `${message}: ${originalMessage}`,
     context: {
-      ...context,
+      ...extraContext,
       originalMessage,
     },
   });

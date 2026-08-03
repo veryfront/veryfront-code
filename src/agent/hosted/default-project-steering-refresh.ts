@@ -1,4 +1,5 @@
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
+import { applySourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import {
   listProjectScopedRemoteToolNames,
   type ProjectScopedRemoteToolOptions,
@@ -9,10 +10,19 @@ import type {
 } from "./default-chat-runtime.ts";
 import type { HostedChatRuntimePreparationSteering } from "./chat-preparation.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
-import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
+import {
+  resolveRuntimeSkillSelectorSnapshotForAgent,
+  type RuntimeSkillDefinition,
+} from "../runtime/skill-metadata.ts";
 import { selectProviderCompatibleToolNames } from "../runtime/provider-tool-compat.ts";
 import { flattenSystemInstructions, withRuntimeToolInventory } from "../runtime/tool-inventory.ts";
+import { TOOL_SEARCH_TOOL_NAME } from "../runtime/tool-exposure.ts";
 import type { HostedChatRuntimeInstructionsInput } from "./chat-preparation.ts";
+import {
+  assertResolvedSkillSelector,
+  createNoneSkillSelectorSnapshot,
+  type ResolvedSkillSelectorPolicy,
+} from "#veryfront/skill/selector.ts";
 
 /** Public API contract for default hosted project steering refresh logger. */
 export type DefaultHostedProjectSteeringRefreshLogger = {
@@ -161,15 +171,44 @@ async function fetchSkillsWithFallback(input: {
   }
 }
 
-function filterVisibleSkills(input: {
-  skills: RuntimeSkillDefinition[];
-  allowedSkillIds?: string[];
-}): RuntimeSkillDefinition[] {
-  if (!input.allowedSkillIds) {
-    return input.skills;
+function resolveRefreshedSkillSnapshot(input: {
+  skills: readonly RuntimeSkillDefinition[];
+  agentId: string;
+  selector: true | false | readonly string[] | undefined;
+  policy: ResolvedSkillSelectorPolicy | undefined;
+}) {
+  if (
+    !input.policy &&
+    (input.selector === false || (Array.isArray(input.selector) && input.selector.length === 0))
+  ) {
+    return createNoneSkillSelectorSnapshot<RuntimeSkillDefinition>();
   }
 
-  return input.skills.filter((skill) => input.allowedSkillIds?.includes(skill.id));
+  if (!input.policy && Array.isArray(input.selector)) {
+    return resolveRuntimeSkillSelectorSnapshotForAgent({
+      skills: input.skills,
+      agentId: input.agentId,
+      selector: [...input.selector],
+    });
+  }
+
+  if (!input.policy || input.policy.kind === "all-visible") {
+    return resolveRuntimeSkillSelectorSnapshotForAgent({
+      skills: input.skills,
+      agentId: input.agentId,
+      selector: input.policy?.source === "true" ? true : undefined,
+    });
+  }
+
+  if (input.policy.kind === "none") {
+    return createNoneSkillSelectorSnapshot<RuntimeSkillDefinition>(input.policy);
+  }
+
+  return resolveRuntimeSkillSelectorSnapshotForAgent({
+    skills: input.skills,
+    agentId: input.agentId,
+    selector: input.policy.entries,
+  });
 }
 
 /** Create default hosted project steering refresh. */
@@ -207,14 +246,28 @@ export function createDefaultHostedProjectSteeringRefresh(
       }),
     ]);
 
-    const visibleSkills = filterVisibleSkills({
+    const skillSelectorSnapshot = resolveRefreshedSkillSnapshot({
       skills,
-      allowedSkillIds: input.taskContext.availableSkillIds,
+      agentId: input.liveProjectSteering.agent.id,
+      selector: input.liveProjectSteering.agent.skills,
+      policy: input.taskContext.skillSelectorPolicy ??
+        input.liveProjectSteering.skillSelectorPolicy,
     });
+    assertResolvedSkillSelector(skillSelectorSnapshot);
+    input.taskContext.availableSkillIds = skillSelectorSnapshot.allowedSkillIds;
+    input.taskContext.skillSelectorPolicy = skillSelectorSnapshot.policy;
+    input.taskContext.skillSourcePaths =
+      Object.keys(skillSelectorSnapshot.skillSourcePaths).length > 0
+        ? skillSelectorSnapshot.skillSourcePaths
+        : undefined;
+    const sourceAllowedRemoteToolNames = applySourceIntegrationPolicy(
+      remoteToolNames,
+      input.toolAssembly.sourceIntegrationPolicy,
+    );
     const allToolNames = [
       ...new Set([
         ...input.toolAssembly.localToolNames,
-        ...remoteToolNames,
+        ...sourceAllowedRemoteToolNames,
         ...input.toolAssembly.providerToolNames,
       ]),
     ].sort();
@@ -222,7 +275,17 @@ export function createDefaultHostedProjectSteeringRefresh(
       model: input.taskContext.model,
       requiredToolNames: input.toolAssembly.localToolNames,
     });
-    input.taskContext.availableToolNames = toolNames;
+    const bootstrapToolNames = toolNames.filter((toolName) =>
+      toolName === "form_input" || toolName === "load_skill"
+    );
+    const hasDeferredTools = toolNames.length > bootstrapToolNames.length;
+    const modelVisibleToolNames = input.toolAssembly.toolLoadingMode === "deferred"
+      ? [
+        ...bootstrapToolNames,
+        ...(hasDeferredTools ? [TOOL_SEARCH_TOOL_NAME] : []),
+      ].sort()
+      : toolNames;
+    input.taskContext.availableToolNames = modelVisibleToolNames;
 
     const refreshedInstructions = options.buildInstructions({
       agentConfig: input.liveProjectSteering.agent,
@@ -230,9 +293,12 @@ export function createDefaultHostedProjectSteeringRefresh(
       branchId,
       environmentContext: input.liveProjectSteering.environmentContext,
       instructions: projectInstructions,
-      skills: visibleSkills,
+      skills: skillSelectorSnapshot.definitions,
+      availableToolNames: modelVisibleToolNames,
     });
 
-    return flattenSystemInstructions(withRuntimeToolInventory(refreshedInstructions, toolNames));
+    return flattenSystemInstructions(
+      withRuntimeToolInventory(refreshedInstructions, modelVisibleToolNames),
+    );
   };
 }

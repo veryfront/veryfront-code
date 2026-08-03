@@ -6,7 +6,7 @@ import {
   runWithVeryfrontCloudContextAsync,
 } from "../../provider/index.ts";
 import { generateText } from "../../runtime/runtime-bridge.ts";
-import { redactSensitive, sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
+import { redactSensitive, sanitizeUrlCredentials } from "#veryfront/utils";
 import type { TextGenerationRuntimeMessage } from "../runtime/text-generation-runtime-message-types.ts";
 import type { AgentRuntimeMessage, AgentRuntimeMessagePart } from "../runtime/message-adapter.ts";
 import type { ContextSummaryGenerator } from "./context-budget-manager.ts";

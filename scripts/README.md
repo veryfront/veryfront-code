@@ -7,6 +7,7 @@ Utility scripts for build, release, quality, and development.
 ```
 scripts/
   build/          # Build & packaging
+  codemods/       # Maintainer source migrations
   lint/           # Code quality & architecture checks
   hooks/          # Git hooks
   split-mode/     # Local split-mode debug config
@@ -15,22 +16,38 @@ scripts/
 Cross-runtime (Node/Bun) test infrastructure lives in `tests/node/` and
 `tests/bun/`.
 
+## codemods/
+
+| Script                        | Task           | Purpose                                      |
+| ----------------------------- | -------------- | -------------------------------------------- |
+| `migrate-chat-composition.ts` | `codemod:chat` | Migrates removed chat compatibility APIs     |
+
+See the [chat composition codemod how-to](./codemods/README.md) before running
+the task against an application checkout.
+
 ## build/
 
 | Script                           | Task        | Purpose                                             |
 | -------------------------------- | ----------- | --------------------------------------------------- |
 | `generate-templates-manifest.ts` | `build`     | Generates template manifest for CLI scaffolding     |
-| `generate-dev-ui-manifest.ts`    | `build`     | Generates dev UI asset manifest                     |
 | `prepare-framework-sources.ts`   | `build`     | Prepares framework `.src` files for SSR transforms  |
 | `build-all.js`                   | n/a         | Cross-compiles CLI binary for all platforms         |
 | `build-npm-dnt.ts`               | `build:npm` | Builds the root npm package via dnt and emits generated extension packages |
-| `build-npm-extension-packages.ts` | `build:npm` | Builds one publishable npm package for each first-party extension manifest |
+| `build-npm-extension-packages.ts` | `build:npm` | Builds publishable npm packages declared by first-party extension manifests |
 
 `deno task build:npm` writes the root package to `npm/` and first-party
 extension packages to `npm/extensions/<extension-name>/`. The root `veryfront`
 package must stay free of feature-specific implementation dependencies. Each
 generated `@veryfront/ext-*` package owns the dependencies declared by its
-extension manifest and peers on the matching `veryfront` version.
+extension manifest. An extension manifest can also declare runtime-specific
+leaf packages with narrower dependency sets and without a `veryfront` peer.
+Use `veryfront.npm.stagedSources` when a leaf package must bundle a canonical
+repository source file without adding the root framework as a dependency.
+
+The React development UI owns its generator under
+`extensions/ext-dev-ui-react/scripts/`. Its checked-in browser bundle embeds
+the generated stylesheet so JavaScript and CSS are always shipped as one
+immutable artifact.
 
 ## lint/
 
@@ -42,6 +59,7 @@ extension manifest and peers on the matching `veryfront` version.
 | `ban-console.ts`                 | `lint:ban-console`               | Lints for inappropriate console usage                                                      |
 | `ban-deep-imports.ts`            | `lint:ban-deep-imports`          | Prevents deep imports from internal modules                                                |
 | `ban-internal-root-imports.ts`   | `lint:ban-internal-root-imports` | Prevents root-level imports in internal modules                                            |
+| `check-module-boundaries.ts`     | `lint:module-boundaries`         | Ratchets broad imports in sensitive layers and dependency edges that participate in cycles |
 | `check-unawaited-promises.ts`    | `lint:check-awaits`              | Detects unawaited async cleanup calls                                                      |
 | `find-duplicate-functions.ts`    | `dupes`                          | Finds exact and near-duplicate functions, plus semantic AST-based matches via `--semantic` |
 | `lint-platform-agnostic.ts`      | `lint:platform`                  | Checks platform-agnostic code boundaries                                                   |

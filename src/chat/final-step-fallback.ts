@@ -7,6 +7,7 @@ import {
 } from "./conversation.ts";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "./types.ts";
 import { parseKnownProblemBody, safeJsonParse } from "./provider-errors.ts";
+import { normalizeTimerDurationMs } from "#veryfront/utils/timer.ts";
 
 function toToolInput(value: unknown): Record<string, unknown> {
   return isRecord(value) ? Object.fromEntries(Object.entries(value)) : {};
@@ -628,13 +629,23 @@ function buildToolChunkDescriptorsFromParts(
     if (!isRecord(part)) {
       continue;
     }
-    if (part.type !== "dynamic-tool" && part.type !== "tool_call" && part.type !== "tool-call") {
+    if (
+      typeof part.type !== "string" ||
+      (part.type !== "dynamic-tool" &&
+        part.type !== "tool_call" &&
+        !part.type.startsWith("tool-"))
+    ) {
       continue;
     }
     if (!("toolCallId" in part) || typeof part.toolCallId !== "string") {
       continue;
     }
-    if (!("toolName" in part) || typeof part.toolName !== "string") {
+    const toolName = typeof part.toolName === "string" && part.toolName.length > 0
+      ? part.toolName
+      : part.type !== "tool-call" && part.type.startsWith("tool-")
+      ? part.type.slice("tool-".length)
+      : "";
+    if (toolName.length === 0) {
       continue;
     }
     if (!("input" in part) || !("state" in part) || typeof part.state !== "string") {
@@ -642,7 +653,6 @@ function buildToolChunkDescriptorsFromParts(
     }
 
     const toolCallId = part.toolCallId;
-    const toolName = part.toolName;
     const input = toToolInput(part.input);
     const state = part.state;
 
@@ -882,13 +892,20 @@ async function resolveStreamPromiseWithTimeout<T>(
   timeoutMs: number,
   fallback: T,
 ): Promise<T> {
+  const normalizedTimeoutMs = normalizeTimerDurationMs(
+    timeoutMs,
+    "Chat final-step timeoutMs",
+  );
   let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
 
   try {
     const resolved = await Promise.race([
       Promise.resolve(promise),
       new Promise<typeof STREAM_PROMISE_TIMEOUT_TOKEN>((resolve) => {
-        timeoutId = globalThis.setTimeout(() => resolve(STREAM_PROMISE_TIMEOUT_TOKEN), timeoutMs);
+        timeoutId = globalThis.setTimeout(
+          () => resolve(STREAM_PROMISE_TIMEOUT_TOKEN),
+          normalizedTimeoutMs,
+        );
       }),
     ]);
 
@@ -900,7 +917,7 @@ async function resolveStreamPromiseWithTimeout<T>(
   } catch {
     return fallback;
   } finally {
-    if (timeoutId) {
+    if (timeoutId !== null) {
       globalThis.clearTimeout(timeoutId);
     }
   }

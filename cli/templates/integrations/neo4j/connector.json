@@ -42,7 +42,7 @@
   ],
   "tools": [
     {
-      "id": "run_cypher_query",
+      "id": "neo4j__run_cypher_query",
       "name": "Run Cypher Query",
       "description": "Execute a read-only Cypher query (MATCH ... RETURN) in an implicit transaction and get back fields and result rows — use for lookups, traversals, and GraphRAG retrieval. Note: the Query API does not enforce read-only access, so only submit read statements here (use a read-only database user to guarantee no writes)",
       "requiresWrite": false,
@@ -78,7 +78,7 @@
       }
     },
     {
-      "id": "run_cypher_write",
+      "id": "neo4j__run_cypher_write",
       "name": "Run Cypher Write",
       "description": "Execute a Cypher statement that modifies the graph (CREATE, MERGE, SET, DELETE) in an implicit transaction",
       "requiresWrite": true,

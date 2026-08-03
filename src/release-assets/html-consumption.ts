@@ -10,7 +10,7 @@
  */
 
 import { serverLogger } from "#veryfront/utils";
-import { releaseAssetUrl } from "./constants.ts";
+import { isValidContentHash, RELEASE_ASSET_CONTENT_TYPES, releaseAssetUrl } from "./constants.ts";
 import type { ReleaseAssetManifest } from "./manifest-schema.ts";
 
 const logger = serverLogger.component("release-asset-consume");
@@ -25,7 +25,8 @@ const logger = serverLogger.component("release-asset-consume");
  * extensions.
  */
 export function normalizeManifestModuleKey(path: string): string {
-  let key = String(path || "").replace(/^\/?_vf_modules\//, "");
+  if (typeof path !== "string") return "";
+  let key = path.replace(/^\/?_vf_modules\//, "");
   key = key.replace(/^\/+/, "");
   key = key.replace(/[?#].*$/, "");
   return key;
@@ -43,14 +44,16 @@ export function resolveManifestModuleUrl(
   logicalPath: string,
 ): string | null {
   const key = normalizeManifestModuleKey(logicalPath);
-  const direct = manifest.modules[key];
-  if (direct) return releaseAssetUrl(direct.contentHash, "js");
+  const direct = ownEntry(manifest.modules, key);
+  if (isUsableJavaScriptAsset(direct)) return releaseAssetUrl(direct.contentHash, "js");
 
   // Tolerate keys that differ only by extension (e.g. ".js" vs source ext).
   const withoutExt = key.replace(/\.(tsx|ts|jsx|mdx|js)$/, "");
   for (const candidateExt of [".tsx", ".ts", ".jsx", ".mdx", ".js"]) {
-    const candidate = manifest.modules[withoutExt + candidateExt];
-    if (candidate) return releaseAssetUrl(candidate.contentHash, "js");
+    const candidate = ownEntry(manifest.modules, withoutExt + candidateExt);
+    if (isUsableJavaScriptAsset(candidate)) {
+      return releaseAssetUrl(candidate.contentHash, "js");
+    }
   }
 
   logger.debug("manifest module miss", { key });
@@ -62,17 +65,32 @@ export function resolveManifestRoutePreloadUrls(
   manifest: ReleaseAssetManifest,
   route: string,
 ): string[] {
-  const entry = manifest.routes[route] ?? manifest.routes[`/${route}`] ??
-    manifest.routes[route.replace(/^\//, "")];
+  const entry = ownEntry(manifest.routes, route) ??
+    ownEntry(manifest.routes, `/${route}`) ??
+    ownEntry(manifest.routes, route.replace(/^\//, ""));
   if (!entry) {
     logger.debug("manifest route miss", { route });
     return [];
   }
 
-  const urls: string[] = [];
+  const urls = new Set<string>();
   for (const modulePath of entry.modules) {
-    const asset = manifest.modules[modulePath];
-    if (asset) urls.push(releaseAssetUrl(asset.contentHash, "js"));
+    const asset = ownEntry(manifest.modules, modulePath);
+    if (isUsableJavaScriptAsset(asset)) {
+      urls.add(releaseAssetUrl(asset.contentHash, "js"));
+    }
   }
-  return urls;
+  return [...urls];
+}
+
+function ownEntry<T>(record: Record<string, T>, key: string): T | undefined {
+  return Object.hasOwn(record, key) ? record[key] : undefined;
+}
+
+function isUsableJavaScriptAsset(
+  value: ReleaseAssetManifest["modules"][string] | undefined,
+): value is ReleaseAssetManifest["modules"][string] {
+  return value !== undefined &&
+    value.contentType === RELEASE_ASSET_CONTENT_TYPES.js &&
+    isValidContentHash(value.contentHash);
 }

@@ -49,6 +49,22 @@ describe("route-parser", () => {
       assertEquals(regex?.test("/about/more"), false);
     });
 
+    it("treats placeholder-looking static segments as literal text", () => {
+      for (
+        const marker of [
+          "___PARAM___",
+          "___CATCHALL___",
+          "___OPTIONAL_CATCHALL___",
+        ]
+      ) {
+        const route = parseRoute(`/api/${marker}`, `${marker}.ts`);
+
+        assertEquals(route.regex?.test(`/api/${marker}`), true);
+        assertEquals(route.regex?.test("/api/unrelated"), false);
+        assertEquals(route.paramNames, []);
+      }
+    });
+
     it("should create regex that matches dynamic params", () => {
       const route = parseRoute("/users/[id]", "user.tsx");
       const { regex } = route;

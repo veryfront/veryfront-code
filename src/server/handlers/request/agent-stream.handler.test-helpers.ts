@@ -4,12 +4,36 @@ import type {
   FileInfo,
   FileSystemAdapter,
 } from "#veryfront/platform/adapters/base.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import type { HandlerContext } from "../types.ts";
+import { createCtx as createBaseInternalAgentRunContext } from "./internal-agent-run.test-helpers.ts";
 
 export function createAgentStreamRequestBody(overrides: Record<string, unknown> = {}): string {
+  const {
+    agentId = "assistant-1",
+    threadId = "10000000-1000-4000-8000-100000000001",
+    runId = "run_1",
+    project: projectOverrides = {},
+    ...invocationOverrides
+  } = overrides;
+
   return JSON.stringify({
-    agentId: "assistant-1",
-    threadId: "10000000-1000-4000-8000-100000000001",
-    runId: "run_1",
+    run: {
+      agentServiceId: "veryfront-platform-agent",
+      agentId,
+      conversationId: threadId,
+      runId,
+      messageId: "10000000-1000-4000-8000-100000000002",
+      inputAnchorMessageId: "10000000-1000-4000-8000-100000000003",
+      requestedByUserId: "10000000-1000-4000-8000-100000000004",
+      project: {
+        projectId: "10000000-1000-4000-8000-100000000005",
+        projectSlug: "test-project",
+        runtimeTargetKind: "main_branch",
+        ...(projectOverrides as Record<string, unknown>),
+      },
+    },
+    agentSource: { type: "branch", branch: "main" },
     messages: [
       {
         id: "msg_1",
@@ -19,7 +43,7 @@ export function createAgentStreamRequestBody(overrides: Record<string, unknown> 
     ],
     tools: [{ name: "studio_focus_component" }],
     context: [{ type: "text", text: "Current file: app.tsx" }],
-    ...overrides,
+    ...invocationOverrides,
   });
 }
 
@@ -60,6 +84,8 @@ export function createNoopEnvAdapter(publicKeyPem: string): EnvironmentAdapter {
 }
 
 export type SourceContextTestFsAdapter = FileSystemAdapter & {
+  getUnderlyingAdapter(): FileSystemAdapter;
+  isVeryfrontAdapter(): boolean;
   isMultiProjectMode(): boolean;
   runWithContext<R>(
     slug: string,
@@ -77,14 +103,19 @@ export type SourceContextTestFsAdapter = FileSystemAdapter & {
 
 export function createNoopFsAdapter(
   runWithContextCalls: Array<{
+    token?: string;
     productionMode?: boolean;
     releaseId?: string | null;
     branch?: string | null;
     environmentName?: string | null;
   }>,
 ): SourceContextTestFsAdapter {
-  return {
-    readFile: async () => "",
+  const adapter: SourceContextTestFsAdapter = {
+    // This adapter holds no files, so reads report absence the way a real
+    // filesystem does rather than returning empty content that hosted config
+    // evaluation would treat as a present, unparseable source.
+    readFile: (path: string) =>
+      Promise.reject(Object.assign(new Error(`File not found: ${path}`), { code: "ENOENT" })),
     writeFile: async () => {},
     exists: async () => false,
     async *readDir() {},
@@ -102,16 +133,39 @@ export function createNoopFsAdapter(
       close: () => {},
       async *[Symbol.asyncIterator]() {},
     }),
+    getUnderlyingAdapter: () => adapter,
+    isVeryfrontAdapter: () => true,
     isMultiProjectMode: () => true,
     runWithContext: async (
-      _projectSlug,
-      _token,
+      projectSlug,
+      token,
       fn,
-      _projectId,
+      projectId,
       options,
     ) => {
-      runWithContextCalls.push(options ?? {});
-      return await fn();
+      runWithContextCalls.push({ token, ...options });
+      return await runWithRequestContext(
+        { projectSlug, projectId, token, ...options },
+        fn,
+      );
+    },
+  };
+  return adapter;
+}
+
+export function createSourceCapableAgentStreamContext(
+  publicKeyPem?: string,
+  runWithContextCalls: Parameters<typeof createNoopFsAdapter>[0] = [],
+): HandlerContext {
+  const context = createBaseInternalAgentRunContext(publicKeyPem);
+  return {
+    ...context,
+    branchId: "10000000-1000-4000-8000-100000000006",
+    branchName: "main",
+    defaultBranchName: "main",
+    adapter: {
+      ...context.adapter,
+      fs: createNoopFsAdapter(runWithContextCalls),
     },
   };
 }

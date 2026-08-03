@@ -2,8 +2,9 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { joinPath } from "#veryfront/utils/path-utils.ts";
 import { HTTP_OK, HTTP_UNAVAILABLE, PRIORITY_HIGH } from "#veryfront/utils/constants/index.ts";
-import { isTracingDegraded, isTracingEnabled } from "#veryfront/observability/tracing/index.ts";
+import { isTracingDegraded, isTracingEnabled } from "#veryfront/observability";
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
+import { DEPENDENCY_ARTIFACT_BUILD_CAPABILITY } from "#veryfront/release-assets/dependency-artifact-contracts.ts";
 
 let serverInitialized = false;
 
@@ -74,6 +75,7 @@ export class HealthHandler extends BaseHandler {
           timestamp: new Date().toISOString(),
           mode: hasStaticBuild ? "static+ssr" : "ssr",
           version: RUNTIME_VERSION,
+          capabilities: [DEPENDENCY_ARTIFACT_BUILD_CAPABILITY],
           tracing: {
             enabled: isTracingEnabled(),
             degraded: tracingDegraded,

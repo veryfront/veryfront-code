@@ -1,12 +1,21 @@
 import type { ClientComponentMeta } from "#veryfront/rendering/rsc/types.ts";
 
 export interface ManifestData {
+  version: 1;
+  hash: string;
+  dependencyPinningCacheKey?: string;
   components: Record<string, string>;
+  modules: Array<{ id: string; clientRef: string; exports: string[] }>;
+  graphIds: {
+    client: Array<{ id: string; path: string; rel: string }>;
+    server: Array<{ id: string; path: string; rel: string }>;
+  };
 }
 
 export interface ManifestCacheEntry {
   data: ManifestData;
   timestamp: number;
+  dependencyPinningCacheKey: string;
 }
 
 export interface RSCHandlerConfig {

@@ -1,14 +1,39 @@
-import type { Server, ServerAdapter, WebSocketUpgrade } from "../../base.ts";
-import type { CloudflareResponseInit, CloudflareWebSocket } from "./types.ts";
+import type { ServerAdapter, WebSocketUpgrade, WebSocketUpgradeOptions } from "../../base.ts";
+import { resolvePortableWebSocketUpgradeHeaders } from "../../../compat/http/websocket-upgrade-options.ts";
+import type { CloudflareResponseInit, WebSocketPair as CloudflareWebSocketPair } from "./types.ts";
+import { NOT_SUPPORTED } from "#veryfront/errors/error-registry/general.ts";
 
-declare class WebSocketPair {
-  0: CloudflareWebSocket;
-  1: CloudflareWebSocket;
+export function resolveCloudflareWebSocketUpgradeHeaders(
+  request: Request,
+  options: WebSocketUpgradeOptions = {},
+): Headers {
+  return resolvePortableWebSocketUpgradeHeaders(request, options, {
+    platform: "cloudflare",
+    runtimeName: "Cloudflare",
+    unsupportedIdleTimeoutDetail:
+      "Cloudflare WebSocketPair does not support a transport idle timeout; use application-level heartbeats",
+  });
 }
 
 export class CloudflareServerAdapter implements ServerAdapter {
-  upgradeWebSocket(_request: Request): WebSocketUpgrade {
-    const pair = new WebSocketPair();
+  upgradeWebSocket(
+    request: Request,
+    options?: WebSocketUpgradeOptions,
+  ): WebSocketUpgrade {
+    const headers = resolveCloudflareWebSocketUpgradeHeaders(request, options);
+    const Pair = (
+      globalThis as typeof globalThis & {
+        WebSocketPair?: new () => CloudflareWebSocketPair;
+      }
+    ).WebSocketPair;
+    if (typeof Pair !== "function") {
+      throw NOT_SUPPORTED.create({
+        detail: "Cloudflare WebSocketPair is not available in this runtime",
+        context: { platform: "cloudflare", operation: "upgradeWebSocket" },
+      });
+    }
+
+    const pair = new Pair();
     const client = pair[0];
     const server = pair[1];
 
@@ -17,6 +42,7 @@ export class CloudflareServerAdapter implements ServerAdapter {
     const responseInit: CloudflareResponseInit = {
       status: 101,
       statusText: "Switching Protocols",
+      headers,
       webSocket: client,
     };
 
@@ -24,15 +50,5 @@ export class CloudflareServerAdapter implements ServerAdapter {
       socket: server,
       response: new Response(null, responseInit),
     };
-  }
-}
-
-export class CloudflareServer implements Server {
-  stop(): Promise<void> {
-    return Promise.resolve();
-  }
-
-  get addr(): { hostname: string; port: number } {
-    return { hostname: "worker", port: 443 };
   }
 }

@@ -31,7 +31,7 @@
   ],
   "tools": [
     {
-      "id": "list_supplier_invoices",
+      "id": "sap__list_supplier_invoices",
       "name": "List Supplier Invoices",
       "description": "List supplier invoices from SAP S/4HANA with optional OData filters",
       "requiresWrite": false,
@@ -72,7 +72,7 @@
       }
     },
     {
-      "id": "get_supplier_invoice",
+      "id": "sap__get_supplier_invoice",
       "name": "Get Supplier Invoice",
       "description": "Get a supplier invoice by invoice number and fiscal year",
       "requiresWrite": false,
@@ -108,7 +108,7 @@
       }
     },
     {
-      "id": "release_supplier_invoice",
+      "id": "sap__release_supplier_invoice",
       "name": "Release Supplier Invoice",
       "description": "Release a blocked supplier invoice in SAP S/4HANA",
       "requiresWrite": true,

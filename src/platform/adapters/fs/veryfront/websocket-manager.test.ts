@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { FileCache } from "../cache/file-cache.ts";
@@ -50,7 +50,7 @@ class MockWebSocket {
 }
 
 function captureConsoleMethod(
-  method: "debug" | "warn",
+  method: "debug" | "log" | "warn",
 ): { getOutput: () => string; reset: () => void; restore: () => void } {
   const original = console[method];
   let capturedOutput = "";
@@ -89,6 +89,7 @@ function withJsonLogFormat<T>(fn: () => T): T {
 }
 
 function createWebSocketManager(options: {
+  apiBaseUrl?: string;
   client?: Partial<VeryfrontApiClient>;
   invalidationCallbacks?: InvalidationCallbacks;
   pregenerateStyles?: (
@@ -109,7 +110,7 @@ function createWebSocketManager(options: {
   const invalidationCallbacks: InvalidationCallbacks = options.invalidationCallbacks ?? {};
 
   return new WebSocketManager({
-    apiBaseUrl: "https://api.example.com/api",
+    apiBaseUrl: options.apiBaseUrl ?? "https://api.example.com/api",
     apiToken: "test-token",
     projectSlug: "test-project",
     cache,
@@ -123,8 +124,7 @@ function createWebSocketManager(options: {
     getContentSource: () => ({ type: "branch", branch: "main" }),
     getProjectDir: () => undefined,
     clearMemoryCaches: () => {},
-    clearFileListIndex: () => {},
-    setFileListCache: async () => {},
+    replaceSourceSnapshot: async () => {},
     pregenerateStyles: options.pregenerateStyles,
   });
 }
@@ -188,8 +188,8 @@ describe("WebSocketManager", () => {
       assertEquals(parsePokeWebSocketMessage(JSON.stringify(null)), null);
     });
 
-    it("throws for malformed JSON so callers can keep parse-error logging", () => {
-      assertThrows(() => parsePokeWebSocketMessage("{"), SyntaxError);
+    it("returns null for malformed JSON (parser logs the error at warn)", () => {
+      assertEquals(parsePokeWebSocketMessage("{"), null);
     });
   });
   let originalWebSocket: typeof WebSocket;
@@ -418,6 +418,7 @@ describe("WebSocketManager", () => {
 
   it("should include projectSlug in connection lifecycle logs", () => {
     const debugCapture = captureConsoleMethod("debug");
+    const logCapture = captureConsoleMethod("log");
     const warnCapture = captureConsoleMethod("warn");
 
     try {
@@ -438,12 +439,48 @@ describe("WebSocketManager", () => {
         debugCapture.reset();
         socket.emitClose();
 
-        const closeEntry = JSON.parse(debugCapture.getOutput()) as {
+        const closeEntry = JSON.parse(warnCapture.getOutput()) as {
           message: string;
           projectSlug?: string;
+          project_id?: string;
+          context?: {
+            delayMs?: number;
+            consecutiveFailures?: number;
+            projectId?: string;
+            url?: string;
+          };
         };
-        assertEquals(closeEntry.message, "WebSocket closed, reconnecting");
+        assertEquals(closeEntry.message, "WebSocket reconnect scheduled after close");
         assertEquals(closeEntry.projectSlug, "test-project");
+        assertEquals(closeEntry.project_id, "project-1");
+        assertEquals(closeEntry.context?.projectId, "project-1");
+        assertEquals(closeEntry.context?.url, "wss://api.example.com/ws/project-1/events");
+        assertEquals(closeEntry.context?.delayMs, 5000);
+        assertEquals(closeEntry.context?.consecutiveFailures, 1);
+
+        logCapture.reset();
+        runOnlyScheduledTimer();
+        const reconnectedSocket = MockWebSocket.instances[1];
+        assertExists(reconnectedSocket);
+        reconnectedSocket.onopen?.call(
+          reconnectedSocket as unknown as WebSocket,
+          new Event("open"),
+        );
+
+        const recoveryEntry = JSON.parse(logCapture.getOutput()) as {
+          message: string;
+          projectSlug?: string;
+          project_id?: string;
+          context?: {
+            consecutiveFailures?: number;
+            projectId?: string;
+          };
+        };
+        assertEquals(recoveryEntry.message, "WebSocket reconnect recovered");
+        assertEquals(recoveryEntry.projectSlug, "test-project");
+        assertEquals(recoveryEntry.project_id, "project-1");
+        assertEquals(recoveryEntry.context?.projectId, "project-1");
+        assertEquals(recoveryEntry.context?.consecutiveFailures, 1);
 
         warnCapture.reset();
         socket.onerror?.call(socket as unknown as WebSocket, new Event("error"));
@@ -459,6 +496,41 @@ describe("WebSocketManager", () => {
       });
     } finally {
       debugCapture.restore();
+      logCapture.restore();
+      warnCapture.restore();
+    }
+  });
+
+  it("redacts WebSocket URL credentials from reconnect warnings", () => {
+    const warnCapture = captureConsoleMethod("warn");
+
+    try {
+      withJsonLogFormat(() => {
+        const manager = createWebSocketManager({
+          apiBaseUrl: "https://user:secret@api.example.com/api",
+        });
+        manager.connect("project-1");
+
+        const socket = MockWebSocket.instances[0];
+        assertExists(socket);
+        socket.emitClose();
+
+        const rawLog = warnCapture.getOutput();
+        assertEquals(rawLog.includes("user:secret"), false);
+        assertEquals(rawLog.includes("secret@"), false);
+
+        const closeEntry = JSON.parse(rawLog) as {
+          message: string;
+          context?: {
+            url?: string;
+          };
+        };
+        assertEquals(closeEntry.message, "WebSocket reconnect scheduled after close");
+        assertEquals(closeEntry.context?.url, "wss://api.example.com/ws/project-1/events");
+
+        manager.dispose();
+      });
+    } finally {
       warnCapture.restore();
     }
   });
@@ -516,8 +588,7 @@ describe("WebSocketManager", () => {
       getContentSource: () => ({ type: "branch", branch: "main" }),
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
-      clearFileListIndex: () => {},
-      setFileListCache: async () => {},
+      replaceSourceSnapshot: async () => {},
     });
 
     manager.connect("project-1");
@@ -529,6 +600,26 @@ describe("WebSocketManager", () => {
     // Token is sent via subprotocol, not query string
     assertEquals(socket.url.includes("token="), false);
     assertEquals(socket.protocols, ["bearer-test-token"]);
+
+    manager.dispose();
+  });
+
+  it("uses the latest API token when opening a WebSocket", () => {
+    const manager = createWebSocketManager();
+
+    manager.connect("project-1");
+    let socket = MockWebSocket.instances.at(-1);
+    assertExists(socket);
+    assertEquals(socket.protocols, ["bearer-test-token"]);
+
+    manager.setApiToken("fresh-request-token");
+    socket.emitClose();
+
+    runOnlyScheduledTimer();
+
+    socket = MockWebSocket.instances.at(-1);
+    assertExists(socket);
+    assertEquals(socket.protocols, ["bearer-fresh-request-token"]);
 
     manager.dispose();
   });
@@ -559,8 +650,7 @@ describe("WebSocketManager", () => {
       getContentSource: () => ({ type: "branch", branch: "main" }),
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
-      clearFileListIndex: () => {},
-      setFileListCache: async () => {},
+      replaceSourceSnapshot: async () => {},
     });
 
     manager.connect("project-1");
@@ -599,8 +689,7 @@ describe("WebSocketManager", () => {
       getContentSource: () => ({ type: "branch", branch: "main" }),
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
-      clearFileListIndex: () => {},
-      setFileListCache: async () => {},
+      replaceSourceSnapshot: async () => {},
     });
 
     manager.connect("project-1");
@@ -639,8 +728,7 @@ describe("WebSocketManager", () => {
       getContentSource: () => ({ type: "branch", branch: "main" }),
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
-      clearFileListIndex: () => {},
-      setFileListCache: async () => {},
+      replaceSourceSnapshot: async () => {},
     });
 
     manager.connect("project-1");
@@ -679,8 +767,7 @@ describe("WebSocketManager", () => {
       getContentSource: () => ({ type: "branch", branch: "main" }),
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
-      clearFileListIndex: () => {},
-      setFileListCache: async () => {},
+      replaceSourceSnapshot: async () => {},
     });
 
     manager.connect("project-1");

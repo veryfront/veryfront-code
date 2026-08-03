@@ -1,6 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
+import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
+import type { HistoricalToolInputCompactionDiagnostic } from "#veryfront/chat/message-prep.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 import { ContextCompactionError } from "./context-budget-manager.ts";
 import {
@@ -9,6 +12,8 @@ import {
   prepareHostedChatRuntimeCreationOptions,
   prepareHostedChatRuntimeMessages,
 } from "./chat-preparation.ts";
+import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
+import { registerHostedRunEventWriterToken } from "./child-run-event-writer-token.ts";
 
 const userMessage: ChatUiMessage = {
   id: "user-message-1",
@@ -73,9 +78,10 @@ function pendingResponseUntilAbort(signal: AbortSignal | null | undefined): Prom
 }
 
 function createParsedHostedChatRequest(
-  overrides: Partial<ParsedHostedChatRequest> = {},
+  overrides: Partial<ParsedHostedChatRequest> & { runEventAppendToken?: string } = {},
 ): ParsedHostedChatRequest {
-  return {
+  const { runEventAppendToken, ...requestOverrides } = overrides;
+  const request: ParsedHostedChatRequest = {
     agentId: undefined,
     userId: "user-1",
     authToken: "auth-token",
@@ -97,8 +103,20 @@ function createParsedHostedChatRequest(
     runtimeOverrides: undefined,
     durableRootRun: undefined,
     persistLatestUserMessageBeforeDurableRun: false,
-    ...overrides,
+    ...requestOverrides,
   };
+  if (runEventAppendToken) {
+    registerHostedRunEventWriterToken(
+      request,
+      {
+        token: runEventAppendToken,
+        projectId: request.projectId ?? "project-from-context",
+        runId: request.durableRootRun?.runId ?? "run-1",
+        fetch: globalThis.fetch,
+      },
+    );
+  }
+  return request;
 }
 
 Deno.test("normalizeParsedHostedChatRequest uses the latest user message as parent message id", () => {
@@ -172,15 +190,20 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
     branchId?: string | null;
   }> = [];
   const parentEvents: unknown[] = [];
+  const checkpointPersistenceOperations: string[] = [];
+  let publicCheckpointAppends = 0;
+  let checkpointFlushComplete = true;
 
   const result = await prepareHostedChatRuntimeCreationOptions({
     request: createParsedHostedChatRequest({
       allowDelegation: false,
+      runEventAppendToken: "root-writer-token",
       model: "requested-model",
       runtimeOverrides: {
         allowedTools: ["load_skill"],
         thinking: false,
         maxSteps: 7,
+        maxOutputTokens: 1200,
       },
     }),
     agentConfig: {
@@ -188,6 +211,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
       model: "configured-model",
       thinking: { enabled: true, budgetTokens: 1000 },
       maxSteps: 50,
+      tools: ["get_agent", "load_skill", "update_agent"],
     },
     projectId: "project-1",
     authToken: "token-1",
@@ -208,6 +232,74 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
         parentEvents.push(...events);
         return Promise.resolve();
       },
+      durableRunMirror: {
+        handleChunk: () => Promise.resolve(),
+        appendEvents: () => {
+          publicCheckpointAppends++;
+          return Promise.resolve();
+        },
+        flush: () =>
+          Promise.resolve({
+            latestEventId: 1,
+            latestExternalEventSequence: 1,
+            pendingEventCount: 0,
+            consecutiveFailures: 0,
+            disabled: false,
+            hasFlushTimer: false,
+            hasRetryTimer: false,
+            inFlight: false,
+          }),
+        getSnapshot: () => ({
+          latestEventId: 1,
+          latestExternalEventSequence: 1,
+          pendingEventCount: 0,
+          consecutiveFailures: 0,
+          disabled: false,
+          hasFlushTimer: false,
+          hasRetryTimer: false,
+          inFlight: false,
+        }),
+        dispose: () => {},
+      },
+      privateDurableRunMirror: {
+        handleChunk: () => Promise.resolve(),
+        appendEvents: (events) => {
+          checkpointPersistenceOperations.push(
+            `append:${events.map((event) => event.type).join(",")}`,
+          );
+          return Promise.resolve();
+        },
+        flush: () => {
+          checkpointPersistenceOperations.push("flush");
+          return Promise.resolve({
+            latestEventId: 2,
+            latestExternalEventSequence: 2,
+            pendingEventCount: checkpointFlushComplete ? 0 : 1,
+            consecutiveFailures: 0,
+            disabled: false,
+            hasFlushTimer: false,
+            hasRetryTimer: false,
+            inFlight: false,
+          });
+        },
+        getSnapshot: () => ({
+          latestEventId: 1,
+          latestExternalEventSequence: 1,
+          pendingEventCount: 0,
+          consecutiveFailures: 0,
+          disabled: false,
+          hasFlushTimer: false,
+          hasRetryTimer: false,
+          inFlight: false,
+        }),
+        dispose: () => {
+          checkpointPersistenceOperations.push("dispose");
+        },
+      },
+    },
+    serverResolvedToolExposureCheckpoint: {
+      version: 1,
+      loadedToolNames: ["get_release"],
     },
     resolveModelId: (modelId) => modelId ? `resolved:${modelId}` : undefined,
     resolveModelThinking: (modelId) => modelId ? { enabled: true, budgetTokens: 1234 } : undefined,
@@ -254,7 +346,10 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
     model: "resolved:requested-model",
     thinking: { enabled: false },
     maxSteps: 7,
+    maxOutputTokens: 1200,
     allowedTools: ["load_skill"],
+    allowedProviderTools: [],
+    includeRuntimeEssentialToolsWhenEmpty: false,
     allowDelegation: false,
     conversationId: "conversation-1",
     runId: "run-1",
@@ -262,23 +357,286 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
     parentRunId: "run-1",
     parentMessageId: "message-1",
     availableSkillIds: ["debug"],
+    skillSelectorPolicy: {
+      kind: "all-visible",
+      source: "omitted",
+    },
     publishParentRunEvents: result.creationOptions.publishParentRunEvents,
+    persistToolExposureCheckpoint: result.creationOptions.persistToolExposureCheckpoint,
+    requireToolExposureCheckpointPersistence: true,
     clientProfile: null,
+    serverResolvedToolExposureCheckpoint: {
+      version: 1,
+      loadedToolNames: ["get_release"],
+    },
     liveProjectSteering: {
       agent: {
         id: "agent-1",
         model: "configured-model",
         thinking: { enabled: true, budgetTokens: 1000 },
         maxSteps: 50,
+        tools: ["get_agent", "load_skill", "update_agent"],
+      },
+      skillSelectorPolicy: {
+        kind: "all-visible",
+        source: "omitted",
       },
       environmentContext: "Browser workspace",
       initialProjectInstructions: "Project instructions",
       initialSkills: [skill],
     },
   });
+  assertEquals(JSON.stringify(result.creationOptions).includes("root-writer-token"), false);
 
   await result.creationOptions.publishParentRunEvents?.([{ type: "state_delta" }]);
   assertEquals(parentEvents, [{ type: "state_delta" }]);
+
+  await result.creationOptions.persistToolExposureCheckpoint?.({
+    version: 1,
+    loadedToolNames: ["get_release"],
+  });
+  assertEquals(checkpointPersistenceOperations, [
+    "append:AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
+    "flush",
+  ]);
+  assertEquals(publicCheckpointAppends, 0);
+
+  checkpointFlushComplete = false;
+  await assertRejects(
+    () =>
+      result.creationOptions.persistToolExposureCheckpoint?.({
+        version: 1,
+        loadedToolNames: ["get_release"],
+      }) ?? Promise.resolve(),
+    Error,
+    "not durably persisted",
+  );
+  assertEquals(checkpointPersistenceOperations.slice(-3), [
+    "append:AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
+    "flush",
+    "dispose",
+  ]);
+});
+
+Deno.test("prepareHostedChatRuntimeCreationOptions hides deferred skill tools from the first hosted prompt", async () => {
+  const result = await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest(),
+    agentConfig: {
+      id: "agent-1",
+      name: "Agent",
+      description: "Hosted agent",
+      instructions: "Base instructions",
+      tools: true,
+      skills: true,
+    },
+    projectId: "project-1",
+    authToken: "token-1",
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () =>
+      Promise.resolve({
+        instructions: "Project instructions",
+        skills: [{
+          id: "deploy",
+          name: "Deploy",
+          description: "Deploy the project",
+          instructions: "Use bash to deploy.",
+          allowedTools: ["bash"],
+        }],
+      }),
+    buildInstructions: buildVeryfrontCloudRuntimeInstructions,
+  });
+
+  const instructions = result.creationOptions.instructions;
+  const system = Array.isArray(instructions)
+    ? instructions.map((message) => message.content).join("\n")
+    : instructions;
+  assertEquals(system.includes("Deploy the project"), true);
+  assertEquals(system.includes("bash"), false);
+});
+
+Deno.test("prepareHostedChatRuntimeCreationOptions uses configured agent tools by default", async () => {
+  const result = await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest(),
+    agentConfig: {
+      id: "agent-1",
+      model: "openai/gpt-5.4-nano",
+      tools: ["get_agent", "get_agent_source", "update_agent"],
+      providerTools: ["web_search"],
+    },
+    projectId: "project-1",
+    authToken: "token-1",
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+    buildInstructions: () => "Agent instructions",
+  });
+
+  assertEquals(result.creationOptions.allowedTools, [
+    "get_agent",
+    "get_agent_source",
+    "update_agent",
+  ]);
+  assertEquals(result.creationOptions.allowedProviderTools, ["web_search"]);
+  assertEquals(result.creationOptions.includeRuntimeEssentialToolsWhenEmpty, true);
+});
+
+it("private checkpoints fail closed without a trusted run-event append token", async () => {
+  let publicMirrorAppends = 0;
+  const result = await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest(),
+    agentConfig: {
+      id: "agent-1",
+      model: "openai/gpt-5.4",
+      tools: ["get_release"],
+    },
+    projectId: "project-1",
+    authToken: "user-api-token",
+    rootRunContext: {
+      durableRootRun: {
+        runId: "run-1",
+        conversationId: "conversation-1",
+        messageId: "message-1",
+        latestEventId: 1,
+        latestExternalEventSequence: 1,
+      },
+      durableRunMirror: {
+        handleChunk: () => Promise.resolve(),
+        appendEvents: () => {
+          publicMirrorAppends++;
+          return Promise.resolve();
+        },
+        flush: () =>
+          Promise.resolve({
+            latestEventId: 1,
+            latestExternalEventSequence: 1,
+            pendingEventCount: 0,
+            consecutiveFailures: 0,
+            disabled: false,
+            hasFlushTimer: false,
+            hasRetryTimer: false,
+            inFlight: false,
+          }),
+        getSnapshot: () => ({
+          latestEventId: 1,
+          latestExternalEventSequence: 1,
+          pendingEventCount: 0,
+          consecutiveFailures: 0,
+          disabled: false,
+          hasFlushTimer: false,
+          hasRetryTimer: false,
+          inFlight: false,
+        }),
+        dispose: () => {},
+      },
+      privateDurableRunMirror: null,
+    },
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+    buildInstructions: () => "Agent instructions",
+  });
+
+  await assertRejects(
+    () =>
+      result.creationOptions.persistToolExposureCheckpoint?.({
+        version: 1,
+        loadedToolNames: ["get_release"],
+      }) ?? Promise.resolve(),
+    Error,
+    "trusted run-event append token",
+  );
+  assertEquals(publicMirrorAppends, 0);
+  assertEquals(
+    (result.creationOptions as unknown as Record<string, unknown>)
+      .requireToolExposureCheckpointPersistence,
+    undefined,
+  );
+});
+
+it("resolves private checkpoint persistence only after the durable flush completes", async () => {
+  const operations: string[] = [];
+  let resolveFlush: (() => void) | undefined;
+  const flushGate = new Promise<void>((resolve) => {
+    resolveFlush = resolve;
+  });
+  const result = await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest(),
+    agentConfig: {
+      id: "agent-1",
+      model: "openai/gpt-5.4",
+      tools: ["get_release"],
+    },
+    projectId: "project-1",
+    authToken: "user-api-token",
+    rootRunContext: {
+      durableRootRun: {
+        runId: "run-1",
+        conversationId: "conversation-1",
+        messageId: "message-1",
+        latestEventId: 1,
+        latestExternalEventSequence: 1,
+      },
+      privateDurableRunMirror: {
+        handleChunk: () => Promise.resolve(),
+        appendEvents: (events) => {
+          operations.push(`append:${events.map((event) => event.type).join(",")}`);
+          return Promise.resolve();
+        },
+        flush: async () => {
+          operations.push("flush:start");
+          await flushGate;
+          operations.push("flush:end");
+          return {
+            latestEventId: 2,
+            latestExternalEventSequence: 2,
+            pendingEventCount: 0,
+            consecutiveFailures: 0,
+            disabled: false,
+            hasFlushTimer: false,
+            hasRetryTimer: false,
+            inFlight: false,
+          };
+        },
+        getSnapshot: () => ({
+          latestEventId: 1,
+          latestExternalEventSequence: 1,
+          pendingEventCount: 0,
+          consecutiveFailures: 0,
+          disabled: false,
+          hasFlushTimer: false,
+          hasRetryTimer: false,
+          inFlight: false,
+        }),
+        dispose: () => {},
+      },
+    },
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+    buildInstructions: () => "Agent instructions",
+  });
+
+  let resolved = false;
+  const persistence = Promise.resolve(
+    result.creationOptions.persistToolExposureCheckpoint?.({
+      version: 1,
+      loadedToolNames: ["get_release"],
+    }),
+  ).then(() => {
+    resolved = true;
+  });
+  await Promise.resolve();
+
+  assertEquals(operations, [
+    "append:AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
+    "flush:start",
+  ]);
+  assertEquals(resolved, false);
+  resolveFlush?.();
+  await persistence;
+  assertEquals(operations, [
+    "append:AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
+    "flush:start",
+    "flush:end",
+  ]);
+  assertEquals(resolved, true);
 });
 
 Deno.test("prepareHostedChatExecution prepares root run, runtime, and final messages", async () => {
@@ -347,6 +705,96 @@ Deno.test("prepareHostedChatExecution prepares root run, runtime, and final mess
       content: "agent-1:Project instructions",
     },
   ]);
+});
+
+Deno.test("prepareHostedChatExecution strips configured provider history selected by a runtime override", async () => {
+  const messages: ChatUiMessage[] = [
+    {
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "Search the web." }],
+    },
+    {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "web_search",
+          toolCallId: "toolu_web_search",
+          input: { query: "Veryfront" },
+          state: "output-available",
+          providerExecuted: true,
+          output: null,
+        },
+        { type: "text", text: "I found the official site." },
+      ],
+    },
+    {
+      id: "tool-1",
+      role: "tool",
+      parts: [{
+        type: "tool-web_search",
+        toolCallId: "toolu_web_search",
+        toolName: "web_search",
+        input: { query: "Veryfront" },
+        state: "output-available",
+        output: null,
+      }],
+    },
+    {
+      id: "user-2",
+      role: "user",
+      parts: [{ type: "text", text: "Continue." }],
+    },
+  ];
+
+  const result = await prepareHostedChatExecution({
+    request: createParsedHostedChatRequest({
+      messages,
+      model: "anthropic/claude-sonnet-4-6",
+      runtimeOverrides: { allowedTools: ["web_search"] },
+      durableRootRun: {
+        runId: "run-1",
+        messageId: "message-1",
+        latestEventId: 3,
+        latestExternalEventSequence: 2,
+      },
+    }),
+    agentConfig: {
+      id: "agent-1",
+      model: "anthropic/claude-sonnet-4-6",
+      providerTools: ["web_search"],
+    },
+    apiUrl: "https://api.example.com",
+    abortSignal: new AbortController().signal,
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+    buildInstructions: () => "Agent instructions",
+    createRuntime: (options) =>
+      Promise.resolve({
+        runtimeKind: "framework",
+        modelId: options.model ?? "anthropic/claude-sonnet-4-6",
+        cleanup: () => Promise.resolve(),
+        agent: {
+          stream: () =>
+            Promise.resolve({
+              steps: Promise.resolve([]),
+              toUIMessageStream: async function* () {},
+            }),
+        },
+      }),
+  });
+
+  assertEquals(result.finalMessages.map((message) => message.role), [
+    "user",
+    "assistant",
+    "user",
+  ]);
+  assertEquals(result.finalMessages[1]?.parts, [{
+    type: "text",
+    text: "I found the official site.",
+  }]);
 });
 
 Deno.test("prepareHostedChatExecution does not carry old submitted form input into a new user turn", async () => {
@@ -545,9 +993,9 @@ Deno.test("prepareHostedChatExecution preserves allowed remote tool history", as
 Deno.test("prepareHostedChatExecution compacts oversized context and appends a durable event", async () => {
   const originalFetch = globalThis.fetch;
   const appendedBodies: unknown[] = [];
-  globalThis.fetch = (input, init): Promise<Response> => {
+  globalThis.fetch = (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     if (input.toString().endsWith("/events")) {
-      appendedBodies.push(JSON.parse(String(init?.body ?? "{}")));
+      appendedBodies.push(JSON.parse(String(observeFetchRequestInit(init).body ?? "{}")));
       return Promise.resolve(
         new Response(
           JSON.stringify({
@@ -572,6 +1020,7 @@ Deno.test("prepareHostedChatExecution compacts oversized context and appends a d
   try {
     const result = await prepareHostedChatExecution({
       request: createParsedHostedChatRequest({
+        runEventAppendToken: "run-event-service-token",
         conversationId: "11111111-1111-4111-a111-111111111111",
         projectId: "project-1",
         validatedContext: {
@@ -622,8 +1071,11 @@ Deno.test("prepareHostedChatExecution compacts oversized context and appends a d
           content: `${input.agentConfig.id}:${input.instructions}`,
         },
       ],
-      createRuntime: (options) =>
-        Promise.resolve({
+      createRuntime: (options) => {
+        assertEquals("runEventAppendToken" in options, false);
+        assertEquals("runEventWriterCapability" in options, false);
+        assertEquals(JSON.stringify(options).includes("run-event-service-token"), false);
+        return Promise.resolve({
           runtimeKind: "framework",
           modelId: options.model ?? "resolved:configured-model",
           cleanup: () => Promise.resolve(),
@@ -634,7 +1086,8 @@ Deno.test("prepareHostedChatExecution compacts oversized context and appends a d
                 toUIMessageStream: async function* () {},
               }),
           },
-        }),
+        });
+      },
       contextBudget: {
         tokenBudget: 220,
         reserveTokens: 20,
@@ -685,6 +1138,7 @@ Deno.test("prepareHostedChatExecution rejects compacted context when durable eve
       () =>
         prepareHostedChatExecution({
           request: createParsedHostedChatRequest({
+            runEventAppendToken: "run-event-service-token",
             conversationId: "11111111-1111-4111-a111-111111111111",
             projectId: "project-1",
             validatedContext: {
@@ -836,7 +1290,7 @@ Deno.test("prepareHostedChatExecution aborts stalled signed attachment fetch bef
   let cancelStartGuard = () => {};
   let cancelPreparationGuard = () => {};
 
-  globalThis.fetch = (input, init): Promise<Response> => {
+  globalThis.fetch = (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = input.toString();
     if (url === "https://api.example.com/projects/project-1/uploads/upload-1/url") {
       return Promise.resolve(
@@ -847,7 +1301,7 @@ Deno.test("prepareHostedChatExecution aborts stalled signed attachment fetch bef
     }
     if (url === "https://signed.example.com/notes.txt") {
       resolveSignedFetchStarted?.();
-      return pendingResponseUntilAbort(init?.signal);
+      return pendingResponseUntilAbort(observeFetchRequestInit(init).signal);
     }
 
     return Promise.reject(new Error(`unexpected fetch ${url}`));
@@ -1043,7 +1497,61 @@ Deno.test("prepareHostedChatRuntimeMessages omits provider-owned remote tool his
   }]);
 });
 
-Deno.test("prepareHostedChatRuntimeCreationOptions filters skills to the run agent's owner scope", async () => {
+Deno.test("prepareHostedChatRuntimeMessages reports historical tool input compaction diagnostics", async () => {
+  const diagnostics: HistoricalToolInputCompactionDiagnostic[] = [];
+  const marker = "HOSTED_TOOL_INPUT_MARKER";
+  const messages = await prepareHostedChatRuntimeMessages(
+    [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Render the widget." }],
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolName: "render_widget",
+          toolCallId: "tool-render-widget",
+          input: {
+            targetPath: "components/Widget.tsx",
+            source: `${marker}:${"export const widget = true;\n".repeat(2000)}`,
+          },
+          state: "output-available",
+          output: { ok: true },
+        }],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Update the widget." }],
+      },
+    ],
+    {
+      historicalToolInputRetention: {
+        diagnostics,
+        resolvePolicy: (toolName) =>
+          toolName === "render_widget"
+            ? {
+              compactCompletedInput: true,
+              compactAfterChars: 100,
+              retainInputFields: [{ inputName: "targetPath", outputName: "path" }],
+            }
+            : undefined,
+      },
+    },
+  );
+
+  const serialized = JSON.stringify(messages);
+  assertEquals(serialized.includes(marker), false);
+  assertEquals(diagnostics.length, 1);
+  assertEquals((diagnostics[0] as { source?: string }).source, "provider");
+  assertEquals((diagnostics[0] as { toolName?: string }).toolName, "render_widget");
+  assertEquals((diagnostics[0] as { toolCallId?: string }).toolCallId, "tool-render-widget");
+});
+
+Deno.test("prepareHostedChatRuntimeCreationOptions applies the skill selector and owner scope", async () => {
   const skills = [
     {
       id: "global-howto",
@@ -1076,7 +1584,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions filters skills to the run age
 
   const result = await prepareHostedChatRuntimeCreationOptions({
     request: createParsedHostedChatRequest({}),
-    agentConfig: { id: "researcher", model: "configured-model" },
+    agentConfig: { id: "researcher", model: "configured-model", skills: ["cite"] },
     projectId: "project-1",
     authToken: "token-1",
     resolveModelId: (modelId) => modelId,
@@ -1092,11 +1600,13 @@ Deno.test("prepareHostedChatRuntimeCreationOptions filters skills to the run age
     },
   });
 
-  const expected = ["global-howto", "researcher--cite"];
-  // Prompt-manifest input, per-run load_skill gate, live steering payload, and
-  // the returned steering all carry the same owner-scoped set.
-  assertEquals(seenByInstructions, [expected]);
-  assertEquals(result.creationOptions.availableSkillIds, expected);
+  const advertised = ["researcher--cite"];
+  assertEquals(seenByInstructions, [advertised]);
+  assertEquals(result.creationOptions.availableSkillIds, advertised);
+  assertEquals(result.creationOptions.skillSelectorPolicy, {
+    kind: "allowlist",
+    entries: ["cite"],
+  });
   assertEquals(result.creationOptions.skillSourcePaths, {
     "researcher--cite": "agents/researcher/skills/cite/SKILL.md",
   });
@@ -1104,7 +1614,35 @@ Deno.test("prepareHostedChatRuntimeCreationOptions filters skills to the run age
     (result.creationOptions.liveProjectSteering?.initialSkills ?? []).map((
       skill: { id: string },
     ) => skill.id),
-    expected,
+    advertised,
   );
-  assertEquals(result.steering.skills.map((skill) => skill.id), expected);
+  assertEquals(result.steering.skills.map((skill) => skill.id), advertised);
+});
+
+Deno.test("prepareHostedChatRuntimeCreationOptions uses the exact selector snapshot for an empty selector", async () => {
+  const result = await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest({}),
+    agentConfig: { id: "researcher", model: "configured-model", skills: [] },
+    projectId: "project-1",
+    authToken: "token-1",
+    resolveModelId: (modelId) => modelId,
+    resolveModelThinking: () => undefined,
+    fetchSteering: () =>
+      Promise.resolve({
+        instructions: "Project instructions",
+        skills: [{
+          id: "global-howto",
+          name: "Global Howto",
+          description: "Project-global guide",
+          instructions: "Follow the guide.",
+          allowedTools: [],
+        }],
+      }),
+    buildInstructions: (input) => [{ role: "system", content: `${input.skills.length}` }],
+  });
+
+  assertEquals(result.creationOptions.availableSkillIds, []);
+  assertEquals(result.creationOptions.skillSelectorPolicy, { kind: "none" });
+  assertEquals(result.creationOptions.instructions, [{ role: "system", content: "0" }]);
+  assertEquals(result.steering.skills, []);
 });

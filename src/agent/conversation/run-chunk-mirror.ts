@@ -26,7 +26,10 @@ const DEFAULT_HOSTED_CHUNK_MIRROR_HIGH_BACKLOG_EVENT_COUNT = 500;
 export interface ConversationRunChunkMirror {
   handleChunk(chunk: ChatUiMessageChunk<ChatMessageMetadata>): Promise<void>;
   appendEvents(events: ConversationRunEvent[]): Promise<void>;
-  flush(): Promise<ConversationRunMirrorSnapshot>;
+  flush(options?: {
+    abortSignal?: AbortSignal;
+    throwOnTimeoutRetry?: boolean;
+  }): Promise<ConversationRunMirrorSnapshot>;
   getSnapshot(): ReturnType<ConversationRunMirror["getSnapshot"]>;
   dispose(): void;
 }
@@ -92,6 +95,8 @@ export interface ConversationRunChunkMirrorApiOptions
   latestExternalEventSequence?: number;
   maxEventsPerBatch?: number;
   maxCursorResyncsPerFlush?: number;
+  /** Explicit host-owned transport for trusted runtime composition and tests. */
+  fetch?: typeof globalThis.fetch;
 }
 
 /** Options accepted by conversation run chunk mirror. */
@@ -125,6 +130,8 @@ export interface HostedConversationRunChunkMirrorOptions {
   batchSize?: number;
   highBacklogEventCount?: number;
   instrumentation?: HostedConversationRunChunkMirrorInstrumentation;
+  /** Explicit host-owned transport for trusted runtime composition and tests. */
+  fetch?: typeof globalThis.fetch;
 }
 
 function resolveQueueController(
@@ -145,6 +152,7 @@ function resolveQueueController(
     maxEventsPerBatch,
     maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush ??
       DEFAULT_MAX_CURSOR_RESYNCS_PER_FLUSH,
+    fetch: input.fetch,
   });
 }
 
@@ -201,8 +209,8 @@ export function createConversationRunChunkMirror(
 
       mirror.enqueue(normalizedEvents);
     },
-    flush() {
-      return mirror.flush();
+    flush(options) {
+      return mirror.flush(options);
     },
     getSnapshot() {
       return mirror.getSnapshot();
@@ -308,6 +316,19 @@ function recordHostedChunkMirrorStopped(input: {
     return;
   }
 
+  if (input.flushAttempt.disableReason === "auth_rejected") {
+    input.instrumentation?.error?.(
+      "Disabling durable run mirroring after permanent append authentication rejection",
+      {
+        conversationId: input.conversationId,
+        runId: input.runId,
+        latestEventId: input.flushAttempt.latestEventId,
+        latestExternalEventSequence: input.flushAttempt.latestExternalEventSequence,
+      },
+    );
+    return;
+  }
+
   if (input.flushAttempt.disableReason === "ignorable_append_rejection") {
     input.instrumentation?.warn?.(
       "Disabling durable run mirroring after external append rejection",
@@ -351,6 +372,7 @@ export function createHostedConversationRunChunkMirror(
     maxCursorResyncsPerFlush: DEFAULT_MAX_CURSOR_RESYNCS_PER_FLUSH,
     immediateFlushEventCount: batchSize,
     highBacklogEventCount,
+    fetch: input.fetch,
     prepareChunkEvents: ({ chunk, defaultPrepare }) =>
       runHostedChunkMirrorTrace(input.instrumentation, "durable.mirrorChunk", async () => {
         const events = defaultPrepare();

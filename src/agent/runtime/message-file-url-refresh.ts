@@ -3,6 +3,8 @@ import {
   type FileUIPartWithUpload,
   isTextPreviewFile,
 } from "../../chat/types.ts";
+import { NETWORK_ERROR } from "#veryfront/errors";
+import { isGenuineUserTurnMessage } from "./runtime-message-origin.ts";
 
 const MAX_INLINE_FILE_CONTENT_CHARS = 200_000;
 const MAX_TOTAL_INLINE_FILE_CONTENT_CHARS = 400_000;
@@ -212,7 +214,7 @@ type InlineFileContent = {
 
 function findNewestUserMessageIndex(messages: readonly ChatUiMessage[]): number {
   for (let index = messages.length - 1; index >= 0; index--) {
-    if (messages[index]?.role === "user") {
+    if (messages[index] && isGenuineUserTurnMessage(messages[index]!)) {
       return index;
     }
   }
@@ -309,11 +311,11 @@ async function fetchRuntimeTextFileContent(
     timeoutMs,
   );
   if (!response.ok) {
-    throw new Error(
-      `Failed to fetch text attachment content${
+    throw NETWORK_ERROR.create({
+      detail: `Failed to fetch text attachment content${
         formatFileContentFetchLabel(input)
       }: HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`,
-    );
+    });
   }
   return await readRuntimeTextFileContent(response, input, fetchSignal, timeoutMs);
 }

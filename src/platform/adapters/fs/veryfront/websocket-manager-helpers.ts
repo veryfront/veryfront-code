@@ -1,5 +1,8 @@
+import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import type { ContentSource, PreviewStyleArtifactInfo, ResolvedContentContext } from "./types.ts";
 import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
+
+const logger = baseLogger.component("ws-helpers");
 
 export const INVALIDATION_DEBOUNCE_MS = 100;
 export const WS_RECONNECT_DELAY_MS = 5000;
@@ -73,7 +76,15 @@ export type PokeWebSocketMessage = {
 };
 
 export function parsePokeWebSocketMessage(data: string): PokeWebSocketMessage | null {
-  const raw: unknown = JSON.parse(data);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(data);
+  } catch {
+    logger.warn("parsePokeWebSocketMessage: malformed JSON in WebSocket message", {
+      preview: data.slice(0, 200),
+    });
+    return null;
+  }
   if (!raw || typeof raw !== "object") return null;
 
   const message = raw as Record<string, unknown>;

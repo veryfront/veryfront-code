@@ -7,6 +7,7 @@ import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { ApiRouteMatcher } from "#veryfront/routing/api/index.ts";
 import { ComponentRegistry } from "#veryfront/modules/component-registry/index.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import type { NodeWebSocketServerProvider } from "#veryfront/extensions/websocket";
 import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
 import { bootstrapDev } from "../bootstrap.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
@@ -22,7 +23,8 @@ import {
   enableSSRFetchInterception,
   setSSRServerPort,
 } from "#veryfront/rendering/ssr-globals.ts";
-import { setEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 import { initializeDistributedCaches } from "#veryfront/cache/distributed-cache-init.ts";
 import { defaultDistributedCacheInitializers } from "#veryfront/server/distributed-cache-initializers.ts";
 import { isDiskCacheConfigured } from "#veryfront/cache/backend.ts";
@@ -60,6 +62,7 @@ export class DevServer {
   private adapter!: RuntimeAdapter;
   private server?: Server;
   private appConfig: VeryfrontConfig | undefined;
+  private _nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
   private requestHandler?: RequestHandler;
   private _handler?: (req: Request) => Promise<Response>;
   readonly ready: Promise<void>;
@@ -78,7 +81,7 @@ export class DevServer {
   }
 
   private isDebug(): boolean {
-    return this.adapter?.env.get("VERYFRONT_DEBUG") === "1";
+    return isTruthyEnvValue(getHostEnv("VERYFRONT_DEBUG"));
   }
 
   private async logRSCStatus(): Promise<void> {
@@ -99,6 +102,7 @@ export class DevServer {
     const bootstrap = await bootstrapDev(this.options.projectDir, baseAdapter);
     this.adapter = bootstrap.adapter;
     this.appConfig = bootstrap.config;
+    this._nodeWebSocketServerProvider = bootstrap.nodeWebSocketServerProvider;
 
     // Merge CLI enableHMR flag into config to ensure HMR scripts are disabled when --no-hmr is passed
     if (this.appConfig && this.options.enableHMR === false) {
@@ -142,7 +146,13 @@ export class DevServer {
     if (isDiskCacheConfigured()) {
       void initializeDistributedCaches(defaultDistributedCacheInitializers).catch(
         (error: unknown) => {
-          logger.debug("[DevServer] Cache initialization failed, using memory fallback", { error });
+          // Warn (not debug): the cache was explicitly configured, so a failure likely
+          // indicates a misconfiguration (wrong Redis host/password). Developers need
+          // to see this — a debug log is too easy to miss.
+          logger.warn(
+            "[DevServer] Configured cache initialization failed — falling back to in-memory cache. Check your Redis / distributed-cache configuration.",
+            { error },
+          );
         },
       );
     }
@@ -209,7 +219,6 @@ export class DevServer {
       this.options.projectDir,
       this.adapter,
       () => this._isReady,
-      () => this.isDebug(),
       this.appConfig,
       defaultProjectSlug,
       this.options.defaultProjectId,
@@ -221,8 +230,6 @@ export class DevServer {
       this.pipeline,
       this.appConfig!,
       (req) => requestHandler.handleRequest(req),
-      this.options.projectDir,
-      this.adapter,
     );
 
     // NOTE: WebSocket upgrade requests MUST NOT be intercepted because the interceptor
@@ -252,11 +259,16 @@ export class DevServer {
       port: this.options.port,
       hostname: this.options.bindAddress ?? LOCALHOST.IPV4,
       signal: this.options.signal,
+      nodeWebSocketServerProvider: this._nodeWebSocketServerProvider,
       onListen: ({ port }: { hostname: string; port: number }) => {
         const url = buildLocalhostUrl(port);
-        logger.info(`Dev server running at ${url}`);
+        logger.debug(`Dev server running at ${url}`);
 
         try {
+          // _isReady must be set inside onListen — the server is only truly ready
+          // to accept connections once this callback fires. Setting it after
+          // adapter.serve() returns races with onListen on Deno (where serve is
+          // non-blocking) and would mark the server ready before it can accept.
           this._isReady = true;
           this._resolveReady();
         } catch (error) {
@@ -264,8 +276,6 @@ export class DevServer {
         }
       },
     });
-
-    this._isReady = true;
   }
 
   /** Return the request handler for use with external HTTP servers. */
@@ -274,6 +284,11 @@ export class DevServer {
       throw INITIALIZATION_ERROR.create({ detail: "DevServer not started. Call start() first." });
     }
     return this._handler;
+  }
+
+  /** Extension-provided Node WebSocket implementation captured with this bootstrap generation. */
+  get nodeWebSocketServerProvider(): Readonly<NodeWebSocketServerProvider> | undefined {
+    return this._nodeWebSocketServerProvider;
   }
 
   private buildDiscoveryConfig(): DiscoveryConfig {
@@ -289,9 +304,9 @@ export class DevServer {
       resourceDirs: ["resources"],
       promptDirs: ["prompts"],
       workflowDirs: ["workflows"],
-      workDirs: ["work"],
       fsAdapter: this.adapter.fs,
       verbose: this.isDebug(),
+      allowHostProjectCodeExecution: true,
     };
   }
 
@@ -300,13 +315,12 @@ export class DevServer {
       const config = this.buildDiscoveryConfig();
       const result = await discoverAll(config);
       const total = result.tools.size + result.agents.size + result.skills.size +
-        result.workflows.size + result.works.size + result.prompts.size +
+        result.workflows.size + result.prompts.size +
         result.resources.size;
       if (total > 0) {
         logger.debug(
           `[Discovery] Registered ${result.tools.size} tools, ${result.agents.size} agents, ` +
             `${result.skills.size} skills, ${result.workflows.size} workflows, ` +
-            `${result.works.size} Work definitions, ` +
             `${result.prompts.size} prompts, ${result.resources.size} resources`,
         );
       }
@@ -410,7 +424,7 @@ export class DevServer {
       clearTranspileCache();
       const config = this.buildDiscoveryConfig();
       const result = await discoverAll(config);
-      logger.info(
+      logger.debug(
         `[HMR] Re-discovered: ${result.tools.size} tools, ${result.agents.size} agents, ` +
           `${result.skills.size} skills, ${result.workflows.size} workflows, ` +
           `${result.prompts.size} prompts, ${result.resources.size} resources`,
@@ -463,7 +477,7 @@ export class DevServer {
   }
 
   async stop(): Promise<void> {
-    logger.info("Shutting down dev server...");
+    logger.debug("Shutting down dev server");
 
     this.reloadUnsubscribe?.();
     this.invalidateUnsubscribe?.();

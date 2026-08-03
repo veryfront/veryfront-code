@@ -1,7 +1,7 @@
 ---
 title: "veryfront/head"
 description: "React head exports for document metadata rendering."
-order: 11
+order: 12
 ---
 
 ## Import
@@ -22,4 +22,4 @@ import { Head } from "veryfront/head";
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `Head` | Applies document head elements during SSR and client rendering. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L201) |
+| `Head` | Applies document head elements during SSR and client rendering. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L461) |

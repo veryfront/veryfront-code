@@ -1,7 +1,15 @@
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import type { DiscoveryResult } from "#veryfront/discovery";
 import { serverLogger } from "#veryfront/utils";
+import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
 import { clearTrackedAgents, createProjectDiscoveryConfig } from "#veryfront/discovery";
-import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
+import { tryGetRegistryScopeContext } from "#veryfront/cache/cache-key-builder.ts";
+import { runWithRegistryTransaction } from "#veryfront/registry/project-scoped-registry-manager.ts";
+import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
+import {
+  isExplicitlyLocalProject,
+  isSharedProjectRuntime,
+} from "#veryfront/security/project-locality.ts";
 import type { HandlerContext } from "../../types.ts";
 
 const logger = serverLogger.component("api-wrapper");
@@ -17,34 +25,108 @@ const logger = serverLogger.component("api-wrapper");
  */
 interface DiscoveryRecord {
   promise: Promise<DiscoveryResult>;
+  sourceSnapshotVersion?: number;
 }
 
-const discoveredProjects = new Map<string, DiscoveryRecord>();
+const discoveredProjects = new LRUCacheAdapter({ maxEntries: 1000 });
+const MAX_DISCOVERY_FAILURES_TO_LOG = 5;
+const MAX_DISCOVERY_ERROR_MESSAGE_LENGTH = 500;
+
+const DISCOVERY_SOURCE_KINDS: Readonly<Record<string, string>> = {
+  agents: "agent",
+  evals: "eval",
+  prompts: "prompt",
+  resources: "resource",
+  schedules: "schedule",
+  skills: "skill",
+  tasks: "task",
+  tools: "tool",
+  webhooks: "webhook",
+  workflows: "workflow",
+};
+
+function withoutFileProtocol(path: string): string {
+  return path.replace(/^file:\/\//, "").replaceAll("\\", "/");
+}
+
+function projectRelativeDiscoveryFile(file: string, projectDir: string): string {
+  const normalizedFile = withoutFileProtocol(file);
+  const normalizedProjectDir = withoutFileProtocol(projectDir).replace(/\/$/, "");
+
+  if (normalizedProjectDir && normalizedFile.startsWith(`${normalizedProjectDir}/`)) {
+    return normalizedFile.slice(normalizedProjectDir.length + 1);
+  }
+  if (!normalizedFile.startsWith("/") && !/^[A-Za-z]:\//.test(normalizedFile)) {
+    return normalizedFile.replace(/^\.\//, "");
+  }
+
+  const segments = normalizedFile.split("/").filter(Boolean);
+  return segments.slice(-2).join("/") || "unknown";
+}
+
+function sanitizeDiscoveryErrorMessage(
+  message: string,
+  file: string,
+  projectDir: string,
+  relativeFile: string,
+): string {
+  let sanitized = sanitizeUrlCredentials(message);
+  const normalizedFile = withoutFileProtocol(file);
+  const normalizedProjectDir = withoutFileProtocol(projectDir).replace(/\/$/, "");
+
+  for (const path of [file, normalizedFile]) {
+    if (path) sanitized = sanitized.replaceAll(path, relativeFile);
+  }
+  if (normalizedProjectDir) {
+    sanitized = sanitized.replaceAll(normalizedProjectDir, "<project>");
+  }
+
+  return sanitized.length <= MAX_DISCOVERY_ERROR_MESSAGE_LENGTH
+    ? sanitized
+    : `${sanitized.slice(0, MAX_DISCOVERY_ERROR_MESSAGE_LENGTH - 3)}...`;
+}
+
+function summarizeDiscoveryFailures(
+  errors: DiscoveryResult["errors"],
+  projectDir: string,
+): Array<{ file: string; sourceKind: string; message: string }> {
+  return errors.slice(0, MAX_DISCOVERY_FAILURES_TO_LOG).map(({ file, error }) => {
+    const relativeFile = projectRelativeDiscoveryFile(file, projectDir);
+    const topLevelDir = relativeFile.split("/", 1)[0] ?? "";
+    return {
+      file: relativeFile,
+      sourceKind: DISCOVERY_SOURCE_KINDS[topLevelDir] ?? "unknown",
+      message: sanitizeDiscoveryErrorMessage(error.message, file, projectDir, relativeFile),
+    };
+  });
+}
 
 /** Build a discovery cache key that incorporates the release/version. */
 function discoveryKey(ctx: HandlerContext): string {
-  const cacheContext = tryGetCacheKeyContext();
-  if (cacheContext) {
-    return `${cacheContext.projectId}:${cacheContext.mode}:${cacheContext.versionId}`;
+  const registryScope = tryGetRegistryScopeContext();
+  if (registryScope) {
+    return registryScope.scopeId;
   }
 
-  const slug = ctx.projectSlug ?? ctx.projectDir;
+  const projectIdentity = ctx.projectId ?? ctx.projectSlug ?? ctx.projectDir;
   const environment = ctx.enriched?.environment ?? ctx.resolvedEnvironment ??
     (ctx.releaseId ? "production" : "preview");
 
   if (environment === "production") {
-    return ctx.releaseId ? `${slug}:release:${ctx.releaseId}` : `${slug}:production:unreleased`;
+    return ctx.releaseId
+      ? `${projectIdentity}:release:${ctx.releaseId}`
+      : `${projectIdentity}:production:unreleased`;
   }
 
   const branch = ctx.requestContext?.branch ?? ctx.enriched?.branch ?? ctx.parsedDomain?.branch ??
     "main";
-  return `${slug}:preview:${branch}`;
+  return `${projectIdentity}:preview:${branch}`;
 }
 
 function shouldCacheCompletedDiscovery(ctx: HandlerContext): boolean {
-  const cacheContext = tryGetCacheKeyContext();
-  if (cacheContext) {
-    return cacheContext.mode === "production";
+  const registryScope = tryGetRegistryScopeContext();
+  if (registryScope) {
+    return registryScope.immutable;
   }
 
   const environment = ctx.enriched?.environment ?? ctx.resolvedEnvironment ??
@@ -59,81 +141,134 @@ function shouldCacheCompletedDiscovery(ctx: HandlerContext): boolean {
  * correct project scope.
  */
 export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<DiscoveryResult> {
-  const key = discoveryKey(ctx);
-  const cacheCompletedDiscovery = shouldCacheCompletedDiscovery(ctx);
+  if (!isExplicitlyLocalProject(ctx) && isSharedProjectRuntime(ctx)) {
+    throw INITIALIZATION_ERROR.create({
+      detail:
+        "Remote executable discovery requires an isolated project runtime and cannot run in the shared host",
+    });
+  }
 
-  const existing = discoveredProjects.get(key);
-  if (existing) return existing.promise;
+  await ctx.adapter.fs.ensureSourceSnapshotFresh?.("primitive-discovery");
+  const key = discoveryKey(ctx);
+  const sourceSnapshotVersion = await ctx.adapter.fs.getSourceSnapshotVersion?.();
+  const cacheCompletedDiscovery = shouldCacheCompletedDiscovery(ctx) ||
+    sourceSnapshotVersion !== undefined;
+
+  const existing = discoveredProjects.get<DiscoveryRecord>(key);
+  if (
+    existing &&
+    (sourceSnapshotVersion === undefined ||
+      existing.sourceSnapshotVersion === sourceSnapshotVersion)
+  ) {
+    return existing.promise;
+  }
 
   const discovery = {
+    sourceSnapshotVersion,
     promise: (async () => {
-      const { clearTranspileCache, discoverAll } = await import("#veryfront/discovery");
-      const { agentRegistry } = await import(
-        "#veryfront/agent/composition/composition.ts"
-      );
-      const { toolRegistry } = await import("#veryfront/tool/registry.ts");
+      return await runWithRegistryTransaction(async () => {
+        const { discoverAll } = await import("#veryfront/discovery");
+        const { agentRegistry } = await import(
+          "#veryfront/agent/composition/composition.ts"
+        );
+        const { toolRegistry } = await import("#veryfront/tool/registry.ts");
 
-      // Clear stale entries for this project scope before re-discovery.
-      // This prevents agents/tools removed in a new release from lingering.
-      clearTrackedAgents();
-      clearTranspileCache();
-      agentRegistry.clear();
-      toolRegistry.clear();
+        // Clear stale entries in a transaction-local copy. Concurrent runs keep
+        // using the prior live registry until discovery succeeds and the staged
+        // replacement is committed atomically.
+        // Keep the content-aware transpile cache: preview discovery runs on every
+        // API request, and clearing it would import unchanged modules under new
+        // temporary URLs that the runtime's ESM module map cannot unload.
+        clearTrackedAgents();
+        agentRegistry.clear();
+        toolRegistry.clear();
 
-      const discoveryOptions = createProjectDiscoveryConfig({
-        projectDir: ctx.projectDir,
-        config: ctx.config,
-        fsAdapter: ctx.adapter.fs,
-      });
-      const result = await discoverAll(discoveryOptions);
-      const shouldWarnOnEmptyAiDiscovery = discoveryOptions.toolDirs.length > 0 ||
-        discoveryOptions.agentDirs.length > 0;
-
-      const logData = {
-        projectSlug: ctx.projectSlug,
-        releaseId: ctx.releaseId,
-        agents: result.agents.size,
-        tools: result.tools.size,
-        errors: result.errors.length,
-      };
-
-      if (
-        result.agents.size === 0 && result.tools.size === 0 && shouldWarnOnEmptyAiDiscovery
-      ) {
-        logger.info("Primitive discovery found 0 agents and 0 tools", {
-          ...logData,
-          errorMessages: result.errors.map((e) => e.error.message).slice(0, 5),
-          baseDir: ctx.projectDir,
+        const discoveryOptions = createProjectDiscoveryConfig({
+          projectDir: ctx.projectDir,
+          cacheNamespace: sourceSnapshotVersion === undefined
+            ? key
+            : `${key}:snapshot:${sourceSnapshotVersion}`,
+          config: ctx.config,
+          fsAdapter: ctx.adapter.fs,
+          allowHostProjectCodeExecution: true,
         });
-      } else {
-        logger.info("Primitive discovery completed", logData);
-      }
+        const result = await discoverAll(discoveryOptions);
+        const shouldWarnOnEmptyAiDiscovery = discoveryOptions.toolDirs.length > 0 ||
+          discoveryOptions.agentDirs.length > 0;
 
-      return result;
+        const logData = {
+          projectSlug: ctx.projectSlug,
+          releaseId: ctx.releaseId,
+          agents: result.agents.size,
+          tools: result.tools.size,
+          errors: result.errors.length,
+        };
+
+        if (result.errors.length > 0) {
+          logger.warn("Primitive discovery completed with errors", {
+            ...logData,
+            failures: summarizeDiscoveryFailures(result.errors, ctx.projectDir),
+            omittedErrors: Math.max(0, result.errors.length - MAX_DISCOVERY_FAILURES_TO_LOG),
+          });
+        } else if (
+          result.agents.size === 0 && result.tools.size === 0 && shouldWarnOnEmptyAiDiscovery
+        ) {
+          logger.debug("Primitive discovery found 0 agents and 0 tools", logData);
+        } else {
+          logger.debug("Primitive discovery completed", logData);
+        }
+
+        return result;
+      });
     })(),
   };
 
   discoveredProjects.set(key, discovery);
 
   try {
-    return await discovery.promise;
+    const result = await discovery.promise;
+    if (result.errors.length > 0) {
+      const current = discoveredProjects.get<DiscoveryRecord>(key);
+      if (current === discovery) {
+        discoveredProjects.delete(key);
+      }
+    }
+    return result;
   } catch (error) {
-    // Allow retry on next request
-    discoveredProjects.delete(key);
+    // A superseded generation may already own this key. Delete only our own
+    // record so the newer discovery remains reusable after it completes.
+    const current = discoveredProjects.get<DiscoveryRecord>(key);
+    if (current === discovery) {
+      discoveredProjects.delete(key);
+    }
     logger.warn("Primitive discovery failed (will retry)", {
       projectSlug: ctx.projectSlug,
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     });
-    throw new Error(
-      `Runtime discovery failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    throw INITIALIZATION_ERROR.create({
+      detail: `Runtime discovery failed: ${error instanceof Error ? error.message : String(error)}`,
+      cause: error,
+    });
   } finally {
     if (!cacheCompletedDiscovery) {
       const current = discoveredProjects.get(key);
       if (current === discovery) {
         discoveredProjects.delete(key);
       }
+    }
+  }
+}
+
+/**
+ * Drop completed and in-flight discovery records for every source scope owned
+ * by a project. The next scoped request rebuilds registries transactionally
+ * from its current source snapshot.
+ */
+export function clearProjectDiscoveryCacheForProject(projectId: string): void {
+  for (const key of discoveredProjects.keys()) {
+    if (key === projectId || key.startsWith(`${projectId}:`)) {
+      discoveredProjects.delete(key);
     }
   }
 }

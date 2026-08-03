@@ -7,9 +7,20 @@ import { InternalAgentsListHandler } from "./internal-agents-list.handler.ts";
 import { runWithProjectEnv } from "../../project-env/storage.ts";
 import {
   createAgentWithConfig,
-  createControlPlaneSignature,
+  createControlPlaneSignature as createTestControlPlaneSignature,
   createCtx,
 } from "./internal-agent-run.test-helpers.ts";
+
+function createControlPlaneSignature(
+  body: string,
+  overrides: Parameters<typeof createTestControlPlaneSignature>[1] = {},
+): ReturnType<typeof createTestControlPlaneSignature> {
+  return createTestControlPlaneSignature(body, {
+    requestMethod: "POST",
+    requestPath: "/api/control-plane/agents/list",
+    ...overrides,
+  });
+}
 
 describe("server/handlers/request/internal-agents-list.handler", () => {
   it("returns discovered agents for a valid signed request", async () => {
@@ -290,7 +301,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
     assertEquals(await result.response.json(), { error: "Invalid internal agents request" });
   });
 
-  it("uses VERYFRONT_API_TOKEN for multi-project proxy context when request token is absent", async () => {
+  it("does not forward VERYFRONT_API_TOKEN when the request token is absent", async () => {
     let discoveryCalls = 0;
     let receivedToken: string | undefined;
 
@@ -314,8 +325,8 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
       requestId: "agents-1",
     });
 
-    // withProxyContext now reads VERYFRONT_API_TOKEN via getHostEnv() (bypassing
-    // project env overlays), so we set it on the real host environment.
+    // A host token must not be combined with request-selected project context.
+    // Set it on the real process environment to prove it is not forwarded.
     const tokenKey = "VERYFRONT_API_TOKEN";
     const originalToken = Deno.env.get(tokenKey);
     Deno.env.set(tokenKey, "server-api-token");
@@ -363,7 +374,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
 
       assertExists(result.response);
       assertEquals(result.response.status, 200);
-      assertEquals(receivedToken, "server-api-token");
+      assertEquals(receivedToken, "");
       assertEquals(discoveryCalls, 1);
       assertEquals(await result.response.json(), {
         agents: [

@@ -15,8 +15,51 @@ import type {
   RunExecutionStatus,
   RunExecutor,
 } from "./types.ts";
+import { requireWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
 
 const logger = baseLogger.component("process-run-executor");
+const FORCE_KILL_DELAY_MS = 5_000;
+
+/**
+ * Non-secret host env vars forwarded to the child when its environment is
+ * cleared (clearEnv). These let the spawned Deno runtime locate its module
+ * cache, temp dir, TLS roots and locale. clearEnv prevents ordinary environment
+ * inheritance, but it is not a sandbox boundary: this executor is for trusted
+ * local code because the child retains broad filesystem and network access.
+ */
+const RUNTIME_INFRA_ENV_KEYS = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "DENO_DIR",
+  "DENO_INSTALL_ROOT",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "DENO_TLS_CA_STORE",
+  "DENO_CERT",
+  "LANG",
+  "LC_ALL",
+  // Windows runtime essentials
+  "SYSTEMROOT",
+  "SystemRoot",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "USERPROFILE",
+  "PATHEXT",
+] as const;
+
+/** Collect the forwardable runtime-infra env vars present on the host. */
+function collectRuntimeInfraEnv(): Record<string, string> {
+  const infra: Record<string, string> = {};
+  if (typeof Deno === "undefined") return infra;
+  for (const key of RUNTIME_INFRA_ENV_KEYS) {
+    const value = Deno.env.get(key);
+    if (value !== undefined) infra[key] = value;
+  }
+  return infra;
+}
 
 /**
  * Process run executor configuration
@@ -55,6 +98,8 @@ interface TrackedExecution {
   completedAt?: Date;
   error?: string;
   timeoutId?: ReturnType<typeof setTimeout>;
+  forceKillTimeoutId?: ReturnType<typeof setTimeout>;
+  exited: boolean;
 }
 
 /**
@@ -96,9 +141,13 @@ export class ProcessRunExecutor implements RunExecutor {
 
   createRunExecution(executionConfig: RunExecutionConfig): Promise<string> {
     const { executionId, run, managerId, timeout, env, debug } = executionConfig;
+    requireWorkflowSourceIntegrationPolicy(run);
 
-    // Build environment variables
+    // Build environment variables. Start from the forwarded runtime-infra vars
+    // (needed because the child spawns with clearEnv:true) so operator- and
+    // run-supplied values still take precedence over them.
     const processEnv: Record<string, string> = {
+      ...collectRuntimeInfraEnv(),
       ...this.config.env,
       ...env,
       MODE: "run",
@@ -123,10 +172,14 @@ export class ProcessRunExecutor implements RunExecutor {
       }
     }
 
-    // Spawn the process
+    // Spawn the process.
+    // clearEnv drops the inherited host environment so the child sees ONLY the
+    // explicitly-assembled processEnv (mode/run IDs and tenant context). This
+    // prevents ordinary host-env inheritance but does not sandbox untrusted code.
     const command = new Deno.Command(this.config.command, {
       args: [...this.config.args, this.config.entrypointPath],
       cwd: this.config.cwd,
+      clearEnv: true,
       env: processEnv,
       stdout: "piped",
       stderr: "piped",
@@ -142,6 +195,7 @@ export class ProcessRunExecutor implements RunExecutor {
       status: "running",
       createdAt: new Date(),
       startedAt: new Date(),
+      exited: false,
     };
 
     this.activeExecutions.set(executionId, execution);
@@ -151,7 +205,7 @@ export class ProcessRunExecutor implements RunExecutor {
     }
 
     // Monitor the process in background
-    this.monitorProcess(execution, timeout);
+    this.monitorProcess(execution, timeout, debug || this.config.debug);
 
     return Promise.resolve(executionId);
   }
@@ -184,13 +238,7 @@ export class ProcessRunExecutor implements RunExecutor {
     }
 
     // Kill the process if still running
-    if (execution.status === "running" || execution.status === "pending") {
-      try {
-        execution.process.kill("SIGTERM");
-      } catch (_) {
-        /* expected: process may already be dead */
-      }
-    }
+    this.terminateProcess(execution);
 
     if (execution.timeoutId) clearTimeout(execution.timeoutId);
     this.activeExecutions.delete(executionId);
@@ -206,13 +254,7 @@ export class ProcessRunExecutor implements RunExecutor {
     // Kill all active processes and clear their timers
     for (const execution of this.activeExecutions.values()) {
       if (execution.timeoutId) clearTimeout(execution.timeoutId);
-      if (execution.status === "running" || execution.status === "pending") {
-        try {
-          execution.process.kill("SIGTERM");
-        } catch (_) {
-          /* expected: process may already be dead */
-        }
-      }
+      this.terminateProcess(execution);
     }
 
     this.activeExecutions.clear();
@@ -223,21 +265,21 @@ export class ProcessRunExecutor implements RunExecutor {
   /**
    * Monitor a process and update its status when it exits
    */
-  private monitorProcess(execution: TrackedExecution, timeout: number): void {
+  private monitorProcess(
+    execution: TrackedExecution,
+    timeout: number,
+    debug: boolean,
+  ): void {
     // Set up timeout
     execution.timeoutId = setTimeout(() => {
       execution.timeoutId = undefined;
       if (execution.status === "running") {
-        try {
-          execution.process.kill("SIGTERM");
-          execution.status = "failed";
-          execution.error = `Run execution timed out after ${timeout}ms`;
-          execution.completedAt = new Date();
+        execution.status = "failed";
+        execution.error = `Run execution timed out after ${timeout}ms`;
+        execution.completedAt = new Date();
+        this.terminateProcess(execution);
 
-          logger.warn(`Run execution ${execution.executionId} timed out`);
-        } catch (_) {
-          /* expected: process may already be dead */
-        }
+        logger.warn(`Run execution ${execution.executionId} timed out`);
       }
     }, timeout);
 
@@ -245,8 +287,11 @@ export class ProcessRunExecutor implements RunExecutor {
     void (async () => {
       try {
         const status = await execution.process.status;
+        execution.exited = true;
         clearTimeout(execution.timeoutId);
+        clearTimeout(execution.forceKillTimeoutId);
         execution.timeoutId = undefined;
+        execution.forceKillTimeoutId = undefined;
 
         execution.completedAt = new Date();
 
@@ -258,7 +303,7 @@ export class ProcessRunExecutor implements RunExecutor {
         if (status.success) {
           execution.status = "succeeded";
 
-          if (this.config.debug) {
+          if (debug) {
             logger.info(`Run execution ${execution.executionId} succeeded`);
           }
         } else {
@@ -268,8 +313,11 @@ export class ProcessRunExecutor implements RunExecutor {
           logger.error(`Run execution ${execution.executionId} failed with code ${status.code}`);
         }
       } catch (error) {
+        execution.exited = true;
         clearTimeout(execution.timeoutId);
+        clearTimeout(execution.forceKillTimeoutId);
         execution.timeoutId = undefined;
+        execution.forceKillTimeoutId = undefined;
 
         execution.status = "failed";
         execution.error = error instanceof Error ? error.message : String(error);
@@ -279,30 +327,54 @@ export class ProcessRunExecutor implements RunExecutor {
       }
     })();
 
-    // Log stdout/stderr in debug mode
-    if (this.config.debug) {
-      this.streamOutput(execution);
+    // Piped output must always be consumed. Otherwise a child that fills an OS
+    // pipe buffer blocks forever before its status can resolve.
+    this.streamOutput(execution, debug);
+  }
+
+  private terminateProcess(execution: TrackedExecution): void {
+    if (execution.exited) return;
+
+    try {
+      execution.process.kill("SIGTERM");
+    } catch (_) {
+      /* expected: process may already be dead */
+      return;
     }
+
+    if (execution.forceKillTimeoutId) return;
+    execution.forceKillTimeoutId = setTimeout(() => {
+      execution.forceKillTimeoutId = undefined;
+      if (execution.exited) return;
+      try {
+        execution.process.kill("SIGKILL");
+      } catch (_) {
+        /* expected: process may have exited after the check */
+      }
+    }, FORCE_KILL_DELAY_MS);
   }
 
   /**
    * Stream process output to logs
    */
-  private streamOutput(execution: TrackedExecution): void {
-    const decoder = new TextDecoder();
-
+  private streamOutput(execution: TrackedExecution, debug: boolean): void {
     // Stream stdout
     const stdout = execution.process.stdout;
     if (stdout) {
       (async () => {
+        const decoder = debug ? new TextDecoder() : null;
         for await (const chunk of stdout) {
+          if (!decoder) continue;
           const text = decoder.decode(chunk).trim();
           if (text) {
             logger.debug(`[RunExecution ${execution.executionId}] ${text}`);
           }
         }
-      })().catch(() => {
-        // Ignore stream errors
+      })().catch((error) => {
+        logger.debug(
+          `[RunExecution ${execution.executionId}] stdout stream error:`,
+          error,
+        );
       });
     }
 
@@ -310,14 +382,21 @@ export class ProcessRunExecutor implements RunExecutor {
     const stderr = execution.process.stderr;
     if (stderr) {
       (async () => {
+        const decoder = debug ? new TextDecoder() : null;
         for await (const chunk of stderr) {
+          if (!decoder) continue;
           const text = decoder.decode(chunk).trim();
           if (text) {
             logger.error(`[RunExecution ${execution.executionId}] ${text}`);
           }
         }
-      })().catch(() => {
-        // Ignore stream errors
+      })().catch((error) => {
+        // stderr often carries the only diagnostic for a failing subprocess —
+        // don't discard a failure to read it.
+        logger.warn(
+          `[RunExecution ${execution.executionId}] stderr stream error:`,
+          error,
+        );
       });
     }
   }

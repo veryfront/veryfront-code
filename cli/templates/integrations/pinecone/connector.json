@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_indexes",
+      "id": "pinecone__list_indexes",
       "name": "List Indexes",
       "description": "List all indexes in the Pinecone project",
       "requiresWrite": false,
@@ -60,7 +60,7 @@
       }
     },
     {
-      "id": "describe_index",
+      "id": "pinecone__describe_index",
       "name": "Describe Index",
       "description": "Get an index's configuration and its data-plane host (needed for Query Vectors and Upsert Vectors)",
       "requiresWrite": false,
@@ -85,7 +85,7 @@
       }
     },
     {
-      "id": "create_index",
+      "id": "pinecone__create_index",
       "name": "Create Index",
       "description": "Create a new serverless or pod-based index",
       "requiresWrite": true,
@@ -125,7 +125,7 @@
       }
     },
     {
-      "id": "query_vectors",
+      "id": "pinecone__query_vectors",
       "name": "Query Vectors",
       "description": "Query an index for the nearest vectors (run Describe Index first to get the index host)",
       "requiresWrite": false,
@@ -180,7 +180,7 @@
       }
     },
     {
-      "id": "upsert_vectors",
+      "id": "pinecone__upsert_vectors",
       "name": "Upsert Vectors",
       "description": "Write vectors into an index (run Describe Index first to get the index host)",
       "requiresWrite": true,

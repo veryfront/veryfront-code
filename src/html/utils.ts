@@ -11,12 +11,16 @@ import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-sc
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { VERYFRONT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import {
-  DEFAULT_REACT_VERSION,
-  esmShReact,
-  readProjectDependencyVersions,
-  resolveProjectReactVersion,
-  stripSemverRange,
+  type DependencyPinningSourceInput,
+  resolveProjectPackageVersions,
 } from "#veryfront/transforms/esm/package-registry.ts";
+import { DEFAULT_REACT_VERSION, esmShReact } from "#veryfront/transforms/esm/react-cdn.ts";
+import {
+  appendDependencyPinningKey,
+  appendSameOriginDependencyPinningPathKey,
+} from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
+import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
 
 function joinAttributes(attrs: Array<string | false | undefined | null | "">): string {
   return attrs.filter(Boolean).join(" ");
@@ -116,27 +120,32 @@ export const PLATFORM_UTILITIES: Record<string, string> = {
   ...AI_MODULE_UTILITIES,
 };
 
+// Per-provider URL templates for the veryfront framework modules only. React is
+// NOT here: it always comes from esm.sh (see esmShReactImports) because unpkg and
+// jsdelivr only serve UMD globals, which cannot be loaded through an import map.
 interface CdnUrlTemplates {
-  react: (version: string) => string;
-  reactDom: (version: string) => string;
-  reactDomClient: (version: string) => string;
-  jsxRuntime: (version: string) => string;
-  jsxDevRuntime: (version: string) => string;
   veryfrontChat: (version: string) => string;
   veryfrontMarkdown: (version: string) => string;
   veryfrontMdx: (version: string) => string;
   veryfrontWorkflow: (version: string) => string;
 }
 
+// React import-map entries, always from esm.sh — the only CDN that serves React
+// as real ESM. Uses the centralized esmShReact() helper so the URLs stay
+// byte-identical across SSR/client (any mismatch loads a second React instance
+// and hooks fail).
+function esmShReactImports(react: string): Record<string, string> {
+  return {
+    react: esmShReact("react", react),
+    "react-dom": esmShReact("react-dom", react, "", true),
+    "react-dom/client": esmShReact("react-dom", react, "/client", true),
+    "react/jsx-runtime": esmShReact("react", react, "/jsx-runtime", true),
+    "react/jsx-dev-runtime": esmShReact("react", react, "/jsx-dev-runtime", true),
+  };
+}
+
 const CDN_URL_TEMPLATES: Record<CdnProvider, CdnUrlTemplates> = {
   "esm.sh": {
-    // Use centralized esmShReact() helper from package-registry.ts to ensure URL consistency
-    // Any URL mismatch causes esm.sh to serve different modules -> multiple React instances -> hooks fail
-    react: (v) => esmShReact("react", v),
-    reactDom: (v) => esmShReact("react-dom", v, "", true),
-    reactDomClient: (v) => esmShReact("react-dom", v, "/client", true),
-    jsxRuntime: (v) => esmShReact("react", v, "/jsx-runtime", true),
-    jsxDevRuntime: (v) => esmShReact("react", v, "/jsx-dev-runtime", true),
     veryfrontChat: (v) =>
       `https://esm.sh/veryfront@${v}/chat?external=react,react-dom&target=es2022`,
     veryfrontMarkdown: (v) =>
@@ -146,23 +155,12 @@ const CDN_URL_TEMPLATES: Record<CdnProvider, CdnUrlTemplates> = {
       `https://esm.sh/veryfront@${v}/workflow/react?external=react,react-dom&target=es2022`,
   },
   unpkg: {
-    react: (v) => `https://unpkg.com/react@${v}/umd/react.production.min.js`,
-    reactDom: (v) => `https://unpkg.com/react-dom@${v}/umd/react-dom.production.min.js`,
-    reactDomClient: (v) => `https://unpkg.com/react-dom@${v}/umd/react-dom.production.min.js`,
-    jsxRuntime: (v) => `https://unpkg.com/react@${v}/jsx-runtime`,
-    jsxDevRuntime: (v) => `https://unpkg.com/react@${v}/jsx-dev-runtime`,
     veryfrontChat: (v) => `https://unpkg.com/veryfront@${v}/esm/src/chat/index.js`,
     veryfrontMarkdown: (v) => `https://unpkg.com/veryfront@${v}/esm/src/markdown/index.js`,
     veryfrontMdx: (v) => `https://unpkg.com/veryfront@${v}/esm/src/mdx/index.js`,
     veryfrontWorkflow: (v) => `https://unpkg.com/veryfront@${v}/esm/src/workflow/react/index.js`,
   },
   jsdelivr: {
-    react: (v) => `https://cdn.jsdelivr.net/npm/react@${v}/umd/react.production.min.js`,
-    reactDom: (v) => `https://cdn.jsdelivr.net/npm/react-dom@${v}/umd/react-dom.production.min.js`,
-    reactDomClient: (v) =>
-      `https://cdn.jsdelivr.net/npm/react-dom@${v}/umd/react-dom.production.min.js`,
-    jsxRuntime: (v) => `https://cdn.jsdelivr.net/npm/react@${v}/jsx-runtime`,
-    jsxDevRuntime: (v) => `https://cdn.jsdelivr.net/npm/react@${v}/jsx-dev-runtime`,
     veryfrontChat: (v) => `https://cdn.jsdelivr.net/npm/veryfront@${v}/esm/src/chat/index.js`,
     veryfrontMarkdown: (v) =>
       `https://cdn.jsdelivr.net/npm/veryfront@${v}/esm/src/markdown/index.js`,
@@ -175,21 +173,29 @@ const CDN_URL_TEMPLATES: Record<CdnProvider, CdnUrlTemplates> = {
 function buildCdnImportMapFromTemplates(
   versions: DetectedVersions,
   templates: CdnUrlTemplates,
-  includePlatformUtilities: boolean,
+  // Whether the AI/chat modules (chat/markdown/mdx/workflow) are also served
+  // locally instead of from the CDN. The CORE platform utilities
+  // (router/head/context/fonts) are ALWAYS served locally regardless of
+  // provider — they must share the same React context module instance as SSR,
+  // otherwise usePageContext() returns undefined and the browser fails to even
+  // resolve `veryfront/router`. CDN is for third-party deps (react) and,
+  // optionally, the AI modules — never the core runtime.
+  includeAiModulesLocally: boolean,
 ): Record<string, string> {
   const { react, veryfront } = versions;
 
   return {
-    react: templates.react(react),
-    "react-dom": templates.reactDom(react),
-    "react-dom/client": templates.reactDomClient(react),
-    "react/jsx-runtime": templates.jsxRuntime(react),
-    "react/jsx-dev-runtime": templates.jsxDevRuntime(react),
+    // React is ALWAYS from esm.sh, regardless of the configured provider (see
+    // esmShReactImports). The `provider` only governs the veryfront modules.
+    ...esmShReactImports(react),
     "veryfront/chat": templates.veryfrontChat(veryfront),
     "veryfront/markdown": templates.veryfrontMarkdown(veryfront),
     "veryfront/mdx": templates.veryfrontMdx(veryfront),
     "veryfront/workflow": templates.veryfrontWorkflow(veryfront),
-    ...(includePlatformUtilities ? PLATFORM_UTILITIES : {}),
+    // Core runtime utilities always resolve locally.
+    ...CORE_PLATFORM_UTILITIES,
+    // AI modules only override the CDN entries when requested.
+    ...(includeAiModulesLocally ? AI_MODULE_UTILITIES : {}),
   };
 }
 
@@ -207,14 +213,9 @@ function getJsdelivrImportMap(versions: DetectedVersions): Record<string, string
 
 function getSelfHostedImportMap(versions: DetectedVersions): Record<string, string> {
   const { react } = versions;
-  const esmShTemplates = CDN_URL_TEMPLATES["esm.sh"];
 
   return {
-    react: esmShTemplates.react(react),
-    "react-dom": esmShTemplates.reactDom(react),
-    "react-dom/client": esmShTemplates.reactDomClient(react),
-    "react/jsx-runtime": esmShTemplates.jsxRuntime(react),
-    "react/jsx-dev-runtime": esmShTemplates.jsxDevRuntime(react),
+    ...esmShReactImports(react),
     "veryfront/chat": "/_veryfront/lib/chat.js",
     "veryfront/markdown": "/_veryfront/lib/markdown.js",
     "veryfront/mdx": "/_veryfront/lib/mdx.js",
@@ -242,45 +243,38 @@ function getCdnImportMap(
   return (CDN_IMPORT_MAP_FACTORIES[provider] ?? getEsmShImportMap)(versions);
 }
 
-async function resolveVersions(
-  projectDir: string,
-  config?: VeryfrontConfig,
-): Promise<DetectedVersions> {
-  // Use shared resolver for React (handles config override + package.json + fallback)
-  const versionsConfig = config?.client?.cdn?.versions;
-  const configuredReactVersion = versionsConfig && versionsConfig !== "auto"
-    ? versionsConfig.react
-    : undefined;
-  const configuredVeryfrontVersion = versionsConfig && versionsConfig !== "auto"
-    ? versionsConfig.veryfront
-    : undefined;
-  const detected = await readProjectDependencyVersions(projectDir);
-  const reactVersion = configuredReactVersion
-    ? resolveProjectReactVersion({ config })
-    : Promise.resolve(detected.react ?? DEFAULT_VERSIONS.react);
-
-  // Resolve veryfront version separately (config override or detection)
-  let veryfrontVersion = DEFAULT_VERSIONS.veryfront;
-
-  if (configuredVeryfrontVersion) {
-    veryfrontVersion = stripSemverRange(configuredVeryfrontVersion);
-  } else if (detected.veryfront) {
-    veryfrontVersion = detected.veryfront;
-  }
-
-  return { react: await reactVersion, veryfront: veryfrontVersion };
-}
-
 interface BuildImportMapOptions {
   projectDir?: string;
   config?: VeryfrontConfig;
+  /** Absolute request origin used to identify same-origin module URLs. */
+  moduleServerOrigin?: string;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningSource?: DependencyPinningSourceInput;
   customImports?: Record<string, string>;
   pretty?: boolean;
   releaseAssetManifest?: ReleaseAssetManifest | null;
 }
 
+async function resolveVersions(
+  options: Pick<
+    BuildImportMapOptions,
+    | "projectDir"
+    | "config"
+    | "dependencyPinningCacheKey"
+    | "dependencyPinningDependencies"
+    | "dependencyPinningSource"
+  >,
+): Promise<DetectedVersions> {
+  const versions = await resolveProjectPackageVersions(options);
+  return {
+    react: versions.react,
+    veryfront: versions.veryfront ?? DEFAULT_VERSIONS.veryfront,
+  };
+}
+
 function stringifyImportMap(imports: Record<string, string>, pretty = true): string {
-  return JSON.stringify({ imports }, null, pretty ? 2 : undefined);
+  return jsonForInlineScript({ imports }, pretty ? 2 : undefined);
 }
 
 function stableMapKey(imports?: Record<string, string>): string {
@@ -378,11 +372,46 @@ function applyReleaseModuleVersions(
   );
 }
 
+function applyDependencyPinningKeys(
+  imports: Record<string, string>,
+  dependencyPinningCacheKey?: string,
+  moduleServerOrigin?: string,
+): Record<string, string> {
+  if (!dependencyPinningCacheKey?.startsWith("on:")) return imports;
+
+  return Object.fromEntries(
+    Object.entries(imports).map(([specifier, url]) => {
+      const pinnedModuleUrl = appendSameOriginDependencyPinningPathKey(
+        url,
+        dependencyPinningCacheKey,
+        moduleServerOrigin,
+      );
+      if (pinnedModuleUrl !== url) {
+        return [
+          specifier,
+          pinnedModuleUrl,
+        ];
+      }
+
+      return [
+        specifier,
+        !specifier.endsWith("/") && url.startsWith("/_veryfront/lib/")
+          ? appendDependencyPinningKey(url, dependencyPinningCacheKey)
+          : url,
+      ];
+    }),
+  );
+}
+
 function isImportMapOnlyOptions(
   options: BuildImportMapOptions | Record<string, string>,
 ): options is Record<string, string> {
   return !("projectDir" in options) &&
     !("config" in options) &&
+    !("moduleServerOrigin" in options) &&
+    !("dependencyPinningCacheKey" in options) &&
+    !("dependencyPinningDependencies" in options) &&
+    !("dependencyPinningSource" in options) &&
     !("customImports" in options) &&
     !("releaseAssetManifest" in options) &&
     !("pretty" in options);
@@ -398,23 +427,39 @@ export async function buildImportMap(
     }
   }
 
-  const { projectDir, config, customImports, pretty = true, releaseAssetManifest } =
-    (options ?? {}) as BuildImportMapOptions;
+  const {
+    projectDir,
+    config,
+    moduleServerOrigin,
+    dependencyPinningCacheKey,
+    dependencyPinningDependencies,
+    dependencyPinningSource,
+    customImports,
+    pretty = true,
+    releaseAssetManifest,
+  } = (options ?? {}) as BuildImportMapOptions;
   const mode = config?.client?.moduleResolution ?? "cdn";
-  const versions = projectDir ? await resolveVersions(projectDir, config) : DEFAULT_VERSIONS;
+  const versions = projectDir || config || dependencyPinningCacheKey ||
+      dependencyPinningDependencies || dependencyPinningSource
+    ? await resolveVersions({
+      projectDir,
+      config,
+      dependencyPinningCacheKey,
+      dependencyPinningDependencies,
+      dependencyPinningSource,
+    })
+    : DEFAULT_VERSIONS;
 
   if (mode === "bundled") {
-    const reactTemplates = CDN_URL_TEMPLATES["esm.sh"];
-    let imports: Record<string, string> = {
-      react: reactTemplates.react(versions.react),
-      "react-dom": reactTemplates.reactDom(versions.react),
-      "react-dom/client": reactTemplates.reactDomClient(versions.react),
-      "react/jsx-runtime": reactTemplates.jsxRuntime(versions.react),
-      "react/jsx-dev-runtime": reactTemplates.jsxDevRuntime(versions.react),
-    };
+    let imports: Record<string, string> = { ...esmShReactImports(versions.react) };
     imports = applyManifestDependencies(imports, releaseAssetManifest);
     imports = applyReleaseModuleVersions(imports, releaseAssetManifest);
     imports = { ...imports, ...customImports };
+    imports = applyDependencyPinningKeys(
+      imports,
+      dependencyPinningCacheKey,
+      moduleServerOrigin,
+    );
 
     return { imports, json: stringifyImportMap(imports, pretty) };
   }
@@ -436,9 +481,19 @@ export async function buildImportMap(
   if (customImports) {
     imports = { ...imports, ...customImports };
   }
+  imports = applyDependencyPinningKeys(
+    imports,
+    dependencyPinningCacheKey,
+    moduleServerOrigin,
+  );
 
+  const dependencyPinningCacheVariant = buildDependencyPinningCacheVariant(
+    dependencyPinningCacheKey,
+    moduleServerOrigin,
+  );
   const cacheKey = JSON.stringify({
     projectDir: projectDir ?? "",
+    ...(dependencyPinningCacheVariant ? { dependencyPinningCacheVariant } : {}),
     mode,
     provider: config?.client?.cdn?.provider ?? "esm.sh",
     react: versions.react,

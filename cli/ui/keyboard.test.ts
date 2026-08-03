@@ -5,7 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createKeyboardHandler } from "./keyboard.ts";
+import { createKeyboardHandler, dispatchKeyPress } from "./keyboard.ts";
 
 describe("keyboard", () => {
   describe("createKeyboardHandler", () => {
@@ -65,6 +65,7 @@ describe("keyboard", () => {
 
     it("accepts all callback options", () => {
       const handler = createKeyboardHandler({
+        onHelp: () => {},
         onOpen: () => {},
         onClear: () => {},
         onQuit: () => {},
@@ -77,6 +78,21 @@ describe("keyboard", () => {
       });
 
       assertExists(handler);
+    });
+
+    it("dispatches help and log shortcuts", () => {
+      const pressed: string[] = [];
+
+      dispatchKeyPress("?", {
+        onHelp: () => pressed.push("help"),
+        onLogs: () => pressed.push("logs"),
+      });
+      dispatchKeyPress("l", {
+        onHelp: () => pressed.push("help"),
+        onLogs: () => pressed.push("logs"),
+      });
+
+      assertEquals(pressed, ["help", "logs"]);
     });
 
     // Note: Full keyboard interaction testing requires terminal access

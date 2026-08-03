@@ -14,6 +14,8 @@
  */
 
 import { ragStore } from "#veryfront/embedding/index.ts";
+import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
+import { base64urlEncodeBytes } from "#veryfront/utils";
 import type {
   RagSearchOptions,
   RagSearchResult,
@@ -468,10 +470,7 @@ function createLookupItem(
 }
 
 function encodeCursor(state: ProjectKnowledgeLookupCursorState): string {
-  const bytes = new TextEncoder().encode(JSON.stringify(state));
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return base64urlEncodeBytes(new TextEncoder().encode(JSON.stringify(state)));
 }
 
 function decodeCursor(cursor: string): ProjectKnowledgeLookupCursorState {
@@ -494,11 +493,13 @@ function decodeCursor(cursor: string): ProjectKnowledgeLookupCursorState {
       typeof parsed.shardCount !== "number" ||
       typeof parsed.shardIndex !== "number"
     ) {
-      throw new Error("Invalid cursor payload");
+      throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid cursor payload" });
     }
 
     if (parsed.shardIndex < 0 || parsed.shardIndex >= parsed.shardCount) {
-      throw new Error("Cursor shard_index must be within shard_count");
+      throw INPUT_VALIDATION_FAILED.create({
+        detail: "Cursor shard_index must be within shard_count",
+      });
     }
 
     return {
@@ -509,10 +510,19 @@ function decodeCursor(cursor: string): ProjectKnowledgeLookupCursorState {
       shardCount: parsed.shardCount,
       shardIndex: parsed.shardIndex,
     };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Could not decode cursor";
-    throw new Error(`Invalid knowledge lookup cursor: ${message}`);
+  } catch {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge lookup cursor" });
   }
+}
+
+function normalizeKnowledgeLookupCursor(cursor: unknown): string | undefined {
+  if (cursor === undefined || cursor === null) return undefined;
+  if (typeof cursor !== "string") {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge lookup cursor" });
+  }
+
+  const normalizedCursor = cursor.trim();
+  return normalizedCursor.length > 0 ? normalizedCursor : undefined;
 }
 
 function scoreEntry(
@@ -715,28 +725,33 @@ function lookupKnowledgeManifest(
   manifest: ProjectKnowledgeManifestEntry[],
   input: ProjectKnowledgeLookupInput,
 ): ProjectKnowledgeLookupOutput {
-  const cursorState = input.cursor ? decodeCursor(input.cursor) : null;
+  const normalizedCursor = normalizeKnowledgeLookupCursor(input.cursor);
+  const cursorState = normalizedCursor ? decodeCursor(normalizedCursor) : null;
   const providedQuery = input.query?.trim() ?? "";
   const resolvedQuery = (cursorState?.query ?? providedQuery).trim();
   const lookupTargetPath = cursorState ? null : getLookupTargetPath(input.lookup_target);
 
   if (!resolvedQuery && !lookupTargetPath) {
-    throw new Error("search_knowledge requires a non-empty query");
+    throw INPUT_VALIDATION_FAILED.create({ detail: "search_knowledge requires a non-empty query" });
   }
 
   if (cursorState && providedQuery && providedQuery !== cursorState.query) {
-    throw new Error("search_knowledge cursor query mismatch");
+    throw INPUT_VALIDATION_FAILED.create({ detail: "search_knowledge cursor query mismatch" });
   }
 
   const resolvedShardCount = cursorState?.shardCount ?? input.shard_count ?? 1;
   const resolvedShardIndex = cursorState?.shardIndex ?? input.shard_index ?? 0;
 
   if (resolvedShardCount < 1) {
-    throw new Error("search_knowledge shard_count must be at least 1");
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: "search_knowledge shard_count must be at least 1",
+    });
   }
 
   if (resolvedShardIndex < 0 || resolvedShardIndex >= resolvedShardCount) {
-    throw new Error("search_knowledge shard_index must be within shard_count");
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: "search_knowledge shard_index must be within shard_count",
+    });
   }
 
   if (lookupTargetPath) {
@@ -807,7 +822,7 @@ function lookupKnowledgeManifest(
     mode,
     data: pageEntries.map(({ entry, matchedFields }) => createLookupItem(entry, matchedFields)),
     page_info: {
-      self: input.cursor ?? null,
+      self: normalizedCursor ?? null,
       first: null,
       next: nextCursor,
       prev: null,
@@ -826,7 +841,7 @@ function coerceSearchKnowledgeInput(
   input: ProjectKnowledgeLookupInput,
 ): ProjectKnowledgeLookupInput {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
-    throw new Error("search_knowledge input must be an object");
+    throw INPUT_VALIDATION_FAILED.create({ detail: "search_knowledge input must be an object" });
   }
 
   const value = input as Record<string, unknown>;
@@ -835,7 +850,9 @@ function coerceSearchKnowledgeInput(
       ? value.project_reference
       : undefined,
     query: typeof value.query === "string" ? value.query : undefined,
-    cursor: typeof value.cursor === "string" ? value.cursor : undefined,
+    cursor: typeof value.cursor === "string"
+      ? normalizeKnowledgeLookupCursor(value.cursor)
+      : undefined,
     lookup_target: value.lookup_target,
     limit: typeof value.limit === "number" ? value.limit : undefined,
     shard_count: typeof value.shard_count === "number" ? value.shard_count : undefined,

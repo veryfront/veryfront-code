@@ -1,5 +1,10 @@
 import { verifyDispatchJws } from "#veryfront/channels/invoke.ts";
 import { getControlPlaneVerificationPublicKey } from "#veryfront/internal-agents/control-plane-auth.ts";
+import {
+  INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
+  InternalAgentRequestBodyTooLargeError,
+  readInternalAgentRequestBody,
+} from "#veryfront/internal-agents/request-body.ts";
 import type { ResponseBuilder } from "#veryfront/security/index.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { HTTP_INTERNAL_SERVER_ERROR } from "#veryfront/utils/constants/index.ts";
@@ -32,6 +37,30 @@ export interface ReadSignedChannelDispatchRequestOptions<T> {
   logLabel?: string;
   logWarn: LogWarn;
   schema: ParseSchema<T>;
+}
+
+type ChannelDispatchBinding = {
+  dispatchId: string;
+  platform: string;
+  projectId: string;
+};
+
+function hasChannelDispatchBinding(value: unknown): value is ChannelDispatchBinding {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.dispatchId === "string" &&
+    typeof record.platform === "string" &&
+    typeof record.projectId === "string";
+}
+
+function payloadMatchesSignedDispatchClaims(
+  payload: unknown,
+  claims: Awaited<ReturnType<typeof verifyDispatchJws>>,
+): boolean {
+  return hasChannelDispatchBinding(payload) &&
+    payload.dispatchId === claims.sub &&
+    payload.platform === claims.platform &&
+    payload.projectId === claims.project_id;
 }
 
 export async function readSignedChannelDispatchRequest<T>(
@@ -71,7 +100,24 @@ export async function readSignedChannelDispatchRequest<T>(
     };
   }
 
-  const rawBody = await req.text();
+  // Read through the capped reader BEFORE signature verification so an
+  // unauthenticated caller cannot stream an unbounded body into memory.
+  let rawBody: string;
+  try {
+    rawBody = await readInternalAgentRequestBody(
+      req,
+      INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
+    );
+  } catch (error) {
+    if (error instanceof InternalAgentRequestBodyTooLargeError) {
+      return {
+        ok: false,
+        response: options.builder.json({ error: "Request body too large" }, 413),
+      };
+    }
+    throw error;
+  }
+
   let claims: Awaited<ReturnType<typeof verifyDispatchJws>>;
   try {
     claims = await verifyDispatchJws(dispatchJws, rawBody, {
@@ -93,12 +139,19 @@ export async function readSignedChannelDispatchRequest<T>(
   }
 
   try {
-    return {
-      ok: true,
-      claims,
-      payload: options.schema.parse(JSON.parse(rawBody)),
-      rawBody,
-    };
+    const payload = options.schema.parse(JSON.parse(rawBody));
+    if (!payloadMatchesSignedDispatchClaims(payload, claims)) {
+      options.logWarn(`${logLabel} signed claims do not match the request payload`, {
+        projectSlug,
+        projectId: ctx.projectId,
+      });
+      return {
+        ok: false,
+        response: options.builder.json({ error: "Invalid dispatch signature" }, 401),
+      };
+    }
+
+    return { ok: true, claims, payload, rawBody };
   } catch (error) {
     options.logWarn(`${logLabel} request validation failed`, {
       error: error instanceof Error ? error.message : String(error),

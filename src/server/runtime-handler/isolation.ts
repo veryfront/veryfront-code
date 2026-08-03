@@ -19,6 +19,7 @@ interface IsolationDeps {
   checkRequest?: typeof projectIsolation.checkRequest;
   startRequest?: typeof projectIsolation.startRequest;
   completeRequest?: typeof projectIsolation.completeRequest;
+  recordTimeout?: typeof projectIsolation.recordTimeout;
 }
 
 let injectedDeps: IsolationDeps | null = null;
@@ -38,6 +39,8 @@ function getDeps() {
       projectIsolation.startRequest.bind(projectIsolation),
     completeRequest: injectedDeps?.completeRequest ??
       projectIsolation.completeRequest.bind(projectIsolation),
+    recordTimeout: injectedDeps?.recordTimeout ??
+      projectIsolation.recordTimeout.bind(projectIsolation),
   };
 }
 
@@ -83,6 +86,28 @@ export function completeIsolatedRequest(
     const deps = getDeps();
     deps.completeRequest(projectSlug, isTimeout);
   }
+}
+
+/**
+ * Record timeout state immediately, then release concurrency when work settles.
+ *
+ * A handler may ignore cancellation forever. Waiting for settlement before
+ * recording the timeout would prevent the circuit breaker from seeing the
+ * failure, while releasing the slot immediately would undercount live work.
+ */
+export function completeIsolatedRequestOnSettlement(
+  projectSlug: string | undefined,
+  shouldCheck: boolean,
+  isTimeout: boolean,
+  settled: Promise<void>,
+): void {
+  if (!shouldCheck) return;
+
+  const deps = getDeps();
+  if (isTimeout) deps.recordTimeout(projectSlug);
+
+  const release = () => deps.completeRequest(projectSlug, false);
+  void settled.then(release, release);
 }
 
 /**

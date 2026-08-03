@@ -34,6 +34,27 @@ export interface ChatFilePart {
   filename?: string;
   /** File size in bytes, when known — shown in the read-only message pill. */
   size?: number;
+  /** Storage-issued upload identifier, when the URL came from an upload endpoint. */
+  uploadId?: string;
+  /** Storage path for runtimes that resolve uploads by path. */
+  uploadPath?: string;
+}
+
+/** Chat message part that carries a URL citation source. */
+export interface ChatSourceUrlPart {
+  type: "source-url";
+  sourceId: string;
+  url: string;
+  title?: string;
+}
+
+/** Chat message part that carries a document citation source. */
+export interface ChatSourceDocumentPart {
+  type: "source-document";
+  sourceId: string;
+  title: string;
+  mediaType?: string;
+  filename?: string;
 }
 
 /** State for chat tool. */
@@ -53,6 +74,8 @@ export interface ChatToolPart<NAME extends string = string, INPUT = unknown, OUT
   input?: INPUT;
   output?: OUTPUT;
   errorText?: string;
+  /** Whether the model provider executed the tool instead of the client/runtime. */
+  providerExecuted?: boolean;
 }
 
 /** Chat message part that carries a tool result. */
@@ -73,6 +96,8 @@ export interface ChatDynamicToolPart {
   input?: unknown;
   output?: unknown;
   errorText?: string;
+  /** Whether the model provider executed the tool instead of the client/runtime. */
+  providerExecuted?: boolean;
 }
 
 /** Public API contract for chat step part. */
@@ -91,6 +116,8 @@ export interface ChatDataPart {
 export type ChatMessagePart =
   | ChatTextPart
   | ChatReasoningPart
+  | ChatSourceUrlPart
+  | ChatSourceDocumentPart
   | ChatFilePart
   | ChatToolPart
   | ChatToolResultPart
@@ -267,6 +294,7 @@ export type ChatStreamEvent =
     type: "tool-output-available";
     toolCallId: string;
     output: unknown;
+    preliminary?: boolean;
   } & ChatStreamEventBase)
   | {
     type: "tool-output-denied";
@@ -347,10 +375,22 @@ type IdDeltaChunk<TType extends string> = IdChunk<TType> & {
   delta: string;
 };
 
+/** Public API contract for content-addressed message chunks. */
+type ContentIdChunk<TType extends string> = IdChunk<TType> & {
+  contentId?: string;
+};
+
+/** Public API contract for content-addressed message delta chunks. */
+type ContentIdDeltaChunk<TType extends string> = ContentIdChunk<TType> & {
+  delta: string;
+};
+
 /** Public API contract for tool call chunk. */
 type ToolCallChunk<TType extends string> = {
   type: TType;
   toolCallId: string;
+  providerExecuted?: boolean;
+  dynamic?: boolean;
 };
 
 /** Public API contract for named tool call chunk. */
@@ -388,9 +428,9 @@ export type ChatUiMessageChunk<TMessageMetadata = ChatMessageMetadata> =
     signature?: string;
     redactedData?: string;
   }
-  | IdChunk<"text-start">
-  | IdDeltaChunk<"text-delta">
-  | IdChunk<"text-end">
+  | ContentIdChunk<"text-start">
+  | ContentIdDeltaChunk<"text-delta">
+  | ContentIdChunk<"text-end">
   | {
     type: "source-url";
     sourceId: string;
@@ -408,6 +448,8 @@ export type ChatUiMessageChunk<TMessageMetadata = ChatMessageMetadata> =
     type: "file";
     mediaType: string;
     url: string;
+    filename?: string;
+    size?: number;
   }
   | NamedToolCallChunk<"tool-input-start">
   | (ToolCallChunk<"tool-input-delta"> & {
@@ -419,6 +461,7 @@ export type ChatUiMessageChunk<TMessageMetadata = ChatMessageMetadata> =
   })
   | (ToolCallChunk<"tool-output-available"> & {
     output: unknown;
+    preliminary?: boolean;
   })
   | ToolErrorChunk<"tool-output-error">
   | ToolCallChunk<"tool-output-denied">

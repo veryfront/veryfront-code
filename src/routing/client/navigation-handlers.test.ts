@@ -267,6 +267,30 @@ describe("NavigationHandlers", () => {
       }
     });
 
+    it("preserves the query and hash selected by browser history", () => {
+      const mocks = setupNavigationHandlerMocks();
+      try {
+        mocks.mockLocation.pathname = "/results";
+        mocks.mockLocation.search = "?page=2";
+        mocks.mockLocation.hash = "#details";
+        const handlers = new NavigationHandlers();
+        let navigatedUrl = "";
+        const popStateHandler = handlers.createPopStateHandler({
+          onNavigate(url: string) {
+            navigatedUrl = url;
+            return Promise.resolve();
+          },
+          onPrefetch() {},
+        });
+
+        popStateHandler({} as PopStateEvent);
+
+        assertEquals(navigatedUrl, "/results?page=2#details");
+      } finally {
+        mocks.cleanup();
+      }
+    });
+
     it("should set popstate navigation flag", () => {
       const mocks = setupNavigationHandlerMocks();
       try {

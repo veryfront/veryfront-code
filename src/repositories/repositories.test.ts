@@ -19,6 +19,8 @@ import {
   MockFileSystemRepository,
 } from "./testing/index.ts";
 import type { HandlerContext } from "#veryfront/types";
+import { createFileSystemRepository } from "./filesystem/filesystem-repository.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 
 describe("Repository Types", () => {
   describe("RepositoryContext", () => {
@@ -191,6 +193,42 @@ describe("MockFileSystemRepository", () => {
     await mockFs.remove("nested/subdir", { recursive: true });
     expect(await mockFs.exists("nested/subdir")).toBe(false);
     expect(await mockFs.exists("nested/subdir/grandchild.txt")).toBe(false);
+  });
+});
+
+describe("SecureFsRepository", () => {
+  it("fails closed for paths outside its repository root", async () => {
+    const repository = createFileSystemRepository({
+      baseDir: "/project",
+      adapter: createMockAdapter(),
+      context: createMockRepositoryContext(),
+    });
+
+    await expect(repository.readFile("../outside.txt")).rejects.toThrow();
+  });
+
+  it("publishes immutable exact and snapshot read capabilities", async () => {
+    const adapter = createMockAdapter();
+    adapter.fs.files.set("/project/asset.bin", "abc");
+    const repository = createFileSystemRepository({
+      baseDir: "/project",
+      adapter,
+      context: createMockRepositoryContext(),
+    });
+
+    expect(
+      [...await repository.readFileBytesWithinLimit!("asset.bin", 3)],
+    ).toEqual([97, 98, 99]);
+    expect(
+      [...await repository.readFileSnapshotWithinLimit!("asset.bin", 3)],
+    ).toEqual([97, 98, 99]);
+
+    for (const key of ["readFileBytesWithinLimit", "readFileSnapshotWithinLimit"] as const) {
+      const descriptor = Object.getOwnPropertyDescriptor(repository, key);
+      expect(descriptor?.enumerable).toBe(true);
+      expect(descriptor?.configurable).toBe(false);
+      expect(descriptor?.writable).toBe(false);
+    }
   });
 });
 

@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listCustomers } from "../../lib/shopify-client.ts";
+import { listCustomers } from "../lib/shopify-client.ts";
 
 export default tool({
-  id: "list-customers",
+  id: "shopify-list-customers",
   description: "List customers from your Shopify store. Can search by query string.",
   inputSchema: defineSchema((v) => v.object({
     limit: v

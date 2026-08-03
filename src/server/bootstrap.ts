@@ -22,7 +22,13 @@ import { MISSING_EXTENSION_ERROR } from "#veryfront/extensions/errors.ts";
 import { getRecommendation } from "#veryfront/extensions/recommendations.ts";
 import type { TracingExporter } from "#veryfront/extensions/observability/tracing-exporter.ts";
 import {
+  type NodeWebSocketServerProvider,
+  NodeWebSocketServerProviderName,
+  snapshotNodeWebSocketServerProvider,
+} from "#veryfront/extensions/websocket";
+import {
   setGlobalActiveSpanAccessor,
+  setGlobalContextAccessor,
   setGlobalMetricsAPI,
   setGlobalTracerProvider,
 } from "#veryfront/observability/tracing/api-shim.ts";
@@ -30,13 +36,13 @@ import {
   getEnvironmentConfig,
   refreshEnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
-import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { getErrorMessage, INVALID_ARGUMENT } from "#veryfront/errors";
 import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
 import { initializeEsbuild } from "#veryfront/platform/compat/esbuild.ts";
-import { logger } from "#veryfront/utils";
+import { __registerLogRecordEmitter, logger } from "#veryfront/utils";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import {
   getEnvSource,
@@ -45,12 +51,12 @@ import {
   markEnvLoaded,
   supportsEnvFiles,
 } from "#veryfront/utils/env-loader.ts";
-import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 import {
   createFileLogSubscriber,
   type FileLogConfig,
   type FileLogSubscriber,
-} from "#veryfront/observability/file-log-subscriber.ts";
+  getLogBuffer,
+} from "#veryfront/observability";
 import { ReloadNotifier } from "./reload-notifier.ts";
 import {
   createServerStyleCallbacks,
@@ -61,6 +67,7 @@ import { clearDomainCache } from "./utils/domain-lookup.ts";
 const bootstrapLog = logger.component("bootstrap");
 const bootstrapDevLog = logger.component("bootstrap-dev");
 const bootstrapProdLog = logger.component("bootstrap-prod");
+const LOCAL_CLI_PROXY_MODE_ENV = "VERYFRONT_CLI_LOCAL_PROXY_MODE";
 
 export interface BootstrapResult {
   /** Enhanced runtime adapter (with FSAdapter if configured) */
@@ -81,6 +88,9 @@ export interface BootstrapResult {
    * can safely invoke `teardownAll()` unconditionally.
    */
   extensionLoader: ExtensionLoader;
+
+  /** Immutable Node WebSocket implementation selected by this extension generation. */
+  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
 
   /**
    * Dispose bootstrap resources: tears down extensions (reverse order),
@@ -117,7 +127,7 @@ function assertRequiredContracts(): void {
   }
 }
 
-function wireTracingShim(): void {
+export function wireTracingShim(): void {
   const tracing = tryResolve<TracingExporter>("TracingExporter");
   if (tracing) {
     setGlobalTracerProvider(
@@ -135,8 +145,17 @@ function wireTracingShim(): void {
         traceApi as Parameters<typeof setGlobalActiveSpanAccessor>[0],
       );
     }
+    const contextApi = tracing.getContextAPI?.();
+    if (contextApi) {
+      setGlobalContextAccessor(
+        contextApi as Parameters<typeof setGlobalContextAccessor>[0],
+      );
+    }
+    const logRecordEmitter = tracing.getLogRecordEmitter?.();
+    __registerLogRecordEmitter(logRecordEmitter ?? null);
     bootstrapLog.debug("[bootstrap] TracingExporter wired into shim");
   } else {
+    __registerLogRecordEmitter(null);
     bootstrapLog.debug("[bootstrap] no TracingExporter extension — using no-op tracer");
   }
 }
@@ -148,13 +167,21 @@ function createBootstrapPrimeContracts(): Record<string, unknown> {
   };
 }
 
+/** @internal Snapshot the extension-provided Node WebSocket implementation for this generation. */
+export function resolveNodeWebSocketServerProviderForBootstrap():
+  | Readonly<NodeWebSocketServerProvider>
+  | undefined {
+  const provider = tryResolve<unknown>(NodeWebSocketServerProviderName);
+  return provider === undefined ? undefined : snapshotNodeWebSocketServerProvider(provider);
+}
+
 const DEFAULT_FILE_LOG_PATH = ".veryfront/logs/server.log";
 const DEFAULT_FILE_LOG_MAX_SIZE = "10mb";
 const DEFAULT_FILE_LOG_MAX_FILES = 5;
 const DEFAULT_FILE_LOG_LEVEL = "warn" as const;
 const DEFAULT_FILE_LOG_FORMAT = "json" as const;
 
-interface FileLogHandle {
+export interface FileLogHandle {
   subscriber: FileLogSubscriber;
   unsubscribe: () => void;
 }
@@ -182,10 +209,26 @@ function maybeAttachFileLogSubscriber(config: VeryfrontConfig): FileLogHandle | 
   return { subscriber, unsubscribe };
 }
 
-async function teardownFileLog(handle: FileLogHandle | null): Promise<void> {
+/**
+ * Detach the file log, absorbing teardown failures.
+ *
+ * `flush()`/`close()` reject so explicit callers can react to dropped log
+ * writes, but bootstrap only detaches a best-effort log sink. Propagating here
+ * would fail a config reload over a retained write error, or replace the real
+ * startup error on the failure path with the teardown rejection.
+ */
+export async function teardownFileLog(handle: FileLogHandle | null): Promise<void> {
   if (!handle) return;
-  handle.unsubscribe();
-  await handle.subscriber.close();
+  try {
+    handle.unsubscribe();
+  } catch (error) {
+    bootstrapLog.warn("[bootstrap] Failed to detach file log subscriber", { error });
+  }
+  try {
+    await handle.subscriber.close();
+  } catch (error) {
+    bootstrapLog.warn("[bootstrap] Failed to close file log subscriber", { error });
+  }
 }
 
 function combineDispose(
@@ -200,7 +243,11 @@ function combineDispose(
       try {
         await teardownFileLog(fileLogHandle ?? null);
       } finally {
-        if (fsDispose) fsDispose();
+        try {
+          __registerLogRecordEmitter(null);
+        } finally {
+          if (fsDispose) fsDispose();
+        }
       }
     }
   };
@@ -311,11 +358,13 @@ export async function bootstrap(
       });
       wireTracingShim();
       assertRequiredContracts();
+      const nodeWebSocketServerProvider = resolveNodeWebSocketServerProviderForBootstrap();
       return {
         adapter,
         config,
         usingFSAdapter: false,
         extensionLoader,
+        ...(nodeWebSocketServerProvider === undefined ? {} : { nodeWebSocketServerProvider }),
         dispose: combineDispose(extensionLoader, undefined, fileLog),
       };
     }
@@ -363,11 +412,13 @@ export async function bootstrap(
       });
       wireTracingShim();
       assertRequiredContracts();
+      const nodeWebSocketServerProvider = resolveNodeWebSocketServerProviderForBootstrap();
       return {
         adapter,
         config,
         usingFSAdapter: false,
         extensionLoader,
+        ...(nodeWebSocketServerProvider === undefined ? {} : { nodeWebSocketServerProvider }),
         dispose: combineDispose(extensionLoader, undefined, fileLog),
       };
     }
@@ -386,6 +437,12 @@ export async function bootstrap(
       const originalConfig = config;
       const reloadedConfig = await getConfig(projectDir, enhancedAdapter);
 
+      // HEURISTIC: detect whether FSAdapter returned a "default dev config" (i.e., the remote
+      // source had no config file) by checking for the exact default values veryfront uses when
+      // no config is found. Known limitation: a user whose real config happens to use port=3000,
+      // host=localhost, and no HMR block will have their config silently discarded here.
+      // A future improvement would be for FSAdapter to return an explicit "config not found"
+      // signal instead of the default-value object.
       const usesDefaultDevConfig = reloadedConfig.dev?.port === 3000 &&
         reloadedConfig.dev?.host === "localhost" &&
         !reloadedConfig.dev?.hmr;
@@ -439,6 +496,7 @@ export async function bootstrap(
     );
     wireTracingShim();
     assertRequiredContracts();
+    const nodeWebSocketServerProvider = resolveNodeWebSocketServerProviderForBootstrap();
 
     return {
       adapter: enhancedAdapter,
@@ -446,6 +504,7 @@ export async function bootstrap(
       usingFSAdapter: true,
       fsAdapterType: fsType,
       extensionLoader,
+      ...(nodeWebSocketServerProvider === undefined ? {} : { nodeWebSocketServerProvider }),
       dispose: combineDispose(extensionLoader, fsDispose, fileLog),
     };
   } catch (err) {
@@ -482,7 +541,7 @@ export async function bootstrapProd(
 
   // Validate NODE_ENV in proxy mode to prevent dev behavior in production
   // @see plans/architecture-audit/014.1-node-env-missing.md
-  validateProductionEnvironment(adapter);
+  validateProductionEnvironment();
 
   try {
     const result = await bootstrap(projectDir, adapter);
@@ -508,13 +567,23 @@ export async function bootstrapProd(
  *
  * @see plans/architecture-audit/014.1-node-env-missing.md
  */
-function validateProductionEnvironment(_adapter: RuntimeAdapter): void {
+function validateProductionEnvironment(): void {
   const nodeEnv = getEnv("NODE_ENV") ?? getEnv("DENO_ENV");
   const proxyMode = getEnv("PROXY_MODE");
+  const localCliProxyMode = getHostEnv(LOCAL_CLI_PROXY_MODE_ENV) === "1" &&
+    getEnvSource(LOCAL_CLI_PROXY_MODE_ENV).source === "process";
   const controlPlanePublicKey = getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
 
   // In proxy mode (deployed pods), NODE_ENV must be explicitly set to production
   if (proxyMode === "1") {
+    if (localCliProxyMode) {
+      bootstrapProdLog.debug("Environment configuration", {
+        nodeEnv: nodeEnv ?? "(unset)",
+        proxyMode,
+      });
+      return;
+    }
+
     if (!nodeEnv) {
       logger.error(
         "[Bootstrap:Prod] CRITICAL: NODE_ENV is not set in proxy mode. " +
@@ -527,18 +596,12 @@ function validateProductionEnvironment(_adapter: RuntimeAdapter): void {
 
     if (nodeEnv !== "production") {
       logger.warn(
-        "[Bootstrap:Prod] NODE_ENV is set to '%s' in proxy mode. " +
+        `[Bootstrap:Prod] NODE_ENV is set to '${nodeEnv}' in proxy mode. ` +
           "Expected 'production'. This may enable dev features.",
-        nodeEnv,
       );
     }
 
-    if (!controlPlanePublicKey && nodeEnv === "development") {
-      logger.warn(
-        "[Bootstrap:Prod] CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY is not set. " +
-          "Channel dispatch verification will be unavailable (local dev mode).",
-      );
-    } else if (!controlPlanePublicKey) {
+    if (!controlPlanePublicKey) {
       logger.error(
         "[Bootstrap:Prod] CRITICAL: CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY is not set in proxy mode. " +
           "Hosted runtimes cannot verify control-plane requests without it.",
@@ -548,6 +611,20 @@ function validateProductionEnvironment(_adapter: RuntimeAdapter): void {
           "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY must be set when running in proxy mode (PROXY_MODE=1)",
       });
     }
+
+    if (!isProxyTopologyTrusted()) {
+      logger.error(
+        "[Bootstrap:Prod] CRITICAL: proxy mode does not trust its upstream topology. " +
+          "Set VERYFRONT_TRUST_FORWARDED_HEADERS=1 only when this process is private behind a sanitising edge. " +
+          "Existing hosted deployments must set this variable on the runtime environment before rolling out " +
+          "this version, and must upgrade the proxy tier before (or together with) the runtime tier. " +
+          "See src/security/README.md, 'Rollout ordering for hosted identity changes'.",
+      );
+      throw INVALID_ARGUMENT.create({
+        detail:
+          "VERYFRONT_TRUST_FORWARDED_HEADERS must be exactly '1' for hosted proxy mode behind a sanitising edge",
+      });
+    }
   }
 
   // Log effective configuration for debugging
@@ -555,4 +632,8 @@ function validateProductionEnvironment(_adapter: RuntimeAdapter): void {
     nodeEnv: nodeEnv ?? "(unset)",
     proxyMode: proxyMode ?? "0",
   });
+}
+
+export function validateProductionEnvironmentForTests(): void {
+  validateProductionEnvironment();
 }

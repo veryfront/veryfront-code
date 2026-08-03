@@ -2,10 +2,19 @@ import { getEnv } from "./env.ts";
 import { getTraceContext } from "./tracing.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { PROXY_RUNTIME_VERSION } from "./version.ts";
-
-// NOTE: Formatting utilities are INLINED below instead of imported from ../utils/logger/core.ts
-// because the proxy Docker build only copies src/proxy/ and has no access to src/utils/.
-// Keep these in sync with src/utils/logger/core.ts if changes are needed.
+import {
+  ANSI,
+  colorize,
+  formatContextText,
+  formatTimestamp,
+  isRecord,
+  LEVEL_COLORS,
+  LEVEL_GLYPHS,
+  type LogLevelName,
+  padTag,
+  type SerializedError,
+  serializeError,
+} from "#veryfront/utils/logger/core.ts";
 
 /**
  * Request context for proxy logging.
@@ -42,7 +51,7 @@ function getProxyRequestContext(): ProxyRequestContext | undefined {
   return requestContextStore.getStore();
 }
 
-export type LogLevel = "debug" | "info" | "warn" | "error";
+export type LogLevel = LogLevelName;
 
 const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
   debug: 0,
@@ -51,146 +60,21 @@ const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
   error: 3,
 };
 
-// Log level configuration
-const MIN_LOG_LEVEL: LogLevel = (() => {
+/**
+ * Resolve the minimum log level per call so that flags set after module
+ * initialization (e.g. --debug parsed in the CLI router) take effect.
+ * Reading eagerly at module load would freeze the level at import time,
+ * which broke --debug when the proxy module was imported before flag parsing.
+ */
+function getMinLogLevel(): LogLevel {
   const level = getEnv("LOG_LEVEL")?.toLowerCase();
   if (level === "debug" || level === "info" || level === "warn" || level === "error") {
     return level;
   }
-  return "info"; // Default: suppress debug logs
-})();
-
-// ============================================================================
-// INLINED FORMATTING UTILITIES (from src/utils/logger/core.ts)
-// These must be kept in sync with core.ts but cannot be imported due to
-// Docker build constraints (proxy is built independently).
-// ============================================================================
-
-const TAG_WIDTH = 10;
-const PREFIX_WIDTH = 23; // timestamp(8) + gap(2) + tag(10) + space(1) + glyph(1) + space(1)
-
-const LEVEL_GLYPHS: Record<LogLevel, string> = {
-  debug: "·",
-  info: "●",
-  warn: "▲",
-  error: "✖",
-};
-
-const ANSI = {
-  reset: "\u001b[0m",
-  dim: "\u001b[2m",
-  gray: "\u001b[90m",
-  red: "\u001b[31m",
-  green: "\u001b[32m",
-  yellow: "\u001b[33m",
-  cyan: "\u001b[36m",
-} as const;
-
-const LEVEL_COLORS: Record<LogLevel, string> = {
-  debug: ANSI.gray,
-  info: ANSI.green,
-  warn: ANSI.yellow,
-  error: ANSI.red,
-};
-
-function padTag(tag: string): string {
-  if (tag.length >= TAG_WIDTH) return tag.slice(0, TAG_WIDTH);
-  return tag.padEnd(TAG_WIDTH, " ");
+  const debugFlag = getEnv("VERYFRONT_DEBUG");
+  if (debugFlag === "1" || debugFlag === "true") return "debug";
+  return "info";
 }
-
-function formatTimestamp(date: Date = new Date()): string {
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-}
-
-function colorize(text: string, color: string | undefined, enable: boolean): string {
-  if (!enable || !color) return text;
-  return `${color}${text}${ANSI.reset}`;
-}
-
-function normalizeText(value: string): string {
-  return value.replace(/\s+/g, " ");
-}
-
-function truncateText(value: string, maxLength = 80): string {
-  if (value.length <= maxLength) return value;
-  return `${value.slice(0, maxLength - 1)}…`;
-}
-
-function formatValue(value: unknown): string {
-  if (typeof value === "string") {
-    const trimmed = normalizeText(value);
-    return /\s/.test(trimmed) ? JSON.stringify(trimmed) : trimmed;
-  }
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  if (value === null) return "null";
-  if (value === undefined) return "undefined";
-
-  let text: string | undefined;
-  try {
-    text = JSON.stringify(value);
-  } catch (_) {
-    /* expected: non-serializable value */
-    text = String(value);
-  }
-
-  if (text === undefined) return "undefined";
-  return truncateText(normalizeText(text));
-}
-
-interface SerializedError {
-  name: string;
-  message: string;
-  stack?: string;
-}
-
-function formatErrorText(error: SerializedError | undefined): string {
-  if (error == null) return "";
-
-  const message = [error.name, error.message].join(": ");
-  return truncateText(normalizeText(message), 120);
-}
-
-function serializeError(error: unknown): SerializedError | undefined {
-  if (error == null) return undefined;
-
-  if (error instanceof Error) {
-    const serialized: SerializedError = {
-      name: error.name,
-      message: error.message,
-    };
-    if (error.stack) serialized.stack = error.stack;
-    return serialized;
-  }
-
-  return { name: "UnknownError", message: String(error) };
-}
-
-function formatContextText(
-  context: Record<string, unknown>,
-  error: SerializedError | undefined,
-  enableColor: boolean,
-): string {
-  const entries: string[] = [];
-  for (const [key, value] of Object.entries(context)) {
-    entries.push(`${key}=${formatValue(value)}`);
-  }
-
-  const errorText = formatErrorText(error);
-  if (errorText) entries.push(`err=${errorText}`);
-  if (entries.length === 0) return "";
-
-  const coloredText = colorize(entries.join(" "), ANSI.dim, enableColor);
-  return `\n${" ".repeat(PREFIX_WIDTH)}${coloredText}`;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-// ============================================================================
-// END INLINED FORMATTING UTILITIES
-// ============================================================================
 
 function isTty(): boolean {
   try {
@@ -266,17 +150,17 @@ function getLogFormat(): "json" | "text" {
 }
 
 class ProxyLogger {
-  private format = getLogFormat();
-
   private log(
     level: LogLevel,
     message: string,
     context?: Record<string, unknown>,
     error?: unknown,
   ): void {
-    if (LOG_LEVEL_ORDER[level] < LOG_LEVEL_ORDER[MIN_LOG_LEVEL]) return;
+    // Resolve level and format per call so --debug flags set after module init take effect.
+    if (LOG_LEVEL_ORDER[level] < LOG_LEVEL_ORDER[getMinLogLevel()]) return;
+    const format = getLogFormat();
 
-    if (this.format !== "json") {
+    if (format !== "json") {
       console.log(formatTextLine(level, message, context, serializeError(error)));
       return;
     }

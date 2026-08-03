@@ -41,7 +41,7 @@
   ],
   "tools": [
     {
-      "id": "list_orders",
+      "id": "woocommerce__list_orders",
       "name": "List Orders",
       "description": "List orders in the store with optional status, search, and date filters",
       "requiresWrite": false,
@@ -87,7 +87,7 @@
       }
     },
     {
-      "id": "get_order",
+      "id": "woocommerce__get_order",
       "name": "Get Order",
       "description": "Retrieve full details of a specific order, including line items, totals, and shipping",
       "requiresWrite": false,
@@ -111,7 +111,7 @@
       }
     },
     {
-      "id": "update_order_status",
+      "id": "woocommerce__update_order_status",
       "name": "Update Order Status",
       "description": "Update an order's status (e.g. mark as completed) and optionally add a customer note",
       "requiresWrite": true,
@@ -146,7 +146,7 @@
       }
     },
     {
-      "id": "list_products",
+      "id": "woocommerce__list_products",
       "name": "List Products",
       "description": "List products in the catalog with optional search, status, and SKU filters",
       "requiresWrite": false,
@@ -192,7 +192,7 @@
       }
     },
     {
-      "id": "create_product",
+      "id": "woocommerce__create_product",
       "name": "Create Product",
       "description": "Create a new product in the store catalog",
       "requiresWrite": true,
@@ -249,7 +249,7 @@
       }
     },
     {
-      "id": "get_product",
+      "id": "woocommerce__get_product",
       "name": "Get Product",
       "description": "Retrieve full details of a specific product, including price, stock, and categories",
       "requiresWrite": false,
@@ -273,7 +273,7 @@
       }
     },
     {
-      "id": "update_product",
+      "id": "woocommerce__update_product",
       "name": "Update Product",
       "description": "Update an existing product's price, stock, status, or descriptions",
       "requiresWrite": true,
@@ -331,7 +331,7 @@
       }
     },
     {
-      "id": "get_sales_report",
+      "id": "woocommerce__get_sales_report",
       "name": "Get Sales Report",
       "description": "Get a sales report with totals for revenue, orders, items, and customers over a period or date range",
       "requiresWrite": false,
@@ -364,7 +364,7 @@
       }
     },
     {
-      "id": "list_customers",
+      "id": "woocommerce__list_customers",
       "name": "List Customers",
       "description": "List store customers with optional email, role, and search filters",
       "requiresWrite": false,

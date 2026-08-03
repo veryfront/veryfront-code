@@ -12,7 +12,16 @@ interface GlobalWithDenoKv {
   };
 }
 
+/**
+ * Open a cross-runtime KV store.
+ *
+ * An explicit path requests durable storage and fails if no durable backend can
+ * open it. Omit the path, or use `:memory:`, to permit a volatile memory store.
+ */
 export async function openKv(path?: string): Promise<Kv> {
+  const requiresDurableBackend = path !== undefined && path !== ":memory:";
+  const backendFailures: unknown[] = [];
+
   if (isDeno) {
     const global = globalThis as GlobalWithDenoKv;
     const open = global.Deno?.openKv;
@@ -21,7 +30,8 @@ export async function openKv(path?: string): Promise<Kv> {
       try {
         return await open(path);
       } catch (error) {
-        serverLogger.debug("Native Deno KV failed, trying other options:", error);
+        backendFailures.push(error);
+        serverLogger.warn("Native Deno KV failed, trying other options:", error);
       }
     }
   }
@@ -34,7 +44,11 @@ export async function openKv(path?: string): Promise<Kv> {
       // cast to satisfy the SqliteKv constructor's nominal type check.
       return new SqliteKv(db as unknown as SqliteDatabase);
     } catch (error) {
-      serverLogger.debug("SqliteStore.openSqliteDatabase failed, using memory KV:", error);
+      backendFailures.push(error);
+      serverLogger.warn(
+        "SqliteStore.openSqliteDatabase failed:",
+        error,
+      );
     }
   } else {
     serverLogger.debug(
@@ -43,9 +57,28 @@ export async function openKv(path?: string): Promise<Kv> {
     );
   }
 
+  if (requiresDurableBackend) {
+    const message = `Could not open a durable KV store for explicit path "${path}". ` +
+      "Configure native Deno KV or install @veryfront/ext-db-sqlite.";
+    if (backendFailures.length) throw new AggregateError(backendFailures, message);
+    throw new Error(message);
+  }
+
+  // In-memory KV: all data is lost on process restart. Log at warn so operators
+  // can detect unintentional memory-only mode in production.
+  serverLogger.warn(
+    "openKv: falling back to in-memory KV store — data will not persist across restarts. " +
+      "Configure Deno KV or install @veryfront/ext-db-sqlite for durable storage.",
+  );
   return new MemoryKv();
 }
 
+/**
+ * Create a cross-runtime KV store.
+ *
+ * An explicit path requests durable storage and fails if no durable backend can
+ * open it. Omit the path, or use `:memory:`, to permit a volatile memory store.
+ */
 export function createKVStore(options?: { path?: string }): Promise<Kv> {
   return openKv(options?.path);
 }

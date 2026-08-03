@@ -4,6 +4,8 @@ import type { APIContext } from "../context-builder.ts";
 
 export interface AppRouteContext {
   params: Record<string, string>;
+  /** Immutable environment snapshot for the current project request. */
+  env: Readonly<Record<string, string>>;
 }
 
 export type HTTPMethod =
@@ -34,4 +36,9 @@ export interface LoadModuleOptions {
   modulePath: string;
   adapter: RuntimeAdapter;
   config?: VeryfrontConfig;
+}
+
+export interface LoadHostModuleOptions extends LoadModuleOptions {
+  /** Explicit host-owned capability for trusted local development only. */
+  allowHostProjectCodeExecution: true;
 }

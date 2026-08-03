@@ -1,6 +1,7 @@
-import { reset } from "../../extensions/contracts.ts";
+import { register, tryResolve, unregister } from "../../extensions/contracts.ts";
+import type { SchemaValidator } from "../../extensions/schema/index.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   agentServiceConfigSchema,
   parseAgentServiceConfig,
@@ -8,8 +9,18 @@ import {
 } from "./config.ts";
 
 describe("agent/agent-service-config", () => {
+  let previousSchemaValidator: SchemaValidator | undefined;
+
+  beforeEach(() => {
+    previousSchemaValidator = tryResolve<SchemaValidator>("SchemaValidator");
+    unregister("SchemaValidator");
+  });
+
   afterEach(() => {
-    reset();
+    unregister("SchemaValidator");
+    if (previousSchemaValidator !== undefined) {
+      register<SchemaValidator>("SchemaValidator", previousSchemaValidator);
+    }
   });
 
   it("registers the built-in schema validator when used directly", () => {
@@ -25,6 +36,15 @@ describe("agent/agent-service-config", () => {
 
     assertEquals(config.VERYFRONT_MCP_URL, "https://api.example.com/mcp");
     assertEquals(agentServiceConfigSchema.parse({}).PORT, 3001);
+  });
+
+  it("derives the MCP URL without duplicating path separators", () => {
+    const config = parseAgentServiceConfig({
+      VERYFRONT_API_URL: "https://api.example.com/",
+    });
+
+    assertEquals(config.VERYFRONT_API_URL, "https://api.example.com/");
+    assertEquals(config.VERYFRONT_MCP_URL, "https://api.example.com/mcp");
   });
 
   it("builds agent service config defaults", () => {
@@ -44,6 +64,7 @@ describe("agent/agent-service-config", () => {
     assertEquals(config.VERYFRONT_AGENT_SERVICE_REGISTRATION, "auto");
     assertEquals(config.VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS, 30000);
     assertEquals(config.VERYFRONT_AGENT_SERVICE_REGION, undefined);
+    assertEquals(config.SERVICE_ACCOUNT_VERYFRONT_SERVER_ID, undefined);
     assertEquals(config.VERYFRONT_ENABLE_DURABLE_INVOKE_AGENT, false);
     assertEquals(config.VERYFRONT_ENABLE_DURABLE_TASK, false);
     assertEquals(config.VERYFRONT_CONTEXT_COMPACTION_ENABLED, true);
@@ -75,6 +96,7 @@ describe("agent/agent-service-config", () => {
       VERYFRONT_AGENT_SERVICE_REGISTRATION: "enabled",
       VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: "45000",
       VERYFRONT_AGENT_SERVICE_REGION: "iad",
+      SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: "00000000-0000-0000-0000-000000000001",
       POD_NAME: "veryfront-agent-7dd7b6f4d8-a1b2c",
       POD_UID: "11111111-1111-4111-a111-111111111111",
       POD_IP: "10.192.4.10",
@@ -106,6 +128,10 @@ describe("agent/agent-service-config", () => {
     assertEquals(config.VERYFRONT_AGENT_SERVICE_REGISTRATION, "enabled");
     assertEquals(config.VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS, 45000);
     assertEquals(config.VERYFRONT_AGENT_SERVICE_REGION, "iad");
+    assertEquals(
+      config.SERVICE_ACCOUNT_VERYFRONT_SERVER_ID,
+      "00000000-0000-0000-0000-000000000001",
+    );
     assertEquals(config.POD_NAME, "veryfront-agent-7dd7b6f4d8-a1b2c");
     assertEquals(config.POD_UID, "11111111-1111-4111-a111-111111111111");
     assertEquals(config.POD_IP, "10.192.4.10");

@@ -27,24 +27,36 @@ describe("babel-node-positions", () => {
       assertEquals(result.includes('data-node-id="node-2"'), true);
     });
 
-    it("injects on custom components", () => {
+    it("does NOT inject on component elements (props would break Fragment-rendering libs)", () => {
       const source = `import { Button } from "./button";
 export default function Page() {
   return <Button>Click</Button>;
 }`;
       const result = injectNodePositions(source, { filePath: "app/page.tsx" });
 
-      assertEquals(result.includes('data-node-name="Button"'), true);
-      assertEquals(result.includes('data-node-file="app/page.tsx"'), true);
+      // Components receive these as React props, not DOM attributes; stamping
+      // them breaks libraries that forward props onto a Fragment (Headless UI).
+      assertEquals(result.includes('data-node-name="Button"'), false);
     });
 
-    it("handles member expressions like Foo.Bar", () => {
+    it("does NOT inject on member-expression components like Foo.Bar", () => {
       const source = `export default function Page() {
   return <Icons.Arrow />;
 }`;
       const result = injectNodePositions(source, { filePath: "app/page.tsx" });
 
-      assertEquals(result.includes('data-node-name="Icons.Arrow"'), true);
+      assertEquals(result.includes('data-node-name="Icons.Arrow"'), false);
+    });
+
+    it("still injects on host children rendered inside a component", () => {
+      const source = `import { Menu } from "./menu";
+export default function Page() {
+  return <Menu><button>Edit</button></Menu>;
+}`;
+      const result = injectNodePositions(source, { filePath: "app/page.tsx" });
+
+      assertEquals(result.includes('data-node-name="Menu"'), false);
+      assertEquals(result.includes('data-node-name="button"'), true);
     });
 
     it("skips SVG elements", () => {

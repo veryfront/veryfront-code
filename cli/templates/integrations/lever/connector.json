@@ -45,7 +45,7 @@
   ],
   "tools": [
     {
-      "id": "list_opportunities",
+      "id": "lever__list_opportunities",
       "name": "List Opportunities",
       "description": "List candidate opportunities",
       "requiresWrite": false,
@@ -118,7 +118,7 @@
       }
     },
     {
-      "id": "get_opportunity",
+      "id": "lever__get_opportunity",
       "name": "Get Opportunity",
       "description": "Get a single opportunity",
       "requiresWrite": false,
@@ -144,7 +144,7 @@
       }
     },
     {
-      "id": "list_postings",
+      "id": "lever__list_postings",
       "name": "List Postings",
       "description": "List job postings",
       "requiresWrite": false,
@@ -176,7 +176,7 @@
       }
     },
     {
-      "id": "get_posting",
+      "id": "lever__get_posting",
       "name": "Get Posting",
       "description": "Get a single job posting",
       "requiresWrite": false,
@@ -197,7 +197,7 @@
       }
     },
     {
-      "id": "list_stages",
+      "id": "lever__list_stages",
       "name": "List Stages",
       "description": "List pipeline stages",
       "requiresWrite": false,

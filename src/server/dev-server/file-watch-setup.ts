@@ -1,5 +1,5 @@
 import { serverLogger as logger } from "#veryfront/utils";
-import { handleErrorWithFallback } from "#veryfront/errors/index.ts";
+import { handleErrorWithFallback } from "#veryfront/errors";
 import { join, relative, sep } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { OptimizedFileWatcher } from "./file-watcher.ts";
@@ -16,25 +16,21 @@ const METRICS_LOG_INTERVAL = 10;
 const DEFAULT_PRIMITIVE_DIRS = ["tools", "agents", "workflows", "prompts", "resources"];
 
 /**
- * Patterns for paths that should NOT trigger HMR updates.
- * These are generated/cached files that change during normal operation
+ * Exact directory-name path segments that should NOT trigger HMR updates.
+ * These contain generated or cached files that change during normal operation
  * but don't represent actual source code changes.
  */
-const IGNORED_PATH_PATTERNS = [
-  ".cache/",
-  ".cache\\",
-  "node_modules/",
-  "node_modules\\",
-  ".git/",
-  ".git\\",
-  ".veryfront/",
-  ".veryfront\\",
+const IGNORED_DIRECTORY_NAMES = new Set([
+  ".cache",
+  "node_modules",
+  ".git",
+  ".veryfront",
+  ".omx",
   // Tool output directories that live inside the project root. Tools such as
   // the Playwright MCP server write per-step artifacts here continuously,
   // which would otherwise drive an open-ended HMR refresh loop.
-  ".playwright-mcp/",
-  ".playwright-mcp\\",
-];
+  ".playwright-mcp",
+]);
 
 /**
  * Generated-artifact file extensions that are never source and must never
@@ -48,6 +44,12 @@ const IGNORED_PATH_PATTERNS = [
  * would wrongly suppress legitimate updates.
  */
 const IGNORED_ARTIFACT_EXTENSIONS = new Set([".log", ".tmp"]);
+
+/**
+ * Generated file names written at project root during dev-server request
+ * handling. These files are not source and must not trigger HMR.
+ */
+const TRANSIENT_MIDDLEWARE_MODULE_RE = /^\.vf-middleware-.+\.mjs$/;
 
 /**
  * Project-root directory names that contain runtime data (not source code)
@@ -77,6 +79,11 @@ function hasIgnoredArtifactExtension(path: string): boolean {
   return false;
 }
 
+function hasIgnoredArtifactFileName(path: string): boolean {
+  const fileName = path.split(/[\\/]/).at(-1)?.toLowerCase() ?? "";
+  return TRANSIENT_MIDDLEWARE_MODULE_RE.test(fileName);
+}
+
 /**
  * Check if a path should be ignored for HMR purposes — either because it lives
  * in a generated/output directory or because it is a generated-artifact file.
@@ -84,8 +91,9 @@ function hasIgnoredArtifactExtension(path: string): boolean {
  * Exported for unit testing.
  */
 export function shouldIgnorePath(path: string): boolean {
-  return IGNORED_PATH_PATTERNS.some((pattern) => path.includes(pattern)) ||
-    hasIgnoredArtifactExtension(path);
+  return path.split(/[\\/]/).some((segment) => IGNORED_DIRECTORY_NAMES.has(segment)) ||
+    hasIgnoredArtifactExtension(path) ||
+    hasIgnoredArtifactFileName(path);
 }
 
 /**

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "@std/assert";
+import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import type {
   AgentServiceSandboxToolsOptions,
   AgentServiceSandboxToolsResult,
@@ -13,6 +13,8 @@ import type {
   ToolDefinition,
   ToolExecutionContext,
 } from "#veryfront/tool";
+import { dynamicTool } from "#veryfront/tool";
+import { defineSchema } from "../../schemas/define.ts";
 import {
   prepareDefaultHostedChildForkSandboxToolSources,
   prepareDefaultHostedChildForkToolSources,
@@ -26,12 +28,20 @@ const trustedStudioProfile: RuntimeClientProfile = {
   capabilities: ["ui_panels"],
 };
 
+const passthroughToolSchema = defineSchema((v) => v.object({}).passthrough())();
+
 function remoteTool(name: string): ToolDefinition {
   return {
     name,
     description: `${name} description`,
     parameters: { type: "object", properties: {} },
   };
+}
+
+function toToolInputRecord(input: unknown): Record<string, unknown> {
+  return typeof input === "object" && input !== null && !Array.isArray(input)
+    ? input as Record<string, unknown>
+    : {};
 }
 
 function createRemoteSourceFixtures() {
@@ -57,7 +67,11 @@ function createRemoteSourceFixtures() {
         ),
       executeTool: (toolName, args, context) => {
         executeCalls.push({ sourceId, toolName, args, context });
-        return Promise.resolve({ success: true, project_id: args.project_id });
+        return Promise.resolve({
+          success: true,
+          project_id: "project-2",
+          slug: args.project_reference,
+        });
       },
     };
   };
@@ -116,7 +130,8 @@ function createSandboxToolsResult(input: {
 
 Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and global tools", async () => {
   const fixtures = createRemoteSourceFixtures();
-  const switchedProjects: string[] = [];
+  const switchedProjectIds: string[] = [];
+  const switchedProjects: Array<{ projectId: string; projectSlug?: string }> = [];
 
   const result = await prepareDefaultHostedChildForkToolSources({
     authToken: "token-1",
@@ -132,8 +147,11 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
         execute: () => ({ ok: true }),
       },
     },
-    onConfirmedStudioProjectSwitch: (projectId) => {
-      switchedProjects.push(projectId);
+    onConfirmedStudioProjectSwitch: (projectId, confirmedProject) => {
+      switchedProjectIds.push(projectId);
+      if (confirmedProject) {
+        switchedProjects.push(confirmedProject);
+      }
     },
     createRemoteToolSource: fixtures.createRemoteToolSource,
   });
@@ -152,9 +170,10 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
     ],
   );
 
-  await result.forkTools.studio_open_project?.execute?.({ project_id: "project-2" });
+  await result.forkTools.studio_open_project?.execute?.({ project_reference: "project-two" });
 
-  assertEquals(switchedProjects, ["project-2"]);
+  assertEquals(switchedProjectIds, ["project-2"]);
+  assertEquals(switchedProjects, [{ projectId: "project-2", projectSlug: "project-two" }]);
   assertEquals(fixtures.executeCalls, [
     {
       sourceId: "veryfront-mcp-fork",
@@ -165,7 +184,7 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
     {
       sourceId: "studio-mcp-live-tools",
       toolName: "studio_open_project",
-      args: { project_id: "project-2" },
+      args: { project_reference: "project-two" },
       context: undefined,
     },
   ]);
@@ -227,6 +246,205 @@ Deno.test("prepareDefaultHostedChildForkToolSources filters API MCP tools with t
   }
 
   assertEquals(Object.keys(result.forkTools), ["delete_server", "update_file"]);
+});
+
+Deno.test("prepareDefaultHostedChildForkToolSources enforces API MCP tool policy at listing and execution", async () => {
+  const executed: string[] = [];
+  let listedDefinitions: string[] = [];
+  const result = await prepareDefaultHostedChildForkToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    mcpServers: [{
+      kind: "veryfront-api",
+      toolPolicy: { allow: ["update_file"], deny: ["delete_file"] },
+    }],
+    getProjectId: () => "project-1",
+    createRemoteToolSource: (config) => ({
+      id: config.id ?? "source",
+      listTools: () => Promise.resolve([remoteTool("update_file"), remoteTool("delete_file")]),
+      executeTool: (toolName) => {
+        executed.push(toolName);
+        return Promise.resolve({ ok: true });
+      },
+    }),
+    createToolsFromRemoteDefinitions: (source, definitions) => {
+      listedDefinitions = definitions.map((definition) => definition.name);
+      return {
+        ...Object.fromEntries(
+          definitions.map((definition) => [
+            definition.name,
+            dynamicTool({
+              id: definition.name,
+              description: definition.description,
+              inputSchema: passthroughToolSchema,
+              execute: (input: unknown, context?: ToolExecutionContext) =>
+                source.executeTool(definition.name, toToolInputRecord(input), context),
+            }),
+          ]),
+        ),
+        delete_file: dynamicTool({
+          id: "delete_file",
+          description: "hostile materialized denied tool",
+          inputSchema: passthroughToolSchema,
+          execute: (input: unknown, context?: ToolExecutionContext) =>
+            source.executeTool("delete_file", toToolInputRecord(input), context),
+        }),
+      };
+    },
+  });
+
+  assertEquals(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assertEquals(listedDefinitions, ["update_file"]);
+  assertEquals(Object.keys(result.forkTools), ["delete_file", "update_file"]);
+  await result.forkTools.update_file?.execute?.({});
+  await assertRejects(
+    async () => await result.forkTools.delete_file!.execute!({}),
+    Error,
+    'Tool "delete_file" is not allowed for this MCP server',
+  );
+  assertEquals(executed, ["get_tool_access_profile", "update_file"]);
+});
+
+Deno.test("prepareDefaultHostedChildForkToolSources enforces generic MCP tool policy at listing and execution", async () => {
+  const executed: string[] = [];
+  let listedDefinitions: string[] = [];
+  const result = await prepareDefaultHostedChildForkToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    mcpServers: [{
+      id: "docs",
+      endpoint: "https://docs.example/mcp",
+      toolPolicy: { allow: ["search_docs"], deny: ["delete_docs"] },
+    }],
+    getProjectId: () => "project-1",
+    createRemoteToolSource: (config) => ({
+      id: config.id ?? "source",
+      listTools: () => Promise.resolve([remoteTool("search_docs"), remoteTool("delete_docs")]),
+      executeTool: (toolName) => {
+        executed.push(toolName);
+        return Promise.resolve({ ok: true });
+      },
+    }),
+    createToolsFromRemoteDefinitions: (source, definitions) => {
+      listedDefinitions = definitions.map((definition) => definition.name);
+      return {
+        ...Object.fromEntries(
+          definitions.map((definition) => [
+            definition.name,
+            dynamicTool({
+              id: definition.name,
+              description: definition.description,
+              inputSchema: passthroughToolSchema,
+              execute: (input: unknown, context?: ToolExecutionContext) =>
+                source.executeTool(definition.name, toToolInputRecord(input), context),
+            }),
+          ]),
+        ),
+        delete_docs: dynamicTool({
+          id: "delete_docs",
+          description: "hostile materialized denied tool",
+          inputSchema: passthroughToolSchema,
+          execute: (input: unknown, context?: ToolExecutionContext) =>
+            source.executeTool("delete_docs", toToolInputRecord(input), context),
+        }),
+      };
+    },
+  });
+
+  assertEquals(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assertEquals(listedDefinitions, ["search_docs"]);
+  assertEquals(Object.keys(result.forkTools), ["delete_docs", "search_docs"]);
+  await result.forkTools.search_docs?.execute?.({});
+  await assertRejects(
+    async () => await result.forkTools.delete_docs!.execute!({}),
+    Error,
+    'Tool "delete_docs" is not allowed for this MCP server',
+  );
+  assertEquals(executed, ["search_docs"]);
+});
+
+Deno.test("prepareDefaultHostedChildForkToolSources enforces Studio MCP tool policy at listing and execution", async () => {
+  const executed: string[] = [];
+  const studioPolicy = {
+    allow: ["studio_open_project"],
+    deny: ["studio_delete_project"],
+  };
+  const result = await prepareDefaultHostedChildForkToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    mcpServers: [{
+      kind: "veryfront-studio",
+      toolPolicy: studioPolicy,
+    }],
+    studioMcpUrl: "https://studio.example/mcp",
+    clientProfile: trustedStudioProfile,
+    getProjectId: () => "project-1",
+    createLiveStudioTools: () =>
+      Promise.resolve({
+        tools: {
+          studio_open_project: {
+            description: "Open project",
+            execute: () => {
+              executed.push("studio_open_project");
+              return { ok: true };
+            },
+          },
+          studio_delete_project: {
+            description: "Delete project",
+            execute: () => {
+              executed.push("studio_delete_project");
+              return { ok: true };
+            },
+          },
+        },
+        close: () => Promise.resolve(),
+      }),
+  });
+
+  assertEquals(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assertEquals(Object.keys(result.forkTools), ["studio_open_project"]);
+  assertEquals(result.forkTools.studio_delete_project, undefined);
+  studioPolicy.allow = [];
+  assertThrows(
+    () => result.forkTools.studio_open_project?.execute?.({}),
+    Error,
+    'Tool "studio_open_project" is not allowed for this MCP server',
+  );
+  assertEquals(executed, []);
+});
+
+Deno.test("prepareDefaultHostedChildForkToolSources preserves explicit MCP opt-out", async () => {
+  const result = await prepareDefaultHostedChildForkToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    mcpServers: [],
+    getProjectId: () => "project-1",
+    createRemoteToolSource: () => {
+      throw new Error("remote MCP source must not be created");
+    },
+    createLiveStudioTools: () => {
+      throw new Error("Studio tools must not be created");
+    },
+  });
+
+  assertEquals(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assertEquals(result.forkTools, {});
 });
 
 Deno.test("prepareDefaultHostedChildForkToolSources reports Studio setup failures", async () => {
@@ -368,4 +586,44 @@ Deno.test("prepareDefaultHostedChildForkSandboxToolSources closes sandbox when s
     errorMessage: "MCP tool setup failed: studio unavailable",
   });
   assertEquals(sandboxClosed, true);
+});
+
+Deno.test("prepareDefaultHostedChildForkSandboxToolSources sanitizes cleanup failures", async () => {
+  let closeCalls = 0;
+  const logged: Array<{ message: string; metadata?: Record<string, unknown> }> = [];
+  const createBashTool: CreateSandboxBashTool = () => Promise.resolve({ tools: {} });
+
+  const result = await prepareDefaultHostedChildForkSandboxToolSources({
+    authToken: "<TOKEN>",
+    apiUrl: "https://api.example",
+    apiMcpUrl: "https://api.example/mcp",
+    mcpServers: [{ kind: "veryfront-studio" }],
+    getProjectId: () => "project-1",
+    createBashTool,
+    createLiveStudioTools: () => {
+      throw new Error("studio unavailable");
+    },
+    createAgentServiceSandboxTools: () =>
+      Promise.resolve(
+        createSandboxToolsResult({
+          closeSandbox: () => {
+            closeCalls++;
+            return Promise.reject(new Error("cleanup exposed <TOKEN> at <LOCAL_PATH>"));
+          },
+        }),
+      ),
+    logger: {
+      error: (message, metadata) => logged.push({ message, metadata }),
+    },
+  });
+
+  assertEquals(result, {
+    ok: false,
+    errorMessage: "MCP tool setup failed: studio unavailable",
+  });
+  assertEquals(closeCalls, 1);
+  assertEquals(
+    logged.find((entry) => entry.message.includes("close sandbox"))?.metadata,
+    { errorName: "Error" },
+  );
 });

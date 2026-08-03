@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import {
   Checkbox,
   Label,
-} from "../../../src/react/components/chat/ui/index.ts";
+} from "../../../src/react/components/ui/index.ts";
 import {
   DocsCode,
   DocsComposition,
@@ -13,7 +13,7 @@ import {
   DocsSection,
 } from "../../.storybook/docs";
 
-const importCode = `import { Checkbox } from "veryfront/chat/ui"`;
+const importCode = `import { Checkbox } from "veryfront/ui"`;
 
 function CheckboxDocsPage() {
   return (
@@ -62,7 +62,7 @@ function CheckboxDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/Checkbox",
+  title: "UI/Checkbox",
   component: Checkbox,
   tags: ["autodocs"],
   parameters: { layout: "centered", docs: { page: CheckboxDocsPage } },

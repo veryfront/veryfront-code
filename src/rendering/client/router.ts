@@ -8,6 +8,7 @@ import {
   NavigationHandlers,
   PageLoader,
   PageTransition,
+  snapshotClientRouteHead,
   ViewportPrefetch,
 } from "#veryfront/routing";
 import type { RouteData, SpaPageData } from "#veryfront/routing";
@@ -95,6 +96,7 @@ export class VeryfrontRouter {
   private options: RouterOptions;
   private spaMode: boolean;
   private spaNavigationHandler: SpaNavigationHandler | null = null;
+  private navigationSequence = 0;
 
   private pageLoader: PageLoader;
   private navigationHandlers: NavigationHandlers;
@@ -110,7 +112,8 @@ export class VeryfrontRouter {
     this.options = { ...globalOptions, ...options };
 
     this.baseUrl = this.options.baseUrl || globalThis.location.origin;
-    this.currentPath = globalThis.location.pathname;
+    this.currentPath =
+      `${globalThis.location.pathname}${globalThis.location.search}${globalThis.location.hash}`;
     this.spaMode = this.options.spaMode ?? globalThis.__VERYFRONT_SPA_MODE__ ?? false;
 
     this.pageLoader = new PageLoader();
@@ -204,7 +207,17 @@ export class VeryfrontRouter {
 
   private cacheCurrentPage(): void {
     const pageData = extractPageDataFromScript();
-    if (pageData) this.pageLoader.setCache(this.currentPath, pageData);
+    if (pageData) {
+      const managedHead = snapshotClientRouteHead(document);
+      this.pageLoader.setCache(this.currentPath, {
+        ...pageData,
+        managedHead,
+        ...(managedHead.some((entry) => entry.tagName === "script") ||
+            document.getElementById("root")?.querySelector("script")
+          ? { requiresFullDocumentNavigation: true }
+          : {}),
+      });
+    }
   }
 
   /**
@@ -216,6 +229,9 @@ export class VeryfrontRouter {
   async navigate(url: string, options?: boolean | NavigateOptions): Promise<void> {
     logger.debug(`Navigating to ${url} (SPA mode: ${this.spaMode})`);
 
+    const navigationId = ++this.navigationSequence;
+    this.pageTransition.cancelPendingTransition();
+    this.pageTransition.setLoadingState(false);
     const history = toHistoryMode(options);
     const sameRoute = this.pathnameOf(url) === this.pathnameOf(this.currentPath);
 
@@ -230,6 +246,7 @@ export class VeryfrontRouter {
       // query-only (or hash-only) change is client state here. Update the URL
       // and notify subscribers so `useRouter()` / `usePageContext()` re-render,
       // without reloading or refetching the page.
+      if (!this.isCurrentNavigation(navigationId)) return;
       this.currentPath = url;
       this.notify();
       this.options.onComplete?.(url);
@@ -238,13 +255,18 @@ export class VeryfrontRouter {
     }
 
     if (this.spaMode && this.spaNavigationHandler) {
-      await this.loadSpaPage(url);
+      await this.loadSpaPage(url, navigationId);
     } else {
-      await this.loadPage(url);
+      if (await this.loadPage(url, true, navigationId)) return;
     }
 
+    if (!this.isCurrentNavigation(navigationId)) return;
     this.notify();
     this.options.onNavigate?.(url);
+  }
+
+  private isCurrentNavigation(navigationId: number): boolean {
+    return navigationId === this.navigationSequence;
   }
 
   /**
@@ -258,17 +280,20 @@ export class VeryfrontRouter {
     return policy({ currentHref: this.currentPath, nextHref: nextUrl, sameRoute });
   }
 
-  private async loadSpaPage(path: string): Promise<void> {
+  private async loadSpaPage(path: string, navigationId: number): Promise<void> {
     logger.debug(`Loading SPA page: ${path}`);
 
     try {
       const spaData = await this.pageLoader.loadSpaPageData(path);
+      if (!this.isCurrentNavigation(navigationId)) return;
       await this.spaNavigationHandler?.(spaData);
+      if (!this.isCurrentNavigation(navigationId)) return;
 
       this.currentPath = path;
       this.handleScrollAfterNavigation();
       this.options.onComplete?.(path);
     } catch (error) {
+      if (!this.isCurrentNavigation(navigationId)) return;
       const normalizedError = error instanceof Error ? error : new Error(String(error));
       logger.error(`Failed to load SPA page ${path}`, normalizedError);
       this.options.onError?.(normalizedError);
@@ -289,14 +314,23 @@ export class VeryfrontRouter {
     this.navigationHandlers.clearPopStateFlag();
   }
 
-  private async loadPage(path: string, updateUI = true): Promise<void> {
+  /** Returns true when navigation was handed to the browser document loader. */
+  private async loadPage(path: string, updateUI = true, navigationId: number): Promise<boolean> {
     if (this.pageLoader.isCached(path)) {
       logger.debug(`Loading ${path} from cache`);
       const data = this.pageLoader.getCached(path);
 
       if (data) {
-        if (updateUI) this.updatePage(data);
-        return;
+        if (!this.isCurrentNavigation(navigationId)) return false;
+        if (updateUI && data.requiresFullDocumentNavigation) {
+          globalThis.location.assign(path);
+          return true;
+        }
+        if (updateUI) this.updatePage(data, path);
+        this.currentPath = path;
+        this.pageTransition.setLoadingState(false);
+        this.options.onComplete?.(path);
+        return false;
       }
 
       logger.warn(`Cache entry for ${path} was unexpectedly null, fetching fresh data`);
@@ -306,18 +340,26 @@ export class VeryfrontRouter {
 
     try {
       const data = await this.pageLoader.loadPage(path);
+      if (!this.isCurrentNavigation(navigationId)) return false;
 
-      if (updateUI) this.updatePage(data);
+      if (updateUI && data.requiresFullDocumentNavigation) {
+        globalThis.location.assign(path);
+        return true;
+      }
+      if (updateUI) this.updatePage(data, path);
 
       this.currentPath = path;
       this.options.onComplete?.(path);
+      return false;
     } catch (error) {
+      if (!this.isCurrentNavigation(navigationId)) return false;
       const normalizedError = error instanceof Error ? error : new Error(String(error));
       logger.error(`Failed to load ${path}`, normalizedError);
       this.options.onError?.(normalizedError);
       this.pageTransition.showError(normalizedError);
+      return false;
     } finally {
-      this.pageTransition.setLoadingState(false);
+      if (this.isCurrentNavigation(navigationId)) this.pageTransition.setLoadingState(false);
     }
   }
 
@@ -329,17 +371,19 @@ export class VeryfrontRouter {
     await this.pageLoader.prefetch(path);
   }
 
-  private updatePage(data: RouteData): void {
+  private updatePage(data: RouteData, targetPath: string): void {
     if (!this.root) return;
 
     const isPopState = this.navigationHandlers.isPopState();
-    const scrollY = this.navigationHandlers.getScrollPosition(this.currentPath);
+    const scrollY = this.navigationHandlers.getScrollPosition(targetPath);
 
     this.pageTransition.updatePage(data, isPopState, scrollY);
     this.navigationHandlers.clearPopStateFlag();
   }
 
   destroy(): void {
+    this.navigationSequence++;
+    this.pageTransition.setLoadingState(false);
     document.removeEventListener("click", this.handleClick);
     globalThis.removeEventListener("popstate", this.handlePopState);
     document.removeEventListener("mouseover", this.handleMouseOver);

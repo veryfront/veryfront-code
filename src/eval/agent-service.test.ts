@@ -2,14 +2,24 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { AgUiRequestSchema } from "veryfront/agent";
-import { datasets, evalAgent, metrics, runEval } from "veryfront/eval";
+import { datasets, evalAgent, type EvalAgentAdapterResult, metrics, runEval } from "veryfront/eval";
+import { defineSchema } from "veryfront/schemas";
+import { type Tool, tool } from "veryfront/tool";
 import {
   buildAgentServiceEvalRequestBody,
   createAgentServiceEvalAdapter,
+  createDurableRunCanaryApiClient,
+  createDurableRunCanaryRunner,
+  createDurableRunTokenGrowthCanaryCase,
   createLiveEvalCaseSupport,
+  type DurableRunCanaryApiClient,
+  type DurableRunCanaryExecution,
+  type DurableRunCanaryRunnerConfig,
+  type DurableRunCanaryRunSummary,
   evaluateAgentServiceEvalEnvironment,
   evaluateRuntimeConfidenceEnv,
   resolveAgentServiceEvalEnvironment,
+  resolveDurableRunCanaryEnvironment,
   runDurableRunCanaryCli,
   runLiveEvalCli,
 } from "veryfront/eval/agent-service";
@@ -26,6 +36,51 @@ function createSseResponse(
       headers: { "content-type": "text/event-stream" },
     },
   );
+}
+
+function createCompletedDurableRunCanaryApiClient(
+  conversationId: string,
+  options: { failStartPrompt?: string } = {},
+): {
+  apiClient: DurableRunCanaryApiClient;
+  createdRunIds: string[];
+} {
+  const createdRunIds: string[] = [];
+
+  return {
+    createdRunIds,
+    apiClient: {
+      createDurableRootRun: async ({ runId }) => {
+        createdRunIds.push(runId);
+      },
+      getRunSummary: async ({ runId }) => ({
+        runId,
+        conversationId,
+        messageId: "22222222-2222-4222-8222-222222222222",
+        agentId: "veryfront",
+        status: "completed",
+        latestEventId: 1,
+        latestExternalEventSequence: null,
+        waitingToolCallId: null,
+        waitingToolName: null,
+        terminalErrorCode: null,
+        terminalErrorMessage: null,
+        startedAt: "2026-07-05T19:00:00.000Z",
+        finishedAt: "2026-07-05T19:00:01.000Z",
+      }),
+      listMessagesForCanary: async () => [],
+      sendUserMessageForCanary: async () => ({
+        id: "33333333-3333-4333-8333-333333333333",
+        role: "user",
+        parts: [],
+      }),
+      startDurableRun: async ({ prompt }) => {
+        if (prompt === options.failStartPrompt) {
+          throw new Error(`failed to start ${prompt}`);
+        }
+      },
+    },
+  };
 }
 
 describe("eval/agent-service", () => {
@@ -49,6 +104,64 @@ describe("eval/agent-service", () => {
       branchId: "branch_123",
       model: "provider/model",
     });
+  });
+
+  it("resolves an explicit direct model for durable canaries", () => {
+    const environment = resolveDurableRunCanaryEnvironment({
+      VERYFRONT_API_URL: "https://api.example.test",
+      VERYFRONT_TOKEN: "token",
+      AG_UI_EVAL_PROJECT_ID: "project_123",
+      AG_UI_EVAL_MODEL: "anthropic/claude-sonnet-4-6",
+    });
+
+    assertEquals(environment.model, "anthropic/claude-sonnet-4-6");
+  });
+
+  it("forwards the durable canary model into the runner and report", async () => {
+    const reportDirectory = await Deno.makeTempDir();
+    const reportPath = `${reportDirectory}/durable.json`;
+    let runnerConfig: DurableRunCanaryRunnerConfig | undefined;
+
+    try {
+      const exitCode = await runDurableRunCanaryCli({
+        agentId: "veryfront",
+        env: {
+          VERYFRONT_API_URL: "https://api.example.test",
+          VERYFRONT_TOKEN: "token",
+          AG_UI_EVAL_PROJECT_ID: "project_123",
+          AG_UI_EVAL_MODEL: "anthropic/claude-sonnet-4-6",
+          DURABLE_CANARY_REPORT_PATH: reportPath,
+        },
+        createCases: () => [{
+          id: "model-forwarding",
+          label: "Durable canary model forwarding",
+          prepare: async () => ({
+            cleanup: async () => {},
+            conversationId: "11111111-1111-4111-8111-111111111111",
+            prompt: "Verify durable canary model forwarding",
+            title: "Durable canary model forwarding",
+            validate: () => {},
+          }),
+        }],
+        createRunner: (config) => {
+          runnerConfig = config;
+          return createDurableRunCanaryRunner(
+            config,
+            createCompletedDurableRunCanaryApiClient(
+              "11111111-1111-4111-8111-111111111111",
+            ).apiClient,
+          );
+        },
+        log: () => {},
+      });
+
+      assertEquals(exitCode, 0);
+      assertEquals(runnerConfig?.model, "anthropic/claude-sonnet-4-6");
+      const report = JSON.parse(await Deno.readTextFile(reportPath));
+      assertEquals(report.model, "anthropic/claude-sonnet-4-6");
+    } finally {
+      await Deno.remove(reportDirectory, { recursive: true });
+    }
   });
 
   it("reports missing live eval environment blockers", () => {
@@ -302,6 +415,41 @@ describe("eval/agent-service", () => {
     assertStringIncludes(JSON.stringify(record.trace.events), "RUN_FINISHED");
   });
 
+  it("rejects mockTools before fetching from the hosted agent service", async () => {
+    let fetchCalled = false;
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () => {
+        fetchCalled = true;
+        return createSseResponse([]);
+      },
+    });
+    const definition = evalAgent({
+      id: "eval:hosted-mocks",
+      target: "agent:veryfront",
+      dataset: datasets.inline([{ id: "smoke", input: "List files" }]),
+      mockTools: {
+        list_files: tool({
+          id: "list_files",
+          description: "List files",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: async () => [],
+        }) as Tool,
+      },
+    });
+
+    const result = await adapter({
+      definition,
+      example: { id: "smoke", input: "List files" },
+      repetition: 1,
+    }) as EvalAgentAdapterResult;
+
+    assertEquals(fetchCalled, false);
+    assertEquals(result.completed, false);
+    assertStringIncludes(result.error ?? "", "mockTools");
+  });
+
   it("marks AG-UI tool result failures in eval traces", async () => {
     const adapter = createAgentServiceEvalAdapter({
       endpoint: "http://127.0.0.1:4311/api/ag-ui",
@@ -516,10 +664,314 @@ describe("eval/agent-service", () => {
     assertEquals(typeof mod.createAgentServiceEvalAdapter, "function");
     assertEquals(typeof mod.runLiveEvalCli, "function");
     assertEquals(typeof mod.runDurableRunCanaryCli, "function");
+    assertEquals(typeof mod.createDurableRunTokenGrowthCanaryCase, "function");
     assertEquals(typeof mod.evaluateRuntimeConfidenceEnv, "function");
     assertEquals(typeof runLiveEvalCli, "function");
     assertEquals(typeof runDurableRunCanaryCli, "function");
+    assertEquals(typeof createDurableRunTokenGrowthCanaryCase, "function");
     assertEquals(typeof evaluateRuntimeConfidenceEnv, "function");
+  });
+
+  it("builds a two-turn durable token-growth canary", async () => {
+    const testCase = createDurableRunTokenGrowthCanaryCase({
+      conversationId: "11111111-1111-4111-8111-111111111111",
+      marker: "TOKEN_GROWTH_TEST_MARKER",
+    });
+
+    const prepared = await testCase.prepare();
+
+    assertEquals(testCase.id, "durable-token-growth-follow-up");
+    assertEquals(prepared.conversationId, "11111111-1111-4111-8111-111111111111");
+    assertStringIncludes(prepared.prompt, "TOKEN_GROWTH_TEST_MARKER");
+    assertStringIncludes(prepared.followUpPrompt ?? "", "TOKEN_GROWTH_TEST_MARKER");
+  });
+
+  it("retains ordered run identities for a two-prompt durable canary", async () => {
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const { apiClient, createdRunIds } = createCompletedDurableRunCanaryApiClient(conversationId);
+    let validationExecutions: DurableRunCanaryExecution[] = [];
+    const runner = createDurableRunCanaryRunner(
+      {
+        agentId: "veryfront",
+        apiUrl: "https://api.example.test",
+        authToken: "token",
+        keepSuccessfulEvidence: false,
+        projectId: "project_123",
+        requestTimeoutMs: 1_000,
+      },
+      apiClient,
+    );
+
+    const result = await runner.runCase({
+      id: "two-prompt",
+      label: "Two prompt",
+      prepare: async () => ({
+        cleanup: async () => {},
+        conversationId,
+        followUpPrompt: "follow up",
+        prompt: "initial",
+        title: "Two prompt",
+        validate: ({ executions }) => {
+          validationExecutions = executions;
+        },
+      }),
+    });
+
+    assertEquals(createdRunIds.length, 2);
+    assertEquals(result.runIds, createdRunIds);
+    assertEquals(validationExecutions.map(({ runId }) => runId), createdRunIds);
+    assertEquals(result.runId, createdRunIds[1]);
+  });
+
+  it("identifies durable canary runs as the trusted Studio client", async () => {
+    let requestBody: unknown;
+    const client = createDurableRunCanaryApiClient({
+      agentId: "veryfront",
+      apiUrl: "https://api.example.test",
+      authToken: "token",
+      projectId: "11111111-1111-4111-8111-111111111111",
+      model: "anthropic/claude-sonnet-4-6",
+      requestTimeoutMs: 1_000,
+      fetch: async (_input, init) => {
+        requestBody = JSON.parse(String(init?.body));
+        return Response.json({});
+      },
+    });
+
+    await client.startDurableRun({
+      conversationId: "11111111-1111-4111-8111-111111111111",
+      runId: "run_studio_client",
+      messageId: "22222222-2222-4222-8222-222222222222",
+      prompt: "Exercise Studio-capable durable tools",
+      userMessageId: "33333333-3333-4333-8333-333333333333",
+    });
+
+    assertEquals(requestBody, {
+      kind: "agent",
+      owner: {
+        kind: "conversation",
+        id: "11111111-1111-4111-8111-111111111111",
+      },
+      public_id: "run_studio_client",
+      request: {
+        mode: "agent",
+        agent_id: "veryfront",
+        input: {
+          messages: [
+            {
+              id: "33333333-3333-4333-8333-333333333333",
+              role: "user",
+              parts: [{ type: "text", text: "Exercise Studio-capable durable tools" }],
+            },
+          ],
+          context: {
+            conversation_id: "11111111-1111-4111-8111-111111111111",
+            project_id: "11111111-1111-4111-8111-111111111111",
+            branch_id: null,
+          },
+          durable_root_run: {
+            run_id: "run_studio_client",
+            message_id: "22222222-2222-4222-8222-222222222222",
+          },
+          forwarded_props: {
+            model: "anthropic/claude-sonnet-4-6",
+            veryfront: {
+              client: {
+                id: "veryfront-studio",
+                type: "web",
+                platform: "durable-canary",
+              },
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it("reports exactly one run identity for a one-prompt durable canary", async () => {
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const { apiClient, createdRunIds } = createCompletedDurableRunCanaryApiClient(conversationId);
+    let validationRunIds: string[] = [];
+    const runner = createDurableRunCanaryRunner(
+      {
+        agentId: "veryfront",
+        apiUrl: "https://api.example.test",
+        authToken: "token",
+        keepSuccessfulEvidence: false,
+        projectId: "project_123",
+        requestTimeoutMs: 1_000,
+      },
+      apiClient,
+    );
+
+    const result = await runner.runCase({
+      id: "one-prompt",
+      label: "One prompt",
+      prepare: async () => ({
+        cleanup: async () => {},
+        conversationId,
+        prompt: "initial",
+        title: "One prompt",
+        validate: ({ executions }) => {
+          validationRunIds = executions.map(({ runId }) => runId);
+        },
+      }),
+    });
+
+    assertEquals(createdRunIds.length, 1);
+    assertEquals(result.runIds, createdRunIds);
+    assertEquals(validationRunIds, createdRunIds);
+    assertEquals(result.runId, createdRunIds[0]);
+  });
+
+  it("retains the created initial run identity when starting it fails", async () => {
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const { apiClient, createdRunIds } = createCompletedDurableRunCanaryApiClient(
+      conversationId,
+      { failStartPrompt: "initial" },
+    );
+    const runner = createDurableRunCanaryRunner(
+      {
+        agentId: "veryfront",
+        apiUrl: "https://api.example.test",
+        authToken: "token",
+        keepSuccessfulEvidence: false,
+        projectId: "project_123",
+        requestTimeoutMs: 1_000,
+      },
+      apiClient,
+    );
+
+    const result = await runner.runCase({
+      id: "initial-start-failure",
+      label: "Initial start failure",
+      prepare: async () => ({
+        cleanup: async () => {},
+        conversationId,
+        prompt: "initial",
+        title: "Initial start failure",
+        validate: () => {
+          throw new Error("validation must not run");
+        },
+      }),
+    });
+
+    assertEquals(createdRunIds.length, 1);
+    assertEquals(result.runIds, createdRunIds);
+    assertStringIncludes(result.details, "failed to start initial");
+  });
+
+  it("retains the created follow-up run identity when starting it fails", async () => {
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const { apiClient, createdRunIds } = createCompletedDurableRunCanaryApiClient(
+      conversationId,
+      { failStartPrompt: "follow up" },
+    );
+    const runner = createDurableRunCanaryRunner(
+      {
+        agentId: "veryfront",
+        apiUrl: "https://api.example.test",
+        authToken: "token",
+        keepSuccessfulEvidence: false,
+        projectId: "project_123",
+        requestTimeoutMs: 1_000,
+      },
+      apiClient,
+    );
+
+    const result = await runner.runCase({
+      id: "follow-up-start-failure",
+      label: "Follow-up start failure",
+      prepare: async () => ({
+        cleanup: async () => {},
+        conversationId,
+        followUpPrompt: "follow up",
+        prompt: "initial",
+        title: "Follow-up start failure",
+        validate: () => {
+          throw new Error("validation must not run");
+        },
+      }),
+    });
+
+    assertEquals(createdRunIds.length, 2);
+    assertEquals(result.runIds, createdRunIds);
+    assertStringIncludes(result.details, "failed to start follow up");
+  });
+
+  it("fails a follow-up durable canary when its setup run fails", async () => {
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const createdRunIds: string[] = [];
+    const startRunInputs: Array<{ prompt: string; runId: string }> = [];
+
+    function createRunSummary(
+      runId: string,
+      status: DurableRunCanaryRunSummary["status"],
+    ): DurableRunCanaryRunSummary {
+      return {
+        runId,
+        conversationId,
+        messageId: "22222222-2222-4222-8222-222222222222",
+        agentId: "veryfront",
+        status,
+        latestEventId: 1,
+        latestExternalEventSequence: null,
+        waitingToolCallId: null,
+        waitingToolName: null,
+        terminalErrorCode: status === "failed" ? "setup_failed" : null,
+        terminalErrorMessage: status === "failed" ? "setup failed" : null,
+        startedAt: "2026-07-05T19:00:00.000Z",
+        finishedAt: "2026-07-05T19:00:01.000Z",
+      };
+    }
+
+    const apiClient: DurableRunCanaryApiClient = {
+      createDurableRootRun: async ({ runId }) => {
+        createdRunIds.push(runId);
+      },
+      getRunSummary: async ({ runId }) =>
+        createRunSummary(runId, createdRunIds[0] === runId ? "failed" : "completed"),
+      listMessagesForCanary: async () => [],
+      sendUserMessageForCanary: async () => ({
+        id: "33333333-3333-4333-8333-333333333333",
+        role: "user",
+        parts: [],
+      }),
+      startDurableRun: async (input) => {
+        startRunInputs.push({ prompt: input.prompt, runId: input.runId });
+      },
+    };
+
+    const runner = createDurableRunCanaryRunner(
+      {
+        agentId: "veryfront",
+        apiUrl: "https://api.example.test",
+        authToken: "token",
+        keepSuccessfulEvidence: false,
+        projectId: "project_123",
+        requestTimeoutMs: 1_000,
+      },
+      apiClient,
+    );
+
+    const result = await runner.runCase({
+      id: "setup-failure",
+      label: "Setup failure",
+      prepare: async () => ({
+        cleanup: async () => {},
+        conversationId,
+        followUpPrompt: "follow up",
+        prompt: "setup",
+        title: "Setup failure",
+        validate: ({ run }) => {
+          assertEquals(run.status, "completed");
+        },
+      }),
+    });
+
+    assertEquals(result.status, "fail");
+    assertStringIncludes(result.details, "setup failed");
+    assertEquals(startRunInputs.map((input) => input.prompt), ["setup"]);
   });
 
   it("does not revive the legacy agent testing import path", async () => {

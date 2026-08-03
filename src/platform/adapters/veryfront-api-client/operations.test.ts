@@ -1,12 +1,25 @@
 import "#veryfront/schemas/_test-setup.ts";
 
 import {
+  assert,
   assertEquals,
   assertExists,
+  assertRejects,
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/index.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { JsonNonValueBytesTooLargeError } from "#veryfront/utils/response-body.ts";
+import {
+  createVeryfrontApiTransport,
+  type TransportRequestInit,
+} from "#veryfront/platform/adapters/veryfront-api-transport.ts";
 import { VeryfrontAPIOperations } from "./operations.ts";
 
 function createOps(
@@ -27,6 +40,55 @@ function assertMethodExists<T extends object>(obj: T, key: keyof T): void {
   assertEquals(typeof value, "function");
 }
 
+async function withoutAbortSignalAny<T>(operation: () => Promise<T>): Promise<T> {
+  const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, "any");
+  Object.defineProperty(AbortSignal, "any", {
+    configurable: true,
+    value: undefined,
+    writable: true,
+  });
+  try {
+    return await operation();
+  } finally {
+    if (descriptor === undefined) Reflect.deleteProperty(AbortSignal, "any");
+    else Object.defineProperty(AbortSignal, "any", descriptor);
+  }
+}
+
+function observeAbortListenerBalance(signal: AbortSignal): {
+  readonly counts: { added: number; removed: number };
+  restore(): void;
+} {
+  const addDescriptor = Object.getOwnPropertyDescriptor(signal, "addEventListener");
+  const removeDescriptor = Object.getOwnPropertyDescriptor(signal, "removeEventListener");
+  const addEventListener = signal.addEventListener.bind(signal);
+  const removeEventListener = signal.removeEventListener.bind(signal);
+  const counts = { added: 0, removed: 0 };
+  Object.defineProperty(signal, "addEventListener", {
+    configurable: true,
+    value: ((...args: Parameters<AbortSignal["addEventListener"]>) => {
+      if (args[0] === "abort") counts.added++;
+      return addEventListener(...args);
+    }) as AbortSignal["addEventListener"],
+  });
+  Object.defineProperty(signal, "removeEventListener", {
+    configurable: true,
+    value: ((...args: Parameters<AbortSignal["removeEventListener"]>) => {
+      if (args[0] === "abort") counts.removed++;
+      return removeEventListener(...args);
+    }) as AbortSignal["removeEventListener"],
+  });
+  return {
+    counts,
+    restore() {
+      if (addDescriptor === undefined) Reflect.deleteProperty(signal, "addEventListener");
+      else Object.defineProperty(signal, "addEventListener", addDescriptor);
+      if (removeDescriptor === undefined) Reflect.deleteProperty(signal, "removeEventListener");
+      else Object.defineProperty(signal, "removeEventListener", removeDescriptor);
+    },
+  };
+}
+
 describe("VeryfrontAPIOperations", () => {
   const originalFetch = globalThis.fetch;
 
@@ -44,6 +106,7 @@ describe("VeryfrontAPIOperations", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    __resetLogRecordEmitterForTests();
   });
 
   describe("class", () => {
@@ -190,6 +253,185 @@ describe("VeryfrontAPIOperations", () => {
       assertStringIncludes(requestedUrl, "include_server_functions=true");
     });
 
+    it("warn-logs normal 404s for branch file content reads", async () => {
+      const entries: LogEntry[] = [];
+      const originalWarn = console.warn;
+      console.warn = () => {};
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: "Not found" }), {
+            status: 404,
+            statusText: "Not Found",
+            headers: { "Content-Type": "application/json" },
+          }),
+        )) as typeof fetch;
+
+      try {
+        await assertRejects(
+          () => createOps().getBranchFile("project-slug", "main", "app/globals.css"),
+          Error,
+          "API request failed: 404 Not Found",
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(
+        entries.some((entry) =>
+          entry.level === "warn" &&
+          entry.component === "veryfront-api-client" &&
+          entry.message === "Request failed"
+        ),
+        true,
+      );
+    });
+
+    it("does not warn-log expected 404s for branch file content probes", async () => {
+      const entries: LogEntry[] = [];
+      const originalWarn = console.warn;
+      console.warn = () => {};
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: "Not found" }), {
+            status: 404,
+            statusText: "Not Found",
+            headers: { "Content-Type": "application/json" },
+          }),
+        )) as typeof fetch;
+
+      try {
+        await assertRejects(
+          () =>
+            createOps().getBranchFile("project-slug", "main", "app/globals.css", {
+              expectedMissing: true,
+            }),
+          Error,
+          "API request failed: 404 Not Found",
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(
+        entries.some((entry) =>
+          (entry.level === "warn" || entry.level === "error") &&
+          entry.component === "veryfront-api-client" &&
+          entry.message === "Request failed"
+        ),
+        false,
+      );
+    });
+
+    it("does not warn-log expected 404s for environment file content probes", async () => {
+      const entries: LogEntry[] = [];
+      const originalWarn = console.warn;
+      console.warn = () => {};
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: "Not found" }), {
+            status: 404,
+            statusText: "Not Found",
+            headers: { "Content-Type": "application/json" },
+          }),
+        )) as typeof fetch;
+
+      try {
+        await assertRejects(
+          () =>
+            createOps().getEnvironmentFile("project-slug", "production", "app/globals.css", {
+              expectedMissing: true,
+            }),
+          Error,
+          "API request failed: 404 Not Found",
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(
+        entries.some((entry) =>
+          (entry.level === "warn" || entry.level === "error") &&
+          entry.component === "veryfront-api-client" &&
+          entry.message === "Request failed"
+        ),
+        false,
+      );
+    });
+
+    it("does not warn-log expected 404s for release file content probes", async () => {
+      const entries: LogEntry[] = [];
+      const originalWarn = console.warn;
+      console.warn = () => {};
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: "Not found" }), {
+            status: 404,
+            statusText: "Not Found",
+            headers: { "Content-Type": "application/json" },
+          }),
+        )) as typeof fetch;
+
+      try {
+        await assertRejects(
+          () =>
+            createOps().getReleaseFile("project-slug", "release-id", "app/globals.css", {
+              expectedMissing: true,
+            }),
+          Error,
+          "API request failed: 404 Not Found",
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(
+        entries.some((entry) =>
+          (entry.level === "warn" || entry.level === "error") &&
+          entry.component === "veryfront-api-client" &&
+          entry.message === "Request failed"
+        ),
+        false,
+      );
+    });
+
+    it("still warn-logs authentication failures for branch file content", async () => {
+      const entries: LogEntry[] = [];
+      const originalWarn = console.warn;
+      console.warn = () => {};
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: "Invalid authentication token" }), {
+            status: 401,
+            statusText: "Unauthorized",
+            headers: { "Content-Type": "application/json" },
+          }),
+        )) as typeof fetch;
+
+      try {
+        await assertRejects(
+          () => createOps().getBranchFile("project-slug", "main", "app/globals.css"),
+          Error,
+          "API request failed: 401 Unauthorized",
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(
+        entries.some((entry) =>
+          entry.level === "warn" &&
+          entry.component === "veryfront-api-client" &&
+          entry.message === "Request failed"
+        ),
+        true,
+      );
+    });
+
     it("requests release file lists with server functions for runtime route discovery", async () => {
       let requestedUrl = "";
       stubJsonFetch((url) => {
@@ -227,6 +469,424 @@ describe("VeryfrontAPIOperations", () => {
       await createOps().getReleaseFile("project-slug", "release-id", "pages/api/articles-2.ts");
 
       assertStringIncludes(requestedUrl, "include_server_functions=true");
+    });
+  });
+
+  describe("bounded file content", () => {
+    it("returns exact UTF-8 bytes through the normal branch file endpoint", async () => {
+      let requestedUrl = "";
+      globalThis.fetch = ((input: RequestInfo | URL) => {
+        requestedUrl = String(input);
+        return Promise.resolve(
+          new Response(JSON.stringify({ ignored: [1, 2, 3], content: "é" }), {
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      }) as typeof fetch;
+
+      const bytes = await createOps().getBranchFileContentBytesWithinLimit(
+        "project-slug",
+        "main",
+        "styles/manifest.json",
+        2,
+      );
+
+      assertEquals([...bytes], [0xc3, 0xa9]);
+      assertStringIncludes(requestedUrl, "/projects/project-slug/files/styles%2Fmanifest.json?");
+      assertStringIncludes(requestedUrl, "branch=main");
+      assertStringIncludes(requestedUrl, "include_server_functions=true");
+    });
+
+    it("rejects oversized content before JSON.parse and without retries", async () => {
+      let fetchCalls = 0;
+      let parseCalls = 0;
+      const originalJsonParse = JSON.parse;
+      globalThis.fetch = (() => {
+        fetchCalls++;
+        return Promise.resolve(new Response(JSON.stringify({ content: "xx" })));
+      }) as typeof fetch;
+      JSON.parse = ((...args: Parameters<typeof JSON.parse>) => {
+        parseCalls++;
+        return Reflect.apply(originalJsonParse, JSON, args);
+      }) as typeof JSON.parse;
+
+      try {
+        await assertRejects(
+          () =>
+            createOps().getBranchFileContentBytesWithinLimit(
+              "project-slug",
+              "main",
+              "styles/manifest.json",
+              1,
+            ),
+          RangeError,
+          "1 UTF-8 bytes",
+        );
+      } finally {
+        JSON.parse = originalJsonParse;
+      }
+
+      assertEquals(fetchCalls, 1);
+      assertEquals(parseCalls, 0);
+    });
+
+    it("defensively copies and post-validates custom transport bytes", async () => {
+      const operations = createOps();
+      const mutable = operations as unknown as {
+        transport: { request(): Promise<unknown> };
+      };
+      const source = new Uint8Array([1, 2]);
+      mutable.transport = { request: () => Promise.resolve(source) };
+
+      const bytes = await operations.getBranchFileContentBytesWithinLimit(
+        "project-slug",
+        "main",
+        "manifest.json",
+        2,
+      );
+      source[0] = 9;
+      assertEquals([...bytes], [1, 2]);
+
+      mutable.transport = { request: () => Promise.resolve(new Uint8Array([1, 2, 3])) };
+      await assertRejects(
+        () =>
+          operations.getBranchFileContentBytesWithinLimit(
+            "project-slug",
+            "main",
+            "manifest.json",
+            2,
+          ),
+        RangeError,
+        "exceeds 2 bytes",
+      );
+    });
+  });
+
+  describe("bounded transport failures", () => {
+    it("propagates caller cancellation to the active fetch without retrying", async () => {
+      let fetchCalls = 0;
+      let requestStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        requestStarted = resolve;
+      });
+      globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+        fetchCalls++;
+        const signal = init?.signal;
+        requestStarted();
+        return new Promise<Response>((_resolve, reject) => {
+          if (!signal) return;
+          const rejectAbort = () => reject(signal.reason);
+          if (signal.aborted) rejectAbort();
+          else signal.addEventListener("abort", rejectAbort, { once: true });
+        });
+      }) as typeof fetch;
+      const transport = createVeryfrontApiTransport<unknown>({
+        baseUrl: "https://api.example.com",
+        getToken: () => "token",
+        retry: { maxRetries: 2, initialDelay: 0, maxDelay: 0 },
+      });
+      const controller = new AbortController();
+      const request = transport.request("/cancelled", { signal: controller.signal });
+      await started;
+
+      controller.abort(new Error("caller cancelled"));
+
+      await assertRejects(() => request, Error, "caller cancelled");
+      assertEquals(fetchCalls, 1);
+    });
+
+    it("propagates caller cancellation when AbortSignal.any is unavailable", async () => {
+      await withoutAbortSignalAny(async () => {
+        let observedSignal: AbortSignal | undefined;
+        let markStarted!: () => void;
+        const started = new Promise<void>((resolve) => {
+          markStarted = resolve;
+        });
+        globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+          observedSignal = init?.signal ?? undefined;
+          markStarted();
+          return new Promise<Response>((_resolve, reject) => {
+            observedSignal?.addEventListener(
+              "abort",
+              () => reject(observedSignal?.reason),
+              { once: true },
+            );
+          });
+        }) as typeof fetch;
+        const transport = createVeryfrontApiTransport<unknown>({
+          baseUrl: "https://api.example.com",
+          getToken: () => "token",
+          retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+        });
+        const controller = new AbortController();
+        const observation = observeAbortListenerBalance(controller.signal);
+        try {
+          const cancellation = new Error("compat cancellation");
+          const request = transport.request("/cancelled", { signal: controller.signal });
+          await started;
+
+          controller.abort(cancellation);
+
+          assertEquals(observedSignal?.reason, cancellation);
+          await assertRejects(() => request, Error, "compat cancellation");
+          assertEquals(observation.counts, { added: 1, removed: 1 });
+        } finally {
+          observation.restore();
+        }
+      });
+    });
+
+    it("detaches compatibility listeners after a successful request", async () => {
+      await withoutAbortSignalAny(async () => {
+        globalThis.fetch = (() => Promise.resolve(new Response("{}"))) as typeof fetch;
+        const caller = new AbortController();
+        const observation = observeAbortListenerBalance(caller.signal);
+        try {
+          const transport = createVeryfrontApiTransport<unknown>({
+            baseUrl: "https://api.example.com",
+            getToken: () => "token",
+            retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+            timeoutMs: 1_000,
+          });
+
+          await transport.request("/ok", { signal: caller.signal });
+
+          assertEquals(observation.counts, { added: 1, removed: 1 });
+        } finally {
+          observation.restore();
+        }
+      });
+    });
+
+    it("detaches compatibility listeners after a non-abort failure", async () => {
+      await withoutAbortSignalAny(async () => {
+        globalThis.fetch = (() => Promise.reject(new Error("network failed"))) as typeof fetch;
+        const caller = new AbortController();
+        const observation = observeAbortListenerBalance(caller.signal);
+        try {
+          const transport = createVeryfrontApiTransport<unknown>({
+            baseUrl: "https://api.example.com",
+            getToken: () => "token",
+            retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+            timeoutMs: 1_000,
+          });
+
+          await assertRejects(
+            () => transport.request("/failed", { signal: caller.signal }),
+            VeryfrontError,
+            "network failed",
+          );
+
+          assertEquals(observation.counts, { added: 1, removed: 1 });
+        } finally {
+          observation.restore();
+        }
+      });
+    });
+
+    it("balances compatibility listeners across retry attempts", async () => {
+      await withoutAbortSignalAny(async () => {
+        let fetchCalls = 0;
+        globalThis.fetch = (() => {
+          fetchCalls++;
+          return fetchCalls === 1
+            ? Promise.reject(new Error("retryable failure"))
+            : Promise.resolve(new Response("{}"));
+        }) as typeof fetch;
+        const caller = new AbortController();
+        const observation = observeAbortListenerBalance(caller.signal);
+        try {
+          const transport = createVeryfrontApiTransport<unknown>({
+            baseUrl: "https://api.example.com",
+            getToken: () => "token",
+            retry: { maxRetries: 1, initialDelay: 0, maxDelay: 0 },
+            timeoutMs: 1_000,
+          });
+
+          await transport.request("/retried", { signal: caller.signal });
+
+          assertEquals(fetchCalls, 2);
+          assertEquals(observation.counts.added, observation.counts.removed);
+          assert(observation.counts.added >= fetchCalls);
+        } finally {
+          observation.restore();
+        }
+      });
+    });
+
+    it("reserves worst-case JSON escape bytes outside the non-value response budget", async () => {
+      const body = '{"content":"\\u0000\\u0000"}';
+      assertEquals(new TextEncoder().encode(body).byteLength, 26);
+      globalThis.fetch = (() => Promise.resolve(new Response(body))) as typeof fetch;
+      const transport = createVeryfrontApiTransport<unknown>({
+        baseUrl: "https://api.example.com",
+        getToken: () => "token",
+        retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+      });
+
+      const result = await transport.request("/bounded", {
+        // The compact document has 14 non-value bytes and the two admitted
+        // NULs use the exact worst case of six wire bytes each.
+        maxResponseBytes: 14,
+        jsonStringFieldWithinLimit: { fieldName: "content", maximumBytes: 2 },
+      });
+
+      assertEquals(result, new Uint8Array([0, 0]));
+    });
+
+    it("does not let unused string headroom enlarge the non-value response budget", async () => {
+      const body = '{"content":"","x":0}';
+      assertEquals(new TextEncoder().encode(body).byteLength, 20);
+      let fetchCalls = 0;
+      globalThis.fetch = (() => {
+        fetchCalls++;
+        return Promise.resolve(new Response(body));
+      }) as typeof fetch;
+      const transport = createVeryfrontApiTransport<unknown>({
+        baseUrl: "https://api.example.com",
+        getToken: () => "token",
+        retry: { maxRetries: 2, initialDelay: 0, maxDelay: 0 },
+      });
+
+      const error = await assertRejects(
+        () =>
+          transport.request("/bounded", {
+            // The selected value is empty, so all 20 bytes count against the
+            // independent 14-byte non-value policy despite the 26-byte hard cap.
+            maxResponseBytes: 14,
+            jsonStringFieldWithinLimit: { fieldName: "content", maximumBytes: 2 },
+          }),
+        VeryfrontError,
+        "invalid bounded JSON content",
+      );
+
+      assertEquals(
+        (error as VeryfrontError).cause instanceof JsonNonValueBytesTooLargeError,
+        true,
+      );
+      assertEquals(fetchCalls, 1);
+    });
+
+    it("retries a body read aborted by the per-attempt timeout", async () => {
+      let fetchCalls = 0;
+      let cancellations = 0;
+      globalThis.fetch = (() => {
+        fetchCalls++;
+        return Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              pull() {
+                return new Promise<void>(() => {});
+              },
+              cancel() {
+                cancellations++;
+              },
+            }),
+          ),
+        );
+      }) as typeof fetch;
+      const transport = createVeryfrontApiTransport<unknown>({
+        baseUrl: "https://api.example.com",
+        getToken: () => "token",
+        retry: { maxRetries: 1, initialDelay: 0, maxDelay: 0 },
+        timeoutMs: 5,
+      });
+
+      await assertRejects(
+        () =>
+          transport.request("/bounded", {
+            maxResponseBytes: 128,
+            jsonStringFieldWithinLimit: { fieldName: "content", maximumBytes: 8 },
+          }),
+        VeryfrontError,
+      );
+
+      assertEquals(fetchCalls, 2);
+      assertEquals(cancellations, 2);
+    });
+
+    it("preserves a 400 status when its diagnostic body is malformed UTF-8", async () => {
+      let fetchCalls = 0;
+      globalThis.fetch = (() => {
+        fetchCalls++;
+        return Promise.resolve(
+          new Response(new Uint8Array([0xc3, 0x28]), {
+            status: 400,
+            statusText: "Bad Request",
+          }),
+        );
+      }) as typeof fetch;
+      const transport = createVeryfrontApiTransport<unknown>({
+        baseUrl: "https://api.example.com",
+        getToken: () => "token",
+        retry: { maxRetries: 2, initialDelay: 0, maxDelay: 0 },
+      });
+
+      const error = await assertRejects(
+        () => transport.request("/invalid"),
+        VeryfrontError,
+        "API request failed: 400 Bad Request",
+      );
+
+      assertEquals((error as VeryfrontError).status, 400);
+      assertEquals(fetchCalls, 1);
+    });
+
+    it("retries a 500 even when its diagnostic body is malformed UTF-8", async () => {
+      let fetchCalls = 0;
+      globalThis.fetch = (() => {
+        fetchCalls++;
+        return Promise.resolve(
+          new Response(new Uint8Array([0xc3, 0x28]), {
+            status: 500,
+            statusText: "Internal Server Error",
+          }),
+        );
+      }) as typeof fetch;
+      const transport = createVeryfrontApiTransport<unknown>({
+        baseUrl: "https://api.example.com",
+        getToken: () => "token",
+        retry: { maxRetries: 1, initialDelay: 0, maxDelay: 0 },
+      });
+
+      await assertRejects(
+        () => transport.request("/failed"),
+        VeryfrontError,
+        "API request failed after 1 retries",
+      );
+
+      assertEquals(fetchCalls, 2);
+    });
+
+    it("rejects invalid bounded options before fetching", async () => {
+      let fetchCalls = 0;
+      globalThis.fetch = (() => {
+        fetchCalls++;
+        return Promise.resolve(new Response("{}"));
+      }) as typeof fetch;
+      const transport = createVeryfrontApiTransport<unknown>({
+        baseUrl: "https://api.example.com",
+        getToken: () => "token",
+        retry: { maxRetries: 2, initialDelay: 0, maxDelay: 0 },
+      });
+      const invalidOptions = [
+        { maxResponseBytes: 0 },
+        { maxResponseBytes: Number.MAX_SAFE_INTEGER + 1 },
+        { jsonStringFieldWithinLimit: { fieldName: "", maximumBytes: 1 } },
+        { jsonStringFieldWithinLimit: { fieldName: "content", maximumBytes: 1.5 } },
+        {
+          maxResponseBytes: 1,
+          jsonStringFieldWithinLimit: {
+            fieldName: "content",
+            maximumBytes: Number.MAX_SAFE_INTEGER,
+          },
+        },
+      ] as TransportRequestInit[];
+
+      for (const init of invalidOptions) {
+        await assertRejects(() => transport.request("/invalid", init));
+      }
+      assertEquals(fetchCalls, 0);
     });
   });
 
@@ -326,6 +986,108 @@ describe("VeryfrontAPIOperations", () => {
 
       assertStringIncludes(requestedUrl, "/releases/rel-1/asset-manifest");
       assertEquals(res.state, "ready");
+    });
+  });
+
+  describe("dependency artifact build operations", () => {
+    it("uploads an attempt asset with raw hash-verified bytes", async () => {
+      let requestedUrl = "";
+      let method = "";
+      let contentType = "";
+      let body: BodyInit | null | undefined;
+      globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+        requestedUrl = String(input);
+        method = init?.method ?? "GET";
+        contentType = new Headers(init?.headers).get("content-type") ?? "";
+        body = init?.body;
+        return Promise.resolve(
+          new Response(JSON.stringify({ stored: true, existed: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }) as typeof fetch;
+      const bytes = new TextEncoder().encode("export const value = 42;");
+      const contentHash = await crypto.subtle.digest("SHA-256", bytes).then((digest) =>
+        [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("")
+      );
+
+      const result = await createOps().uploadDependencyArtifactAsset(
+        "11111111-1111-4111-8111-111111111111",
+        2,
+        contentHash,
+        "text/javascript",
+        bytes,
+      );
+
+      assertEquals(method, "PUT");
+      assertStringIncludes(
+        requestedUrl,
+        `/dependency-artifacts/11111111-1111-4111-8111-111111111111/attempts/2/assets/${contentHash}`,
+      );
+      assertEquals(contentType, "text/javascript");
+      assertEquals(body, bytes);
+      assertEquals(result, { stored: true, existed: false });
+    });
+
+    it("rejects a local content hash mismatch before transport", async () => {
+      let fetchCalls = 0;
+      globalThis.fetch = ((_input: RequestInfo | URL, _init?: RequestInit) => {
+        fetchCalls++;
+        return Promise.resolve(new Response("{}"));
+      }) as typeof fetch;
+
+      await assertRejects(
+        () =>
+          createOps().uploadDependencyArtifactAsset(
+            "11111111-1111-4111-8111-111111111111",
+            2,
+            "a".repeat(64),
+            "text/javascript",
+            new TextEncoder().encode("different"),
+          ),
+        Error,
+        "content hash",
+      );
+      assertEquals(fetchCalls, 0);
+    });
+
+    it("reports the complete ready graph to the lease-bound result endpoint", async () => {
+      let requestedUrl = "";
+      let method = "";
+      let body: unknown;
+      stubJsonFetch((url, init) => {
+        requestedUrl = url;
+        method = init?.method ?? "GET";
+        body = init?.body ? JSON.parse(String(init.body)) : undefined;
+        return { accepted: true, state: "ready" };
+      });
+      const hash = "b".repeat(64);
+
+      const result = await createOps().reportDependencyArtifactBuildResult(
+        "11111111-1111-4111-8111-111111111111",
+        2,
+        {
+          outcome: "ready",
+          graph: {
+            graph_schema_version: 1,
+            root_content_hash: hash,
+            assets: [{
+              content_hash: hash,
+              content_type: "text/javascript",
+              size: 42,
+            }],
+          },
+        },
+      );
+
+      assertEquals(method, "POST");
+      assertStringIncludes(
+        requestedUrl,
+        "/dependency-artifacts/11111111-1111-4111-8111-111111111111/attempts/2/result",
+      );
+      assertEquals((body as { outcome: string }).outcome, "ready");
+      assertEquals(result, { accepted: true, state: "ready" });
     });
   });
 });

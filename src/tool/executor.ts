@@ -1,6 +1,6 @@
 import type { Tool, ToolExecutionContext } from "./types.ts";
 import { toolRegistry } from "./registry.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 
 /**
  * Whether a registered tool is visible to the caller identified by the

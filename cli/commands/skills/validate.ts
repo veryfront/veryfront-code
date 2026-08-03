@@ -6,10 +6,14 @@
 
 import type { ParsedArgs } from "#cli/shared/types";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
-import { logError, logSuccess } from "#cli/utils";
+import { exitProcess, logError, logSuccess, logWarning } from "#cli/utils";
 import { createFileSystem } from "veryfront/platform";
-import { basename } from "#std/path.ts";
-import { parseSkillFrontmatter, validateSkillMetadata } from "veryfront/skill";
+import { basename, resolve } from "veryfront/platform/path";
+import {
+  isValidStrictSkillName,
+  parseSkillFrontmatter,
+  validateSkillFileMetadata,
+} from "veryfront/skill";
 
 interface ValidationIssue {
   severity: "error" | "warning";
@@ -36,7 +40,9 @@ export async function validateSkillDirectory(dir: string): Promise<ValidationIss
 
   try {
     const parsed = await parseSkillFrontmatter(content);
-    validateSkillMetadata(parsed.frontmatter, basename(dir));
+    const directoryName = basename(resolve(dir));
+    validateCanonicalFrontmatterName(parsed.frontmatter, directoryName);
+    validateSkillFileMetadata(parsed.frontmatter, directoryName);
     if (!parsed.body.trim()) {
       issues.push({ severity: "warning", message: "SKILL.md body is empty" });
     }
@@ -46,6 +52,22 @@ export async function validateSkillDirectory(dir: string): Promise<ValidationIss
   }
 
   return issues;
+}
+
+function validateCanonicalFrontmatterName(
+  frontmatter: Record<string, unknown>,
+  directoryName: string,
+): void {
+  if (typeof frontmatter.name !== "string") return;
+
+  const name = frontmatter.name.trim();
+  if (!isValidStrictSkillName(name)) {
+    return;
+  }
+
+  if (name !== directoryName) {
+    throw new Error(`Skill name "${name}" does not match directory name "${directoryName}"`);
+  }
 }
 
 async function outputResults(
@@ -62,7 +84,7 @@ async function outputResults(
         issues,
       }),
     );
-    if (hasErrors) Deno.exit(1);
+    if (hasErrors) exitProcess(1);
     return;
   }
 
@@ -75,9 +97,9 @@ async function outputResults(
     if (issue.severity === "error") {
       logError(issue.message);
     } else {
-      console.log(`  ! ${issue.message}`);
+      logWarning(issue.message);
     }
   }
 
-  if (hasErrors) Deno.exit(1);
+  if (hasErrors) exitProcess(1);
 }

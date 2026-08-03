@@ -4,8 +4,7 @@
  * Main orchestrator for executing durable workflows
  **************************/
 
-import { logger as baseLogger } from "#veryfront/utils";
-import { ensureError } from "#veryfront/errors/veryfront-error.ts";
+import { logger as baseLogger, sleep } from "#veryfront/utils";
 import {
   INVALID_ARGUMENT,
   ORCHESTRATION_ERROR,
@@ -14,7 +13,6 @@ import {
 } from "#veryfront/errors";
 import type {
   BlobResolver,
-  NodeState,
   StepBuilderContext,
   WorkflowContext,
   WorkflowDefinition,
@@ -23,7 +21,7 @@ import type {
   WorkflowStatus,
 } from "../types.ts";
 import { generateId, parseDuration } from "../types.ts";
-import { hasLockSupport, type WorkflowBackend } from "../backends/types.ts";
+import { updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { env as getProcessEnv } from "#veryfront/compat/process.ts";
 import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
@@ -32,11 +30,28 @@ import { CheckpointManager } from "./checkpoint-manager.ts";
 import { runWithWorkflowTenant, StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
 import { isBlobRef } from "../blob/guards.ts";
 import type { BlobStorage } from "../blob/types.ts";
+import {
+  captureWorkflowSourceIntegrationPolicy,
+  runWithWorkflowSourceIntegrationPolicy,
+} from "../source-integration-policy.ts";
+import { executeWorkflowRunControl } from "../runtime/workflow-run-control.ts";
 
 const logger = baseLogger.component("workflow-executor");
 
 /** Default polling interval for waiting on workflow result */
 const DEFAULT_RESULT_POLL_INTERVAL_MS = 1_000;
+
+/** Default max time waitForResult() polls before giving up (5 minutes) */
+const DEFAULT_RESULT_WAIT_TIMEOUT_MS = 5 * 60 * 1_000;
+
+/** Time allowed for an aborted graph to finish its cooperative cleanup. */
+const DEFAULT_CANCELLATION_GRACE_PERIOD_MS = 1_000;
+
+function supportsExecutionOwnership(backend: WorkflowBackend): boolean {
+  return typeof backend.updateRunIfStatusAndWorker === "function" &&
+    typeof backend.saveCheckpointIfStatusAndWorker === "function" &&
+    typeof backend.savePendingApprovalIfStatusAndWorker === "function";
+}
 
 /**
  * Workflow executor configuration
@@ -54,8 +69,14 @@ export interface WorkflowExecutorConfig {
   debug?: boolean;
   /** Lock duration in milliseconds for distributed execution (default: 30000) */
   lockDuration?: number;
+  /** Heartbeat and remote-cancellation poll interval in milliseconds (default: 10000) */
+  heartbeatInterval?: number;
   /** Enable distributed locking (default: true if backend supports it) */
   enableLocking?: boolean;
+  /** Max time result()/waitForResult waits for a terminal state (default: 300000) */
+  resultWaitTimeout?: number;
+  /** Max milliseconds to wait for aborted execution to settle before detaching it (default: 1000) */
+  cancellationGracePeriod?: number;
   /** Callback when workflow starts */
   onStart?: (run: WorkflowRun) => void;
   /** Callback when workflow completes */
@@ -63,7 +84,7 @@ export interface WorkflowExecutorConfig {
   /** Callback when workflow fails */
   onError?: (run: WorkflowRun, error: Error) => void;
   /** Callback when workflow is waiting */
-  onWaiting?: (run: WorkflowRun, nodeId: string) => void;
+  onWaiting?: (run: WorkflowRun, nodeId: string) => void | Promise<void>;
 }
 
 /** Controller for a running workflow. */
@@ -97,6 +118,8 @@ export class WorkflowExecutor {
   // deno-lint-ignore no-explicit-any -- type-erased registry: register() accepts WorkflowDefinition<TInput, TOutput> with arbitrary type params
   private workflows = new Map<string, WorkflowDefinition<any, any>>();
   private blobResolver?: BlobResolver;
+  private activeRunControllers = new Map<string, AbortController>();
+  private cancellationUpdates = new Map<string, Promise<void>>();
 
   /** Default lock duration: 30 seconds */
   private static readonly DEFAULT_LOCK_DURATION = 30_000;
@@ -108,10 +131,12 @@ export class WorkflowExecutor {
       maxConcurrency: 10,
       debug: false,
       lockDuration: WorkflowExecutor.DEFAULT_LOCK_DURATION,
+      heartbeatInterval: WorkflowExecutor.HEARTBEAT_INTERVAL_MS,
       ...config,
     };
 
     this.stepExecutor = new StepExecutor({
+      cancellationGracePeriod: this.config.cancellationGracePeriod,
       ...this.config.stepExecutor,
       blobStorage: this.config.blobStorage,
     });
@@ -197,6 +222,9 @@ export class WorkflowExecutor {
       }
       : undefined;
     const injectedProjectEnv = mergeInjectedWorkflowEnv(undefined, getProcessEnv());
+    const executionWorkerId = supportsExecutionOwnership(this.config.backend)
+      ? `run-execution:${generateId("exec")}`
+      : undefined;
 
     const run: WorkflowRun<TInput, TOutput> = {
       id: options?.runId ?? generateId("run"),
@@ -213,12 +241,14 @@ export class WorkflowExecutor {
       checkpoints: [],
       pendingApprovals: [],
       createdAt: new Date(),
+      workerId: executionWorkerId,
+      sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
       _tenant: tenant,
     };
 
     await this.config.backend.createRun(run);
 
-    const settled = this.executeAsync(run.id).catch((error) => {
+    const settled = this.executeAsync(run.id, undefined, executionWorkerId).catch((error) => {
       logger.error("Workflow failed", { runId: run.id }, error);
     });
 
@@ -228,9 +258,36 @@ export class WorkflowExecutor {
   /**
    * Resume a paused/waiting workflow
    */
-  async resume(runId: string, fromCheckpoint?: string): Promise<void> {
+  async resume(
+    runId: string,
+    fromCheckpoint?: string,
+    expectedWorkerId?: string,
+  ): Promise<void> {
     const run = await this.config.backend.getRun(runId);
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+
+    // A run execution owns its run for the lifetime of its immutable worker id.
+    // If persisted ownership has moved on (e.g. a new owner reclaimed a stalled
+    // run), this execution must not resume it and clobber the new owner's work.
+    if (expectedWorkerId !== undefined && run.workerId !== expectedWorkerId) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Cannot resume workflow run because execution ownership has changed",
+      });
+    }
+    const executionWorkerId = expectedWorkerId ?? run.workerId;
+
+    await runWithWorkflowSourceIntegrationPolicy(
+      run,
+      () => this.resumeRun(run, fromCheckpoint, executionWorkerId),
+    );
+  }
+
+  private async resumeRun(
+    run: WorkflowRun,
+    fromCheckpoint?: string,
+    expectedWorkerId?: string,
+  ): Promise<void> {
+    const runId = run.id;
 
     if (run.status !== "waiting" && run.status !== "pending" && run.status !== "running") {
       throw ORCHESTRATION_ERROR.create({
@@ -245,7 +302,14 @@ export class WorkflowExecutor {
     }
 
     const nodes = this.resolveNodes(workflow, run.context);
-    const resumeInfo = await this.checkpointManager.prepareResume(runId, nodes, fromCheckpoint);
+    // A waiting run already contains the authoritative event/approval handoff
+    // in its persisted context and node states. Restoring an older checkpoint
+    // here can erase that decision immediately before execution resumes.
+    // Explicit checkpoint recovery still restores the requested snapshot, and
+    // pending/running recovery retains the existing latest-checkpoint behavior.
+    const resumeInfo = run.status === "waiting" && fromCheckpoint === undefined
+      ? null
+      : await this.checkpointManager.prepareResume(runId, nodes, fromCheckpoint);
 
     if (fromCheckpoint && !resumeInfo) {
       throw RESOURCE_NOT_FOUND.create({
@@ -255,14 +319,25 @@ export class WorkflowExecutor {
     }
 
     if (resumeInfo) {
-      await this.config.backend.updateRun(runId, {
-        status: "running",
-        context: resumeInfo.context,
-        nodeStates: resumeInfo.nodeStates,
-      });
+      const restored = await updateRunIfStatus(
+        this.config.backend,
+        runId,
+        [run.status],
+        {
+          status: "running",
+          context: resumeInfo.context,
+          nodeStates: resumeInfo.nodeStates,
+        },
+        expectedWorkerId,
+      );
+      if (!restored) {
+        throw ORCHESTRATION_ERROR.create({
+          detail: "Cannot resume workflow run because execution ownership or status changed",
+        });
+      }
     }
 
-    await this.executeAsync(runId, resumeInfo?.startFromNode);
+    await this.executeAsync(runId, resumeInfo?.startFromNode, expectedWorkerId);
   }
 
   /**
@@ -271,123 +346,91 @@ export class WorkflowExecutor {
    * Uses distributed locking (when backend supports it) to prevent
    * concurrent execution of the same workflow run.
    */
-  async executeAsync(runId: string, startFromNode?: string): Promise<void> {
+  async executeAsync(
+    runId: string,
+    startFromNode?: string,
+    expectedWorkerId?: string,
+  ): Promise<void> {
     const run = await this.config.backend.getRun(runId);
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+    if (expectedWorkerId !== undefined && run.workerId !== expectedWorkerId) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Cannot execute workflow run because execution ownership has changed",
+      });
+    }
+    const executionWorkerId = expectedWorkerId ?? run.workerId;
 
+    await runWithWorkflowSourceIntegrationPolicy(
+      run,
+      () => this.executeRun(run, startFromNode, executionWorkerId),
+    );
+  }
+
+  private async executeRun(
+    run: WorkflowRun,
+    startFromNode?: string,
+    expectedWorkerId?: string,
+  ): Promise<void> {
     const workflow = this.workflows.get(run.workflowId);
     if (!workflow) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Workflow not found: ${run.workflowId}` });
     }
 
-    const useLocking = this.config.enableLocking !== false && hasLockSupport(this.config.backend);
-    const lockDuration = this.config.lockDuration ?? WorkflowExecutor.DEFAULT_LOCK_DURATION;
-    let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
-    let heartbeatInFlight = false;
-
-    if (useLocking) {
-      const acquired = await this.config.backend.acquireLock!(runId, lockDuration);
-      if (!acquired) {
-        throw ORCHESTRATION_ERROR.create({
-          detail:
-            `Cannot execute workflow run "${runId}": another worker is already executing it. ` +
-            `This can happen when multiple workers try to execute the same run concurrently.`,
-        });
-      }
-      logger.debug("Acquired lock for run", { runId });
-    }
-
-    try {
-      const now = new Date();
-      await this.config.backend.updateRun(runId, {
-        status: "running",
-        startedAt: run.startedAt || now,
-        heartbeatAt: now,
-      });
-
-      heartbeatInterval = setInterval(() => {
-        if (heartbeatInFlight) return;
-        heartbeatInFlight = true;
-
-        void (async () => {
-          try {
-            await this.config.backend.updateRun(runId, {
-              heartbeatAt: new Date(),
-            });
-
-            if (useLocking && typeof this.config.backend.extendLock === "function") {
-              const extended = await this.config.backend.extendLock(runId, lockDuration);
-              if (!extended) {
-                logger.warn("Failed to extend lock during heartbeat", { runId });
-              }
-            }
-          } catch (error) {
-            logger.warn("Heartbeat update failed", { runId }, error);
-          } finally {
-            heartbeatInFlight = false;
-          }
-        })();
-      }, WorkflowExecutor.HEARTBEAT_INTERVAL_MS);
-
-      const updatedRun = await this.config.backend.getRun(runId);
-      this.config.onStart?.(updatedRun!);
-
-      const nodes = this.resolveNodes(workflow, run.context);
-
-      const runWithTenantContext: WorkflowRun = run._tenant
-        ? {
-          ...run,
-          context: { ...run.context, _tenant: run._tenant },
+    await executeWorkflowRunControl({
+      backend: this.config.backend,
+      run,
+      expectedWorkerId,
+      enableLocking: this.config.enableLocking,
+      lockDuration: this.config.lockDuration ?? WorkflowExecutor.DEFAULT_LOCK_DURATION,
+      heartbeatInterval: this.config.heartbeatInterval ?? WorkflowExecutor.HEARTBEAT_INTERVAL_MS,
+      waitForCancellationUpdate: (runId) => this.waitForCancellationUpdate(runId),
+      waitForCancellationGrace: (operation) => this.waitForCancellationGrace(operation),
+      registerController: (runId, controller) => {
+        this.activeRunControllers.set(runId, controller);
+      },
+      clearController: (runId, controller) => {
+        if (this.activeRunControllers.get(runId) === controller) {
+          this.activeRunControllers.delete(runId);
         }
-        : run;
+      },
+      isCurrentExecution: (runId, controller) => this.isCurrentExecution(runId, controller),
+      execute: ({ controller, signal, ownership }) => {
+        const nodes = this.resolveNodes(workflow, run.context);
+        const runWithTenantContext: WorkflowRun = run._tenant
+          ? {
+            ...run,
+            context: { ...run.context, _tenant: run._tenant },
+          }
+          : run;
 
-      const result = await runWithWorkflowTenant(run._tenant, () =>
-        this.executeWithTimeout(
-          () => this.dagExecutor.execute(nodes, runWithTenantContext, startFromNode),
-          workflow.timeout,
-        ));
-
-      if (result.completed) {
-        const finalRun = await this.completeRun(runId, result.context, result.nodeStates);
-
+        return runWithWorkflowTenant(run._tenant, () =>
+          this.executeWithTimeout(
+            () =>
+              this.dagExecutor.execute(
+                nodes,
+                runWithTenantContext,
+                startFromNode,
+                signal,
+                ownership,
+              ),
+            workflow.timeout,
+            controller,
+          ));
+      },
+      onStart: (startedRun) => {
+        this.config.onStart?.(startedRun);
+      },
+      onComplete: async (finalRun) => {
         workflow.outputSchema?.parse(finalRun.output);
-
         await workflow.onComplete?.(finalRun.output, finalRun.context);
         this.config.onComplete?.(finalRun);
-        return;
-      }
-
-      if (result.waiting) {
-        await this.pauseRun(runId, result.waitingNode!, result.context, result.nodeStates);
-
-        const pausedRun = await this.config.backend.getRun(runId);
-        this.config.onWaiting?.(pausedRun!, result.waitingNode!);
-        return;
-      }
-
-      const error = ORCHESTRATION_ERROR.create({ detail: result.error || "Unknown error" });
-      await this.failRun(runId, error, result.context, result.nodeStates);
-
-      await workflow.onError?.(error, result.context);
-      this.config.onError?.(run, error);
-    } catch (error) {
-      const normalizedError = ensureError(error);
-      await this.failRun(runId, normalizedError, run.context, run.nodeStates);
-
-      await workflow.onError?.(normalizedError, run.context);
-      this.config.onError?.(run, normalizedError);
-
-      throw normalizedError;
-    } finally {
-      if (heartbeatInterval) {
-        clearInterval(heartbeatInterval);
-      }
-
-      if (useLocking) {
-        await this.config.backend.releaseLock!(runId);
-        logger.debug("Released lock for run", { runId });
-      }
-    }
+      },
+      onError: async (errorRun, error, context) => {
+        await workflow.onError?.(error, context);
+        this.config.onError?.(errorRun, error);
+      },
+      onWaiting: (waitingRun, nodeId) => this.config.onWaiting?.(waitingRun, nodeId),
+    });
   }
 
   /**
@@ -467,103 +510,71 @@ export class WorkflowExecutor {
    * Uses Promise.race() to properly handle timeout cleanup.
    * The timeout is always cleared in the finally block to prevent memory leaks.
    */
-  private async executeWithTimeout<T>(fn: () => Promise<T>, timeout?: string | number): Promise<T> {
-    if (!timeout) return fn();
-
-    const timeoutMs = parseDuration(timeout);
+  private async executeWithTimeout<T>(
+    fn: () => Promise<T>,
+    timeout: string | number | undefined,
+    executionController: AbortController,
+  ): Promise<T> {
+    executionController.signal.throwIfAborted();
+    const operation = Promise.resolve().then(fn);
+    const fencedOperation = operation.then((value) => {
+      executionController.signal.throwIfAborted();
+      return value;
+    });
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => {
-        reject(TIMEOUT_ERROR.create({ detail: `Workflow timed out after ${timeoutMs}ms` }));
-      }, timeoutMs);
+    let rejectAbort: (() => void) | undefined;
+    const abortPromise = new Promise<never>((_, reject) => {
+      rejectAbort = () => reject(executionController.signal.reason);
+      if (executionController.signal.aborted) rejectAbort();
+      else executionController.signal.addEventListener("abort", rejectAbort, { once: true });
     });
 
+    if (timeout) {
+      const timeoutMs = parseDuration(timeout);
+      const timeoutError = TIMEOUT_ERROR.create({
+        detail: `Workflow timed out after ${timeoutMs}ms`,
+      });
+      timeoutId = setTimeout(() => {
+        if (!executionController.signal.aborted) executionController.abort(timeoutError);
+      }, timeoutMs);
+    }
+
     try {
-      return await Promise.race([fn(), timeoutPromise]);
+      return await Promise.race([fencedOperation, abortPromise]);
+    } catch (error) {
+      if (executionController.signal.aborted) {
+        await this.waitForCancellationGrace(fencedOperation);
+      }
+      throw error;
     } finally {
       if (timeoutId !== undefined) clearTimeout(timeoutId);
+      if (rejectAbort) executionController.signal.removeEventListener("abort", rejectAbort);
     }
   }
 
-  /**
-   * Mark run as completed
-   */
-  private async completeRun(
-    runId: string,
-    context: WorkflowContext,
-    nodeStates: Record<string, NodeState>,
-  ): Promise<WorkflowRun> {
-    const publicContext = this.toPublicContext(context);
-    const output = this.determineOutput(publicContext);
-
-    await this.config.backend.updateRun(runId, {
-      status: "completed",
-      output,
-      context: publicContext,
-      nodeStates,
-      completedAt: new Date(),
+  private async waitForCancellationGrace(operation: Promise<unknown>): Promise<void> {
+    const gracePeriod = Math.max(
+      0,
+      this.config.cancellationGracePeriod ?? DEFAULT_CANCELLATION_GRACE_PERIOD_MS,
+    );
+    let graceTimeoutId: ReturnType<typeof setTimeout> | undefined;
+    const settled = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    const graceExpired = new Promise<void>((resolve) => {
+      graceTimeoutId = setTimeout(resolve, gracePeriod);
     });
 
-    return (await this.config.backend.getRun(runId))!;
+    try {
+      await Promise.race([settled, graceExpired]);
+    } finally {
+      if (graceTimeoutId !== undefined) clearTimeout(graceTimeoutId);
+    }
   }
 
-  /**
-   * Mark run as failed
-   */
-  private async failRun(
-    runId: string,
-    error: Error,
-    context: WorkflowContext,
-    nodeStates: Record<string, NodeState>,
-  ): Promise<void> {
-    const publicContext = this.toPublicContext(context);
-
-    await this.config.backend.updateRun(runId, {
-      status: "failed",
-      context: publicContext,
-      nodeStates,
-      error: {
-        message: error.message,
-        stack: error.stack,
-      },
-      completedAt: new Date(),
-    });
-  }
-
-  /**
-   * Mark run as waiting
-   */
-  private async pauseRun(
-    runId: string,
-    waitingNode: string,
-    context: WorkflowContext,
-    nodeStates: Record<string, NodeState>,
-  ): Promise<void> {
-    const publicContext = this.toPublicContext(context);
-
-    await this.config.backend.updateRun(runId, {
-      status: "waiting",
-      currentNodes: [waitingNode],
-      context: publicContext,
-      nodeStates,
-    });
-  }
-
-  /**
-   * Remove execution-only metadata before exposing or persisting workflow context.
-   */
-  private toPublicContext(context: WorkflowContext): WorkflowContext {
-    const { _tenant: _tenant, ...publicContext } = context;
-    return publicContext;
-  }
-
-  /**
-   * Determine workflow output from context
-   */
-  private determineOutput(context: WorkflowContext): unknown {
-    const { input: _input, _tenant: _tenant, ...rest } = context;
-    return rest;
+  private isCurrentExecution(runId: string, controller: AbortController): boolean {
+    return this.activeRunControllers.get(runId) === controller;
   }
 
   /**
@@ -585,7 +596,10 @@ export class WorkflowExecutor {
   private async waitForResult<TOutput>(
     runId: string,
     pollInterval = DEFAULT_RESULT_POLL_INTERVAL_MS,
+    timeoutMs = this.config.resultWaitTimeout ?? DEFAULT_RESULT_WAIT_TIMEOUT_MS,
   ): Promise<TOutput> {
+    const deadline = Date.now() + timeoutMs;
+
     while (true) {
       const run = await this.config.backend.getRun(runId);
       if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
@@ -598,8 +612,15 @@ export class WorkflowExecutor {
         throw ORCHESTRATION_ERROR.create({ detail: "Workflow was cancelled" });
       }
 
-      // no cleanup needed: one-shot
-      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        throw TIMEOUT_ERROR.create({
+          detail: `Timed out after ${timeoutMs}ms waiting for workflow run "${runId}" to reach a ` +
+            `terminal state (last status: "${run.status}").`,
+        });
+      }
+
+      await sleep(Math.min(pollInterval, remaining));
     }
   }
 
@@ -617,10 +638,29 @@ export class WorkflowExecutor {
       });
     }
 
-    await this.config.backend.updateRun(runId, {
-      status: "cancelled",
-      completedAt: new Date(),
-    });
+    const cancellationUpdate = Promise.resolve().then(() =>
+      this.config.backend.updateRun(runId, {
+        status: "cancelled",
+        completedAt: new Date(),
+      })
+    );
+    this.cancellationUpdates.set(runId, cancellationUpdate);
+
+    this.activeRunControllers.get(runId)?.abort(
+      ORCHESTRATION_ERROR.create({ detail: `Workflow run "${runId}" was cancelled` }),
+    );
+
+    try {
+      await cancellationUpdate;
+    } finally {
+      if (this.cancellationUpdates.get(runId) === cancellationUpdate) {
+        this.cancellationUpdates.delete(runId);
+      }
+    }
+  }
+
+  private async waitForCancellationUpdate(runId: string): Promise<void> {
+    await this.cancellationUpdates.get(runId);
   }
 
   /**

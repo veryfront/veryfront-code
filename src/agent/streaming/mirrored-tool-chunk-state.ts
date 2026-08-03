@@ -1,4 +1,5 @@
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
+import { deriveKnowledgeSourceDocumentChunk } from "#veryfront/chat/knowledge-source-document.ts";
 
 /** Check whether a durable chunk mirrors tool output. */
 export function isDurableMirroredOutputChunk(
@@ -136,6 +137,7 @@ export interface CreateHostedMirroredUiStreamInput {
     chunk: ChatUiMessageChunk<ChatMessageMetadata>,
   ) => Promise<void> | void;
   setMirroredOutput?: (value: boolean) => void;
+  registerPendingDerivedSourceFlush?: (flush: () => Promise<void>) => void;
   logger?: HostedMirroredUiStreamLogger;
 }
 
@@ -250,26 +252,122 @@ export async function* createHostedMirroredUiStream(
   input: CreateHostedMirroredUiStreamInput,
 ): AsyncIterable<ChatUiMessageChunk<ChatMessageMetadata>> {
   let streamError: unknown = null;
+  const emittedKnowledgeSourceIds = new Set<string>();
+  const mirroredKnowledgeSourceIds = new Set<string>();
+  const emittedDerivedKnowledgeSourceIds = new Set<string>();
+  let pendingDerivedSource: ReturnType<typeof deriveKnowledgeSourceDocumentChunk> = null;
+
+  const mirrorChunk = async (chunk: ChatUiMessageChunk<ChatMessageMetadata>): Promise<void> => {
+    input.rootStreamWatchdog.observe(chunk);
+    if (isDurableMirroredOutputChunk(chunk)) {
+      input.setMirroredOutput?.(true);
+    }
+    recordMirroredToolChunkState(input.mirroredToolChunkState, chunk);
+    if (input.appendChunk) {
+      await Promise.resolve(input.appendChunk(chunk)).catch((error: unknown) => {
+        input.logger?.error("Durable run mirror failed to handle chunk", {
+          chunkType: chunk.type,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
+  };
+
+  const takePendingDerivedSource = (): ReturnType<
+    typeof deriveKnowledgeSourceDocumentChunk
+  > => {
+    const source = pendingDerivedSource;
+    pendingDerivedSource = null;
+    if (!source || emittedKnowledgeSourceIds.has(source.sourceId)) {
+      return null;
+    }
+    emittedKnowledgeSourceIds.add(source.sourceId);
+    return source;
+  };
+
+  const mirrorSourceOnce = async (
+    source: NonNullable<ReturnType<typeof deriveKnowledgeSourceDocumentChunk>>,
+  ): Promise<void> => {
+    if (mirroredKnowledgeSourceIds.has(source.sourceId)) {
+      return;
+    }
+    mirroredKnowledgeSourceIds.add(source.sourceId);
+    await mirrorChunk(source);
+  };
+
+  input.registerPendingDerivedSourceFlush?.(async () => {
+    if (!pendingDerivedSource || emittedKnowledgeSourceIds.has(pendingDerivedSource.sourceId)) {
+      return;
+    }
+    await mirrorSourceOnce(pendingDerivedSource);
+  });
 
   try {
-    for await (const chunk of input.sourceStream) {
-      input.rootStreamWatchdog.observe(chunk);
-      if (isDurableMirroredOutputChunk(chunk)) {
-        input.setMirroredOutput?.(true);
+    for await (const sourceChunk of input.sourceStream) {
+      if (
+        pendingDerivedSource &&
+        sourceChunk.type === "source-document" &&
+        sourceChunk.sourceId === pendingDerivedSource.sourceId
+      ) {
+        pendingDerivedSource = null;
+        if (!emittedKnowledgeSourceIds.has(sourceChunk.sourceId)) {
+          emittedKnowledgeSourceIds.add(sourceChunk.sourceId);
+          mirroredKnowledgeSourceIds.add(sourceChunk.sourceId);
+          await mirrorChunk(sourceChunk);
+          yield sourceChunk;
+        }
+        continue;
       }
-      recordMirroredToolChunkState(input.mirroredToolChunkState, chunk);
-      if (input.appendChunk) {
-        await Promise.resolve(input.appendChunk(chunk)).catch((error: unknown) => {
-          input.logger?.error("Durable run mirror failed to handle chunk", {
-            chunkType: chunk.type,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        });
+
+      const pendingSource = takePendingDerivedSource();
+      if (pendingSource) {
+        emittedDerivedKnowledgeSourceIds.add(pendingSource.sourceId);
+        await mirrorSourceOnce(pendingSource);
+        yield pendingSource;
       }
-      yield chunk;
+
+      if (sourceChunk.type === "source-document") {
+        if (emittedKnowledgeSourceIds.has(sourceChunk.sourceId)) {
+          if (emittedDerivedKnowledgeSourceIds.delete(sourceChunk.sourceId)) {
+            await mirrorChunk(sourceChunk);
+            yield sourceChunk;
+          }
+          continue;
+        }
+        emittedKnowledgeSourceIds.add(sourceChunk.sourceId);
+        await mirrorSourceOnce(sourceChunk);
+        yield sourceChunk;
+        continue;
+      }
+
+      const derivedSource = sourceChunk.type === "tool-output-available"
+        ? deriveKnowledgeSourceDocumentChunk({
+          toolName: input.mirroredToolChunkState.toolCallNames.get(sourceChunk.toolCallId),
+          output: sourceChunk.output,
+        })
+        : null;
+      if (derivedSource && !emittedKnowledgeSourceIds.has(derivedSource.sourceId)) {
+        pendingDerivedSource = derivedSource;
+      }
+
+      await mirrorChunk(sourceChunk);
+      yield sourceChunk;
+    }
+
+    const pendingSource = takePendingDerivedSource();
+    if (pendingSource) {
+      emittedDerivedKnowledgeSourceIds.add(pendingSource.sourceId);
+      await mirrorSourceOnce(pendingSource);
+      yield pendingSource;
     }
   } catch (error) {
     streamError = error;
+    const pendingSource = takePendingDerivedSource();
+    if (pendingSource) {
+      emittedDerivedKnowledgeSourceIds.add(pendingSource.sourceId);
+      await mirrorSourceOnce(pendingSource);
+      yield pendingSource;
+    }
     throw error;
   } finally {
     if (streamError && input.appendChunk) {

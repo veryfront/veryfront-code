@@ -5,6 +5,8 @@ import {
   DEFAULT_HEADERS,
   DEFAULT_MAX_AGE,
   DEFAULT_METHODS,
+  getDefaultCORSHeaders,
+  getDefaultCORSMethods,
   HTTP_FORBIDDEN,
   HTTP_NO_CONTENT,
 } from "./constants.ts";
@@ -20,6 +22,11 @@ describe("CORS constants", () => {
     it("should have 6 methods", () => {
       assertEquals(DEFAULT_METHODS.length, 6);
     });
+
+    it("exports the immutable runtime policy", () => {
+      assertEquals(Object.isFrozen(DEFAULT_METHODS), true);
+      assertEquals(getDefaultCORSMethods(), DEFAULT_METHODS);
+    });
   });
 
   describe("DEFAULT_HEADERS", () => {
@@ -27,6 +34,11 @@ describe("CORS constants", () => {
       for (const header of ["Content-Type", "Authorization"]) {
         assert(DEFAULT_HEADERS.includes(header));
       }
+    });
+
+    it("exports the immutable runtime policy", () => {
+      assertEquals(Object.isFrozen(DEFAULT_HEADERS), true);
+      assertEquals(getDefaultCORSHeaders(), DEFAULT_HEADERS);
     });
   });
 

@@ -3,6 +3,40 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PageHandler } from "./page-handler.ts";
 
+function extractGeneratedFunction(html: string, declaration: string): string {
+  const start = html.indexOf(declaration);
+  assertEquals(start >= 0, true, `${declaration} not found in page handler HTML`);
+  const end = html.indexOf("\n    }", start);
+  assertEquals(end > start, true, `could not find end of ${declaration}`);
+  return html.slice(start, end + "\n    }".length);
+}
+
+async function runGeneratedSnapshotRecovery(
+  html: string,
+  response: Response,
+  reloadDocument: () => void,
+  recoveryState: Record<string, unknown>,
+): Promise<boolean> {
+  const source = [
+    extractGeneratedFunction(
+      html,
+      "async function isDependencySnapshotConflictResponse(",
+    ),
+    extractGeneratedFunction(
+      html,
+      "async function recoverFromDependencySnapshotConflict(",
+    ),
+  ].join("\n");
+
+  return await new Function(
+    "response",
+    "reloadDocument",
+    "recoveryState",
+    `${source}
+return recoverFromDependencySnapshotConflict(response, reloadDocument, recoveryState);`,
+  )(response, reloadDocument, recoveryState) as boolean;
+}
+
 describe("server/services/rsc/orchestrators/page-handler", () => {
   describe("handle", () => {
     it("should return HTML response with correct content type", () => {
@@ -22,6 +56,14 @@ describe("server/services/rsc/orchestrators/page-handler", () => {
       const response = handler.handle("/about", new URLSearchParams());
       const html = await response.text();
       assertEquals(html.includes("/_veryfront/rsc/render/about"), true);
+    });
+
+    it("does not replace a failed route render with the generic payload endpoint", async () => {
+      const handler = new PageHandler();
+      const response = handler.handle("/about", new URLSearchParams());
+      const html = await response.text();
+
+      assertEquals(html.includes("fetchPayload('/_veryfront/rsc/payload')"), false);
     });
 
     it("should include query string in render URL", async () => {
@@ -49,10 +91,83 @@ describe("server/services/rsc/orchestrators/page-handler", () => {
     });
 
     it("should include dev mode flag", async () => {
-      const handler = new PageHandler();
+      const handler = new PageHandler(true);
       const response = handler.handle("/", new URLSearchParams());
       const html = await response.text();
-      assertEquals(html.includes("__VERYFRONT_DEV__"), true);
+      assertEquals(html.includes("window.__VERYFRONT_DEV__ = true"), true);
+    });
+
+    it("disables dev mode for non-local responses", async () => {
+      const handler = new PageHandler(false);
+      const response = handler.handle("/", new URLSearchParams());
+      const html = await response.text();
+
+      assertEquals(html.includes("window.__VERYFRONT_DEV__ = false"), true);
+      assertEquals(html.includes("window.__VERYFRONT_DEV__ = true"), false);
+    });
+
+    it("publishes the configured React version and module strategy for hydration", async () => {
+      const handler = new PageHandler(false, "18.3.1", "rsc-module");
+      const response = handler.handle("/", new URLSearchParams());
+      const html = await response.text();
+
+      assertEquals(html.includes('id="veryfront-hydration-data"'), true);
+      assertEquals(html.includes('"reactVersion":"18.3.1"'), true);
+      assertEquals(html.includes('"clientModuleStrategy":"rsc-module"'), true);
+      assertEquals(html.includes('"dev":false'), true);
+    });
+
+    it("preserves application pins and sends the page snapshot as a render header", async () => {
+      const handler = new PageHandler(
+        false,
+        "18.3.1",
+        "rsc-module",
+        "on:pins-a",
+      );
+      const response = handler.handle(
+        "/",
+        new URLSearchParams({ name: "Ada", pins: "on:stale" }),
+      );
+      const html = await response.text();
+
+      assertEquals(
+        html.includes(
+          "/_veryfront/rsc/render/?name=Ada\\u0026pins=on%3Apins-a",
+        ),
+        false,
+      );
+      assertEquals(
+        html.includes(
+          "/_veryfront/rsc/render/?name=Ada\\u0026pins=on%3Astale",
+        ),
+        true,
+      );
+      assertEquals(
+        html.includes('"dependencyPinningCacheKey":"on:pins-a"'),
+        true,
+      );
+      assertEquals(
+        html.includes('"x-veryfront-dependency-pins":"on:pins-a"'),
+        true,
+      );
+      assertEquals(response.headers.get("cache-control"), "no-store");
+    });
+
+    it("preserves application pins without a transport header when pinning is off", async () => {
+      const handler = new PageHandler(false, "18.3.1", "rsc-module", "off");
+      const response = handler.handle(
+        "/",
+        new URLSearchParams({ pins: "application-value" }),
+      );
+      const html = await response.text();
+
+      assertEquals(
+        html.includes("/_veryfront/rsc/render/?pins=application-value"),
+        true,
+      );
+      assertEquals(html.includes("x-veryfront-dependency-pins"), false);
+      assertEquals(html.includes('"dependencyPinningCacheKey"'), false);
+      assertEquals(response.headers.get("cache-control"), null);
     });
 
     it("should not include legacy hydrate.js import", async () => {
@@ -69,8 +184,78 @@ describe("server/services/rsc/orchestrators/page-handler", () => {
       assertEquals(html.includes("import('/_veryfront/rsc/client.js?hydrate=1')"), true);
     });
 
-    it("should add nonce attributes to inline scripts when provided", async () => {
+    it("seeds hydration with the dependency snapshot captured by the render payload", async () => {
       const handler = new PageHandler();
+      const response = handler.handle("/", new URLSearchParams());
+      const html = await response.text();
+
+      assertEquals(
+        html.includes("const pinKey = payload?.dependencyPinningCacheKey"),
+        true,
+      );
+      assertEquals(
+        html.includes("hydrationState.dependencyPinningCacheKey = pinKey"),
+        true,
+      );
+      assertEquals(
+        html.indexOf("seedDependencySnapshot(payload)") <
+          html.indexOf("import('/_veryfront/rsc/client.js?hydrate=1')"),
+        true,
+      );
+    });
+
+    it("reloads once and stops first render for an exact dependency snapshot conflict", async () => {
+      const handler = new PageHandler(
+        false,
+        "18.3.1",
+        "rsc-module",
+        "on:pins-a",
+      );
+      const html = await handler.handle("/", new URLSearchParams()).text();
+      const recoveryState: Record<string, unknown> = {};
+      let reloads = 0;
+
+      for (let attempt = 0; attempt < 2; attempt++) {
+        assertEquals(
+          await runGeneratedSnapshotRecovery(
+            html,
+            new Response("Unknown dependency snapshot", { status: 409 }),
+            () => {
+              reloads++;
+            },
+            recoveryState,
+          ),
+          true,
+        );
+      }
+
+      assertEquals(reloads, 1);
+      assertEquals(
+        recoveryState.__VF_DEPENDENCY_SNAPSHOT_RECOVERY_STARTED__,
+        true,
+      );
+      assertEquals(
+        await runGeneratedSnapshotRecovery(
+          html,
+          new Response("Application conflict", { status: 409 }),
+          () => {
+            reloads++;
+          },
+          recoveryState,
+        ),
+        false,
+      );
+      assertEquals(reloads, 1);
+      assertEquals(
+        html.includes(
+          "if (payloadResult === DEPENDENCY_SNAPSHOT_RECOVERY_RESULT) return;",
+        ),
+        true,
+      );
+    });
+
+    it("should add nonce attributes to inline scripts when provided", async () => {
+      const handler = new PageHandler(true);
       const response = handler.handle("/", new URLSearchParams(), "nonce-123");
       const html = await response.text();
 

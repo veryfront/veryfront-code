@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { buildAppRoutes, buildPagesRoutes } from "./static-generation.ts";
 import { clearCSSCache, getCSSByHash } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
@@ -10,6 +16,13 @@ import { createMockAdapter as createMemoryAdapter } from "#veryfront/platform/ad
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import * as React from "react";
+import {
+  __injectReactDOMServerForTests,
+  __setServerModuleLoaderForTests,
+  resetReactCache,
+} from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 
 function createMockAdapter(): RuntimeAdapter {
   const files = new Map<string, string>();
@@ -79,6 +92,8 @@ describe(
 
     afterEach(() => {
       setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalFlag ?? "");
+      resetReactCache();
+      __setServerModuleLoaderForTests(null);
     });
 
     describe("buildAppRoutes", () => {
@@ -95,6 +110,90 @@ describe(
         assertEquals(stats.pages, 0);
         assertEquals(stats.totalSize, 0);
         assertEquals(stats.ssgPaths, []);
+      });
+
+      it("uses config.react.version for App Router SSR and the browser import map", async () => {
+        const adapter = createMemoryAdapter();
+        const appDir = "/tmp/project/src/site";
+        adapter.fs.files.set(
+          `${appDir}/page.tsx`,
+          "export default function Page() { return null; }",
+        );
+        adapter.fs.files.set(
+          `${appDir}/layout.tsx`,
+          "export default function Layout() { return null; }",
+        );
+        const server = (marker: string) => ({
+          renderToString: (node: React.ReactNode) => {
+            const element = React.isValidElement<{ children?: React.ReactNode }>(node)
+              ? node
+              : null;
+            const layoutMarker = element?.props.children ? "with-layout" : "without-layout";
+            return `<p>${marker}-${layoutMarker}</p>`;
+          },
+          renderToStaticMarkup: () => `<p>${marker}</p>`,
+        });
+        __setServerModuleLoaderForTests((_url, label) => {
+          if (label === "React") return Promise.resolve({ default: React });
+          throw new Error(`Unexpected module load: ${label}`);
+        });
+        __injectReactDOMServerForTests(server("default-react"));
+        __injectReactDOMServerForTests(server("project-react-18"), "18.3.1");
+
+        await buildAppRoutes(
+          [{
+            path: "/",
+            pageFile: `${appDir}/page.tsx`,
+            segments: [],
+            segmentDirs: [appDir],
+          }],
+          {
+            adapter,
+            projectDir: "/tmp/project",
+            outputDir: "/tmp/output",
+            renderer: createMockRenderer(),
+            config: {
+              react: { version: "18.3.1" },
+              directories: { app: "src/site" },
+            } as VeryfrontConfig,
+            enablePrefetch: false,
+            chunkManifest: null,
+          },
+        );
+
+        const html = adapter.fs.files.get("/tmp/output/index.html") ?? "";
+        assertStringIncludes(html, "project-react-18-with-layout");
+        const importMapReact = extractImportMapImports(html).react;
+        assertExists(importMapReact);
+        assertStringIncludes(importMapReact, "react@18.3.1");
+      });
+
+      it("fails the build when an app route cannot be rendered", async () => {
+        const error = await assertRejects(() =>
+          buildAppRoutes(
+            [{
+              path: "/broken",
+              pageFile: "/tmp/project/app/broken/page.tsx",
+              segments: ["broken"],
+              segmentDirs: ["/tmp/project/app/broken"],
+            }],
+            {
+              adapter: createMockAdapter(),
+              projectDir: "/tmp/project",
+              outputDir: "/tmp/output",
+              renderer: createMockRenderer(),
+              config: createMockConfig(),
+              enablePrefetch: false,
+              chunkManifest: null,
+              traceStep: (name, fn) =>
+                name === "app:/broken" ? Promise.reject(new Error("render failed")) : fn(),
+            },
+          )
+        );
+
+        assertEquals(error instanceof VeryfrontError, true);
+        assertEquals((error as VeryfrontError).slug, "ssg-generation-error");
+        assertEquals((error as Error).message, "Failed to build app route /broken");
       });
 
       it("writes and links generated CSS for app router pages", async () => {
@@ -353,13 +452,13 @@ describe(
         const jsxDevRuntimeHash = "5".repeat(64);
         const headHash = "6".repeat(64);
         const manifest: ReleaseAssetManifest = {
-          schemaVersion: 1,
+          schemaVersion: 2,
           projectId: "local-project",
           releaseId: "standalone-dev",
           releaseVersion: 0,
           manifestVersion: 1,
           builderVersion: "0.1.810",
-          sourceContentHash: "source",
+          sourceContentHash: "a".repeat(64),
           createdAt: "2026-06-15T00:00:00.000Z",
           assetBasePath: "/_vf/assets",
           modules: {},
@@ -402,7 +501,7 @@ describe(
               contentType: "text/javascript",
             },
           },
-          fallback: { mode: "jit", gaps: [] },
+          dependencyMode: "immutable",
         };
         const renderer = {
           renderPage: (
@@ -446,6 +545,76 @@ describe(
           html.includes('"veryfront/react/head": "/_vf_modules/_veryfront/react/runtime/core.js"'),
           false,
         );
+      });
+
+      it("renders Pages Router routes with static-only data context", async () => {
+        const calls: Array<{
+          slug: string;
+          request?: Request;
+          url?: URL;
+          staticDataOnly?: boolean;
+          contentSourceId?: string;
+        }> = [];
+        const renderer = {
+          renderPage: (
+            slug: string,
+            options?: {
+              request?: Request;
+              url?: URL;
+              staticDataOnly?: boolean;
+              contentSourceId?: string;
+            },
+          ) => {
+            calls.push({
+              slug,
+              request: options?.request,
+              url: options?.url,
+              staticDataOnly: options?.staticDataOnly,
+              contentSourceId: options?.contentSourceId,
+            });
+            return Promise.resolve({
+              html: "<html><head></head><body><div>content</div></body></html>",
+              frontmatter: {},
+              headings: [],
+            });
+          },
+          destroy: () => Promise.resolve(),
+        } as unknown as VeryfrontRenderer;
+
+        await buildPagesRoutes(
+          [
+            { slug: "index", path: "/", file: "pages/index.tsx" },
+            { slug: "search", path: "/search?q=jobs", file: "pages/search.tsx" },
+          ],
+          {
+            adapter: createMockAdapter(),
+            projectDir: "/tmp/project",
+            outputDir: "/tmp/output",
+            renderer,
+            config: createMockConfig(),
+            enablePrefetch: false,
+            chunkManifest: null,
+            dryRun: true,
+            baseUrl: "https://example.test/app",
+            contentSourceId: "release-test",
+          },
+        );
+
+        assertEquals(calls.length, 2);
+        const rootCall = calls[0];
+        const searchCall = calls[1];
+        assertExists(rootCall);
+        assertExists(searchCall);
+        assertEquals(rootCall.slug, "index");
+        assertEquals(rootCall.request, undefined);
+        assertEquals(rootCall.url?.href, "https://example.test/");
+        assertEquals(rootCall.staticDataOnly, true);
+        assertEquals(rootCall.contentSourceId, "release-test");
+        assertEquals(searchCall.slug, "search");
+        assertEquals(searchCall.request, undefined);
+        assertEquals(searchCall.url?.href, "https://example.test/search?q=jobs");
+        assertEquals(searchCall.staticDataOnly, true);
+        assertEquals(searchCall.url?.searchParams.get("q"), "jobs");
       });
 
       it("records generated Pages Router paths in SSG stats", async () => {
@@ -507,26 +676,31 @@ describe(
         assertStringIncludes(html, "\\u003c/script\\u003e");
       });
 
-      it("should handle renderer errors gracefully", async () => {
+      it("fails the build when a page cannot be rendered", async () => {
         const errorRenderer = {
           renderPage: () => Promise.reject(new Error("render failed")),
           destroy: () => Promise.resolve(),
         } as unknown as VeryfrontRenderer;
 
-        const stats = await buildPagesRoutes(
-          [{ slug: "bad", path: "/bad", file: "pages/bad.mdx" }],
-          {
-            adapter: createMockAdapter(),
-            projectDir: "/tmp/project",
-            outputDir: "/tmp/output",
-            renderer: errorRenderer,
-            config: createMockConfig(),
-            enablePrefetch: false,
-            chunkManifest: null,
-          },
+        const error = await assertRejects(
+          () =>
+            buildPagesRoutes(
+              [{ slug: "bad", path: "/bad", file: "pages/bad.mdx" }],
+              {
+                adapter: createMockAdapter(),
+                projectDir: "/tmp/project",
+                outputDir: "/tmp/output",
+                renderer: errorRenderer,
+                config: createMockConfig(),
+                enablePrefetch: false,
+                chunkManifest: null,
+              },
+            ),
         );
-        // Should not throw, just skip the failed page
-        assertEquals(stats.pages, 0);
+
+        assertEquals(error instanceof VeryfrontError, true);
+        assertEquals((error as VeryfrontError).slug, "ssg-generation-error");
+        assertEquals((error as Error).message, "Failed to build page /bad");
       });
 
       it("should use custom traceStep function", async () => {

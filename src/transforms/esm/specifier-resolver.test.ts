@@ -1,9 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { CacheHttpModuleFn } from "./specifier-resolver.ts";
 import { buildReplacements, rewriteModuleImports } from "./specifier-resolver.ts";
 import type { CacheOptions } from "./http-cache-helpers.ts";
+import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
 
 describe("transforms/esm/specifier-resolver", () => {
   const defaultOptions: CacheOptions = {
@@ -16,41 +17,113 @@ describe("transforms/esm/specifier-resolver", () => {
   describe("buildReplacements", () => {
     it("returns empty map for code with no imports", async () => {
       const result = await buildReplacements("const x = 1;", undefined, defaultOptions, noopCache);
-      assertEquals(result.size, 0);
+      assertEquals(result.replacements.size, 0);
     });
 
     it("returns empty map for internal bare specifiers", async () => {
       const code = `import { foo } from "#veryfront/utils";`;
       const result = await buildReplacements(code, undefined, defaultOptions, noopCache);
-      assertEquals(result.size, 0);
+      assertEquals(result.replacements.size, 0);
     });
 
     it("returns empty map for node: scheme", async () => {
       const code = `import fs from "node:fs";`;
       const result = await buildReplacements(code, undefined, defaultOptions, noopCache);
-      assertEquals(result.size, 0);
+      assertEquals(result.replacements.size, 0);
+    });
+
+    it("does not rewrite private import-map aliases to esm.sh fragments", async () => {
+      const code = `import { load } from "#std/dotenv.ts";`;
+      const cacheCalls: string[] = [];
+      const result = await buildReplacements(
+        code,
+        "https://esm.sh/?external=react&target=es2022",
+        defaultOptions,
+        async (url) => {
+          cacheCalls.push(url);
+          return "/tmp/cache/http-std.mjs";
+        },
+      );
+
+      assertEquals(result.replacements.size, 0);
+      assertEquals(cacheCalls, []);
+    });
+
+    it("rewrites mapped private import-map aliases before skipping internal aliases", async () => {
+      const code = `import pkg from "#pkg";`;
+      const cacheCalls: string[] = [];
+      const result = await buildReplacements(
+        code,
+        "https://esm.sh/parent@1/index.js",
+        {
+          ...defaultOptions,
+          importMap: {
+            imports: {
+              "#pkg": "https://cdn.example.com/pkg.js",
+            },
+          },
+        },
+        async (url) => {
+          cacheCalls.push(url);
+          return "/tmp/cache/http-pkg.mjs";
+        },
+      );
+
+      assertEquals(result.replacements.get("#pkg"), "./http-pkg.mjs");
+      assertEquals(cacheCalls, ["https://cdn.example.com/pkg.js"]);
+    });
+
+    it("returns empty map for jsr: specifiers", async () => {
+      const code = `import { load } from "jsr:@std/dotenv@0.225.6";`;
+      const result = await buildReplacements(code, undefined, defaultOptions, noopCache);
+      assertEquals(result.replacements.size, 0);
     });
 
     it("rewrites npm: specifiers when cache returns a path", async () => {
       const code = `import React from "npm:react@18";`;
       const mockCache: CacheHttpModuleFn = async () => "/tmp/cache/http-12345.mjs";
       const result = await buildReplacements(code, undefined, defaultOptions, mockCache);
-      assertEquals(result.has("npm:react@18"), true);
-      assertEquals(result.get("npm:react@18"), "file:///tmp/cache/http-12345.mjs");
+      assertEquals(result.replacements.has("npm:react@18"), true);
+      assertEquals(result.replacements.get("npm:react@18"), "file:///tmp/cache/http-12345.mjs");
     });
 
     it("npm: specifier falls back to bare name when cache returns null", async () => {
       const code = `import React from "npm:react@18";`;
       const result = await buildReplacements(code, undefined, defaultOptions, noopCache);
-      assertEquals(result.get("npm:react@18"), "react@18");
+      assertEquals(result.replacements.get("npm:react@18"), "react@18");
+    });
+
+    it("resolves npm: specifiers after String prefix poisoning", async () => {
+      const stringPrototypeDescriptors = Object.getOwnPropertyDescriptors(String.prototype);
+
+      try {
+        Object.defineProperty(String.prototype, "startsWith", {
+          configurable: true,
+          value() {
+            throw new Error("poisoned String.prototype.startsWith");
+          },
+          writable: true,
+        });
+
+        const code = `import React from "npm:react@18";`;
+        const result = await buildReplacements(code, undefined, defaultOptions, async () => {
+          return "/tmp/cache/http-12345.mjs";
+        });
+        assertEquals(result.replacements.get("npm:react@18"), "file:///tmp/cache/http-12345.mjs");
+      } finally {
+        Object.defineProperties(String.prototype, stringPrototypeDescriptors);
+      }
     });
 
     it("rewrites http URL when cache returns a path", async () => {
       const code = `import lodash from "https://esm.sh/lodash@4";`;
       const mockCache: CacheHttpModuleFn = async () => "/tmp/cache/http-99999.mjs";
       const result = await buildReplacements(code, undefined, defaultOptions, mockCache);
-      assertEquals(result.has("https://esm.sh/lodash@4"), true);
-      assertEquals(result.get("https://esm.sh/lodash@4"), "file:///tmp/cache/http-99999.mjs");
+      assertEquals(result.replacements.has("https://esm.sh/lodash@4"), true);
+      assertEquals(
+        result.replacements.get("https://esm.sh/lodash@4"),
+        "file:///tmp/cache/http-99999.mjs",
+      );
     });
 
     it("rewrites mapped esm.sh veryfront URLs to local framework modules without caching", async () => {
@@ -76,7 +149,7 @@ describe("transforms/esm/specifier-resolver", () => {
       );
 
       assertEquals(
-        result.get(specifier),
+        result.replacements.get(specifier),
         "/_vf_modules/_veryfront/chat/index.js?ssr=true",
       );
       assertEquals(cacheCalls, []);
@@ -91,7 +164,7 @@ describe("transforms/esm/specifier-resolver", () => {
         defaultOptions,
         mockCache,
       );
-      assertEquals(result.get("https://esm.sh/lodash@4"), "./http-99999.mjs");
+      assertEquals(result.replacements.get("https://esm.sh/lodash@4"), "./http-99999.mjs");
     });
 
     it("resolves relative specifiers against HTTP base URL", async () => {
@@ -103,27 +176,161 @@ describe("transforms/esm/specifier-resolver", () => {
         defaultOptions,
         mockCache,
       );
-      assertEquals(result.has("./utils.js"), true);
-      assertEquals(result.get("./utils.js"), "./http-11111.mjs");
+      assertEquals(result.replacements.has("./utils.js"), true);
+      assertEquals(result.replacements.get("./utils.js"), "./http-11111.mjs");
     });
 
     it("ignores relative specifiers without HTTP base URL", async () => {
       const code = `import { foo } from "./utils.js";`;
       const result = await buildReplacements(code, undefined, defaultOptions, noopCache);
-      assertEquals(result.size, 0);
+      assertEquals(result.replacements.size, 0);
     });
 
-    it("propagates cache errors", async () => {
+    it("fails closed when a dynamic absolute URL cannot be cached", async () => {
+      const code = `export const load = () => import("https://esm.sh/foo");`;
+      await assertRejects(
+        () =>
+          buildReplacements(code, undefined, defaultOptions, async () => {
+            throw new Error("cache failed");
+          }),
+        Error,
+        "cache failed",
+      );
+    });
+
+    it("aborts when a static specifier's cache lookup throws", async () => {
+      // A static import belongs to the emitted module's own import graph. The
+      // artifact contract is that every static dependency is local before the
+      // runtime loader sees it, so this failure stays fatal.
       const code = `import foo from "https://esm.sh/foo";`;
-      let caught: Error | null = null;
-      try {
-        await buildReplacements(code, undefined, defaultOptions, async () => {
-          throw new Error("cache failed");
-        });
-      } catch (e) {
-        caught = e as Error;
+      await assertRejects(
+        () =>
+          buildReplacements(code, undefined, defaultOptions, async () => {
+            throw new Error("cache failed");
+          }),
+        Error,
+        "cache failed",
+      );
+    });
+
+    it("aborts when a specifier is imported both statically and dynamically", async () => {
+      const code = `import foo from "https://esm.sh/foo";\nexport const again = () =>` +
+        ` import("https://esm.sh/foo");`;
+      await assertRejects(
+        () =>
+          buildReplacements(code, undefined, defaultOptions, async () => {
+            throw new Error("cache failed");
+          }),
+        Error,
+        "cache failed",
+      );
+    });
+
+    it("fails closed when an absolute URL cache returns no artifact", async () => {
+      const code = `export const load = () => import("https://esm.sh/foo");`;
+      await assertRejects(
+        () => buildReplacements(code, undefined, defaultOptions, async () => null),
+        Error,
+        "Failed to cache absolute HTTP module",
+      );
+    });
+
+    it("never degrades an outbound-policy denial into a runtime import", async () => {
+      const code = `export const load = () => import("http://169.254.169.254/metadata");`;
+      await assertRejects(
+        () =>
+          buildReplacements(code, undefined, defaultOptions, async () => {
+            throw new OutboundRequestBlockedError("internal destination blocked");
+          }),
+        OutboundRequestBlockedError,
+        "internal destination blocked",
+      );
+    });
+
+    it("returns the complete replacement set when every specifier resolves", async () => {
+      const code = `import ok from "https://esm.sh/ok";`;
+      const result = await buildReplacements(
+        code,
+        undefined,
+        defaultOptions,
+        async () => "/tmp/cache/http-ok.mjs",
+      );
+      assertEquals(result.replacements.size, 1);
+    });
+
+    it("aborts when a dynamic relative specifier fails to resolve", async () => {
+      // A relative specifier inside an esm.sh bundle resolves at call time
+      // against the local bundle cache directory, where the chunk was never
+      // written. Leaving it in place would guarantee a runtime failure.
+      const code = `export const load = () => import("./chunk-abc.mjs");`;
+      await assertRejects(
+        () =>
+          buildReplacements(code, "https://esm.sh/parent@1/index.js", defaultOptions, async () => {
+            throw new Error("cache failed");
+          }),
+        Error,
+        "cache failed",
+      );
+    });
+
+    it("aborts when a dynamic npm: specifier fails to resolve", async () => {
+      const code = `export const load = () => import("npm:some-package");`;
+      await assertRejects(
+        () =>
+          buildReplacements(code, "https://esm.sh/parent@1/index.js", defaultOptions, async () => {
+            throw new Error("cache failed");
+          }),
+        Error,
+        "cache failed",
+      );
+    });
+
+    it("leaves a server-only package external instead of routing it to esm.sh", async () => {
+      // `redis` and its explicit npm: form only run server-side. They must be
+      // left in place for the runtime to resolve (node_modules / npm:), never
+      // fetched from esm.sh — so the cache function is never called and nothing
+      // is degraded or aborted.
+      for (const specifier of ["redis", "npm:redis", "npm:redis@5.11.0"]) {
+        const code = `export const load = () => import(${JSON.stringify(specifier)});`;
+        let cacheCalls = 0;
+        const result = await buildReplacements(
+          code,
+          "https://esm.sh/parent@1/index.js",
+          defaultOptions,
+          async () => {
+            cacheCalls++;
+            return null;
+          },
+        );
+        assertEquals(cacheCalls, 0, `${specifier} must not hit esm.sh`);
+        assertEquals(result.replacements.size, 0, `${specifier} must be left in place`);
       }
-      assertEquals(caught?.message, "cache failed");
+    });
+
+    it("aborts when a dynamic bare specifier fails to resolve", async () => {
+      const code = `export const load = () => import("some-package");`;
+      await assertRejects(
+        () =>
+          buildReplacements(code, "https://esm.sh/parent@1/index.js", defaultOptions, async () => {
+            throw new Error("cache failed");
+          }),
+        Error,
+        "cache failed",
+      );
+    });
+
+    it("rejects the entire artifact when any dynamic absolute URL fails", async () => {
+      const code = `import ok from "https://esm.sh/ok";\n` +
+        `export const load = () => import("https://esm.sh/broken");`;
+      const cache: CacheHttpModuleFn = async (url) => {
+        if (url === "https://esm.sh/broken") throw new Error("upstream 500");
+        return "/tmp/cache/http-ok.mjs";
+      };
+      await assertRejects(
+        () => buildReplacements(code, undefined, defaultOptions, cache),
+        Error,
+        "upstream 500",
+      );
     });
   });
 
@@ -131,32 +338,49 @@ describe("transforms/esm/specifier-resolver", () => {
     it("returns code unchanged when no replacements needed", async () => {
       const code = `import fs from "node:fs";`;
       const result = await rewriteModuleImports(code, "", defaultOptions, noopCache);
-      assertEquals(result, code);
+      assertEquals(result.code, code);
     });
 
     it("rewrites http import in code", async () => {
       const code = `import React from "https://esm.sh/react@18";`;
       const mockCache: CacheHttpModuleFn = async () => "/tmp/cache/http-12345.mjs";
       const result = await rewriteModuleImports(code, "", defaultOptions, mockCache);
-      assertEquals(result.includes("file:///tmp/cache/http-12345.mjs"), true);
-      assertEquals(result.includes("https://esm.sh/react@18"), false);
+      assertEquals(result.code.includes("file:///tmp/cache/http-12345.mjs"), true);
+      assertEquals(result.code.includes("https://esm.sh/react@18"), false);
     });
 
-    it("propagates cache errors from rewriteModuleImports", async () => {
-      let caught: Error | null = null;
-      try {
-        await rewriteModuleImports(
-          `import foo from "https://esm.sh/foo";`,
-          "https://esm.sh/parent",
-          defaultOptions,
-          async () => {
+    it("does not emit a dynamic absolute URL when caching throws", async () => {
+      const original = `export const load = () => import("https://esm.sh/foo");`;
+      await assertRejects(
+        () =>
+          rewriteModuleImports(original, "https://esm.sh/parent", defaultOptions, async () => {
             throw new Error("cache failed");
-          },
-        );
-      } catch (e) {
-        caught = e as Error;
-      }
-      assertEquals(caught?.message, "cache failed");
+          }),
+        Error,
+        "cache failed",
+      );
+    });
+
+    it("does not emit a dynamic absolute URL when caching returns null", async () => {
+      const original = `export const load = () => import("https://esm.sh/foo");`;
+      await assertRejects(
+        () =>
+          rewriteModuleImports(original, "https://esm.sh/parent", defaultOptions, async () => null),
+        Error,
+        "Failed to cache absolute HTTP module",
+      );
+    });
+
+    it("aborts when a static specifier's cache lookup throws", async () => {
+      const original = `import foo from "https://esm.sh/foo";`;
+      await assertRejects(
+        () =>
+          rewriteModuleImports(original, "https://esm.sh/parent", defaultOptions, async () => {
+            throw new Error("cache failed");
+          }),
+        Error,
+        "cache failed",
+      );
     });
   });
 });

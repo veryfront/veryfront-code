@@ -42,6 +42,10 @@ Use `veryfront/extensions/eval` when a project needs to send completed
 `EvalReport` payloads to an eval platform such as Braintrust, Langfuse, or
 LangSmith. Use `@veryfront/ext-eval-report-http` for a generic HTTP transport
 when a project wants one gateway endpoint instead of vendor SDKs. Use
+`@veryfront/ext-eval-report-mlflow` when reports should be logged as MLflow
+Tracking runs. Select the exporter id from the eval CLI with `--export mlflow`
+or set `VERYFRONT_EVAL_EXPORTERS=mlflow` in CI; `MLFLOW_TRACKING_URI` activates
+the extension without a project config entry. Use
 `veryfront/extensions/observability` for runtime tracing, OpenTelemetry SDK
 setup, spans, and monitoring.
 
@@ -50,3 +54,17 @@ allow inputs, outputs, references, traces, metric evidence, metric explanations,
 or record metadata before those fields leave the process. When OpenTelemetry is
 active, `runEval` attaches the active `traceId` and `spanId` to export context
 unless the caller passes an explicit trace context.
+
+Exporter extensions should stay generic. Project-specific extraction, such as
+turning a product ticket or model response into a classification label, belongs
+in the eval adapter or metric. The MLflow exporter can aggregate classification
+metrics only from safe metric evidence fields, and that evidence requires an
+explicit redaction opt-in. Artifact transport is also part of the exporter
+boundary: v1 supports HTTP(S) artifact roots and HTTP(S) MLflow artifact proxy
+endpoints, not direct uploads to local filesystem roots or backend-specific
+schemes such as `dbfs://`, `gs://`, or `wasbs://`.
+
+Future vendor integrations should be sibling packages behind the same contract.
+For example, Braintrust should be added as a separate
+`@veryfront/ext-eval-report-*` exporter rather than as project-specific logic in
+the MLflow exporter.

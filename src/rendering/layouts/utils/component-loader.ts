@@ -6,11 +6,12 @@ import {
 } from "#veryfront/utils";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import type { LayoutItem, MdxBundle, MDXComponents, MDXModule } from "#veryfront/types";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { preloadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { loadComponentFromSource } from "#veryfront/modules/react-loader/component-loader.ts";
@@ -18,10 +19,21 @@ import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolv
 import { getProjectReact } from "#veryfront/react";
 import { ensureValidChild } from "./ensure-valid-child.ts";
 import { buildLayoutComponentCacheKey, CacheKeyPrefix } from "#veryfront/cache/keys.ts";
+import { LAYOUT_EXTENSIONS } from "#veryfront/rendering/layouts/types.ts";
+import {
+  type DependencyPinningSourceInput,
+  resolveDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
+import { Singleflight } from "#veryfront/utils/singleflight.ts";
 
 const loadMdxLayoutLog = logger.component("load-mdx-layout");
 const applyTsxLayoutLog = logger.component("apply-tsx-layout");
 const applyMdxLayoutLog = logger.component("apply-mdx-layout");
+const APP_ROUTER_SCRIPT_LAYOUT_EXTENSIONS = LAYOUT_EXTENSIONS.filter((extension) =>
+  extension !== "md" && extension !== "mdx"
+);
+const TSX_COMPONENT_FLIGHT_STALE_EVICTION_MS = 5 * 60_000;
 
 type AppRouterDocumentLayoutFunction = (
   props: { children?: BundledReact.ReactNode },
@@ -33,6 +45,26 @@ export interface LayoutComponentCache {
   delete(key: string): void;
   clear(): void;
   clearForProject?(projectId: string): void;
+}
+
+interface LoadTSXComponentDeps {
+  loadComponentFromSource: typeof loadComponentFromSource;
+}
+
+const tsxComponentFlights = new WeakMap<
+  LayoutComponentCache,
+  Singleflight<BundledReact.ComponentType>
+>();
+
+function getTSXComponentFlights(
+  cache: LayoutComponentCache,
+): Singleflight<BundledReact.ComponentType> {
+  let flights = tsxComponentFlights.get(cache);
+  if (!flights) {
+    flights = new Singleflight<BundledReact.ComponentType>();
+    tsxComponentFlights.set(cache, flights);
+  }
+  return flights;
 }
 
 class InMemoryLayoutComponentCache implements LayoutComponentCache {
@@ -179,12 +211,22 @@ export function createLayoutComponentCache(
 export function shouldUnwrapAppRouterDocumentLayout(
   componentPath: string | undefined,
   projectDir: string,
+  appDirectory = "app",
 ): boolean {
   if (!componentPath) return false;
 
   const relativePath = resolveRelativePath(componentPath.replace(/\\/g, "/"), projectDir)
     .replace(/^\/+/, "");
-  return relativePath === "app/layout.tsx";
+  const relativeAppDirectory = resolveRelativePath(
+    appDirectory.replace(/\\/g, "/"),
+    projectDir,
+  )
+    .replace(/^\.\/+/, "")
+    .replace(/^\/+|\/+$/g, "");
+
+  return APP_ROUTER_SCRIPT_LAYOUT_EXTENSIONS.some((extension) =>
+    relativePath === `${relativeAppDirectory}/layout.${extension}`
+  );
 }
 
 export function unwrapAppRouterDocumentLayout(
@@ -214,32 +256,80 @@ export async function loadTSXComponent(
   projectId: string,
   projectSlug: string,
   contentSourceId: string,
+  reactVersion?: string,
+  deps: LoadTSXComponentDeps = { loadComponentFromSource },
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
 ): Promise<BundledReact.ComponentType> {
   const source = await adapter.fs.readFile(componentPath);
+  const dependencySnapshot = await resolveDependencyPinningSnapshot(
+    dependencyPinningSource ?? projectDir,
+    dependencyPinningCacheKey,
+    dependencyPinningDependencies,
+  );
   const hash = await computeHash(source);
-  const cacheKey = buildLayoutComponentCacheKey(projectId, componentPath, hash, contentSourceId);
+  const legacyCacheKey =
+    buildLayoutComponentCacheKey(projectId, componentPath, hash, contentSourceId) +
+    ":" + (reactVersion ?? "default");
+  const cacheVariant = buildDependencyPinningCacheVariant(
+    dependencySnapshot.cacheKey,
+    moduleServerOrigin,
+  );
+  const cacheKey = cacheVariant ? `${legacyCacheKey}:pins:${cacheVariant}` : legacyCacheKey;
 
   const cached = cache.get(cacheKey);
   if (cached) return cached;
 
-  const loaded = await loadComponentFromSource(source, componentPath, projectDir, adapter, {
-    dev: true,
-    projectId,
-    projectSlug,
-    ssr: true,
-    contentSourceId,
-  });
+  const loaded = await getTSXComponentFlights(cache).do(
+    cacheKey,
+    async (control) => {
+      const cachedDuringFlight = cache.get(cacheKey);
+      if (cachedDuringFlight) return cachedDuringFlight;
 
-  if (!loaded) {
-    throw toError(
-      createError({
-        type: "render",
-        message: "Component loading failed",
-      }),
-    );
-  }
+      const loaded = await deps.loadComponentFromSource(
+        source,
+        componentPath,
+        projectDir,
+        adapter,
+        {
+          dev: true,
+          projectId,
+          projectSlug,
+          ssr: true,
+          contentSourceId,
+          reactVersion,
+          moduleServerOrigin,
+          dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+          dependencyPinningDependencies: dependencySnapshot.dependencies,
+          dependencyPinningSource: dependencyPinningSource ?? projectDir,
+        },
+      );
 
-  cache.set(cacheKey, loaded);
+      if (!loaded) {
+        throw toError(
+          createError({
+            type: "render",
+            message: "Component loading failed",
+          }),
+        );
+      }
+
+      if (control.isCurrent()) {
+        cache.set(cacheKey, loaded);
+      }
+      return loaded;
+    },
+    {
+      staleAfterMs: TSX_COMPONENT_FLIGHT_STALE_EVICTION_MS,
+      onStaleEvicted: () => {
+        applyTsxLayoutLog.warn("Evicted stale TSX layout component load flight", {
+          componentPath,
+        });
+      },
+    },
+  );
   return loaded;
 }
 
@@ -252,6 +342,12 @@ export function loadMDXLayout(
   projectSlug: string,
   contentSourceId: string,
   preloadedImportMap?: ImportMapConfig,
+  reactVersion?: string,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
+  config?: VeryfrontConfig,
 ): Promise<BundledReact.ComponentType<{ components?: MDXComponents }> | undefined> {
   return withSpan(
     SpanNames.LAYOUT_LOAD_MDX,
@@ -261,7 +357,11 @@ export function loadMDXLayout(
         hasPreloadedImportMap: !!preloadedImportMap,
       });
 
-      const map = preloadedImportMap ?? (await preloadImportMap(projectDir, adapter, projectId));
+      const map = preloadedImportMap ?? (await preloadImportMap(projectDir, adapter, projectId, {
+        projectDir,
+        contentSourceId,
+        config,
+      }));
       if (preloadedImportMap) {
         loadMdxLayoutLog.debug("Using preloaded import map", { projectSlug });
       }
@@ -279,6 +379,11 @@ export function loadMDXLayout(
         projectDir,
         projectSlug,
         contentSourceId,
+        reactVersion,
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies,
+        dependencyPinningSource,
+        moduleServerOrigin,
       )) as MDXModule;
 
       loadMdxLayoutLog.debug("loadModuleESM DONE", {
@@ -304,8 +409,28 @@ export async function preloadMDXLayoutModule(
   projectId: string,
   projectSlug: string,
   contentSourceId: string,
+  reactVersion?: string,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
+  config?: VeryfrontConfig,
 ): Promise<void> {
-  await loadMDXLayout(bundle, projectDir, adapter, projectId, projectSlug, contentSourceId);
+  await loadMDXLayout(
+    bundle,
+    projectDir,
+    adapter,
+    projectId,
+    projectSlug,
+    contentSourceId,
+    undefined,
+    reactVersion,
+    dependencyPinningCacheKey,
+    dependencyPinningDependencies,
+    dependencyPinningSource,
+    moduleServerOrigin,
+    config,
+  );
 }
 
 export async function applyTSXLayout(
@@ -318,6 +443,11 @@ export async function applyTSXLayout(
   projectId: string,
   projectSlug: string,
   contentSourceId: string,
+  reactVersion?: string,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
 ): Promise<BundledReact.ReactElement> {
   const start = performance.now();
   applyTsxLayoutLog.debug("START", {
@@ -326,7 +456,7 @@ export async function applyTSXLayout(
     projectSlug,
   });
 
-  const React = await getProjectReact();
+  const React = await getProjectReact(reactVersion);
 
   try {
     applyTsxLayoutLog.debug("loadTSXComponent START", { componentPath: item.componentPath });
@@ -340,6 +470,12 @@ export async function applyTSXLayout(
       projectId,
       projectSlug,
       contentSourceId,
+      reactVersion,
+      undefined,
+      dependencyPinningCacheKey,
+      dependencyPinningDependencies,
+      dependencyPinningSource,
+      moduleServerOrigin,
     );
 
     applyTsxLayoutLog.debug("loadTSXComponent DONE", {
@@ -375,8 +511,14 @@ export async function applyMDXLayout(
   projectSlug: string,
   contentSourceId: string,
   preloadedImportMap?: ImportMapConfig,
+  reactVersion?: string,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
+  config?: VeryfrontConfig,
 ): Promise<BundledReact.ReactElement> {
-  const React = await getProjectReact();
+  const React = await getProjectReact(reactVersion);
   const LayoutFn = await loadMDXLayout(
     bundle,
     projectDir,
@@ -385,6 +527,12 @@ export async function applyMDXLayout(
     projectSlug,
     contentSourceId,
     preloadedImportMap,
+    reactVersion,
+    dependencyPinningCacheKey,
+    dependencyPinningDependencies,
+    dependencyPinningSource,
+    moduleServerOrigin,
+    config,
   );
 
   if (!LayoutFn) {

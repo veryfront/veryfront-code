@@ -1,4 +1,5 @@
 import { serverLogger } from "#veryfront/utils";
+import { isProduction } from "#veryfront/platform/environment.ts";
 import {
   clearModulePathCache,
   invalidateModulePaths,
@@ -17,6 +18,7 @@ import {
 import { clearSnippetCacheForProject } from "#veryfront/rendering/snippet-renderer.ts";
 import { resetApiHandlerForProject } from "#veryfront/server/handlers/request/api/pages-api-handler.ts";
 import { clearSourceMissCache } from "#veryfront/modules/server/module-source-resolution-cache.ts";
+import { invalidateProjectMiddlewareCache } from "#veryfront/server/runtime-handler/project-middleware.ts";
 
 const logger = serverLogger.component("cache-invalidation");
 
@@ -62,6 +64,13 @@ export async function invalidateProjectCaches(
   }
   clearSourceMissCache();
 
+  const middlewareEntries = invalidateProjectMiddlewareCache(projectSlug, projectId);
+  logger.debug("Clearing project middleware cache", {
+    projectSlug,
+    projectId,
+    entriesDeleted: middlewareEntries,
+  });
+
   logger.debug("Clearing SSR module cache", {
     projectSlug,
     projectId,
@@ -85,14 +94,15 @@ export async function invalidateProjectCaches(
   }
 
   if (!hasRealProjectSlug) {
-    logger.error(
-      "[CacheInvalidation] Skipping cache invalidation — no project identity available",
-      {
-        projectSlug,
-        reason: "projectSlug is 'preview' and no projectId provided",
-        action: "skipped_global_wipe",
-      },
-    );
+    const message =
+      "[CacheInvalidation] Skipping cache invalidation — no project identity available";
+    const context = {
+      projectSlug,
+      reason: "projectSlug is 'preview' and no projectId provided",
+      action: "skipped_global_wipe",
+    };
+    if (isProduction()) logger.error(message, context);
+    else logger.debug(message, context);
     // Previously called clearRendererCaches() which wiped ALL projects' caches on this pod.
     // This was a multi-tenant blast radius risk: one preview deployment could nuke every tenant's cache.
     // Now we skip the invalidation entirely. The stale cache will be naturally evicted by TTL

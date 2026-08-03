@@ -1,8 +1,8 @@
 /**
  * Deploy command - Create a release and deploy to an environment
  *
- * Creates a new release from the specified branch (default: main)
- * and deploys it to the target environment (default: production).
+ * Creates a new release from the specified branch, or main when no branch is
+ * specified, then deploys it to the target environment (default: production).
  *
  * @module cli/commands/deploy
  */
@@ -10,24 +10,37 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { cwd } from "veryfront/platform";
-import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
-import { confirmPrompt, logInfo, logSuccess } from "#cli/utils";
-import { createNoopSpinner, createSpinner, muted } from "#cli/ui";
-import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
+import { exitProcess, isVerbose, logInfo, logSuccess, logWarning } from "#cli/utils";
+import { UNKNOWN_ERROR, VeryfrontError } from "veryfront/errors";
+import { brand, createNoopSpinner, createSpinner, dim, formatDuration } from "#cli/ui";
+import { createStreamErrorResult, isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
+import {
+  createDeployProject,
+  type DeployPlan,
+  type DeployProject,
+  type DeployProjectOutcome,
+  type DeployStepName,
+} from "../../shared/deployment/deploy-project.ts";
+import { deployProgressText, initialDeployProgressText } from "../../shared/deployment/progress.ts";
+import type { DeployResult } from "../../shared/deployment/result.ts";
 
 /**
  * Schema factory for deploy command arguments
  */
 export const getDeployArgsSchema = defineSchema((v) =>
   v.object({
-    branch: v.string().min(1).default("main"),
+    projectDir: v.string().optional(),
+    branch: v.string().min(1).optional(),
     env: v.string().min(1).default("production"),
     releaseName: v.string().min(1).optional(),
     dryRun: v.boolean().default(false),
+    /** Deprecated compatibility flag; invoking deploy already authorizes the operation. */
     force: v.boolean().default(false),
     /** Quiet mode - suppress spinner/progress output */
     quiet: v.boolean().default(false),
+    /** Internal option used by commands that already pushed source. */
+    skipSourcePush: v.boolean().default(false),
   })
 );
 
@@ -36,12 +49,18 @@ export const DeployArgsSchema = lazySchema(getDeployArgsSchema);
 /**
  * Deploy command options (inferred from schema)
  */
-export type DeployOptions = InferSchema<ReturnType<typeof getDeployArgsSchema>>;
+type ParsedDeployOptions = InferSchema<ReturnType<typeof getDeployArgsSchema>>;
+export type DeployOptions = Omit<ParsedDeployOptions, "skipSourcePush"> & {
+  skipSourcePush?: boolean;
+  /** Deploy Execution override for tests; production uses createDeployProject(). */
+  deployProject?: DeployProject;
+};
 
 /**
  * Parse CLI arguments into validated DeployOptions
  */
 export const parseDeployArgs = createArgParser(DeployArgsSchema, {
+  projectDir: CommonArgs.projectDir,
   branch: CommonArgs.branch,
   env: CommonArgs.env,
   releaseName: CommonArgs.releaseName,
@@ -53,235 +72,182 @@ export const parseDeployArgs = createArgParser(DeployArgsSchema, {
 /**
  * Environment from the API
  */
-interface Environment {
-  id: string;
-  name: string;
-  protected: boolean;
-}
-
-/**
- * Release from the API
- */
-interface Release {
-  id: string;
-  name: string;
-  version: string;
-  export_status: string;
-  build_status: string;
-  deploy_status: string;
-}
-
-/**
- * Deployment from the API
- */
-interface Deployment {
-  id: string;
-  release: string;
-  environment: string;
-}
-
-/**
- * List environments response from API
- */
-interface ListEnvironmentsResponse {
-  data: Environment[];
-  page_info?: {
-    next?: string;
-  };
-}
-
-/**
- * Get environment by name (with pagination support)
- */
-export async function getEnvironmentByName(
-  client: ApiClient,
-  projectSlug: string,
-  name: string,
-): Promise<Environment | null> {
-  let cursor: string | undefined;
-
-  do {
-    const params: Record<string, string> = { limit: "100" };
-    if (cursor) params.cursor = cursor;
-
-    const response = await client.get<ListEnvironmentsResponse>(
-      `/projects/${projectSlug}/environments`,
-      params,
-    );
-
-    const found = response.data.find((e) => e.name === name);
-    if (found) return found;
-
-    cursor = response.page_info?.next;
-  } while (cursor);
-
-  return null;
-}
-
-/**
- * Create a new release
- */
-export function createRelease(
-  client: ApiClient,
-  projectSlug: string,
-  options?: { name?: string; branch?: string },
-): Promise<Release> {
-  const body: Record<string, string> = {};
-  if (options?.name) body.name = options.name;
-  if (options?.branch) body.branch_reference = options.branch;
-
-  return client.post<Release>(`/projects/${projectSlug}/releases`, body);
-}
-
-/**
- * Create a new deployment
- */
-export function createDeployment(
-  client: ApiClient,
-  projectSlug: string,
-  releaseId: string,
-  environmentId: string,
-): Promise<Deployment> {
-  return client.post<Deployment>(`/projects/${projectSlug}/deployments`, {
-    release_id: releaseId,
-    environment_id: environmentId,
-  });
-}
+export type { DeployResult };
 
 /**
  * Create a release and deploy to an environment
  */
-export async function deployCommand(options: DeployOptions): Promise<void> {
-  const { branch, env, releaseName, dryRun, force, quiet } = options;
-
-  if (isJsonMode()) {
-    return deployCommandJson(options);
-  }
-
-  let spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
-
-  const config = await resolveConfigWithAuth(cwd());
-  const client = createApiClient(config);
-
-  spinner.update(`Looking up environment "${env}"...`);
-
-  const environment = await getEnvironmentByName(client, config.projectSlug, env);
-  if (!environment) {
-    spinner.stop();
-    throw new Error(`Environment "${env}" not found`);
-  }
-
-  spinner.stop();
-
-  if (dryRun) {
-    if (!quiet) logInfo(`Would create release from "${branch}" and deploy to "${env}"`);
-    return;
-  }
-
-  if (!force) {
-    const confirmed = await confirmPrompt(
-      `Create release from "${branch}" and deploy to "${env}"?`,
-      true,
-    );
-    if (!confirmed) {
-      console.log(`  ${muted("Deploy cancelled.")}`);
-      return;
-    }
-  }
-
-  spinner = quiet ? createNoopSpinner() : createSpinner(`Creating release from "${branch}"...`);
-
-  const release = await createRelease(client, config.projectSlug, { name: releaseName, branch });
-
-  spinner.update(`Deploying ${release.version} to ${env}...`);
-
-  await createDeployment(client, config.projectSlug, release.id, environment.id);
-
-  spinner.stop();
-
-  if (quiet) return;
-
-  logSuccess(`Deployed ${release.version} to ${env}`);
-  logInfo(`  Release: ${release.name} (${release.version})`);
-  logInfo(`  Environment: ${env}`);
-
-  const { getPostDeployTips } = await import("../../help/tips.ts");
-  console.log(getPostDeployTips());
+export async function deployCommand(options: DeployOptions): Promise<DeployResult | null> {
+  if (isJsonMode()) return deployCommandJson(options);
+  return deployCommandHuman(options);
 }
 
-async function deployCommandJson(options: DeployOptions): Promise<void> {
-  const { branch, env, releaseName, dryRun, force } = options;
+function deployRunner(options: DeployOptions): DeployProject {
+  return options.deployProject ?? createDeployProject();
+}
 
+function toDeployRequest(options: DeployOptions) {
+  return {
+    projectDir: options.projectDir ?? cwd(),
+    branch: options.branch,
+    environment: options.env,
+    releaseName: options.releaseName,
+    mode: options.dryRun ? "dry-run" as const : "apply" as const,
+    source: options.skipSourcePush
+      ? { kind: "already-pushed" as const }
+      : { kind: "ensure-pushed" as const },
+  };
+}
+
+function formatDryRunActions(plan: DeployPlan): string {
+  return plan.plannedActions.includes("push-source")
+    ? `push source to "${plan.branch}", create release, and deploy to "${plan.environment}"`
+    : `create release and deploy to "${plan.environment}"`;
+}
+
+function logDryRunPlan(plan: DeployPlan, quiet: boolean): void {
+  if (quiet) return;
+  const suffix = plan.projectId ? "" : ` for project ${plan.projectSlug}`;
+  logInfo(`Would ${formatDryRunActions(plan)}${suffix}`);
+}
+
+function commandStepName(stepName: DeployStepName): string {
+  return stepName === "create-deployment" ? "deploy" : stepName;
+}
+
+async function deployCommandHuman(options: DeployOptions): Promise<DeployResult | null> {
+  const { env, quiet = false } = options;
+  const startedAt = Date.now();
+  const verbose = isVerbose();
+  let progressText = initialDeployProgressText(verbose);
+  const spinner = quiet ? createNoopSpinner() : createSpinner(progressText);
+  const updateProgress = (next: string | null): void => {
+    if (!next) return;
+    if (next === progressText) return;
+    progressText = next;
+    spinner.update(next);
+  };
+  let warning: string | null = null;
+  let outcome: DeployProjectOutcome;
   try {
-    // JSON mode requires --force or --yes to prevent accidental deploys
-    const { isInteractive } = await import("../../shared/interactive.ts");
-    if (!force && isInteractive()) {
-      streamJsonLine({
-        type: "result",
-        success: false,
-        error:
-          "Deploy in JSON mode requires --force or --yes to confirm. This prevents accidental production deploys.",
-      });
-      const { exit } = await import("veryfront/platform");
-      exit(1);
-      return;
-    }
-
-    streamJsonLine({ type: "step", name: "resolve-config", status: "started" });
-    const config = await resolveConfigWithAuth(cwd());
-    const client = createApiClient(config);
-    streamJsonLine({ type: "step", name: "resolve-config", status: "completed" });
-
-    streamJsonLine({ type: "step", name: "resolve-environment", status: "started" });
-    const environment = await getEnvironmentByName(client, config.projectSlug, env);
-    if (!environment) {
-      streamJsonLine({
-        type: "result",
-        success: false,
-        error: `Environment "${env}" not found`,
-      });
-      const { exit } = await import("veryfront/platform");
-      exit(1);
-      return;
-    }
-    streamJsonLine({ type: "step", name: "resolve-environment", status: "completed" });
-
-    if (dryRun) {
-      streamJsonLine({
-        type: "result",
-        success: true,
-        data: { dryRun: true, branch, environment: env },
-      });
-      return;
-    }
-
-    streamJsonLine({ type: "step", name: "create-release", status: "started" });
-    const release = await createRelease(client, config.projectSlug, {
-      name: releaseName,
-      branch,
-    });
-    streamJsonLine({ type: "step", name: "create-release", status: "completed" });
-
-    streamJsonLine({ type: "step", name: "deploy", status: "started" });
-    await createDeployment(client, config.projectSlug, release.id, environment.id);
-    streamJsonLine({ type: "step", name: "deploy", status: "completed" });
-
-    streamJsonLine({
-      type: "result",
-      success: true,
-      data: {
-        release: { id: release.id, name: release.name, version: release.version },
-        environment: env,
-        branch,
+    outcome = await deployRunner(options).execute(toDeployRequest(options), {
+      onEvent(event) {
+        if (event.kind === "warning") {
+          warning = event.message;
+          return;
+        }
+        updateProgress(deployProgressText(event, env, verbose));
       },
     });
   } catch (error) {
+    spinner.stop();
+    throw error;
+  }
+  spinner.stop();
+
+  if (outcome.kind === "dry-run") {
+    logDryRunPlan(outcome.plan, quiet);
+    return null;
+  }
+
+  const result = outcome.result;
+
+  if (quiet) return result;
+
+  logSuccess(
+    `Deployed ${result.projectSlug} to ${env} in ${formatDuration(Date.now() - startedAt)}`,
+  );
+  console.log();
+  console.log(`  ${brand(result.url)}`);
+  console.log(
+    `  ${
+      dim(
+        `${result.protected ? "Protected" : "Public"} · Release ${result.release.version}`,
+      )
+    }`,
+  );
+  console.log();
+
+  if (verbose) {
+    logInfo(`  Project: ${result.projectSlug} (${result.projectId})`);
+    logInfo(`  Environment: ${env} (${result.environmentId})`);
+    logInfo(
+      `  Release: ${result.release.name} (${result.release.version}, ${result.release.id})`,
+    );
+    logInfo(`  Deployment: ${result.deploymentId}`);
+    if (result.routingConvergence?.status === "converged") {
+      logInfo(
+        `  Data plane: ${result.routingConvergence.acknowledged}/${result.routingConvergence.recipients} proxy replicas converged`,
+      );
+    }
+    logInfo(
+      result.commitSha
+        ? `  Commit: ${result.commitSha}`
+        : "  Commit: unavailable (source digest verified)",
+    );
+    logInfo(`  Source digest: ${result.sourceDigest}`);
+    logInfo(`  Control plane: ${result.controlPlane}`);
+  }
+
+  if (warning) logWarning(warning);
+
+  if (verbose) {
+    const { getPostDeployTips } = await import("../../help/tips.ts");
+    console.log(getPostDeployTips());
+  }
+
+  return result;
+}
+
+async function deployCommandJson(options: DeployOptions): Promise<DeployResult | null> {
+  try {
+    const outcome = await deployRunner(options).execute(toDeployRequest(options), {
+      onEvent(event) {
+        if (event.kind === "warning") {
+          streamJsonLine({
+            type: "warning",
+            code: event.code,
+            message: event.message,
+          });
+          return;
+        }
+        streamJsonLine({
+          type: "step",
+          name: commandStepName(event.step),
+          status: event.phase,
+        });
+      },
+    });
+
+    if (outcome.kind === "dry-run") {
+      streamJsonLine({
+        type: "result",
+        success: true,
+        data: { dryRun: true, ...outcome.plan },
+      });
+      return null;
+    }
+
+    const result = outcome.result;
     streamJsonLine({
       type: "result",
-      success: false,
-      error: error instanceof Error ? error.message : String(error),
+      success: true,
+      data: result,
     });
-    const { exit } = await import("veryfront/platform");
-    exit(1);
+    return result;
+  } catch (error) {
+    const vfErr = error instanceof VeryfrontError ? error : UNKNOWN_ERROR.create({
+      detail: error instanceof Error ? error.message : String(error),
+      cause: error instanceof Error ? error : undefined,
+    });
+    streamJsonLine(
+      createStreamErrorResult({
+        code: "RUNTIME_ERROR",
+        slug: vfErr.slug,
+        message: vfErr.detail ?? vfErr.message,
+      }),
+    );
+    exitProcess(1);
+    return null;
   }
 }

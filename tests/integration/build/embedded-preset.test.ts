@@ -10,13 +10,8 @@ import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 // which only works reliably in Deno (can resolve npm packages from anywhere)
 const denoOnlyIt = isDeno ? it : it.skip;
 
-// Note: Sanitizers disabled due to esbuild native process cleanup timing
 describe(
   "Embedded preset (scaffold)",
-  {
-    sanitizeResources: false,
-    sanitizeOps: false,
-  },
   () => {
     it("builds minimal manifest and outputs under embedded/", async () => {
       await withTestContext("embedded-preset", async (context) => {

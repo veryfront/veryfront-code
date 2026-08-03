@@ -10,6 +10,7 @@ import {
 const CONVERSATION_ID = "11111111-1111-4111-a111-111111111111";
 const MESSAGE_ID = "22222222-2222-4222-a222-222222222222";
 const PROJECT_ID = "33333333-3333-4333-a333-333333333333";
+const ENVIRONMENT_ID = "55555555-5555-4555-8555-555555555555";
 const BRANCH_ID = "44444444-4444-4444-8444-444444444444";
 
 describe("agent/durable-contracts", () => {
@@ -17,16 +18,33 @@ describe("agent/durable-contracts", () => {
     assertEquals(resolveConversationRunTargets({ projectId: null, branchId: null }), {
       sourceTargetKind: null,
       runtimeTargetKind: null,
+      targetEnvironmentId: null,
       targetBranchId: null,
     });
     assertEquals(resolveConversationRunTargets({ projectId: PROJECT_ID, branchId: BRANCH_ID }), {
       sourceTargetKind: "preview_branch",
       runtimeTargetKind: "preview_branch",
+      targetEnvironmentId: null,
       targetBranchId: BRANCH_ID,
     });
+    assertEquals(
+      resolveConversationRunTargets({
+        projectId: PROJECT_ID,
+        runtimeTargetKind: "environment",
+        environmentId: ENVIRONMENT_ID,
+        branchId: null,
+      }),
+      {
+        sourceTargetKind: "environment",
+        runtimeTargetKind: "environment",
+        targetEnvironmentId: ENVIRONMENT_ID,
+        targetBranchId: null,
+      },
+    );
     assertEquals(resolveConversationRunTargets({ projectId: PROJECT_ID, branchId: null }), {
       sourceTargetKind: "project",
       runtimeTargetKind: "main_branch",
+      targetEnvironmentId: null,
       targetBranchId: null,
     });
   });
@@ -52,6 +70,7 @@ describe("agent/durable-contracts", () => {
         waitingToolCallId: "tool-call-1",
         waitingToolName: "form_input",
         status: "waiting_for_tool",
+        streamProtocolVersion: 1,
       },
     );
 
@@ -73,8 +92,56 @@ describe("agent/durable-contracts", () => {
         waitingToolCallId: null,
         waitingToolName: null,
         status: "running",
+        streamProtocolVersion: 1,
       },
     );
+  });
+
+  it("defaults unversioned and unknown run metadata to protocol version 1", () => {
+    assertEquals(
+      ConversationRunProjectionSchema.parse({
+        run_id: "run-old",
+        conversation_id: CONVERSATION_ID,
+        message_id: MESSAGE_ID,
+        latest_event_id: 0,
+        latest_external_event_sequence: 0,
+        status: "completed",
+      }).streamProtocolVersion,
+      1,
+    );
+
+    assertEquals(
+      ConversationRunProjectionSchema.parse({
+        run_id: "run-unknown",
+        conversation_id: CONVERSATION_ID,
+        message_id: MESSAGE_ID,
+        latest_event_id: 0,
+        latest_external_event_sequence: 0,
+        status: "completed",
+        metadata: { stream_protocol_version: 99 },
+      }).streamProtocolVersion,
+      1,
+    );
+  });
+
+  it("reads protocol version 2 only from canonical run metadata", () => {
+    for (
+      const status of ["running", "completed", "failed", "cancelled"] as const
+    ) {
+      assertEquals(
+        ConversationRunProjectionSchema.parse({
+          run_id: `run-v2-${status}`,
+          conversation_id: CONVERSATION_ID,
+          message_id: MESSAGE_ID,
+          latest_event_id: 0,
+          latest_external_event_sequence: 0,
+          status,
+          metadata: { stream_protocol_version: 2 },
+        }).streamProtocolVersion,
+        2,
+        status,
+      );
+    }
   });
 
   it("rejects durable run projections without external event sequence metadata", () => {

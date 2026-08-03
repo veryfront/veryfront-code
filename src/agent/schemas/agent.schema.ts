@@ -20,7 +20,7 @@ export const getAgentStatusSchema = defineSchema((v) =>
 
 export const getMemoryConfigSchema = defineSchema((v) =>
   v.object({
-    type: v.enum(["conversation", "buffer", "summary", "redis"] as const),
+    type: v.enum(["conversation", "buffer", "summary"] as const),
     maxTokens: v.number().int().positive().optional(),
     maxMessages: v.number().int().positive().optional(),
     // Persist history across calls on the agent instance. Defaults to true when
@@ -46,6 +46,7 @@ export const getToolCallPartWithArgsSchema = defineSchema((v) =>
     args: v.record(v.string(), v.unknown()),
     inputText: v.string().optional(),
     providerExecuted: v.boolean().optional(),
+    supportsDeferredResults: v.boolean().optional(),
   })
 );
 
@@ -57,6 +58,7 @@ export const getToolCallPartWithInputSchema = defineSchema((v) =>
     input: v.record(v.string(), v.unknown()),
     inputText: v.string().optional(),
     providerExecuted: v.boolean().optional(),
+    supportsDeferredResults: v.boolean().optional(),
   })
 );
 
@@ -96,6 +98,31 @@ const inlineToolCallPartShape = (v: SchemaValidator) =>
     args: v.record(v.string(), v.unknown()),
   });
 
+const sourceUrlPartShape = (v: SchemaValidator) =>
+  v.object({
+    type: v.literal("source-url"),
+    sourceId: v.string(),
+    url: v.string(),
+    title: v.string().optional(),
+  });
+
+const sourceDocumentPartShape = (v: SchemaValidator) =>
+  v.object({
+    type: v.literal("source-document"),
+    sourceId: v.string(),
+    title: v.string(),
+    mediaType: v.string().optional(),
+    filename: v.string().optional(),
+  });
+
+const attachmentMetadataFields = (v: SchemaValidator) => ({
+  filename: v.string().optional(),
+  uploadId: v.string().optional(),
+  upload_id: v.string().optional(),
+  uploadPath: v.string().optional(),
+  upload_path: v.string().optional(),
+});
+
 export const getMessagePartSchema = defineSchema((v) =>
   v.union([
     v.object({
@@ -111,15 +138,19 @@ export const getMessagePartSchema = defineSchema((v) =>
     getToolCallPartSchema(),
     inlineToolCallPartShape(v),
     getToolResultPartSchema(),
+    sourceUrlPartShape(v),
+    sourceDocumentPartShape(v),
     v.object({
       type: v.literal("image"),
       url: v.string(),
       mediaType: v.string(),
+      ...attachmentMetadataFields(v),
     }),
     v.object({
       type: v.literal("file"),
       url: v.string(),
       mediaType: v.string(),
+      ...attachmentMetadataFields(v),
     }),
   ])
 );

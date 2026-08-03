@@ -8,10 +8,19 @@
  */
 
 import { exists } from "#veryfront/platform/compat/fs.ts";
+import { join, relative } from "#veryfront/compat/path/index.ts";
 
 export const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ?? "/tmp/veryfront-e2e-bin";
 export const BINARY_HASH_PATH = `${BINARY_PATH}.srcHash`;
-const HASH_INPUTS = ["src", "cli", "scripts/build", "deno.json"] as const;
+const HASH_INPUTS = [
+  "src",
+  "cli",
+  "scripts/build",
+  "extensions",
+  "react",
+  "deno.json",
+  "deno.lock",
+] as const;
 
 function toHex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -40,16 +49,18 @@ async function walkFiles(path: string): Promise<string[]> {
   return files.sort();
 }
 
-async function computeWorkingTreeHash(): Promise<string> {
+async function computeWorkingTreeHash(cwd: string): Promise<string> {
   const encoder = new TextEncoder();
   const fileHashes: string[] = [];
 
   for (const input of HASH_INPUTS) {
-    if (!await exists(input)) continue;
-    for (const file of await walkFiles(input)) {
+    const inputPath = join(cwd, input);
+    if (!await exists(inputPath)) continue;
+    for (const file of await walkFiles(inputPath)) {
       const content = await Deno.readFile(file);
       const contentHash = await sha256Hex(content);
-      fileHashes.push(`${file}\0${contentHash}`);
+      const relativePath = relative(cwd, file).replaceAll("\\", "/");
+      fileHashes.push(`${relativePath}\0${contentHash}`);
     }
   }
 
@@ -61,63 +72,51 @@ async function computeWorkingTreeHash(): Promise<string> {
  * Hashes the working tree for binary build inputs so uncommitted edits
  * also invalidate the cached compiled test binary.
  */
-export async function computeSourceHash(): Promise<string> {
+export async function computeSourceHash(cwd = Deno.cwd()): Promise<string> {
   const decoder = new TextDecoder();
 
   try {
     const statusResult = await new Deno.Command("git", {
       args: ["status", "--porcelain", "--", ...HASH_INPUTS],
+      cwd,
       stdout: "piped",
       stderr: "null",
     }).output();
 
     if (!statusResult.success) {
-      return await computeWorkingTreeHash();
+      return await computeWorkingTreeHash(cwd);
     }
 
     const statusOutput = decoder.decode(statusResult.stdout).trim();
     if (statusOutput.length > 0) {
-      return await computeWorkingTreeHash();
+      return await computeWorkingTreeHash(cwd);
     }
   } catch {
-    return await computeWorkingTreeHash();
+    return await computeWorkingTreeHash(cwd);
   }
 
   // Fast path for clean trees: use git object IDs.
   try {
-    const srcResult = await new Deno.Command("git", {
-      args: ["rev-parse", "HEAD:src"],
-      stdout: "piped",
-      stderr: "null",
-    }).output();
-    const scriptsResult = await new Deno.Command("git", {
-      args: ["rev-parse", "HEAD:scripts/build"],
-      stdout: "piped",
-      stderr: "null",
-    }).output();
-    const cliResult = await new Deno.Command("git", {
-      args: ["rev-parse", "HEAD:cli"],
-      stdout: "piped",
-      stderr: "null",
-    }).output();
-    const denoJsonResult = await new Deno.Command("git", {
-      args: ["rev-parse", "HEAD:deno.json"],
-      stdout: "piped",
-      stderr: "null",
-    }).output();
+    const results = await Promise.all(
+      HASH_INPUTS.map((input) =>
+        new Deno.Command("git", {
+          args: ["rev-parse", `HEAD:${input}`],
+          cwd,
+          stdout: "piped",
+          stderr: "null",
+        }).output()
+      ),
+    );
 
-    if (srcResult.success && scriptsResult.success && cliResult.success && denoJsonResult.success) {
-      const srcHash = decoder.decode(srcResult.stdout).trim();
-      const scriptsHash = decoder.decode(scriptsResult.stdout).trim();
-      const cliHash = decoder.decode(cliResult.stdout).trim();
-      const denoJsonHash = decoder.decode(denoJsonResult.stdout).trim();
-      return `v3-${srcHash}-${cliHash}-${scriptsHash}-${denoJsonHash}`;
+    if (results.every((result) => result.success)) {
+      const hashes = results.map((result) => decoder.decode(result.stdout).trim());
+      return `v4-${hashes.join("-")}`;
     }
   } catch {
     // fall through
   }
 
-  return await computeWorkingTreeHash();
+  return await computeWorkingTreeHash(cwd);
 }
 
 /**

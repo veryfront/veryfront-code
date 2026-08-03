@@ -6,19 +6,48 @@
 
 import { getDenoRuntime, isDeno } from "./runtime.ts";
 
-// Node.js process global type declaration
-declare const process:
-  | {
-    stdin: {
-      setRawMode?(enabled: boolean): void;
-      resume(): void;
-      pause(): void;
-      on(event: string, listener: (data: Uint8Array) => void): void;
-      once(event: string, listener: (data: Uint8Array) => void): void;
-      off(event: string, listener: (data: Uint8Array) => void): void;
-    };
+type StdinDataListener = (data: Uint8Array) => void;
+type StdinEndListener = () => void;
+type StdinErrorListener = (error: unknown) => void;
+
+/** @internal Minimal Node-compatible stream surface used by the adapter. */
+export interface NodeStdinLike {
+  readonly readableEnded?: boolean;
+  setRawMode?(enabled: boolean): void;
+  resume(): void;
+  pause(): void;
+  on(event: "data", listener: StdinDataListener): void;
+  on(event: "end", listener: StdinEndListener): void;
+  on(event: "error", listener: StdinErrorListener): void;
+  off(event: "data", listener: StdinDataListener): void;
+  off(event: "end", listener: StdinEndListener): void;
+  off(event: "error", listener: StdinErrorListener): void;
+}
+
+function getNodeStdin(): (NodeStdinLike & NodeKeypressStdinLike) | undefined {
+  try {
+    const process = Reflect.get(globalThis, "process") as
+      | { stdin?: NodeStdinLike & NodeKeypressStdinLike }
+      | undefined;
+    return process?.stdin;
+  } catch {
+    return undefined;
   }
-  | undefined;
+}
+
+export interface NodeRawStdinLike {
+  setRawMode?(enabled: boolean): void;
+}
+
+export interface NodeKeypressStdinLike extends NodeRawStdinLike {
+  pause(): void;
+  resume(): void;
+  once(event: string, listener: (data: Uint8Array) => void): void;
+}
+
+export function setNodeRawMode(stdin: NodeRawStdinLike, enabled: boolean): void {
+  stdin.setRawMode?.(enabled);
+}
 
 /**
  * Set raw mode on stdin (enables character-by-character input)
@@ -30,11 +59,11 @@ export function setRawMode(enabled: boolean): void {
     return;
   }
 
-  const stdin = process?.stdin;
-  if (!stdin?.setRawMode) return;
+  const stdin = getNodeStdin();
+  if (!stdin) return;
 
-  stdin.setRawMode(enabled);
-  if (enabled) stdin.resume();
+  setNodeRawMode(stdin, enabled);
+  if (!enabled) stdin.pause();
 }
 
 /**
@@ -43,6 +72,112 @@ export function setRawMode(enabled: boolean): void {
 export interface StdinReader {
   read(): Promise<{ value: Uint8Array | undefined; done: boolean }>;
   releaseLock(): void;
+}
+
+type PendingRead = {
+  resolve(result: { value: Uint8Array | undefined; done: boolean }): void;
+  reject(error: unknown): void;
+};
+
+const MAX_BUFFERED_STDIN_BYTES = 1024 * 1024;
+
+/** @internal Creates the Node stream-backed reader without consulting globals. */
+export function createNodeStdinReader(stdin: NodeStdinLike): StdinReader {
+  const buffer: Uint8Array[] = [];
+  const pendingReads: PendingRead[] = [];
+  let bufferedBytes = 0;
+  let ended = stdin.readableEnded === true;
+  let released = false;
+  let pausedForBackpressure = false;
+  let terminalError: unknown;
+
+  function detach(): void {
+    stdin.off("data", onData);
+    stdin.off("end", onEnd);
+    stdin.off("error", onError);
+  }
+
+  function settlePendingAsDone(): void {
+    for (const pending of pendingReads.splice(0)) {
+      pending.resolve({ value: undefined, done: true });
+    }
+  }
+
+  function onData(data: Uint8Array): void {
+    if (ended || released) return;
+
+    const chunk = new Uint8Array(data);
+    const pending = pendingReads.shift();
+    if (pending) {
+      pending.resolve({ value: chunk, done: false });
+      return;
+    }
+
+    buffer.push(chunk);
+    bufferedBytes += chunk.byteLength;
+    if (bufferedBytes >= MAX_BUFFERED_STDIN_BYTES && !pausedForBackpressure) {
+      stdin.pause();
+      pausedForBackpressure = true;
+    }
+  }
+
+  function onEnd(): void {
+    if (ended || released) return;
+    ended = true;
+    detach();
+    settlePendingAsDone();
+  }
+
+  function onError(error: unknown): void {
+    if (ended || released) return;
+    terminalError = error instanceof Error ? error : new Error("Standard input failed");
+    ended = true;
+    detach();
+    for (const pending of pendingReads.splice(0)) {
+      pending.reject(terminalError);
+    }
+  }
+
+  if (!ended) {
+    stdin.on("data", onData);
+    stdin.on("end", onEnd);
+    stdin.on("error", onError);
+    stdin.resume();
+  }
+
+  return {
+    read(): Promise<{ value: Uint8Array | undefined; done: boolean }> {
+      const value = buffer.shift();
+      if (value) {
+        bufferedBytes -= value.byteLength;
+        if (
+          pausedForBackpressure &&
+          bufferedBytes < MAX_BUFFERED_STDIN_BYTES / 2
+        ) {
+          stdin.resume();
+          pausedForBackpressure = false;
+        }
+        return Promise.resolve({ value, done: false });
+      }
+
+      if (released) return Promise.resolve({ value: undefined, done: true });
+      if (terminalError !== undefined) return Promise.reject(terminalError);
+      if (ended) return Promise.resolve({ value: undefined, done: true });
+
+      return new Promise((resolve, reject) => {
+        pendingReads.push({ resolve, reject });
+      });
+    },
+    releaseLock(): void {
+      if (released) return;
+      released = true;
+      detach();
+      stdin.pause();
+      buffer.length = 0;
+      bufferedBytes = 0;
+      settlePendingAsDone();
+    },
+  };
 }
 
 /**
@@ -62,7 +197,7 @@ export function getStdinReader(): StdinReader {
     };
   }
 
-  const stdin = process?.stdin;
+  const stdin = getNodeStdin();
   if (!stdin) {
     return {
       read: () => Promise.resolve({ value: undefined, done: true }),
@@ -70,51 +205,49 @@ export function getStdinReader(): StdinReader {
     };
   }
 
-  let buffer: Uint8Array[] = [];
-  let resolveRead: ((result: { value: Uint8Array | undefined; done: boolean }) => void) | null =
-    null;
+  return createNodeStdinReader(stdin);
+}
 
-  function onData(data: Uint8Array): void {
-    const chunk = new Uint8Array(data);
-    if (resolveRead) {
-      resolveRead({ value: chunk, done: false });
-      resolveRead = null;
-      return;
+/** Read one line from stdin and release the reader when complete. */
+export async function readStdinLine(
+  reader: StdinReader = getStdinReader(),
+): Promise<string | null> {
+  const decoder = new TextDecoder();
+  let input = "";
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (value) {
+        input += decoder.decode(value, { stream: !done });
+      } else if (done) {
+        input += decoder.decode();
+      }
+      const lineEnd = input.search(/[\r\n]/);
+      if (lineEnd !== -1) return input.slice(0, lineEnd);
+      if (done) return input || null;
     }
-    buffer.push(chunk);
+  } finally {
+    reader.releaseLock();
   }
-
-  function onEnd(): void {
-    if (!resolveRead) return;
-    resolveRead({ value: undefined, done: true });
-    resolveRead = null;
-  }
-
-  stdin.on("data", onData);
-  stdin.on("end", onEnd);
-
-  return {
-    read(): Promise<{ value: Uint8Array | undefined; done: boolean }> {
-      const value = buffer.shift();
-      if (value) return Promise.resolve({ value, done: false });
-
-      return new Promise((resolve) => {
-        resolveRead = resolve;
-      });
-    },
-    releaseLock(): void {
-      stdin.off("data", onData);
-      stdin.off("end", onEnd);
-      buffer = [];
-      resolveRead = null;
-    },
-  };
 }
 
 /**
  * Wait for a single keypress from stdin.
  * Works in both Deno and Node.js.
  */
+export function waitForNodeKeypress(stdin: NodeKeypressStdinLike): Promise<void> {
+  return new Promise((resolve) => {
+    stdin.once("data", () => {
+      setNodeRawMode(stdin, false);
+      stdin.pause();
+      resolve();
+    });
+    setNodeRawMode(stdin, true);
+    stdin.resume();
+  });
+}
+
 export function waitForKeypress(): Promise<void> {
   const deno = isDeno ? getDenoRuntime() : undefined;
   if (deno) {
@@ -130,21 +263,8 @@ export function waitForKeypress(): Promise<void> {
     })();
   }
 
-  return new Promise((resolve) => {
-    const stdin = process?.stdin;
-    if (!stdin) {
-      resolve();
-      return;
-    }
-
-    stdin.setRawMode?.(true);
-    stdin.resume();
-    stdin.once("data", () => {
-      stdin.setRawMode?.(false);
-      stdin.pause();
-      resolve();
-    });
-  });
+  const stdin = getNodeStdin();
+  return stdin ? waitForNodeKeypress(stdin) : Promise.resolve();
 }
 
 // Key codes for raw mode
@@ -173,7 +293,7 @@ export function createEscapeBuffer(onTimeout: (key: string) => void): EscapeBuff
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
   function clear(): void {
-    if (timeoutId) {
+    if (timeoutId !== null) {
       clearTimeout(timeoutId);
       timeoutId = null;
     }
@@ -207,67 +327,23 @@ export function createEscapeBuffer(onTimeout: (key: string) => void): EscapeBuff
  * Returns true if Enter was pressed (continue), false if Ctrl+C (exit).
  * Works in both Deno and Node.js.
  */
-export function waitForEnterOrExit(): Promise<boolean> {
-  return new Promise((resolve) => {
-    const deno = isDeno ? getDenoRuntime() : undefined;
-    if (deno) {
-      deno.stdin.setRaw(true);
-      const reader = deno.stdin.readable.getReader();
+export async function waitForEnterOrExit(): Promise<boolean> {
+  setRawMode(true);
+  const reader = getStdinReader();
 
-      const cleanup = (result: boolean) => {
-        deno.stdin.setRaw(false);
-        reader.releaseLock();
-        resolve(result);
-      };
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) return false;
+      if (!value) continue;
 
-      const readKey = async (): Promise<void> => {
-        const { value } = await reader.read();
-        const key = value?.[0];
-        if (key === undefined) return;
-
-        if (key === CTRL_C) {
-          cleanup(false);
-          return;
-        }
-
-        if (key === ENTER_CR || key === ENTER_LF) {
-          cleanup(true);
-          return;
-        }
-
-        readKey();
-      };
-
-      readKey();
-      return;
-    }
-
-    const stdin = process?.stdin;
-    if (!stdin) {
-      resolve(false);
-      return;
-    }
-
-    stdin.setRawMode?.(true);
-    stdin.resume();
-
-    const cleanup = (result: boolean) => {
-      stdin.setRawMode?.(false);
-      stdin.pause();
-      stdin.off("data", onData);
-      resolve(result);
-    };
-
-    const onData = (data: Uint8Array) => {
-      if (data.length === 0) return;
-      const key = data[0];
-      if (key === CTRL_C) {
-        cleanup(false);
-        return;
+      for (const key of value) {
+        if (key === CTRL_C) return false;
+        if (key === ENTER_CR || key === ENTER_LF) return true;
       }
-      if (key === ENTER_CR || key === ENTER_LF) cleanup(true);
-    };
-
-    stdin.on("data", onData);
-  });
+    }
+  } finally {
+    reader.releaseLock();
+    setRawMode(false);
+  }
 }

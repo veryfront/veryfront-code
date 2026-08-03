@@ -1,4 +1,5 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { NETWORK_ERROR } from "#veryfront/errors";
 
 const DEFAULT_RUNTIME_UPLOAD_URL_TIMEOUT_MS = 15_000;
 
@@ -44,18 +45,19 @@ export async function getRuntimeUploadUrl(options: RuntimeUploadUrlOptions): Pro
   });
 
   if (!response.ok) {
-    throw new Error(
-      `Failed to fetch signed upload URL for ${options.uploadId}: ${await readApiErrorMessage(
-        response,
-      )}`,
-    );
+    throw NETWORK_ERROR.create({
+      detail:
+        `Failed to fetch signed upload URL for ${options.uploadId}: ${await readApiErrorMessage(
+          response,
+        )}`,
+    });
   }
 
   const parsed = getRuntimeUploadUrlResponseSchema().safeParse(await response.json());
   if (!parsed.success) {
-    throw new Error(
-      `Failed to fetch signed upload URL for ${options.uploadId}: invalid API response`,
-    );
+    throw NETWORK_ERROR.create({
+      detail: `Failed to fetch signed upload URL for ${options.uploadId}: invalid API response`,
+    });
   }
 
   return parsed.data.signed_url;

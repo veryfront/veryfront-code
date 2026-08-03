@@ -1,11 +1,84 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import {
   getForwardedHostedModelId,
   getForwardedHostedRuntimeOverrides,
+  getServerResolvedToolExposureCheckpoint,
   resolveHostedRuntimeRequestConfig,
   resolveHostedRuntimeThinkingOverride,
 } from "./runtime-request-config.ts";
+
+it("server-resolved tool exposure checkpoint parses strictly and fails closed", () => {
+  const checkpoint = {
+    version: 1 as const,
+    loadedToolNames: ["get_release"],
+  };
+  assertEquals(
+    getServerResolvedToolExposureCheckpoint({
+      serverResolvedToolExposureCheckpoint: checkpoint,
+    }, true),
+    checkpoint,
+  );
+  assertEquals(
+    getServerResolvedToolExposureCheckpoint({
+      serverResolvedToolExposureCheckpoint: {
+        ...checkpoint,
+        version: 2,
+      },
+    }, true),
+    {
+      version: 2,
+      loadedToolNames: ["get_release"],
+    },
+  );
+  assertEquals(
+    getServerResolvedToolExposureCheckpoint({
+      serverResolvedToolExposureCheckpoint: {
+        ...checkpoint,
+        version: 3,
+      },
+    }, true),
+    undefined,
+  );
+  assertEquals(
+    getServerResolvedToolExposureCheckpoint({
+      serverResolvedToolExposureCheckpoint: {
+        ...checkpoint,
+        loadedToolNames: ["get_release", "get_release"],
+      },
+    }, true),
+    undefined,
+  );
+  assertEquals(
+    getServerResolvedToolExposureCheckpoint({
+      serverResolvedToolExposureCheckpoint: checkpoint,
+    }, false),
+    undefined,
+  );
+});
+
+it("ordinary hosted request resolution ignores forwarded private tool exposure state", () => {
+  const result = resolveHostedRuntimeRequestConfig({
+    agentConfig: {
+      model: "anthropic/claude-opus-4-6",
+    },
+    request: {
+      forwardedProps: {
+        serverResolvedToolExposureCheckpoint: {
+          version: 1,
+          loadedToolNames: ["delete_project"],
+        },
+      },
+    },
+    resolveModelId: (model) => model,
+  });
+
+  assertEquals(
+    (result as unknown as Record<string, unknown>).serverResolvedToolExposureCheckpoint,
+    undefined,
+  );
+});
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 
 function createAgentConfig(
@@ -39,6 +112,13 @@ Deno.test("getForwardedHostedRuntimeOverrides parses non-empty forwarded runtime
   assertEquals(getForwardedHostedRuntimeOverrides({ runtimeOverrides: { thinking: 1000 } }), {
     thinking: 1000,
   });
+  assertEquals(getForwardedHostedRuntimeOverrides({ maxOutputTokens: 1200 }), {
+    maxOutputTokens: 1200,
+  });
+  assertEquals(
+    getForwardedHostedRuntimeOverrides({ runtimeOverrides: { toolLoading: "eager" } }),
+    undefined,
+  );
 });
 
 Deno.test("resolveHostedRuntimeThinkingOverride applies optional thinking override", () => {
@@ -123,6 +203,37 @@ Deno.test("resolveHostedRuntimeRequestConfig resolves overrides, thinking, max s
   });
 });
 
+Deno.test("resolveHostedRuntimeRequestConfig honors configured thinking before model defaults", () => {
+  const resolveModelThinking = (model: string | undefined) =>
+    model === "veryfront-cloud/anthropic/claude-sonnet-4-6"
+      ? { enabled: true, budgetTokens: 2048 }
+      : undefined;
+
+  const disabledResult = resolveHostedRuntimeRequestConfig({
+    request: {},
+    agentConfig: createAgentConfig({
+      model: "anthropic/claude-sonnet-4-6",
+      thinking: { enabled: false },
+    }),
+    resolveModelId: (model) => model ? `veryfront-cloud/${model}` : undefined,
+    resolveModelThinking,
+  });
+
+  assertEquals(disabledResult.requestedThinking, { enabled: false });
+
+  const omittedResult = resolveHostedRuntimeRequestConfig({
+    request: {},
+    agentConfig: createAgentConfig({
+      model: "anthropic/claude-sonnet-4-6",
+      thinking: undefined,
+    }),
+    resolveModelId: (model) => model ? `veryfront-cloud/${model}` : undefined,
+    resolveModelThinking,
+  });
+
+  assertEquals(omittedResult.requestedThinking, { enabled: true, budgetTokens: 2048 });
+});
+
 Deno.test("resolveHostedRuntimeRequestConfig uses forwarded overrides when request overrides are absent", () => {
   const result = resolveHostedRuntimeRequestConfig({
     request: {
@@ -131,12 +242,97 @@ Deno.test("resolveHostedRuntimeRequestConfig uses forwarded overrides when reque
           allowedTools: ["read_file"],
           maxSteps: 8,
         },
+        maxOutputTokens: 1200,
       },
     },
     agentConfig: createAgentConfig({ maxSteps: 12 }),
     resolveModelId: (model) => model ? `veryfront-cloud/${model}` : undefined,
   });
 
-  assertEquals(result.effectiveRuntimeOverrides, { allowedTools: ["read_file"], maxSteps: 8 });
+  assertEquals(result.effectiveRuntimeOverrides, {
+    allowedTools: ["read_file"],
+    maxSteps: 8,
+    maxOutputTokens: 1200,
+  });
   assertEquals(result.requestedMaxSteps, 8);
+  assertEquals(result.requestedMaxOutputTokens, 1200);
+});
+
+Deno.test("resolveHostedRuntimeRequestConfig defaults to configured agent tools", () => {
+  const result = resolveHostedRuntimeRequestConfig({
+    request: {},
+    agentConfig: createAgentConfig({
+      tools: ["get_agent", "get_agent_source", "update_agent"],
+      delegates: ["writer"],
+      providerTools: ["web_search"],
+    }),
+    resolveModelId: (model) => model,
+  });
+
+  assertEquals(result.requestedAllowedTools, [
+    "get_agent",
+    "get_agent_source",
+    "update_agent",
+    "agent_writer",
+  ]);
+  assertEquals(result.requestedAllowedProviderTools, ["web_search"]);
+  assertEquals(result.includeRuntimeEssentialToolsWhenEmpty, true);
+});
+
+Deno.test("resolveHostedRuntimeRequestConfig only lets request tool overrides narrow configured tools", () => {
+  const resolve = (allowedTools: string[]) => {
+    const result = resolveHostedRuntimeRequestConfig({
+      request: { runtimeOverrides: { allowedTools } },
+      agentConfig: createAgentConfig({
+        tools: ["get_agent", "update_agent"],
+        providerTools: ["web_search"],
+      }),
+      resolveModelId: (model) => model,
+    });
+    assertEquals(
+      result.requestedAllowedProviderTools,
+      allowedTools.includes("web_search") ? ["web_search"] : [],
+    );
+    assertEquals(result.includeRuntimeEssentialToolsWhenEmpty, false);
+    return result.requestedAllowedTools;
+  };
+
+  assertEquals(resolve(["unbound_tool", "update_agent", "web_search"]), [
+    "update_agent",
+  ]);
+  assertEquals(resolve([]), []);
+});
+
+Deno.test("resolveHostedRuntimeRequestConfig distinguishes unrestricted and omitted agent tools", () => {
+  const resolve = (
+    tools: RuntimeAgentMarkdownDefinition["tools"],
+    providerTools?: string[],
+  ) => {
+    const result = resolveHostedRuntimeRequestConfig({
+      request: {},
+      agentConfig: createAgentConfig({ tools, providerTools }),
+      resolveModelId: (model) => model,
+    });
+    return {
+      tools: result.requestedAllowedTools,
+      providerTools: result.requestedAllowedProviderTools,
+      includeRuntimeEssentialToolsWhenEmpty: result.includeRuntimeEssentialToolsWhenEmpty,
+    };
+  };
+
+  assertEquals(resolve(true), {
+    tools: undefined,
+    providerTools: [],
+    includeRuntimeEssentialToolsWhenEmpty: true,
+  });
+  assertEquals(resolve(undefined), {
+    tools: [],
+    providerTools: [],
+    includeRuntimeEssentialToolsWhenEmpty: true,
+  });
+  assertEquals(resolve(undefined, ["web_search"]), {
+    tools: [],
+    providerTools: ["web_search"],
+    includeRuntimeEssentialToolsWhenEmpty: true,
+  });
 });

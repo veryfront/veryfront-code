@@ -3,60 +3,100 @@
  *
  * Runs inside the project runtime as the `task:release-asset-build` handler.
  * Materializes a release's file set, transforms every browser module through
- * the SAME pipeline `serveModule` uses (byte parity with the JIT fallback is a
- * hard requirement), compiles route CSS where reachable, content-addresses and
+ * the SAME pipeline `serveModule` uses (byte parity is a hard requirement),
+ * compiles route CSS where reachable, content-addresses and
  * uploads each asset, then assembles and PUTs the manifest (→ ready).
  *
  * Defensive by construction:
- * - Browser graph failures that can fall back to JIT are recorded as gaps.
- * - Other build failures (list/hash/upload/PUT) report `failed`.
+ * - Any browser graph or CSS coverage failure prevents manifest publication.
+ * - Build failures (transform/list/hash/upload/PUT) report `failed`.
  * - The temp dir is always cleaned up by the caller.
  *
  * @module release-assets/build-executor
  */
 
-import { serverLogger } from "#veryfront/utils";
+import type { VeryfrontConfig } from "#veryfront/config";
+import { VERYFRONT_CONFIG_FILES } from "#veryfront/config/config-files.ts";
+import { serverLogger } from "#veryfront/utils/logger/index.ts";
+import {
+  isCSSPipelineIdentity,
+  isStyleProfileHash,
+} from "#veryfront/utils/css-artifact-identity.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-import { dirname, join, normalize } from "#veryfront/compat/path/index.ts";
+import { createFileSystem, isNotFoundError, realPath } from "#veryfront/platform/compat/fs.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import {
+  dirname,
+  fromFileUrl,
+  isAbsolute,
+  join,
+  normalize,
+  toFileUrl,
+} from "#veryfront/compat/path/index.ts";
 import {
   FRAMEWORK_EMBEDDED_SRC_DIR,
   FRAMEWORK_SRC_DIR,
   resolveFrameworkSourcePath,
   resolveRelativeFrameworkSourceImport,
 } from "#veryfront/platform/compat/framework-source-resolver.ts";
-import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
-import { cacheHttpImportsToLocal, normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache.ts";
+import { PUBLISHED_RUNTIME_HELPERS } from "#veryfront/platform/compat/published-runtime-helpers.ts";
+import { normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 import { extractSourceUrl } from "#veryfront/transforms/esm/source-url-embed.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
-import { getReactUrls } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  createDependencyPinningSource,
+  type DependencyPinningSnapshot,
+  type DependencyPinningSourceInput,
+  resolveDependencyPinningSnapshot,
+  resolveProjectReactVersion,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import { getReactUrls } from "#veryfront/transforms/esm/react-cdn.ts";
 import { PLATFORM_UTILITIES } from "#veryfront/html/utils.ts";
 import { extractCandidatesFromFiles } from "#veryfront/html/styles-builder/candidate-extractor.ts";
-import { sha256HexBytes } from "./hash.ts";
+import { FRAMEWORK_CANDIDATES } from "#veryfront/server/handlers/dev/framework-candidates.generated.ts";
+import { validateLexicalPath } from "#veryfront/security/path-validation.ts";
+import {
+  CSS_IMPORTING_SOURCE_EXTENSIONS,
+  resolveCssImportPath,
+} from "#veryfront/html/styles-builder/css-import-extraction.ts";
+import { rewriteCssModuleContent } from "#veryfront/transforms/css-modules/naming.ts";
+import { computeHashBytes } from "#veryfront/utils";
 import {
   RELEASE_ASSET_BASE_PATH,
   RELEASE_ASSET_CONTENT_TYPES,
-  RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
+  RELEASE_ASSET_MANIFEST_LIMITS,
   RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
+  RELEASE_ASSET_MAX_PENDING_BYTES,
   RELEASE_ASSET_MAX_SIZE_BYTES,
   RELEASE_ASSET_UPLOAD_CONCURRENCY,
+  type ReleaseAssetContentType,
   releaseAssetUrl,
 } from "./constants.ts";
-import { routeForPage } from "./route-path.ts";
+import {
+  configuredRoutePath,
+  normalizeLogicalPath as normalizeRouteLogicalPath,
+  routeForConfiguredPage,
+  routeForPage,
+} from "./route-path.ts";
 export { routeForPage } from "./route-path.ts";
-import type {
-  ReleaseAssetCssEntry,
-  ReleaseAssetManifest,
-  ReleaseAssetRouteEntry,
+import { hasControlCharacters } from "./string-validation.ts";
+import {
+  parseReleaseAssetManifest,
+  type ReleaseAssetCssEntry,
+  type ReleaseAssetDependencyMode,
+  type ReleaseAssetManifest,
+  type ReleaseAssetRouteEntry,
 } from "./manifest-schema.ts";
+import type { CompileProjectCssResult } from "./css-compile.ts";
+import { materializeReleaseDependencyGraph } from "./dependency-artifact-graph.ts";
 
 const logger = serverLogger.component("release-asset-build");
 
 /** Browser module source extensions eligible for transform. */
 const BROWSER_MODULE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
 /** Directories used as browser graph entry seeds. Imports may reach any project directory. */
-const BROWSER_MODULE_DIRS = ["pages/", "components/", "layouts/", "lib/", "src/"];
+const BROWSER_MODULE_DIRS = ["components/", "layouts/", "lib/", "src/"];
+const PROJECT_IMPORT_ROOTS = ["app/", "pages/", ...BROWSER_MODULE_DIRS];
 const FRAMEWORK_MODULE_URL_PREFIX = "/_vf_modules/_veryfront/";
 const REACT_IMPORT_MAP_DEPENDENCIES = [
   "react",
@@ -65,11 +105,26 @@ const REACT_IMPORT_MAP_DEPENDENCIES = [
   "react/jsx-runtime",
   "react/jsx-dev-runtime",
 ] as const;
+const MAX_RELEASE_FILES = 50_000;
+const MAX_RELEASE_FILE_PATH_LENGTH = RELEASE_ASSET_MANIFEST_LIMITS.manifestKeyLength;
+const MAX_RELEASE_SOURCE_BYTES = 64 * 1024 * 1024;
+const MAX_CSS_CANDIDATES = 100_000;
+const MAX_CSS_INPUT_BYTES = RELEASE_ASSET_MAX_SIZE_BYTES;
+const MAX_BUILD_IDENTIFIER_LENGTH = RELEASE_ASSET_MANIFEST_LIMITS.identifierLength;
+const MAX_DEPENDENCY_MODULES = RELEASE_ASSET_MANIFEST_LIMITS.dependencyEntries;
+const MAX_DEPENDENCY_SPECIFIERS = RELEASE_ASSET_MANIFEST_LIMITS.dependencySpecifiers;
+const MAX_DEPENDENCY_SOURCE_BYTES = RELEASE_ASSET_MAX_PENDING_BYTES;
+const MAX_DEPENDENCY_DIRECTORY_DEPTH = 64;
+const MAX_DEPENDENCY_SPECIFIER_LENGTH = RELEASE_ASSET_MANIFEST_LIMITS.manifestKeyLength;
+const FRAMEWORK_DEPENDENCY_ENTRY_RESERVE = Object.keys(PLATFORM_UTILITIES).length;
+const MAX_HTTP_DEPENDENCY_ENTRIES = Math.max(
+  0,
+  RELEASE_ASSET_MANIFEST_LIMITS.dependencyEntries - FRAMEWORK_DEPENDENCY_ENTRY_RESERVE,
+);
+const textEncoder = new TextEncoder();
+type VeryfrontConfigFileName = (typeof VERYFRONT_CONFIG_FILES)[number];
 
-function isDependencyImportMapEnabled(): boolean {
-  return getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG) === "1";
-}
-
+/** Inputs required to build and publish one release asset manifest generation. */
 export interface ReleaseAssetBuildInput {
   /** Project reference (slug or id) used for API calls. */
   projectReference: string;
@@ -81,41 +136,65 @@ export interface ReleaseAssetBuildInput {
   releaseVersion: number;
   /** Release version string used for API path segments. */
   releaseVersionRef: string;
-  /** React version for transforms. */
-  reactVersion?: string;
   /**
-   * Configured Tailwind stylesheet path (relative to the project root), used to
-   * resolve the project stylesheet from the materialized file set for CSS
-   * compilation. When absent, conventional defaults are tried (globals.css).
+   * Trusted composition seam for declaratively evaluating the exact config
+   * source selected from the immutable release file set. Implementations must
+   * return a validated configuration snapshot without executing tenant code in
+   * the host realm. `null` requests framework defaults.
    */
-  stylesheetPath?: string;
+  loadConfig: ReleaseAssetConfigLoader;
   /** Authenticated, project-scoped API client. */
   client: ReleaseAssetBuildClient;
   /** Runtime adapter used by the transform pipeline. */
-  // deno-lint-ignore no-explicit-any -- adapter is passed through to transformToESM
-  adapter: any;
+  adapter: RuntimeAdapter;
   /**
-   * Transform function. Defaults to the same `transformToESM` pipeline
-   * `serveModule` uses (browser, non-SSR) — byte parity is a hard requirement.
-   * Injectable for tests.
+   * Dependency closure represented by the published manifest. `immutable`
+   * requires an explicitly composed policy-enforced vendor; `source` keeps
+   * transformed HTTP imports on their canonical source URLs.
    */
-  transform?: ReleaseAssetTransform;
+  dependencyMode: ReleaseAssetDependencyMode;
   /**
-   * Optional HTTP dependency vendor. Defaults to the existing HTTP module cache
-   * and is injectable so tests do not depend on live package CDN behavior.
+   * Explicit browser transform composition seam. Production must provide the
+   * same pipeline `serveModule` uses (browser, non-SSR); byte parity is a hard
+   * requirement.
+   */
+  transform: ReleaseAssetTransform;
+  /**
+   * HTTP dependency vendor required by `dependencyMode: "immutable"`.
    */
   vendorHttpImports?: ReleaseAssetHttpDependencyVendor;
 }
 
+/** Exact configuration source selected from the immutable release file set. */
+export interface ReleaseAssetConfigSource {
+  readonly fileName: VeryfrontConfigFileName;
+  readonly source: string;
+}
+
+/** Trusted release configuration composition boundary. */
+export type ReleaseAssetConfigLoader = (
+  source: ReleaseAssetConfigSource | null,
+) => Promise<VeryfrontConfig>;
+
+/** Browser transform contract shared with the module-serving pipeline. */
 export type ReleaseAssetTransform = (
   source: string,
   sourceFile: string,
   projectDir: string,
-  // deno-lint-ignore no-explicit-any -- adapter is opaque to the executor
-  adapter: any,
-  options: { projectId: string; dev: boolean; ssr: boolean; reactVersion?: string },
+  adapter: RuntimeAdapter,
+  options: {
+    projectId: string;
+    dev: boolean;
+    ssr: boolean;
+    reactVersion?: string;
+    /** Immutable dependency state shared by every transform in this build. */
+    dependencyPinningSnapshot?: DependencyPinningSnapshot;
+    /** Package source paired with dependencyPinningSnapshot. */
+    dependencyPinningSource?: DependencyPinningSourceInput;
+  },
 ) => Promise<string>;
 
+/** One vendored dependency and the source identity represented by its code. */
 export interface ReleaseAssetVendorDependency {
   /** Specifier currently used by transformed code after vendoring. */
   specifier: string;
@@ -127,11 +206,13 @@ export interface ReleaseAssetVendorDependency {
   code: string;
 }
 
+/** Rewritten module code plus every dependency needed by that rewrite. */
 export interface ReleaseAssetVendorResult {
   code: string;
   dependencies: ReleaseAssetVendorDependency[];
 }
 
+/** Injectable HTTP dependency vendoring contract. */
 export type ReleaseAssetHttpDependencyVendor = (
   code: string,
   options: {
@@ -151,7 +232,7 @@ export interface ReleaseAssetBuildClient {
   uploadReleaseAsset(
     version: string,
     contentHash: string,
-    contentType: string,
+    contentType: ReleaseAssetContentType,
     bytes: Uint8Array,
   ): Promise<{ stored: boolean; existed: boolean }>;
   putReleaseAssetManifest(
@@ -160,30 +241,36 @@ export interface ReleaseAssetBuildClient {
   ): Promise<{ state: string; manifest_version?: number }>;
   reportReleaseAssetManifestState(
     version: string,
-    state: "partial" | "failed",
+    state: "failed",
     error?: string,
   ): Promise<unknown>;
   /**
-   * Optional project CSS compiler; when absent, css:[] is recorded.
+   * Required project CSS compiler. A build client without an explicitly
+   * composed CSS pipeline is invalid even when the current source set happens
+   * not to request CSS.
    *
-   * Receives the Tailwind class candidates extracted from the release source
+   * Receives the CSS class candidates extracted from the release source
    * plus the resolved project stylesheet (so the implementation can compile
-   * without re-fetching the file set). Returns `null` on any failure so the
-   * executor keeps a CSS gap and proceeds.
+   * without re-fetching the file set). It may return `null` only when neither
+   * candidates nor a stylesheet require CSS. Invalid output and compilation
+   * failures fail the release build.
    */
-  compileProjectCss?(
+  compileProjectCss(
     candidates: Set<string>,
     stylesheet: string | undefined,
-  ): Promise<{ css: string; styleProfileHash: string | null } | null>;
+    options: { config: VeryfrontConfig },
+  ): Promise<CompileProjectCssResult | null>;
 }
 
+/** Observable outcome of a release asset build attempt. */
 export interface ReleaseAssetBuildResult {
   success: boolean;
   state: "ready" | "failed";
   moduleCount: number;
   cssCount: number;
   routeCount: number;
-  gaps: string[];
+  /** Bounded coverage diagnostics; always empty for a successful build. */
+  coverageFailures: readonly string[];
   error?: string;
 }
 
@@ -191,9 +278,10 @@ interface PreparedAsset {
   logicalPath: string;
   contentHash: string;
   size: number;
-  contentType: string;
+  contentType: ReleaseAssetContentType;
 }
 
+/** Prepared content-addressed asset bytes ready for upload. */
 export interface PreparedReleaseAsset extends PreparedAsset {
   bytes: Uint8Array;
 }
@@ -209,6 +297,13 @@ interface DependencyModule {
   specifiers: Set<string>;
   sourcePath?: string;
   code: string;
+  codeSize: number;
+}
+
+interface DependencyModuleCollection {
+  modules: Map<string, DependencyModule>;
+  specifierCount: number;
+  sourceBytes: number;
 }
 
 interface FinalizedDependencyModules {
@@ -216,15 +311,141 @@ interface FinalizedDependencyModules {
   fallbackUrls: Map<string, string>;
 }
 
+interface PendingAssetStore {
+  entries: Map<
+    string,
+    {
+      bytes: Uint8Array<ArrayBuffer>;
+      contentType: ReleaseAssetContentType;
+    }
+  >;
+  totalBytes: number;
+}
+
+interface FrameworkBuildContext {
+  projectId: string;
+  adapter: RuntimeAdapter;
+  reactVersion?: string;
+  allowHttp: boolean;
+  requestedSpecifiers?: ReadonlySet<string>;
+}
+
+function createPendingAssetStore(): PendingAssetStore {
+  return { entries: new Map(), totalBytes: 0 };
+}
+
+function pendingAssetKey(
+  contentHash: string,
+  contentType: ReleaseAssetContentType,
+): string {
+  return JSON.stringify([contentHash, contentType]);
+}
+
+function rememberPendingAsset(
+  store: PendingAssetStore,
+  asset: PreparedAsset,
+  bytes: Uint8Array<ArrayBuffer>,
+): boolean {
+  const key = pendingAssetKey(asset.contentHash, asset.contentType);
+  const existing = store.entries.get(key);
+  if (existing) {
+    if (!bytesEqual(existing.bytes, bytes)) {
+      throw new Error("Release asset hash collision detected");
+    }
+    return false;
+  }
+
+  if (store.totalBytes + bytes.byteLength > RELEASE_ASSET_MAX_PENDING_BYTES) {
+    throw new Error(
+      `Pending release assets exceed ${RELEASE_ASSET_MAX_PENDING_BYTES} bytes`,
+    );
+  }
+
+  store.entries.set(key, { bytes, contentType: asset.contentType });
+  store.totalBytes += bytes.byteLength;
+  return true;
+}
+
+function getPendingAsset(
+  store: PendingAssetStore,
+  asset: PreparedAsset,
+): { bytes: Uint8Array<ArrayBuffer>; contentType: ReleaseAssetContentType } | undefined {
+  return store.entries.get(pendingAssetKey(asset.contentHash, asset.contentType));
+}
+
+function requirePendingAsset(
+  store: PendingAssetStore,
+  asset: PreparedAsset,
+): { bytes: Uint8Array<ArrayBuffer>; contentType: ReleaseAssetContentType } {
+  const stored = getPendingAsset(store, asset);
+  if (!stored) {
+    throw new Error("Prepared release asset is missing its pending bytes");
+  }
+  return stored;
+}
+
+function forgetPendingAsset(store: PendingAssetStore, asset: PreparedAsset): void {
+  const key = pendingAssetKey(asset.contentHash, asset.contentType);
+  const existing = store.entries.get(key);
+  if (!existing) return;
+  store.entries.delete(key);
+  store.totalBytes -= existing.bytes.byteLength;
+}
+
+function discardPendingAssetsSince(
+  uploadQueue: PreparedAsset[],
+  store: PendingAssetStore,
+  startIndex: number,
+): void {
+  for (const asset of uploadQueue.splice(startIndex)) {
+    forgetPendingAsset(store, asset);
+  }
+}
+
+function bytesEqual(
+  left: Uint8Array<ArrayBuffer>,
+  right: Uint8Array<ArrayBuffer>,
+): boolean {
+  if (left.byteLength !== right.byteLength) return false;
+  for (let index = 0; index < left.byteLength; index++) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
+
+interface ReleaseRouterDirectories {
+  app: string;
+  pages: string;
+}
+
 function frameworkModuleUrlToSourceKey(moduleUrl: string): string | null {
   if (!moduleUrl.startsWith(FRAMEWORK_MODULE_URL_PREFIX)) return null;
-  return moduleUrl
+  const sourceKey = moduleUrl
     .slice(FRAMEWORK_MODULE_URL_PREFIX.length)
     .replace(/\.(mjs|cjs|js|jsx|ts|tsx)$/, "");
+  if (
+    sourceKey.length === 0 ||
+    sourceKey.length > RELEASE_ASSET_MANIFEST_LIMITS.manifestKeyLength ||
+    sourceKey.includes("\\") ||
+    sourceKey.includes("?") ||
+    sourceKey.includes("#") ||
+    hasControlCharacters(sourceKey)
+  ) {
+    return null;
+  }
+  return normalizeLogicalPath(sourceKey) === sourceKey ? sourceKey : null;
 }
 
 function frameworkSourceKeyToModuleUrl(sourceKey: string): string {
   return `${FRAMEWORK_MODULE_URL_PREFIX}${sourceKey}.js`;
+}
+
+function embeddedFrameworkModuleCode(sourceKey: string): string | null {
+  if (sourceKey === "_deno-config") {
+    return `export default ${JSON.stringify({ version: VERSION })};\n`;
+  }
+
+  return null;
 }
 
 function frameworkSourcePathToSourceKey(sourcePath: string, lookupDirs: string[]): string | null {
@@ -239,10 +460,47 @@ function frameworkSourcePathToSourceKey(sourcePath: string, lookupDirs: string[]
   return null;
 }
 
+function frameworkRootsForLookupDirs(lookupDirs: string[]): string[] {
+  const roots = new Set<string>();
+  for (const lookupDir of lookupDirs) {
+    if (lookupDir.endsWith("/dist/framework-src")) {
+      roots.add(lookupDir.slice(0, -"/dist/framework-src".length));
+    } else if (lookupDir.endsWith("/src")) {
+      roots.add(lookupDir.slice(0, -"/src".length));
+    }
+  }
+  return [...roots];
+}
+
+/**
+ * Published npm packages emit DNT runtime helpers (`_dnt.shims.js`,
+ * `_dnt.polyfills.js`, `deno.js`) at the package ESM root — outside every
+ * framework source lookup dir. Map those exact files to a reserved source key
+ * so the release dependency walk can publish them instead of leaving the
+ * relative import unresolved.
+ */
+function publishedRuntimeHelperSourceKey(
+  sourcePath: string,
+  lookupDirs: string[],
+): string | null {
+  for (const root of frameworkRootsForLookupDirs(lookupDirs)) {
+    for (const helper of PUBLISHED_RUNTIME_HELPERS) {
+      if (sourcePath === join(root, helper)) {
+        return `_published-runtime/${helper.replace(/\.js$/, "")}`;
+      }
+    }
+  }
+  return null;
+}
+
 /** Sanitize an error for state reporting (no internal paths / stack traces). */
 function sanitizeError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/\/[^\s]+/g, "<path>").slice(0, 300);
+  try {
+    const message = error instanceof Error ? error.message : String(error);
+    return String(message).replace(/\/[^\s]+/g, "<path>").slice(0, 300);
+  } catch {
+    return "Unknown release asset build error";
+  }
 }
 
 /** True when a logical path is an eligible browser module. */
@@ -253,9 +511,54 @@ function isTransformableBrowserModule(path: string): boolean {
 }
 
 /** True when a logical path should seed the browser module graph. */
-function isBrowserModule(path: string): boolean {
+function isBrowserModule(path: string, directories: ReleaseRouterDirectories): boolean {
   if (!isTransformableBrowserModule(path)) return false;
-  return BROWSER_MODULE_DIRS.some((dir) => path.startsWith(dir));
+  if (routeForConfiguredPage(path, directories) !== null) return true;
+  return isConfiguredAppRouterLayout(path, directories) ||
+    BROWSER_MODULE_DIRS.some((dir) => path.startsWith(dir));
+}
+
+function isConfiguredAppRouterLayout(path: string, directories: ReleaseRouterDirectories): boolean {
+  const appPath = configuredRoutePath(path, directories, "app");
+  if (!appPath?.startsWith("app/")) return false;
+  const withoutPrefix = appPath.slice("app/".length);
+  const segments = withoutPrefix.split("/");
+  const fileName = segments.pop();
+  if (!fileName || !/^layout\.(tsx|ts|jsx|mdx|js)$/.test(fileName)) return false;
+  return !segments.some((segment) => segment.startsWith("@") || segment.startsWith("_"));
+}
+
+function collectConfiguredAppRouterLayoutsForPage(
+  logicalPath: string,
+  directories: ReleaseRouterDirectories,
+  knownPaths: Set<string>,
+): string[] {
+  const appPath = configuredRoutePath(logicalPath, directories, "app");
+  if (!appPath || routeForPage(appPath) === null) return [];
+
+  const segments = logicalPath.split("/");
+  segments.pop();
+  const appRootDepth = normalizeRouteLogicalPath(directories.app).split("/").filter(Boolean).length;
+
+  const layouts: string[] = [];
+  for (let depth = appRootDepth; depth <= segments.length; depth++) {
+    const dir = segments.slice(0, depth).join("/");
+    for (const ext of BROWSER_MODULE_EXTENSIONS) {
+      const candidate = dir ? `${dir}/layout${ext}` : `layout${ext}`;
+      if (knownPaths.has(candidate)) {
+        layouts.push(candidate);
+        break;
+      }
+    }
+  }
+  return layouts;
+}
+
+function releaseRouterDirectories(config: VeryfrontConfig): ReleaseRouterDirectories {
+  return {
+    app: config.directories?.app ?? "app",
+    pages: config.directories?.pages ?? "pages",
+  };
 }
 
 function resolveKnownModulePath(path: string, knownPaths: Set<string>): string | null {
@@ -265,6 +568,7 @@ function resolveKnownModulePath(path: string, knownPaths: Set<string>): string |
       .replace(/^\/+/, "")
       .replace(/[?#].*$/, ""),
   );
+  if (!normalized) return null;
 
   if (normalized.startsWith("_veryfront/")) return null;
   if (knownPaths.has(normalized)) return normalized;
@@ -278,17 +582,19 @@ function resolveKnownModulePath(path: string, knownPaths: Set<string>): string |
   return null;
 }
 
-function normalizeLogicalPath(path: string): string {
+function normalizeLogicalPath(path: string): string | null {
+  if (path.includes("\\") || hasControlCharacters(path)) return null;
   const parts: string[] = [];
   for (const part of path.split("/")) {
     if (!part || part === ".") continue;
     if (part === "..") {
+      if (parts.length === 0) return null;
       parts.pop();
       continue;
     }
     parts.push(part);
   }
-  return parts.join("/");
+  return parts.length > 0 ? parts.join("/") : null;
 }
 
 function normalizeProjectSpecifier(specifier: string, logicalPath: string): string | null {
@@ -316,7 +622,7 @@ function normalizeProjectSpecifier(specifier: string, logicalPath: string): stri
 
   if (specifier.startsWith("/")) return specifier;
 
-  if (BROWSER_MODULE_DIRS.some((dir) => specifier.startsWith(dir))) return specifier;
+  if (PROJECT_IMPORT_ROOTS.some((dir) => specifier.startsWith(dir))) return specifier;
 
   return null;
 }
@@ -373,6 +679,51 @@ async function rewriteProjectModuleImports(
   return await replaceSpecifiers(code, (specifier) => rewriteSpecifier(specifier));
 }
 
+async function assertFinalModuleImports(
+  code: string,
+  options: { allowHttp: boolean },
+): Promise<void> {
+  for (const imp of await parseImports(code)) {
+    if (imp.d === -2) continue;
+    if (imp.n === undefined) {
+      throw new Error("Release module contains a non-literal dynamic import");
+    }
+
+    const specifier = imp.n;
+    if (
+      !hasControlCharacters(specifier) &&
+      /^\/_vf\/assets\/[0-9a-f]{64}\.js(?:[?#].*)?$/.test(specifier)
+    ) {
+      continue;
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(specifier);
+    } catch {
+      throw new Error(`Release module contains an unresolved import: ${specifier}`);
+    }
+
+    const protocol = parsed.protocol.toLowerCase();
+    if (protocol === "http:" || protocol === "https:") {
+      if (
+        !options.allowHttp ||
+        parsed.username !== "" ||
+        parsed.password !== "" ||
+        !isSafeBuildText(specifier, MAX_DEPENDENCY_SPECIFIER_LENGTH)
+      ) {
+        throw new Error("Release module contains an unvendored HTTP import");
+      }
+      continue;
+    }
+
+    if (protocol === "file:") {
+      throw new Error("Release module contains an unresolved local file import");
+    }
+    throw new Error(`Release module contains an unsupported import: ${specifier}`);
+  }
+}
+
 function dependencyUrlForSpecifier(
   dependencyUrls: Map<string, string>,
   specifier: string,
@@ -406,28 +757,79 @@ function buildDependencyUrlMap(
     const dependency = dependencyModules?.get(manifestKey);
     const url = releaseAssetUrl(entry.contentHash, "js");
 
-    urls.set(manifestKey, url);
-    urls.set(normalizeDependencySpecifier(manifestKey), url);
+    setDependencyUrlAlias(urls, manifestKey, url);
+    setDependencyUrlAlias(urls, normalizeDependencySpecifier(manifestKey), url);
     if (manifestKey.startsWith("http://") || manifestKey.startsWith("https://")) {
       const normalized = normalizeHttpUrl(manifestKey);
-      urls.set(normalized, url);
-      urls.set(normalizeDependencySpecifier(normalized), url);
+      setDependencyUrlAlias(urls, normalized, url);
+      setDependencyUrlAlias(urls, normalizeDependencySpecifier(normalized), url);
     }
 
     if (!dependency) continue;
 
-    urls.set(entry.logicalPath, url);
+    setDependencyUrlAlias(urls, entry.logicalPath, url);
     for (const specifier of dependency.specifiers) {
-      urls.set(specifier, url);
-      urls.set(normalizeDependencySpecifier(specifier), url);
+      setDependencyUrlAlias(urls, specifier, url);
+      setDependencyUrlAlias(urls, normalizeDependencySpecifier(specifier), url);
       if (specifier.startsWith("http://") || specifier.startsWith("https://")) {
         const normalized = normalizeHttpUrl(specifier);
-        urls.set(normalized, url);
-        urls.set(normalizeDependencySpecifier(normalized), url);
+        setDependencyUrlAlias(urls, normalized, url);
+        setDependencyUrlAlias(urls, normalizeDependencySpecifier(normalized), url);
       }
     }
   }
   return urls;
+}
+
+function setDependencyUrlAlias(
+  urls: Map<string, string>,
+  key: string,
+  url: string,
+): void {
+  const existing = urls.get(key);
+  if (existing !== undefined && existing !== url) {
+    throw new Error(`Conflicting release dependency alias: ${key}`);
+  }
+  urls.set(key, url);
+}
+
+function setDependencyModuleAlias(
+  aliases: Map<string, DependencyModule>,
+  key: string,
+  dependency: DependencyModule,
+): void {
+  const existing = aliases.get(key);
+  if (existing && existing !== dependency) {
+    throw new Error(`Conflicting vendored dependency alias: ${key}`);
+  }
+  aliases.set(key, dependency);
+}
+
+function preparedAssetsEqual(left: PreparedAsset, right: PreparedAsset): boolean {
+  return left.contentHash === right.contentHash &&
+    left.size === right.size &&
+    left.contentType === right.contentType;
+}
+
+function mergePreparedAssetRecords(
+  ...records: Array<Record<string, PreparedAsset>>
+): Record<string, PreparedAsset> {
+  const merged: Record<string, PreparedAsset> = Object.create(null);
+  for (const record of records) {
+    for (const [key, asset] of Object.entries(record)) {
+      const existing = Object.hasOwn(merged, key) ? merged[key] : undefined;
+      if (existing && !preparedAssetsEqual(existing, asset)) {
+        throw new Error(`Conflicting release asset manifest key: ${key}`);
+      }
+      Object.defineProperty(merged, key, {
+        value: asset,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    }
+  }
+  return merged;
 }
 
 export function buildReleaseAssetDependencyUrlMap(
@@ -439,8 +841,13 @@ export function buildReleaseAssetDependencyUrlMap(
 function exposeDependencySpecifierAliases(
   assets: Record<string, PreparedAsset>,
   dependencyModules: Map<string, DependencyModule>,
+  maximumEntries: number = RELEASE_ASSET_MANIFEST_LIMITS.dependencyEntries,
 ): Record<string, PreparedAsset> {
-  const aliased = { ...assets };
+  const aliased = mergePreparedAssetRecords(assets);
+  let entryCount = Object.keys(aliased).length;
+  if (entryCount > maximumEntries) {
+    throw new Error(`Release dependency manifest exceeds ${maximumEntries} entries`);
+  }
   for (const dependency of dependencyModules.values()) {
     const asset = assets[dependency.manifestKey];
     if (!asset) continue;
@@ -456,7 +863,20 @@ function exposeDependencySpecifierAliases(
       ) {
         continue;
       }
-      aliased[normalized] = asset;
+      const existing = Object.hasOwn(aliased, normalized) ? aliased[normalized] : undefined;
+      if (existing && !preparedAssetsEqual(existing, asset)) {
+        throw new Error(`Conflicting release dependency manifest alias: ${normalized}`);
+      }
+      if (!existing && entryCount >= maximumEntries) {
+        throw new Error(`Release dependency manifest exceeds ${maximumEntries} entries`);
+      }
+      Object.defineProperty(aliased, normalized, {
+        value: asset,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+      if (!existing) entryCount++;
     }
   }
   return aliased;
@@ -484,40 +904,286 @@ function addDependencyUrlAliases(
   dependency: DependencyModule,
   url: string,
 ): void {
-  urls.set(dependency.manifestKey, url);
-  if (dependency.sourcePath) urls.set(`file://${dependency.sourcePath}`, url);
+  setDependencyUrlAlias(urls, dependency.manifestKey, url);
+  if (dependency.sourcePath) {
+    setDependencyUrlAlias(urls, toFileUrl(dependency.sourcePath).href, url);
+  }
   for (const specifier of dependency.specifiers) {
-    urls.set(normalizeDependencySpecifier(specifier), url);
+    setDependencyUrlAlias(urls, normalizeDependencySpecifier(specifier), url);
   }
 }
 
-function addDependencyModule(
-  dependencies: Map<string, DependencyModule>,
-  dependency: ReleaseAssetVendorDependency,
-): void {
-  const sourcePath = dependency.sourcePath ?? resolveLocalDependencyPath(dependency.specifier) ??
-    undefined;
-  const existing = dependencies.get(dependency.manifestKey);
-  if (existing) {
-    existing.specifiers.add(dependency.specifier);
-    existing.sourcePath ??= sourcePath;
-    return;
+const UNREADABLE_DATA_PROPERTY = Symbol("unreadable-data-property");
+
+function readOwnDataProperty(
+  value: unknown,
+  key: PropertyKey,
+): unknown | typeof UNREADABLE_DATA_PROPERTY {
+  if (typeof value !== "object" || value === null) return UNREADABLE_DATA_PROPERTY;
+  try {
+    const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+    if (!descriptor) return undefined;
+    return Object.hasOwn(descriptor, "value") ? descriptor.value : UNREADABLE_DATA_PROPERTY;
+  } catch {
+    return UNREADABLE_DATA_PROPERTY;
+  }
+}
+
+function snapshotCompiledProjectCss(value: unknown): CompileProjectCssResult {
+  const css = readOwnDataProperty(value, "css");
+  const styleProfileHash = readOwnDataProperty(value, "styleProfileHash");
+  const cssPipelineIdentity = readOwnDataProperty(value, "cssPipelineIdentity");
+  if (
+    typeof css !== "string" ||
+    css.length === 0 ||
+    !isStyleProfileHash(styleProfileHash) ||
+    !isCSSPipelineIdentity(cssPipelineIdentity)
+  ) {
+    throw new Error("Release asset CSS compiler returned an invalid identity result");
   }
 
-  dependencies.set(dependency.manifestKey, {
-    manifestKey: dependency.manifestKey,
-    specifiers: new Set([dependency.specifier]),
-    sourcePath,
-    code: dependency.code,
-  });
+  return Object.freeze({ css, styleProfileHash, cssPipelineIdentity });
+}
+
+function createDependencyModuleCollection(): DependencyModuleCollection {
+  return {
+    modules: new Map(),
+    specifierCount: 0,
+    sourceBytes: 0,
+  };
+}
+
+function clearDependencyModules(collection: DependencyModuleCollection): void {
+  collection.modules.clear();
+  collection.specifierCount = 0;
+  collection.sourceBytes = 0;
+}
+
+function validateVendorResult(
+  value: unknown,
+): { code: string; dependencies: readonly unknown[] } {
+  const code = readOwnDataProperty(value, "code");
+  const dependencies = readOwnDataProperty(value, "dependencies");
+  if (
+    typeof code !== "string" ||
+    textEncoder.encode(code).byteLength > RELEASE_ASSET_MAX_SIZE_BYTES ||
+    !Array.isArray(dependencies) ||
+    dependencies.length > MAX_DEPENDENCY_MODULES
+  ) {
+    throw new Error("HTTP dependency vendor returned an invalid or oversized result");
+  }
+  return { code, dependencies };
+}
+
+function stageDependencyModules(
+  dependencies: readonly unknown[],
+): DependencyModuleCollection {
+  const staged = createDependencyModuleCollection();
+
+  for (let index = 0; index < dependencies.length; index++) {
+    const dependency = readOwnDataProperty(dependencies, String(index));
+    const manifestKey = readOwnDataProperty(dependency, "manifestKey");
+    const specifier = readOwnDataProperty(dependency, "specifier");
+    const code = readOwnDataProperty(dependency, "code");
+    const declaredSourcePath = readOwnDataProperty(dependency, "sourcePath");
+    if (
+      !isSafeBuildText(manifestKey, MAX_DEPENDENCY_SPECIFIER_LENGTH) ||
+      !isSafeBuildText(specifier, MAX_DEPENDENCY_SPECIFIER_LENGTH) ||
+      typeof code !== "string"
+    ) {
+      throw new Error("Vendored dependency exceeds the supported boundary");
+    }
+
+    const codeSize = textEncoder.encode(code).byteLength;
+    if (codeSize > RELEASE_ASSET_MAX_SIZE_BYTES) {
+      throw new Error("Vendored dependency exceeds the supported boundary");
+    }
+
+    let sourcePath: string | undefined;
+    if (declaredSourcePath !== undefined) {
+      if (
+        !isSafeBuildText(declaredSourcePath, MAX_RELEASE_FILE_PATH_LENGTH) ||
+        !isAbsolute(declaredSourcePath) ||
+        normalize(declaredSourcePath) !== declaredSourcePath
+      ) {
+        throw new Error("Vendored dependency source path must be canonical and absolute");
+      }
+      sourcePath = declaredSourcePath;
+    } else {
+      sourcePath = resolveLocalDependencyPath(specifier) ?? undefined;
+    }
+
+    const existing = staged.modules.get(manifestKey);
+    if (existing) {
+      if (
+        existing.code !== code ||
+        (existing.sourcePath !== undefined &&
+          sourcePath !== undefined &&
+          existing.sourcePath !== sourcePath)
+      ) {
+        throw new Error(`Conflicting vendored dependency identity: ${manifestKey}`);
+      }
+      if (!existing.specifiers.has(specifier)) {
+        existing.specifiers.add(specifier);
+        staged.specifierCount++;
+      }
+      existing.sourcePath ??= sourcePath;
+    } else {
+      staged.modules.set(manifestKey, {
+        manifestKey,
+        specifiers: new Set([specifier]),
+        sourcePath,
+        code,
+        codeSize,
+      });
+      staged.specifierCount++;
+      staged.sourceBytes += codeSize;
+    }
+
+    if (
+      staged.modules.size > MAX_DEPENDENCY_MODULES ||
+      staged.specifierCount > MAX_DEPENDENCY_SPECIFIERS ||
+      staged.sourceBytes > MAX_DEPENDENCY_SOURCE_BYTES
+    ) {
+      throw new Error("Vendored dependency collection exceeds the supported boundary");
+    }
+  }
+
+  return staged;
+}
+
+function addStagedDependencySpecifier(
+  staged: DependencyModuleCollection,
+  dependency: DependencyModule,
+  specifier: string,
+): void {
+  if (!isSafeBuildText(specifier, MAX_DEPENDENCY_SPECIFIER_LENGTH)) {
+    throw new Error("Vendored dependency specifier exceeds the supported boundary");
+  }
+  if (dependency.specifiers.has(specifier)) return;
+  if (staged.specifierCount >= MAX_DEPENDENCY_SPECIFIERS) {
+    throw new Error("Vendored dependency specifiers exceed the supported boundary");
+  }
+  dependency.specifiers.add(specifier);
+  staged.specifierCount++;
+}
+
+function commitDependencyModules(
+  target: DependencyModuleCollection,
+  staged: DependencyModuleCollection,
+): void {
+  let addedModules = 0;
+  let addedSpecifiers = 0;
+  let addedSourceBytes = 0;
+
+  for (const dependency of staged.modules.values()) {
+    const existing = target.modules.get(dependency.manifestKey);
+    if (!existing) {
+      addedModules++;
+      addedSpecifiers += dependency.specifiers.size;
+      addedSourceBytes += dependency.codeSize;
+      continue;
+    }
+    if (
+      existing.code !== dependency.code ||
+      (existing.sourcePath !== undefined &&
+        dependency.sourcePath !== undefined &&
+        existing.sourcePath !== dependency.sourcePath)
+    ) {
+      throw new Error(
+        `Conflicting vendored dependency identity: ${dependency.manifestKey}`,
+      );
+    }
+    for (const specifier of dependency.specifiers) {
+      if (!existing.specifiers.has(specifier)) addedSpecifiers++;
+    }
+  }
+
+  if (
+    target.modules.size + addedModules > MAX_DEPENDENCY_MODULES ||
+    target.specifierCount + addedSpecifiers > MAX_DEPENDENCY_SPECIFIERS ||
+    target.sourceBytes + addedSourceBytes > MAX_DEPENDENCY_SOURCE_BYTES
+  ) {
+    throw new Error("Vendored dependency collection exceeds the supported boundary");
+  }
+
+  for (const dependency of staged.modules.values()) {
+    const existing = target.modules.get(dependency.manifestKey);
+    if (!existing) {
+      target.modules.set(dependency.manifestKey, {
+        ...dependency,
+        specifiers: new Set(dependency.specifiers),
+      });
+      continue;
+    }
+    for (const specifier of dependency.specifiers) existing.specifiers.add(specifier);
+    existing.sourcePath ??= dependency.sourcePath;
+  }
+
+  target.specifierCount += addedSpecifiers;
+  target.sourceBytes += addedSourceBytes;
+}
+
+function mergeDependencyModules(
+  target: DependencyModuleCollection,
+  dependencies: readonly unknown[],
+): void {
+  commitDependencyModules(target, stageDependencyModules(dependencies));
 }
 
 function normalizeDependencySpecifier(specifier: string): string {
-  return specifier.replace(/[?#].*$/, "");
+  return specifier.startsWith("http://") || specifier.startsWith("https://")
+    ? normalizeHttpUrl(specifier)
+    : specifier;
 }
 
+const gapIndexes = new WeakMap<string[], Set<string>>();
+const GAP_DETAIL_LIMIT_MARKER = "coverage-failures:detail-limit-exceeded";
+const GAP_ENTRY_LIMIT_MARKER = "coverage-failures:entry-limit-exceeded";
+
 function pushGap(gaps: string[], gap: string): void {
-  if (!gaps.includes(gap)) gaps.push(gap);
+  let index = gapIndexes.get(gaps);
+  if (!index) {
+    index = new Set(gaps);
+    gapIndexes.set(gaps, index);
+  }
+  if (index.has(GAP_ENTRY_LIMIT_MARKER)) return;
+
+  const boundedGap = gap.length > RELEASE_ASSET_MANIFEST_LIMITS.coverageFailureLength ||
+      gap.length === 0 ||
+      gap.trim() !== gap ||
+      hasControlCharacters(gap)
+    ? GAP_DETAIL_LIMIT_MARKER
+    : gap;
+  if (index.has(boundedGap)) return;
+
+  if (index.size >= RELEASE_ASSET_MANIFEST_LIMITS.coverageFailures - 1) {
+    index.add(GAP_ENTRY_LIMIT_MARKER);
+    gaps.push(GAP_ENTRY_LIMIT_MARKER);
+    return;
+  }
+
+  index.add(boundedGap);
+  gaps.push(boundedGap);
+}
+
+class IncompleteReleaseAssetBuildError extends Error {
+  readonly coverageFailures: readonly string[];
+
+  constructor(coverageFailures: readonly string[]) {
+    const snapshot = Object.freeze([...coverageFailures]);
+    const summary = snapshot.slice(0, 3).map((failure) => failure.slice(0, 200)).join(", ");
+    const remaining = snapshot.length > 3 ? ` (+${snapshot.length - 3} more)` : "";
+    super(`Release asset coverage is incomplete: ${summary}${remaining}`);
+    this.name = "IncompleteReleaseAssetBuildError";
+    this.coverageFailures = snapshot;
+  }
+}
+
+function assertCompleteReleaseAssetCoverage(coverageFailures: readonly string[]): void {
+  if (coverageFailures.length > 0) {
+    throw new IncompleteReleaseAssetBuildError(coverageFailures);
+  }
 }
 
 function dependencyLookupKeys(specifier: string): Set<string> {
@@ -561,7 +1227,7 @@ async function collectReactImportMapDependencyModules(
   input: { reactVersion?: string },
   tempDir: string,
   vendorHttpImports: ReleaseAssetHttpDependencyVendor,
-  dependencies: Map<string, DependencyModule>,
+  dependencies: DependencyModuleCollection,
 ): Promise<void> {
   const reactUrls = getReactUrls(input.reactVersion);
   const entries: Array<readonly [string, string]> = [];
@@ -573,21 +1239,23 @@ async function collectReactImportMapDependencyModules(
   const source = entries.map(([, url]) => `import ${JSON.stringify(url)};`).join("\n");
   if (!source) return;
 
-  const vendored = await vendorHttpImports(source, {
-    tempDir,
-    reactVersion: input.reactVersion,
-  });
-  for (const dependency of vendored.dependencies) {
-    addDependencyModule(dependencies, dependency);
-  }
+  const vendored = validateVendorResult(
+    await vendorHttpImports(source, {
+      tempDir,
+      reactVersion: input.reactVersion,
+    }),
+  );
+  const staged = stageDependencyModules(vendored.dependencies);
 
   for (const [specifier, url] of entries) {
-    const dependency = findDependencyModuleBySpecifier(dependencies, url);
+    const dependency = findDependencyModuleBySpecifier(staged.modules, url);
     if (!dependency) {
       throw new Error(`React import-map dependency missing: ${specifier}`);
     }
-    dependency.specifiers.add(specifier);
+    addStagedDependencySpecifier(staged, dependency, specifier);
   }
+
+  commitDependencyModules(dependencies, staged);
 }
 
 function resolveLocalDependencyPath(specifier: string, parentFilePath?: string): string | null {
@@ -595,7 +1263,17 @@ function resolveLocalDependencyPath(specifier: string, parentFilePath?: string):
 
   if (normalized.startsWith("file://")) {
     try {
-      return normalize(decodeURIComponent(new URL(normalized).pathname));
+      const url = new URL(normalized);
+      if (
+        url.protocol !== "file:" ||
+        (url.hostname !== "" && url.hostname !== "localhost") ||
+        url.username !== "" ||
+        url.password !== "" ||
+        url.port !== ""
+      ) {
+        return null;
+      }
+      return normalize(fromFileUrl(url));
     } catch (_) {
       return null;
     }
@@ -614,106 +1292,155 @@ function isPathInsideRoot(filePath: string, rootPath: string): boolean {
   return file === root || file.startsWith(`${root}/`) || file.startsWith(`${root}\\`);
 }
 
-async function collectLocalHttpDependencyModules(
-  code: string,
-  dependencies: Map<string, DependencyModule>,
-  cacheDir: string,
-): Promise<void> {
-  const fs = createFileSystem();
-  const cacheRoot = normalize(cacheDir);
-  const seen = new Set<string>();
-  const queue: Array<{ specifier: string; parentFilePath?: string }> = [];
-
-  for (const imp of await parseImports(code)) {
-    if (imp.n) queue.push({ specifier: imp.n });
+async function readHttpDependencyCacheFile(
+  fs: ReturnType<typeof createFileSystem>,
+  filePath: string,
+): Promise<{ code: string; sourceUrl: string }> {
+  const fileInfo = fs.lstat ? await fs.lstat(filePath) : await fs.stat(filePath);
+  if (
+    fileInfo.isSymlink ||
+    !fileInfo.isFile ||
+    fileInfo.isDirectory ||
+    !Number.isSafeInteger(fileInfo.size) ||
+    fileInfo.size < 0 ||
+    fileInfo.size > RELEASE_ASSET_MAX_SIZE_BYTES
+  ) {
+    throw new Error("HTTP dependency cache file is not a safe bounded regular file");
   }
 
-  while (queue.length > 0) {
-    const { specifier, parentFilePath } = queue.shift()!;
-    const filePath = resolveLocalDependencyPath(specifier, parentFilePath);
-    if (!filePath || seen.has(filePath)) continue;
-    if (!isPathInsideRoot(filePath, cacheRoot)) {
-      throw new Error(`Vendored HTTP dependency resolved outside cache root: ${specifier}`);
-    }
-    seen.add(filePath);
-
-    const depCode = await fs.readTextFile(filePath);
-    const manifestKey = extractSourceUrl(depCode) ?? `file://${filePath}`;
-    const depSpecifiers = new Set<string>([
-      normalizeDependencySpecifier(specifier),
-      `file://${filePath}`,
-    ]);
-
-    const existing = dependencies.get(manifestKey);
-    if (existing) {
-      for (const depSpecifier of depSpecifiers) existing.specifiers.add(depSpecifier);
-      existing.sourcePath ??= filePath;
-    } else {
-      dependencies.set(manifestKey, {
-        manifestKey,
-        specifiers: depSpecifiers,
-        sourcePath: filePath,
-        code: depCode,
-      });
-    }
-
-    for (const imp of await parseImports(depCode)) {
-      if (imp.n) queue.push({ specifier: imp.n, parentFilePath: filePath });
-    }
+  const bytes = await fs.readFile(filePath);
+  if (
+    bytes.byteLength !== fileInfo.size ||
+    bytes.byteLength > RELEASE_ASSET_MAX_SIZE_BYTES
+  ) {
+    throw new Error("HTTP dependency cache file changed while it was being read");
   }
+
+  let code: string;
+  try {
+    code = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch (error) {
+    throw new Error("HTTP dependency cache file is not valid UTF-8", { cause: error });
+  }
+
+  const embeddedSourceUrl = extractSourceUrl(code);
+  if (
+    !isSafeBuildText(embeddedSourceUrl, MAX_DEPENDENCY_SPECIFIER_LENGTH) ||
+    (!embeddedSourceUrl.startsWith("http://") &&
+      !embeddedSourceUrl.startsWith("https://"))
+  ) {
+    throw new Error("HTTP dependency cache file is missing a valid HTTP source marker");
+  }
+
+  let parsedSourceUrl: URL;
+  try {
+    parsedSourceUrl = new URL(embeddedSourceUrl);
+  } catch (error) {
+    throw new Error("HTTP dependency cache file has an invalid HTTP source marker", {
+      cause: error,
+    });
+  }
+  if (parsedSourceUrl.protocol !== "http:" && parsedSourceUrl.protocol !== "https:") {
+    throw new Error("HTTP dependency cache file has an invalid HTTP source marker");
+  }
+
+  const sourceUrl = normalizeHttpUrl(parsedSourceUrl.toString());
+  if (!isSafeBuildText(sourceUrl, MAX_DEPENDENCY_SPECIFIER_LENGTH)) {
+    throw new Error("HTTP dependency cache source exceeds the supported boundary");
+  }
+  return { code, sourceUrl };
 }
 
-async function vendorHttpImportsWithCache(
-  code: string,
-  options: { tempDir: string; reactVersion?: string },
-): Promise<ReleaseAssetVendorResult> {
-  const imports = await parseImports(code);
+function isSafeBuildText(
+  value: unknown,
+  maximumLength: number = MAX_BUILD_IDENTIFIER_LENGTH,
+): value is string {
+  return typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= maximumLength &&
+    value.trim() === value &&
+    !hasControlCharacters(value);
+}
+
+function requireCanonicalReleaseFilePath(value: unknown): string {
   if (
-    !imports.some((imp) =>
-      imp.n &&
-      (imp.n.startsWith("http://") || imp.n.startsWith("https://") || imp.n.startsWith("npm:"))
-    )
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_RELEASE_FILE_PATH_LENGTH ||
+    value.normalize("NFC") !== value ||
+    value.startsWith("/") ||
+    value.startsWith("\\") ||
+    /^[A-Za-z]:[\\/]/.test(value) ||
+    value.endsWith("/") ||
+    value.endsWith("\\") ||
+    value.includes("?") ||
+    value.includes("#") ||
+    hasControlCharacters(value)
   ) {
-    return { code, dependencies: [] };
+    throw new Error("Release file path must be a canonical relative path");
   }
 
-  const cacheDir = join(options.tempDir, ".veryfront-http-bundle");
-  const result = await cacheHttpImportsToLocal(code, {
-    cacheDir,
-    importMap: { imports: {}, scopes: {} },
-    reactVersion: options.reactVersion,
+  const normalizedValue = value.replace(/\\/g, "/");
+  const parts = normalizedValue.split("/");
+  if (
+    parts.some((part) =>
+      part.length === 0 ||
+      part === "." ||
+      part === ".." ||
+      part.endsWith(".") ||
+      part.endsWith(" ") ||
+      part.includes(":") ||
+      /^(?:con|prn|aux|nul|clock\$|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i
+        .test(part)
+    ) ||
+    normalizeLogicalPath(normalizedValue) !== normalizedValue
+  ) {
+    throw new Error("Release file path must be a canonical relative path");
+  }
+
+  return normalizedValue;
+}
+
+function portableReleaseFilePathKey(filePath: string): string {
+  return filePath.normalize("NFC").toUpperCase();
+}
+
+function resolveMaterializedReleasePath(tempDir: string, filePath: string): string {
+  // The build owns a newly-created temporary root and materializes only regular
+  // file contents beneath it; no caller-controlled filesystem links are
+  // admitted. Lexical containment is therefore the correct boundary here.
+  const result = validateLexicalPath(filePath, {
+    baseDir: tempDir,
+    allowAbsolute: false,
   });
+  const resolvedPath = result.canonicalPath ? normalize(result.canonicalPath) : null;
 
-  const dependencies = new Map<string, DependencyModule>();
-  await collectLocalHttpDependencyModules(result.code, dependencies, cacheDir);
+  if (
+    !result.valid ||
+    !resolvedPath ||
+    resolvedPath === normalize(tempDir) ||
+    !isPathInsideRoot(resolvedPath, tempDir)
+  ) {
+    throw new Error("Release file path must stay within the build directory");
+  }
 
-  return {
-    code: result.code,
-    dependencies: [...dependencies.values()].flatMap((dependency) =>
-      [...dependency.specifiers].map((specifier) => ({
-        specifier,
-        manifestKey: dependency.manifestKey,
-        sourcePath: dependency.sourcePath,
-        code: dependency.code,
-      }))
-    ),
-  };
+  return resolvedPath;
 }
 
 export async function buildReactImportMapDependencyAssets(options: {
   tempDir: string;
   reactVersion?: string;
-  vendorHttpImports?: ReleaseAssetHttpDependencyVendor;
+  vendorHttpImports: ReleaseAssetHttpDependencyVendor;
 }): Promise<{
   dependencies: Record<string, PreparedAsset>;
   assets: PreparedReleaseAsset[];
   gaps: string[];
 }> {
-  const dependencyModules = new Map<string, DependencyModule>();
+  const dependencyModules = createDependencyModuleCollection();
   const uploadQueue: PreparedAsset[] = [];
-  const pendingBytes = new Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>();
+  const pendingBytes = createPendingAssetStore();
   const gaps: string[] = [];
-  const vendorHttpImports = options.vendorHttpImports ?? vendorHttpImportsWithCache;
+  const vendorHttpImports = options.vendorHttpImports;
 
   await collectReactImportMapDependencyModules(
     { reactVersion: options.reactVersion },
@@ -723,22 +1450,24 @@ export async function buildReactImportMapDependencyAssets(options: {
   );
 
   const finalized = await finalizeDependencyModules(
-    dependencyModules,
+    dependencyModules.modules,
     uploadQueue,
     pendingBytes,
     gaps,
   );
-  const dependencies = exposeDependencySpecifierAliases(finalized.assets, dependencyModules);
+  const dependencies = exposeDependencySpecifierAliases(
+    finalized.assets,
+    dependencyModules.modules,
+  );
 
   return {
     dependencies,
-    assets: uploadQueue.flatMap((asset) => {
-      const stored = pendingBytes.get(asset.contentHash);
-      if (!stored) return [];
-      return [{
+    assets: uploadQueue.map((asset) => {
+      const stored = requirePendingAsset(pendingBytes, asset);
+      return {
         ...asset,
         bytes: stored.bytes,
-      }];
+      };
     }),
     gaps,
   };
@@ -746,54 +1475,79 @@ export async function buildReactImportMapDependencyAssets(options: {
 
 async function collectCachedHttpDependencyModules(
   cacheDir: string,
-  dependencies: Map<string, DependencyModule>,
+  physicalCacheRoot: string,
+  dependencies: DependencyModuleCollection,
 ): Promise<void> {
   const fs = createFileSystem();
   const cacheRoot = normalize(cacheDir);
 
-  async function visit(dir: string): Promise<void> {
-    let entries: AsyncIterable<{ name: string; isFile?: boolean; isDirectory?: boolean }>;
-    try {
-      entries = fs.readDir(dir);
-    } catch {
-      return;
-    }
+  let fileCount = 0;
+  let entryCount = 0;
 
-    for await (const entry of entries) {
+  async function visit(dir: string, depth: number): Promise<void> {
+    if (depth > MAX_DEPENDENCY_DIRECTORY_DEPTH) {
+      throw new Error(
+        `Cached dependency tree exceeds ${MAX_DEPENDENCY_DIRECTORY_DEPTH} levels`,
+      );
+    }
+    const entries: Array<{
+      name: string;
+      isFile: boolean;
+      isDirectory: boolean;
+      isSymlink?: boolean;
+    }> = [];
+    for await (const entry of fs.readDir(dir)) {
+      entryCount++;
+      if (entryCount > MAX_DEPENDENCY_SPECIFIERS) {
+        throw new Error(
+          `Cached dependency tree exceeds ${MAX_DEPENDENCY_SPECIFIERS} filesystem entries`,
+        );
+      }
+      entries.push(entry);
+    }
+    entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+
+    for (const entry of entries) {
       const path = join(dir, entry.name);
+      if (entry.isSymlink) {
+        throw new Error(`Cached HTTP dependency tree contains a symbolic link: ${path}`);
+      }
       if (entry.isDirectory) {
-        await visit(path);
+        await visit(path, depth + 1);
         continue;
       }
       if (!entry.isFile || !/^http-[a-z0-9]+\.mjs$/i.test(entry.name)) continue;
+      fileCount++;
+      if (fileCount > MAX_DEPENDENCY_MODULES) {
+        throw new Error(`Cached dependency tree exceeds ${MAX_DEPENDENCY_MODULES} modules`);
+      }
       const filePath = normalize(path);
       if (!isPathInsideRoot(filePath, cacheRoot)) {
         throw new Error(`Cached HTTP dependency resolved outside cache root: ${filePath}`);
       }
-
-      const code = await fs.readTextFile(filePath);
-      const manifestKey = extractSourceUrl(code) ?? `file://${filePath}`;
-      const specifiers = [`file://${filePath}`];
-      if (manifestKey.startsWith("http://") || manifestKey.startsWith("https://")) {
-        specifiers.push(manifestKey);
+      const physicalFilePath = normalize(await realPath(filePath));
+      if (!isPathInsideRoot(physicalFilePath, physicalCacheRoot)) {
+        throw new Error(`Cached HTTP dependency escaped its physical cache root: ${filePath}`);
       }
 
-      const existing = dependencies.get(manifestKey);
-      if (existing) {
-        for (const specifier of specifiers) existing.specifiers.add(specifier);
-        existing.sourcePath ??= filePath;
-      } else {
-        dependencies.set(manifestKey, {
+      const { code, sourceUrl: manifestKey } = await readHttpDependencyCacheFile(
+        fs,
+        filePath,
+      );
+
+      mergeDependencyModules(
+        dependencies,
+        [toFileUrl(filePath).href, manifestKey].map((specifier) => ({
           manifestKey,
-          specifiers: new Set(specifiers),
+          specifier,
           sourcePath: filePath,
           code,
-        });
-      }
+        })),
+      );
     }
   }
 
-  await visit(cacheDir);
+  await visit(cacheDir, 0);
 }
 
 export async function buildCachedHttpDependencyAssets(options: {
@@ -804,35 +1558,50 @@ export async function buildCachedHttpDependencyAssets(options: {
   gaps: string[];
 }> {
   const fs = createFileSystem();
-  const cacheStat = await fs.stat(options.cacheDir).catch(() => null);
-  if (!cacheStat?.isDirectory) {
-    return { dependencies: {}, assets: [], gaps: [] };
+  let cacheStat: Awaited<ReturnType<typeof fs.stat>>;
+  try {
+    cacheStat = fs.lstat ? await fs.lstat(options.cacheDir) : await fs.stat(options.cacheDir);
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      return { dependencies: {}, assets: [], gaps: [] };
+    }
+    throw error;
   }
+  if (cacheStat.isSymlink || cacheStat.isFile || !cacheStat.isDirectory) {
+    throw new Error("Cached HTTP dependency path is not a safe directory");
+  }
+  const physicalCacheRoot = normalize(await realPath(options.cacheDir));
 
-  const dependencyModules = new Map<string, DependencyModule>();
+  const dependencyModules = createDependencyModuleCollection();
   const uploadQueue: PreparedAsset[] = [];
-  const pendingBytes = new Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>();
+  const pendingBytes = createPendingAssetStore();
   const gaps: string[] = [];
 
-  await collectCachedHttpDependencyModules(options.cacheDir, dependencyModules);
+  await collectCachedHttpDependencyModules(
+    options.cacheDir,
+    physicalCacheRoot,
+    dependencyModules,
+  );
 
   const finalized = await finalizeDependencyModules(
-    dependencyModules,
+    dependencyModules.modules,
     uploadQueue,
     pendingBytes,
     gaps,
   );
-  const dependencies = exposeDependencySpecifierAliases(finalized.assets, dependencyModules);
+  const dependencies = exposeDependencySpecifierAliases(
+    finalized.assets,
+    dependencyModules.modules,
+  );
 
   return {
     dependencies,
-    assets: uploadQueue.flatMap((asset) => {
-      const stored = pendingBytes.get(asset.contentHash);
-      if (!stored) return [];
-      return [{
+    assets: uploadQueue.map((asset) => {
+      const stored = requirePendingAsset(pendingBytes, asset);
+      return {
         ...asset,
         bytes: stored.bytes,
-      }];
+      };
     }),
     gaps,
   };
@@ -841,25 +1610,33 @@ export async function buildCachedHttpDependencyAssets(options: {
 async function finalizeDependencyModules(
   dependencyModules: Map<string, DependencyModule>,
   uploadQueue: PreparedAsset[],
-  pendingBytes: Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>,
+  pendingBytes: PendingAssetStore,
   gaps: string[],
 ): Promise<FinalizedDependencyModules> {
   const bySpecifier = new Map<string, DependencyModule>();
   const byFilePath = new Map<string, DependencyModule>();
   for (const dependency of dependencyModules.values()) {
     for (const specifier of dependency.specifiers) {
-      bySpecifier.set(normalizeDependencySpecifier(specifier), dependency);
+      setDependencyModuleAlias(
+        bySpecifier,
+        normalizeDependencySpecifier(specifier),
+        dependency,
+      );
       const filePath = resolveLocalDependencyPath(specifier);
-      if (filePath) byFilePath.set(filePath, dependency);
+      if (filePath) setDependencyModuleAlias(byFilePath, filePath, dependency);
     }
-    if (dependency.sourcePath) byFilePath.set(dependency.sourcePath, dependency);
+    if (dependency.sourcePath) {
+      setDependencyModuleAlias(
+        byFilePath,
+        normalize(dependency.sourcePath),
+        dependency,
+      );
+    }
   }
 
   const finalized = new Map<string, PreparedAsset>();
   const fallbackUrls = new Map<string, string>();
-  const skippedCycles = new Set<string>();
   const recordedCycleGaps = new Set<string>();
-  const visiting: string[] = [];
 
   function resolveDependencyImport(
     specifier: string,
@@ -874,96 +1651,76 @@ async function finalizeDependencyModules(
     return bySpecifier.get(normalizeDependencySpecifier(specifier)) ?? null;
   }
 
-  function recordDependencyCycle(cycleKeys: string[]): void {
+  function recordDependencyCycle(cycleKeys: readonly string[]): void {
     // Separate content-hashed ESM files cannot represent cyclic imports without
     // release-scoped aliases or bundling, so keep only that component on source URL fallback.
-    for (const key of cycleKeys) skippedCycles.add(key);
-
     const gap = `dependency-cycle:${cycleKeys.join("->")}`;
     if (!recordedCycleGaps.has(gap)) {
       recordedCycleGaps.add(gap);
-      gaps.push(gap);
+      pushGap(gaps, gap);
     }
   }
 
-  function cycleFallbackFor(dependency: DependencyModule): string | null {
-    if (!skippedCycles.has(dependency.manifestKey)) return null;
-    return dependencyFallbackUrl(dependency);
-  }
-
-  async function finalize(manifestKey: string): Promise<PreparedAsset | null> {
-    const existing = finalized.get(manifestKey);
-    if (existing) return existing;
-    if (visiting.includes(manifestKey)) {
-      recordDependencyCycle([...visiting.slice(visiting.indexOf(manifestKey)), manifestKey]);
-      return null;
-    }
-    if (skippedCycles.has(manifestKey)) return null;
-
-    const dependency = dependencyModules.get(manifestKey);
-    if (!dependency) return null;
-
-    visiting.push(manifestKey);
-    try {
-      const imports = await parseImports(dependency.code);
-      for (const imp of imports) {
-        if (!imp.n) continue;
-        const filePath = resolveLocalDependencyPath(imp.n, dependency.sourcePath);
-        if (filePath && !byFilePath.has(filePath)) {
-          throw new Error(`Unresolved vendored file dependency: ${imp.n}`);
-        }
-        const child = resolveDependencyImport(imp.n, dependency);
-        if (!child) continue;
-        if (child.manifestKey === manifestKey) {
-          recordDependencyCycle([manifestKey, manifestKey]);
-          continue;
-        }
-        await finalize(child.manifestKey);
+  const graphModules = new Map(
+    [...dependencyModules].map(([manifestKey, dependency]) =>
+      [
+        manifestKey,
+        {
+          id: manifestKey,
+          code: dependency.code,
+          contentType: RELEASE_ASSET_CONTENT_TYPES.js,
+        },
+      ] as const
+    ),
+  );
+  const materialized = await materializeReleaseDependencyGraph({
+    modules: graphModules,
+    maxAssetBytes: RELEASE_ASSET_MAX_SIZE_BYTES,
+    resolveImport(specifier, parent) {
+      const dependency = dependencyModules.get(parent.id);
+      if (!dependency) return { kind: "invalid", failureCode: "graph_incomplete" };
+      const filePath = resolveLocalDependencyPath(specifier, dependency.sourcePath);
+      if (filePath && !byFilePath.has(filePath)) {
+        throw new Error(`Unresolved vendored file dependency: ${specifier}`);
       }
-
-      if (skippedCycles.has(manifestKey)) return null;
-
-      const rewritten = await replaceSpecifiers(dependency.code, (specifier) => {
-        const child = resolveDependencyImport(specifier, dependency);
-        if (!child) return null;
-        const asset = finalized.get(child.manifestKey);
-        if (asset) return releaseAssetUrl(asset.contentHash, "js");
-        return cycleFallbackFor(child);
-      });
-
-      const entry = await addPreparedJavaScriptAsset(
-        `__dependencies__/${manifestKey}`,
-        rewritten,
-        uploadQueue,
-        pendingBytes,
-      );
-      if (!entry) {
-        throw new Error(`Vendored dependency exceeds release asset size limit: ${manifestKey}`);
+      const child = resolveDependencyImport(specifier, dependency);
+      return child ? { kind: "module", moduleId: child.manifestKey } : { kind: "external" };
+    },
+    cycleFallbackUrl(module) {
+      const dependency = dependencyModules.get(module.id);
+      const fallbackUrl = dependency ? dependencyFallbackUrl(dependency) : null;
+      if (!fallbackUrl) {
+        throw new Error(`Unrepresentable vendored dependency cycle: ${module.id}`);
       }
-      for (const specifier of dependency.specifiers) {
-        bySpecifier.set(normalizeDependencySpecifier(specifier), dependency);
-      }
-      finalized.set(manifestKey, entry);
-      return entry;
-    } finally {
-      visiting.pop();
+      return fallbackUrl;
+    },
+    onCycle: recordDependencyCycle,
+    assetSizeErrorMessage: (module) =>
+      `Vendored dependency exceeds release asset size limit: ${module.id}`,
+  });
+
+  for (const asset of materialized.assets) {
+    await assertFinalModuleImports(new TextDecoder().decode(asset.bytes), {
+      allowHttp: false,
+    });
+    const entry: PreparedAsset = {
+      logicalPath: `__dependencies__/${asset.sourceId}`,
+      contentHash: asset.contentHash,
+      size: asset.size,
+      contentType: asset.contentType,
+    };
+    finalized.set(asset.sourceId, entry);
+    if (rememberPendingAsset(pendingBytes, entry, asset.bytes)) {
+      uploadQueue.push(entry);
     }
   }
 
-  try {
-    for (const manifestKey of dependencyModules.keys()) await finalize(manifestKey);
-  } finally {
-    visiting.length = 0;
-  }
-
-  for (const manifestKey of skippedCycles) {
+  for (const manifestKey of materialized.skippedCycleIds) {
     const dependency = dependencyModules.get(manifestKey);
     if (!dependency) continue;
 
     const fallbackUrl = dependencyFallbackUrl(dependency);
-    if (!fallbackUrl) {
-      throw new Error(`Unrepresentable vendored dependency cycle: ${manifestKey}`);
-    }
+    if (!fallbackUrl) throw new Error(`Unrepresentable vendored dependency cycle: ${manifestKey}`);
 
     addDependencyUrlAliases(fallbackUrls, dependency, fallbackUrl);
   }
@@ -976,11 +1733,13 @@ async function finalizeProjectModules(
   knownPaths: Set<string>,
   dependencyUrls: Map<string, string>,
   uploadQueue: PreparedAsset[],
-  pendingBytes: Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>,
+  pendingBytes: PendingAssetStore,
   gaps: string[],
+  allowHttp: boolean,
 ): Promise<{ modules: Record<string, PreparedAsset>; skippedModules: Set<string> }> {
   const finalized = new Map<string, PreparedAsset>();
   const unresolvedCycles = new Set<string>();
+  const nonSizeFailures = new Set<string>();
   const cyclicModules = await collectCyclicProjectModules(transformedModules, knownPaths, gaps);
   const skippedModules = new Set(cyclicModules);
 
@@ -994,8 +1753,9 @@ async function finalizeProjectModules(
       const gap = `cycle:${cycle}`;
       if (!unresolvedCycles.has(gap)) {
         unresolvedCycles.add(gap);
-        gaps.push(gap);
+        pushGap(gaps, gap);
       }
+      nonSizeFailures.add(logicalPath);
       return null;
     }
 
@@ -1012,19 +1772,32 @@ async function finalizeProjectModules(
         path: logicalPath,
         error: sanitizeError(error),
       });
+      nonSizeFailures.add(logicalPath);
       return null;
     }
     for (const importedPath of imports.values()) {
       await finalize(importedPath, nextStack);
     }
 
-    const rewritten = await rewriteProjectModuleImports(
-      transformed.code,
-      logicalPath,
-      finalized,
-      knownPaths,
-      dependencyUrls,
-    );
+    let rewritten: string;
+    try {
+      rewritten = await rewriteProjectModuleImports(
+        transformed.code,
+        logicalPath,
+        finalized,
+        knownPaths,
+        dependencyUrls,
+      );
+      await assertFinalModuleImports(rewritten, { allowHttp });
+    } catch (error) {
+      pushGap(gaps, `module-rewrite-failed:${logicalPath}`);
+      logger.warn("Module import rewrite failed during release asset finalization", {
+        path: logicalPath,
+        error: sanitizeError(error),
+      });
+      nonSizeFailures.add(logicalPath);
+      return null;
+    }
     const entry = await addPreparedJavaScriptAsset(
       logicalPath,
       rewritten,
@@ -1043,8 +1816,9 @@ async function finalizeProjectModules(
     const entry = await finalize(logicalPath, []);
     if (!entry) {
       skippedModules.add(logicalPath);
-      const gap = `oversized:${logicalPath}`;
-      if (!gaps.includes(gap)) gaps.push(gap);
+      if (!nonSizeFailures.has(logicalPath)) {
+        pushGap(gaps, `oversized:${logicalPath}`);
+      }
     }
   }
 
@@ -1075,7 +1849,7 @@ async function collectCyclicProjectModules(
       const gap = `cycle:${[...cycleMembers, logicalPath].join("->")}`;
       if (!recordedCycles.has(gap)) {
         recordedCycles.add(gap);
-        gaps.push(gap);
+        pushGap(gaps, gap);
       }
       return;
     }
@@ -1118,32 +1892,33 @@ async function addPreparedJavaScriptAsset(
   logicalPath: string,
   code: string,
   uploadQueue: PreparedAsset[],
-  pendingBytes: Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>,
+  pendingBytes: PendingAssetStore,
 ): Promise<PreparedAsset | null> {
   const bytes = new TextEncoder().encode(code) as Uint8Array<ArrayBuffer>;
   if (bytes.byteLength > RELEASE_ASSET_MAX_SIZE_BYTES) return null;
 
-  const contentHash = await sha256HexBytes(bytes);
+  const contentHash = await computeHashBytes(bytes);
   const entry: PreparedAsset = {
     logicalPath,
     contentHash,
     size: bytes.byteLength,
     contentType: RELEASE_ASSET_CONTENT_TYPES.js,
   };
-  if (!pendingBytes.has(contentHash)) {
-    pendingBytes.set(contentHash, { bytes, contentType: RELEASE_ASSET_CONTENT_TYPES.js });
+  if (rememberPendingAsset(pendingBytes, entry, bytes)) {
     uploadQueue.push(entry);
   }
   return entry;
 }
 
 async function buildFrameworkDependencies(
-  input: ReleaseAssetBuildInput,
+  input: FrameworkBuildContext,
   tempDir: string,
   transform: ReleaseAssetTransform,
+  dependencyPinningSnapshot: DependencyPinningSnapshot,
+  dependencyPinningSource: DependencyPinningSourceInput,
   dependencyUrls: Map<string, string>,
   uploadQueue: PreparedAsset[],
-  pendingBytes: Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>,
+  pendingBytes: PendingAssetStore,
   gaps: string[],
 ): Promise<Record<string, PreparedAsset>> {
   const fs = createFileSystem();
@@ -1151,6 +1926,7 @@ async function buildFrameworkDependencies(
   const lookupDirs = [FRAMEWORK_SRC_DIR, FRAMEWORK_EMBEDDED_SRC_DIR, join(tempDir, "src")];
   const moduleAssets = new Map<string, PreparedAsset>();
   const visiting = new Set<string>();
+  const publishedHelperPaths = new Map<string, string>();
 
   async function resolveFrameworkImport(
     specifier: string,
@@ -1158,7 +1934,13 @@ async function buildFrameworkDependencies(
   ): Promise<string | null> {
     if (specifier.startsWith("./") || specifier.startsWith("../")) {
       const resolvedPath = await resolveRelativeFrameworkSourceImport(specifier, fromSourcePath);
-      return resolvedPath ? frameworkSourcePathToSourceKey(resolvedPath, lookupDirs) : null;
+      if (!resolvedPath) return null;
+      const helperSourceKey = publishedRuntimeHelperSourceKey(resolvedPath, lookupDirs);
+      if (helperSourceKey) {
+        publishedHelperPaths.set(helperSourceKey, resolvedPath);
+        return helperSourceKey;
+      }
+      return frameworkSourcePathToSourceKey(resolvedPath, lookupDirs);
     }
 
     if (specifier.startsWith(FRAMEWORK_MODULE_URL_PREFIX)) {
@@ -1176,27 +1958,34 @@ async function buildFrameworkDependencies(
     if (existing) return existing;
 
     if (visiting.has(sourceKey)) {
-      gaps.push(`dependency-cycle:${publicSpecifier}:${sourceKey}`);
+      pushGap(gaps, `dependency-cycle:${publicSpecifier}:${sourceKey}`);
       return null;
     }
 
-    const frameworkSource = await resolveFrameworkSourcePath(sourceKey, {
-      extraLookupDirs: [join(tempDir, "src")],
-    });
-    if (!frameworkSource) {
-      gaps.push(`dependency-missing:${publicSpecifier}:${sourceKey}`);
+    const publishedHelperPath = publishedHelperPaths.get(sourceKey);
+    const frameworkSource = publishedHelperPath
+      ? { path: publishedHelperPath, lookupDir: dirname(publishedHelperPath) }
+      : await resolveFrameworkSourcePath(sourceKey, {
+        extraLookupDirs: [join(tempDir, "src")],
+      });
+    const embeddedCode = frameworkSource ? null : embeddedFrameworkModuleCode(sourceKey);
+    if (!frameworkSource && embeddedCode === null) {
+      pushGap(gaps, `dependency-missing:${publicSpecifier}:${sourceKey}`);
       return null;
     }
 
     visiting.add(sourceKey);
     let code: string;
     try {
-      const source = await fs.readTextFile(frameworkSource.path);
-      code = await transform(source, frameworkSource.path, tempDir, input.adapter, {
+      const sourcePath = frameworkSource?.path ?? join(tempDir, `${sourceKey}.js`);
+      const source = embeddedCode ?? await fs.readTextFile(sourcePath);
+      code = await transform(source, sourcePath, tempDir, input.adapter, {
         projectId: input.projectId,
         dev: false,
         ssr: false,
         reactVersion: input.reactVersion,
+        dependencyPinningSnapshot,
+        dependencyPinningSource,
       });
 
       const frameworkImportUrls = new Map<string, string>();
@@ -1204,7 +1993,7 @@ async function buildFrameworkDependencies(
       for (const imp of await parseImports(code)) {
         if (!imp.n) continue;
 
-        const importedSourceKey = await resolveFrameworkImport(imp.n, frameworkSource.path);
+        const importedSourceKey = await resolveFrameworkImport(imp.n, sourcePath);
         if (!importedSourceKey) continue;
 
         const importedAsset = await processFrameworkModule(importedSourceKey, publicSpecifier);
@@ -1225,8 +2014,9 @@ async function buildFrameworkDependencies(
           frameworkImportUrls.get(specifier) ??
             dependencyUrlForSpecifier(dependencyUrls, specifier),
       );
+      await assertFinalModuleImports(code, { allowHttp: input.allowHttp });
     } catch (error) {
-      gaps.push(`dependency-transform-failed:${publicSpecifier}:${sourceKey}`);
+      pushGap(gaps, `dependency-transform-failed:${publicSpecifier}:${sourceKey}`);
       logger.warn("Framework dependency transform failed during release asset build", {
         specifier: publicSpecifier,
         sourceKey,
@@ -1245,7 +2035,7 @@ async function buildFrameworkDependencies(
       pendingBytes,
     );
     if (!entry) {
-      gaps.push(`dependency-oversized:${publicSpecifier}:${sourceKey}`);
+      pushGap(gaps, `dependency-oversized:${publicSpecifier}:${sourceKey}`);
       return null;
     }
 
@@ -1254,6 +2044,7 @@ async function buildFrameworkDependencies(
   }
 
   for (const [specifier, moduleUrl] of Object.entries(PLATFORM_UTILITIES)) {
+    if (input.requestedSpecifiers && !input.requestedSpecifiers.has(specifier)) continue;
     const sourceKey = frameworkModuleUrlToSourceKey(moduleUrl);
     if (!sourceKey) continue;
 
@@ -1268,37 +2059,65 @@ async function buildFrameworkDependencies(
   return dependencies;
 }
 
+async function collectRequestedFrameworkSpecifiers(
+  transformedModules: ReadonlyMap<string, TransformedProjectModule>,
+): Promise<Set<string>> {
+  const requested = new Set<string>();
+  const specifiersByModuleUrl = new Map<string, string[]>();
+  for (const [specifier, moduleUrl] of Object.entries(PLATFORM_UTILITIES)) {
+    const aliases = specifiersByModuleUrl.get(moduleUrl) ?? [];
+    aliases.push(specifier);
+    specifiersByModuleUrl.set(moduleUrl, aliases);
+  }
+
+  for (const transformed of transformedModules.values()) {
+    for (const imp of await parseImports(transformed.code)) {
+      if (!imp.n) continue;
+      if (Object.hasOwn(PLATFORM_UTILITIES, imp.n)) requested.add(imp.n);
+      for (const alias of specifiersByModuleUrl.get(imp.n) ?? []) requested.add(alias);
+    }
+  }
+
+  return requested;
+}
+
 export async function buildFrameworkDependencyAssets(options: {
   tempDir: string;
-  // deno-lint-ignore no-explicit-any -- adapter is passed through to transformToESM
-  adapter: any;
+  adapter: RuntimeAdapter;
   reactVersion?: string;
   projectId?: string;
-  transform?: ReleaseAssetTransform;
+  transform: ReleaseAssetTransform;
   dependencyUrls: Map<string, string>;
+  dependencyPinningSnapshot?: DependencyPinningSnapshot;
+  dependencyPinningSource?: DependencyPinningSourceInput;
 }): Promise<{
   dependencies: Record<string, PreparedAsset>;
   assets: PreparedReleaseAsset[];
   gaps: string[];
 }> {
   const uploadQueue: PreparedAsset[] = [];
-  const pendingBytes = new Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>();
+  const pendingBytes = createPendingAssetStore();
   const gaps: string[] = [];
-  const transform = options.transform ?? transformToESM;
+  const dependencyPinningSource = options.dependencyPinningSource ??
+    createDependencyPinningSource({
+      projectDir: options.tempDir,
+      adapter: options.adapter,
+      contentSourceId: "local-framework-assets",
+    });
+  const dependencyPinningSnapshot = options.dependencyPinningSnapshot ??
+    await resolveDependencyPinningSnapshot(dependencyPinningSource);
+  const transform = options.transform;
   const dependencies = await buildFrameworkDependencies(
     {
-      projectReference: options.projectId ?? "local",
       projectId: options.projectId ?? "local",
-      releaseId: "local",
-      releaseVersion: 0,
-      releaseVersionRef: "local",
       reactVersion: options.reactVersion,
-      client: undefined as unknown as ReleaseAssetBuildClient,
       adapter: options.adapter,
-      transform,
+      allowHttp: false,
     },
     options.tempDir,
     transform,
+    dependencyPinningSnapshot,
+    dependencyPinningSource,
     options.dependencyUrls,
     uploadQueue,
     pendingBytes,
@@ -1307,13 +2126,12 @@ export async function buildFrameworkDependencyAssets(options: {
 
   return {
     dependencies,
-    assets: uploadQueue.flatMap((asset) => {
-      const stored = pendingBytes.get(asset.contentHash);
-      if (!stored) return [];
-      return [{
+    assets: uploadQueue.map((asset) => {
+      const stored = requirePendingAsset(pendingBytes, asset);
+      return {
         ...asset,
         bytes: stored.bytes,
-      }];
+      };
     }),
     gaps,
   };
@@ -1325,10 +2143,10 @@ function addFrameworkDependencyUrlAliases(
 ): void {
   for (const [specifier, entry] of Object.entries(dependencies)) {
     const url = releaseAssetUrl(entry.contentHash, "js");
-    urls.set(specifier, url);
+    setDependencyUrlAlias(urls, specifier, url);
 
     const moduleUrl = PLATFORM_UTILITIES[specifier];
-    if (moduleUrl) urls.set(moduleUrl, url);
+    if (moduleUrl) setDependencyUrlAlias(urls, moduleUrl, url);
   }
 }
 
@@ -1346,15 +2164,15 @@ async function collectRouteClosure(
   const queue = [...entrypoints];
   const gaps: string[] = [];
 
-  while (queue.length > 0) {
-    const current = queue.shift()!;
+  for (let queueIndex = 0; queueIndex < queue.length; queueIndex++) {
+    const current = queue[queueIndex]!;
     if (visited.has(current)) continue;
     visited.add(current);
 
     const transformed = transformedModules.get(current);
     if (!transformed) {
       // Module referenced but not transformable or not successfully transformed.
-      gaps.push(`closure-missing:${current}`);
+      pushGap(gaps, `closure-missing:${current}`);
       continue;
     }
 
@@ -1377,6 +2195,87 @@ async function collectRouteClosure(
   return { modules: [...visited], gaps };
 }
 
+function validateReleaseAssetBuildInput(
+  input: ReleaseAssetBuildInput,
+  tempDir: string,
+): void {
+  if (!isSafeBuildText(input.projectReference)) {
+    throw new Error("Release asset project reference is invalid");
+  }
+  if (!isSafeBuildText(input.projectId)) {
+    throw new Error("Release asset project ID is invalid");
+  }
+  if (!isSafeBuildText(input.releaseId)) {
+    throw new Error("Release asset release ID is invalid");
+  }
+  if (!isSafeBuildText(input.releaseVersionRef)) {
+    throw new Error("Release asset release version reference is invalid");
+  }
+  if (!Number.isSafeInteger(input.releaseVersion) || input.releaseVersion < 0) {
+    throw new Error("Release asset release version must be a non-negative safe integer");
+  }
+  if (!isSafeBuildText(tempDir, MAX_RELEASE_FILE_PATH_LENGTH)) {
+    throw new Error("Release asset temporary directory is invalid");
+  }
+  if (
+    typeof input.client?.beginReleaseAssetManifestBuild !== "function" ||
+    typeof input.client.listAllReleaseFiles !== "function" ||
+    typeof input.client.uploadReleaseAsset !== "function" ||
+    typeof input.client.putReleaseAssetManifest !== "function" ||
+    typeof input.client.reportReleaseAssetManifestState !== "function" ||
+    typeof input.client.compileProjectCss !== "function"
+  ) {
+    throw new Error("Release asset build client is incomplete");
+  }
+  if (typeof input.transform !== "function") {
+    throw new Error("Release asset transform must be a function");
+  }
+  if (typeof input.loadConfig !== "function") {
+    throw new Error("Release asset config loader is unavailable");
+  }
+  if (input.dependencyMode !== "source" && input.dependencyMode !== "immutable") {
+    throw new Error("Release asset dependency mode is invalid");
+  }
+  if (
+    input.vendorHttpImports !== undefined &&
+    typeof input.vendorHttpImports !== "function"
+  ) {
+    throw new Error("Release asset dependency vendor must be a function");
+  }
+  if (input.dependencyMode === "source" && input.vendorHttpImports !== undefined) {
+    throw new Error("Release asset dependency vendor requires immutable dependency mode");
+  }
+  if (input.dependencyMode === "immutable" && typeof input.vendorHttpImports !== "function") {
+    throw new Error(
+      "Immutable release dependencies require a policy-enforced vendor extension",
+    );
+  }
+}
+
+interface ValidatedReleaseAssetBuildStart {
+  readonly id: string;
+  readonly manifestVersion: number;
+  readonly state: "queued" | "building";
+}
+
+function validateBuildStart(
+  value: Awaited<ReturnType<ReleaseAssetBuildClient["beginReleaseAssetManifestBuild"]>>,
+): ValidatedReleaseAssetBuildStart {
+  const id = readOwnDataProperty(value, "id");
+  const manifestVersion = readOwnDataProperty(value, "manifest_version");
+  const state = readOwnDataProperty(value, "state");
+  if (
+    !isSafeBuildText(id) ||
+    typeof manifestVersion !== "number" ||
+    !Number.isSafeInteger(manifestVersion) ||
+    manifestVersion < 0 ||
+    (state !== "queued" && state !== "building")
+  ) {
+    throw new Error("Release asset build start was not acknowledged");
+  }
+  return Object.freeze({ id, manifestVersion, state });
+}
+
 /**
  * Execute a release asset build. Pure orchestration over the injected client
  * and a runtime-provided temp dir + react version.
@@ -1386,36 +2285,41 @@ export async function runReleaseAssetBuild(
   tempDir: string,
 ): Promise<ReleaseAssetBuildResult> {
   const { client } = input;
-  const transform: ReleaseAssetTransform = input.transform ??
-    ((source, sourceFile, projectDir, adapter, options) =>
-      transformToESM(source, sourceFile, projectDir, adapter, {
-        projectId: options.projectId,
-        dev: options.dev,
-        ssr: options.ssr,
-        studioEmbed: false,
-        reactVersion: options.reactVersion,
-      }));
-
-  // H1: wrap the whole build so any non-transform failure also reports failed.
+  let validatedStart: ValidatedReleaseAssetBuildStart | null = null;
   try {
-    return await runBuildInner(input, tempDir, client, transform);
+    validateReleaseAssetBuildInput(input, tempDir);
+    const transform = input.transform;
+    validatedStart = validateBuildStart(
+      await client.beginReleaseAssetManifestBuild(input.releaseVersionRef),
+    );
+
+    // Wrap the whole build so any non-transform failure also reports failed.
+    return await runBuildInner(
+      input,
+      tempDir,
+      client,
+      transform,
+      validatedStart.manifestVersion,
+    );
   } catch (error) {
     const sanitized = sanitizeError(error);
     logger.warn("Release asset build failed (non-transform error)", {
       releaseId: input.releaseId,
       error: sanitized,
     });
-    try {
-      await client.reportReleaseAssetManifestState(
-        input.releaseVersionRef,
-        "failed",
-        sanitized,
-      );
-    } catch (reportErr) {
-      logger.warn("Failed to report build failure state", {
-        releaseId: input.releaseId,
-        error: sanitizeError(reportErr),
-      });
+    if (validatedStart) {
+      try {
+        await client.reportReleaseAssetManifestState(
+          input.releaseVersionRef,
+          "failed",
+          sanitized,
+        );
+      } catch (reportErr) {
+        logger.warn("Failed to report build failure state", {
+          releaseId: input.releaseId,
+          error: sanitizeError(reportErr),
+        });
+      }
     }
     return {
       success: false,
@@ -1423,10 +2327,27 @@ export async function runReleaseAssetBuild(
       moduleCount: 0,
       cssCount: 0,
       routeCount: 0,
-      gaps: [],
+      coverageFailures: error instanceof IncompleteReleaseAssetBuildError
+        ? error.coverageFailures
+        : [],
       error: sanitized,
     };
   }
+}
+
+async function resolveReleaseReactVersion(
+  releaseConfig: VeryfrontConfig,
+  tempDir: string,
+  dependencyPinningSnapshot: DependencyPinningSnapshot,
+  dependencyPinningSource: DependencyPinningSourceInput,
+): Promise<string> {
+  return await resolveProjectReactVersion({
+    projectDir: tempDir,
+    config: releaseConfig,
+    dependencyPinningSource,
+    dependencyPinningCacheKey: dependencyPinningSnapshot.cacheKey,
+    dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
+  });
 }
 
 async function runBuildInner(
@@ -1434,93 +2355,187 @@ async function runBuildInner(
   tempDir: string,
   client: ReleaseAssetBuildClient,
   transform: ReleaseAssetTransform,
+  manifestVersion: number,
 ): Promise<ReleaseAssetBuildResult> {
-  // 1. Begin (idempotent). H2: capture manifest_version from the API response.
-  const beginResult = await client.beginReleaseAssetManifestBuild(input.releaseVersionRef);
-  const manifestVersion = beginResult.manifest_version;
-
-  // 2. Materialize the release file set.
+  // Materialize only after the control plane acknowledges an active build.
   const files = await client.listAllReleaseFiles(input.releaseVersionRef);
+  if (!Array.isArray(files) || files.length > MAX_RELEASE_FILES) {
+    throw new Error(`Release file list exceeds ${MAX_RELEASE_FILES} entries`);
+  }
   const fs = createFileSystem();
   const sourceByPath = new Map<string, string>();
+  const portablePathKeys = new Set<string>();
+  let sourceBytes = 0;
+  let transformableSourceCount = 0;
 
   for (const file of files) {
-    if (typeof file.content !== "string") continue;
-    sourceByPath.set(file.path, file.content);
-    const abs = join(tempDir, file.path);
-    await fs.mkdir(dirname(abs), { recursive: true });
-    await fs.writeTextFile(abs, file.content);
+    const path = readOwnDataProperty(file, "path");
+    const content = readOwnDataProperty(file, "content");
+    if (typeof content !== "string") {
+      throw new Error("Release file entry must include string content");
+    }
+    const logicalPath = requireCanonicalReleaseFilePath(path);
+    if (sourceByPath.has(logicalPath)) {
+      throw new Error("Release file list contains a duplicate path");
+    }
+    const portablePathKey = portableReleaseFilePathKey(logicalPath);
+    if (portablePathKeys.has(portablePathKey)) {
+      throw new Error("Release file list contains a portable path collision");
+    }
+    portablePathKeys.add(portablePathKey);
+    if (isTransformableBrowserModule(logicalPath)) {
+      transformableSourceCount++;
+      if (transformableSourceCount > RELEASE_ASSET_MANIFEST_LIMITS.moduleEntries) {
+        throw new Error(
+          `Release browser modules exceed ${RELEASE_ASSET_MANIFEST_LIMITS.moduleEntries} entries`,
+        );
+      }
+    }
+    const contentBytes = textEncoder.encode(content).byteLength;
+    if (contentBytes > RELEASE_ASSET_MAX_SIZE_BYTES) {
+      throw new Error(`Release source file exceeds ${RELEASE_ASSET_MAX_SIZE_BYTES} bytes`);
+    }
+    sourceBytes += contentBytes;
+    if (sourceBytes > MAX_RELEASE_SOURCE_BYTES) {
+      throw new Error(`Release source files exceed ${MAX_RELEASE_SOURCE_BYTES} bytes`);
+    }
+
+    sourceByPath.set(logicalPath, content);
   }
+
+  // Validate the entire logical file set before writing any tenant-controlled
+  // path. This keeps case-insensitive and Unicode-normalizing filesystems from
+  // making the materialized bytes differ from the hashed in-memory snapshot.
+  for (const [logicalPath, content] of sourceByPath) {
+    const abs = resolveMaterializedReleasePath(tempDir, logicalPath);
+    await fs.mkdir(dirname(abs), { recursive: true });
+    await fs.writeTextFile(abs, content);
+  }
+
+  const sourceContentHash = await releaseFileSetSignature(sourceByPath);
 
   // 3 + 4. Collect the browser module closure and transform each module
   // through the SAME pipeline serveModule uses (browser, non-SSR).
   const transformedModules = new Map<string, TransformedProjectModule>();
-  const dependencyModules = new Map<string, DependencyModule>();
+  const dependencyModules = createDependencyModuleCollection();
   const gaps: string[] = [];
   const uploadQueue: PreparedAsset[] = [];
   // Bytes are held per-hash only until uploaded, then dropped (M3).
-  const pendingBytes = new Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>();
+  const pendingBytes = createPendingAssetStore();
   const knownPaths = new Set(sourceByPath.keys());
-  const vendorHttpImports = input.vendorHttpImports ?? vendorHttpImportsWithCache;
-  const vendorDependencies = isDependencyImportMapEnabled();
-  const transformingModules = new Set<string>();
+  const vendorDependencies = input.dependencyMode === "immutable";
+  const configuredVendor = input.vendorHttpImports;
+  const vendorHttpImports = vendorDependencies ? configuredVendor : undefined;
+  const configFile = VERYFRONT_CONFIG_FILES.find((candidate) => sourceByPath.has(candidate));
+  const releaseConfig = await input.loadConfig(
+    configFile
+      ? {
+        fileName: configFile,
+        source: sourceByPath.get(configFile)!,
+      }
+      : null,
+  );
+  if (!releaseConfig || typeof releaseConfig !== "object" || Array.isArray(releaseConfig)) {
+    throw new Error("Release asset config loader returned an invalid config");
+  }
+  const routeDirectories = releaseRouterDirectories(releaseConfig);
+  const dependencyPinningSource = createDependencyPinningSource({
+    projectDir: tempDir,
+    projectId: input.projectId,
+    releaseId: input.releaseId,
+    contentSourceId: `release-assets:${input.releaseVersionRef}`,
+    isLocalProject: true,
+    config: releaseConfig,
+  });
+  const dependencyPinningSnapshot = await resolveDependencyPinningSnapshot(
+    dependencyPinningSource,
+  );
+  const releaseReactVersion = await resolveReleaseReactVersion(
+    releaseConfig,
+    tempDir,
+    dependencyPinningSnapshot,
+    dependencyPinningSource,
+  );
 
   async function transformProjectModule(
     logicalPath: string,
-  ): Promise<ReleaseAssetBuildResult | null> {
-    if (transformedModules.has(logicalPath) || transformingModules.has(logicalPath)) return null;
-    if (!isTransformableBrowserModule(logicalPath)) return null;
+  ): Promise<string[]> {
+    if (transformedModules.has(logicalPath) || !isTransformableBrowserModule(logicalPath)) {
+      return [];
+    }
 
     const source = sourceByPath.get(logicalPath);
-    if (typeof source !== "string") return null;
+    if (typeof source !== "string") return [];
 
-    transformingModules.add(logicalPath);
-
+    const sourceFile = join(tempDir, logicalPath);
+    let code: string;
     try {
-      // M2: enforce client-side size limit before transform (source is a proxy;
-      // transformed output is checked after encoding below).
-      const sourceFile = join(tempDir, logicalPath);
-      let code: string;
+      code = await transform(source, sourceFile, tempDir, input.adapter, {
+        projectId: input.projectId,
+        dev: false,
+        ssr: false,
+        reactVersion: releaseReactVersion,
+        dependencyPinningSnapshot,
+        dependencyPinningSource,
+      });
+    } catch (error) {
+      const sanitized = sanitizeError(error);
+      pushGap(gaps, `module-transform-failed:${logicalPath}`);
+      logger.warn("Module transform failed during release asset build", {
+        path: logicalPath,
+        error: sanitized,
+      });
+      return [];
+    }
+    if (typeof code !== "string") {
+      pushGap(gaps, `module-transform-failed:${logicalPath}`);
+      logger.warn("Module transform returned a non-string result", {
+        path: logicalPath,
+      });
+      return [];
+    }
+    const transformedSize = textEncoder.encode(code).byteLength;
+    if (transformedSize > RELEASE_ASSET_MAX_SIZE_BYTES) {
+      pushGap(gaps, `oversized:${logicalPath}`);
+      logger.warn("Module transform output exceeds the release asset limit", {
+        path: logicalPath,
+        size: transformedSize,
+        limit: RELEASE_ASSET_MAX_SIZE_BYTES,
+      });
+      return [];
+    }
+
+    const unvendoredCode = code;
+    let imports: Map<string, string> | undefined;
+    if (typeof vendorHttpImports === "function") {
       try {
-        code = await transform(source, sourceFile, tempDir, input.adapter, {
-          projectId: input.projectId,
-          dev: false,
-          ssr: false,
-          reactVersion: input.reactVersion,
-        });
+        const vendored = validateVendorResult(
+          await vendorHttpImports(code, {
+            tempDir,
+            reactVersion: releaseReactVersion,
+          }),
+        );
+        const stagedDependencies = stageDependencyModules(vendored.dependencies);
+        const vendoredImports = await collectProjectModuleImports(
+          vendored.code,
+          logicalPath,
+          knownPaths,
+        );
+        commitDependencyModules(dependencyModules, stagedDependencies);
+        code = vendored.code;
+        imports = vendoredImports;
       } catch (error) {
         const sanitized = sanitizeError(error);
-        pushGap(gaps, `module-transform-failed:${logicalPath}`);
-        logger.warn("Module transform failed during release asset build", {
+        pushGap(gaps, `module-dependency-vendor-failed:${logicalPath}`);
+        logger.warn("HTTP dependency vendoring failed during release asset build", {
           path: logicalPath,
           error: sanitized,
         });
-        return null;
+        code = unvendoredCode;
       }
+    }
 
-      const unvendoredCode = code;
-      if (vendorDependencies) {
-        try {
-          const vendored = await vendorHttpImports(code, {
-            tempDir,
-            reactVersion: input.reactVersion,
-          });
-          code = vendored.code;
-          for (const dependency of vendored.dependencies) {
-            addDependencyModule(dependencyModules, dependency);
-          }
-        } catch (error) {
-          const sanitized = sanitizeError(error);
-          pushGap(gaps, `module-dependency-vendor-failed:${logicalPath}`);
-          logger.warn("HTTP dependency vendoring failed during release asset build", {
-            path: logicalPath,
-            error: sanitized,
-          });
-          code = unvendoredCode;
-        }
-      }
-
-      let imports: Map<string, string>;
+    if (!imports) {
       try {
         imports = await collectProjectModuleImports(code, logicalPath, knownPaths);
       } catch (error) {
@@ -1530,32 +2545,34 @@ async function runBuildInner(
           path: logicalPath,
           error: sanitized,
         });
-        return null;
+        return [];
       }
-
-      transformedModules.set(logicalPath, { logicalPath, code, unvendoredCode });
-      for (const importedPath of imports.values()) {
-        const failure = await transformProjectModule(importedPath);
-        if (failure) return failure;
-      }
-    } finally {
-      transformingModules.delete(logicalPath);
     }
 
-    return null;
+    transformedModules.set(logicalPath, { logicalPath, code, unvendoredCode });
+    return [...imports.values()];
   }
 
+  const moduleQueue: string[] = [];
+  const queuedModules = new Set<string>();
   for (const logicalPath of sourceByPath.keys()) {
-    if (!isBrowserModule(logicalPath)) continue;
-
-    const failure = await transformProjectModule(logicalPath);
-    if (failure) return failure;
+    if (!isBrowserModule(logicalPath, routeDirectories)) continue;
+    moduleQueue.push(logicalPath);
+    queuedModules.add(logicalPath);
+  }
+  for (let index = 0; index < moduleQueue.length; index++) {
+    const logicalPath = moduleQueue[index]!;
+    for (const importedPath of await transformProjectModule(logicalPath)) {
+      if (queuedModules.has(importedPath)) continue;
+      queuedModules.add(importedPath);
+      moduleQueue.push(importedPath);
+    }
   }
 
-  if (vendorDependencies) {
+  if (typeof vendorHttpImports === "function") {
     try {
       await collectReactImportMapDependencyModules(
-        input,
+        { ...input, reactVersion: releaseReactVersion },
         tempDir,
         vendorHttpImports,
         dependencyModules,
@@ -1571,14 +2588,19 @@ async function runBuildInner(
 
   let httpDependencies: Record<string, PreparedAsset>;
   let httpDependencyFallbackUrls: Map<string, string>;
+  const dependencyUploadQueueStart = uploadQueue.length;
   try {
     const finalizedHttpDependencies = await finalizeDependencyModules(
-      dependencyModules,
+      dependencyModules.modules,
       uploadQueue,
       pendingBytes,
       gaps,
     );
-    httpDependencies = finalizedHttpDependencies.assets;
+    httpDependencies = exposeDependencySpecifierAliases(
+      finalizedHttpDependencies.assets,
+      dependencyModules.modules,
+      MAX_HTTP_DEPENDENCY_ENTRIES,
+    );
     httpDependencyFallbackUrls = finalizedHttpDependencies.fallbackUrls;
   } catch (error) {
     const sanitized = sanitizeError(error);
@@ -1589,26 +2611,48 @@ async function runBuildInner(
     for (const transformed of transformedModules.values()) {
       transformed.code = transformed.unvendoredCode;
     }
-    dependencyModules.clear();
+    discardPendingAssetsSince(uploadQueue, pendingBytes, dependencyUploadQueueStart);
+    clearDependencyModules(dependencyModules);
     httpDependencies = {};
     httpDependencyFallbackUrls = new Map();
   }
-  httpDependencies = exposeDependencySpecifierAliases(httpDependencies, dependencyModules);
-  const dependencyUrls = buildDependencyUrlMap(httpDependencies, dependencyModules);
+  const dependencyUrls = buildDependencyUrlMap(
+    httpDependencies,
+    dependencyModules.modules,
+  );
   for (const [specifier, url] of httpDependencyFallbackUrls) {
-    dependencyUrls.set(specifier, url);
+    setDependencyUrlAlias(dependencyUrls, specifier, url);
   }
+  const requestedFrameworkSpecifiers = await collectRequestedFrameworkSpecifiers(
+    transformedModules,
+  );
   const frameworkDependencies = await buildFrameworkDependencies(
-    input,
+    {
+      projectId: input.projectId,
+      adapter: input.adapter,
+      reactVersion: releaseReactVersion,
+      allowHttp: !vendorDependencies,
+      requestedSpecifiers: requestedFrameworkSpecifiers,
+    },
     tempDir,
     transform,
+    dependencyPinningSnapshot,
+    dependencyPinningSource,
     dependencyUrls,
     uploadQueue,
     pendingBytes,
     gaps,
   );
-  if (vendorDependencies) addFrameworkDependencyUrlAliases(dependencyUrls, frameworkDependencies);
-  const dependencies = { ...frameworkDependencies, ...httpDependencies };
+  addFrameworkDependencyUrlAliases(dependencyUrls, frameworkDependencies);
+  const dependencies = mergePreparedAssetRecords(
+    frameworkDependencies,
+    httpDependencies,
+  );
+  if (Object.keys(dependencies).length > RELEASE_ASSET_MANIFEST_LIMITS.dependencyEntries) {
+    throw new Error(
+      `Release dependency manifest exceeds ${RELEASE_ASSET_MANIFEST_LIMITS.dependencyEntries} entries`,
+    );
+  }
 
   const { modules, skippedModules } = await finalizeProjectModules(
     transformedModules,
@@ -1617,6 +2661,7 @@ async function runBuildInner(
     uploadQueue,
     pendingBytes,
     gaps,
+    !vendorDependencies,
   );
 
   for (const logicalPath of transformedModules.keys()) {
@@ -1629,76 +2674,88 @@ async function runBuildInner(
     });
   }
 
-  // 5b. CSS: compile project CSS where reachable, else record css:[] and note.
+  // 5b. CSS: compile requested project CSS and fail closed on any invalid output.
   const css: ReleaseAssetCssEntry[] = [];
   const cssHashes: string[] = [];
-  if (client.compileProjectCss) {
-    try {
-      const candidates = collectClassCandidates(sourceByPath);
-      const stylesheet = resolveProjectStylesheet(sourceByPath, input.stylesheetPath);
-      const compiled = await client.compileProjectCss(candidates, stylesheet);
-      if (compiled && compiled.css) {
-        const bytes = new TextEncoder().encode(compiled.css) as Uint8Array<ArrayBuffer>;
-        const contentHash = await sha256HexBytes(bytes);
-        css.push({
-          contentHash,
-          size: bytes.byteLength,
-          contentType: RELEASE_ASSET_CONTENT_TYPES.css,
-          styleProfileHash: compiled.styleProfileHash,
-        });
-        cssHashes.push(contentHash);
-        if (!pendingBytes.has(contentHash)) {
-          pendingBytes.set(contentHash, { bytes, contentType: RELEASE_ASSET_CONTENT_TYPES.css });
-          uploadQueue.push({
-            logicalPath: `__css__/${contentHash}`,
-            contentHash,
-            size: bytes.byteLength,
-            contentType: RELEASE_ASSET_CONTENT_TYPES.css,
-          });
-        }
-      } else {
-        // The compiler degraded (returned null/empty) — record the gap so a
-        // ready manifest never silently lacks the promised CSS signal.
-        gaps.push("css:compile-failed");
-        logger.warn("Release asset CSS compile returned no output (recording gap)");
-      }
-    } catch (error) {
-      // CSS is best-effort: record a gap, keep css:[].
-      gaps.push("css:compile-failed");
-      logger.warn("Release asset CSS compile failed (recording gap)", {
-        error: sanitizeError(error),
-      });
-    }
-  } else {
-    gaps.push("css:no-pipeline");
+  const candidates = collectClassCandidates(sourceByPath);
+  if (candidates.size > MAX_CSS_CANDIDATES) {
+    throw new Error(
+      `Release asset CSS candidates exceed ${MAX_CSS_CANDIDATES} entries`,
+    );
   }
 
-  // 5a. Upload assets with bounded concurrency, dropping bytes after each
-  // successful upload (M3) to bound peak memory.
-  await uploadWithConcurrency(uploadQueue, RELEASE_ASSET_UPLOAD_CONCURRENCY, async (asset) => {
-    const stored = pendingBytes.get(asset.contentHash);
-    if (!stored) return;
-    await client.uploadReleaseAsset(
-      input.releaseVersionRef,
-      asset.contentHash,
-      stored.contentType,
-      stored.bytes,
-    );
-    // M3: drop bytes immediately after upload.
-    pendingBytes.delete(asset.contentHash);
-  });
+  const stylesheetPath = releaseConfig.tailwind?.stylesheet;
+  const resolvedStylesheet = resolveProjectStylesheet(sourceByPath, stylesheetPath);
+  if (stylesheetPath !== undefined && resolvedStylesheet === undefined) {
+    pushGap(gaps, `stylesheet-missing:${stylesheetPath}`);
+    assertCompleteReleaseAssetCoverage(gaps);
+  }
+  const stylesheet = await mergeModuleCssImports(sourceByPath, resolvedStylesheet, gaps);
+  assertCompleteReleaseAssetCoverage(gaps);
+  const cssRequested = candidates.size > 0 || stylesheet !== undefined;
+  if (cssRequested) {
+    const stylesheetBytes = stylesheet ? textEncoder.encode(stylesheet).byteLength : 0;
+    if (stylesheetBytes > MAX_CSS_INPUT_BYTES) {
+      throw new Error(
+        `Release asset CSS input exceeds ${MAX_CSS_INPUT_BYTES} bytes`,
+      );
+    }
+
+    const compiledResult = await client.compileProjectCss(candidates, stylesheet, {
+      config: releaseConfig,
+    });
+    if (compiledResult === null) {
+      throw new Error("Release asset CSS compiler returned no requested output");
+    }
+    const compiled = snapshotCompiledProjectCss(compiledResult);
+    const bytes = textEncoder.encode(compiled.css) as Uint8Array<ArrayBuffer>;
+    if (bytes.byteLength > RELEASE_ASSET_MAX_SIZE_BYTES) {
+      throw new Error(
+        `Release asset CSS output exceeds ${RELEASE_ASSET_MAX_SIZE_BYTES} bytes`,
+      );
+    }
+
+    const contentHash = await computeHashBytes(bytes);
+    css.push({
+      contentHash,
+      size: bytes.byteLength,
+      contentType: RELEASE_ASSET_CONTENT_TYPES.css,
+      styleProfileHash: compiled.styleProfileHash,
+      cssPipelineIdentity: compiled.cssPipelineIdentity,
+    });
+    cssHashes.push(contentHash);
+    const asset: PreparedAsset = {
+      logicalPath: `__css__/${contentHash}`,
+      contentHash,
+      size: bytes.byteLength,
+      contentType: RELEASE_ASSET_CONTENT_TYPES.css,
+    };
+    if (rememberPendingAsset(pendingBytes, asset, bytes)) {
+      uploadQueue.push(asset);
+    }
+  }
 
   // B2. Routes: walk the transformed browser import closure from each page entrypoint.
   // Modules missing from transformedModules are recorded as closure gaps.
   const routes: Record<string, ReleaseAssetRouteEntry> = {};
-  const pageModules = Object.keys(modules).filter((p) => p.startsWith("pages/"));
+  const pageModules = Object.keys(modules).filter((p) =>
+    routeForConfiguredPage(p, routeDirectories) !== null
+  );
 
   for (const logicalPath of pageModules) {
-    const route = routeForPage(logicalPath);
+    const route = routeForConfiguredPage(logicalPath, routeDirectories);
     if (!route) continue;
+    if (Object.hasOwn(routes, route)) {
+      pushGap(gaps, `route-collision:${route}`);
+      continue;
+    }
 
+    const entryModules = [
+      logicalPath,
+      ...collectConfiguredAppRouterLayoutsForPage(logicalPath, routeDirectories, knownPaths),
+    ];
     const { modules: closureModules, gaps: closureGaps } = await collectRouteClosure(
-      [logicalPath],
+      entryModules,
       transformedModules,
       knownPaths,
     );
@@ -1712,22 +2769,46 @@ async function runBuildInner(
     // framework-provided) are recorded as gaps for this route.
     for (const missing of closureModules) {
       if (modules[missing] === undefined && !missing.startsWith("lib/")) {
-        closureGaps.push(`route-gap:${route}:${missing}`);
+        pushGap(closureGaps, `route-gap:${route}:${missing}`);
       }
     }
     if (closureGaps.length > 0) {
-      gaps.push(...closureGaps.filter((g) => !gaps.includes(g)));
+      for (const gap of closureGaps) pushGap(gaps, gap);
     }
 
     routes[route] = { modules: manifestedModules, css: cssHashes };
   }
 
+  // A v2 manifest is publishable only when every requested module,
+  // dependency, route closure, and stylesheet has complete immutable coverage.
+  assertCompleteReleaseAssetCoverage(gaps);
+
+  // Upload only after coverage is proven complete, so failed builds do not
+  // leave unreferenced immutable assets behind.
+  await uploadWithConcurrency(uploadQueue, RELEASE_ASSET_UPLOAD_CONCURRENCY, async (asset) => {
+    const stored = requirePendingAsset(pendingBytes, asset);
+    const acknowledgement = await client.uploadReleaseAsset(
+      input.releaseVersionRef,
+      asset.contentHash,
+      stored.contentType,
+      stored.bytes,
+    );
+    const acknowledgedStored = readOwnDataProperty(acknowledgement, "stored");
+    const acknowledgedExisting = readOwnDataProperty(acknowledgement, "existed");
+    if (
+      typeof acknowledgedStored !== "boolean" ||
+      typeof acknowledgedExisting !== "boolean" ||
+      (!acknowledgedStored && !acknowledgedExisting)
+    ) {
+      throw new Error("Release asset upload was not acknowledged");
+    }
+    forgetPendingAsset(pendingBytes, asset);
+  });
+
   // 6. Assemble and PUT the manifest.
-  const sourceContentHash = await sha256HexBytes(
-    new TextEncoder().encode([...sourceByPath.keys()].sort().join("\n")) as Uint8Array<ArrayBuffer>,
-  );
   const manifest: ReleaseAssetManifest = {
     schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
+    dependencyMode: input.dependencyMode,
     projectId: input.projectId,
     releaseId: input.releaseId,
     releaseVersion: input.releaseVersion,
@@ -1753,17 +2834,33 @@ async function runBuildInner(
         contentType: entry.contentType,
       }]),
     ),
-    fallback: { mode: "jit", gaps },
   };
 
-  const result = await client.putReleaseAssetManifest(input.releaseVersionRef, manifest);
+  const verifiedManifest = parseReleaseAssetManifest(manifest);
+  if (!verifiedManifest) {
+    throw new Error("Release asset manifest failed internal validation");
+  }
+  const result = await client.putReleaseAssetManifest(
+    input.releaseVersionRef,
+    verifiedManifest,
+  );
+  const acknowledgedState = readOwnDataProperty(result, "state");
+  const acknowledgedManifestVersion = readOwnDataProperty(result, "manifest_version");
+  if (
+    acknowledgedState !== "ready" ||
+    typeof acknowledgedManifestVersion !== "number" ||
+    !Number.isSafeInteger(acknowledgedManifestVersion) ||
+    acknowledgedManifestVersion !== manifestVersion
+  ) {
+    throw new Error("Release asset manifest PUT was not acknowledged");
+  }
   logger.info("Release asset manifest built", {
     releaseId: input.releaseId,
     manifestVersion,
     moduleCount: Object.keys(modules).length,
     cssCount: css.length,
     routeCount: Object.keys(routes).length,
-    state: result.state,
+    state: "ready",
   });
 
   return {
@@ -1772,52 +2869,161 @@ async function runBuildInner(
     moduleCount: Object.keys(modules).length,
     cssCount: css.length,
     routeCount: Object.keys(routes).length,
-    gaps,
+    coverageFailures: [],
   };
 }
 
+async function releaseFileSetSignature(sourceByPath: Map<string, string>): Promise<string> {
+  const entries = [...sourceByPath.entries()]
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+  const serialized = JSON.stringify(entries);
+  return await computeHashBytes(
+    textEncoder.encode(serialized) as Uint8Array<ArrayBuffer>,
+  );
+}
+
 /**
- * Resolve the project Tailwind stylesheet from the materialized file set.
- * Tries the configured path first, then conventional defaults. Returns
- * `undefined` when none is present (the CSS compiler then uses its default).
+ * Resolve the project stylesheet from the materialized file set.
+ * A configured path is authoritative and must be canonical. Conventional
+ * defaults are considered only when no path was configured.
  */
 function resolveProjectStylesheet(
   sourceByPath: Map<string, string>,
   stylesheetPath: string | undefined,
-): string | undefined {
-  const candidatePaths = stylesheetPath
-    ? [stylesheetPath, stylesheetPath.replace(/^\.?\//, "")]
-    : ["globals.css", "src/globals.css"];
+): { content: string; path: string } | undefined {
+  const candidatePaths = stylesheetPath === undefined
+    ? ["globals.css", "src/globals.css"]
+    : [requireCanonicalReleaseFilePath(stylesheetPath)];
   for (const path of candidatePaths) {
     const content = sourceByPath.get(path);
-    if (typeof content === "string") return content;
+    if (typeof content === "string") return { content, path };
   }
   return undefined;
 }
 
-/** Extract Tailwind class candidates from materialized source. */
-function collectClassCandidates(sourceByPath: Map<string, string>): Set<string> {
-  return extractCandidatesFromFiles(
-    [...sourceByPath.entries()].map(([path, content]) => ({ path, content })),
-  );
+/**
+ * Merge plain CSS files imported by project modules (`import "./styles.css"`
+ * in a layout or component) into the resolved stylesheet. The production SSR
+ * pipeline includes these imports per page at render time; release assets are
+ * compiled once per release, so the merge happens here instead — mirroring the
+ * dev /_vf_styles route.
+ *
+ * CSS Module selectors are rewritten with the same project-relative identity
+ * used by the transform and HTML aggregation paths.
+ */
+async function mergeModuleCssImports(
+  sourceByPath: Map<string, string>,
+  stylesheet: { content: string; path: string } | undefined,
+  gaps: string[],
+): Promise<string | undefined> {
+  const importedPaths = new Set<string>();
+  for (const [path, content] of sourceByPath) {
+    if (!CSS_IMPORTING_SOURCE_EXTENSIONS.some((ext) => path.endsWith(ext))) continue;
+    let imports: Awaited<ReturnType<typeof parseImports>>;
+    try {
+      imports = await parseImports(content);
+    } catch (error) {
+      pushGap(gaps, `stylesheet-import-parse-failed:${path}`);
+      logger.warn("CSS import parsing failed during release asset build", {
+        path,
+        error: sanitizeError(error),
+      });
+      continue;
+    }
+
+    for (const imp of imports) {
+      const specifier = imp.n;
+      if (!specifier) continue;
+      const cssPath = specifier.split(/[?#]/, 1)[0] ?? "";
+      if (!cssPath.endsWith(".css")) continue;
+      if (cssPath !== specifier) {
+        pushGap(gaps, `stylesheet-import-unsupported:${path}`);
+        continue;
+      }
+      const importedPath = resolveCssImportPath(specifier, `/${path}`, "/");
+      if (!importedPath) {
+        pushGap(gaps, `stylesheet-import-unsupported:${path}`);
+        continue;
+      }
+
+      const relativePath = importedPath.replace(/^\/+/, "");
+      if (!sourceByPath.has(relativePath)) {
+        pushGap(gaps, `stylesheet-import-missing:${relativePath}`);
+        continue;
+      }
+      importedPaths.add(relativePath);
+    }
+  }
+
+  const segments: string[] = [];
+  let moduleCount = 0;
+  let regularCount = 0;
+  for (const relativePath of [...importedPaths].sort()) {
+    if (relativePath === stylesheet?.path) continue;
+    const content = sourceByPath.get(relativePath);
+    if (content === undefined) continue;
+    if (relativePath.endsWith(".module.css")) {
+      segments.push(rewriteCssModuleContent(content, `/${relativePath}`));
+      moduleCount++;
+    } else {
+      segments.push(content);
+      regularCount++;
+    }
+  }
+
+  if (segments.length === 0) return stylesheet?.content;
+
+  logger.debug("Merged module CSS imports into release stylesheet", {
+    importedCount: segments.length,
+    regularCount,
+    moduleCount,
+  });
+  return [stylesheet?.content, ...segments].filter((value) => value !== undefined).join("\n");
 }
 
-/** Run an async task over items with a fixed concurrency limit. */
+/** Extract CSS class candidates from materialized source. */
+function collectClassCandidates(sourceByPath: Map<string, string>): Set<string> {
+  const candidates = extractCandidatesFromFiles(
+    [...sourceByPath.entries()].map(([path, content]) => ({ path, content })),
+  );
+  for (const candidate of FRAMEWORK_CANDIDATES) candidates.add(candidate);
+  return candidates;
+}
+
+/** Run an async task over items with a fixed concurrency limit.
+ *
+ * Unlike a bare Promise.all of workers, each worker catches per-item
+ * failures so a single bad upload never abandons the remaining queue.
+ * All items are attempted; if any fail, an AggregateError is thrown
+ * after all workers complete so callers know exactly which assets failed.
+ */
 async function uploadWithConcurrency<T>(
   items: T[],
   concurrency: number,
   task: (item: T) => Promise<void>,
 ): Promise<void> {
   let index = 0;
+  const errors: unknown[] = [];
+
   async function worker(): Promise<void> {
     while (index < items.length) {
       const current = index++;
-      await task(items[current]!);
+      try {
+        await task(items[current]!);
+      } catch (error) {
+        errors.push(error);
+      }
     }
   }
-  const workers = Array.from(
-    { length: Math.min(concurrency, items.length) },
-    () => worker(),
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, () => worker()),
   );
-  await Promise.all(workers);
+
+  if (errors.length > 0) {
+    throw new AggregateError(
+      errors,
+      `${errors.length} of ${items.length} asset uploads failed`,
+    );
+  }
 }

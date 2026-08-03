@@ -10,9 +10,12 @@ import { withSpan } from "veryfront/observability/otlp-setup";
 import { connectors } from "../../../src/integrations/_data.ts";
 import { filterVisibleIntegrations } from "../../../src/integrations/feature-flags.ts";
 import { INTEGRATION_CATEGORIES } from "../../commands/init/catalog.ts";
+import { createProject as createSharedProject } from "../../shared/project-creation.ts";
+import { validateProjectName } from "../../shared/project-name.ts";
 import type { MCPTool } from "../tools.ts";
 import { directoryExists, formatError, toSlug } from "./helpers.ts";
 import type { InitTemplate } from "../../commands/init/types.ts";
+import type { IntegrationName } from "../../templates/types.ts";
 
 // ============================================================================
 // Static Data
@@ -359,13 +362,21 @@ const getCreateProjectInput = defineSchema((v) =>
 );
 const createProjectInput = lazySchema(getCreateProjectInput);
 
-type CreateProjectInput = InferSchema<ReturnType<typeof getCreateProjectInput>>;
+export type CreateProjectInput = InferSchema<ReturnType<typeof getCreateProjectInput>>;
 
 interface CreateProjectResult {
   success: boolean;
   projectDir?: string;
   message: string;
   nextSteps?: string[];
+}
+
+export function resolveCreateProjectPaths(
+  input: Pick<CreateProjectInput, "name" | "directory">,
+): { name: string; parentDir: string; projectDir: string } {
+  const name = toSlug(input.name);
+  const parentDir = input.directory ?? cwd();
+  return { name, parentDir, projectDir: join(parentDir, name) };
 }
 
 export const vfCreateProject: MCPTool<CreateProjectInput, CreateProjectResult> = {
@@ -380,34 +391,38 @@ export const vfCreateProject: MCPTool<CreateProjectInput, CreateProjectResult> =
       "cli.mcp.tool.vf_create_project",
       async () => {
         try {
-          const { initCommand } = await import("../../commands/init/index.ts");
-
-          const slug = toSlug(input.name);
-          const parentDir = input.directory ?? cwd();
-          const projectDir = join(parentDir, slug);
+          const { name, parentDir, projectDir } = resolveCreateProjectPaths(input);
+          const nameError = validateProjectName(name);
+          if (nameError) {
+            return { success: false, message: `Failed to create project: ${nameError}` };
+          }
 
           if (await directoryExists(projectDir)) {
             return { success: false, message: `Directory already exists: ${projectDir}` };
           }
 
-          await initCommand({
-            name: input.name,
+          const creation = await createSharedProject({
+            name,
+            parentDir,
             template: input.template as InitTemplate,
-            integrations: input.integrations as
-              | import("../../templates/types.ts").IntegrationName[]
-              | undefined,
-            skipInstall: false,
-            skipEnvPrompt: true,
+            runtime: "node",
+            features: [],
+            integrations: (input.integrations ?? []) as IntegrationName[],
+            environmentValues: {},
+            conflictPolicy: "fail",
+            installDependencies: true,
+            initializeGit: false,
+            includePackageMetadata: true,
           });
 
-          const nextSteps = [`cd ${slug}`, "deno task dev"];
+          const nextSteps = [`cd ${creation.projectDir}`, "deno task dev"];
           if (input.integrations?.length) {
             nextSteps.push("Configure integration credentials in .env");
           }
 
           return {
             success: true,
-            projectDir,
+            projectDir: creation.projectDir,
             message: `Created project "${input.name}" with ${input.template} template`,
             nextSteps,
           };

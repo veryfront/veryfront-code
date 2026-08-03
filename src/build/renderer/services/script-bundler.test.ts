@@ -19,7 +19,6 @@ describe(
   { sanitizeOps: false, sanitizeResources: false },
   () => {
     afterAll(async () => {
-      if ((globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) return;
       await esbuild.stop();
     });
 
@@ -34,7 +33,7 @@ describe(
             content: 'export const greeting = "hello";',
             type: "ts",
           },
-          { mode: "development", projectDir: "/tmp", external: [] },
+          { mode: "development", projectDir: "/tmp", external: [], sources: [] },
           result,
           esbuild,
           fileCache,
@@ -56,7 +55,7 @@ describe(
             content: 'export const greeting = "hello world";',
             type: "ts",
           },
-          { mode: "production", projectDir: "/tmp", external: [] },
+          { mode: "production", projectDir: "/tmp", external: [], sources: [] },
           result,
           esbuild,
           fileCache,
@@ -73,7 +72,7 @@ describe(
         const code = `import React from "react";\nexport const x = 1;`;
         await bundleScript(
           { path: "comp.tsx", content: code, type: "tsx" },
-          { mode: "development", projectDir: "/tmp", external: ["react"] },
+          { mode: "development", projectDir: "/tmp", external: ["react"], sources: [] },
           result,
           esbuild,
           fileCache,
@@ -91,7 +90,7 @@ describe(
         const code = "export const x = 1;";
         await bundleScript(
           { path: "cached.ts", content: code, type: "ts" },
-          { mode: "development", projectDir: "/tmp", external: [] },
+          { mode: "development", projectDir: "/tmp", external: [], sources: [] },
           result,
           esbuild,
           fileCache,
@@ -110,7 +109,12 @@ describe(
             content: 'import { foo } from "./nonexistent"; export default foo;',
             type: "ts",
           },
-          { mode: "development", projectDir: "/tmp/nonexistent-dir-" + Date.now(), external: [] },
+          {
+            mode: "development",
+            projectDir: "/tmp/nonexistent-dir-" + Date.now(),
+            external: [],
+            sources: [],
+          },
           result,
           esbuild,
           fileCache,
@@ -125,7 +129,13 @@ describe(
 
         await bundleScript(
           { path: "server.ts", content: "export const x = 1;", type: "ts" },
-          { mode: "development", projectDir: "/tmp", external: [], platform: "node" },
+          {
+            mode: "development",
+            projectDir: "/tmp",
+            external: [],
+            platform: "node",
+            sources: [],
+          },
           result,
           esbuild,
           fileCache,
@@ -149,6 +159,7 @@ describe(
             mode: "development",
             projectDir: "/tmp",
             external: ["react", "react/jsx-runtime", "react/jsx-dev-runtime"],
+            sources: [],
           },
           result,
           esbuild,

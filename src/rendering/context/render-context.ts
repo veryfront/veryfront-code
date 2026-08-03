@@ -2,7 +2,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { HandlerContext } from "#veryfront/types";
 import type { EnrichedContext } from "#veryfront/server/context/enriched-context.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import {
   buildRenderCacheKey,
   buildRenderCachePrefix,
@@ -19,6 +19,10 @@ export interface RenderContext {
   projectDir: string;
   config: VeryfrontConfig;
   mode: "development" | "production";
+  /** Whether browser-facing local filesystem module URLs are trusted. */
+  isLocalProject?: boolean;
+  /** Narrow host-owned capability for project-code execution. */
+  allowHostProjectCodeExecution?: boolean;
   adapter: RuntimeAdapter;
   cachePrefix: string;
   environment: RenderEnvironment;
@@ -80,6 +84,9 @@ export function createRenderContext(
     projectDir: ctx.projectDir,
     config: ctx.config,
     mode: isLocal ? "development" : "production",
+    isLocalProject: isLocal,
+    allowHostProjectCodeExecution: isLocal ||
+      ctx.allowHostProjectCodeExecution === true,
     adapter: ctx.adapter,
     cachePrefix,
     environment,
@@ -133,6 +140,9 @@ export function createRenderContextFromEnriched(
     projectDir: enriched.projectDir,
     config: enriched.config,
     mode: enriched.mode,
+    isLocalProject: enriched.isLocalProject,
+    allowHostProjectCodeExecution: enriched.isLocalProject ||
+      enriched.allowHostProjectCodeExecution === true,
     adapter: enriched.adapter,
     cachePrefix: enriched.cachePrefix,
     environment: enriched.environment,

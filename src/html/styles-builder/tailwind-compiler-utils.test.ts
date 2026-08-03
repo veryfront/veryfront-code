@@ -2,86 +2,25 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  buildCSSCacheEntry,
   evaluateProjectCSSLocalCacheState,
   formatCSSErrorMessage,
-  parseCSSCacheEntry,
   parseProjectCSSCacheEntry,
-  resolveStylesheet,
 } from "./tailwind-compiler-utils.ts";
+import { hashCSS, hashString } from "./css-identity.ts";
 
 describe("styles-builder/tailwind-compiler-utils", () => {
-  describe("resolveStylesheet", () => {
-    it("uses fallback when stylesheet is undefined", () => {
-      assertEquals(resolveStylesheet(undefined, "default"), "default");
-    });
-
-    it("keeps provided stylesheet when present", () => {
-      assertEquals(resolveStylesheet("custom", "default"), "custom");
-    });
-  });
-
-  describe("buildCSSCacheEntry", () => {
-    it("normalizes Set candidates to an array", () => {
-      const entry = buildCSSCacheEntry("body{}", {
-        candidates: new Set(["mt-4", "p-2"]),
-        stylesheet: "custom",
-      }, "default");
-
-      assertEquals(entry.css, "body{}");
-      assertEquals(entry.candidates, ["mt-4", "p-2"]);
-      assertEquals(entry.stylesheet, "custom");
-    });
-
-    it("uses defaults when inputs are missing", () => {
-      const entry = buildCSSCacheEntry("body{}", undefined, "default");
-      assertEquals(entry.css, "body{}");
-      assertEquals(entry.candidates, []);
-      assertEquals(entry.stylesheet, "default");
-    });
-  });
-
-  describe("parseCSSCacheEntry", () => {
-    it("parses structured JSON entries", () => {
-      const raw = JSON.stringify({
-        css: ".foo{color:red}",
-        candidates: ["foo", "bar"],
-        stylesheet: "custom",
-      });
-      const entry = parseCSSCacheEntry(raw, "default");
-      assertEquals(entry.css, ".foo{color:red}");
-      assertEquals(entry.candidates, ["foo", "bar"]);
-      assertEquals(entry.stylesheet, "custom");
-    });
-
-    it("falls back to defaults when optional JSON fields are missing", () => {
-      const raw = JSON.stringify({ css: ".foo{color:red}" });
-      const entry = parseCSSCacheEntry(raw, "default");
-      assertEquals(entry.css, ".foo{color:red}");
-      assertEquals(entry.candidates, []);
-      assertEquals(entry.stylesheet, "default");
-    });
-
-    it("treats malformed JSON as legacy plain CSS", () => {
-      const raw = "{not valid json";
-      const entry = parseCSSCacheEntry(raw, "default");
-      assertEquals(entry.css, raw);
-      assertEquals(entry.candidates, []);
-      assertEquals(entry.stylesheet, "default");
-    });
-  });
-
   describe("parseProjectCSSCacheEntry", () => {
     it("returns parsed entry when JSON shape is valid", () => {
+      const css = ".foo{color:red}";
       const raw = JSON.stringify({
-        css: ".foo{color:red}",
-        hash: "abcd1234",
-        candidatesHash: "candidates123",
+        css,
+        hash: hashCSS(css),
+        candidatesHash: hashString("candidates"),
       });
       assertEquals(parseProjectCSSCacheEntry(raw), {
-        css: ".foo{color:red}",
-        hash: "abcd1234",
-        candidatesHash: "candidates123",
+        css,
+        hash: hashCSS(css),
+        candidatesHash: hashString("candidates"),
       });
     });
 
@@ -124,23 +63,23 @@ describe("styles-builder/tailwind-compiler-utils", () => {
         formatCSSErrorMessage('The plugin "@tailwindcss/forms" does not accept options'),
         {
           title: "Plugin Options Not Supported",
-          message: "@tailwindcss/forms does not accept options in Tailwind CSS v4",
-          suggestion: 'Remove the options block from @plugin. Use: @plugin "@tailwindcss/forms";',
+          message: "@tailwindcss/forms does not accept options",
+          suggestion: 'Remove the options block from @plugin "@tailwindcss/forms".',
         },
       );
     });
 
     it("formats plugin load errors with single quotes", () => {
       const formatted = formatCSSErrorMessage("Failed to load plugin 'my-plugin'");
-      assertEquals(formatted.title, "Plugin Not Found");
-      assertEquals(formatted.message, "Could not load plugin: my-plugin");
+      assertEquals(formatted.title, "Plugin Not Available");
+      assertEquals(formatted.message, "The configured CSS processor could not load: my-plugin");
     });
 
     it("falls back to generic formatting", () => {
       assertEquals(formatCSSErrorMessage("Something else"), {
-        title: "Tailwind CSS Error",
+        title: "CSS Compilation Error",
         message: "Something else",
-        suggestion: "Check your stylesheet for errors",
+        suggestion: "Check the stylesheet and explicit CSS provider configuration.",
       });
     });
   });

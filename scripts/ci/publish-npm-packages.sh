@@ -35,10 +35,18 @@ require_env() {
   done
 }
 
-# Package directories in the `deno task build:npm` output (publish modes).
+# Package directories in dependency order for publish modes. The root package
+# pins auto-loaded extensions to the same version, so publish it last.
 package_dirs() {
+  find npm/extensions -mindepth 1 -maxdepth 1 -type d | sort | while read -r PACKAGE_DIR; do
+    if [ "$(jq -r '.veryfront.npm.publish == false' "${PACKAGE_DIR}/package.json")" = "true" ]; then
+      PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
+      echo "::notice::${PACKAGE_NAME} is marked veryfront.npm.publish=false; skipping npm publish" >&2
+      continue
+    fi
+    printf '%s\n' "${PACKAGE_DIR}"
+  done
   printf '%s\n' npm
-  find npm/extensions -mindepth 1 -maxdepth 1 -type d | sort
 }
 
 # Package names derived from the deno.json workspace (preflight runs before
@@ -47,7 +55,11 @@ package_names_from_workspace() {
   printf '%s\n' veryfront
   jq -r '.workspace[] | select(startswith("./extensions/")) | .[2:] + "/deno.json"' deno.json \
     | while read -r MANIFEST_PATH; do
+      if [ "$(jq -r '.veryfront.npm.publish == false' "${MANIFEST_PATH}")" = "true" ]; then
+        continue
+      fi
       jq -r '.name' "${MANIFEST_PATH}"
+      jq -r '.veryfront.npm.runtimePackages[]?.name' "${MANIFEST_PATH}"
     done \
     | sort
 }
@@ -55,9 +67,17 @@ package_names_from_workspace() {
 update_package_version() {
   PACKAGE_DIR="$1"
   jq --arg v "$VERSION" '
+    def update_first_party_extension_deps:
+      if .dependencies then
+        .dependencies |= with_entries(
+          if (.key | startswith("@veryfront/ext-")) then .value = $v else . end
+        )
+      else . end;
+
     .version = $v
     | if .peerDependencies?.veryfront then .peerDependencies.veryfront = "^" + $v else . end
     | if .dependencies?.veryfront then .dependencies.veryfront = "^" + $v else . end
+    | update_first_party_extension_deps
   ' "${PACKAGE_DIR}/package.json" > "${PACKAGE_DIR}/package.json.tmp"
   mv "${PACKAGE_DIR}/package.json.tmp" "${PACKAGE_DIR}/package.json"
 }
@@ -67,7 +87,10 @@ update_package_version() {
 # the global PUBLISHED_GIT_HEAD for callers' error messages.
 wait_for_npm_git_head() {
   PACKAGE_NAME="$1"
-  for attempt in $(seq 1 24); do
+  # npm can expose a published version before its gitHead metadata converges.
+  # Allow up to five minutes of empty reads while preserving hash mismatches as
+  # immediate failures.
+  for attempt in $(seq 1 60); do
     PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead 2>/dev/null || true)"
     if [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
       return 0
@@ -75,7 +98,7 @@ wait_for_npm_git_head() {
     if [ -n "${PUBLISHED_GIT_HEAD}" ]; then
       return 1
     fi
-    echo "Waiting for npm registry metadata for ${PACKAGE_NAME}@${VERSION} (attempt ${attempt}/24)."
+    echo "Waiting for npm registry metadata for ${PACKAGE_NAME}@${VERSION} (attempt ${attempt}/60)."
     sleep 5
   done
 
@@ -137,8 +160,71 @@ run_rc_publish() {
   done
 }
 
+is_npm_package_not_found() {
+  printf '%s\n' "$1" | grep -Eq '(^|[[:space:]])(E404|404 Not Found)([[:space:]]|$)'
+}
+
+sanitize_npm_lookup_output() {
+  printf '%s\n' "$1" \
+    | sed -E \
+      -e '/^npm error A complete log of this run can be found in:/d' \
+      -e "s#Bearer [^][[:space:]\"'),]+#Bearer <REDACTED>#g" \
+      -e "s#([?&]token=)[^][[:space:]\"'),&]+#\1<REDACTED>#g" \
+      -e "s#(_authToken=)[^][[:space:]\"'),]+#\1<REDACTED>#g" \
+      -e 's#"(file://)/[^"]*"#"\1<path>"#g' \
+      -e "s#'(file://)/[^']*'#'\1<path>'#g" \
+      -e 's#\[(file://)/[^]]*\]#[\1<path>]#g' \
+      -e 's#(file://)/[^][[:space:]"),]+#\1<path>#g' \
+      -e 's#(^|[[:space:]=(])"((/|[A-Za-z]:[\\/]|\\\\)[^"]*)"#\1"<path>"#g' \
+      -e "s#(^|[[:space:]=(])'((/|[A-Za-z]:[\\\\/]|\\\\\\\\)[^']*)'#\1'<path>'#g" \
+      -e 's#\[(/|[A-Za-z]:[\\/]|\\\\)[^]]*\]#[<path>]#g' \
+      -e 's#(^|[[:space:]"=(])/[^][[:space:]"),]+#\1<path>#g' \
+      -e 's#(^|[[:space:]"=(])[A-Za-z]:[\\/][^][[:space:]"),]+#\1<path>#g' \
+      -e 's#(^|[[:space:]"=(])\\\\[^][[:space:]"),]+#\1<path>#g'
+}
+
+ensure_package_names_registered() {
+  MISSING_PACKAGE_NAMES=0
+  PACKAGE_NAME_LOOKUP_FAILURES=0
+
+  for PACKAGE_NAME in $(package_names_from_workspace); do
+    set +e
+    NPM_LOOKUP_OUTPUT="$(npm view "${PACKAGE_NAME}@*" name 2>&1)"
+    NPM_LOOKUP_STATUS=$?
+    set -e
+
+    if [ "${NPM_LOOKUP_STATUS}" -eq 0 ]; then
+      continue
+    fi
+
+    if is_npm_package_not_found "${NPM_LOOKUP_OUTPUT}"; then
+      echo "::error::${PACKAGE_NAME} is not registered on npm." >&2
+      MISSING_PACKAGE_NAMES=1
+      continue
+    fi
+
+    echo "::error::npm registry lookup failed for ${PACKAGE_NAME} (status ${NPM_LOOKUP_STATUS})." >&2
+    SANITIZED_NPM_LOOKUP_OUTPUT="$(sanitize_npm_lookup_output "${NPM_LOOKUP_OUTPUT}")"
+    if [ -n "${SANITIZED_NPM_LOOKUP_OUTPUT}" ]; then
+      printf '%s\n' "${SANITIZED_NPM_LOOKUP_OUTPUT}" >&2
+    fi
+    PACKAGE_NAME_LOOKUP_FAILURES=1
+  done
+
+  if [ "${PACKAGE_NAME_LOOKUP_FAILURES}" -ne 0 ]; then
+    echo "::error::Resolve the npm registry lookup failures above, then rerun the stable release preflight." >&2
+    return 1
+  fi
+
+  if [ "${MISSING_PACKAGE_NAMES}" -ne 0 ]; then
+    echo "::error::The unregistered package names are listed above. Publish each package once with a prerelease version and a non-latest dist-tag, then configure trusted publishing. Do not publish ${VERSION} manually; keep that stable version available for this CI provenance release." >&2
+    return 1
+  fi
+}
+
 run_preflight() {
   require_env VERSION GITHUB_SHA
+  ensure_package_names_registered
 
   for PACKAGE_NAME in $(package_names_from_workspace); do
     if npm view "${PACKAGE_NAME}@${VERSION}" version 2>/dev/null; then
@@ -163,10 +249,12 @@ run_release_publish() {
   done
 }
 
-MODE="${1:-}"
-case "${MODE}" in
-  rc-publish) run_rc_publish ;;
-  preflight) run_preflight ;;
-  release-publish) run_release_publish ;;
-  *) usage ;;
-esac
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  MODE="${1:-}"
+  case "${MODE}" in
+    rc-publish) run_rc_publish ;;
+    preflight) run_preflight ;;
+    release-publish) run_release_publish ;;
+    *) usage ;;
+  esac
+fi

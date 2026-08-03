@@ -34,7 +34,7 @@
  * ```
  */
 
-export { defineConfig } from "#veryfront/config";
+export { defineConfig, defineConfigWithEnv, mergeConfigs } from "#veryfront/config";
 export type { VeryfrontConfig } from "#veryfront/config";
 
 export { getEnv } from "#veryfront/platform";

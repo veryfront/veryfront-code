@@ -40,7 +40,7 @@
   ],
   "tools": [
     {
-      "id": "list_projects",
+      "id": "gitlab__list_projects",
       "name": "List Projects",
       "description": "List accessible GitLab projects",
       "requiresWrite": false,
@@ -81,7 +81,7 @@
       }
     },
     {
-      "id": "get_project",
+      "id": "gitlab__get_project",
       "name": "Get Project",
       "description": "Get detailed information about a GitLab project",
       "requiresWrite": false,
@@ -99,7 +99,7 @@
       }
     },
     {
-      "id": "search_issues",
+      "id": "gitlab__search_issues",
       "name": "Search Issues",
       "description": "Search for issues across projects",
       "requiresWrite": false,
@@ -145,7 +145,7 @@
       }
     },
     {
-      "id": "get_issue",
+      "id": "gitlab__get_issue",
       "name": "Get Issue",
       "description": "Get detailed information about a specific issue",
       "requiresWrite": false,
@@ -169,7 +169,7 @@
       }
     },
     {
-      "id": "create_issue",
+      "id": "gitlab__create_issue",
       "name": "Create Issue",
       "description": "Create a new issue in a project",
       "requiresWrite": true,
@@ -206,7 +206,7 @@
       }
     },
     {
-      "id": "update_issue",
+      "id": "gitlab__update_issue",
       "name": "Update Issue",
       "description": "Update, close, or reopen a GitLab issue",
       "requiresWrite": true,
@@ -252,7 +252,7 @@
       }
     },
     {
-      "id": "add_issue_comment",
+      "id": "gitlab__add_issue_comment",
       "name": "Add Issue Comment",
       "description": "Add a comment/note to a GitLab issue",
       "requiresWrite": true,
@@ -287,7 +287,7 @@
       }
     },
     {
-      "id": "list_merge_requests",
+      "id": "gitlab__list_merge_requests",
       "name": "List Merge Requests",
       "description": "List merge requests for a project or across projects",
       "requiresWrite": false,
@@ -328,7 +328,7 @@
       }
     },
     {
-      "id": "get_merge_request",
+      "id": "gitlab__get_merge_request",
       "name": "Get Merge Request",
       "description": "Get detailed information about a specific GitLab merge request",
       "requiresWrite": false,
@@ -352,7 +352,7 @@
       }
     },
     {
-      "id": "add_merge_request_comment",
+      "id": "gitlab__add_merge_request_comment",
       "name": "Add Merge Request Comment",
       "description": "Add a comment/note to a GitLab merge request",
       "requiresWrite": true,

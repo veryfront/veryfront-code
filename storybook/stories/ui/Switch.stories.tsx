@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import {
   Switch,
   SwitchField,
-} from "../../../src/react/components/chat/ui/index.ts";
+} from "../../../src/react/components/ui/index.ts";
 import {
   DocsCode,
   DocsComposition,
@@ -14,7 +14,7 @@ import {
 } from "../../.storybook/docs";
 
 const importCode =
-  `import { Switch, SwitchField } from "veryfront/chat/ui"`;
+  `import { Switch, SwitchField } from "veryfront/ui"`;
 
 const compositionTree = `Switch         <- Bare toggle control
 SwitchField    <- Label row with embedded Switch`;
@@ -106,7 +106,7 @@ function SwitchDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/Switch",
+  title: "UI/Switch",
   component: Switch,
   subcomponents: { SwitchField },
   tags: ["autodocs"],

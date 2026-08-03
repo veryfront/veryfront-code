@@ -83,6 +83,35 @@ describe("transforms/esm/http-cache-invariants", () => {
       const hash = asBundleHash("999999999999");
       assertEquals(typeof hash, "string");
     });
+
+    it("accepts full lowercase SHA-256 hashes", () => {
+      const hash = asBundleHash(
+        "d9daafa3b706faf7af89c03417596d23beed4c1ae964d7ee7ead5d335b683412",
+      );
+      assertEquals(typeof hash, "string");
+    });
+
+    it("rejects shortened hexadecimal hashes", () => {
+      let threw = false;
+      try {
+        asBundleHash("d9daafa3b706faf7");
+      } catch (_) {
+        threw = true;
+      }
+      assertEquals(threw, true);
+    });
+
+    it("rejects uppercase SHA-256 hashes", () => {
+      let threw = false;
+      try {
+        asBundleHash(
+          "D9DAAFA3B706FAF7AF89C03417596D23BEED4C1AE964D7EE7EAD5D335B683412",
+        );
+      } catch (_) {
+        threw = true;
+      }
+      assertEquals(threw, true);
+    });
   });
 
   describe("asLocalModuleCode", () => {

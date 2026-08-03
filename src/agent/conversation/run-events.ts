@@ -12,6 +12,8 @@ export const conversationRunEventTypes = {
   reasoningMessageStart: "REASONING_MESSAGE_START",
   reasoningMessageContent: "REASONING_MESSAGE_CONTENT",
   reasoningMessageEnd: "REASONING_MESSAGE_END",
+  stepStarted: "STEP_STARTED",
+  stepFinished: "STEP_FINISHED",
   toolCallStart: "TOOL_CALL_START",
   toolCallArgs: "TOOL_CALL_ARGS",
   toolCallEnd: "TOOL_CALL_END",
@@ -64,6 +66,20 @@ export class ConversationRunEventEncoder {
   private activeMessageId: string | null = null;
   private activeTextContentId: string | null = null;
   private textContentIndex = 0;
+  private activeStepName: string | null = null;
+  private stepCount = 0;
+
+  private nextStepName(): string {
+    this.stepCount += 1;
+    this.activeStepName = `step-${this.stepCount}`;
+    return this.activeStepName;
+  }
+
+  private finishStepName(): string {
+    const stepName = this.activeStepName ?? `step-${Math.max(this.stepCount, 1)}`;
+    this.activeStepName = null;
+    return stepName;
+  }
 
   private getToolResultMessageId(toolCallId: string) {
     return this.activeMessageId
@@ -90,6 +106,13 @@ export class ConversationRunEventEncoder {
       messageId,
       contentId,
     };
+  }
+
+  // Tool call state is only needed until the call resolves; keeping it for the
+  // whole run would grow unbounded over long agent sessions.
+  private releaseToolCallState(toolCallId: string): void {
+    this.toolInputs.delete(toolCallId);
+    this.streamedToolInputs.delete(toolCallId);
   }
 
   private serializeToolResultContent(value: unknown): string {
@@ -198,12 +221,12 @@ export class ConversationRunEventEncoder {
             : {}),
           isError: true,
         });
-        this.toolInputs.delete(chunk.toolCallId);
+        this.releaseToolCallState(chunk.toolCallId);
         return events;
       }
 
-      case "tool-output-available":
-        return [{
+      case "tool-output-available": {
+        const events: ConversationRunEvent[] = [{
           type: conversationRunEventTypes.toolCallResult,
           messageId: this.getToolResultMessageId(chunk.toolCallId),
           toolCallId: chunk.toolCallId,
@@ -213,9 +236,12 @@ export class ConversationRunEventEncoder {
             ? { input: this.toolInputs.get(chunk.toolCallId) }
             : {}),
         }];
+        this.releaseToolCallState(chunk.toolCallId);
+        return events;
+      }
 
-      case "tool-output-error":
-        return [{
+      case "tool-output-error": {
+        const events: ConversationRunEvent[] = [{
           type: conversationRunEventTypes.toolCallResult,
           messageId: this.getToolResultMessageId(chunk.toolCallId),
           toolCallId: chunk.toolCallId,
@@ -226,9 +252,12 @@ export class ConversationRunEventEncoder {
             : {}),
           isError: true,
         }];
+        this.releaseToolCallState(chunk.toolCallId);
+        return events;
+      }
 
-      case "tool-output-denied":
-        return [{
+      case "tool-output-denied": {
+        const events: ConversationRunEvent[] = [{
           type: conversationRunEventTypes.toolCallResult,
           messageId: this.getToolResultMessageId(chunk.toolCallId),
           toolCallId: chunk.toolCallId,
@@ -239,17 +268,36 @@ export class ConversationRunEventEncoder {
             : {}),
           isError: true,
         }];
+        this.releaseToolCallState(chunk.toolCallId);
+        return events;
+      }
+
+      case "source-document":
+      case "source-url":
+      case "file":
+        return [{
+          type: conversationRunEventTypes.custom,
+          name: chunk.type,
+          value: chunk,
+        }];
+
+      case "start-step":
+        return [{
+          type: conversationRunEventTypes.stepStarted,
+          stepName: this.nextStepName(),
+        }];
+
+      case "finish-step":
+        return [{
+          type: conversationRunEventTypes.stepFinished,
+          stepName: this.finishStepName(),
+        }];
 
       case "error":
       case "finish":
       case "abort":
       case "message-metadata":
-      case "source-url":
-      case "source-document":
-      case "file":
       case "tool-approval-request":
-      case "start-step":
-      case "finish-step":
         return [];
 
       default:

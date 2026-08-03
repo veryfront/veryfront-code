@@ -1,11 +1,17 @@
 export interface SSROptions {
+  /** React version used to select an isolated server renderer module. */
+  reactVersion?: string;
   onError?: (error: Error) => void;
   bootstrapScripts?: string[];
   bootstrapModules?: string[];
   identifierPrefix?: string;
   namespaceURI?: string;
   nonce?: string;
+  /** @internal Request-owned capabilities propagated through React Suspense. */
+  renderContext?: import("../../server-render-context.ts").ServerRenderContextValue;
   progressiveChunkSize?: number;
+  /** Maximum UTF-8 bytes retained when an SSR result must be buffered. */
+  maxBufferedBytes?: number;
   onAllReady?: () => void;
   onShellReady?: () => void;
   onShellError?: (error: Error) => void;
@@ -16,6 +22,7 @@ export interface SSRResult {
   stream?: ReadableStream<Uint8Array>;
   pipe?: (writable: NodeJS.WritableStream) => void;
   abort?: () => void;
+  allReady?: Promise<unknown>;
 }
 
 export interface SSRResponseOptions extends SSROptions {
@@ -32,5 +39,6 @@ export interface HTMLWrapOptions {
   links: Array<{ rel: string; href: string }>;
   scripts: Array<{ src: string; type?: string }>;
   bootstrapScripts: string[];
+  bootstrapModules?: string[];
   nonce?: string;
 }

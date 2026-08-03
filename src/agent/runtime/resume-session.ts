@@ -1,3 +1,5 @@
+import { AGENT_ERROR } from "#veryfront/errors";
+
 /** Public API contract for run session status. */
 export type RunSessionStatus = "running" | "waiting" | "completed" | "cancelled" | "failed";
 
@@ -170,9 +172,9 @@ export class RunResumeSessionManager<T> {
     }
 
     if (this.sessions.size >= this.maxConcurrentSessions) {
-      throw new Error(
-        `Maximum concurrent sessions (${this.maxConcurrentSessions}) reached`,
-      );
+      throw AGENT_ERROR.create({
+        detail: `Maximum concurrent sessions (${this.maxConcurrentSessions}) reached`,
+      });
     }
 
     const session: RunSession<T> = {
@@ -352,10 +354,8 @@ export class RunResumeSessionManager<T> {
   }
 
   reset(): void {
-    for (const session of this.sessions.values()) {
-      this.clearWaitingTimeout(session);
-      this.clearSessionTimeout(session);
+    for (const runId of [...this.sessions.keys()]) {
+      this.cancelRun(runId);
     }
-    this.sessions.clear();
   }
 }

@@ -1,0 +1,270 @@
+import "#veryfront/schemas/_test-setup.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { loadMiddlewareFile } from "./middleware.ts";
+
+function createVirtualAdapter(
+  source: string | undefined,
+  onFileAccess?: (operation: "exists" | "read") => void,
+): RuntimeAdapter {
+  const fs = {
+    getUnderlyingAdapter: () => fs,
+    getAdapterType: () => "MultiProjectFSAdapter",
+    isVeryfrontAdapter: () => true,
+    isMultiProjectMode: () => true,
+    exists: (path: string) => {
+      onFileAccess?.("exists");
+      return Promise.resolve(source !== undefined && path.endsWith("/middleware.ts"));
+    },
+    readFile: () => {
+      onFileAccess?.("read");
+      return Promise.resolve(source ?? "");
+    },
+  } as unknown as RuntimeAdapter["fs"];
+
+  return {
+    id: "test",
+    name: "test",
+    capabilities: {},
+    fs,
+    env: {
+      get: () => undefined,
+      set: () => {},
+      delete: () => {},
+      has: () => false,
+      toObject: () => ({}),
+    },
+    server: {} as RuntimeAdapter["server"],
+    serve: () => Promise.resolve({ close: () => Promise.resolve() }),
+  } as unknown as RuntimeAdapter;
+}
+
+describe("loadMiddlewareFile", () => {
+  afterAll(async () => {
+    const { stop } = await import("veryfront/extensions/bundler");
+    await stop();
+  });
+
+  it("rejects remote middleware before reading or evaluating project source", async () => {
+    const marker = `__vf_middleware_isolation_${crypto.randomUUID().replaceAll("-", "")}`;
+    const host = globalThis as unknown as Record<string, unknown>;
+    let sourceReads = 0;
+    const adapter = createVirtualAdapter(
+      `globalThis.${marker} = Deno.env.get("HOST_SECRET"); export default [];`,
+      (operation) => {
+        if (operation === "read") sourceReads++;
+      },
+    );
+
+    try {
+      await assertRejects(
+        () => loadMiddlewareFile("/app", adapter, { throwOnError: true }),
+        TypeError,
+        "requires explicit trusted-local execution",
+      );
+      assertEquals(sourceReads, 0);
+      assertEquals(host[marker], undefined);
+    } finally {
+      delete host[marker];
+    }
+  });
+
+  it("allows shared runtimes to establish that no middleware exists", async () => {
+    let sourceReads = 0;
+    const adapter = createVirtualAdapter(undefined, (operation) => {
+      if (operation === "read") sourceReads++;
+    });
+
+    assertEquals(await loadMiddlewareFile("/app", adapter), []);
+    assertEquals(sourceReads, 0);
+  });
+
+  it("fails closed for invalid production middleware", async () => {
+    const adapter = createVirtualAdapter("export default function broken( {");
+
+    await assertRejects(
+      () =>
+        loadMiddlewareFile("/app", adapter, {
+          throwOnError: true,
+          allowHostProjectCodeExecution: true,
+        }),
+      Error,
+    );
+  });
+
+  it("fails closed when production middleware has no valid default export", async () => {
+    const adapter = createVirtualAdapter("export const middleware = () => new Response('ok');");
+
+    await assertRejects(
+      () =>
+        loadMiddlewareFile("/app", adapter, {
+          throwOnError: true,
+          allowHostProjectCodeExecution: true,
+        }),
+      TypeError,
+      "Invalid middleware export",
+    );
+  });
+
+  it("fails closed when a production middleware array contains invalid entries", async () => {
+    const adapter = createVirtualAdapter(
+      "export default [() => new Response('ok'), 'invalid'];",
+    );
+
+    await assertRejects(
+      () =>
+        loadMiddlewareFile("/app", adapter, {
+          throwOnError: true,
+          allowHostProjectCodeExecution: true,
+        }),
+      TypeError,
+      "Invalid middleware export",
+    );
+  });
+
+  it("preserves nonfatal development loading for invalid middleware", async () => {
+    const adapter = createVirtualAdapter("export default function broken( {");
+
+    assertEquals(
+      await loadMiddlewareFile("/app", adapter, { allowHostProjectCodeExecution: true }),
+      [],
+    );
+  });
+});
+
+describe("dev-server/middleware: actionable rejection", () => {
+  afterAll(async () => {
+    const { stop } = await import("veryfront/extensions/bundler");
+    await stop();
+  });
+
+  it("names the Next.js convention when a named middleware export is found", async () => {
+    // A root middleware.ts written for Next.js takes down every route, so the
+    // error has to be enough to fix the file without reading framework source.
+    const adapter = createVirtualAdapter(
+      "export function middleware(request) { return new Response('ok'); }",
+    );
+
+    const error = await assertRejects(
+      () =>
+        loadMiddlewareFile("/app", adapter, {
+          throwOnError: true,
+          allowHostProjectCodeExecution: true,
+        }),
+      TypeError,
+    );
+
+    // assertRejects hands back an unknown; narrow it before reading the copy.
+    assertInstanceOf(error, TypeError);
+    assertStringIncludes(error.message, "middleware.ts");
+    assertStringIncludes(error.message, "Next.js convention");
+    assertStringIncludes(error.message, "(c, next)");
+    assertStringIncludes(error.message, "export default");
+    assertStringIncludes(error.message, "docs/guides/middleware.md");
+  });
+
+  it("lists the offending exports when the shape is merely wrong", async () => {
+    const adapter = createVirtualAdapter("export const handler = 1; export const other = 2;");
+
+    const error = await assertRejects(
+      () =>
+        loadMiddlewareFile("/app", adapter, {
+          throwOnError: true,
+          allowHostProjectCodeExecution: true,
+        }),
+      TypeError,
+    );
+
+    assertInstanceOf(error, TypeError);
+    assertStringIncludes(error.message, "Found export(s):");
+    assertStringIncludes(error.message, "handler");
+    assertStringIncludes(error.message, "other");
+  });
+
+  it("describes a default export array with a non-function entry", async () => {
+    // Every wrong shape with a default export used to collapse to the useless
+    // "Found export(s): default." because the message read the namespace keys,
+    // not the resolved default.
+    const adapter = createVirtualAdapter(
+      "export default [async (c, next) => await next(), 'audit'];",
+    );
+
+    const error = await assertRejects(
+      () =>
+        loadMiddlewareFile("/app", adapter, {
+          throwOnError: true,
+          allowHostProjectCodeExecution: true,
+        }),
+      TypeError,
+    );
+
+    assertInstanceOf(error, TypeError);
+    assertStringIncludes(error.message, "non-function at index 1");
+    assertStringIncludes(error.message, "(string)");
+  });
+
+  it("describes an empty default export array", async () => {
+    const adapter = createVirtualAdapter("export default [];");
+
+    const error = await assertRejects(
+      () =>
+        loadMiddlewareFile("/app", adapter, {
+          throwOnError: true,
+          allowHostProjectCodeExecution: true,
+        }),
+      TypeError,
+    );
+
+    assertInstanceOf(error, TypeError);
+    assertStringIncludes(error.message, "empty default export array");
+  });
+
+  it("describes a default export object that is not middleware", async () => {
+    const adapter = createVirtualAdapter(
+      "export default { handler: async (c, next) => await next() };",
+    );
+
+    const error = await assertRejects(
+      () =>
+        loadMiddlewareFile("/app", adapter, {
+          throwOnError: true,
+          allowHostProjectCodeExecution: true,
+        }),
+      TypeError,
+    );
+
+    assertInstanceOf(error, TypeError);
+    assertStringIncludes(error.message, "default export of type object");
+    assertStringIncludes(error.message, "handler");
+  });
+
+  it("still accepts a valid default export", async () => {
+    const adapter = createVirtualAdapter(
+      "export default async function (c, next) { return await next(); }",
+    );
+
+    const middleware = await loadMiddlewareFile("/app", adapter, {
+      throwOnError: true,
+      allowHostProjectCodeExecution: true,
+    });
+    assertEquals(middleware.length, 1);
+  });
+
+  it("still accepts an array of functions", async () => {
+    const adapter = createVirtualAdapter(
+      "export default [async (c, next) => await next(), async (c, next) => await next()];",
+    );
+
+    const middleware = await loadMiddlewareFile("/app", adapter, {
+      throwOnError: true,
+      allowHostProjectCodeExecution: true,
+    });
+    assertEquals(middleware.length, 2);
+  });
+});

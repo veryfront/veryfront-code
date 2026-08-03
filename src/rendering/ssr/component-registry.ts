@@ -5,6 +5,12 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { VirtualModuleSystem } from "../virtual-module-system.ts";
 import { loadComponentFromSource } from "#veryfront/modules/react-loader/component-loader.ts";
+import {
+  type DependencyPinningSnapshot,
+  type DependencyPinningSourceInput,
+  resolveDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import type { LoadComponentOptions } from "#veryfront/modules/react-loader/types.ts";
 
 interface DeferredComponentSource {
   source: string;
@@ -18,6 +24,16 @@ interface FailedComponent {
   filePath: string;
   timestamp: number;
 }
+
+const COMPONENT_DEPENDENCY_SNAPSHOT_MAX_ENTRIES = 32;
+
+type ComponentSourceLoader = (
+  source: string,
+  filePath: string,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+  options?: LoadComponentOptions,
+) => Promise<React.ComponentType<Record<string, unknown>>>;
 
 function createErrorFallbackComponent(
   componentName: string,
@@ -72,6 +88,12 @@ function createErrorFallbackComponent(
 
 export class ComponentRegistry {
   private components = new Map<string, React.ComponentType<Record<string, unknown>>>();
+  private componentsByDependencySnapshot = new Map<
+    string,
+    Map<string, React.ComponentType<Record<string, unknown>>>
+  >();
+  private dependencySnapshotGenerations = new Map<string, number>();
+  private dependencySnapshotLoads = new Map<string, Promise<void>>();
   private virtualModules: VirtualModuleSystem;
   private componentSources = new Map<string, DeferredComponentSource>();
   private failedComponents = new Map<string, FailedComponent>();
@@ -83,6 +105,8 @@ export class ComponentRegistry {
   private vendorBundleHash?: string;
   private projectId?: string;
   private contentSourceId?: string;
+  private componentSourceGeneration = 0;
+  private componentSourceLoader: ComponentSourceLoader;
 
   constructor(
     virtualModules?: VirtualModuleSystem,
@@ -92,6 +116,7 @@ export class ComponentRegistry {
     vendorBundleHash?: string,
     projectId?: string,
     contentSourceId?: string,
+    componentSourceLoader: ComponentSourceLoader = loadComponentFromSource,
   ) {
     this.virtualModules = virtualModules ?? new VirtualModuleSystem();
     this.serverPort = serverPort;
@@ -100,6 +125,7 @@ export class ComponentRegistry {
     this.vendorBundleHash = vendorBundleHash;
     this.projectId = projectId;
     this.contentSourceId = contentSourceId;
+    this.componentSourceLoader = componentSourceLoader;
   }
 
   async loadFromDirectory(dir: string, deferLoading = false): Promise<void> {
@@ -111,14 +137,19 @@ export class ComponentRegistry {
 
     try {
       const processed = await this.collectComponents(dir, actualProjectRoot, deferLoading);
+      if (!deferLoading) await this.prepareDependencySnapshot();
       logger.debug(`Loaded ${processed} component${processed === 1 ? "" : "s"} from ${dir}`);
     } catch (error) {
       logger.debug(`Components directory not found: ${dir}`, error);
     }
   }
 
-  get(name: string): React.ComponentType<Record<string, unknown>> | null {
-    const component = this.components.get(name);
+  get(
+    name: string,
+    dependencyPinningCacheKey?: string,
+  ): React.ComponentType<Record<string, unknown>> | null {
+    const components = this.getDependencySnapshotComponents(dependencyPinningCacheKey);
+    const component = components?.get(name);
     if (component) return component;
 
     if (this.componentSources.has(name) && !this.initialized) {
@@ -128,16 +159,24 @@ export class ComponentRegistry {
     return null;
   }
 
-  getAll(): Record<string, React.ComponentType<Record<string, unknown>>> {
-    return Object.fromEntries(this.components);
+  getAll(
+    dependencyPinningCacheKey?: string,
+  ): Record<string, React.ComponentType<Record<string, unknown>>> {
+    const components = this.getDependencySnapshotComponents(dependencyPinningCacheKey);
+    return Object.fromEntries(components ?? []);
   }
 
-  getAllAsComponents(): Record<string, React.ComponentType<unknown>> {
-    return Object.fromEntries(this.components) as Record<string, React.ComponentType<unknown>>;
+  getAllAsComponents(
+    dependencyPinningCacheKey?: string,
+  ): Record<string, React.ComponentType<unknown>> {
+    return this.getAll(dependencyPinningCacheKey) as Record<
+      string,
+      React.ComponentType<unknown>
+    >;
   }
 
-  has(name: string): boolean {
-    return this.components.has(name);
+  has(name: string, dependencyPinningCacheKey?: string): boolean {
+    return this.getDependencySnapshotComponents(dependencyPinningCacheKey)?.has(name) === true;
   }
 
   getVirtualModuleSystem(): VirtualModuleSystem {
@@ -146,14 +185,79 @@ export class ComponentRegistry {
 
   clear(): void {
     this.components.clear();
+    this.componentsByDependencySnapshot.clear();
+    this.dependencySnapshotGenerations.clear();
+    this.dependencySnapshotLoads.clear();
     this.componentSources.clear();
     this.failedComponents.clear();
     this.initialized = false;
+    this.componentSourceGeneration = 0;
   }
 
   async initializeComponents(): Promise<void> {
-    if (this.initialized) return;
+    await this.prepareDependencySnapshot();
+  }
 
+  /**
+   * Materialize the retained component sources for one immutable dependency
+   * snapshot. Snapshot-specific maps avoid reusing component objects compiled
+   * under package state A during a later or concurrent state-B render.
+   */
+  async prepareDependencySnapshot(
+    dependencyPinningCacheKey?: string,
+    dependencyPinningDependencies?: Readonly<Record<string, string>>,
+    dependencyPinningSource?: DependencyPinningSourceInput,
+    moduleServerOrigin?: string,
+  ): Promise<string> {
+    const dependencySnapshot = await resolveDependencyPinningSnapshot(
+      (dependencyPinningSource ?? this.projectDir) || undefined,
+      dependencyPinningCacheKey,
+      dependencyPinningDependencies,
+    );
+    const snapshotKey = dependencySnapshot.cacheKey.startsWith("on:") && moduleServerOrigin
+      ? `${dependencySnapshot.cacheKey}:origin:${encodeURIComponent(moduleServerOrigin)}`
+      : dependencySnapshot.cacheKey;
+    const sourceGeneration = this.componentSourceGeneration;
+    if (
+      this.dependencySnapshotGenerations.get(snapshotKey) === sourceGeneration
+    ) {
+      this.touchDependencySnapshot(snapshotKey);
+      this.components = this.componentsByDependencySnapshot.get(snapshotKey) ?? new Map();
+      this.initialized = true;
+      return snapshotKey;
+    }
+
+    const loadKey = `${snapshotKey}\0${sourceGeneration}`;
+    const activeLoad = this.dependencySnapshotLoads.get(loadKey);
+    if (activeLoad) {
+      await activeLoad;
+      return snapshotKey;
+    }
+
+    const load = this.loadDependencySnapshot(
+      dependencySnapshot,
+      snapshotKey,
+      sourceGeneration,
+      dependencyPinningSource,
+      moduleServerOrigin,
+    ).finally(() => {
+      if (this.dependencySnapshotLoads.get(loadKey) === load) {
+        this.dependencySnapshotLoads.delete(loadKey);
+      }
+      this.trimDependencySnapshots();
+    });
+    this.dependencySnapshotLoads.set(loadKey, load);
+    await load;
+    return snapshotKey;
+  }
+
+  private async loadDependencySnapshot(
+    dependencySnapshot: DependencyPinningSnapshot,
+    snapshotKey: string,
+    sourceGeneration: number,
+    dependencyPinningSource?: DependencyPinningSourceInput,
+    moduleServerOrigin?: string,
+  ): Promise<void> {
     const adapter = this.adapter;
     if (!adapter) {
       logger.warn("Component registry adapter unavailable; skipping initialization");
@@ -162,20 +266,26 @@ export class ComponentRegistry {
 
     logger.debug(`Initializing ${this.componentSources.size} deferred components`);
 
+    const components = new Map<string, React.ComponentType<Record<string, unknown>>>();
     let successCount = 0;
     let failCount = 0;
 
     for (const [componentName, info] of this.componentSources) {
       try {
-        const Component = await loadComponentFromSource(
+        const Component = await this.componentSourceLoader(
           info.source,
           info.filePath,
           info.projectRoot,
           adapter,
-          this.getLoaderOptions(info.projectRoot),
+          this.getLoaderOptions(
+            info.projectRoot,
+            dependencySnapshot,
+            dependencyPinningSource,
+            moduleServerOrigin,
+          ),
         );
 
-        this.components.set(componentName, Component);
+        components.set(componentName, Component);
         this.failedComponents.delete(componentName);
         successCount++;
         logger.debug(`Successfully loaded component: ${componentName}`);
@@ -190,7 +300,7 @@ export class ComponentRegistry {
           timestamp: Date.now(),
         });
 
-        this.components.set(
+        components.set(
           componentName,
           createErrorFallbackComponent(componentName, errorMessage),
         );
@@ -202,7 +312,17 @@ export class ComponentRegistry {
       }
     }
 
-    this.componentSources.clear();
+    this.componentsByDependencySnapshot.set(
+      snapshotKey,
+      components,
+    );
+    this.dependencySnapshotGenerations.set(
+      snapshotKey,
+      sourceGeneration,
+    );
+    this.touchDependencySnapshot(snapshotKey);
+    this.trimDependencySnapshots();
+    this.components = components;
     this.initialized = true;
 
     if (failCount > 0) {
@@ -215,6 +335,48 @@ export class ComponentRegistry {
     logger.debug(`Component initialization complete: ${successCount} components loaded`);
   }
 
+  private touchDependencySnapshot(snapshotKey: string): void {
+    const components = this.componentsByDependencySnapshot.get(snapshotKey);
+    const generation = this.dependencySnapshotGenerations.get(snapshotKey);
+    if (!components || generation === undefined) return;
+
+    this.componentsByDependencySnapshot.delete(snapshotKey);
+    this.componentsByDependencySnapshot.set(snapshotKey, components);
+    this.dependencySnapshotGenerations.delete(snapshotKey);
+    this.dependencySnapshotGenerations.set(snapshotKey, generation);
+  }
+
+  private getDependencySnapshotComponents(
+    snapshotKey?: string,
+  ): Map<string, React.ComponentType<Record<string, unknown>>> | undefined {
+    if (!snapshotKey) return this.components;
+    const components = this.componentsByDependencySnapshot.get(snapshotKey);
+    if (components) this.touchDependencySnapshot(snapshotKey);
+    return components;
+  }
+
+  private trimDependencySnapshots(): void {
+    while (
+      this.componentsByDependencySnapshot.size >
+        COMPONENT_DEPENDENCY_SNAPSHOT_MAX_ENTRIES
+    ) {
+      let evicted = false;
+      for (const snapshotKey of this.componentsByDependencySnapshot.keys()) {
+        const activeLoadPrefix = `${snapshotKey}\0`;
+        const isLoading = [...this.dependencySnapshotLoads.keys()].some((loadKey) =>
+          loadKey.startsWith(activeLoadPrefix)
+        );
+        if (isLoading) continue;
+
+        this.componentsByDependencySnapshot.delete(snapshotKey);
+        this.dependencySnapshotGenerations.delete(snapshotKey);
+        evicted = true;
+        break;
+      }
+      if (!evicted) break;
+    }
+  }
+
   getFailedComponents(): FailedComponent[] {
     return Array.from(this.failedComponents.values());
   }
@@ -223,19 +385,22 @@ export class ComponentRegistry {
     return this.failedComponents.has(name);
   }
 
-  private getLoaderOptions(projectRoot: string): {
-    projectId: string;
-    dev: true;
-    moduleServerUrl?: string;
-    vendorBundleHash?: string;
-    contentSourceId?: string;
-  } {
+  private getLoaderOptions(
+    projectRoot: string,
+    dependencySnapshot?: DependencyPinningSnapshot,
+    dependencyPinningSource?: DependencyPinningSourceInput,
+    moduleServerOrigin?: string,
+  ): LoadComponentOptions {
     return {
       projectId: this.projectId ?? projectRoot,
       dev: true,
       moduleServerUrl: this.moduleServerUrl,
       vendorBundleHash: this.vendorBundleHash,
       contentSourceId: this.contentSourceId,
+      moduleServerOrigin,
+      dependencyPinningCacheKey: dependencySnapshot?.cacheKey,
+      dependencyPinningDependencies: dependencySnapshot?.dependencies,
+      dependencyPinningSource,
     };
   }
 
@@ -273,32 +438,39 @@ export class ComponentRegistry {
 
       if (!(entry.isFile || entry.isSymlink) || !/\.(tsx|jsx|ts|js)$/.test(entry.name)) continue;
 
+      const extMatch = /\.(tsx|jsx|ts|js)$/.exec(entry.name);
+      const fileType = extMatch?.[1] as "tsx" | "jsx" | "ts" | "js" | undefined;
       const componentName = entry.name.replace(/\.(tsx|jsx|ts|js)$/, "");
       if (componentName === "index") continue;
 
       try {
         const fileContent = await adapter.fs.readFile(entryPath);
 
-        await this.virtualModules.registerModule(`component:${componentName}`, fileContent, dir);
+        // Pass fileType explicitly so the virtual module system does not have
+        // to guess the loader from source content heuristics.
+        await this.virtualModules.registerModule(
+          `component:${componentName}`,
+          fileContent,
+          dir,
+          fileType,
+        );
 
-        if (deferLoading) {
+        const previousSource = this.componentSources.get(componentName);
+        if (
+          previousSource?.source !== fileContent ||
+          previousSource.filePath !== entryPath ||
+          previousSource.projectRoot !== projectRoot
+        ) {
           this.componentSources.set(componentName, {
             source: fileContent,
             filePath: entryPath,
             projectRoot,
           });
-          logger.debug(`Stored component source for deferred loading: ${componentName}`);
-        } else {
-          const Component = await loadComponentFromSource(
-            fileContent,
-            entryPath,
-            projectRoot,
-            adapter,
-            this.getLoaderOptions(projectRoot),
-          );
+          this.componentSourceGeneration++;
+        }
 
-          this.components.set(componentName, Component);
-          logger.debug(`Loaded component immediately: ${componentName}`);
+        if (deferLoading) {
+          logger.debug(`Stored component source for deferred loading: ${componentName}`);
         }
 
         count++;

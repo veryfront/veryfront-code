@@ -156,7 +156,37 @@ describe("server/handlers/request/static.handler", () => {
     assertEquals(result.response, undefined);
   });
 
-  it("adds matching nonces to static HTML responses before applying CSP", async () => {
+  it("redirects a missing favicon.ico to an existing favicon.svg", async () => {
+    const handler = new StaticHandler();
+    const resolvedPaths: string[] = [];
+    (handler as any).staticService = {
+      resolveFile: (pathname: string) => {
+        resolvedPaths.push(pathname);
+        if (pathname === "/favicon.ico") return Promise.resolve(null);
+        return Promise.resolve({
+          path: "/tmp/test-project/public/favicon.svg",
+          data: new TextEncoder().encode("<svg></svg>"),
+          etag: '"favicon-etag"',
+          contentType: "image/svg+xml",
+          cacheStrategy: "medium",
+          source: "public",
+        });
+      },
+      isAssetRequest: () => true,
+    };
+
+    const result = await handler.handle(
+      new Request("http://localhost/favicon.ico"),
+      makeCtx(),
+    );
+
+    assertExists(result.response);
+    assertEquals(resolvedPaths, ["/favicon.ico", "/favicon.svg"]);
+    assertEquals(result.response.status, 307);
+    assertEquals(result.response.headers.get("location"), "http://localhost/favicon.svg");
+  });
+
+  it("adds matching nonces to source-authored static HTML before applying CSP", async () => {
     const handler = new StaticHandler();
     (handler as any).staticService = {
       resolveFile: async () => ({

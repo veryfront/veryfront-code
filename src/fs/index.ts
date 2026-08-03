@@ -7,9 +7,9 @@
  * ```ts
  * import { exists, mkdir, readTextFile, writeTextFile } from "veryfront/fs";
  *
- * const content = await readTextFile("./data/config.json");
- * await writeTextFile("./output/result.json", JSON.stringify(data));
+ * const data = JSON.parse(await readTextFile("./data/config.json"));
  * await mkdir("./output", { recursive: true });
+ * await writeTextFile("./output/result.json", JSON.stringify(data));
  * ```
  *
  * @example Path utilities
@@ -32,6 +32,8 @@ export {
   createFileSystem,
   exists,
   type FileSystem,
+  isNotFoundError,
+  lstat,
   mkdir,
   readDir,
   readTextFile,
@@ -48,3 +50,8 @@ export {
 } from "#veryfront/platform/compat/path/index.ts";
 
 export { cwd } from "#veryfront/platform/compat/process.ts";
+
+export {
+  FileSnapshotChangedError,
+  isFileSnapshotChangedError,
+} from "#veryfront/platform/adapters/file-snapshot-error.ts";

@@ -2,6 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { NotFoundHandler } from "./not-found.ts";
+import { ErrorPages } from "#veryfront/server/utils/error-html.ts";
+import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 
 describe("server/handlers/response/not-found", () => {
   describe("NotFoundHandler metadata", () => {
@@ -37,43 +39,39 @@ describe("server/handlers/response/not-found", () => {
       assertEquals(result.response?.status, 404);
     });
 
-    it("should return HTML content", async () => {
+    it("renders the SAME 404 page as the SSR miss path (nonce-injected ErrorPages)", async () => {
+      // The fallback handler and the SSR miss path must produce an identical 404,
+      // so a fallthrough like /_veryfront/<missing> looks the same as a normal
+      // page miss — not the old divergent card design.
       const body = await getBody("http://localhost/some-path");
-      assertEquals(body.includes("<!DOCTYPE html>"), true);
-      assertEquals(body.includes("404"), true);
-      assertEquals(body.includes("Page Not Found"), true);
+
+      // The inline <style>/<script> must carry the CSP nonce (like the SSR
+      // response builder), otherwise a strict nonce-based CSP would block the
+      // styling and the page would render unstyled.
+      const nonce = body.match(/<style nonce="([^"]+)"/)?.[1] ?? "";
+      assertEquals(nonce.length > 0, true);
+      // ...and the body is exactly the canonical ErrorPages 404 with that nonce.
+      assertEquals(body, addNonceToHtmlTags(ErrorPages.notFound("/some-path"), nonce));
+
+      assertEquals(body.includes("Page Not Found"), false);
+      assertEquals(body.includes("Go Home"), false);
     });
 
-    it("should include the requested path in the response", async () => {
+    it("should return styled HTML naming the missing path", async () => {
       const body = await getBody("http://localhost/my-missing-page");
+      assertEquals(body.includes("<!DOCTYPE html>"), true);
+      assertEquals(body.includes("Not Found"), true);
+      assertEquals(body.includes("could not be found"), true);
       assertEquals(body.includes("/my-missing-page"), true);
     });
 
     it("should escape HTML in the pathname", async () => {
-      // URL constructor encodes angle brackets, so the pathname becomes /%3Cscript%3E...
-      // The handler uses escapeHtml on it. We verify the path is safely included.
+      // URL keeps the angle brackets percent-encoded in the pathname, and
+      // ErrorPages escapes the message — the raw script tag must never appear.
       const body = await getBody(
         "http://localhost/%3Cscript%3Ealert(1)%3C/script%3E",
       );
       assertEquals(body.includes("<script>alert(1)</script>"), false);
-    });
-
-    it("should include Go Home and Go Back links", async () => {
-      const body = await getBody("http://localhost/test");
-      assertEquals(body.includes('href="/"'), true);
-      assertEquals(body.includes('href=".."'), true);
-      assertEquals(body.includes("Go Home"), true);
-      assertEquals(body.includes("Go Back"), true);
-    });
-
-    it("should avoid javascript: links in the fallback page", async () => {
-      const body = await getBody("http://localhost/test");
-      assertEquals(body.includes("javascript:history.back()"), false);
-    });
-
-    it("should add a nonce to the inline style block", async () => {
-      const body = await getBody("http://localhost/test");
-      assertEquals(body.includes("<style nonce="), true);
     });
   });
 });

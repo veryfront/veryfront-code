@@ -1,8 +1,8 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
 import { Markdown } from "../../markdown.tsx";
-import { ChevronDownIcon } from "../../icons/index.ts";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { ChevronDownIcon } from "../../../ui/icons/index.ts";
+import { createStrictContext } from "../../../create-strict-context.ts";
 import { Shimmer } from "./animations.tsx";
 
 // ---------------------------------------------------------------------------
@@ -16,28 +16,41 @@ import { Shimmer } from "./animations.tsx";
 
 /** Per-card state shared with `Reasoning.*` sub-parts. */
 export interface ReasoningContextValue {
+  /** The reasoning markdown text to render in the body. */
   text: string;
+  /** Whether tokens are still streaming; drives the shimmer label + auto-open. */
   isStreaming: boolean;
+  /** Whether the disclosure is currently expanded. */
   isOpen: boolean;
+  /** Toggle the disclosure open/closed (opts out of stream-driven auto-collapse). */
   toggle: () => void;
 }
 
-const ReasoningContext = React.createContext<ReasoningContextValue | null>(null);
+const [ReasoningContext, useReasoningContext] = createStrictContext<ReasoningContextValue>(
+  "useReasoning",
+  "a Reasoning",
+);
 
-/** Read the enclosing `Reasoning` state. Throws when used outside a `Reasoning`. */
-export function useReasoning(): ReasoningContextValue {
-  const ctx = React.useContext(ReasoningContext);
-  if (!ctx) {
-    throw COMPONENT_ERROR.create({
-      detail: "useReasoning must be used within a Reasoning",
-    });
-  }
-  return ctx;
-}
+/**
+ * Read the disclosure state provided by `Reasoning.Root` (text + open state).
+ * Use it to build a custom disclosure part; throws outside a `Reasoning`.
+ *
+ * @example
+ * ```tsx
+ * function MyTrigger() {
+ *   const { isOpen, toggle } = useReasoning();
+ *   return <button onClick={toggle}>{isOpen ? "Hide" : "Show"} reasoning</button>;
+ * }
+ * // <Reasoning.Root text={text}><MyTrigger /><Reasoning.Content /></Reasoning.Root>
+ * ```
+ */
+export const useReasoning = useReasoningContext;
 
-/** Props accepted by `Reasoning` / `Reasoning.Root` (aka `ReasoningCard`). */
+/** Props accepted by `Reasoning` / `Reasoning.Root`. */
 export interface ReasoningProps {
+  /** The reasoning markdown text rendered in the disclosure body. */
   text: string;
+  /** Whether tokens are still streaming; shimmers the label and auto-opens the card. */
   isStreaming?: boolean;
   className?: string;
   /** Overrides the chevron glyph. Rotation-on-open styling is applied to the
@@ -56,103 +69,108 @@ export interface ReasoningProps {
   onOpenChange?: (open: boolean) => void;
   /** Compose your own disclosure; when omitted, the default anatomy renders. */
   children?: React.ReactNode;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /**
  * `Reasoning.Root` — context provider + wrapper. No children renders the
  * default anatomy (`Trigger` + `Content`); pass children to recompose.
  */
-const ReasoningRoot = React.forwardRef<HTMLDivElement, ReasoningProps>(
-  function Reasoning(
-    {
-      text,
-      isStreaming = false,
-      className,
-      icon,
-      labels,
-      open,
-      defaultOpen,
-      onOpenChange,
-      children,
-    },
+function ReasoningRoot(
+  {
+    text,
+    isStreaming = false,
+    className,
+    icon,
+    labels,
+    open,
+    defaultOpen,
+    onOpenChange,
+    children,
     ref,
-  ) {
-    const isControlled = open !== undefined;
-    // Uncontrolled default: open only if we mount mid-stream. A completed /
-    // reloaded card (isStreaming === false) starts collapsed, so it never
-    // plays the open-then-collapse animation.
-    const [uncontrolledOpen, setUncontrolledOpen] = React.useState(
-      defaultOpen ?? isStreaming,
-    );
-    const isOpen = isControlled ? open : uncontrolledOpen;
-    const userToggledRef = React.useRef(false);
-    // Tracks whether this card has ever streamed during its lifetime. We only
-    // auto-collapse once streaming actually ends — a card that was never
-    // streaming (history reload) has nothing to animate away from.
-    const hasStreamedRef = React.useRef(isStreaming);
+  }: ReasoningProps,
+): React.ReactElement {
+  const isControlled = open !== undefined;
+  // Uncontrolled default: open only if we mount mid-stream. A completed /
+  // reloaded card (isStreaming === false) starts collapsed, so it never
+  // plays the open-then-collapse animation.
+  const [uncontrolledOpen, setUncontrolledOpen] = React.useState(
+    defaultOpen ?? isStreaming,
+  );
+  const isOpen = isControlled ? open : uncontrolledOpen;
+  const userToggledRef = React.useRef(false);
+  // Tracks whether this card has ever streamed during its lifetime. We only
+  // auto-collapse once streaming actually ends — a card that was never
+  // streaming (history reload) has nothing to animate away from.
+  const hasStreamedRef = React.useRef(isStreaming);
 
-    React.useEffect(() => {
-      // Parent owns state when controlled, and a manual toggle opts out of the
-      // stream-driven open/collapse entirely.
-      if (isControlled || userToggledRef.current) return;
+  React.useEffect(() => {
+    // Parent owns state when controlled, and a manual toggle opts out of the
+    // stream-driven open/collapse entirely.
+    if (isControlled || userToggledRef.current) return;
 
-      if (isStreaming) {
-        hasStreamedRef.current = true;
-        if (!isOpen) {
-          setUncontrolledOpen(true);
-          onOpenChange?.(true);
-        }
-        return;
+    if (isStreaming) {
+      hasStreamedRef.current = true;
+      if (!isOpen) {
+        setUncontrolledOpen(true);
+        onOpenChange?.(true);
       }
+      return;
+    }
 
-      // Streaming just finished in this session — collapse after a beat. If we
-      // never streamed (reloaded chat), leave the card exactly as it mounted.
-      if (!hasStreamedRef.current || !isOpen) return;
+    // Streaming just finished in this session — collapse after a beat. If we
+    // never streamed (reloaded chat), leave the card exactly as it mounted.
+    if (!hasStreamedRef.current || !isOpen) return;
 
-      const timer = setTimeout(() => {
-        setUncontrolledOpen(false);
-        onOpenChange?.(false);
-      }, 1000);
-      return () => clearTimeout(timer);
-    }, [isControlled, isStreaming, isOpen, onOpenChange]);
+    const timer = setTimeout(() => {
+      setUncontrolledOpen(false);
+      onOpenChange?.(false);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [isControlled, isStreaming, isOpen, onOpenChange]);
 
-    const toggle = React.useCallback(() => {
-      userToggledRef.current = true;
-      const next = !isOpen;
-      if (!isControlled) setUncontrolledOpen(next);
-      onOpenChange?.(next);
-    }, [isControlled, isOpen, onOpenChange]);
+  const toggle = React.useCallback(() => {
+    userToggledRef.current = true;
+    const next = !isOpen;
+    if (!isControlled) setUncontrolledOpen(next);
+    onOpenChange?.(next);
+  }, [isControlled, isOpen, onOpenChange]);
 
-    const context: ReasoningContextValue = { text, isStreaming, isOpen, toggle };
+  const context: ReasoningContextValue = { text, isStreaming, isOpen, toggle };
 
-    return (
-      <ReasoningContext.Provider value={context}>
-        <div ref={ref} className={cn("not-prose mb-3", className)}>
-          {children ?? (
-            <>
-              <ReasoningTrigger icon={icon} labels={labels} />
-              <ReasoningContent />
-            </>
-          )}
-        </div>
-      </ReasoningContext.Provider>
-    );
-  },
-);
+  return (
+    <ReasoningContext.Provider value={context}>
+      <div ref={ref} className={cn("not-prose mb-3", className)}>
+        {children ?? (
+          <>
+            <ReasoningTrigger icon={icon} labels={labels} />
+            <ReasoningContent />
+          </>
+        )}
+      </div>
+    </ReasoningContext.Provider>
+  );
+}
 ReasoningRoot.displayName = "Reasoning.Root";
 
 /** Props for `Reasoning.Trigger` — the disclosure button. */
 export interface ReasoningTriggerProps {
-  /** Overrides the chevron glyph. */
+  /** Replace the default glyph. The canonical path (RFC 2980: a leaf renders its
+   * default icon when childless; pass children to replace it). */
+  children?: React.ReactNode;
+  /** @deprecated Pass `children` instead. Kept working for backward compatibility. */
   icon?: React.ReactNode;
   /** Override the two labels; each defaults to the current string. */
   labels?: { thinking?: string; thought?: string };
   className?: string;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 /** The header row: a "Thinking…" / "Thought process" label + expand chevron. */
 function ReasoningTrigger(
-  { icon, labels, className }: ReasoningTriggerProps,
+  { children, icon, labels, className, ref }: ReasoningTriggerProps,
 ): React.JSX.Element {
   const { isStreaming, isOpen, toggle } = useReasoning();
   const thinkingLabel = labels?.thinking ?? "Thinking...";
@@ -161,6 +179,7 @@ function ReasoningTrigger(
 
   return (
     <button
+      ref={ref}
       type="button"
       onClick={toggle}
       className={cn(
@@ -175,7 +194,7 @@ function ReasoningTrigger(
           !isOpen && "-rotate-90",
         )}
       >
-        {icon ?? <ChevronDownIcon className="size-3.5 shrink-0" />}
+        {children ?? icon ?? <ChevronDownIcon className="size-3.5 shrink-0" />}
       </span>
     </button>
   );
@@ -184,12 +203,14 @@ ReasoningTrigger.displayName = "Reasoning.Trigger";
 
 /** The reasoning body. Renders when open; pass children to replace the markdown. */
 function ReasoningContent(
-  { className, children }: { className?: string; children?: React.ReactNode },
+  { className, children, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element | null {
   const { text, isOpen } = useReasoning();
   if (!isOpen) return null;
   return (
-    <div className={cn("mt-2 text-sm text-[var(--foreground)]", className)}>
+    <div {...props} ref={ref} className={cn("mt-2 text-sm text-[var(--foreground)]", className)}>
       {children ?? (
         // `text-sm!` overrides Markdown's base `text-base` (cn does not tw-merge)
         // so reasoning renders at 14px like Studio's compact variant.
@@ -210,6 +231,3 @@ export const Reasoning = Object.assign(ReasoningRoot, {
   Trigger: ReasoningTrigger,
   Content: ReasoningContent,
 });
-
-/** Back-compat alias — `message.tsx` and `agent-card.tsx` import `ReasoningCard`. */
-export const ReasoningCard = ReasoningRoot;

@@ -1,12 +1,19 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import type { DiscoveryResult } from "#veryfront/discovery/types.ts";
 import { defineSchema } from "#veryfront/schemas";
 import { tool } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { step, workflow } from "#veryfront/workflow";
-import { clearProjectAgentRuntimeRegistries } from "../../../src/agent/project/agent-runtime.ts";
+import {
+  clearProjectAgentRuntimeRegistries,
+  type ProjectAgentRuntimeDiscovery,
+} from "../../../src/agent/project/agent-runtime.ts";
+import { getActiveSourceIntegrationPolicy } from "../../../src/integrations/source-policy-context.ts";
+import {
+  normalizeSourceIntegrationPolicy,
+  type SourceIntegrationPolicyManifest,
+} from "../../../src/integrations/source-policy.ts";
 import { saveToken } from "../../auth/token-store.ts";
 import { formatWorkflowDiscoveryErrors, runWorkflowCommand } from "./command.ts";
 
@@ -48,7 +55,11 @@ function restoreEnv() {
   }
 }
 
-function createEmptyDiscoveryResult(): DiscoveryResult {
+function createEmptyDiscoveryResult(
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest = normalizeSourceIntegrationPolicy(
+    undefined,
+  ),
+): ProjectAgentRuntimeDiscovery {
   return {
     tools: new Map(),
     agents: new Map(),
@@ -56,10 +67,12 @@ function createEmptyDiscoveryResult(): DiscoveryResult {
     resources: new Map(),
     prompts: new Map(),
     workflows: new Map(),
-    works: new Map(),
     tasks: new Map(),
+    schedules: new Map(),
+    webhooks: new Map(),
     evals: new Map(),
     errors: [],
+    sourceIntegrationPolicy,
   };
 }
 
@@ -103,7 +116,10 @@ describe("workflow command", () => {
         id: "echo",
         description: "Echo workflow input.",
         inputSchema: defineSchema((v) => v.object({ message: v.string() }))(),
-        execute: (input) => ({ echoed: input.message }),
+        execute: (input) => ({
+          echoed: input.message,
+          sourceIntegrationPolicy: getActiveSourceIntegrationPolicy(),
+        }),
       });
 
       const echoWorkflow = workflow({
@@ -127,7 +143,11 @@ describe("workflow command", () => {
           discoverProjectAgentRuntime: () => {
             toolRegistry.register(echoTool.id, echoTool);
 
-            const discovery = createEmptyDiscoveryResult();
+            const discovery = createEmptyDiscoveryResult(
+              normalizeSourceIntegrationPolicy({
+                allow: { confluence: { allowedTools: ["search_content"] } },
+              }),
+            );
             discovery.tools.set(echoTool.id, echoTool);
             discovery.workflows.set(echoWorkflow.id, echoWorkflow);
 
@@ -137,7 +157,16 @@ describe("workflow command", () => {
       );
 
       assertEquals(JSON.parse(await Deno.readTextFile(resultPath)), {
-        start: { echoed: "hello" },
+        start: {
+          echoed: "hello",
+          sourceIntegrationPolicy: {
+            schemaVersion: 1,
+            mode: "allowlist",
+            integrations: {
+              confluence: { allowedToolIds: ["search_content"] },
+            },
+          },
+        },
       });
     } finally {
       await Deno.remove(projectDir, { recursive: true });

@@ -1,7 +1,7 @@
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { createCacheNamespace } from "#veryfront/utils/cache-namespace.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
-import { VERSION } from "#veryfront/utils/version.ts";
+import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 import {
   resolveVeryfrontModuleTarget,
   resolveVeryfrontModuleUrl,
@@ -39,16 +39,20 @@ function formatMdxEsmTransformCacheKey(
   reactVersion: string,
   normalizedPath: string,
   contentHash: string,
+  cacheVariant?: string,
 ): string {
-  return `${namespace}:${projectId}:${contentSourceId}:${reactVersion}:${normalizedPath}:${contentHash}:ssr`;
+  const variant = cacheVariant?.startsWith("on:") ? `:${cacheVariant}` : "";
+  return `${namespace}:${projectId}:${contentSourceId}:${reactVersion}:${normalizedPath}:${contentHash}${variant}:ssr`;
 }
 
 function formatMdxEsmPathCacheKey(
   namespace: string,
   reactVersion: string,
   normalizedPath: string,
+  cacheVariant?: string,
 ): string {
-  return `${namespace}:${reactVersion}:${normalizedPath}`;
+  const variant = cacheVariant?.startsWith("on:") ? `:${cacheVariant}` : "";
+  return `${namespace}:${reactVersion}${variant}:${normalizedPath}`;
 }
 
 function formatMdxEsmModuleFileName(namespace: string, contentHash: string): string {
@@ -120,7 +124,7 @@ function buildMdxEsmCacheSchemaSample() {
       "veryfront/router": "./src/react/runtime/core.ts",
       "veryfront/context": "./src/react/runtime/core.ts",
     }),
-    frameworkVersion: VERSION,
+    frameworkVersion: RUNTIME_VERSION,
   };
 }
 
@@ -159,6 +163,7 @@ export function buildMdxEsmTransformCacheKey(
   reactVersion: string,
   normalizedPath: string,
   contentHash: string,
+  cacheVariant?: string,
 ): string {
   return formatMdxEsmTransformCacheKey(
     MDX_ESM_CACHE_NAMESPACE,
@@ -167,14 +172,21 @@ export function buildMdxEsmTransformCacheKey(
     reactVersion,
     normalizedPath,
     contentHash,
+    cacheVariant,
   );
 }
 
 export function buildMdxEsmPathCacheKey(
   normalizedPath: string,
   reactVersion = REACT_DEFAULT_VERSION,
+  cacheVariant?: string,
 ): string {
-  return formatMdxEsmPathCacheKey(MDX_ESM_CACHE_NAMESPACE, reactVersion, normalizedPath);
+  return formatMdxEsmPathCacheKey(
+    MDX_ESM_CACHE_NAMESPACE,
+    reactVersion,
+    normalizedPath,
+    cacheVariant,
+  );
 }
 
 export function buildMdxEsmModuleFileName(contentHash: string): string {

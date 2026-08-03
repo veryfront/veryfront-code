@@ -8,21 +8,17 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { rendererLogger } from "#veryfront/utils/logger/logger.ts";
+import { rendererLogger } from "#veryfront/utils";
 import { HTTP_MODULE_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { httpBundleCache } from "./http-cache-wrapper.ts";
 import { asLocalModuleCode } from "./http-cache-invariants.ts";
 import { getManifestIdForHash, refreshManifestTTL } from "./bundle-manifest-ttl.ts";
-import type { BundleEntry } from "./bundle-manifest-types.ts";
-import type { HttpCacheLike } from "./http-cache-helpers.ts";
+import type { HttpCacheIdentityMetadata, HttpCacheLike } from "./http-cache-helpers.ts";
 
 const logger = rendererLogger.component("http-cache");
 
 const DISTRIBUTED_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
-/** Per-request accumulator for bundle metadata during cacheHttpImportsToLocal. */
-export const bundleAccumulatorStorage = new AsyncLocalStorage<BundleEntry[]>();
 /** Per-request stack used to detect circular HTTP module dependencies. */
 export const processingStackStorage = new AsyncLocalStorage<Set<string>>();
 /** Deduplicate concurrent HTTP module fetches to avoid races. */
@@ -43,21 +39,22 @@ export function __clearInFlightHttpFetches(): void {
 const IN_FLIGHT_JITTER_MS = 5_000;
 
 /**
- * Wait for an in-flight fetch with timeout + jitter.
+ * Wait for an in-flight fetch. The default timeout includes jitter; callers
+ * with a bounded owner operation can supply its complete wait window.
  * Returns undefined on timeout so caller can retry.
  */
 export async function waitForInFlightFetch(
   promise: Promise<string | null>,
-  cacheKey: string,
+  waitTimeoutMs?: number,
 ): Promise<string | null | undefined> {
-  const jitter = Math.floor(Math.random() * IN_FLIGHT_JITTER_MS);
-  const timeoutMs = IN_FLIGHT_WAIT_TIMEOUT_MS + jitter;
+  const timeoutMs = waitTimeoutMs === undefined
+    ? IN_FLIGHT_WAIT_TIMEOUT_MS + Math.floor(Math.random() * IN_FLIGHT_JITTER_MS)
+    : waitTimeoutMs;
 
   let timeoutId: ReturnType<typeof setTimeout>;
   const timeoutPromise = new Promise<undefined>((resolve) => {
     timeoutId = setTimeout(() => {
       logger.warn("In-flight fetch wait timed out, will retry", {
-        cacheKey,
         timeoutMs,
       });
       resolve(undefined);
@@ -76,10 +73,11 @@ export async function waitForInFlightFetch(
  * This is fire-and-forget to avoid blocking the hot path.
  */
 export function refreshDistributedCacheAsync(
-  hash: number,
+  hash: string,
   code: string,
   _cacheDir: string,
   normalizedUrl: string,
+  identityMetadata: HttpCacheIdentityMetadata,
   getLastDistributedRefresh: () => HttpCacheLike<string, number>,
 ): void {
   (async () => {
@@ -95,6 +93,7 @@ export function refreshDistributedCacheAsync(
           asLocalModuleCode(code),
           normalizedUrl,
           HTTP_MODULE_DISTRIBUTED_TTL_SEC,
+          identityMetadata,
         );
         getLastDistributedRefresh().set(hashStr, now);
         logger.debug("Refreshed distributed cache TTL", { hash });
@@ -115,29 +114,4 @@ export function refreshDistributedCacheAsync(
   })().catch((err) => {
     logger.debug("Distributed cache async refresh error", { err });
   });
-}
-
-/**
- * Track bundle for manifest accumulation if in accumulation context.
- */
-export function trackBundleAccumulator(
-  hash: number,
-  normalizedUrl: string,
-  cachePath: string,
-): void {
-  const accumulator = bundleAccumulatorStorage.getStore();
-  if (accumulator) {
-    void (async () => {
-      try {
-        const stat = await createFileSystem().stat(cachePath);
-        accumulator.push({
-          hash: String(hash),
-          url: normalizedUrl,
-          sizeBytes: stat?.size ?? 0,
-        });
-      } catch {
-        // Ignore stat errors
-      }
-    })();
-  }
 }

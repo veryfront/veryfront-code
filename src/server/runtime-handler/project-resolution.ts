@@ -10,7 +10,7 @@
  * @module server/runtime-handler/project-resolution
  */
 
-import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
+import { getBaseLogger } from "#veryfront/utils";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { type ParsedDomain, parseProjectDomain } from "../utils/domain-parser.ts";
 import { getEnvironmentType, lookupProjectByDomain } from "../utils/domain-lookup.ts";
@@ -18,6 +18,8 @@ import { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environmen
 import { SpanNames, withSpan } from "./tracing.ts";
 import { isInternalHost } from "./request-utils.ts";
 import { getEffectiveRequestHost } from "../utils/request-host.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { decodeIdentityHeaderValue } from "#veryfront/utils/header-identity.ts";
 
 const baseLogger = getBaseLogger("SERVER");
 
@@ -60,10 +62,14 @@ interface RequestHeaders {
   branchId: string | undefined;
   /** Branch name from x-branch-name header */
   branchName: string | undefined;
+  /** Project default branch name from x-default-branch-name header */
+  defaultBranchName: string | undefined;
   /** Environment from x-environment header */
   environment: string | undefined;
   /** Environment ID from x-environment-id header (for env var resolution) */
   environmentId: string | undefined;
+  /** Canonical environment name paired with x-environment-id by the trusted proxy */
+  environmentName: string | undefined;
   /** Token from authorization header */
   token: string | undefined;
   /** Content source ID from x-content-source-id header */
@@ -72,8 +78,15 @@ interface RequestHeaders {
   projectPath: string | undefined;
 }
 
-function getEffectiveHost(req: Request, url: URL): string {
-  return getEffectiveRequestHost(req, url);
+function trustForwardedHeaders(): boolean {
+  return getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
+}
+
+function getEffectiveHost(req: Request, url: URL, proxyTrusted?: boolean): string {
+  // x-forwarded-host is client-controlled and only trustworthy behind a trusted
+  // upstream proxy. Honour it only after the operator opt-in; otherwise fall
+  // back to Host. Signed application requests are not general proxy authority.
+  return getEffectiveRequestHost(req, url, proxyTrusted ?? trustForwardedHeaders());
 }
 
 /**
@@ -84,20 +97,47 @@ function getEffectiveHost(req: Request, url: URL): string {
  * domain parsing. This allows proxy-forwarded requests to resolve
  * project context from the hostname alone.
  */
-export function extractRequestHeaders(req: Request, url: URL): RequestHeaders {
-  const host = getEffectiveHost(req, url);
+export function extractRequestHeaders(
+  req: Request,
+  url: URL,
+  proxyTrusted?: boolean,
+  identityHeadersTrusted = trustForwardedHeaders(),
+): RequestHeaders {
+  const host = getEffectiveHost(req, url, proxyTrusted);
   const parsedDomain = parseProjectDomain(host);
   const projectSlugHeader = req.headers.get("x-project-slug")?.trim() || undefined;
+  // Routing identity supplied in a header or query is meaningful only behind
+  // the operator-declared sanitising edge. WebSocket query parameters are
+  // browser-controlled and must not independently unlock preview behavior.
+  const environment = (proxyTrusted ?? trustForwardedHeaders())
+    ? req.headers.get("x-environment") ?? url.searchParams.get("x-environment") ?? undefined
+    : undefined;
 
+  // `x-release-id`, `x-content-source-id`, and `x-project-path` are read
+  // without the identity-trust gate deliberately: local single-project and
+  // eval flows supply them directly, `x-project-path` is re-guarded by the
+  // adapter factory behind the same proxy trust check, and proxy mode rejects
+  // every untrusted request outright in createProxyGuard before these values
+  // can select tenant identity. Do not add tenant-identity headers here
+  // without gating them on identityHeadersTrusted.
   return {
     projectSlug: projectSlugHeader ?? parsedDomain.slug ?? undefined,
-    projectId: req.headers.get("x-project-id") ?? undefined,
+    projectId: identityHeadersTrusted ? req.headers.get("x-project-id") ?? undefined : undefined,
     releaseId: req.headers.get("x-release-id") ?? undefined,
-    branchId: req.headers.get("x-branch-id") ?? undefined,
-    branchName: req.headers.get("x-branch-name") ?? undefined,
-    environment: req.headers.get("x-environment") ?? url.searchParams.get("x-environment") ??
-      undefined,
-    environmentId: req.headers.get("x-environment-id") ?? undefined,
+    branchId: identityHeadersTrusted ? req.headers.get("x-branch-id") ?? undefined : undefined,
+    branchName: identityHeadersTrusted
+      ? decodeIdentityHeaderValue(req.headers.get("x-branch-name"))?.trim() || undefined
+      : undefined,
+    defaultBranchName: identityHeadersTrusted
+      ? decodeIdentityHeaderValue(req.headers.get("x-default-branch-name"))?.trim() || undefined
+      : undefined,
+    environment,
+    environmentId: identityHeadersTrusted
+      ? req.headers.get("x-environment-id") ?? undefined
+      : undefined,
+    environmentName: identityHeadersTrusted
+      ? req.headers.get("x-environment-name")?.trim() || undefined
+      : undefined,
     token: undefined, // Extracted separately from request context
     contentSourceId: req.headers.get("x-content-source-id") ?? undefined,
     projectPath: req.headers.get("x-project-path") ?? undefined,
@@ -137,6 +177,8 @@ interface ProjectResolutionOptions {
   defaultReleaseId?: string | undefined;
   /** WS slug override from query param */
   wsSlugOverride: string | undefined;
+  /** Whether the request has already passed the proxy trust check. */
+  proxyTrusted?: boolean;
 }
 
 /**
@@ -155,7 +197,7 @@ export async function resolveProject(
   headers: RequestHeaders,
   opts: ProjectResolutionOptions,
 ): Promise<ProjectResolutionResult> {
-  const host = getEffectiveHost(req, url);
+  const host = getEffectiveHost(req, url, opts.proxyTrusted);
 
   const deps = getDeps();
   const parsedDomain = deps.parseProjectDomain(host);
@@ -173,7 +215,7 @@ export async function resolveProject(
   let projectId: string | undefined = headers.projectId ??
     (slugMatchesDefault ? opts.defaultProjectId : undefined);
   let releaseId: string | undefined = headers.releaseId ?? opts.defaultReleaseId;
-  let environmentName: string | undefined;
+  let environmentName: string | undefined = headers.environmentName;
   let proxyEnv = parseProxyEnvironment(headers.environment ?? null);
 
   const shouldSkipDomainLookup = isInternalHost(host);

@@ -10,6 +10,9 @@ import {
   getRuntimeRemoteToolSources,
   type RuntimeRemoteToolConfig,
 } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
+import { buildRuntimeUsageTraceAttributes } from "#veryfront/agent/runtime/trace-usage.ts";
+import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-native-tool-inventory.ts";
+import { selectProviderCompatibleToolNames } from "#veryfront/agent/runtime/provider-tool-compat.ts";
 import {
   convertAgentRuntimeMessagesToProviderMessages,
   convertProviderMessagesToAgentRuntimeMessages,
@@ -26,13 +29,19 @@ import {
   SandboxShellToolsProviderName,
 } from "#veryfront/extensions/sandbox/index.ts";
 import { resolveHostedRuntimeAllowedToolNames } from "#veryfront/agent/hosted/runtime-essential-tools.ts";
-import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import {
+  createToolsFromHostDefinitions,
   isToolVisibleTo,
   type Tool,
   type ToolExecutionContext,
   toolRegistry,
 } from "#veryfront/tool";
+import { skillRegistry } from "#veryfront/skill/registry.ts";
+import {
+  addSpanEvent,
+  setSpanAttributes,
+  withSpan,
+} from "#veryfront/observability/tracing/otlp-setup.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import {
@@ -43,6 +52,7 @@ import {
   parseSseJsonEvents,
 } from "./ag-ui-sse.ts";
 import { AgentRunCancelledError, type AgentRunSessionManager } from "./session-manager.ts";
+import { composeInternalAgentRunSystemPrompt } from "./run-system-prompt.ts";
 import type { RuntimeRunAgentInput } from "./schema.ts";
 import { serverLogger } from "#veryfront/utils";
 
@@ -87,6 +97,7 @@ export interface RuntimeAgentStreamExecutionDeps {
   projectAgentSandbox?: {
     apiUrl?: string;
     authToken?: string;
+    branchId?: string | null;
     projectId?: string | null;
     sandboxEndpoint?: string;
   };
@@ -187,9 +198,6 @@ export function buildMergedTools(
   if (agent.config.tools === true) {
     const merged: Record<string, Tool | boolean> = {};
     for (const [toolId, registryTool] of toolRegistry.getAll()) {
-      if (!agent.config.skills && SKILL_TOOL_IDS.has(toolId)) {
-        continue;
-      }
       // Owner-aware: another agent's owned tool never enters this agent's
       // model tool definitions.
       if (!isToolVisibleTo(registryTool, { agentId: agent.id })) {
@@ -200,6 +208,10 @@ export function buildMergedTools(
     for (const toolName of sourceAllowedRemoteToolNames) {
       merged[toolName] = true;
     }
+    // Injected Studio tools win: an unmarked forwarded name keeps its
+    // wait-for-tool-result wrapper so the frontend handler still runs. Server
+    // authority is opted into by name via serverResolvedProjectTools, which
+    // filters the name out of injectedTools above.
     return { ...merged, ...injectedTools };
   }
 
@@ -263,6 +275,48 @@ function getStringProperty(value: Record<string, unknown>, keys: string[]): stri
   return undefined;
 }
 
+type InternalAgentRunTraceAttributes = Record<string, string | number | boolean | undefined>;
+
+function compactTraceAttributes(
+  attributes: InternalAgentRunTraceAttributes,
+): Record<string, string | number | boolean> {
+  return Object.fromEntries(
+    Object.entries(attributes).filter(([, value]) =>
+      typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+    ),
+  ) as Record<string, string | number | boolean>;
+}
+
+function buildInternalAgentRunTraceAttributes(input: {
+  runInput: RuntimeRunAgentInput;
+  agent: Agent;
+  deps: RuntimeAgentStreamExecutionDeps;
+  status?: "running" | "completed" | "failed" | "cancelled";
+}): Record<string, string | number | boolean> {
+  const forwardedProps = input.runInput.forwardedProps;
+  const scheduleId = forwardedProps
+    ? getStringProperty(forwardedProps, ["schedule_id", "scheduleId"])
+    : undefined;
+  const scheduleName = forwardedProps
+    ? getStringProperty(forwardedProps, ["schedule_name", "scheduleName"])
+    : undefined;
+
+  return compactTraceAttributes({
+    "agent.id": input.agent.id,
+    "run.id": input.runInput.runId,
+    "thread.id": input.runInput.threadId,
+    "parent.run.id": input.runInput.parentRunId,
+    "project.id": input.deps.projectAgentSandbox?.projectId ?? undefined,
+    "schedule.id": scheduleId,
+    "schedule.name": scheduleName,
+    "run.trigger.kind": scheduleId ? "schedule" : undefined,
+    "run.trigger.id": scheduleId,
+    "agent.run.status": input.status,
+    "gen_ai.operation.name": "chat",
+    "gen_ai.agent.id": input.agent.id,
+  });
+}
+
 function getAgentSandboxConfig(
   agent: Agent,
 ): { sandboxId?: string; sandboxEndpoint?: string; projectId?: string } {
@@ -275,6 +329,16 @@ function getAgentSandboxConfig(
     sandboxId: getStringProperty(config.sandbox, ["id", "sandboxId", "sessionId"]),
     sandboxEndpoint: getStringProperty(config.sandbox, ["endpoint", "sandboxEndpoint"]),
     projectId: getStringProperty(config.sandbox, ["projectId"]),
+  };
+}
+
+function createIdempotentAsyncCleanup(
+  cleanup?: () => Promise<void>,
+): () => Promise<void> {
+  let cleanupPromise: Promise<void> | undefined;
+  return () => {
+    cleanupPromise ??= cleanup ? Promise.resolve().then(cleanup) : Promise.resolve();
+    return cleanupPromise;
   };
 }
 
@@ -314,19 +378,34 @@ async function buildProjectAgentSandboxTools(input: {
       : {}),
     getProjectId: () => sandboxConfig.projectId ?? input.deps.projectAgentSandbox?.projectId,
   });
+  const closeSandbox = createIdempotentAsyncCleanup(() => sandboxResult.closeSandbox());
 
-  const bash = sandboxResult.tools[PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME];
-  if (!bash) {
-    await sandboxResult.closeSandbox();
-    return {};
+  try {
+    const declaredTools = input.agent.config.tools;
+    const materializedTools = createToolsFromHostDefinitions(sandboxResult.tools);
+    const configuredTools = isRecord(declaredTools)
+      ? Object.fromEntries(
+        Object.entries(materializedTools).filter(([toolName]) => declaredTools[toolName] === true),
+      )
+      : {};
+    if (!configuredTools[PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME]) {
+      await closeSandbox();
+      return {};
+    }
+
+    return {
+      tools: configuredTools,
+      closeSandbox,
+    };
+  } catch (error) {
+    await closeSandbox().catch((cleanupError) => {
+      logger.warn("Internal agent runtime sandbox cleanup failed during materialization", {
+        agentId: input.agent.id,
+        error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+      });
+    });
+    throw error;
   }
-
-  return {
-    tools: {
-      [PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME]: bash as Tool,
-    },
-    closeSandbox: sandboxResult.closeSandbox,
-  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -347,6 +426,13 @@ function getAllowedRemoteToolNames(
     return [];
   }
   return allowedTools.every((toolName) => typeof toolName === "string") ? allowedTools : [];
+}
+
+function getForwardedMaxOutputTokens(
+  forwardedProps: RuntimeRunAgentInput["forwardedProps"],
+): number | undefined {
+  const value = forwardedProps?.maxOutputTokens;
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
 /**
@@ -382,8 +468,9 @@ function getRuntimeToolAllowlist(
 
 /**
  * Intersects the merged run tool set with the restrictive tool allowlist.
- * Skill runtime/delegation tools are preserved for skill-enabled agents,
- * mirroring the hosted chat runtime's allowlist semantics.
+ * Skill runtime tools are preserved for every agent. Delegation tools are
+ * preserved only when the agent has at least one visible skill, mirroring
+ * the hosted chat runtime's allowlist semantics.
  *
  * The allowlist bounds this run's direct tool surface only: preserved skill
  * delegation tools (`invoke_agent`) can spawn child runs whose tool assembly
@@ -404,15 +491,11 @@ function applyRuntimeToolAllowlist(
     // rather than silently skipping enforcement.
     return {};
   }
-  const availableSkillIds = agent.config.skills === true
-    ? ["*"]
-    : Array.isArray(agent.config.skills)
-    ? agent.config.skills
-    : undefined;
+  const hasVisibleSkills = skillRegistry.hasVisibleSkills({ agentId: agent.id });
   const allowedToolNames = resolveHostedRuntimeAllowedToolNames({
     allowedToolNames: toolAllowlist,
     localToolNames: Object.keys(mergedTools),
-    ...(availableSkillIds ? { availableSkillIds } : {}),
+    ...(hasVisibleSkills ? { availableSkillIds: ["*"] } : {}),
   });
   if (!allowedToolNames) {
     return mergedTools;
@@ -420,6 +503,29 @@ function applyRuntimeToolAllowlist(
   return Object.fromEntries(
     Object.entries(mergedTools).filter(([toolName]) => allowedToolNames.has(toolName)),
   );
+}
+
+function getRequiredLocalToolNames(input: {
+  mergedTools: Agent["config"]["tools"];
+  availableLocalTools: Record<string, Tool | boolean>;
+  agent: Agent;
+}): string[] {
+  if (!input.mergedTools || input.mergedTools === true) {
+    return [];
+  }
+
+  return Object.entries(input.mergedTools)
+    .filter(([toolName, entry]) => {
+      if (entry && typeof entry === "object") {
+        return true;
+      }
+      if (Object.hasOwn(input.availableLocalTools, toolName)) {
+        return true;
+      }
+      const registryTool = toolRegistry.get(toolName);
+      return Boolean(registryTool && isToolVisibleTo(registryTool, { agentId: input.agent.id }));
+    })
+    .map(([toolName]) => toolName);
 }
 
 function getServerResolvedProjectToolNames(
@@ -521,13 +627,13 @@ async function getDeclaredRemoteSourceToolNames(input: {
 
 function compactRuntimeMessagesForStream(
   messages: Message[],
-  mergedTools: Agent["config"]["tools"],
+  systemPrompt: string,
+  toolCount: number,
 ): Message[] {
-  const toolCount = mergedTools && mergedTools !== true ? Object.keys(mergedTools).length : 0;
   return convertProviderMessagesToAgentRuntimeMessages(
     compactForStep(
       convertAgentRuntimeMessagesToProviderMessages(messages),
-      estimateOverhead("", toolCount),
+      estimateOverhead(systemPrompt, toolCount),
     ),
   ) as Message[];
 }
@@ -550,92 +656,139 @@ export async function createRuntimeAgentStreamResponse(
     threadId: input.threadId,
   });
 
-  const forwardedAllowedRemoteToolNames = getAllowedRemoteToolNames(input.forwardedProps);
-  const sourceAllowedRemoteToolNames = getAgentAllowedRemoteToolNames(agent);
-  const grantedRemoteToolNames = forwardedAllowedRemoteToolNames === undefined
-    ? undefined
-    : mergeRemoteToolNames(
-      sourceAllowedRemoteToolNames,
-      forwardedAllowedRemoteToolNames,
-    );
-  const runtimeToolAllowlist = getRuntimeToolAllowlist(input.forwardedProps);
-  if (runtimeToolAllowlist === null && forwardedAllowedRemoteToolNames !== undefined) {
-    logger.debug(
-      "runtimeOverrides.allowedTools is additive on internal runs; use runtimeOverrides.toolAllowlist to restrict the run tool surface",
-      { runId: input.runId, agentId: agent.id },
-    );
-  }
-  const forwardedIntegrationToolDefs = getForwardedIntegrationToolDefinitions(input.forwardedProps);
-  const availableForwardedToolNames = forwardedIntegrationToolDefs?.map((tool) => tool.name);
-  // A restrictive toolAllowlist caps remote exposure too: it intersects the
-  // tightest existing remote filter (forwarded grants, else the agent source's
-  // own __vfAllowedRemoteTools). With neither present, discover the agent's
-  // declared remote-source surface and intersect with that. A bare allowlist
-  // entry can narrow actual remote sources, but never becomes an implicit
-  // project-scoped integration grant (#2768).
-  const sourceRemoteFilterBase = Object.hasOwn(agent.config, "__vfAllowedRemoteTools")
-    ? sourceAllowedRemoteToolNames
-    : undefined;
-  const remoteFallbackBase = runtimeToolAllowlist !== null &&
-      grantedRemoteToolNames === undefined &&
-      sourceRemoteFilterBase === undefined
-    ? await getDeclaredRemoteSourceToolNames({ agent, runInput: input, deps })
-    : undefined;
-  const allowedRemoteToolNames = runtimeToolAllowlist === null
-    ? grantedRemoteToolNames
-    : (grantedRemoteToolNames ?? sourceRemoteFilterBase ?? remoteFallbackBase ?? []).filter(
-      (toolName) => runtimeToolAllowlist.has(toolName),
-    );
-  const sandboxTools = await buildProjectAgentSandboxTools({ agent, deps });
-  const availableLocalTools = {
-    ...(deps.localTools ?? {}),
-    ...(sandboxTools.tools ?? {}),
-  };
-  const mergedTools = applyRuntimeToolAllowlist(
-    buildMergedTools(
-      agent,
-      input,
-      deps.sessionManager,
-      availableForwardedToolNames,
-      Object.keys(availableLocalTools).length > 0 ? availableLocalTools : undefined,
-    ),
-    runtimeToolAllowlist,
-    agent,
-  );
-  // Provider-native tools (e.g. web_search) are provider-side and bypass the
-  // merged tool record, so cap them against the allowlist explicitly.
-  const cappedProviderTools =
-    runtimeToolAllowlist !== null && Array.isArray(agent.config.providerTools)
-      ? agent.config.providerTools.filter(
-        (toolName) => typeof toolName === "string" && runtimeToolAllowlist.has(toolName),
-      )
-      : undefined;
-  const runtimeAgent: RuntimeFilteredAgent = {
-    ...agent,
-    config: {
-      ...agent.config,
-      tools: mergedTools,
-      ...(cappedProviderTools !== undefined ? { providerTools: cappedProviderTools } : {}),
-      ...(allowedRemoteToolNames !== undefined
-        ? { __vfAllowedRemoteTools: allowedRemoteToolNames }
-        : {}),
-      ...(forwardedIntegrationToolDefs !== undefined
-        ? { __vfForwardedIntegrationToolDefs: forwardedIntegrationToolDefs }
-        : {}),
-    },
-  };
-  const runtime = deps.createRuntime?.(runtimeAgent, mergedTools) ??
-    new AgentRuntime(runtimeAgent.id, runtimeAgent.config);
-
   let completedResponse: AgentResponse | null = null;
-  const runtimeMessages = compactRuntimeMessagesForStream(
-    normalizeAgUiRuntimeMessages(input.messages),
-    mergedTools,
-  );
   let runtimeStream: ReadableStream<Uint8Array>;
-  let clientAttached = true;
+  let closeSandbox = createIdempotentAsyncCleanup();
   try {
-    runtimeStream = await runtime.stream(
+    const forwardedAllowedRemoteToolNames = getAllowedRemoteToolNames(input.forwardedProps);
+    const sourceAllowedRemoteToolNames = getAgentAllowedRemoteToolNames(agent);
+    const grantedRemoteToolNames = forwardedAllowedRemoteToolNames === undefined
+      ? undefined
+      : mergeRemoteToolNames(
+        sourceAllowedRemoteToolNames,
+        forwardedAllowedRemoteToolNames,
+      );
+    const runtimeToolAllowlist = getRuntimeToolAllowlist(input.forwardedProps);
+    if (runtimeToolAllowlist === null && forwardedAllowedRemoteToolNames !== undefined) {
+      logger.debug(
+        "runtimeOverrides.allowedTools is additive on internal runs; use runtimeOverrides.toolAllowlist to restrict the run tool surface",
+        { runId: input.runId, agentId: agent.id },
+      );
+    }
+    const forwardedIntegrationToolDefs = getForwardedIntegrationToolDefinitions(
+      input.forwardedProps,
+    );
+    const availableForwardedToolNames = forwardedIntegrationToolDefs?.map((tool) => tool.name);
+    // A restrictive toolAllowlist caps remote exposure too: it intersects the
+    // tightest existing remote filter (forwarded grants, else the agent source's
+    // own __vfAllowedRemoteTools). With neither present, discover the agent's
+    // declared remote-source surface and intersect with that. A bare allowlist
+    // entry can narrow actual remote sources, but never becomes an implicit
+    // project-scoped integration grant (#2768).
+    const sourceRemoteFilterBase = Object.hasOwn(agent.config, "__vfAllowedRemoteTools")
+      ? sourceAllowedRemoteToolNames
+      : undefined;
+    const remoteFallbackBase = runtimeToolAllowlist !== null &&
+        grantedRemoteToolNames === undefined &&
+        sourceRemoteFilterBase === undefined
+      ? await getDeclaredRemoteSourceToolNames({ agent, runInput: input, deps })
+      : undefined;
+    const allowedRemoteToolNames = runtimeToolAllowlist === null
+      ? grantedRemoteToolNames
+      : (grantedRemoteToolNames ?? sourceRemoteFilterBase ?? remoteFallbackBase ?? []).filter(
+        (toolName) => runtimeToolAllowlist.has(toolName),
+      );
+    const sandboxTools = await buildProjectAgentSandboxTools({ agent, deps });
+    closeSandbox = sandboxTools.closeSandbox ?? closeSandbox;
+    const availableLocalTools = {
+      ...(deps.localTools ?? {}),
+      ...(sandboxTools.tools ?? {}),
+    };
+    const mergedTools = applyRuntimeToolAllowlist(
+      buildMergedTools(
+        agent,
+        input,
+        deps.sessionManager,
+        availableForwardedToolNames,
+        Object.keys(availableLocalTools).length > 0 ? availableLocalTools : undefined,
+      ),
+      runtimeToolAllowlist,
+      agent,
+    );
+    // Provider-native tools (e.g. web_search) are provider-side and bypass the
+    // merged tool record, so cap them against the allowlist explicitly.
+    const cappedProviderTools =
+      runtimeToolAllowlist !== null && Array.isArray(agent.config.providerTools)
+        ? agent.config.providerTools.filter(
+          (toolName) => typeof toolName === "string" && runtimeToolAllowlist.has(toolName),
+        )
+        : undefined;
+    const effectiveProviderToolNames = cappedProviderTools ??
+      (Array.isArray(agent.config.providerTools)
+        ? agent.config.providerTools.filter((toolName): toolName is string =>
+          typeof toolName === "string"
+        )
+        : []);
+    const modelSupportedProviderToolNames = new Set(
+      getProviderNativeToolNames({ model: agent.config.model }),
+    );
+    const providerToolNames = effectiveProviderToolNames.filter((toolName) =>
+      modelSupportedProviderToolNames.has(toolName)
+    );
+    const mergedToolNames = mergedTools && mergedTools !== true ? Object.keys(mergedTools) : [];
+    const allowedRemoteToolNameSet = new Set(allowedRemoteToolNames ?? []);
+    const forwardedToolNames = (forwardedIntegrationToolDefs?.map((def) => def.name) ?? [])
+      .filter((toolName) => allowedRemoteToolNameSet.has(toolName));
+    const localToolNames = getRequiredLocalToolNames({
+      mergedTools,
+      availableLocalTools,
+      agent,
+    });
+    const runtimeToolNames = selectProviderCompatibleToolNames(
+      [
+        ...new Set([
+          ...mergedToolNames,
+          ...providerToolNames,
+          ...(allowedRemoteToolNames ?? []),
+          ...forwardedToolNames,
+        ]),
+      ].sort(),
+      {
+        model: agent.config.model,
+        requiredToolNames: localToolNames,
+      },
+    );
+    const systemPrompt = await composeInternalAgentRunSystemPrompt({
+      agent,
+      runInput: input,
+      projectId: deps.projectAgentSandbox?.projectId ?? null,
+      branchId: deps.projectAgentSandbox?.branchId,
+      toolNames: runtimeToolNames,
+    });
+    const runtimeAgent: RuntimeFilteredAgent = {
+      ...agent,
+      config: {
+        ...agent.config,
+        system: systemPrompt,
+        tools: mergedTools,
+        ...(cappedProviderTools !== undefined ? { providerTools: cappedProviderTools } : {}),
+        ...(allowedRemoteToolNames !== undefined
+          ? { __vfAllowedRemoteTools: allowedRemoteToolNames }
+          : {}),
+        ...(forwardedIntegrationToolDefs !== undefined
+          ? { __vfForwardedIntegrationToolDefs: forwardedIntegrationToolDefs }
+          : {}),
+      },
+    };
+    const runtime = deps.createRuntime?.(runtimeAgent, mergedTools) ??
+      new AgentRuntime(runtimeAgent.id, runtimeAgent.config);
+    const runtimeMessages = compactRuntimeMessagesForStream(
+      normalizeAgUiRuntimeMessages(input.messages),
+      systemPrompt,
+      runtimeToolNames.length,
+    );
+    const maxOutputTokens = getForwardedMaxOutputTokens(input.forwardedProps);
+    const candidateRuntimeStream = await runtime.stream(
       runtimeMessages,
       {
         threadId: input.threadId,
@@ -654,9 +807,13 @@ export async function createRuntimeAgentStreamResponse(
         },
       },
       undefined,
-      undefined,
+      maxOutputTokens,
       abortSignal,
     );
+    if (candidateRuntimeStream.locked) {
+      throw new TypeError("Internal agent runtime returned a locked stream");
+    }
+    runtimeStream = candidateRuntimeStream;
     logger.info("Internal agent runtime stream attached", {
       runId: input.runId,
       threadId: input.threadId,
@@ -664,7 +821,7 @@ export async function createRuntimeAgentStreamResponse(
     });
   } catch (error) {
     deps.sessionManager.failRun(input.runId);
-    await sandboxTools.closeSandbox?.().catch((cleanupError) => {
+    await closeSandbox().catch((cleanupError) => {
       logger.warn("Internal agent runtime sandbox cleanup failed after setup error", {
         runId: input.runId,
         agentId: agent.id,
@@ -680,194 +837,312 @@ export async function createRuntimeAgentStreamResponse(
     throw error;
   }
 
+  let clientAttached = true;
   let stopHeartbeat: (() => void) | undefined;
   const response = new ReadableStream<Uint8Array>({
     start: async (controller) => {
-      const state = createStreamTransformState();
-      const reader = runtimeStream.getReader();
-      const decoder = new TextDecoder();
-      let remainder = "";
-      let aborted = false;
-      let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
-      stopHeartbeat = () => {
-        if (heartbeatTimer) {
-          clearInterval(heartbeatTimer);
-          heartbeatTimer = undefined;
-        }
-      };
+      await withSpan(
+        "agent.run",
+        async (runSpan) => {
+          setSpanAttributes(
+            runSpan,
+            buildInternalAgentRunTraceAttributes({
+              runInput: input,
+              agent,
+              deps,
+              status: "running",
+            }),
+          );
+          addSpanEvent(runSpan, "agent.run.started");
+          const state = createStreamTransformState();
+          const reader = runtimeStream.getReader();
+          const decoder = new TextDecoder();
+          let remainder = "";
+          let aborted = false;
+          let readerReachedEof = false;
+          let readerExitReason: unknown = new Error(
+            "Internal agent runtime stream stopped before EOF",
+          );
+          let readerCancellation: Promise<void> | undefined;
+          let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+          stopHeartbeat = () => {
+            if (heartbeatTimer) {
+              clearInterval(heartbeatTimer);
+              heartbeatTimer = undefined;
+            }
+          };
 
-      const enqueueIfAttached = (event: string, payload: Record<string, unknown>) => {
-        const encodedEvent = formatAgUiEvent(event, payload);
-        if (!clientAttached) {
-          return;
-        }
+          const enqueueIfAttached = (event: string, payload: Record<string, unknown>) => {
+            const encodedEvent = formatAgUiEvent(event, payload);
+            if (!clientAttached) {
+              return;
+            }
 
-        try {
-          controller.enqueue(encodedEvent);
-        } catch {
-          clientAttached = false;
-        }
-      };
-      const enqueueHeartbeatIfAttached = () => {
-        if (!clientAttached) {
-          return;
-        }
+            try {
+              controller.enqueue(encodedEvent);
+            } catch {
+              clientAttached = false;
+            }
+          };
+          const enqueueHeartbeatIfAttached = () => {
+            if (!clientAttached) {
+              return;
+            }
 
-        try {
-          controller.enqueue(INTERNAL_AGENT_RUNTIME_HEARTBEAT_FRAME);
-        } catch {
-          clientAttached = false;
-        }
-      };
-      const prepareToolResultIfNeeded = (event: string, payload: Record<string, unknown>) => {
-        if (
-          event !== "ToolCallStart" && event !== "ToolCallArgs" &&
-          event !== "ToolCallEnd"
-        ) {
-          return;
-        }
+            try {
+              controller.enqueue(INTERNAL_AGENT_RUNTIME_HEARTBEAT_FRAME);
+            } catch {
+              clientAttached = false;
+            }
+          };
+          const prepareToolResultIfNeeded = (event: string, payload: Record<string, unknown>) => {
+            if (
+              event !== "ToolCallStart" && event !== "ToolCallArgs" &&
+              event !== "ToolCallEnd"
+            ) {
+              return;
+            }
 
-        const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : null;
-        if (!toolCallId) {
-          return;
-        }
+            const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : null;
+            if (!toolCallId) {
+              return;
+            }
 
-        deps.sessionManager.prepareForToolResult(input.runId, toolCallId);
-      };
+            deps.sessionManager.prepareForToolResult(input.runId, toolCallId);
+          };
 
-      const throwIfAborted = () => {
-        if (aborted || abortSignal.aborted) {
-          throw new AgentRunCancelledError();
-        }
-      };
+          const throwIfAborted = () => {
+            if (aborted || abortSignal.aborted) {
+              throw new AgentRunCancelledError();
+            }
+          };
 
-      const abortHandler = () => {
-        aborted = true;
-        logger.warn("Internal agent runtime stream aborted", {
-          runId: input.runId,
-          threadId: input.threadId,
-          agentId: agent.id,
-        });
-        reader.cancel(new AgentRunCancelledError()).catch((error) => {
-          logger.debug("Internal agent runtime reader cancellation failed during abort cleanup", {
-            runId: input.runId,
-            threadId: input.threadId,
-            agentId: agent.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        });
-      };
+          const cancelReaderOnce = (reason: unknown): Promise<void> => {
+            if (readerReachedEof) {
+              return Promise.resolve();
+            }
+            readerCancellation ??= reader.cancel(reason).catch((error) => {
+              logger.debug(
+                "Internal agent runtime reader cancellation failed during cleanup",
+                {
+                  runId: input.runId,
+                  threadId: input.threadId,
+                  agentId: agent.id,
+                  error: error instanceof Error ? error.message : String(error),
+                },
+              );
+            });
+            return readerCancellation;
+          };
 
-      abortSignal.addEventListener("abort", abortHandler, { once: true });
-      enqueueIfAttached("RunStarted", {
-        runId: input.runId,
-        threadId: input.threadId,
-        agentId: agent.id,
-      });
-      heartbeatTimer = setInterval(
-        enqueueHeartbeatIfAttached,
-        INTERNAL_AGENT_RUNTIME_HEARTBEAT_INTERVAL_MS,
-      );
-
-      try {
-        while (true) {
-          throwIfAborted();
-
-          const { done, value } = await reader.read();
-          throwIfAborted();
-
-          if (done) {
-            logger.info("Internal agent runtime stream reader completed", {
+          const abortHandler = () => {
+            if (aborted) {
+              return;
+            }
+            aborted = true;
+            const cancellationError = new AgentRunCancelledError();
+            readerExitReason = cancellationError;
+            logger.warn("Internal agent runtime stream aborted", {
               runId: input.runId,
               threadId: input.threadId,
               agentId: agent.id,
             });
-            break;
-          }
+            void cancelReaderOnce(cancellationError);
+          };
 
-          remainder += decoder.decode(value, { stream: true });
-          const parsed = parseSseJsonEvents(remainder);
-          remainder = parsed.remainder;
+          try {
+            abortSignal.addEventListener("abort", abortHandler, { once: true });
+            if (abortSignal.aborted) {
+              abortHandler();
+            }
+            enqueueIfAttached("RunStarted", {
+              runId: input.runId,
+              threadId: input.threadId,
+              agentId: agent.id,
+            });
+            heartbeatTimer = setInterval(
+              enqueueHeartbeatIfAttached,
+              INTERNAL_AGENT_RUNTIME_HEARTBEAT_INTERVAL_MS,
+            );
 
-          for (const event of parsed.events) {
-            for (const mappedEvent of mapRuntimeEventToAgUi(state, event)) {
-              prepareToolResultIfNeeded(mappedEvent.event, mappedEvent.payload);
+            while (true) {
+              throwIfAborted();
+
+              const { done, value } = await reader.read();
+              throwIfAborted();
+
+              if (done) {
+                readerReachedEof = true;
+                logger.info("Internal agent runtime stream reader completed", {
+                  runId: input.runId,
+                  threadId: input.threadId,
+                  agentId: agent.id,
+                });
+                break;
+              }
+
+              remainder += decoder.decode(value, { stream: true });
+              const parsed = parseSseJsonEvents(remainder);
+              remainder = parsed.remainder;
+
+              for (const event of parsed.events) {
+                for (const mappedEvent of mapRuntimeEventToAgUi(state, event)) {
+                  prepareToolResultIfNeeded(mappedEvent.event, mappedEvent.payload);
+                  enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
+                }
+              }
+            }
+
+            throwIfAborted();
+
+            const trailingEvents = parseSseJsonEvents(`${remainder}\n\n`);
+            for (const event of trailingEvents.events) {
+              for (const mappedEvent of mapRuntimeEventToAgUi(state, event)) {
+                prepareToolResultIfNeeded(mappedEvent.event, mappedEvent.payload);
+                enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
+              }
+            }
+
+            throwIfAborted();
+
+            for (const mappedEvent of finalizeRunEvents(state, completedResponse)) {
               enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
             }
+            const finalStatus = state.sawTerminalError ? "failed" : "completed";
+            if (state.sawTerminalError) {
+              deps.sessionManager.failRun(input.runId);
+            } else {
+              deps.sessionManager.completeRun(input.runId);
+            }
+            setSpanAttributes(runSpan, {
+              ...buildInternalAgentRunTraceAttributes({
+                runInput: input,
+                agent,
+                deps,
+                status: finalStatus,
+              }),
+              "agent.run.final_status": finalStatus,
+              "agent.run.saw_visible_output": state.sawVisibleOutput,
+              "agent.run.saw_terminal_error": state.sawTerminalError,
+              ...(state.sawTerminalError ? { "error.type": "AgentRunTerminalError" } : {}),
+              ...buildRuntimeUsageTraceAttributes(completedResponse?.usage),
+              ...(state.metadata.finishReason
+                ? { "gen_ai.response.finish_reasons": state.metadata.finishReason }
+                : {}),
+            });
+            addSpanEvent(
+              runSpan,
+              state.sawTerminalError ? "agent.run.failed" : "agent.run.completed",
+            );
+            logger.info("Internal agent runtime stream finalized", {
+              runId: input.runId,
+              threadId: input.threadId,
+              agentId: agent.id,
+              status: finalStatus,
+              sawVisibleOutput: state.sawVisibleOutput,
+              sawTerminalError: state.sawTerminalError,
+              finishReason: state.metadata.finishReason,
+            });
+          } catch (error) {
+            readerExitReason = error;
+            if (error instanceof AgentRunCancelledError) {
+              deps.sessionManager.cancelRun(input.runId);
+              setSpanAttributes(runSpan, {
+                ...buildInternalAgentRunTraceAttributes({
+                  runInput: input,
+                  agent,
+                  deps,
+                  status: "cancelled",
+                }),
+                "agent.run.final_status": "cancelled",
+                "error.type": "AgentRunCancelledError",
+                "error.message": error.message,
+              });
+              addSpanEvent(runSpan, "agent.run.cancelled");
+              logger.warn("Internal agent runtime stream cancelled", {
+                runId: input.runId,
+                threadId: input.threadId,
+                agentId: agent.id,
+                error: error.message,
+              });
+              enqueueIfAttached("RunError", {
+                code: "CANCELLED",
+                message: error.message,
+              });
+            } else {
+              deps.sessionManager.failRun(input.runId);
+              const errorMessage = error instanceof Error ? error.message : String(error);
+              setSpanAttributes(runSpan, {
+                ...buildInternalAgentRunTraceAttributes({
+                  runInput: input,
+                  agent,
+                  deps,
+                  status: "failed",
+                }),
+                "agent.run.final_status": "failed",
+                "error.type": error instanceof Error ? error.name : "Error",
+                "error.message": errorMessage,
+              });
+              addSpanEvent(runSpan, "agent.run.failed");
+              logger.error("Internal agent runtime stream failed", {
+                runId: input.runId,
+                threadId: input.threadId,
+                agentId: agent.id,
+                error: errorMessage,
+              });
+              enqueueIfAttached("RunError", {
+                code: "RUNTIME_ERROR",
+                message: errorMessage,
+              });
+            }
+          } finally {
+            stopHeartbeat?.();
+            stopHeartbeat = undefined;
+            abortSignal.removeEventListener("abort", abortHandler);
+            if (!readerReachedEof) {
+              await cancelReaderOnce(readerExitReason);
+            }
+            try {
+              reader.releaseLock();
+            } catch (releaseError) {
+              logger.debug("Internal agent runtime reader lock release failed", {
+                runId: input.runId,
+                threadId: input.threadId,
+                agentId: agent.id,
+                error: releaseError instanceof Error ? releaseError.message : String(releaseError),
+              });
+            }
+            await closeSandbox().catch((cleanupError) => {
+              logger.warn("Internal agent runtime sandbox cleanup failed", {
+                runId: input.runId,
+                agentId: agent.id,
+                error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+              });
+            });
           }
-        }
+        },
+        buildInternalAgentRunTraceAttributes({
+          runInput: input,
+          agent,
+          deps,
+          status: "running",
+        }),
+      );
 
-        throwIfAborted();
-
-        const trailingEvents = parseSseJsonEvents(`${remainder}\n\n`);
-        for (const event of trailingEvents.events) {
-          for (const mappedEvent of mapRuntimeEventToAgUi(state, event)) {
-            prepareToolResultIfNeeded(mappedEvent.event, mappedEvent.payload);
-            enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
-          }
-        }
-
-        throwIfAborted();
-
-        for (const mappedEvent of finalizeRunEvents(state, completedResponse)) {
-          enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
-        }
-        deps.sessionManager.completeRun(input.runId);
-        logger.info("Internal agent runtime stream finalized", {
-          runId: input.runId,
-          threadId: input.threadId,
-          agentId: agent.id,
-          sawVisibleOutput: state.sawVisibleOutput,
-          sawTerminalError: state.sawTerminalError,
-          finishReason: state.metadata.finishReason,
-        });
-      } catch (error) {
-        if (error instanceof AgentRunCancelledError) {
-          deps.sessionManager.cancelRun(input.runId);
-          logger.warn("Internal agent runtime stream cancelled", {
-            runId: input.runId,
-            threadId: input.threadId,
-            agentId: agent.id,
-            error: error.message,
-          });
-          enqueueIfAttached("RunError", {
-            code: "CANCELLED",
-            message: error.message,
-          });
-        } else {
-          deps.sessionManager.failRun(input.runId);
-          logger.error("Internal agent runtime stream failed", {
-            runId: input.runId,
-            threadId: input.threadId,
-            agentId: agent.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          enqueueIfAttached("RunError", {
-            code: "RUNTIME_ERROR",
-            message: error instanceof Error ? error.message : String(error),
-          });
-        }
-      } finally {
-        stopHeartbeat?.();
-        stopHeartbeat = undefined;
-        abortSignal.removeEventListener("abort", abortHandler);
-        if (clientAttached) {
-          controller.close();
-        }
-        await sandboxTools.closeSandbox?.().catch((cleanupError) => {
-          logger.warn("Internal agent runtime sandbox cleanup failed", {
-            runId: input.runId,
-            agentId: agent.id,
-            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
-          });
-        });
-        logger.debug("Internal agent runtime stream response closed", {
-          runId: input.runId,
-          threadId: input.threadId,
-          agentId: agent.id,
-          clientAttached,
-        });
+      // `withSpan` ends the run span after its callback settles. Keep the
+      // response open until that lifecycle has completed so observing EOF also
+      // guarantees that the terminal run telemetry is finalized. Cancellation
+      // marks the client detached, in which case the stream is already closed
+      // by its consumer and must not be closed a second time here.
+      if (clientAttached) {
+        controller.close();
       }
+      logger.debug("Internal agent runtime stream response closed", {
+        runId: input.runId,
+        threadId: input.threadId,
+        agentId: agent.id,
+        clientAttached,
+      });
     },
     cancel() {
       clientAttached = false;

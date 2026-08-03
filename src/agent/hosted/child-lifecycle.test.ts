@@ -360,4 +360,33 @@ describe("agent/hosted-child-lifecycle", () => {
     assertEquals(result.terminalState.status, "completed");
     assertEquals(result.terminalState.terminalErrorCode, "DURABLE_CHILD_COMPLETED_EXTERNALLY");
   });
+
+  it("returns externally completed terminal states without rethrowing unexpected final status", async () => {
+    const result = await runHostedChildExecutionLifecycle({
+      adapter: {
+        completed: () => {
+          throw new Error("completed terminal persistence must be skipped");
+        },
+      },
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      execute: () => {
+        throw new HostedChildTerminalStateError("completed", {
+          childConversationId: "conversation-1",
+          childRunId: "run-1",
+          childMessageId: "message-1",
+          latestEventId: 1,
+          latestExternalEventSequence: 1,
+        });
+      },
+      getExecutionSnapshot: () => null,
+    });
+
+    assertEquals(result.status, "failed");
+    assertEquals(result.terminalState, {
+      status: "completed",
+      terminalErrorCode: "DURABLE_CHILD_COMPLETED_EXTERNALLY",
+      terminalErrorMessage:
+        "Hosted child run run-1 became completed before local execution finished",
+    });
+  });
 });

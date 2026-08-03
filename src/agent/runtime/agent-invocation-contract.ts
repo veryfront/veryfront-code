@@ -1,7 +1,7 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, RefinementCtx } from "#veryfront/extensions/schema/index.ts";
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-extensions.ts";
-import { parseAgUiJsonRequestOrError } from "../ag-ui/request-shared.ts";
+import { parseAgUiJsonBody, parseAgUiJsonRequestOrError } from "../ag-ui/request-shared.ts";
 import { getRuntimeAgentMarkdownDefinitionSchema } from "./agent-definition.ts";
 
 ensureBuiltinSchemaValidator();
@@ -133,7 +133,7 @@ export const getRuntimeAgentSourceContextSchema = defineSchema((v) =>
     v.object({
       type: v.literal("environment"),
       environmentName: v.string().min(1).max(255),
-      releaseId: v.string().min(1).max(255).optional(),
+      releaseId: v.string().min(1).max(255),
     }),
     v.object({
       type: v.literal("release"),
@@ -156,7 +156,7 @@ export const getRuntimeAgentTargetKindSchema = defineSchema((v) =>
  */
 export const RuntimeAgentTargetKindSchema = lazySchema(getRuntimeAgentTargetKindSchema);
 
-type RuntimeAgentTargetSelectionInput = {
+export type RuntimeAgentTargetSelectionInput = {
   runtimeTargetKind?: InferSchema<ReturnType<typeof getRuntimeAgentTargetKindSchema>> | null;
   runtimeTargetEnvironmentId?: string | null;
   runtimeTargetBranchId?: string | null;
@@ -199,6 +199,44 @@ export function validateRuntimeAgentTargetSelection(
       path: ["runtimeTargetKind"],
     });
   }
+}
+
+/**
+ * Binds the selected source snapshot to the runtime target whose identifiers
+ * will be signed into the control-plane request.
+ */
+export function validateRuntimeAgentSourceTargetBinding(
+  input: RuntimeAgentTargetSelectionInput & { agentSource: RuntimeAgentSourceContext },
+  ctx: RefinementCtx,
+) {
+  const kind = input.runtimeTargetKind ?? "main_branch";
+  const sourceType = input.agentSource.type;
+
+  if (sourceType === "environment" && kind !== "environment") {
+    ctx.addIssue({
+      code: "custom",
+      message: "environment agent source requires an environment runtime target",
+      path: ["agentSource", "type"],
+    });
+  } else if (sourceType !== "environment" && kind === "environment") {
+    ctx.addIssue({
+      code: "custom",
+      message: "environment runtime target requires an environment agent source",
+      path: ["agentSource", "type"],
+    });
+  }
+
+  if (sourceType === "release" && kind !== "main_branch") {
+    ctx.addIssue({
+      code: "custom",
+      message: "release agent source requires a main-branch runtime target",
+      path: ["agentSource", "type"],
+    });
+  }
+
+  // A project's default branch is platform metadata, not a framework literal.
+  // Hosted runtimes compare branch sources with the trusted default branch
+  // supplied by the proxy after body-bound control-plane verification.
 }
 
 export const getRuntimeAgentProjectContextSchema = defineSchema((v) =>
@@ -314,7 +352,7 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
       (value) => isWithinJsonSizeLimit(value, MAX_CONTEXT_TOTAL_BYTES),
       { message: "context must be less than 64 KB total" },
     ),
-    agentSource: getRuntimeAgentSourceContextSchema().optional(),
+    agentSource: getRuntimeAgentSourceContextSchema(),
     agentConfig: getRuntimeAgentMarkdownDefinitionSchema().optional().refine(
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_AGENT_CONFIG_BYTES),
       { message: "agentConfig must be less than 64 KB" },
@@ -332,6 +370,14 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
         path: ["agentConfig", "id"],
       });
     }
+
+    validateRuntimeAgentSourceTargetBinding(
+      {
+        ...input.run.project,
+        agentSource: input.agentSource,
+      },
+      ctx,
+    );
   })
 );
 
@@ -380,8 +426,11 @@ export type RuntimeAgentControlPlaneStreamRequest = {
   messages: RuntimeAgentRunInvocation["messages"];
   tools: RuntimeAgentRunInvocation["tools"];
   context: RuntimeAgentRunInvocation["context"];
+  runtimeTargetKind: NonNullable<RuntimeAgentProjectContext["runtimeTargetKind"]>;
+  runtimeTargetEnvironmentId?: RuntimeAgentProjectContext["runtimeTargetEnvironmentId"];
+  runtimeTargetBranchId?: RuntimeAgentProjectContext["runtimeTargetBranchId"];
   credentials?: RuntimeAgentRunInvocation["credentials"];
-  agentSource?: RuntimeAgentRunInvocation["agentSource"];
+  agentSource: RuntimeAgentRunInvocation["agentSource"];
   agentConfig?: RuntimeAgentRunInvocation["agentConfig"];
   forwardedProps?: RuntimeAgentRunInvocation["forwardedProps"];
 };
@@ -398,8 +447,11 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
     messages: input.messages,
     tools: input.tools,
     context: input.context,
+    runtimeTargetKind: input.run.project.runtimeTargetKind ?? "main_branch",
+    runtimeTargetEnvironmentId: input.run.project.runtimeTargetEnvironmentId ?? null,
+    runtimeTargetBranchId: input.run.project.runtimeTargetBranchId ?? null,
     ...(input.credentials ? { credentials: input.credentials } : {}),
-    ...(input.agentSource ? { agentSource: input.agentSource } : {}),
+    agentSource: input.agentSource,
     ...(input.agentConfig ? { agentConfig: input.agentConfig } : {}),
     ...(input.forwardedProps ? { forwardedProps: input.forwardedProps } : {}),
   };
@@ -409,7 +461,7 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
 export async function parseRuntimeAgentRunInvocation(
   request: Request,
 ): Promise<RuntimeAgentRunInvocation> {
-  return getRuntimeAgentRunInvocationSchema().parse(await request.json());
+  return getRuntimeAgentRunInvocationSchema().parse(await parseAgUiJsonBody(request));
 }
 
 /** Error shape for parse runtime agent run invocation or. */

@@ -1,6 +1,6 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
-import { parseAgUiJsonRequestOrError } from "../ag-ui/request-shared.ts";
+import { parseAgUiJsonBody, parseAgUiJsonRequestOrError } from "../ag-ui/request-shared.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_TOOL_PARAMETERS_BYTES = 16_384;
@@ -112,11 +112,37 @@ export const getAgUiRuntimeSystemMessageSchema = defineSchema((v) =>
   }).strict()
 );
 
+export const getAgUiRuntimeAttachmentSchema = defineSchema((v) =>
+  v.discriminatedUnion("type", [
+    v.object({
+      type: v.literal("image"),
+      url: v.string().min(1),
+      mediaType: v.string().min(1),
+      uploadId: v.string().min(1).optional(),
+      upload_id: v.string().min(1).optional(),
+      uploadPath: v.string().min(1).optional(),
+      upload_path: v.string().min(1).optional(),
+      filename: v.string().min(1).optional(),
+    }).strict(),
+    v.object({
+      type: v.literal("file"),
+      url: v.string().min(1),
+      mediaType: v.string().min(1),
+      uploadId: v.string().min(1).optional(),
+      upload_id: v.string().min(1).optional(),
+      uploadPath: v.string().min(1).optional(),
+      upload_path: v.string().min(1).optional(),
+      filename: v.string().min(1).optional(),
+    }).strict(),
+  ])
+);
+
 export const getAgUiRuntimeUserMessageSchema = defineSchema((v) =>
   v.object({
     id: v.string().min(1),
     role: v.literal("user"),
     content: v.string(),
+    attachments: v.array(getAgUiRuntimeAttachmentSchema()).optional(),
     ...runtimeMessageExtensionFields(v),
   }).strict()
 );
@@ -221,7 +247,7 @@ export function normalizeAgUiBrowserRuntimeRequest(
 
 /** Request payload for parse AG-UI runtime. */
 export async function parseAgUiRuntimeRequest(request: Request): Promise<AgUiRuntimeRequest> {
-  return getAgUiRuntimeRequestSchema().parse(await request.json());
+  return getAgUiRuntimeRequestSchema().parse(await parseAgUiJsonBody(request));
 }
 
 /** Error shape for parse AG-UI runtime request or. */

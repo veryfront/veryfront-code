@@ -6,8 +6,8 @@
  */
 
 import { detectPlatform } from "#veryfront/platform/core-platform.ts";
-import { agentLogger } from "#veryfront/utils/logger/logger.ts";
-import { ensureError } from "#veryfront/errors/veryfront-error.ts";
+import { agentLogger } from "#veryfront/utils";
+import { ensureError } from "#veryfront/errors";
 import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
 import type {
   DiscoveryConfig,
@@ -28,10 +28,10 @@ import {
   toolHandler,
   webhookHandler,
   workflowHandler,
-  workHandler,
 } from "./handlers/index.ts";
 import { discoverRuntimeAgentMarkdownDefinitions } from "./handlers/runtime-agent-markdown-handler.ts";
 import { filenameToId } from "./discovery-utils.ts";
+import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 
 const logger = agentLogger.component("discovery");
 
@@ -136,7 +136,13 @@ async function discoverItems<T>(
           continue;
         }
 
-        const registered = handler.register(id, candidate.item, file, dir);
+        const registered = handler.register(
+          id,
+          candidate.item,
+          file,
+          dir,
+          candidate.exportName,
+        );
         resultMap.set(id, registered);
 
         if (verbose) {
@@ -180,12 +186,20 @@ async function discoverConfiguredItems<T>(
  * Discover all items in configured directories
  */
 export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryResult> {
+  if (!isExplicitHostProjectCodeExecutionAllowed(config)) {
+    throw new TypeError(
+      "Executable project discovery requires explicit trusted-local execution",
+    );
+  }
+
   const baseDir = config.baseDir;
 
   const context: FileDiscoveryContext = {
     platform: detectPlatform(),
     fsAdapter: config.fsAdapter,
+    cacheNamespace: config.cacheNamespace,
     baseDir,
+    allowHostProjectCodeExecution: true,
   };
 
   const result: DiscoveryResult = {
@@ -195,7 +209,6 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
     resources: new Map(),
     prompts: new Map(),
     workflows: new Map(),
-    works: new Map(),
     tasks: new Map(),
     schedules: new Map(),
     webhooks: new Map(),
@@ -278,17 +291,6 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
     result,
     context,
     workflowHandler,
-    config.verbose,
-  );
-
-  // Discover Work definitions
-  await discoverConfiguredItems(
-    config.workDirs,
-    ["work"],
-    baseDir,
-    result,
-    context,
-    workHandler,
     config.verbose,
   );
 

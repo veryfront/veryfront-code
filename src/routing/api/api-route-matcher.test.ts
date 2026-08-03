@@ -55,6 +55,31 @@ describe("ApiRouteMatcher", () => {
       assertEquals(router.match("/not-found"), null);
     });
 
+    it("treats regular expression metacharacters as literal path characters", () => {
+      const router = createRouter();
+      router.addRoute("/api/v1.0/users+admins", "pages/api/versioned.ts");
+
+      assertExists(router.match("/api/v1.0/users+admins"));
+      assertEquals(router.match("/api/v1x0/usersadmins"), null);
+      assertEquals(router.match("/api/v110/usersssssadmins"), null);
+    });
+
+    it("does not turn placeholder-looking static paths into dynamic routes", () => {
+      for (
+        const marker of [
+          "___PARAM___",
+          "___CATCHALL___",
+          "___OPTIONAL_CATCHALL___",
+        ]
+      ) {
+        const router = createRouter();
+        router.addRoute(`/api/${marker}`, `pages/api/${marker}.ts`);
+
+        assertEquals(router.match(`/api/${marker}`)?.route.page, `pages/api/${marker}.ts`);
+        assertEquals(router.match("/api/unrelated"), null);
+      }
+    });
+
     it("handles root route", () => {
       const router = createRouter();
       router.addRoute("/", "pages/index.tsx");
@@ -301,20 +326,20 @@ describe("ApiRouteMatcher", () => {
       assertEquals(match2.route.page, "pages/api/users.tsx");
     });
 
-    it("caches negative results", () => {
+    it("caches negative results but invalidates them when a route is added", () => {
       const router = createRouter();
       router.addRoute("/api/users", "pages/api/users.tsx");
 
+      // Negative result is cached...
       assertEquals(router.match("/api/posts"), null);
 
+      // ...but adding the matching route must invalidate that cached miss,
+      // otherwise late/hot-reloaded routes keep 404ing (the fixed bug).
       router.addRoute("/api/posts", "pages/api/posts.tsx");
 
-      assertEquals(router.match("/api/posts"), null);
-
-      router.clearCache();
-      const match3 = router.match("/api/posts");
-      assertExists(match3);
-      assertEquals(match3.route.page, "pages/api/posts.tsx");
+      const match2 = router.match("/api/posts");
+      assertExists(match2);
+      assertEquals(match2.route.page, "pages/api/posts.tsx");
     });
   });
 

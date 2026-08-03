@@ -13,6 +13,9 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { BuildManifest } from "#veryfront/build/production-build/index.ts";
 import type { CacheStrategy } from "#veryfront/security";
 import { createSecureFs } from "#veryfront/security";
+import { serverLogger } from "#veryfront/utils";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { relative, resolve } from "#veryfront/platform/compat/path/index.ts";
 import type { FileSystemRepository } from "#veryfront/repositories/types.ts";
 import {
   getExtension,
@@ -24,6 +27,17 @@ import {
 import { normalizeChunkPath } from "../../utils/chunk-utils.ts";
 import { computeEtag } from "../../handlers/utils/etag.ts";
 import { getContentType as getContentTypeFromExt } from "../../handlers/utils/content-types.ts";
+
+const logger = serverLogger.component("static-file-service");
+
+function isExpectedCandidateMiss(error: unknown): boolean {
+  if (isNotFoundError(error)) return true;
+
+  const maybeVeryfrontError = error as { name?: unknown; slug?: unknown };
+  return error instanceof Error &&
+    maybeVeryfrontError.name === "VeryfrontError" &&
+    maybeVeryfrontError.slug === "security-violation";
+}
 
 /**
  * Result of resolving a static file
@@ -113,12 +127,22 @@ export class StaticFileService {
   private getFileSystem(options: StaticFileOptions): FileSystemLike {
     if (this.fsRepo) return this.fsRepo;
 
-    return createSecureFs({
-      baseDir: options.projectDir,
+    const projectRoot = resolve(options.projectDir);
+    const secureFs = createSecureFs({
+      baseDir: projectRoot,
       adapter: options.adapter,
       context: "static-serving",
-      throwOnError: false,
     });
+
+    // StaticFileService keeps absolute paths in candidates and results, while
+    // SecureFs exposes a base-directory-scoped namespace. Adapt that boundary
+    // explicitly so the static policy can continue rejecting absolute input.
+    const toProjectPath = (path: string): string => relative(projectRoot, resolve(path));
+    return {
+      readFile: (path) => secureFs.readFile(toProjectPath(path)),
+      readFileBytes: (path) => secureFs.readFileBytes(toProjectPath(path)),
+      stat: (path) => secureFs.stat(toProjectPath(path)),
+    };
   }
 
   async resolveFile(
@@ -128,11 +152,20 @@ export class StaticFileService {
     const fs = this.getFileSystem(options);
     const normalizedPath = requestPath === "/" ? "/index.html" : requestPath;
     const candidates = await this.buildCandidates(normalizedPath, options, fs);
+    const unexpectedErrors: unknown[] = [];
 
     for (const candidate of candidates) {
-      const result = await this.tryResolveCandidate(candidate, requestPath, options, fs);
+      const result = await this.tryResolveCandidate(
+        candidate,
+        requestPath,
+        options,
+        fs,
+        unexpectedErrors,
+      );
       if (result) return result;
     }
+
+    if (unexpectedErrors.length > 0) throw unexpectedErrors[0];
 
     return null;
   }
@@ -175,6 +208,7 @@ export class StaticFileService {
     requestPath: string,
     options: StaticFileOptions,
     fs: FileSystemLike,
+    unexpectedErrors: unknown[],
   ): Promise<StaticFileResult | null> {
     try {
       const info = await fs.stat(candidate.path);
@@ -191,8 +225,24 @@ export class StaticFileService {
         cacheStrategy: this.determineCacheStrategy(candidate, requestPath, options),
         source: candidate.source,
       };
-    } catch (_) {
-      /* expected: file may not exist */
+    } catch (error) {
+      // Candidate probing uses exceptions as control flow: this method is called
+      // once per candidate location (dist, public, ...). A missing file, or a
+      // candidate the security layer rejects (outside the allowed roots), just
+      // means "this candidate does not apply" — resolveFile() must still try the
+      // remaining candidates, so we fall through to null rather than throwing.
+      // Genuinely unexpected errors are logged and recorded for diagnosability,
+      // but must not fail resolution of a sibling candidate that would have
+      // matched. resolveFile() rethrows the first recorded error only after all
+      // candidates miss, so transient I/O failures surface as 5xx instead of
+      // cacheable 404s without breaking candidate probing.
+      if (!isExpectedCandidateMiss(error)) {
+        unexpectedErrors.push(error);
+        logger.debug("Static file candidate did not resolve", {
+          source: candidate.source,
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
+      }
       return null;
     }
   }

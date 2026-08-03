@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "search",
+      "id": "exa__search",
       "name": "Search",
       "description": "Search the web with Exa's neural and keyword search",
       "requiresWrite": false,
@@ -75,7 +75,7 @@
       }
     },
     {
-      "id": "get_contents",
+      "id": "exa__get_contents",
       "name": "Get Contents",
       "description": "Get parsed page contents, summaries, and metadata for a list of URLs",
       "requiresWrite": false,
@@ -105,7 +105,7 @@
       }
     },
     {
-      "id": "find_similar",
+      "id": "exa__find_similar",
       "name": "Find Similar Links",
       "description": "Find pages similar in meaning to a given URL",
       "requiresWrite": false,
@@ -131,7 +131,7 @@
       }
     },
     {
-      "id": "answer",
+      "id": "exa__answer",
       "name": "Answer",
       "description": "Get an LLM-generated answer to a question grounded in Exa search results with citations",
       "requiresWrite": true,

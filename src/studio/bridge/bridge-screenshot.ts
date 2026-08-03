@@ -36,6 +36,9 @@ function loadHtml2Canvas(): Promise<void> {
 
   state.html2canvasPromise = new Promise<void>((resolve, reject) => {
     const script = document.createElement("script");
+    // Pinned to html2canvas-pro@2.0.0 for reproducible screenshot behavior.
+    // CDN load failures (outage or CSP script-src restriction) are handled by the
+    // onerror callback below, which rejects the load promise gracefully.
     script.src = "https://cdn.jsdelivr.net/npm/html2canvas-pro@2.0.0/dist/html2canvas-pro.min.js";
     script.onload = () => {
       state.html2canvasLoaded = true;

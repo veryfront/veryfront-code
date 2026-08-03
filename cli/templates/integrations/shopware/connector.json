@@ -42,7 +42,7 @@
   ],
   "tools": [
     {
-      "id": "search_products",
+      "id": "shopware__search_products",
       "name": "Search Products",
       "description": "Search products with the Admin API search criteria (term, filters, sorting, paging)",
       "requiresWrite": false,
@@ -89,7 +89,7 @@
       }
     },
     {
-      "id": "search_orders",
+      "id": "shopware__search_orders",
       "name": "Search Orders",
       "description": "Search orders with the Admin API search criteria (filters, sorting, paging)",
       "requiresWrite": false,
@@ -136,7 +136,7 @@
       }
     },
     {
-      "id": "search_customers",
+      "id": "shopware__search_customers",
       "name": "Search Customers",
       "description": "Search customers with the Admin API search criteria (term, filters, sorting, paging)",
       "requiresWrite": false,
@@ -183,7 +183,7 @@
       }
     },
     {
-      "id": "get_order",
+      "id": "shopware__get_order",
       "name": "Get Order",
       "description": "Get full details of a single order by ID",
       "requiresWrite": false,
@@ -210,7 +210,7 @@
       }
     },
     {
-      "id": "get_product",
+      "id": "shopware__get_product",
       "name": "Get Product",
       "description": "Get full details of a single product by ID",
       "requiresWrite": false,
@@ -237,7 +237,7 @@
       }
     },
     {
-      "id": "create_product",
+      "id": "shopware__create_product",
       "name": "Create Product",
       "description": "Create a new product (requires name, productNumber, stock, taxId, and a price array)",
       "requiresWrite": true,
@@ -272,7 +272,7 @@
       }
     },
     {
-      "id": "update_product",
+      "id": "shopware__update_product",
       "name": "Update Product",
       "description": "Partially update a product, e.g. change its price, stock, or visibility",
       "requiresWrite": true,
@@ -313,7 +313,7 @@
       }
     },
     {
-      "id": "transition_order_state",
+      "id": "shopware__transition_order_state",
       "name": "Transition Order State",
       "description": "Move an order to its next state via a state machine transition (e.g. process, complete, cancel, reopen)",
       "requiresWrite": true,

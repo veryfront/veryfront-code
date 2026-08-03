@@ -1,11 +1,10 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createSheetsClient } from "../../lib/sheets-client.ts";
-
-const DEFAULT_USER_ID = "demo-user";
+import { createSheetsClient } from "../lib/sheets-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "create-chart",
+  id: "sheets-create-chart",
   description:
     "Create an embedded chart. Provide a Google Sheets API EmbeddedChart spec without chartId.",
   inputSchema: defineSchema((v) =>
@@ -16,8 +15,9 @@ export default tool({
       ),
     })
   )(),
-  execute({ spreadsheetId, chart }) {
-    return createSheetsClient(DEFAULT_USER_ID).createChart(
+  execute({ spreadsheetId, chart }, context) {
+    const userId = requireUserIdFromContext(context);
+    return createSheetsClient(userId).createChart(
       spreadsheetId,
       chart,
     );

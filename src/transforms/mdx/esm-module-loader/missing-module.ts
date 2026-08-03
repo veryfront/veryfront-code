@@ -2,7 +2,7 @@
  * Missing module error helpers for MDX ESM loader.
  */
 
-import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
+import { getErrorCollector } from "#veryfront/observability";
 import { MODULE_NOT_FOUND } from "#veryfront/errors";
 import { extractNamedImports } from "./utils/stub-module.ts";
 

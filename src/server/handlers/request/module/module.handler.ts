@@ -11,30 +11,97 @@ import { handleDataEndpoint } from "./data-endpoint-handler.ts";
 import { handlePageDataEndpoint } from "./page-data-endpoint-handler.ts";
 import { handleVirtualModule } from "./virtual-module-handler.ts";
 import { handleBatchModuleEndpoint } from "./batch-module-handler.ts";
-import { PRIORITY_MEDIUM } from "#veryfront/utils/constants/index.ts";
+import { HTTP_METHOD_NOT_ALLOWED, PRIORITY_MEDIUM } from "#veryfront/utils/constants/index.ts";
+import {
+  createErrorResponseFromDefinition,
+  PROJECT_EXECUTION_UNAVAILABLE,
+} from "#veryfront/errors";
+import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
+
+const MODULE_ENDPOINT_PREFIXES = [
+  "/_vf_modules/",
+  "/_veryfront/modules/",
+  "/_veryfront/pages/",
+  "/_veryfront/data/",
+  "/_veryfront/page-data/",
+] as const;
+
+const HOST_RENDERER_ENDPOINT_PREFIXES = [
+  "/_veryfront/modules/",
+  "/_veryfront/pages/",
+  "/_veryfront/data/",
+  "/_veryfront/page-data/",
+] as const;
 
 export class ModuleHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "ModuleHandler",
     priority: PRIORITY_MEDIUM as HandlerPriority,
-    patterns: [
-      { pattern: "/_vf_modules/", prefix: true },
-      { pattern: "/_veryfront/modules/", prefix: true },
-      { pattern: "/_veryfront/pages/", prefix: true },
-      { pattern: "/_veryfront/data/", prefix: true },
-      { pattern: "/_veryfront/page-data/", prefix: true },
-    ],
+    patterns: MODULE_ENDPOINT_PREFIXES.map((pattern) => ({
+      pattern,
+      prefix: true,
+    })),
   };
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const pathname = new URL(req.url).pathname;
     const { createResponseBuilder, respond, logDebug, getErrorMessage } = this.helpers;
     const proxyOptions = { requireToken: true };
+    const method = req.method.toUpperCase();
+    const isOwnedPath = MODULE_ENDPOINT_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+    if (
+      isOwnedPath &&
+      method !== "GET" &&
+      method !== "HEAD"
+    ) {
+      return Promise.resolve(
+        respond(
+          new Response("Method not allowed", {
+            status: HTTP_METHOD_NOT_ALLOWED,
+            headers: {
+              "Allow": "GET, HEAD",
+              "Cache-Control": "no-store",
+              "Content-Type": "text/plain; charset=utf-8",
+            },
+          }),
+        ),
+      );
+    }
+
+    // These endpoints delegate to the legacy renderer, whose module loader
+    // imports page and layout code in the host process. Remote source must not
+    // reach that path until rendering has a generation-owned prepared module
+    // graph equivalent to isolated API routes.
+    if (
+      isSharedProjectRuntime(ctx) &&
+      HOST_RENDERER_ENDPOINT_PREFIXES.some((prefix) => pathname.startsWith(prefix))
+    ) {
+      const problem = createErrorResponseFromDefinition(
+        PROJECT_EXECUTION_UNAVAILABLE,
+        {
+          detail:
+            "Shared runtimes require a dedicated isolated project runtime for module rendering",
+          instance: pathname,
+        },
+      );
+      problem.headers.set("Cache-Control", "no-store");
+      return Promise.resolve(
+        respond(
+          method === "HEAD"
+            ? new Response(null, {
+              status: problem.status,
+              statusText: problem.statusText,
+              headers: problem.headers,
+            })
+            : problem,
+        ),
+      );
+    }
 
     if (pathname === "/_vf_modules/_batch") {
       return this.withProxyContext(
         ctx,
-        () => handleBatchModuleEndpoint(req, ctx, createResponseBuilder, respond),
+        () => handleBatchModuleEndpoint(req, respond),
         proxyOptions,
       );
     }

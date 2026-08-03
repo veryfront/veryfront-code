@@ -8,8 +8,7 @@ order: 7
 
 - A project that runs locally with `veryfront dev` (see
   [Create project](./create-project.md)).
-- For Veryfront Cloud: a `VERYFRONT_API_TOKEN` and a project reference. Run
-  `veryfront login` or set the env vars. See
+- For Veryfront Cloud: run `veryfront login` or set `VERYFRONT_API_TOKEN`. See
   [Configuration](../guides/configuration.md).
 - For another host: any container or Node-compatible runtime that can serve the
   build output.
@@ -35,17 +34,46 @@ veryfront serve
 Open [http://localhost:3000](http://localhost:3000). Confirm the same pages and
 endpoints work.
 
-## Deploy to Veryfront Cloud
+## Preview on Veryfront Cloud
+
+Create or link the cloud project and push the current source to its preview:
 
 ```bash
-veryfront deploy
+npx veryfront push
 ```
+
+`veryfront push` stores local project identity in ignored
+`.veryfront/project.json`, records the pushed source digest in
+`.veryfront/push-receipt.json`, and prints the preview URL. It does not write
+`veryfront.json`.
+
+Push preserves remote-only files by default. Use
+`npx veryfront push --prune --dry-run` to preview an exact remote mirror, then
+run `npx veryfront push --prune` only when those deletions are intentional.
 
 For a preview deployment per branch:
 
 ```bash
-veryfront deploy --branch feature-x
+npx veryfront push --branch feature-x
 ```
+
+## Deploy to Veryfront Cloud
+
+After checking the preview, deploy the exact pushed source digest:
+
+```bash
+npx veryfront deploy --env production
+```
+
+Deploy uses the last verified Push receipt, verifies the release source digest,
+waits for browser assets, and prints the environment URL. If no Push receipt
+exists, Deploy first runs a quiet Push so a first deployment still works as one
+command.
+
+Project reference precedence is `VERYFRONT_PROJECT_SLUG` or environment
+configuration, then `veryfront.config.ts`, then legacy `veryfront.json`, then
+lower-level tenant or project-ID environment references, then the ignored local
+link.
 
 ## Deploy somewhere else
 
@@ -54,10 +82,13 @@ For a non-Cloud target, run `veryfront build` and ship the `dist/` output. See
 
 ## Verify it worked
 
-After `veryfront deploy`, run:
+After Deploy completes, run:
 
 ```bash
 veryfront open
 ```
 
 The deployed page and API routes respond.
+
+For an automated production workflow, see
+[Deploy from CI](../guides/deploy-from-ci.md).

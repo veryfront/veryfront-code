@@ -31,9 +31,13 @@ describe("getNativeResponse", () => {
 });
 
 describe("getNativeDeno", () => {
-  it("returns the native Deno namespace in the Deno runtime", () => {
+  it("returns the native Deno namespace when the runtime provides one", () => {
     const nativeDeno = getNativeDeno();
-    assertStrictEquals(nativeDeno, Deno);
+    if (typeof Deno === "undefined") {
+      assertEquals(nativeDeno, undefined);
+    } else {
+      assertStrictEquals(nativeDeno, Deno);
+    }
   });
 
   it("returns undefined when the typed host has no native Deno namespace", () => {
@@ -46,6 +50,10 @@ describe("getNativeDeno", () => {
 
   it("exposes native APIs absent from the dnt shim", () => {
     const nativeDeno = getNativeDeno();
+    if (typeof Deno === "undefined") {
+      assertEquals(nativeDeno, undefined);
+      return;
+    }
     assert(nativeDeno !== undefined);
     assertEquals(typeof nativeDeno.serve, "function");
     assertEquals(typeof nativeDeno.upgradeWebSocket, "function");

@@ -1,18 +1,60 @@
-import { parseSseChunk, readGatewayBillingMode, readRecord } from "veryfront/provider/shared";
+import {
+  mergeUsage,
+  ProviderRequestError,
+  readGatewayBillingMode,
+  readRecord,
+} from "veryfront/provider/shared";
 import type { RuntimeUsage } from "veryfront/provider/shared";
+import {
+  appendOpenAIStreamToolArgument,
+  isJsonObjectText,
+  joinOpenAIStreamToolArguments,
+  MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES,
+  MAX_OPENAI_STREAM_TOOL_ARGUMENT_FRAGMENTS,
+  type OpenAIStreamToolArgumentBudget,
+} from "./openai-tool-input.ts";
+import {
+  isBoundedOpenAIStreamString,
+  MAX_OPENAI_STREAM_CONTENT_PARTS,
+  MAX_OPENAI_STREAM_IDENTIFIER_BYTES,
+  MAX_OPENAI_STREAM_TOOL_NAME_BYTES,
+} from "./openai-stream-metadata.ts";
+import {
+  appendOpenAISseChunk,
+  finishOpenAISseDecoding,
+  parseOpenAISseBuffer,
+} from "./openai-sse-buffer.ts";
 
-type OpenAICompatibleChoice = {
-  message?: unknown;
-  delta?: unknown;
-  finish_reason?: unknown;
+type OpenAICompatibleProviderKind = "openai" | "mistral" | "moonshotai";
+
+type OpenAIChatStreamContext = {
+  providerKind?: OpenAICompatibleProviderKind;
+  providerLabel?: string;
 };
 
 type OpenAIStreamToolCallState = {
   id: string;
   name: string;
-  arguments: string;
+  argumentChunks: string[];
   started: boolean;
 };
+
+export const MAX_OPENAI_STREAM_TOOL_CALLS = 1_024;
+
+function invalidOpenAIStream(
+  context: OpenAIChatStreamContext,
+  issue: string,
+): ProviderRequestError {
+  const providerKind = context.providerKind ?? "openai";
+  return new ProviderRequestError({
+    provider: providerKind,
+    status: 200,
+    message: `${
+      context.providerLabel ?? providerKind
+    } request failed: invalid successful stream (${issue})`,
+    retryable: false,
+  });
+}
 
 function normalizeOpenAIFinishReason(
   raw: unknown,
@@ -98,128 +140,302 @@ function extractOpenAIUsage(payload: unknown): RuntimeUsage | undefined {
   };
 }
 
-function extractOpenAIContentText(content: unknown): string {
+function mergeOpenAIUsage(
+  current: RuntimeUsage | undefined,
+  payload: unknown,
+): RuntimeUsage | undefined {
+  const merged = mergeUsage(current, extractOpenAIUsage(payload));
+  return merged && Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+function extractOpenAIContentText(
+  content: unknown,
+  context: OpenAIChatStreamContext,
+): string {
+  if (content === undefined || content === null) {
+    return "";
+  }
   if (typeof content === "string") {
     return content;
   }
-
   if (!Array.isArray(content)) {
-    return "";
+    throw invalidOpenAIStream(context, "choice delta content had an invalid type");
+  }
+  if (content.length > MAX_OPENAI_STREAM_CONTENT_PARTS) {
+    throw invalidOpenAIStream(
+      context,
+      `choice delta content exceeded ${MAX_OPENAI_STREAM_CONTENT_PARTS} parts`,
+    );
   }
 
-  let text = "";
+  const textParts: string[] = [];
   for (const part of content) {
     const record = readRecord(part);
-    const type = record?.type;
-    if (type === "text" && typeof record?.text === "string") {
-      text += record.text;
+    if (!record) {
+      throw invalidOpenAIStream(context, "choice delta content part was not an object");
+    }
+    if (record.type === "text") {
+      if (typeof record.text !== "string") {
+        throw invalidOpenAIStream(context, "choice delta text part was malformed");
+      }
+      textParts.push(record.text);
+    } else if (record.type === "refusal") {
+      if (typeof record.refusal !== "string") {
+        throw invalidOpenAIStream(context, "choice delta refusal part was malformed");
+      }
+      textParts.push(record.refusal);
+    } else {
+      throw invalidOpenAIStream(context, "choice delta content part type was unsupported");
     }
   }
-
-  return text;
+  return textParts.join("");
 }
 
-function extractFirstChoice(payload: unknown): OpenAICompatibleChoice | undefined {
-  const record = readRecord(payload);
-  const choices = record?.choices;
-  if (!Array.isArray(choices) || choices.length === 0) {
-    return undefined;
+function assertCompleteToolInput(
+  toolCall: OpenAIStreamToolCallState,
+  context: OpenAIChatStreamContext,
+): string {
+  const argumentsText = joinOpenAIStreamToolArguments(toolCall.argumentChunks);
+  if (!toolCall.started || !toolCall.id || !toolCall.name || !argumentsText) {
+    throw invalidOpenAIStream(context, "tool call was incomplete");
   }
-
-  const first = readRecord(choices[0]);
-  if (!first) {
-    return undefined;
+  if (!isJsonObjectText(argumentsText)) {
+    throw invalidOpenAIStream(context, "tool call arguments were not valid JSON object text");
   }
+  return argumentsText;
+}
 
-  return first;
+function isToolCallsFinishReason(
+  value: string | { unified: string; raw: string } | null,
+): boolean {
+  return typeof value === "object" && value?.unified === "tool-calls";
 }
 
 export async function* streamOpenAICompatibleParts(
   stream: ReadableStream<Uint8Array>,
+  context: OpenAIChatStreamContext = {},
 ): AsyncIterable<unknown> {
-  const decoder = new TextDecoder();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
   let buffer = "";
   const toolCalls = new Map<number, OpenAIStreamToolCallState>();
+  const toolCallIndicesById = new Map<string, number>();
   let reasoningId: string | null = null;
   let reasoningIndex = 0;
   let finishReason: string | { unified: string; raw: string } | null = null;
   let usage: RuntimeUsage | undefined;
+  let sawChoiceEnvelope = false;
+  let sawFinishReason = false;
+  let sawDone = false;
+  let sawPostFinishUsage = false;
+  const toolArgumentBudget: OpenAIStreamToolArgumentBudget = {
+    bytes: 0,
+    fragments: 0,
+  };
 
-  for await (const chunk of stream) {
-    buffer += decoder.decode(chunk, { stream: true });
-    const parsed = parseSseChunk(buffer);
-    buffer = parsed.remainder;
+  function* processEvent(event: unknown | "[DONE]"): Generator<unknown> {
+    if (event === "[DONE]") {
+      if (sawDone) {
+        throw invalidOpenAIStream(context, "stream contained multiple done markers");
+      }
+      if (!sawFinishReason) {
+        throw invalidOpenAIStream(context, "done marker arrived before a finish reason");
+      }
+      sawDone = true;
+      return;
+    }
+    if (sawDone) {
+      throw invalidOpenAIStream(context, "stream contained data after its done marker");
+    }
 
-    for (const event of parsed.events) {
-      if (event === "[DONE]") {
-        continue;
+    const record = readRecord(event);
+    if (!record) {
+      throw invalidOpenAIStream(context, "event was not an object");
+    }
+    const usageRecord = readRecord(record.usage);
+    usage = mergeOpenAIUsage(usage, record);
+
+    if (record.choices === undefined) {
+      if (!usageRecord) {
+        throw invalidOpenAIStream(context, "event had neither choices nor usage");
+      }
+      if (sawFinishReason) {
+        if (sawPostFinishUsage) {
+          throw invalidOpenAIStream(context, "stream contained multiple post-finish usage events");
+        }
+        sawPostFinishUsage = true;
+      }
+      return;
+    }
+    if (!Array.isArray(record.choices)) {
+      throw invalidOpenAIStream(context, "choices was not an array");
+    }
+    if (record.choices.length === 0) {
+      if (!usageRecord) {
+        throw invalidOpenAIStream(context, "empty choices event had no usage");
+      }
+      if (sawFinishReason) {
+        if (sawPostFinishUsage) {
+          throw invalidOpenAIStream(context, "stream contained multiple post-finish usage events");
+        }
+        sawPostFinishUsage = true;
+      }
+      return;
+    }
+    if (sawFinishReason) {
+      throw invalidOpenAIStream(context, "stream contained choice data after its finish reason");
+    }
+
+    const choice = readRecord(record.choices[0]);
+    if (!choice) {
+      throw invalidOpenAIStream(context, "first choice was not an object");
+    }
+    sawChoiceEnvelope = true;
+
+    if (
+      choice.finish_reason !== undefined &&
+      choice.finish_reason !== null &&
+      (typeof choice.finish_reason !== "string" || choice.finish_reason.length === 0)
+    ) {
+      throw invalidOpenAIStream(context, "choice finish reason was malformed");
+    }
+
+    let delta: Record<string, unknown>;
+    if (choice.delta === undefined || choice.delta === null) {
+      if (typeof choice.finish_reason !== "string") {
+        throw invalidOpenAIStream(context, "choice had neither a delta nor a finish reason");
+      }
+      delta = {};
+    } else {
+      const deltaRecord = readRecord(choice.delta);
+      if (!deltaRecord) {
+        throw invalidOpenAIStream(context, "choice delta was not an object");
+      }
+      delta = deltaRecord;
+    }
+
+    if (
+      delta.role !== undefined &&
+      delta.role !== "assistant"
+    ) {
+      throw invalidOpenAIStream(context, "choice delta role was not assistant");
+    }
+    if (
+      delta.reasoning_content !== undefined &&
+      typeof delta.reasoning_content !== "string"
+    ) {
+      throw invalidOpenAIStream(context, "reasoning delta was malformed");
+    }
+    if (
+      typeof delta.reasoning_content === "string" &&
+      delta.reasoning_content.length > 0
+    ) {
+      if (!reasoningId) {
+        reasoningId = `reasoning-${reasoningIndex++}`;
+        yield { type: "reasoning-start", id: reasoningId };
+      }
+      yield {
+        type: "reasoning-delta",
+        id: reasoningId,
+        delta: delta.reasoning_content,
+      };
+    }
+
+    const refusal = delta.refusal;
+    if (refusal !== undefined && refusal !== null && typeof refusal !== "string") {
+      throw invalidOpenAIStream(context, "refusal delta was malformed");
+    }
+    const textDelta = extractOpenAIContentText(delta.content, context) +
+      (typeof refusal === "string" ? refusal : "");
+    if (textDelta.length > 0) {
+      if (reasoningId) {
+        yield { type: "reasoning-end", id: reasoningId };
+        reasoningId = null;
+      }
+      yield { type: "text-delta", delta: textDelta };
+    }
+
+    if (
+      delta.tool_calls !== undefined &&
+      delta.tool_calls !== null &&
+      !Array.isArray(delta.tool_calls)
+    ) {
+      throw invalidOpenAIStream(context, "tool_calls delta was not an array");
+    }
+    const rawToolCalls = Array.isArray(delta.tool_calls) ? delta.tool_calls : [];
+    for (const rawToolCall of rawToolCalls) {
+      if (reasoningId) {
+        yield { type: "reasoning-end", id: reasoningId };
+        reasoningId = null;
       }
 
-      const record = readRecord(event);
-      usage = extractOpenAIUsage(record) ?? usage;
-      const choice = extractFirstChoice(record);
-      if (!choice) {
-        continue;
+      const toolCallRecord = readRecord(rawToolCall);
+      if (!toolCallRecord) {
+        throw invalidOpenAIStream(context, "tool call delta was not an object");
+      }
+      const index = toolCallRecord.index;
+      if (!Number.isSafeInteger(index) || (index as number) < 0) {
+        throw invalidOpenAIStream(context, "tool call index was malformed");
+      }
+      const toolCallIndex = index as number;
+      if (
+        toolCallRecord.id !== undefined &&
+        !isBoundedOpenAIStreamString(
+          toolCallRecord.id,
+          MAX_OPENAI_STREAM_IDENTIFIER_BYTES,
+        )
+      ) {
+        throw invalidOpenAIStream(context, "tool call id was malformed");
+      }
+      if (
+        toolCallRecord.type !== undefined &&
+        toolCallRecord.type !== "function"
+      ) {
+        throw invalidOpenAIStream(context, "tool call type was not function");
+      }
+      const existingToolCall = toolCalls.get(toolCallIndex);
+      if (!existingToolCall && toolCalls.size >= MAX_OPENAI_STREAM_TOOL_CALLS) {
+        throw invalidOpenAIStream(
+          context,
+          `stream exceeded ${MAX_OPENAI_STREAM_TOOL_CALLS} tool calls`,
+        );
+      }
+      const current = existingToolCall ?? {
+        id: "",
+        name: "",
+        argumentChunks: [],
+        started: false,
+      };
+      if (typeof toolCallRecord.id === "string") {
+        const existingIndex = toolCallIndicesById.get(toolCallRecord.id);
+        if (existingIndex !== undefined && existingIndex !== toolCallIndex) {
+          throw invalidOpenAIStream(context, "tool call id was reused at another index");
+        }
+        if (current.id && current.id !== toolCallRecord.id) {
+          throw invalidOpenAIStream(context, "tool call id changed while streaming");
+        }
+        current.id = toolCallRecord.id;
+        toolCallIndicesById.set(toolCallRecord.id, toolCallIndex);
       }
 
-      const delta = readRecord(choice.delta);
-      if (typeof delta?.reasoning_content === "string" && delta.reasoning_content.length > 0) {
-        if (!reasoningId) {
-          reasoningId = `reasoning-${reasoningIndex++}`;
-          yield {
-            type: "reasoning-start",
-            id: reasoningId,
-          };
+      if (toolCallRecord.function !== undefined && toolCallRecord.function !== null) {
+        const fn = readRecord(toolCallRecord.function);
+        if (!fn) {
+          throw invalidOpenAIStream(context, "tool call function was not an object");
         }
-
-        yield {
-          type: "reasoning-delta",
-          id: reasoningId,
-          delta: delta.reasoning_content,
-        };
-      }
-
-      const textDelta = extractOpenAIContentText(delta?.content);
-      if (textDelta.length > 0) {
-        if (reasoningId) {
-          yield {
-            type: "reasoning-end",
-            id: reasoningId,
-          };
-          reasoningId = null;
+        if (
+          fn.name !== undefined &&
+          !isBoundedOpenAIStreamString(fn.name, MAX_OPENAI_STREAM_TOOL_NAME_BYTES)
+        ) {
+          throw invalidOpenAIStream(context, "tool call function name was malformed");
         }
-        yield { type: "text-delta", delta: textDelta };
-      }
-
-      const rawToolCalls = Array.isArray(delta?.tool_calls) ? delta.tool_calls : [];
-      for (const rawToolCall of rawToolCalls) {
-        if (reasoningId) {
-          yield {
-            type: "reasoning-end",
-            id: reasoningId,
-          };
-          reasoningId = null;
-        }
-
-        const toolCallRecord = readRecord(rawToolCall);
-        const index = typeof toolCallRecord?.index === "number" ? toolCallRecord.index : 0;
-        const current = toolCalls.get(index) ?? {
-          id: typeof toolCallRecord?.id === "string" ? toolCallRecord.id : `tool-${index}`,
-          name: "",
-          arguments: "",
-          started: false,
-        };
-
-        if (typeof toolCallRecord?.id === "string") {
-          current.id = toolCallRecord.id;
-        }
-
-        const fn = readRecord(toolCallRecord?.function);
-        if (typeof fn?.name === "string") {
+        if (typeof fn.name === "string") {
+          if (current.name && current.name !== fn.name) {
+            throw invalidOpenAIStream(context, "tool call function name changed while streaming");
+          }
           current.name = fn.name;
         }
 
-        if (!current.started && current.name.length > 0) {
+        if (!current.started && current.id && current.name) {
           current.started = true;
           yield {
             type: "tool-input-start",
@@ -228,57 +444,112 @@ export async function* streamOpenAICompatibleParts(
           };
         }
 
-        if (typeof fn?.arguments === "string" && fn.arguments.length > 0) {
-          current.arguments += fn.arguments;
-          yield {
-            type: "tool-input-delta",
-            id: current.id,
-            delta: fn.arguments,
-          };
+        if (fn.arguments !== undefined && typeof fn.arguments !== "string") {
+          throw invalidOpenAIStream(context, "tool call arguments delta was malformed");
         }
-
-        toolCalls.set(index, current);
+        if (typeof fn.arguments === "string") {
+          if (!current.started) {
+            throw invalidOpenAIStream(
+              context,
+              "tool call arguments arrived before its id and name",
+            );
+          }
+          const limit = appendOpenAIStreamToolArgument(
+            toolArgumentBudget,
+            current.argumentChunks,
+            fn.arguments,
+          );
+          if (limit === "bytes") {
+            throw invalidOpenAIStream(
+              context,
+              `tool call arguments exceeded ${MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES} UTF-8 bytes`,
+            );
+          }
+          if (limit === "fragments") {
+            throw invalidOpenAIStream(
+              context,
+              `tool call arguments exceeded ${MAX_OPENAI_STREAM_TOOL_ARGUMENT_FRAGMENTS} fragments`,
+            );
+          }
+          if (fn.arguments.length > 0) {
+            yield {
+              type: "tool-input-delta",
+              id: current.id,
+              delta: fn.arguments,
+            };
+          }
+        }
       }
 
-      const normalizedFinishReason = normalizeOpenAIFinishReason(choice.finish_reason);
-      if (normalizedFinishReason) {
-        finishReason = normalizedFinishReason;
-      }
+      toolCalls.set(toolCallIndex, current);
+    }
+
+    if (typeof choice.finish_reason === "string") {
+      finishReason = normalizeOpenAIFinishReason(choice.finish_reason);
+      sawFinishReason = true;
     }
   }
 
-  if (buffer.trim().length > 0) {
-    const parsed = parseSseChunk(`${buffer}\n\n`);
+  for await (const chunk of stream) {
+    buffer = appendOpenAISseChunk(
+      decoder,
+      buffer,
+      chunk,
+      (issue) => invalidOpenAIStream(context, issue),
+    );
+    const parsed = parseOpenAISseBuffer(
+      buffer,
+      (issue) => invalidOpenAIStream(context, issue),
+    );
+    buffer = parsed.remainder;
     for (const event of parsed.events) {
-      if (event === "[DONE]") {
-        continue;
-      }
-
-      const record = readRecord(event);
-      usage = extractOpenAIUsage(record) ?? usage;
+      yield* processEvent(event);
     }
+  }
+
+  buffer = finishOpenAISseDecoding(
+    decoder,
+    buffer,
+    (issue) => invalidOpenAIStream(context, issue),
+  );
+  if (buffer.trim().length > 0) {
+    const parsed = parseOpenAISseBuffer(
+      buffer,
+      (issue) => invalidOpenAIStream(context, issue),
+      true,
+    );
+    for (const event of parsed.events) {
+      yield* processEvent(event);
+    }
+  }
+
+  if (!sawChoiceEnvelope) {
+    throw invalidOpenAIStream(context, "stream contained no choice envelope");
+  }
+  if (!sawFinishReason) {
+    throw invalidOpenAIStream(context, "stream ended before a finish reason");
   }
 
   if (reasoningId) {
-    yield {
-      type: "reasoning-end",
-      id: reasoningId,
-    };
+    yield { type: "reasoning-end", id: reasoningId };
   }
 
-  if (
-    finishReason &&
-    typeof finishReason === "object" &&
-    finishReason.unified === "tool-calls"
-  ) {
+  const finishedWithToolCalls = isToolCallsFinishReason(finishReason);
+  if (finishedWithToolCalls) {
+    if (toolCalls.size === 0) {
+      throw invalidOpenAIStream(context, "tool-call finish contained no tool calls");
+    }
     for (const toolCall of toolCalls.values()) {
+      const input = assertCompleteToolInput(toolCall, context);
       yield {
         type: "tool-call",
         toolCallId: toolCall.id,
         toolName: toolCall.name,
-        input: toolCall.arguments,
+        input,
       };
     }
+  } else if (toolCalls.size > 0) {
+    throw invalidOpenAIStream(context, "stream ended with unfinished tool calls");
   }
 
   yield {

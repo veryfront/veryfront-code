@@ -13,10 +13,22 @@ import {
   getOrComputeTransform,
   initializeTransformCache,
   setCachedTransformAsync,
+  type TransformCachedEntryValidator,
 } from "#veryfront/transforms/esm/transform-cache.ts";
 import { validateCachedBundlesByManifestOrCode } from "#veryfront/transforms/esm/cached-bundle-validation.ts";
+import { exists } from "#veryfront/platform/compat/fs.ts";
+import { findMissingFrameworkBundlePaths } from "#veryfront/transforms/shared/framework-bundle-paths.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
+import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  type DependencyResolutionObservation,
+  validateDependencyResolutionObservations,
+} from "#veryfront/transforms/import-rewriter/dependency-resolution.ts";
+import { replaySSRDependencyResolutionObservations } from "#veryfront/transforms/import-rewriter/ssr-adapter.ts";
+import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
 
 const logger = rendererLogger.component("module-loader");
 
@@ -33,6 +45,7 @@ interface TransformCacheResult {
   code: string;
   cacheHit: boolean;
   bundleManifestId?: string;
+  dependencyResolutionObservations?: ReadonlyArray<DependencyResolutionObservation>;
 }
 
 interface BundleValidationResult {
@@ -47,6 +60,14 @@ interface TransformOptions {
   dev: boolean;
   ssr: boolean;
   reactVersion?: string;
+  moduleServerOrigin?: string;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningSource?: DependencyPinningSourceInput;
+  onDependencyResolutionObserved?: (
+    observation: DependencyResolutionObservation,
+  ) => void;
+  onProgress?: TransformProgressListener;
 }
 
 interface PipelineResult {
@@ -57,8 +78,12 @@ export interface ModuleTransformCacheDeps {
   initializeTransformCache: typeof initializeTransformCache;
   getOrComputeTransform: (
     key: string,
-    compute: () => Promise<string>,
+    compute: (reportProgress?: TransformProgressListener) => Promise<string>,
     ttlSeconds: number,
+    onProgress?: TransformProgressListener,
+    signal?: AbortSignal,
+    validateCachedEntry?: TransformCachedEntryValidator,
+    getDependencyResolutionObservations?: () => ReadonlyArray<DependencyResolutionObservation>,
   ) => Promise<TransformCacheResult>;
   transformToESM: (
     code: string,
@@ -72,6 +97,7 @@ export interface ModuleTransformCacheDeps {
     bundleManifestId: string | undefined,
     cacheDir: string,
   ) => Promise<BundleValidationResult>;
+  findMissingFrameworkBundlePaths: (code: string) => Promise<string[]>;
   getHttpBundleCacheDir: typeof getHttpBundleCacheDir;
   setCachedTransformAsync: typeof setCachedTransformAsync;
   runPipeline: (
@@ -87,6 +113,15 @@ const defaultDeps: ModuleTransformCacheDeps = {
   getOrComputeTransform,
   transformToESM,
   validateCachedBundlesByManifestOrCode,
+  findMissingFrameworkBundlePaths: (code) =>
+    findMissingFrameworkBundlePaths(code, exists, {
+      onError: (path, error) => {
+        logger.error("Framework bundle validation error", {
+          path,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      },
+    }),
   getHttpBundleCacheDir,
   setCachedTransformAsync,
   runPipeline: async (code, filePath, projectDir, options) => {
@@ -103,8 +138,60 @@ export interface TransformModuleCodeWithCacheInput {
   mode: "development" | "production";
   adapter: RuntimeAdapter;
   reactVersion?: string;
+  moduleServerOrigin?: string;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningSource?: DependencyPinningSourceInput;
   ttlSeconds?: number;
+  onProgress?: TransformProgressListener;
+  signal?: AbortSignal;
   deps?: ModuleTransformCacheDeps;
+}
+
+function createCachedTransformValidator(
+  filePath: string,
+  deps: ModuleTransformCacheDeps,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+): TransformCachedEntryValidator {
+  return async (entry) => {
+    const [httpValidation, missingFrameworkBundles] = await Promise.all([
+      deps.validateCachedBundlesByManifestOrCode(
+        entry.code,
+        entry.bundleManifestId,
+        deps.getHttpBundleCacheDir(),
+      ),
+      deps.findMissingFrameworkBundlePaths(entry.code),
+    ]);
+
+    if (!httpValidation.valid || missingFrameworkBundles.length > 0) {
+      logger.warn("Cached transform dependency validation failed, re-transforming", {
+        filePath,
+        manifestId: entry.bundleManifestId?.slice(0, 12),
+        failedHashes: httpValidation.failedHashes,
+        reason: httpValidation.valid ? "framework_bundle_missing" : httpValidation.reason,
+        source: httpValidation.valid ? "framework-bundles" : httpValidation.source,
+        missingFrameworkBundleCount: missingFrameworkBundles.length,
+        firstMissingFrameworkBundle: missingFrameworkBundles[0]?.split("/").pop(),
+      });
+      return false;
+    }
+
+    if (
+      dependencyPinningCacheKey?.startsWith("on:") &&
+      validateDependencyResolutionObservations(
+          entry.dependencyResolutionObservations,
+          dependencyPinningDependencies,
+        ) === null
+    ) {
+      logger.warn("Cached transform dependency metadata is missing or inconsistent", {
+        filePath,
+      });
+      return false;
+    }
+
+    return true;
+  };
 }
 
 /** Transform module source through the shared cache and stale-cache retry checks. */
@@ -115,69 +202,101 @@ export async function transformModuleCodeWithCache(
   const ttlSeconds = input.ttlSeconds ?? TRANSFORM_DISTRIBUTED_TTL_SEC;
   const contentHash = hashCodeHex(input.fileContent);
   const scopedPath = `${input.effectiveProjectId}:${input.filePath}`;
-  const cacheKey = generateTransformCacheKey(scopedPath, contentHash, true);
+  const reactVersion = input.reactVersion ?? REACT_DEFAULT_VERSION;
+  const cacheVariant = buildDependencyPinningCacheVariant(
+    input.dependencyPinningCacheKey,
+    input.moduleServerOrigin,
+  );
+  const moduleServerOrigin = cacheVariant ? input.moduleServerOrigin : undefined;
+  const legacyConfig = [
+    input.projectDir,
+    input.mode,
+    reactVersion,
+  ];
+  const configHash = hashCodeHex(JSON.stringify(
+    cacheVariant ? [...legacyConfig, cacheVariant] : legacyConfig,
+  ));
+  const cacheKey = generateTransformCacheKey(
+    scopedPath,
+    contentHash,
+    true,
+    false,
+    { configHash },
+  );
+  const dependencyResolutionObservations = new Map<
+    string,
+    DependencyResolutionObservation
+  >();
   const transformOptions = {
     projectId: input.effectiveProjectId,
     dev: input.mode === "development",
     ssr: true,
-    reactVersion: input.reactVersion,
+    reactVersion,
+    moduleServerOrigin,
+    dependencyPinningCacheKey: input.dependencyPinningCacheKey,
+    dependencyPinningDependencies: input.dependencyPinningDependencies,
+    dependencyPinningSource: input.dependencyPinningSource,
+    onDependencyResolutionObserved: (observation: DependencyResolutionObservation) => {
+      dependencyResolutionObservations.set(observation.packageName, observation);
+    },
+    onProgress: input.onProgress,
   };
 
   await deps.initializeTransformCache();
 
   const transformResult = await deps.getOrComputeTransform(
     cacheKey,
-    () => {
+    (reportProgress) => {
       logger.debug("Transform cache miss, transforming", { filePath: input.filePath });
       return deps.transformToESM(
         input.fileContent,
         input.filePath,
         input.projectDir,
         input.adapter,
-        transformOptions,
+        { ...transformOptions, onProgress: reportProgress },
       );
     },
     ttlSeconds,
+    input.onProgress,
+    input.signal,
+    createCachedTransformValidator(
+      input.filePath,
+      deps,
+      input.dependencyPinningCacheKey,
+      input.dependencyPinningDependencies,
+    ),
+    () =>
+      [...dependencyResolutionObservations.values()].sort((left, right) =>
+        left.packageName.localeCompare(right.packageName)
+      ),
+  );
+
+  input.signal?.throwIfAborted();
+
+  const cachedDependencyResolutionObservations = input.dependencyPinningCacheKey?.startsWith("on:")
+    ? validateDependencyResolutionObservations(
+      transformResult.dependencyResolutionObservations,
+      input.dependencyPinningDependencies,
+    )
+    : [];
+  if (cachedDependencyResolutionObservations === null) {
+    throw new Error("Computed transform dependency metadata is unavailable");
+  }
+  for (const observation of cachedDependencyResolutionObservations) {
+    dependencyResolutionObservations.set(observation.packageName, observation);
+  }
+  replaySSRDependencyResolutionObservations(
+    cachedDependencyResolutionObservations,
+    {
+      projectDir: input.projectDir,
+      projectId: input.effectiveProjectId,
+      dependencyPinningCacheKey: input.dependencyPinningCacheKey,
+      dependencyPinningDependencies: input.dependencyPinningDependencies,
+      dependencyPinningSource: input.dependencyPinningSource,
+    },
   );
 
   let transformedCode = transformResult.code;
-
-  if (transformResult.cacheHit) {
-    const validation = await deps.validateCachedBundlesByManifestOrCode(
-      transformedCode,
-      transformResult.bundleManifestId,
-      deps.getHttpBundleCacheDir(),
-    );
-    if (!validation.valid) {
-      logger.warn("Cached HTTP bundle validation failed, re-transforming", {
-        filePath: input.filePath,
-        manifestId: transformResult.bundleManifestId?.slice(0, 12),
-        failedHashes: validation.failedHashes,
-        reason: validation.reason,
-        source: validation.source,
-      });
-
-      transformedCode = await deps.transformToESM(
-        input.fileContent,
-        input.filePath,
-        input.projectDir,
-        input.adapter,
-        transformOptions,
-      );
-
-      deps.setCachedTransformAsync(
-        cacheKey,
-        transformedCode,
-        contentHash,
-        ttlSeconds,
-      ).catch((error) => {
-        logger.debug("Failed to update transform cache after re-transform", {
-          filePath: input.filePath,
-          error,
-        });
-      });
-    }
-  }
 
   // CRITICAL: Validate that no unresolved /_vf_modules/ imports remain after transform.
   // These imports should have been resolved to file:// paths by ssrVfModulesPlugin.
@@ -216,6 +335,8 @@ export async function transformModuleCodeWithCache(
         transformedCode,
         hashCodeHex(transformedCode).slice(0, 16),
         ttlSeconds,
+        undefined,
+        [...dependencyResolutionObservations.values()],
       ).catch((error) => {
         logger.debug("Failed to update cache after retry", {
           filePath: input.filePath,

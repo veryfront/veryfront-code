@@ -57,5 +57,18 @@ describe("hydration-script-builder/dev-component-manifest", () => {
       const result = generateDevComponentManifestScript(config as any);
       assertEquals(result.includes(JSON.stringify(config.dev.components)), true);
     });
+
+    it("should escape component metadata that could close the script", () => {
+      const result = generateDevComponentManifestScript({
+        dev: {
+          components: [{
+            name: "</script><script>globalThis.__veryfrontManifestBreakout = true</script>",
+          }],
+        },
+      } as any);
+
+      assertEquals(result.includes("</script><script>"), false);
+      assertEquals(result.includes("\\u003c/script"), true);
+    });
   });
 });

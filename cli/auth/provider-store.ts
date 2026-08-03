@@ -8,9 +8,10 @@
  * @module cli/auth/provider-store
  */
 
-import { getEnvironmentConfig } from "veryfront/config";
+import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { join } from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
+import { CONFIG_DIR_NAME, TOKEN_FILE_PERMISSIONS } from "../shared/constants.ts";
 
 export type ProviderName = "anthropic" | "openai";
 
@@ -20,32 +21,36 @@ export interface ProviderCredential {
   provider: ProviderName;
 }
 
-function getTokenDir(): string {
-  const env = getEnvironmentConfig();
+function getTokenDir(env: EnvironmentConfig = getEnvironmentConfig()): string {
   const configDir = env.xdgConfigHome
-    ? join(env.xdgConfigHome, "veryfront")
-    : join(env.homeDir!, ".config", "veryfront");
+    ? join(env.xdgConfigHome, CONFIG_DIR_NAME)
+    : env.homeDir
+    ? join(env.homeDir, ".config", CONFIG_DIR_NAME)
+    : null;
+  if (!configDir) throw new Error("Could not determine home directory");
   return join(configDir, "tokens");
 }
 
 export async function saveProviderToken(
   provider: ProviderName,
   credential: ProviderCredential,
+  env?: EnvironmentConfig,
 ): Promise<void> {
   const fs = createFileSystem();
-  const dir = getTokenDir();
+  const dir = getTokenDir(env);
   await fs.mkdir(dir, { recursive: true });
   const path = join(dir, provider);
   await fs.writeTextFile(path, JSON.stringify(credential));
-  await fs.chmod(path, 0o600);
+  await fs.chmod(path, TOKEN_FILE_PERMISSIONS);
 }
 
 export async function readProviderToken(
   provider: ProviderName,
+  env?: EnvironmentConfig,
 ): Promise<ProviderCredential | null> {
   const fs = createFileSystem();
   try {
-    const raw = await fs.readTextFile(join(getTokenDir(), provider));
+    const raw = await fs.readTextFile(join(getTokenDir(env), provider));
     return JSON.parse(raw) as ProviderCredential;
   } catch {
     return null;
@@ -54,20 +59,21 @@ export async function readProviderToken(
 
 export async function deleteProviderToken(
   provider: ProviderName,
+  env?: EnvironmentConfig,
 ): Promise<void> {
   const fs = createFileSystem();
   try {
-    await fs.remove(join(getTokenDir(), provider));
+    await fs.remove(join(getTokenDir(env), provider));
   } catch {
     // Token doesn't exist — fine
   }
 }
 
-export async function listProviderTokens(): Promise<ProviderName[]> {
+export async function listProviderTokens(env?: EnvironmentConfig): Promise<ProviderName[]> {
   const fs = createFileSystem();
   const providers: ProviderName[] = [];
   try {
-    for await (const entry of fs.readDir(getTokenDir())) {
+    for await (const entry of fs.readDir(getTokenDir(env))) {
       if (
         entry.isFile &&
         (entry.name === "anthropic" || entry.name === "openai")

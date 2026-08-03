@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __injectCssCacheForTests,
@@ -36,6 +36,41 @@ describe("css-cache", () => {
     it("handles mixed defined/undefined values", () => {
       const key = getPageCssCacheKey("proj", undefined, "/about", "v1");
       assertEquals(key, "proj:preview:/about:v1");
+    });
+
+    it("isolates dependency snapshots and module origins", () => {
+      const snapshotA = getPageCssCacheKey(
+        "proj",
+        "production",
+        "/about",
+        "v1",
+        "on:34n9smy47dk9",
+        "https://a.example.test",
+      );
+      const snapshotB = getPageCssCacheKey(
+        "proj",
+        "production",
+        "/about",
+        "v1",
+        "on:34n8mjmdp7io",
+        "https://a.example.test",
+      );
+      const otherOrigin = getPageCssCacheKey(
+        "proj",
+        "production",
+        "/about",
+        "v1",
+        "on:34n9smy47dk9",
+        "https://b.example.test",
+      );
+
+      assertNotEquals(snapshotA, snapshotB);
+      assertNotEquals(snapshotA, otherOrigin);
+
+      cachePageCss(snapshotA, "/* snapshot A */");
+      cachePageCss(snapshotB, "/* snapshot B */");
+      assertEquals(getCachedPageCss(snapshotA), "/* snapshot A */");
+      assertEquals(getCachedPageCss(snapshotB), "/* snapshot B */");
     });
   });
 

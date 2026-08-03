@@ -43,7 +43,7 @@
   ],
   "tools": [
     {
-      "id": "list_meetings",
+      "id": "zoom__list_meetings",
       "name": "List Meetings",
       "description": "List scheduled or upcoming Zoom meetings for the authenticated user",
       "requiresWrite": false,
@@ -101,7 +101,7 @@
       }
     },
     {
-      "id": "get_meeting",
+      "id": "zoom__get_meeting",
       "name": "Get Meeting",
       "description": "Get details of a Zoom meeting by ID",
       "requiresWrite": false,
@@ -119,7 +119,7 @@
       }
     },
     {
-      "id": "create_meeting",
+      "id": "zoom__create_meeting",
       "name": "Create Meeting",
       "description": "Schedule a new Zoom meeting for the authenticated user",
       "requiresWrite": true,
@@ -169,7 +169,7 @@
       }
     },
     {
-      "id": "list_recordings",
+      "id": "zoom__list_recordings",
       "name": "List Recordings",
       "description": "List cloud recordings for the authenticated user",
       "requiresWrite": false,
@@ -208,7 +208,7 @@
       }
     },
     {
-      "id": "get_me",
+      "id": "zoom__get_me",
       "name": "Get My Profile",
       "description": "Get the authenticated Zoom user's profile",
       "requiresWrite": false,

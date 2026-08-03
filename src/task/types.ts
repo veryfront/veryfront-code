@@ -16,6 +16,10 @@ export interface TaskContext {
   config: Record<string, unknown>;
   /** Project ID (when executed by the platform) */
   projectId?: string;
+  /** Environment ID for the runtime target executing this task */
+  environmentId?: string;
+  /** Cooperative cancellation for request- or runtime-scoped execution */
+  signal?: AbortSignal;
 }
 
 /**
@@ -36,11 +40,30 @@ export interface TaskDefinition {
   run: (ctx: TaskContext) => Promise<unknown> | unknown;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === "string";
+}
+
+function isOptionalRecord(
+  value: unknown,
+): value is Record<string, unknown> | undefined {
+  return value === undefined || isRecord(value);
+}
+
 /**
- * Type guard: checks if a value looks like a TaskDefinition
+ * Return true only when the runnable and every declared task metadata field
+ * match the public `TaskDefinition` contract.
  */
 export function isTaskDefinition(value: unknown): value is TaskDefinition {
-  if (!value || typeof value !== "object") return false;
-  const obj = value as Record<string, unknown>;
-  return typeof obj.run === "function";
+  if (!isRecord(value)) return false;
+  return typeof value.run === "function" &&
+    isOptionalString(value.name) &&
+    isOptionalString(value.description) &&
+    isOptionalRecord(value.inputSchema) &&
+    isOptionalRecord(value.outputSchema) &&
+    (value.schedulable === undefined || typeof value.schedulable === "boolean");
 }

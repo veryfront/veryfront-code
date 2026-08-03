@@ -6,10 +6,36 @@
  */
 
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
+import { stripJsonImportAttributes } from "../../esm/import-attributes.ts";
+import type { DependencyResolutionObservation } from "../../import-rewriter/dependency-resolution.ts";
 import { type RewriteContext, rewriteImports } from "../../import-rewriter/index.ts";
+import { extractDependencyPinningPathKey } from "../../import-rewriter/url-builder.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
+const DEPENDENCY_RESOLUTION_OBSERVATIONS = "dependencyResolutionObservations";
+const DENO_CONFIG_STUB_PATH = "/_vf_modules/_veryfront/_deno-config.js";
+
+function isDenoConfigStubUrl(specifier: string): boolean {
+  const separatorIndex = specifier.search(/[?#]/);
+  const pathname = separatorIndex === -1 ? specifier : specifier.slice(0, separatorIndex);
+  const extracted = extractDependencyPinningPathKey(pathname);
+  return !extracted.malformed && extracted.pathname === DENO_CONFIG_STUB_PATH;
+}
+
+export function getDependencyResolutionObservations(
+  ctx: TransformContext,
+): readonly DependencyResolutionObservation[] {
+  const observations = ctx.metadata.get(DEPENDENCY_RESOLUTION_OBSERVATIONS);
+  if (!(observations instanceof Map)) return [];
+  return [...observations.values()].sort((left, right) =>
+    left.packageName.localeCompare(right.packageName)
+  );
+}
+
 async function buildRewriteContext(ctx: TransformContext): Promise<RewriteContext> {
+  const observations = new Map<string, DependencyResolutionObservation>();
+  ctx.metadata.set(DEPENDENCY_RESOLUTION_OBSERVATIONS, observations);
+
   const rewriteCtx: RewriteContext = {
     filePath: ctx.filePath,
     projectDir: ctx.projectDir,
@@ -17,9 +43,17 @@ async function buildRewriteContext(ctx: TransformContext): Promise<RewriteContex
     target: ctx.target,
     dev: ctx.dev,
     moduleServerUrl: ctx.moduleServerUrl,
+    moduleServerOrigin: ctx.moduleServerOrigin,
     vendorBundleHash: ctx.vendorBundleHash,
     apiBaseUrl: ctx.apiBaseUrl,
     reactVersion: ctx.reactVersion,
+    dependencyPinningCacheKey: ctx.dependencyPinningCacheKey,
+    dependencyPinningDependencies: ctx.dependencyPinningDependencies,
+    dependencyPinningSource: ctx.dependencyPinningSource,
+    onDependencyResolutionObserved: (observation) => {
+      observations.set(observation.packageName, observation);
+      ctx.onDependencyResolutionObserved?.(observation);
+    },
   };
 
   if (ctx.target !== "ssr") return rewriteCtx;
@@ -43,6 +77,7 @@ export const resolveImportsPlugin: TransformPlugin = {
 
   async transform(ctx: TransformContext): Promise<string> {
     const rewriteCtx = await buildRewriteContext(ctx);
-    return rewriteImports(ctx.code, rewriteCtx);
+    const code = await rewriteImports(ctx.code, rewriteCtx);
+    return stripJsonImportAttributes(code, isDenoConfigStubUrl);
   },
 };

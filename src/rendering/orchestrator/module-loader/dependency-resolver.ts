@@ -1,17 +1,54 @@
-import { dirname, join, normalize } from "#veryfront/compat/path/index.ts";
+import { dirname, join, normalize, toFileUrl } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { parallelMap, rendererLogger } from "#veryfront/utils";
 import {
+  findDynamicImportSpans,
   findStaticImportFromSpans,
   replaceSourceSpans,
   type SourceSpanReplacement,
+  type StaticImportSpan,
 } from "#veryfront/transforms/mdx/esm-module-loader/utils/source-spans.ts";
 import { findSourceFile } from "../file-resolver/index.ts";
 
 const logger = rendererLogger.component("module-loader");
+const MAX_IMPORTS_PER_KIND = 500;
 
-type AliasImport = { full: string; path: string; start: number; end: number };
-type RelativeImport = { full: string; path: string; fromDir: string; start: number; end: number };
+/**
+ * Collect one kind of import span, failing closed past the per-kind bound.
+ *
+ * The scanner is asked for one span more than the bound so that an over-budget
+ * module is rejected rather than resolved from a truncated prefix: every span
+ * collected here is rewritten to a temp-file URL later, so dropping the tail
+ * would leave those imports pointing at specifiers that no longer resolve.
+ */
+function collectBoundedSpans(
+  scan: (maxMatches: number) => StaticImportSpan[],
+  kind: string,
+): StaticImportSpan[] {
+  const spans = scan(MAX_IMPORTS_PER_KIND + 1);
+  if (spans.length > MAX_IMPORTS_PER_KIND) {
+    throw new RangeError(
+      `Module contains more than ${MAX_IMPORTS_PER_KIND} ${kind} imports`,
+    );
+  }
+  return spans;
+}
+
+type AliasImport = {
+  full: string;
+  path: string;
+  start: number;
+  end: number;
+  isDynamic: boolean;
+};
+type RelativeImport = {
+  full: string;
+  path: string;
+  fromDir: string;
+  start: number;
+  end: number;
+  isDynamic: boolean;
+};
 
 /** Resolved local module dependency discovered in a source module. */
 export type ResolvedModuleDependency = {
@@ -22,6 +59,8 @@ export type ResolvedModuleDependency = {
   relativePath: string;
   depFilePath: string | null;
   isLocalLib: boolean;
+  /** True when discovered inside `import("…")` rather than a static import. */
+  isDynamic: boolean;
 };
 
 /** Resolved dependency after its source module has been transformed to a temp file. */
@@ -37,30 +76,53 @@ export interface ResolveModuleDependenciesInput {
   adapter: RuntimeAdapter;
 }
 
+const matchAlias = (specifier: string) => specifier.startsWith("@/") ? specifier : null;
+const matchRelative = (specifier: string) => specifier.match(/^(\.\.?\/[^?]+)(?:\?.*)?$/)?.[1];
+
 function collectAliasImports(fileContent: string): AliasImport[] {
-  return findStaticImportFromSpans(
-    fileContent,
-    (specifier) => specifier.startsWith("@/") ? specifier : null,
-  ).map(({ original, path, start, end }) => ({
-    full: original,
-    path,
-    start,
-    end,
-  }));
+  const toAlias = (isDynamic: boolean) =>
+  (
+    { original, path, start, end }: {
+      original: string;
+      path: string;
+      start: number;
+      end: number;
+    },
+  ): AliasImport => ({ full: original, path, start, end, isDynamic });
+
+  return [
+    ...collectBoundedSpans(
+      (maxMatches) => findStaticImportFromSpans(fileContent, matchAlias, maxMatches),
+      "static alias",
+    ).map(toAlias(false)),
+    ...collectBoundedSpans(
+      (maxMatches) => findDynamicImportSpans(fileContent, matchAlias, maxMatches),
+      "dynamic alias",
+    ).map(toAlias(true)),
+  ];
 }
 
 function collectRelativeImports(fileContent: string, fileDir: string): RelativeImport[] {
-  return findStaticImportFromSpans(
-    fileContent,
-    (specifier) => specifier.match(/^(\.\.?\/[^?]+)(?:\?.*)?$/)?.[1],
-  )
-    .map(({ original, path, start, end }) => ({
-      full: original,
-      path,
-      fromDir: fileDir,
-      start,
-      end,
-    }))
+  const toRelative = (isDynamic: boolean) =>
+  (
+    { original, path, start, end }: {
+      original: string;
+      path: string;
+      start: number;
+      end: number;
+    },
+  ): RelativeImport => ({ full: original, path, fromDir: fileDir, start, end, isDynamic });
+
+  return [
+    ...collectBoundedSpans(
+      (maxMatches) => findStaticImportFromSpans(fileContent, matchRelative, maxMatches),
+      "static relative",
+    ).map(toRelative(false)),
+    ...collectBoundedSpans(
+      (maxMatches) => findDynamicImportSpans(fileContent, matchRelative, maxMatches),
+      "dynamic relative",
+    ).map(toRelative(true)),
+  ]
     // Ignore already-transformed file:// imports.
     .filter((imp) => !imp.path.includes("file://"));
 }
@@ -128,6 +190,7 @@ async function resolveRelativeImport(
     relativePath: imp.path,
     depFilePath,
     isLocalLib: false,
+    isDynamic: imp.isDynamic,
   };
 }
 
@@ -164,11 +227,16 @@ export function rewriteResolvedDependencyImports(
   fileContent: string,
   transformedDeps: TransformedModuleDependency[],
 ): string {
-  const replacements: SourceSpanReplacement[] = transformedDeps.map((dep) => ({
-    start: dep.start,
-    end: dep.end,
-    expected: dep.full,
-    replacement: `from "file://${dep.depTempPath}"`,
-  }));
+  const replacements: SourceSpanReplacement[] = transformedDeps.map((dep) => {
+    const moduleUrl = toFileUrl(dep.depTempPath).href;
+    return {
+      start: dep.start,
+      end: dep.end,
+      expected: dep.full,
+      // A dynamic span covers only the quoted specifier; a static one covers the
+      // whole `from "…"` clause.
+      replacement: dep.isDynamic ? `"${moduleUrl}"` : `from "${moduleUrl}"`,
+    };
+  });
   return replaceSourceSpans(fileContent, replacements);
 }

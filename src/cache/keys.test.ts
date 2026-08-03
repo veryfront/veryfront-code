@@ -7,7 +7,9 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert";
 import {
+  buildComponentCacheKey,
   buildConfigCacheKey,
+  buildProxyManagerCacheKey,
   buildQueryAwareCacheKey,
   buildRenderCacheKey,
   buildRenderCachePrefix,
@@ -15,17 +17,62 @@ import {
   computeContentSourceId,
   DEFAULT_EXCLUDED_QUERY_PARAMS,
   filterQueryParams,
+  isValidCacheKey,
+  isValidCachePattern,
   parseRenderCacheKey,
+  sanitizeCacheKey,
   sanitizeQueryParamsForCacheKey,
 } from "./keys.ts";
 import {
   clearReleaseAssetManifestCache,
-  configureReleaseAssetManifestFetcher,
   getReadyManifestForRender,
+  getReadyManifestForRenderAsync,
+  registerManifestFetcherForRelease,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
+const CANONICAL_PIN_KEY = "on:z7bg3qnfgtcb";
+const API_CACHE_KEY_MAX_LENGTH = 512;
+const API_CACHE_KEY_PATTERN = /^[a-zA-Z0-9_:.\-/]+$/;
+
 describe("cache/keys", () => {
+  describe("buildComponentCacheKey", () => {
+    it("isolates pin-on hydration transforms by request origin", () => {
+      const base = [
+        "project",
+        "/app/page.tsx",
+        "content-hash",
+        CANONICAL_PIN_KEY,
+      ] as const;
+      const originA = buildComponentCacheKey(...base, "https://a.example");
+      const originB = buildComponentCacheKey(...base, "https://b.example");
+
+      assertNotEquals(originA, originB);
+    });
+
+    it("preserves the flag-off component identity when an origin is supplied", () => {
+      const legacy = "component:project:/app/page.tsx:hash";
+      assertEquals(
+        buildComponentCacheKey("project", "/app/page.tsx", "hash", "off"),
+        buildComponentCacheKey(
+          "project",
+          "/app/page.tsx",
+          "hash",
+          "off",
+          "https://a.example",
+        ),
+      );
+      assertEquals(
+        buildComponentCacheKey("project", "/app/page.tsx", "hash"),
+        legacy,
+      );
+      assertEquals(
+        buildComponentCacheKey("project", "/app/page.tsx", "hash", "off"),
+        legacy,
+      );
+    });
+  });
+
   describe("CacheKeyPrefix", () => {
     it("should have SSR_MODULE prefix", () => {
       assertEquals(CacheKeyPrefix.SSR_MODULE, "veryfront:ssr-module:");
@@ -67,25 +114,24 @@ describe("cache/keys", () => {
 
   describe("render cache prefix + manifest consumption", () => {
     const makeManifest = (): ReleaseAssetManifest => ({
-      schemaVersion: 1,
+      schemaVersion: 2,
       manifestVersion: 1,
       projectId: "proj_123",
       releaseId: "rel_456",
       releaseVersion: 1,
       builderVersion: "0.1.765",
-      sourceContentHash: "abc123",
+      sourceContentHash: "a".repeat(64),
       createdAt: "2026-06-12T00:00:00Z",
       assetBasePath: "/_vf/assets",
       modules: {},
       css: [],
       routes: {},
-      fallback: { mode: "jit" as const, gaps: [] },
+      dependencyMode: "immutable",
       dependencies: {},
     });
 
     afterEach(() => {
       clearReleaseAssetManifestCache();
-      configureReleaseAssetManifestFetcher(undefined);
       try {
         Deno.env.delete("VERYFRONT_RELEASE_ASSET_MANIFEST");
       } catch (_) { /* env may be read-only in some test configs */ }
@@ -95,8 +141,9 @@ describe("cache/keys", () => {
       try {
         Deno.env.delete("VERYFRONT_RELEASE_ASSET_MANIFEST");
       } catch (_) { /* ok */ }
-      configureReleaseAssetManifestFetcher(async () => ({
+      registerManifestFetcherForRelease("rel_456", async () => ({
         state: "ready",
+        manifest_version: 1,
         manifest: makeManifest(),
       }));
       // With flag off, must return null
@@ -120,9 +167,9 @@ describe("cache/keys", () => {
       const fetchDone = new Promise<void>((r) => {
         resolvePromise = r;
       });
-      configureReleaseAssetManifestFetcher(async () => {
+      registerManifestFetcherForRelease("rel_456", async () => {
         resolvePromise();
-        return { state: "ready", manifest: makeManifest() };
+        return { state: "ready", manifest_version: 1, manifest: makeManifest() };
       });
 
       // First call: cache miss → background fetch scheduled → returns null
@@ -130,7 +177,7 @@ describe("cache/keys", () => {
 
       // Wait for the background fetch to complete
       await fetchDone;
-      await Promise.resolve();
+      await getReadyManifestForRenderAsync("rel_456");
 
       // Second call: cache hit → returns manifest
       const cached = getReadyManifestForRender("rel_456");
@@ -199,6 +246,61 @@ describe("cache/keys", () => {
       assertMatch(buildConfigCacheKey("example-project", true), /^vf:example-project:.+$/);
     });
 
+    it("separates virtual config caches by exact source target", () => {
+      const main = buildConfigCacheKey("example-project", true, {
+        productionMode: false,
+        branch: "main",
+      });
+      const preview = buildConfigCacheKey("example-project", true, {
+        productionMode: false,
+        branch: "feature/integrations",
+      });
+      const release = buildConfigCacheKey("example-project", true, {
+        productionMode: true,
+        releaseId: "release-1",
+      });
+      const environment = buildConfigCacheKey("example-project", true, {
+        productionMode: true,
+        releaseId: "release-1",
+        environmentName: "Production",
+      });
+
+      assertNotEquals(main, preview);
+      assertNotEquals(main, release);
+      assertNotEquals(release, environment);
+      assertEquals(
+        main.includes("source:branch:main"),
+        true,
+      );
+      assertEquals(
+        preview.includes("source:branch:feature%2Fintegrations"),
+        true,
+      );
+      assertEquals(
+        release.includes("source:release:release-1"),
+        true,
+      );
+      assertEquals(
+        environment.includes("source:environment:Production:release-1"),
+        true,
+      );
+    });
+
+    it("uses injective structured encoding for environment config sources", () => {
+      const left = buildConfigCacheKey("example-project", true, {
+        productionMode: true,
+        environmentName: "Production:release-1",
+        releaseId: "release-2",
+      });
+      const right = buildConfigCacheKey("example-project", true, {
+        productionMode: true,
+        environmentName: "Production",
+        releaseId: "release-1:release-2",
+      });
+
+      assertNotEquals(left, right);
+    });
+
     it("should build key for local filesystem", () => {
       // Should use hashed path with folder name, not absolute path
       // Format: config:local-{hash}-{folderName}:{version}
@@ -206,6 +308,66 @@ describe("cache/keys", () => {
         buildConfigCacheKey("/path/to/project", false),
         /^config:local-[a-f0-9]+-project:.+$/,
       );
+    });
+  });
+
+  describe("buildProxyManagerCacheKey", () => {
+    it("requires an immutable release for production environments", () => {
+      assertThrows(
+        () => buildProxyManagerCacheKey("example-project", true, null, null, "Production"),
+        Error,
+        "Missing releaseId in production",
+      );
+    });
+
+    it("separates production environment and release identities", () => {
+      const environment = buildProxyManagerCacheKey(
+        "example-project",
+        true,
+        "release-1",
+        null,
+        "Production",
+      );
+      const release = buildProxyManagerCacheKey(
+        "example-project",
+        true,
+        "release-1",
+        null,
+      );
+
+      assertNotEquals(environment, release);
+      assertEquals(environment.includes("environment:Production:release-1"), true);
+      assertEquals(release.includes("release:release-1"), true);
+    });
+
+    it("separates canonical projects and credential principals", () => {
+      const first = buildProxyManagerCacheKey(
+        "reusable-slug",
+        false,
+        null,
+        "main",
+        null,
+        { projectId: "project-one", credentialPrincipal: "principal-one" },
+      );
+      const reassigned = buildProxyManagerCacheKey(
+        "reusable-slug",
+        false,
+        null,
+        "main",
+        null,
+        { projectId: "project-two", credentialPrincipal: "principal-one" },
+      );
+      const rotatedCredential = buildProxyManagerCacheKey(
+        "reusable-slug",
+        false,
+        null,
+        "main",
+        null,
+        { projectId: "project-one", credentialPrincipal: "principal-two" },
+      );
+
+      assertNotEquals(first, reassigned);
+      assertNotEquals(first, rotatedCredential);
     });
   });
 
@@ -413,6 +575,115 @@ describe("cache/keys", () => {
     it("should include HubSpot tracking params", () => {
       assertEquals(DEFAULT_EXCLUDED_QUERY_PARAMS.includes("_hsenc"), true);
       assertEquals(DEFAULT_EXCLUDED_QUERY_PARAMS.includes("_hsmi"), true);
+    });
+  });
+
+  describe("sanitizeCacheKey / isValidCacheKey", () => {
+    it("recognises a well-formed structural key as valid", () => {
+      const key = "veryfront:ssr-module:proj_123:production:rel-abc:components/Button.tsx";
+      assertEquals(isValidCacheKey(key), true);
+    });
+
+    it("treats the empty string as invalid", () => {
+      assertEquals(isValidCacheKey(""), false);
+    });
+
+    it("rejects keys and patterns longer than the API limit", () => {
+      assertEquals(isValidCacheKey("a".repeat(API_CACHE_KEY_MAX_LENGTH + 1)), false);
+      assertEquals(isValidCachePattern(`prefix:${"*".repeat(API_CACHE_KEY_MAX_LENGTH)}`), false);
+    });
+
+    it("flags keys containing characters outside the allowed set", () => {
+      assertEquals(isValidCacheKey("render:proj:/blog?ref=x&y=1"), false);
+      assertEquals(isValidCacheKey("render:proj: has space"), false);
+      assertEquals(isValidCacheKey("render:café"), false);
+    });
+
+    it("returns well-formed keys unchanged (no cache churn)", async () => {
+      const key = "veryfront:ssr-module:proj_123:production:rel-abc:components/Button.tsx";
+      assertEquals(await sanitizeCacheKey(key), key);
+    });
+
+    it("treats `*` as a wildcard for patterns but not as a valid key character", () => {
+      const pattern = "render:proj_123:production:rel-abc:*";
+      // `*` is only valid in a del-pattern, never in a concrete key.
+      assertEquals(isValidCachePattern(pattern), true);
+      assertEquals(isValidCacheKey(pattern), false);
+    });
+
+    it("leaves a clean del-pattern (prefix + wildcard) unchanged", () => {
+      const pattern = "render:proj_123:production:rel-abc:*";
+      assertEquals(isValidCachePattern(pattern), true);
+    });
+
+    it("flags a del-pattern whose literal segment has invalid characters", () => {
+      // Escaping a space in the literal prefix would inject `*` wildcards into
+      // the glob, so the backend must refuse it rather than sanitize.
+      assertEquals(isValidCachePattern("render:proj bad:*"), false);
+    });
+
+    it("maps a literal `*` to a valid concrete API key", async () => {
+      const sanitized = await sanitizeCacheKey("render:proj:a*b");
+      assertEquals(isValidCacheKey(sanitized), true);
+      assertMatch(sanitized, API_CACHE_KEY_PATTERN);
+      assertEquals(sanitized.includes("render:proj:a"), false);
+    });
+
+    it("does not collide a malformed key with a marker-looking valid key", async () => {
+      assertNotEquals(await sanitizeCacheKey("a b"), await sanitizeCacheKey("a*20b"));
+    });
+
+    it("maps leaked query-string characters to a valid concrete API key", async () => {
+      const sanitized = await sanitizeCacheKey("render:proj:/blog?ref=x&y=1");
+      assertEquals(isValidCacheKey(sanitized), true);
+      assertMatch(sanitized, API_CACHE_KEY_PATTERN);
+      assertEquals(sanitized.includes("render:proj:/blog"), false);
+    });
+
+    it("does not retain secret-bearing path prefixes from malformed URLs", async () => {
+      const sanitized = await sanitizeCacheKey(
+        "https://example.com/reset/token/secret123?next=/account",
+      );
+      assertEquals(sanitized.includes("secret123"), false);
+      assertEquals(isValidCacheKey(sanitized), true);
+    });
+
+    it("maps whitespace and non-ASCII characters to a valid concrete API key", async () => {
+      const sanitized = await sanitizeCacheKey("render:café page");
+      assertEquals(isValidCacheKey(sanitized), true);
+      assertMatch(sanitized, API_CACHE_KEY_PATTERN);
+      assertEquals(sanitized.includes("render:caf"), false);
+    });
+
+    it("always returns a valid, length-bounded concrete key", async () => {
+      for (
+        const input of [
+          "",
+          "a?b=c",
+          "spaces here",
+          "emoji-🚀-key",
+          "tab\tchar",
+          "percent%20already",
+          "back\\slash",
+          'quote"key',
+          "a".repeat(API_CACHE_KEY_MAX_LENGTH + 1),
+        ]
+      ) {
+        const sanitized = await sanitizeCacheKey(input);
+        assertEquals(isValidCacheKey(sanitized), true);
+        assertMatch(sanitized, API_CACHE_KEY_PATTERN);
+        assertEquals(sanitized.length <= API_CACHE_KEY_MAX_LENGTH, true);
+      }
+    });
+
+    it("keeps the reserved fallback namespace distinct from raw valid keys", async () => {
+      const sanitized = await sanitizeCacheKey("a b");
+      assertNotEquals(await sanitizeCacheKey(sanitized), sanitized);
+    });
+
+    it("is deterministic so a get derives the same key as its set", async () => {
+      const raw = "render:proj:/blog?ref=x";
+      assertEquals(await sanitizeCacheKey(raw), await sanitizeCacheKey(raw));
     });
   });
 });

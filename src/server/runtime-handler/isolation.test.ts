@@ -5,6 +5,7 @@ import {
   __injectDepsForTests,
   checkRequestIsolation,
   completeIsolatedRequest,
+  completeIsolatedRequestOnSettlement,
   createIsolationErrorResponse,
   type IsolationCheckResult,
   startIsolatedRequest,
@@ -110,6 +111,48 @@ describe("isolation", () => {
 
       completeIsolatedRequest("my-project", true, true);
       assertEquals(calls, [{ slug: "my-project", isTimeout: true }]);
+    });
+  });
+
+  describe("completeIsolatedRequestOnSettlement", () => {
+    it("records a timeout immediately and releases concurrency after settlement", async () => {
+      const calls: string[] = [];
+      let settle!: () => void;
+      const settled = new Promise<void>((resolve) => {
+        settle = resolve;
+      });
+      __injectDepsForTests({
+        recordTimeout: () => calls.push("timeout"),
+        completeRequest: (_slug, isTimeout) => calls.push(`complete:${isTimeout}`),
+      });
+
+      completeIsolatedRequestOnSettlement("my-project", true, true, settled);
+
+      assertEquals(calls, ["timeout"]);
+      settle();
+      await settled;
+      await Promise.resolve();
+      assertEquals(calls, ["timeout", "complete:false"]);
+    });
+
+    it("waits for settlement before completing a non-timeout request", async () => {
+      const calls: string[] = [];
+      let settle!: () => void;
+      const settled = new Promise<void>((resolve) => {
+        settle = resolve;
+      });
+      __injectDepsForTests({
+        recordTimeout: () => calls.push("timeout"),
+        completeRequest: () => calls.push("complete"),
+      });
+
+      completeIsolatedRequestOnSettlement("my-project", true, false, settled);
+
+      assertEquals(calls, []);
+      settle();
+      await settled;
+      await Promise.resolve();
+      assertEquals(calls, ["complete"]);
     });
   });
 

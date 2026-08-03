@@ -4,6 +4,7 @@ type MockReadFile = (path: string) => Promise<string>;
 
 type CreateGeneratorOptions = {
   mode?: HTMLGeneratorConfig["mode"];
+  isLocalProject?: boolean;
   readFile?: MockReadFile;
 };
 
@@ -24,6 +25,7 @@ export function createMockAdapter(readFile: MockReadFile = defaultReadFile) {
 
 export function createHTMLGenerator({
   mode = "production",
+  isLocalProject,
   readFile = defaultReadFile,
 }: CreateGeneratorOptions = {}): HTMLGenerator {
   return new HTMLGenerator({
@@ -31,6 +33,7 @@ export function createHTMLGenerator({
     adapter: createMockAdapter(readFile) as any,
     config: {} as any,
     mode,
+    isLocalProject,
   });
 }
 

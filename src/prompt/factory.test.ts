@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert";
+import {
+  assertEquals,
+  assertNotStrictEquals,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert";
 import { prompt } from "./factory.ts";
+import type { PromptConfig, PromptMCPConfig } from "./types.ts";
 
 describe("prompt factory", () => {
   describe("prompt()", () => {
@@ -132,14 +138,134 @@ describe("prompt factory", () => {
     });
   });
 
-  describe("getContent() error handling", () => {
-    it("should throw when prompt has neither content nor generate", async () => {
-      const p = prompt({ id: "empty", description: "desc" });
-      await assertRejects(
-        () => p.getContent(),
-        Error,
-        'Prompt "empty" has no content or generator',
+  describe("configuration validation", () => {
+    it("should reject a prompt with neither content nor generate", () => {
+      assertThrows(
+        () =>
+          prompt(
+            { id: "empty", description: "desc" } as unknown as PromptConfig,
+          ),
+        TypeError,
+        "Prompt must define static content or a generator",
       );
+    });
+
+    it("should reject top-level configuration accessors without invoking them", () => {
+      let reads = 0;
+      const config = Object.freeze(
+        Object.defineProperties({}, {
+          id: { enumerable: true, value: "accessor-config" },
+          description: {
+            enumerable: true,
+            get() {
+              reads += 1;
+              return "desc";
+            },
+          },
+          content: { enumerable: true, value: "Hello" },
+        }),
+      );
+
+      assertThrows(
+        () => prompt(config as unknown as PromptConfig),
+        TypeError,
+        "Prompt description must be an own data property",
+      );
+      assertEquals(reads, 0);
+    });
+
+    it("should always return an owned frozen prompt from a frozen configuration", () => {
+      const config = Object.freeze({
+        id: "owned-config",
+        description: "desc",
+        content: "Hello",
+      });
+      const p = prompt(config);
+
+      assertNotStrictEquals(p as unknown, config as unknown);
+      assertEquals(Object.isFrozen(p), true);
+      assertEquals(p.id, "owned-config");
+    });
+
+    it("should reject MCP accessors without invoking them", () => {
+      let reads = 0;
+      const mcp = Object.freeze(
+        Object.defineProperty({}, "enabled", {
+          enumerable: true,
+          get() {
+            reads += 1;
+            return reads % 2 === 1;
+          },
+        }),
+      );
+
+      assertThrows(
+        () =>
+          prompt({
+            id: "accessor-mcp",
+            description: "desc",
+            content: "Hello",
+            mcp,
+          } as unknown as PromptConfig),
+        TypeError,
+        "Prompt MCP enabled must be an own data property",
+      );
+      assertEquals(reads, 0);
+    });
+
+    it("should reject a revoked MCP proxy", () => {
+      const { proxy, revoke } = Proxy.revocable({ enabled: true }, {});
+      revoke();
+
+      assertThrows(
+        () =>
+          prompt({
+            id: "revoked-mcp",
+            description: "desc",
+            content: "Hello",
+            mcp: proxy,
+          } as unknown as PromptConfig),
+        TypeError,
+        "Prompt MCP configuration must be an object",
+      );
+    });
+
+    it("should always own the frozen MCP snapshot", () => {
+      const arguments_: NonNullable<PromptMCPConfig["arguments"]> = [
+        { name: "topic", required: true },
+      ];
+      Object.freeze(arguments_[0]);
+      Object.freeze(arguments_);
+      const mcp: PromptMCPConfig = {
+        enabled: true,
+        arguments: arguments_,
+      };
+      Object.freeze(mcp);
+      const p = prompt({
+        id: "owned-mcp",
+        description: "desc",
+        content: "Hello",
+        mcp,
+      });
+
+      assertNotStrictEquals(p.mcp, mcp);
+      assertNotStrictEquals(p.mcp?.arguments, mcp.arguments);
+      assertNotStrictEquals(p.mcp?.arguments?.[0], arguments_[0]);
+      assertEquals(Object.isFrozen(p.mcp), true);
+      assertEquals(Object.isFrozen(p.mcp?.arguments), true);
+      assertEquals(Object.isFrozen(p.mcp?.arguments?.[0]), true);
+    });
+
+    it("should preserve omitted MCP arguments without inventing an empty list", () => {
+      const p = prompt({
+        id: "mcp-without-arguments",
+        description: "desc",
+        content: "Hello",
+        mcp: { enabled: true },
+      });
+
+      assertEquals(p.mcp?.arguments, undefined);
+      assertEquals(Object.isFrozen(p.mcp), true);
     });
   });
 });

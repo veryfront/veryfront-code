@@ -1,25 +1,35 @@
-import { join } from "#veryfront/compat/path";
+import { dirname, join } from "#veryfront/compat/path";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import type { HTMLGenerationOptions } from "#veryfront/html";
 import {
   buildImportMapJson,
+  buildStructuredManagedHeadDescriptors,
+  escapeHTML,
   extractHTMLMetadata,
   generateHTMLShellParts,
   injectHTMLContent,
   isFullHTMLDocument,
 } from "#veryfront/html";
 import { buildNonceAttribute } from "#veryfront/html/html-escape.ts";
-import type { MDXFrontmatter } from "#veryfront/types";
+import {
+  HEAD_PROVENANCE_ATTRIBUTE,
+  HEAD_SHELL_PROVENANCE_ATTRIBUTE,
+  headMetaSingletonKeyFromRecord,
+  serializeManagedHeadPayload,
+} from "#veryfront/html/managed-head-protocol.ts";
+import type { MDXFrontmatter } from "#veryfront/transforms/mdx/types.ts";
+import type { RenderMetadata } from "#veryfront/types";
 import { DEFAULT_DASHBOARD_PORT, rendererLogger } from "#veryfront/utils";
-import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 import { injectElementSelectors } from "#veryfront/studio/element-selector-injector.ts";
 import { computeSourceHash } from "#veryfront/studio/hash-utils.ts";
 import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
+import { hasUseClientDirective } from "#veryfront/rendering/rsc/page-island.ts";
 import { getReadyManifestForRenderAsync } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { resolveAppComponentPath } from "../layouts/utils/app-resolver.ts";
+import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import { StreamTimeoutError, streamToString } from "../utils/stream-utils.ts";
-import { profilePhase, profileSyncPhase } from "#veryfront/observability/request-profiler.ts";
+import { profilePhase, profileSyncPhase } from "#veryfront/observability";
 import {
   extractProjectClassesForRoute,
   type ProjectCSSResult,
@@ -27,14 +37,70 @@ import {
   startProjectCSSPreparation,
 } from "./html-project-css.ts";
 import {
+  buildCollectedHeadDescriptors,
   buildHeadElements as buildCollectedHeadElements,
+  mergeCollectedHeadWithShell,
   mergeFrontmatter as mergeCollectedFrontmatter,
+  resolveCommittedHeadFromHTML,
 } from "./html-head.ts";
 import { mergeImportedCSS as mergeImportedProjectCss } from "./html-imported-css.ts";
 import type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
+import { NOT_SUPPORTED } from "#veryfront/errors";
 export type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
 
 const logger = rendererLogger.component("html-generator");
+
+function hasCollectedHeadEntries(
+  head: HTMLGenerationContext["collectedHead"],
+): boolean {
+  return head !== undefined && (
+    head.title !== undefined ||
+    head.description !== undefined ||
+    head.metas.length > 0 ||
+    head.links.length > 0 ||
+    head.styles.length > 0 ||
+    head.scripts.length > 0
+  );
+}
+
+function toShellFrontmatter(
+  frontmatter: MDXFrontmatter,
+): NonNullable<RenderMetadata["frontmatter"]> {
+  // The public RenderMetadata type still exposes the legacy scalar-only
+  // frontmatter index, while the HTML pipeline supports structured meta/link/
+  // script/style fields. This boundary narrows only the type view; the shell
+  // immediately validates and snapshots every structured value before use.
+  return frontmatter as unknown as NonNullable<RenderMetadata["frontmatter"]>;
+}
+
+function injectHeadScriptsAfterImportMap(html: string, scripts: string): string {
+  const headOpen = html.indexOf("<head>");
+  const headClose = headOpen < 0 ? -1 : html.indexOf("</head>", headOpen);
+  if (headOpen < 0 || headClose < 0) {
+    throw new Error("Generated HTML shell is missing a complete head element");
+  }
+
+  const lower = html.toLowerCase();
+  let cursor = headOpen + "<head>".length;
+  while (cursor < headClose) {
+    const scriptStart = lower.indexOf("<script", cursor);
+    if (scriptStart < 0 || scriptStart >= headClose) break;
+    const scriptOpenEnd = lower.indexOf(">", scriptStart + "<script".length);
+    if (scriptOpenEnd < 0 || scriptOpenEnd >= headClose) break;
+    const openingTag = lower.slice(scriptStart, scriptOpenEnd + 1);
+    if (/\stype\s*=\s*["']importmap["']/.test(openingTag)) {
+      const scriptClose = lower.indexOf("</script>", scriptOpenEnd + 1);
+      if (scriptClose < 0 || scriptClose >= headClose) break;
+      const insertionPoint = scriptClose + "</script>".length;
+      return html.slice(0, insertionPoint) +
+        `\n  ${scripts}` +
+        html.slice(insertionPoint);
+    }
+    cursor = scriptOpenEnd + 1;
+  }
+
+  throw new Error("Generated HTML shell is missing its framework import map");
+}
 
 /**
  * Resolve the release ID for manifest consumption from render options.
@@ -71,6 +137,41 @@ async function resolveReleaseAssetManifestForHTML(
   );
 }
 
+/**
+ * Locate the opening `<html>` tag in `html`, respecting quoted attribute values
+ * so that a `>` inside an attribute value (e.g. `data-foo="a>b"`) does not
+ * truncate the tag prematurely.
+ *
+ * Returns the start index, the exclusive end index (points past the `>`), and
+ * the raw attribute string between `<html` and `>`. Returns null if no tag is
+ * found or the tag is not properly closed.
+ */
+function findHtmlOpeningTag(
+  html: string,
+): { tagStart: number; tagEnd: number; attrs: string } | null {
+  const lower = html.toLowerCase();
+  const tagStart = lower.indexOf("<html");
+  if (tagStart === -1) return null;
+
+  const afterHtml = tagStart + 5;
+  // Must be followed by whitespace, >, or / to be a genuine <html> element
+  const boundary = lower[afterHtml];
+  if (boundary && !/[\s>\/]/.test(boundary)) return null;
+
+  let activeQuote: string | null = null;
+  for (let i = afterHtml; i < html.length; i++) {
+    const ch = html[i];
+    if (activeQuote) {
+      if (ch === activeQuote) activeQuote = null;
+    } else if (ch === '"' || ch === "'") {
+      activeQuote = ch;
+    } else if (ch === ">") {
+      return { tagStart, tagEnd: i + 1, attrs: html.slice(afterHtml, i) };
+    }
+  }
+  return null; // unclosed tag
+}
+
 function applyExplicitThemeToDocument(
   html: string,
   colorScheme: "light" | "dark" | undefined,
@@ -78,36 +179,37 @@ function applyExplicitThemeToDocument(
 ): string {
   if (!enabled || !colorScheme) return html;
 
-  return html.replace(/<html\b([^>]*)>/i, (_match, attrs: string) => {
-    let nextAttrs = attrs;
+  const tag = findHtmlOpeningTag(html);
+  if (!tag) return html;
 
-    if (/\sdata-theme\s*=/i.test(nextAttrs)) {
-      nextAttrs = nextAttrs.replace(/\sdata-theme\s*=\s*(["']).*?\1/i, "");
-    }
-    nextAttrs += ` data-theme="${colorScheme}"`;
+  let nextAttrs = tag.attrs;
 
-    const styleMatch = nextAttrs.match(/\sstyle\s*=\s*(["'])(.*?)\1/i);
-    if (styleMatch) {
-      let styleValue = (styleMatch[2] ?? "").trim();
+  if (/\sdata-theme\s*=/i.test(nextAttrs)) {
+    nextAttrs = nextAttrs.replace(/\sdata-theme\s*=\s*(["']).*?\1/i, "");
+  }
+  nextAttrs += ` data-theme="${colorScheme}"`;
 
-      if (/color-scheme\s*:/i.test(styleValue)) {
-        styleValue = styleValue.replace(
-          /color-scheme\s*:\s*[^;]+/i,
-          `color-scheme: ${colorScheme}`,
-        );
-      } else {
-        styleValue = styleValue
-          ? `${styleValue.replace(/;?\s*$/, ";")} color-scheme: ${colorScheme};`
-          : `color-scheme: ${colorScheme};`;
-      }
+  const styleMatch = nextAttrs.match(/\sstyle\s*=\s*(["'])(.*?)\1/i);
+  if (styleMatch) {
+    let styleValue = (styleMatch[2] ?? "").trim();
 
-      nextAttrs = nextAttrs.replace(styleMatch[0], ` style="${styleValue}"`);
+    if (/color-scheme\s*:/i.test(styleValue)) {
+      styleValue = styleValue.replace(
+        /color-scheme\s*:\s*[^;]+/i,
+        `color-scheme: ${colorScheme}`,
+      );
     } else {
-      nextAttrs += ` style="color-scheme: ${colorScheme};"`;
+      styleValue = styleValue
+        ? `${styleValue.replace(/;?\s*$/, ";")} color-scheme: ${colorScheme};`
+        : `color-scheme: ${colorScheme};`;
     }
 
-    return `<html${nextAttrs}>`;
-  });
+    nextAttrs = nextAttrs.replace(styleMatch[0], ` style="${styleValue}"`);
+  } else {
+    nextAttrs += ` style="color-scheme: ${colorScheme};"`;
+  }
+
+  return html.slice(0, tag.tagStart) + `<html${nextAttrs}>` + html.slice(tag.tagEnd);
 }
 
 function injectThemePersistenceScript(
@@ -135,68 +237,51 @@ export class HTMLGenerator {
   }
 
   async generateFullHTML(context: HTMLGenerationContext): Promise<string> {
+    const committedHead = resolveCommittedHeadFromHTML(context.html, context.collectedHead);
+    const effectiveContext = committedHead ? { ...context, collectedHead: committedHead } : context;
     let html: string;
-    if (isFullHTMLDocument(context.html)) {
-      let projectCSSPromise: Promise<ProjectCSSResult> | undefined;
-      if (this.config.mode === "production" && context.options?.environment === "production") {
-        const mergedFrontmatter = mergeCollectedFrontmatter(context);
-        const htmlOptions = await profilePhase(
-          "html.build_options",
-          () => this.buildHTMLOptions(context, mergedFrontmatter),
-        );
-        projectCSSPromise = startProjectCSSPreparation(context, htmlOptions);
-      }
-
-      html = await this.handleFullHTMLDocument(context, projectCSSPromise);
+    if (isFullHTMLDocument(effectiveContext.html)) {
+      html = await this.handleFullHTMLDocument(effectiveContext);
     } else {
-      html = await this.wrapHTMLFragment(context);
+      html = await this.wrapHTMLFragment(effectiveContext);
     }
-    const finalHtml = context.options?.studioEmbed ? injectElementSelectors(html) : html;
+    const finalHtml = effectiveContext.options?.studioEmbed ? injectElementSelectors(html) : html;
 
-    if (context.options?.studioEmbed) {
+    if (effectiveContext.options?.studioEmbed) {
       logger.debug("Injected element selectors for Studio");
     }
 
-    return addNonceToHtmlTags(finalHtml, context.options?.nonce);
+    return finalHtml;
   }
 
   async generateHTMLStream(
     reactStream: ReadableStream,
     context: Omit<HTMLGenerationContext, "html">,
   ): Promise<ReadableStream> {
-    const fullContext = context as HTMLGenerationContext;
-    const mergedFrontmatter = mergeCollectedFrontmatter(fullContext);
-    const htmlOptions = await profilePhase(
-      "html.build_options",
-      () => this.buildHTMLOptions(fullContext, mergedFrontmatter),
-    );
-    const projectCSSPromise = startProjectCSSPreparation(fullContext, htmlOptions);
-    startPreparedCSSWarmup(this.config, fullContext, htmlOptions);
-
     let reactContent: string;
     try {
       reactContent = (await streamToString(reactStream)).trim();
     } catch (error) {
       if (!(error instanceof StreamTimeoutError)) throw error;
 
-      logger.warn("Stream timed out, using partial content", {
+      logger.warn("Stream timed out; discarding partial content", {
         partialLength: error.partialContent.length,
       });
-      reactContent = error.partialContent.trim();
+      throw error;
     }
+
+    const committedHead = resolveCommittedHeadFromHTML(reactContent, context.collectedHead);
+    const fullContext = {
+      ...context,
+      html: reactContent,
+      ...(committedHead ? { collectedHead: committedHead } : {}),
+    } as HTMLGenerationContext;
 
     if (isFullHTMLDocument(reactContent)) {
       const encoder = new TextEncoder();
-      const fullHtml = addNonceToHtmlTags(
-        await this.handleFullHTMLDocument(
-          {
-            ...fullContext,
-            html: reactContent,
-          },
-          projectCSSPromise,
-        ),
-        context.options?.nonce,
-      );
+      const fullHtml = await this.handleFullHTMLDocument({
+        ...fullContext,
+      });
 
       return new ReadableStream({
         start(controller) {
@@ -205,6 +290,14 @@ export class HTMLGenerator {
         },
       });
     }
+
+    const mergedFrontmatter = mergeCollectedFrontmatter(fullContext);
+    const htmlOptions = await profilePhase(
+      "html.build_options",
+      () => this.buildHTMLOptions(fullContext, mergedFrontmatter),
+    );
+    const projectCSSPromise = startProjectCSSPreparation(fullContext, htmlOptions);
+    startPreparedCSSWarmup(this.config, fullContext, htmlOptions);
 
     const { start, end } = await profilePhase(
       "html.generate_shell_parts",
@@ -219,10 +312,7 @@ export class HTMLGenerator {
     );
 
     const encoder = new TextEncoder();
-    const fullHtml = addNonceToHtmlTags(
-      `${start}${reactContent}${end}`,
-      context.options?.nonce,
-    );
+    const fullHtml = `${start}${reactContent}${end}`;
 
     return new ReadableStream({
       start(controller) {
@@ -234,12 +324,26 @@ export class HTMLGenerator {
 
   private async handleFullHTMLDocument(
     context: HTMLGenerationContext,
-    projectCSSPromise?: Promise<ProjectCSSResult>,
   ): Promise<string> {
+    if (hasCollectedHeadEntries(context.collectedHead)) {
+      throw NOT_SUPPORTED.create({
+        detail:
+          "React <Head> cannot be combined with a component-authored full HTML document; declare that document head directly",
+      });
+    }
+    const mergedFrontmatter = mergeCollectedFrontmatter(context);
+    const htmlOptions = await profilePhase(
+      "html.build_options",
+      () => this.buildHTMLOptions(context, mergedFrontmatter),
+    );
+    const projectCSSPromise = startProjectCSSPreparation(context, htmlOptions);
     const metadata = extractHTMLMetadata(
-      (context.pageInfo.entity.frontmatter || {}) as MDXFrontmatter,
+      mergedFrontmatter,
       (context.layoutBundle?.frontmatter || {}) as MDXFrontmatter,
     );
+    // Full-document placeholders use the same bounded structured-head contract
+    // as framework shells even though their authored placement is custom.
+    buildStructuredManagedHeadDescriptors(metadata, metadata.title ?? "Veryfront App");
 
     const pagePath = context.pageInfo.entity.path;
     const [isClientPage, releaseAssetManifest] = await Promise.all([
@@ -249,6 +353,10 @@ export class HTMLGenerator {
     const importMapJson = await buildImportMapJson({
       projectDir: this.config.projectDir,
       config: this.config.config,
+      moduleServerOrigin: context.options?.url?.origin,
+      dependencyPinningCacheKey: context.options?.dependencyPinningCacheKey,
+      dependencyPinningDependencies: context.options?.dependencyPinningDependencies,
+      dependencyPinningSource: context.options?.dependencyPinningSource,
       releaseAssetManifest,
     });
 
@@ -277,10 +385,13 @@ export class HTMLGenerator {
       isClientPage,
       params: context.options?.params,
       environment: context.options?.environment,
-      isLocalProject: this.config.mode === "development",
+      isLocalProject: this.config.isLocalProject === true,
       nonce: context.options?.nonce,
       importMapJson,
       projectStylesheetHref,
+      dependencyPinningCacheKey: context.options?.dependencyPinningCacheKey,
+      releaseAssetManifest,
+      directories: this.config.config.directories,
     });
 
     if (injectedHtml.trimStart().toLowerCase().startsWith("<!doctype")) return injectedHtml;
@@ -308,7 +419,7 @@ export class HTMLGenerator {
   private async detectUseClientDirective(pagePath: string): Promise<boolean> {
     try {
       const pageContent = await this.config.adapter.fs.readFile(pagePath);
-      const isClientPage = /^\s*['"]use client['"];?\s*$/m.test(pageContent);
+      const isClientPage = hasUseClientDirective(pageContent, pagePath);
 
       if (isClientPage) {
         logger.debug(`Detected 'use client' page: ${pagePath}`);
@@ -357,21 +468,32 @@ export class HTMLGenerator {
     projectCSSPromise?: Promise<ProjectCSSResult>,
   ): Promise<{ start: string; end: string }> {
     const head = context.collectedHead;
-    const effectiveTitle = head?.title || mergedFrontmatter.title || "Veryfront App";
-    const effectiveDescription = head?.description || mergedFrontmatter.description || "";
-    const enrichedFrontmatter = {
-      ...mergedFrontmatter,
-      ...(head?.title && { title: head.title }),
-      ...(head?.description && { description: head.description }),
-    };
+    const layoutFrontmatter = (context.layoutBundle?.frontmatter ?? {}) as MDXFrontmatter;
+    const {
+      frontmatter: enrichedFrontmatter,
+      emissionHead,
+      marksViewport,
+    } = mergeCollectedHeadWithShell(
+      mergedFrontmatter,
+      layoutFrontmatter,
+      head,
+    );
+
+    const completeManagedHeadPayload = serializeManagedHeadPayload([
+      ...buildStructuredManagedHeadDescriptors(
+        extractHTMLMetadata(enrichedFrontmatter, layoutFrontmatter),
+        enrichedFrontmatter.title || "Veryfront App",
+      ),
+      ...buildCollectedHeadDescriptors(emissionHead),
+    ]);
 
     const { start, end } = await generateHTMLShellParts(
       {
-        title: effectiveTitle,
-        description: effectiveDescription,
+        title: enrichedFrontmatter.title || "Veryfront App",
+        description: enrichedFrontmatter.description || "",
         slug: context.slug,
-        frontmatter: enrichedFrontmatter,
-        layoutFrontmatter: context.layoutBundle?.frontmatter,
+        frontmatter: toShellFrontmatter(enrichedFrontmatter),
+        layoutFrontmatter: toShellFrontmatter(layoutFrontmatter),
         ssrHash: context.ssrHash,
       },
       htmlOptions,
@@ -379,16 +501,61 @@ export class HTMLGenerator {
       context.options?.props,
       reactContent,
       projectCSSPromise,
+      { managedHeadPayload: completeManagedHeadPayload },
     );
-
-    const { scripts, other } = buildCollectedHeadElements(head);
-    if (!scripts && !other) return { start, end };
 
     let modifiedStart = start;
 
-    // Inject blocking scripts at TOP of <head> (after opening tag, before meta/CSS)
+    // The shell always emits its own title and viewport, while React Head must
+    // retain exact text/attributes for deterministic client adoption. Replace
+    // or remove only these fixed framework-generated shapes, then let the
+    // collected-head serializer emit the authoritative marked metadata.
+    if (head?.title !== undefined) {
+      const shellTitleOpen = `<title ${HEAD_SHELL_PROVENANCE_ATTRIBUTE}="true">`;
+      const titleStart = modifiedStart.indexOf(shellTitleOpen);
+      const titleEnd = titleStart < 0
+        ? -1
+        : modifiedStart.indexOf("</title>", titleStart + shellTitleOpen.length);
+      if (titleStart >= 0 && titleEnd >= 0) {
+        modifiedStart = modifiedStart.slice(0, titleStart) +
+          `<title ${HEAD_PROVENANCE_ATTRIBUTE}="true">${escapeHTML(head.title)}</title>` +
+          modifiedStart.slice(titleEnd + "</title>".length);
+      }
+    }
+
+    const headDescription = head?.description ??
+      head?.metas.find((meta) => headMetaSingletonKeyFromRecord(meta) === "meta:description")
+        ?.content;
+    if (headDescription !== undefined && headDescription.length > 0) {
+      modifiedStart = modifiedStart.replace(
+        `<meta name="description" content="${
+          escapeHTML(headDescription)
+        }" ${HEAD_SHELL_PROVENANCE_ATTRIBUTE}="true">`,
+        "",
+      );
+    }
+    if (marksViewport) {
+      const viewport = head?.metas.find((meta) =>
+        headMetaSingletonKeyFromRecord(meta) === "meta:viewport"
+      );
+      modifiedStart = modifiedStart.replace(
+        `<meta name="viewport" content="${
+          escapeHTML(viewport?.content ?? "")
+        }" ${HEAD_SHELL_PROVENANCE_ATTRIBUTE}="true">`,
+        "",
+      );
+    }
+
+    const { scripts, other } = buildCollectedHeadElements(
+      emissionHead,
+      context.options?.nonce,
+    );
+    if (!scripts && !other) return { start: modifiedStart, end };
+
+    // The framework import map must precede every module script. Keep collected
+    // scripts ahead of CSS while inserting them only after that map is closed.
     if (scripts) {
-      modifiedStart = modifiedStart.replace("<head>", `<head>\n  ${scripts}`);
+      modifiedStart = injectHeadScriptsAfterImportMap(modifiedStart, scripts);
     }
 
     // Inject other head elements at BOTTOM of <head> (before closing tag)
@@ -413,10 +580,114 @@ export class HTMLGenerator {
     );
   }
 
+  /**
+   * Resolve + load the nearest app-router `error.tsx` for the route's segment and
+   * build a ready-to-render element with the caught error. Returns the element
+   * (for the SSR error render) and the boundary's absolute source path (embedded
+   * as `errorPath` so the client hydration bundle wraps the same boundary and it
+   * hydrates). Null when the project has no matching `error.tsx`.
+   */
+  async resolveErrorComponent(
+    context: HTMLGenerationContext,
+    error: Error,
+  ): Promise<{ element: unknown; path: string } | null> {
+    const loaded = await this.resolveErrorComponentPath(context);
+    if (!loaded) return null;
+
+    try {
+      const reactVersion = await resolveProjectReactVersion({
+        projectDir: this.config.projectDir,
+        config: this.config.config,
+        dependencyPinningCacheKey: context.options?.dependencyPinningCacheKey,
+        dependencyPinningDependencies: context.options?.dependencyPinningDependencies,
+        dependencyPinningSource: context.options?.dependencyPinningSource,
+      });
+      const { getProjectReact } = await import(
+        "#veryfront/react/compat/ssr-adapter/index.ts"
+      );
+      const React = await getProjectReact(reactVersion);
+      const createElement = React.createElement as (
+        component: unknown,
+        props: unknown,
+      ) => unknown;
+      const element = createElement(loaded.component, { error, reset: () => {} });
+      return { element, path: loaded.path };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async resolveErrorComponentPath(
+    context: HTMLGenerationContext,
+  ): Promise<{ component: unknown; path: string } | null> {
+    try {
+      const appRoot = join(
+        this.config.projectDir,
+        this.config.config?.directories?.app ?? "app",
+      );
+      try {
+        const st = await this.config.adapter.fs.stat(appRoot);
+        if (!st.isDirectory) return null;
+      } catch (_) {
+        return null; // no app directory
+      }
+
+      const { collectAncestorDirs, loadReservedWithPath } = await import(
+        "../app-reserved.ts"
+      );
+      const matchedPath = context.pageInfo?.entity?.path;
+      const absolutePagePath = matchedPath
+        ? matchedPath.startsWith(this.config.projectDir)
+          ? matchedPath
+          : join(this.config.projectDir, matchedPath)
+        : appRoot;
+      const segmentDir = matchedPath ? dirname(absolutePagePath) : appRoot;
+      const dirs = await collectAncestorDirs(segmentDir, appRoot);
+      const reactVersion = await resolveProjectReactVersion({
+        projectDir: this.config.projectDir,
+        config: this.config.config,
+        dependencyPinningCacheKey: context.options?.dependencyPinningCacheKey,
+        dependencyPinningDependencies: context.options?.dependencyPinningDependencies,
+        dependencyPinningSource: context.options?.dependencyPinningSource,
+      });
+      const { computeContentSourceId } = await import("#veryfront/cache/keys.ts");
+      const contentSourceId = computeContentSourceId(
+        this.config.isLocalProject === true,
+        context.options?.environment ?? "preview",
+        null,
+        context.options?.releaseId,
+      );
+      const loaded = await loadReservedWithPath(
+        dirs,
+        "error",
+        this.config.projectDir,
+        this.config.mode,
+        this.config.adapter,
+        context.options?.projectId,
+        contentSourceId,
+        reactVersion,
+        context.options?.dependencyPinningCacheKey,
+        context.options?.dependencyPinningDependencies,
+        context.options?.dependencyPinningSource,
+        context.options?.url?.origin,
+      );
+      if (!loaded) return null;
+
+      return { component: loaded.component, path: loaded.filePath };
+    } catch (_) {
+      return null; // error.tsx resolution is best-effort
+    }
+  }
+
   private async loadProjectFile(filename: string): Promise<string | undefined> {
     try {
       const filePath = join(this.config.projectDir, filename);
-      const content = await this.config.adapter.fs.readFile(filePath);
+      const fs = this.config.adapter.fs as typeof this.config.adapter.fs & {
+        readOptionalTextFile?: (path: string) => Promise<string>;
+      };
+      const content = fs.readOptionalTextFile
+        ? await fs.readOptionalTextFile(filePath)
+        : await fs.readFile(filePath);
       logger.debug(`Loaded ${filename}`, { length: content.length });
       return content;
     } catch (_) {
@@ -436,6 +707,29 @@ export class HTMLGenerator {
       profilePhase("html.load_global_css", () => this.loadProjectFile(stylesheetPath)),
     ]);
     const appComponentPath = appComponentPathOrNull ?? undefined;
+    const clientLayoutPaths = new Set(
+      context.options?.clientPageIsland?.clientLayoutPaths ?? [],
+    );
+    const hydrationLayouts = context.options?.clientPageIsland
+      ? context.nestedLayouts.filter((layout) =>
+        clientLayoutPaths.has(layout.componentPath ?? layout.path ?? "")
+      )
+      : context.nestedLayouts;
+    const hydrationLayoutPaths = new Set(
+      hydrationLayouts.map((layout) =>
+        extractRelativePath(
+          layout.componentPath ?? layout.path ?? "",
+          this.config.projectDir,
+        )
+      ),
+    );
+    const hydrationLayoutProps = context.options?.layoutProps
+      ? Object.fromEntries(
+        Object.entries(context.options.layoutProps).filter(([path]) =>
+          hydrationLayoutPaths.has(path)
+        ),
+      )
+      : undefined;
     const projectClasses = await profilePhase(
       "html.route_candidates",
       () => extractProjectClassesForRoute(this.config, context, appComponentPath),
@@ -473,17 +767,22 @@ export class HTMLGenerator {
     const sourceHash = context.options?.studioEmbed && context.pageInfo.entity.content
       ? computeSourceHash(context.pageInfo.entity.content)
       : undefined;
-
     return profileSyncPhase("html.build_options.finalize", () => ({
       mode: this.config.mode,
       config: this.config.config,
       projectDir: this.config.projectDir,
-      nestedLayouts: context.nestedLayouts.map((l) => ({
+      moduleServerOrigin: context.options?.url?.origin,
+      nestedLayouts: hydrationLayouts.map((l) => ({
         kind: l.kind,
         path: l.path,
         componentPath: l.componentPath,
       })),
-      appPath: appComponentPath,
+      appPath: context.options?.clientPageIsland ? undefined : appComponentPath,
+      // Set on the SSR error path so the client hydration bundle wraps the page
+      // in the same app-router error boundary that rendered error.tsx on the server.
+      errorPath: context.options?.errorPath,
+      isolatedClientPage: context.options?.clientPageIsland ? true : undefined,
+      layoutProps: hydrationLayoutProps,
       pagePath,
       pageType,
       nonce: context.options?.nonce,
@@ -501,9 +800,11 @@ export class HTMLGenerator {
       environment: context.options?.environment,
       headings: context.pageBundle.headings,
       projectClasses,
-      isLocalProject: this.config.mode === "development",
+      isLocalProject: this.config.isLocalProject === true,
       noHmr: context.options?.noHmr,
       forceProductionScripts: context.options?.forceProductionScripts,
+      dependencyPinningCacheKey: context.options?.dependencyPinningCacheKey,
+      dependencyPinningDependencies: context.options?.dependencyPinningDependencies,
       ...(context.options?.releaseAssetManifest !== undefined
         ? { releaseAssetManifest: context.options.releaseAssetManifest }
         : {}),

@@ -46,7 +46,7 @@
   ],
   "tools": [
     {
-      "id": "list_forms",
+      "id": "hubspot__list_forms",
       "name": "List Forms",
       "description": "List HubSpot forms so agents can find a form ID before reading submissions",
       "requiresWrite": false,
@@ -81,7 +81,7 @@
       }
     },
     {
-      "id": "list_form_submissions",
+      "id": "hubspot__list_form_submissions",
       "name": "List Form Submissions",
       "description": "List recent submissions for a HubSpot form in reverse chronological order",
       "requiresWrite": false,
@@ -113,7 +113,7 @@
       }
     },
     {
-      "id": "get_contact",
+      "id": "hubspot__get_contact",
       "name": "Get Contact",
       "description": "Get a HubSpot contact by ID or email before scoring, dedupe, or updates",
       "requiresWrite": false,
@@ -152,7 +152,7 @@
       }
     },
     {
-      "id": "search_contacts",
+      "id": "hubspot__search_contacts",
       "name": "Search Contacts",
       "description": "Search HubSpot contacts by filters for lead research and CRM lookup",
       "requiresWrite": false,
@@ -192,7 +192,7 @@
       }
     },
     {
-      "id": "create_contact",
+      "id": "hubspot__create_contact",
       "name": "Create Contact",
       "description": "Create a HubSpot contact from form submission or researched lead data",
       "requiresWrite": true,
@@ -209,7 +209,7 @@
       }
     },
     {
-      "id": "update_contact",
+      "id": "hubspot__update_contact",
       "name": "Update Contact",
       "description": "Update HubSpot contact properties, including lead score or research notes",
       "requiresWrite": true,
@@ -239,7 +239,7 @@
       }
     },
     {
-      "id": "get_lead",
+      "id": "hubspot__get_lead",
       "name": "Get Lead",
       "description": "Get a HubSpot CRM lead before scoring, routing, or updates",
       "requiresWrite": false,
@@ -273,7 +273,7 @@
       }
     },
     {
-      "id": "list_leads",
+      "id": "hubspot__list_leads",
       "name": "List Leads",
       "description": "List HubSpot CRM leads for scoring, spreadsheet updates, or research workflows",
       "requiresWrite": false,
@@ -315,7 +315,7 @@
       }
     },
     {
-      "id": "search_leads",
+      "id": "hubspot__search_leads",
       "name": "Search Leads",
       "description": "Search HubSpot CRM leads for dedupe, scoring, and routing workflows",
       "requiresWrite": false,
@@ -355,7 +355,7 @@
       }
     },
     {
-      "id": "create_lead",
+      "id": "hubspot__create_lead",
       "name": "Create Lead",
       "description": "Create a HubSpot CRM lead associated with an existing contact or company",
       "requiresWrite": true,
@@ -376,7 +376,7 @@
       }
     },
     {
-      "id": "update_lead",
+      "id": "hubspot__update_lead",
       "name": "Update Lead",
       "description": "Update a HubSpot CRM lead with score, qualification, owner, or research fields",
       "requiresWrite": true,
@@ -401,7 +401,7 @@
       }
     },
     {
-      "id": "get_company",
+      "id": "hubspot__get_company",
       "name": "Get Company",
       "description": "Get a HubSpot company by ID or domain before lead research or association",
       "requiresWrite": false,
@@ -440,7 +440,7 @@
       }
     },
     {
-      "id": "search_companies",
+      "id": "hubspot__search_companies",
       "name": "Search Companies",
       "description": "Search HubSpot companies by domain, name, or firmographic properties",
       "requiresWrite": false,
@@ -480,7 +480,7 @@
       }
     },
     {
-      "id": "create_company",
+      "id": "hubspot__create_company",
       "name": "Create Company",
       "description": "Create a HubSpot company for researched lead accounts",
       "requiresWrite": true,
@@ -497,7 +497,7 @@
       }
     },
     {
-      "id": "update_company",
+      "id": "hubspot__update_company",
       "name": "Update Company",
       "description": "Update HubSpot company properties with research or enrichment data",
       "requiresWrite": true,
@@ -527,7 +527,7 @@
       }
     },
     {
-      "id": "list_properties",
+      "id": "hubspot__list_properties",
       "name": "List Properties",
       "description": "List HubSpot CRM properties for contacts, leads, or companies before updating custom fields",
       "requiresWrite": false,
@@ -559,7 +559,7 @@
       }
     },
     {
-      "id": "list_owners",
+      "id": "hubspot__list_owners",
       "name": "List Owners",
       "description": "List HubSpot owners so agents can assign or route contacts and leads",
       "requiresWrite": false,
@@ -596,7 +596,7 @@
       }
     },
     {
-      "id": "list_association_labels",
+      "id": "hubspot__list_association_labels",
       "name": "List Association Labels",
       "description": "List HubSpot association labels between CRM object types before associating records",
       "requiresWrite": false,
@@ -623,7 +623,7 @@
       }
     },
     {
-      "id": "list_associations",
+      "id": "hubspot__list_associations",
       "name": "List Associations",
       "description": "List records associated with a HubSpot CRM record",
       "requiresWrite": false,
@@ -667,7 +667,7 @@
       }
     },
     {
-      "id": "associate_records",
+      "id": "hubspot__associate_records",
       "name": "Associate Records",
       "description": "Create a default HubSpot association between two CRM records",
       "requiresWrite": true,
@@ -703,7 +703,7 @@
       }
     },
     {
-      "id": "remove_association",
+      "id": "hubspot__remove_association",
       "name": "Remove Association",
       "description": "Remove all HubSpot associations between two CRM records",
       "requiresWrite": true,

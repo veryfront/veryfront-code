@@ -73,6 +73,9 @@ export function toClientContext(context: ResolvedContentContext): ClientContextI
     case "branch":
       return { type: "branch", name: context.branch ?? "main" };
     case "environment":
+      if (context.releaseId) {
+        return { type: "release", version: context.releaseId };
+      }
       return {
         type: "environment",
         name: context.environmentName ?? "production",
@@ -142,7 +145,9 @@ export function fetchFileListForContext(
     case "branch":
       return client.listAllFiles();
     case "environment":
-      return client.listAllEnvironmentFiles(context.environmentName!);
+      return context.releaseId
+        ? client.listPublishedFiles(undefined, context.releaseId)
+        : client.listAllEnvironmentFiles(context.environmentName!);
     case "release":
       return client.listPublishedFiles(undefined, context.releaseId);
   }

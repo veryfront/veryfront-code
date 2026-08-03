@@ -30,6 +30,7 @@ import {
 } from "../child-run/execution-support.ts";
 import {
   buildChildRunResultSummary,
+  type ChildRunResultMode,
   summarizeChildRunResultValue,
 } from "../child-run/result-summary.ts";
 import {
@@ -110,6 +111,7 @@ export interface ExecuteHostedChildForkStreamInput {
   streamState: { finalText: string };
   usage?: ChildRunExecutionUsage;
   maxSteps: number;
+  resultMode?: ChildRunResultMode;
   startTime: number;
   finalizationTimeoutMs: number;
   onSettled?: (snapshot: ChildRunExecutionSnapshot) => void | Promise<void>;
@@ -160,6 +162,7 @@ export async function finalizeHostedChildForkCompletion(input: {
   toolCalls: Array<{ toolName: string; toolCallId: string; input?: unknown }>;
   toolResults: Array<{ toolName: string; toolCallId: string; input: unknown; output: unknown }>;
   usage?: ChildRunExecutionUsage;
+  resultMode?: ChildRunResultMode;
   startTime: number;
   durableMessageId: string | null;
   durableMirrorHasEmittedProgress: boolean;
@@ -267,7 +270,10 @@ export async function finalizeHostedChildForkCompletion(input: {
   });
   const snapshot = buildChildRunSuccessSnapshot(common, finalText);
   await input.onSettled?.(snapshot);
-  return buildChildRunSuccessResult(common, buildChildRunResultSummary(finalText));
+  return buildChildRunSuccessResult(
+    common,
+    buildChildRunResultSummary(finalText, { mode: input.resultMode }),
+  );
 }
 
 /** Process a hosted child fork failure. */
@@ -290,9 +296,14 @@ export async function handleHostedChildForkFailure(
   }
 
   const errorText = input.error instanceof Error ? input.error.message : "Unknown error";
+  // A step is one LLM turn, not one tool call, so tool-call count overcounts
+  // steps (a single turn can emit several parallel calls). The failed stream
+  // never resolves its step list, so the exact count is unavailable here; use
+  // completed tool-result rounds as the closest lower-bound proxy that never
+  // exceeds the real step count.
   const common = buildChildRunResultCommon({
     description: input.description,
-    steps: input.toolCalls.length,
+    steps: input.toolResults.length,
     toolCalls: input.toolCalls,
     toolResults: input.toolResults,
     usage: input.usage,
@@ -480,6 +491,8 @@ export async function executeHostedChildForkStream(
   let finalText = input.streamState.finalText;
   let shouldSeparateNextTextBlock = false;
   let softIdleHeartbeatCount = 0;
+  const mirroredSourceDocumentIds = new Set<string>();
+  const derivedMirroredSourceDocumentIds = new Set<string>();
 
   if (input.durableRunMirror) {
     input.markDurableStepStarted();
@@ -600,6 +613,22 @@ export async function executeHostedChildForkStream(
       );
 
       for (const mirroredChunk of mirroredChunks) {
+        if (mirroredChunk.type === "source-document") {
+          const replacesDerivedSource = part.type === "source" &&
+            mirroredSourceDocumentIds.has(mirroredChunk.sourceId) &&
+            derivedMirroredSourceDocumentIds.delete(mirroredChunk.sourceId);
+          if (
+            mirroredSourceDocumentIds.has(mirroredChunk.sourceId) &&
+            !replacesDerivedSource
+          ) {
+            continue;
+          }
+          mirroredSourceDocumentIds.add(mirroredChunk.sourceId);
+          if (part.type === "tool-result") {
+            derivedMirroredSourceDocumentIds.add(mirroredChunk.sourceId);
+          }
+        }
+
         if (isAlreadyMirroredHostedChunk(part.type, mirroredChunk.type)) {
           continue;
         }
@@ -621,6 +650,7 @@ export async function executeHostedChildForkStream(
     description: input.description,
     kind: input.kind,
     maxSteps: input.maxSteps,
+    resultMode: input.resultMode,
     toolCalls: input.toolCalls,
     toolResults: input.toolResults,
     usage: input.usage,

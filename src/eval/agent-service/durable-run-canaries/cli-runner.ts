@@ -1,4 +1,5 @@
 import { mkdir, writeTextFile } from "#veryfront/platform/compat/fs.ts";
+import { ENV_VAR_MISSING, INVALID_ARGUMENT } from "#veryfront/errors";
 import { dirname, resolve } from "#veryfront/platform/compat/path/index.ts";
 import { cwd as getProcessCwd } from "#veryfront/platform/compat/process.ts";
 import { type LiveEvalApiContext } from "../live-evals/api-client.ts";
@@ -9,6 +10,7 @@ import {
   type DurableRunCanaryResult,
   type DurableRunCanaryRunnerConfig,
 } from "./runner.ts";
+import { assertCanonicalEvalString, stringifyEvalError } from "../../validation.ts";
 
 type EnvRecord = Record<string, string | undefined>;
 
@@ -42,22 +44,47 @@ function createTimestampedReportPath(input: {
   );
 }
 
+function validateDurableRunCanaryCases(testCases: DurableRunCanaryCase[]): void {
+  if (!Array.isArray(testCases)) {
+    throw INVALID_ARGUMENT.create({ detail: "Durable run canary cases must be an array" });
+  }
+  if (testCases.length === 0) {
+    throw INVALID_ARGUMENT.create({ detail: "No durable run canary cases were selected" });
+  }
+
+  const seenIds = new Set<string>();
+  for (const [index, testCase] of testCases.entries()) {
+    if (typeof testCase !== "object" || testCase === null) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Durable canary case[${index}] must be an object`,
+      });
+    }
+    assertCanonicalEvalString(testCase.id, `Durable canary case[${index}] id`);
+    assertCanonicalEvalString(testCase.label, `Durable canary case[${index}] label`);
+    const id = testCase.id;
+    if (seenIds.has(id)) {
+      throw INVALID_ARGUMENT.create({ detail: `Duplicate durable canary case id "${id}"` });
+    }
+    seenIds.add(id);
+  }
+}
+
 /** Run durable run canary cli. */
 export async function runDurableRunCanaryCli(
   input: RunDurableRunCanaryCliInput,
 ): Promise<number> {
   const log = input.log ?? console.log;
   const cwd = input.cwd ?? getProcessCwd();
-  const { apiUrl, authToken, projectId, requestTimeoutMs, keepSuccessfulEvidence } =
+  const { apiUrl, authToken, projectId, model, requestTimeoutMs, keepSuccessfulEvidence } =
     resolveDurableRunCanaryEnvironment(input.env);
   const reportPath = input.env.DURABLE_CANARY_REPORT_PATH ??
     createTimestampedReportPath({ cwd, directory: "durable-run-staging-canaries" });
 
   if (!authToken) {
-    throw new Error("Missing VERYFRONT_TOKEN");
+    throw ENV_VAR_MISSING.create({ detail: "Missing VERYFRONT_TOKEN" });
   }
   if (!projectId) {
-    throw new Error("Missing AG_UI_EVAL_PROJECT_ID");
+    throw ENV_VAR_MISSING.create({ detail: "Missing AG_UI_EVAL_PROJECT_ID" });
   }
 
   const context: LiveEvalApiContext = {
@@ -71,6 +98,7 @@ export async function runDurableRunCanaryCli(
     authToken,
     agentId: input.agentId,
     projectId,
+    model,
     requestTimeoutMs,
     keepSuccessfulEvidence,
   });
@@ -78,14 +106,31 @@ export async function runDurableRunCanaryCli(
     context,
     requestTimeoutMs,
   });
+  validateDurableRunCanaryCases(testCases);
 
   log(`Durable run canaries -> ${apiUrl}`);
   log(`Project scope -> ${projectId}`);
+  log(`Model -> ${model ?? "runtime default"}`);
 
   const results: DurableRunCanaryResult[] = [];
   for (const testCase of testCases) {
     log(`\n[run] ${testCase.label}`);
-    const result = await runCase(testCase);
+    const startedAt = Date.now();
+    let result: DurableRunCanaryResult;
+    try {
+      result = await runCase(testCase);
+    } catch (error) {
+      result = {
+        id: testCase.id,
+        label: testCase.label,
+        status: "fail",
+        details: stringifyEvalError(error),
+        durationMs: Date.now() - startedAt,
+        conversationId: "unknown",
+        runId: "unknown",
+        runIds: [],
+      };
+    }
     results.push(result);
     log(`[${result.status}] ${result.id}: ${result.details}`);
   }
@@ -103,6 +148,7 @@ export async function runDurableRunCanaryCli(
         generatedAt: new Date().toISOString(),
         apiUrl,
         projectId,
+        model: model ?? null,
         results,
         summary,
       },

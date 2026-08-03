@@ -9,7 +9,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module agent/composition/composition.test
  */
 
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Agent, AgentResponse, AgentStreamResult } from "../types.ts";
 
@@ -193,5 +193,26 @@ describe("agentAsTool", () => {
       toolCalls: 0,
       status: "completed",
     });
+  });
+
+  it("preserves the child stream error when no final response is produced", async () => {
+    const childAgent = createMinimalAgent("failing-child");
+    childAgent.stream = () =>
+      Promise.resolve({
+        toDataStreamResponse() {
+          return new Response(
+            'data: {"type":"error","error":"Veryfront API MCP is unavailable"}\n\n',
+            { headers: { "Content-Type": "text/event-stream" } },
+          );
+        },
+      });
+
+    const tool = agentAsTool(childAgent, "Run failing child agent");
+
+    await assertRejects(
+      () => tool.execute({ input: "Process the inbox" }),
+      Error,
+      "Veryfront API MCP is unavailable",
+    );
   });
 });

@@ -1,19 +1,40 @@
 import { dirname, join, normalize, relative, toFileUrl } from "#std/path";
 import { parseNpmImport } from "./npm-dependency-sources.ts";
+import { MINIMUM_NODE_VERSION, NPM_NODE_ENGINE } from "./runtime-support.ts";
 
 export type ExtensionManifest = {
   name: string;
   version?: string;
-  exports: string;
+  exports: string | Record<string, string>;
   veryfront?: {
     extension?: boolean;
+    activation?: "auto" | "explicit";
     contracts?: {
       provides?: string[];
       requires?: string[];
     };
     capabilities?: unknown[];
+    npm?: {
+      nodeEngine?: string;
+      publish?: boolean;
+      stagedSources?: ExtensionStagedSourceManifest[];
+      runtimePackages?: ExtensionRuntimePackageManifest[];
+    };
   };
   imports?: Record<string, string>;
+};
+
+export type ExtensionRuntimePackageManifest = {
+  name: string;
+  export: string;
+  dependencies: string[];
+  peerVeryfront?: boolean;
+};
+
+export type ExtensionStagedSourceManifest = {
+  specifier: string;
+  source: string;
+  target: string;
 };
 
 export type RootPackageConfig = {
@@ -27,22 +48,63 @@ export type NpmPackageMapping = {
   subPath?: string;
 };
 
+export type ExtensionEntryPoint = {
+  name: string;
+  path: string;
+};
+
+export type ExtensionPackageJson = Record<string, unknown> & {
+  name: string;
+  version: string;
+};
+
 export type ExtensionPackageSpec = {
   manifestPath: string;
   manifestDir: string;
+  entryPoints: ExtensionEntryPoint[];
   entryPoint: string;
   packageName: string;
   packageDirectoryName: string;
-  packageJson: Record<string, unknown>;
+  packageJson: ExtensionPackageJson;
   dntMappings: Record<string, NpmPackageMapping>;
   manifestDependencies: Record<string, string>;
+  peerVeryfront: boolean;
   readmePath: string;
+  stagedSources: ExtensionStagedSourceManifest[];
 };
 
 const TEST_ONLY_IMPORTS = new Set([
   "@std/assert",
   "@std/testing/bdd",
 ]);
+
+const NODE_ENGINE_PATTERN = /^>=(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
+
+function compareVersions(left: string, right: string): number {
+  const leftParts = left.split(".").map(Number);
+  const rightParts = right.split(".").map(Number);
+  for (let index = 0; index < 3; index++) {
+    const difference = leftParts[index]! - rightParts[index]!;
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+function extensionNodeEngine(manifest: ExtensionManifest): string {
+  const nodeEngine = manifest.veryfront?.npm?.nodeEngine ?? NPM_NODE_ENGINE;
+  if (typeof nodeEngine !== "string" || !NODE_ENGINE_PATTERN.test(nodeEngine)) {
+    throw new Error(
+      `${manifest.name} veryfront.npm.nodeEngine must use the exact minimum-version form >=MAJOR.MINOR.PATCH`,
+    );
+  }
+  const minimumVersion = nodeEngine.slice(2);
+  if (compareVersions(minimumVersion, MINIMUM_NODE_VERSION) < 0) {
+    throw new Error(
+      `${manifest.name} veryfront.npm.nodeEngine cannot be lower than the Veryfront minimum ${NPM_NODE_ENGINE}`,
+    );
+  }
+  return nodeEngine;
+}
 
 export function firstPartyExtensionManifestPaths(
   rootConfig: RootPackageConfig,
@@ -82,7 +144,79 @@ export function manifestDependencies(
   );
 }
 
+export function normalizeExtensionEntryPoints(input: {
+  manifestPath: string;
+  manifestDir: string;
+  exports: ExtensionManifest["exports"];
+}): ExtensionEntryPoint[] {
+  if (typeof input.exports === "string") {
+    return [{
+      name: ".",
+      path: resolveExtensionExportPath({
+        manifestPath: input.manifestPath,
+        manifestDir: input.manifestDir,
+        exportName: ".",
+        exportPath: input.exports,
+      }),
+    }];
+  }
+
+  const entryPoints: ExtensionEntryPoint[] = [];
+  for (const [exportName, exportPath] of Object.entries(input.exports)) {
+    validateExtensionExportName(input.manifestPath, exportName);
+    entryPoints.push({
+      name: exportName,
+      path: resolveExtensionExportPath({
+        manifestPath: input.manifestPath,
+        manifestDir: input.manifestDir,
+        exportName,
+        exportPath,
+      }),
+    });
+  }
+
+  if (!entryPoints.some((entryPoint) => entryPoint.name === ".")) {
+    throw new Error(
+      `${input.manifestPath} exports must include "." when using an export map`,
+    );
+  }
+
+  return entryPoints;
+}
+
 export function createExtensionPackageSpec(input: {
+  manifestPath: string;
+  manifest: ExtensionManifest;
+  rootConfig: RootPackageConfig;
+  rootDir: string;
+  version: string;
+  license: string;
+}): ExtensionPackageSpec {
+  return createBaseExtensionPackageSpec(input);
+}
+
+export function createExtensionPackageSpecs(input: {
+  manifestPath: string;
+  manifest: ExtensionManifest;
+  rootConfig: RootPackageConfig;
+  rootDir: string;
+  version: string;
+  license: string;
+}): ExtensionPackageSpec[] {
+  const baseSpec = createBaseExtensionPackageSpec(input);
+  const runtimePackageSpecs =
+    (input.manifest.veryfront?.npm?.runtimePackages ?? [])
+      .map((runtimePackage) =>
+        createRuntimeExtensionPackageSpec({
+          ...input,
+          baseSpec,
+          runtimePackage,
+        })
+      );
+  return [baseSpec, ...runtimePackageSpecs];
+}
+
+function createBaseExtensionPackageSpec(input: {
   manifestPath: string;
   manifest: ExtensionManifest;
   rootConfig: RootPackageConfig;
@@ -106,15 +240,28 @@ export function createExtensionPackageSpec(input: {
   const packageDirectoryName = extensionPackageDirectoryName(packageName);
   const dependencies = manifestDependencies(input.manifest);
   const veryfrontPeerRange = `^${input.version}`;
+  const entryPoints = normalizeExtensionEntryPoints({
+    manifestPath: input.manifestPath,
+    manifestDir,
+    exports: input.manifest.exports,
+  });
+  const stagedSources = normalizeExtensionStagedSources(
+    input.manifestPath,
+    input.manifest.veryfront?.npm?.stagedSources ?? [],
+  );
 
   return {
     manifestPath: input.manifestPath,
     manifestDir,
-    entryPoint: join(manifestDir, input.manifest.exports),
+    entryPoints,
+    entryPoint: entryPoints.find((entryPoint) => entryPoint.name === ".")!
+      .path,
     packageName,
     packageDirectoryName,
     manifestDependencies: dependencies,
+    peerVeryfront: true,
     readmePath: join(manifestDir, "README.md"),
+    stagedSources,
     dntMappings: createVeryfrontDntMappings({
       manifest: input.manifest,
       manifestDir,
@@ -141,7 +288,7 @@ export function createExtensionPackageSpec(input: {
       homepage:
         `https://github.com/veryfront/veryfront-code/tree/main/${manifestDir}`,
       engines: {
-        node: ">=18.0.0",
+        node: extensionNodeEngine(input.manifest),
       },
       peerDependencies: {
         veryfront: veryfrontPeerRange,
@@ -158,6 +305,142 @@ export function createExtensionPackageSpec(input: {
       veryfront: input.manifest.veryfront,
     },
   };
+}
+
+function createRuntimeExtensionPackageSpec(input: {
+  manifestPath: string;
+  manifest: ExtensionManifest;
+  rootConfig: RootPackageConfig;
+  rootDir: string;
+  version: string;
+  license: string;
+  baseSpec: ExtensionPackageSpec;
+  runtimePackage: ExtensionRuntimePackageManifest;
+}): ExtensionPackageSpec {
+  const runtimePackage = input.runtimePackage;
+  if (!runtimePackage.name?.startsWith("@veryfront/ext-")) {
+    throw new Error(
+      `${input.manifestPath} runtime package name must start with @veryfront/ext-; received ${runtimePackage.name}`,
+    );
+  }
+
+  const sourceEntryPoint = input.baseSpec.entryPoints.find((entryPoint) =>
+    entryPoint.name === runtimePackage.export
+  );
+  if (!sourceEntryPoint) {
+    throw new Error(
+      `${input.manifestPath} runtime package ${runtimePackage.name} references missing export "${runtimePackage.export}"`,
+    );
+  }
+
+  const allDependencies = manifestDependencies(input.manifest);
+  const dependencies: Record<string, string> = {};
+  for (const dependency of runtimePackage.dependencies) {
+    const version = allDependencies[dependency];
+    if (!version) {
+      throw new Error(
+        `${input.manifestPath} runtime package ${runtimePackage.name} references dependency "${dependency}" that is not declared in imports`,
+      );
+    }
+    dependencies[dependency] = version;
+  }
+
+  const peerVeryfront = runtimePackage.peerVeryfront !== false;
+  const packageJson: ExtensionPackageJson = {
+    name: runtimePackage.name,
+    version: input.version,
+    description: `Veryfront first-party extension package for ${
+      extensionNameFromPackageName(runtimePackage.name)
+    }`,
+    license: input.license,
+    author: "Veryfront",
+    repository: {
+      type: "git",
+      url: "git+https://github.com/veryfront/veryfront-code.git",
+      directory: input.baseSpec.manifestDir,
+    },
+    bugs: {
+      url: "https://github.com/veryfront/veryfront-code/issues",
+    },
+    homepage:
+      `https://github.com/veryfront/veryfront-code/tree/main/${input.baseSpec.manifestDir}`,
+    engines: {
+      node: extensionNodeEngine(input.manifest),
+    },
+    dependencies,
+    keywords: [
+      "veryfront",
+      "extension",
+      extensionNameFromPackageName(runtimePackage.name),
+    ],
+    publishConfig: {
+      access: "public",
+    },
+  };
+  if (peerVeryfront) {
+    packageJson.peerDependencies = {
+      veryfront: `^${input.version}`,
+    };
+  }
+
+  return {
+    manifestPath: input.manifestPath,
+    manifestDir: input.baseSpec.manifestDir,
+    entryPoints: [{
+      name: ".",
+      path: sourceEntryPoint.path,
+    }],
+    entryPoint: sourceEntryPoint.path,
+    packageName: runtimePackage.name,
+    packageDirectoryName: extensionPackageDirectoryName(runtimePackage.name),
+    manifestDependencies: dependencies,
+    peerVeryfront,
+    readmePath: input.baseSpec.readmePath,
+    stagedSources: input.baseSpec.stagedSources,
+    dntMappings: peerVeryfront ? input.baseSpec.dntMappings : {},
+    packageJson,
+  };
+}
+
+function normalizeExtensionStagedSources(
+  manifestPath: string,
+  stagedSources: ExtensionStagedSourceManifest[],
+): ExtensionStagedSourceManifest[] {
+  return stagedSources.map((stagedSource) => {
+    if (!stagedSource.specifier || stagedSource.specifier.startsWith(".")) {
+      throw new Error(
+        `${manifestPath} staged source specifier must be a non-relative import; received "${stagedSource.specifier}"`,
+      );
+    }
+    validateRepositoryRelativePath(
+      manifestPath,
+      "source",
+      stagedSource.source,
+    );
+    validateRepositoryRelativePath(
+      manifestPath,
+      "target",
+      stagedSource.target,
+    );
+    return { ...stagedSource };
+  });
+}
+
+function validateRepositoryRelativePath(
+  manifestPath: string,
+  field: "source" | "target",
+  path: string,
+): void {
+  if (
+    !path ||
+    path.startsWith("/") ||
+    /^[A-Za-z]:[\\/]/.test(path) ||
+    path.split(/[\\/]/).includes("..")
+  ) {
+    throw new Error(
+      `${manifestPath} staged ${field} path must stay within the repository; received "${path}"`,
+    );
+  }
 }
 
 export function normalizeExtensionPackageJson(input: {
@@ -195,23 +478,92 @@ export function normalizeExtensionPackageJson(input: {
     pkg.dependencies = dependencies;
   }
 
-  pkg.peerDependencies ??= {};
-  pkg.peerDependencies.veryfront = `^${input.version}`;
+  if (input.spec.peerVeryfront) {
+    pkg.peerDependencies ??= {};
+    pkg.peerDependencies.veryfront = `^${input.version}`;
+  } else {
+    delete pkg.peerDependencies;
+  }
 
   pkg.type = "module";
   const importPath = packageImportPath(pkg);
   if (importPath) {
     pkg.types = importPath.replace(/\.js$/, ".d.ts");
-    if (pkg.exports?.["."] && typeof pkg.exports["."] === "object") {
-      pkg.exports["."].types = pkg.types;
-    }
   }
+  addExportTypes(pkg);
   pkg.files = ["esm", "LICENSE", "NOTICE", "README.md"];
-  pkg.veryfront = input.spec.packageJson.veryfront;
+  if (input.spec.packageJson.veryfront === undefined) {
+    delete pkg.veryfront;
+  } else {
+    pkg.veryfront = input.spec.packageJson.veryfront;
+  }
   delete pkg.devDependencies;
   delete pkg._generatedBy;
 
   return pkg;
+}
+
+function validateExtensionExportName(
+  manifestPath: string,
+  exportName: string,
+): void {
+  if (
+    exportName === "." ||
+    (
+      exportName.startsWith("./") &&
+      !exportName.endsWith("/") &&
+      !exportName.includes("//") &&
+      !exportName.split("/").includes("..")
+    )
+  ) {
+    return;
+  }
+
+  throw new Error(
+    `${manifestPath} contains unsupported extension export key "${exportName}". Export keys must be "." or package subpaths such as "./node".`,
+  );
+}
+
+function resolveExtensionExportPath(input: {
+  manifestPath: string;
+  manifestDir: string;
+  exportName: string;
+  exportPath: string;
+}): string {
+  if (
+    !input.exportPath.startsWith("./") ||
+    input.exportPath.endsWith("/") ||
+    input.exportPath.includes("//") ||
+    input.exportPath.split("/").includes("..")
+  ) {
+    throw new Error(
+      `${input.manifestPath} export "${input.exportName}" must point to a local file path such as "./src/index.ts"; received "${input.exportPath}".`,
+    );
+  }
+
+  return join(input.manifestDir, input.exportPath);
+}
+
+function addExportTypes(pkg: {
+  exports?: Record<string, string | { import?: string; types?: string }>;
+}): void {
+  if (!pkg.exports) return;
+
+  for (const [exportName, exportValue] of Object.entries(pkg.exports)) {
+    if (typeof exportValue === "string") {
+      if (exportValue.endsWith(".js")) {
+        pkg.exports[exportName] = {
+          import: exportValue,
+          types: exportValue.replace(/\.js$/, ".d.ts"),
+        };
+      }
+      continue;
+    }
+
+    if (typeof exportValue.import === "string") {
+      exportValue.types = exportValue.import.replace(/\.js$/, ".d.ts");
+    }
+  }
 }
 
 const BARE_IMPORT_SPECIFIER_PATTERNS = [

@@ -21,18 +21,30 @@ export {
 } from "./runtime-guards.ts";
 
 export {
+  __registerLogRecordEmitter,
   __registerTraceContextGetter,
   __registerTraceContextGetter as registerTraceContextGetter,
   agentLogger,
   bundlerLogger,
+  cliLogger,
   createRunUserLogger,
+  getBaseLogger,
   logger,
   refreshLoggerConfig,
   rendererLogger,
   runWithRequestContextAsync,
   serverLogger,
 } from "./logger/index.ts";
-export type { Logger, RequestContext } from "./logger/index.ts";
+export type { LogEntry, Logger, RequestContext } from "./logger/index.ts";
+
+// Redaction / URL sanitization helpers
+export {
+  type RedactedValue,
+  redactForSerialization,
+  redactSensitive,
+  sanitizeUrlCredentials,
+  sanitizeUrlForSpan,
+} from "./logger/redact.ts";
 
 export {
   BREAKPOINT_LG,
@@ -78,6 +90,7 @@ export {
   HTTP_STATUS_SUCCESS_MIN,
   HTTP_UNAVAILABLE,
   IMAGE_OPTIMIZATION,
+  isTruthyEnvValue,
   MAX_BATCH_SIZE,
   MAX_PATH_LENGTH,
   MAX_PATH_TRAVERSAL_DEPTH,
@@ -101,14 +114,28 @@ export {
   type BundleCode as HashBundleCode,
   computeCodeHash,
   computeHash,
+  computeHashBytes,
   fnv1aHash,
   shortHash,
   simpleHash,
 } from "./hash-utils.ts";
 
+export {
+  base64urlEncode,
+  base64urlEncodeBytes,
+  encodeBase64,
+  encodeBase64Bytes,
+} from "./base64url.ts";
+
+export { sleep } from "./sleep.ts";
+export { awaitAbortable, createAbortError, throwIfAborted } from "./abort.ts";
+export { hasProjectIdentityControlCharacters, isCanonicalProjectSlug } from "./project-identity.ts";
+
+export { createSubscriberSet, type SubscriberSet } from "./subscriber-set.ts";
+
 export { MemoCache, memoize, memoizeAsync, simpleHash as memoizeHash } from "./memoize.ts";
 
-export { normalizePath } from "./path-utils.ts";
+export { isWithinDirectory, normalizePath } from "./path-utils.ts";
 
 export { type BundleCode, type BundleMetadata, getBundleManifestStore } from "./bundle-manifest.ts";
 
@@ -119,9 +146,22 @@ export { isCompiledBinary } from "./platform.ts";
 export {
   computeIntegrity,
   createLockfileManager,
+  getLockfileEntryForBuild,
   type LockfileManager,
+  setLockfileEntryForBuild,
 } from "./import-lockfile.ts";
 
 export { endRequest, isEnabled, startRequest, startTimer, timeAsync } from "./perf-timer.ts";
 
 export { parallelMap } from "./parallel.ts";
+
+export { safeJsonParse, type SafeJsonParseResult } from "./json.ts";
+
+export {
+  assertCSSPipelineIdentity,
+  assertStyleProfileHash,
+  isCSSPipelineIdentity,
+  isStyleProfileHash,
+  MAX_CSS_PIPELINE_IDENTITY_CODE_UNITS,
+  MAX_CSS_PIPELINE_IDENTITY_UTF8_BYTES,
+} from "./css-artifact-identity.ts";

@@ -35,6 +35,8 @@ export {
 
 // Utilities: parsing, filtering, normalization
 export {
+  CACHE_KEY_ALLOWED_PATTERN,
+  CACHE_PATTERN_ALLOWED_PATTERN,
   createCacheKeyFilter,
   deleteAllKeysForProject,
   deleteAllKeysForProjectAsync,
@@ -42,10 +44,19 @@ export {
   getAllKeysForProject,
   getAllKeysForProjectAsync,
   getCacheKeyVersion,
+  isValidCacheKey,
+  isValidCachePattern,
   normalizeFilePath,
   parseRenderCacheKey,
+  sanitizeCacheKey,
   sanitizeQueryParamsForCacheKey,
 } from "./utils.ts";
+
+export {
+  type CacheSourceIdentity,
+  encodeCacheSourceIdentity,
+  type EncodedCacheSourceIdentity,
+} from "./source-identity.ts";
 
 // File/dir/stat cache key builders
 export {
@@ -55,6 +66,7 @@ export {
   buildFileListCacheKey,
   buildFileOperationCacheKey,
   buildStatCacheKeyPrefix,
+  type VirtualConfigSourceContext,
 } from "./builders/file.ts";
 
 // GitHub adapter cache key builders

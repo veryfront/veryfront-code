@@ -1,5 +1,5 @@
 import type { AgentMiddleware, AgentResponse } from "../../types.ts";
-import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import { agentLogger } from "#veryfront/utils";
 import { COST_LIMIT_EXCEEDED } from "#veryfront/errors";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1_000;

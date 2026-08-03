@@ -21,11 +21,11 @@
 import type { Tool } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool";
 import type { Skill } from "#veryfront/skill";
-import { parseSkillFrontmatter, validateSkillMetadata } from "#veryfront/skill/parser.ts";
+import { parseSkillFrontmatter, validateSkillFileMetadata } from "#veryfront/skill/parser.ts";
 import { getSkill, registerSkill } from "#veryfront/skill/registry.ts";
 import { SKILL_MD_FILENAME } from "#veryfront/skill/types.ts";
 import { registerTool } from "#veryfront/mcp";
-import { ensureError } from "#veryfront/errors/veryfront-error.ts";
+import { ensureError } from "#veryfront/errors";
 import { filenameToId } from "./discovery-utils.ts";
 import {
   discoveryFileExists,
@@ -215,7 +215,9 @@ async function buildSkillFromDir(input: {
 
   const content = await readDiscoveryTextFile(skillMdPath, input.context);
   const parsed = await parseSkillFrontmatter(content);
-  const metadata = validateSkillMetadata(parsed.frontmatter, input.id);
+  const metadata = validateSkillFileMetadata(parsed.frontmatter, input.id, {
+    providerSafeName: true,
+  });
 
   return {
     id: input.id,

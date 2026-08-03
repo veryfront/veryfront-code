@@ -39,7 +39,7 @@
   ],
   "tools": [
     {
-      "id": "search_issues",
+      "id": "linear__search_issues",
       "name": "Search Issues",
       "description": "Search for Linear issues by title or description",
       "requiresWrite": false,
@@ -112,7 +112,7 @@
       }
     },
     {
-      "id": "get_issue",
+      "id": "linear__get_issue",
       "name": "Get Issue",
       "description": "Get detailed information about a specific Linear issue",
       "requiresWrite": false,
@@ -135,7 +135,7 @@
       }
     },
     {
-      "id": "create_issue",
+      "id": "linear__create_issue",
       "name": "Create Issue",
       "description": "Create a new Linear issue in a team",
       "requiresWrite": true,
@@ -174,7 +174,7 @@
       }
     },
     {
-      "id": "update_issue",
+      "id": "linear__update_issue",
       "name": "Update Issue",
       "description": "Update the status, assignee, or other properties of an issue",
       "requiresWrite": true,
@@ -212,7 +212,7 @@
       }
     },
     {
-      "id": "delete_issue",
+      "id": "linear__delete_issue",
       "name": "Delete Issue",
       "description": "Archive a Linear issue. By default this is non-permanent so canary-created issues do not remain active.",
       "requiresWrite": true,
@@ -241,7 +241,7 @@
       }
     },
     {
-      "id": "list_projects",
+      "id": "linear__list_projects",
       "name": "List Projects",
       "description": "List all projects in the workspace",
       "requiresWrite": false,
@@ -369,7 +369,7 @@
       }
     },
     {
-      "id": "list_teams",
+      "id": "linear__list_teams",
       "name": "List Teams",
       "description": "List Linear teams in the workspace so issues can be created in the right team",
       "requiresWrite": false,
@@ -497,7 +497,7 @@
       }
     },
     {
-      "id": "list_workflow_states",
+      "id": "linear__list_workflow_states",
       "name": "List Workflow States",
       "description": "List workflow states for a Linear team so issues can be moved to the right status",
       "requiresWrite": false,
@@ -625,7 +625,7 @@
       }
     },
     {
-      "id": "list_users",
+      "id": "linear__list_users",
       "name": "List Users",
       "description": "List Linear users in the workspace so issues can be assigned to the right person",
       "requiresWrite": false,
@@ -680,7 +680,7 @@
       }
     },
     {
-      "id": "add_comment",
+      "id": "linear__add_comment",
       "name": "Add Comment",
       "description": "Add a comment to a Linear issue",
       "requiresWrite": true,
@@ -709,7 +709,7 @@
       }
     },
     {
-      "id": "list_issue_labels",
+      "id": "linear__list_issue_labels",
       "name": "List Issue Labels",
       "description": "List Linear issue labels so the right label IDs can be applied when creating or updating issues",
       "requiresWrite": false,

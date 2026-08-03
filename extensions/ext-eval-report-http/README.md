@@ -18,9 +18,23 @@ scores, redaction policy, and optional trace correlation. Do not use OTLP
 runtime telemetry env vars to route eval reports; `OTEL_*` settings only control
 runtime trace and metric export.
 
-## Installation
+## Activation
 
-Add the extension to your project's `veryfront.config.ts`:
+Source and compiled Veryfront runtimes select the extension automatically, but
+it remains dormant until an HTTP exporter URL is configured and an eval run
+selects its exporter id. npm services that need HTTP eval export install
+`@veryfront/ext-eval-report-http`; package discovery then selects it
+automatically. The standard `veryfront` npm package does not install this
+network-export integration for every application.
+
+Set `VERYFRONT_EVAL_HTTP_EXPORTER_URL` for the default `http` exporter, then run:
+
+```bash
+veryfront eval deep-research --export http
+```
+
+Register the factory explicitly only when configuration must define multiple
+exporters, inject a fetch implementation, or avoid environment configuration:
 
 ```ts
 import extEvalReportHttp from "@veryfront/ext-eval-report-http";
@@ -83,6 +97,24 @@ Each exporter sends:
   "context": {}
 }
 ```
+
+The registry redacts report records before the HTTP exporter runs. Inputs,
+outputs, references, traces, tool payloads, metric evidence, metric
+explanations, record metadata, and export context metadata are omitted unless
+the caller explicitly allows them with the export redaction policy.
+
+## Gateway mapping strategy
+
+Keep vendor SDKs and schema translation in the receiving gateway, not in this
+extension. The HTTP exporter always sends the same redacted `{ report, context
+}` payload.
+
+| Destination      | Gateway mapping                                                                                                                                                                                    |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Braintrust       | Map the report run id, eval id, target, summary scores, and redacted records to the Braintrust experiment shape. Store `context.trace.traceId` and `context.trace.spanId` as correlation metadata. |
+| Langfuse         | Map records to trace observations or score events. Forward only the redacted fields present in the report, and return a receipt id or URL from the gateway response.                               |
+| LangSmith        | Map the report to a dataset run and records to examples or feedback rows. Keep references, evidence, explanations, and metadata absent unless the export policy explicitly allows them.            |
+| Internal gateway | Persist the redacted Veryfront report first, fan out to vendor-specific adapters asynchronously, and return a sanitized receipt.                                                                   |
 
 `runEval` enriches export context with the active runtime `traceId` and `spanId`
 when OpenTelemetry is active and the caller did not pass an explicit

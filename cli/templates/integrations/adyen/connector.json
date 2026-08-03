@@ -34,7 +34,7 @@
   ],
   "tools": [
     {
-      "id": "create_payment_session",
+      "id": "adyen__create_payment_session",
       "name": "Create Payment Session",
       "description": "Create an Adyen Checkout payment session that a Drop-in or Component can use to collect payment",
       "requiresWrite": true,
@@ -87,7 +87,7 @@
       }
     },
     {
-      "id": "get_session_result",
+      "id": "adyen__get_session_result",
       "name": "Get Session Result",
       "description": "Get the final result of an Adyen payment session, including authorized payments and status",
       "requiresWrite": false,
@@ -118,7 +118,7 @@
       }
     },
     {
-      "id": "list_payment_methods",
+      "id": "adyen__list_payment_methods",
       "name": "List Payment Methods",
       "description": "List the payment methods available for a merchant account, amount, and shopper country",
       "requiresWrite": false,
@@ -160,7 +160,7 @@
       }
     },
     {
-      "id": "create_payment_link",
+      "id": "adyen__create_payment_link",
       "name": "Create Payment Link",
       "description": "Create a hosted Pay by Link URL the shopper can open to pay, without needing a Drop-in or Component frontend",
       "requiresWrite": true,
@@ -224,7 +224,7 @@
       }
     },
     {
-      "id": "capture_payment",
+      "id": "adyen__capture_payment",
       "name": "Capture Payment",
       "description": "Capture an authorised Adyen payment (for manual-capture flows); the outcome arrives asynchronously via a CAPTURE webhook",
       "requiresWrite": true,
@@ -265,7 +265,7 @@
       }
     },
     {
-      "id": "create_refund",
+      "id": "adyen__create_refund",
       "name": "Create Refund",
       "description": "Refund all or part of a captured Adyen payment; the outcome arrives asynchronously via a REFUND webhook",
       "requiresWrite": true,

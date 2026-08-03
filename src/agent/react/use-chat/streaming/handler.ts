@@ -1,8 +1,10 @@
+import { AGENT_ERROR } from "#veryfront/errors/error-registry/agent.ts";
 import {
   createAgUiChatEventDecoderState,
   decodeAgUiSseChunk,
   flushAgUiSseChunk,
 } from "../../../../chat/ag-ui.ts";
+import { toRenderableCustomChunk } from "../../../../chat/ag-ui-helpers.ts";
 import { normalizeChatMessageMetadata } from "../../../../chat/chat-ui-message-helpers.ts";
 import type { ChatStreamEvent } from "../../../../chat/protocol.ts";
 import type { ChatMessagePart, ChatToolPart } from "#veryfront/agent/react/use-chat/types.ts";
@@ -207,6 +209,16 @@ function processStreamEvent(
       handleToolOutputAvailable(parsed, state, onUpdate, getBuildParts);
       return;
 
+    case "source-url":
+    case "source-document":
+    case "file": {
+      const part = toRenderableCustomChunk(parsed);
+      if (part) {
+        handleRenderableMessagePart(part, state, onUpdate, getBuildParts);
+      }
+      return;
+    }
+
     case "tool-input-error":
     case "tool-output-error":
       handleToolError(parsed, state, onUpdate, getBuildParts);
@@ -233,7 +245,12 @@ function processStreamEvent(
       return;
 
     default:
-      if (typeof parsed.type === "string" && parsed.type.startsWith("data-")) {
+      if (
+        typeof parsed.type === "string" &&
+        parsed.type.startsWith("data-") &&
+        Object.hasOwn(parsed, "data") &&
+        parsed.data !== undefined
+      ) {
         handleDataPart(
           { type: parsed.type, data: parsed.data },
           state,
@@ -308,6 +325,12 @@ function processChatStreamEvent(
       handleToolOutputAvailable(event, state, onUpdate, getBuildParts);
       return;
 
+    case "source-url":
+    case "source-document":
+    case "file":
+      handleRenderableMessagePart(event, state, onUpdate, getBuildParts);
+      return;
+
     case "reasoning-start":
       handleReasoningStart(event, state, onUpdate, getBuildParts);
       return;
@@ -328,11 +351,12 @@ function processChatStreamEvent(
       return;
 
     case "error":
-      throw new Error(event.errorText);
+      throw AGENT_ERROR.create({ detail: event.errorText });
 
     default:
       if (event.type.startsWith("data-")) {
-        const data = (event as { data: unknown }).data;
+        const data = (event as { data?: unknown }).data;
+        if (data === undefined) return;
         handleDataPart({ type: event.type, data }, state, onUpdate, getBuildParts);
         onData(data);
       }
@@ -379,10 +403,24 @@ function handleStart(
   }
 }
 
+function getTextBlockId(parsed: Record<string, unknown>): string | undefined {
+  if (typeof parsed.contentId === "string" && parsed.contentId) {
+    return parsed.contentId;
+  }
+  return typeof parsed.id === "string" && parsed.id ? parsed.id : undefined;
+}
+
+function getTextMessageId(parsed: Record<string, unknown>): string | undefined {
+  if (typeof parsed.messageId === "string" && parsed.messageId) {
+    return parsed.messageId;
+  }
+  return typeof parsed.id === "string" && parsed.id ? parsed.id : undefined;
+}
+
 function handleTextStart(parsed: Record<string, unknown>, state: StreamingState): void {
-  state.currentTextId = (parsed.id as string) || generateClientId("text");
+  state.currentTextId = getTextBlockId(parsed) ?? generateClientId("text");
   if (!state.messageId) {
-    state.messageId = state.currentTextId;
+    state.messageId = getTextMessageId(parsed) ?? state.currentTextId;
   }
   state.textBlocks.set(state.currentTextId, { text: "", state: "streaming", order: null });
 }
@@ -393,11 +431,12 @@ function handleTextDelta(
   onUpdate: StreamingCallbacks["onUpdate"],
   getBuildParts: () => ChatMessagePart[],
 ): void {
-  const textId = (parsed.id as string) || state.currentTextId || "default";
+  const textId = (getTextBlockId(parsed) ?? state.currentTextId) || "default";
   const delta = (parsed.textDelta ?? parsed.delta ?? "") as string;
 
   if (!state.messageId) {
-    state.messageId = textId === "default" ? generateClientId("msg") : textId;
+    state.messageId = getTextMessageId(parsed) ??
+      (textId === "default" ? generateClientId("msg") : textId);
   }
 
   let block = state.textBlocks.get(textId);
@@ -417,7 +456,7 @@ function handleTextDelta(
 }
 
 function handleTextEnd(parsed: Record<string, unknown>, state: StreamingState): void {
-  const textId = (parsed.id as string) || state.currentTextId;
+  const textId = getTextBlockId(parsed) ?? state.currentTextId;
   const block = state.textBlocks.get(textId);
   if (!block) return;
 
@@ -458,6 +497,41 @@ function isRenderableDataPartType(type: string): boolean {
     type !== "data-messages-snapshot";
 }
 
+function handleRenderableMessagePart(
+  part: Extract<ChatStreamEvent, { type: "source-url" | "source-document" | "file" }>,
+  state: StreamingState,
+  onUpdate: StreamingCallbacks["onUpdate"],
+  getBuildParts: () => ChatMessagePart[],
+): void {
+  if (!state.messageId) {
+    state.messageId = generateClientId("msg");
+  }
+
+  if (part.type !== "file") {
+    const existingSource = state.dataParts.find(({ part: existingPart }) =>
+      existingPart.type === part.type &&
+      "sourceId" in existingPart &&
+      existingPart.sourceId === part.sourceId
+    );
+    if (existingSource) {
+      existingSource.part = part;
+      emitUpdate(state, onUpdate, getBuildParts);
+      return;
+    }
+  }
+
+  state.dataParts.push({
+    order: state.partOrderCounter++,
+    part,
+  });
+
+  emitUpdate(state, onUpdate, getBuildParts);
+}
+
+function getProviderExecuted(parsed: Record<string, unknown>): boolean | undefined {
+  return typeof parsed.providerExecuted === "boolean" ? parsed.providerExecuted : undefined;
+}
+
 function handleToolInputStart(
   parsed: Record<string, unknown>,
   state: StreamingState,
@@ -469,12 +543,14 @@ function handleToolInputStart(
   }
 
   const toolCallId = (parsed.toolCallId as string) || generateClientId("tool");
+  const providerExecuted = getProviderExecuted(parsed);
   const toolCall: OrderedToolCall = {
     toolCallId,
     toolName: (parsed.toolName as string) || "unknown",
     inputText: "",
     state: "input-streaming",
     dynamic: parsed.dynamic === true,
+    ...(providerExecuted !== undefined ? { providerExecuted } : {}),
     order: state.partOrderCounter++,
   };
 
@@ -510,6 +586,7 @@ function handleToolInputAvailable(
   }
 
   let toolCall = state.toolCalls.get(toolCallId);
+  const providerExecuted = getProviderExecuted(parsed);
   if (!toolCall) {
     toolCall = {
       toolCallId,
@@ -517,6 +594,7 @@ function handleToolInputAvailable(
       inputText: "",
       state: "input-available",
       dynamic: parsed.dynamic === true,
+      ...(providerExecuted !== undefined ? { providerExecuted } : {}),
       order: state.partOrderCounter++,
     };
     state.toolCalls.set(toolCallId, toolCall);
@@ -526,6 +604,7 @@ function handleToolInputAvailable(
   toolCall.toolName = (parsed.toolName as string) || toolCall.toolName;
   toolCall.state = "input-available";
   if (parsed.dynamic === true) toolCall.dynamic = true;
+  if (providerExecuted !== undefined) toolCall.providerExecuted = providerExecuted;
 
   onToolCall?.({
     toolCall: {
@@ -543,6 +622,9 @@ function handleToolInputAvailable(
       toolName: toolCall.toolName,
       state: "input-available",
       input: toolCall.input,
+      ...(toolCall.providerExecuted !== undefined
+        ? { providerExecuted: toolCall.providerExecuted }
+        : {}),
     });
   } else {
     state.messageParts.push({
@@ -551,6 +633,9 @@ function handleToolInputAvailable(
       toolName: toolCall.toolName,
       state: "input-available",
       input: toolCall.input,
+      ...(toolCall.providerExecuted !== undefined
+        ? { providerExecuted: toolCall.providerExecuted }
+        : {}),
     } as ChatToolPart);
   }
 
@@ -569,6 +654,8 @@ function handleToolOutputAvailable(
 
   toolCall.output = parsed.output;
   toolCall.state = "output-available";
+  const providerExecuted = getProviderExecuted(parsed);
+  if (providerExecuted !== undefined) toolCall.providerExecuted = providerExecuted;
 
   state.messageParts.push({
     type: "tool-result",
@@ -593,6 +680,8 @@ function handleToolError(
   toolCall.state = "output-error";
   toolCall.error = parsed.errorText as string;
   if (parsed.dynamic === true) toolCall.dynamic = true;
+  const providerExecuted = getProviderExecuted(parsed);
+  if (providerExecuted !== undefined) toolCall.providerExecuted = providerExecuted;
 
   emitUpdate(state, onUpdate, getBuildParts);
 }

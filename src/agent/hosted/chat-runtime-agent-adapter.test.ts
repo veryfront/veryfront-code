@@ -2,12 +2,17 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessageChunk } from "../../chat/types.ts";
 import type { ToolExecutionDataEvent } from "../../tool/types.ts";
+import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import {
   createHostedChatRuntimeAgentAdapter,
   type HostedChatRuntimeAgentAdapterInput,
 } from "./chat-runtime-agent-adapter.ts";
 
 const encoder = new TextEncoder();
+const unrestrictedSourceIntegrationPolicy = {
+  schemaVersion: 1,
+  mode: "unrestricted",
+} as const;
 
 async function collectChunks(
   stream: AsyncIterable<ChatUiMessageChunk>,
@@ -45,14 +50,57 @@ function publishDataEventFrom(
 }
 
 describe("createHostedChatRuntimeAgentAdapter", () => {
+  it("keeps the source policy active through lazy stream construction and consumption", async () => {
+    const observedPolicies: Array<ReturnType<typeof getActiveSourceIntegrationPolicy>> = [];
+    const runtimeAgent: HostedChatRuntimeAgentAdapterInput["runtimeAgent"] = {
+      stream() {
+        observedPolicies.push(getActiveSourceIntegrationPolicy());
+        return Promise.resolve({
+          toDataStreamResponse: () => {
+            observedPolicies.push(getActiveSourceIntegrationPolicy());
+            return new Response(
+              new ReadableStream<Uint8Array>({
+                pull(controller) {
+                  observedPolicies.push(getActiveSourceIntegrationPolicy());
+                  controller.enqueue(encoder.encode('data: {"type":"message-finish"}\n\n'));
+                  controller.close();
+                },
+              }),
+            );
+          },
+        });
+      },
+    };
+    const adapter = createHostedChatRuntimeAgentAdapter({
+      runtimeAgent,
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    });
+
+    const result = await adapter.stream({
+      messages: [],
+      abortSignal: new AbortController().signal,
+    });
+    await collectChunks(
+      result.toUIMessageStream({ generateMessageId: () => "assistant-message" }),
+    );
+
+    assertEquals(observedPolicies, [
+      unrestrictedSourceIntegrationPolicy,
+      unrestrictedSourceIntegrationPolicy,
+      unrestrictedSourceIntegrationPolicy,
+    ]);
+  });
+
   it("runs a framework runtime agent under the host runner and maps its data stream", async () => {
     let capturedInput:
       | Parameters<HostedChatRuntimeAgentAdapterInput["runtimeAgent"]["stream"]>[0]
       | undefined;
     let runnerCalled = false;
+    let observedSourcePolicy: ReturnType<typeof getActiveSourceIntegrationPolicy>;
     const abortController = new AbortController();
     const runtimeAgent: HostedChatRuntimeAgentAdapterInput["runtimeAgent"] = {
       stream(input) {
+        observedSourcePolicy = getActiveSourceIntegrationPolicy();
         capturedInput = input;
         return Promise.resolve({
           toDataStreamResponse: () =>
@@ -70,9 +118,14 @@ describe("createHostedChatRuntimeAgentAdapter", () => {
     };
     const adapter = createHostedChatRuntimeAgentAdapter({
       runtimeAgent,
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
       agentId: "agent-1",
       runId: "run-1",
+      conversationId: "conversation-1",
+      projectId: "project-1",
+      projectSlug: "project-slug-1",
       authToken: "run-token-1",
+      maxOutputTokens: 1200,
       runStream: async (operation) => {
         runnerCalled = true;
         return await operation();
@@ -95,11 +148,16 @@ describe("createHostedChatRuntimeAgentAdapter", () => {
     );
 
     assertEquals(runnerCalled, true);
+    assertEquals(observedSourcePolicy, unrestrictedSourceIntegrationPolicy);
     assertEquals(capturedInput?.messages?.[0]?.id, "user-message");
     assertEquals(capturedInput?.context?.abortSignal, abortController.signal);
     assertEquals(capturedInput?.context?.agentId, "agent-1");
     assertEquals(capturedInput?.context?.runId, "run-1");
+    assertEquals(capturedInput?.context?.conversationId, "conversation-1");
+    assertEquals(capturedInput?.context?.projectId, "project-1");
+    assertEquals(capturedInput?.context?.projectSlug, "project-slug-1");
     assertEquals(capturedInput?.context?.authToken, "run-token-1");
+    assertEquals(capturedInput?.maxOutputTokens, 1200);
     const expectedChunks = [
       { type: "start", messageId: "assistant-message" },
       { type: "start-step" },
@@ -115,6 +173,37 @@ describe("createHostedChatRuntimeAgentAdapter", () => {
       { type: "finish", finishReason: "stop" },
     ] as unknown as ChatUiMessageChunk[];
     assertEquals(chunks, expectedChunks);
+  });
+
+  it("resolves project context for each stream invocation", async () => {
+    const observedProjectContexts: Array<{ projectId?: unknown; projectSlug?: unknown }> = [];
+    const runtimeAgent: HostedChatRuntimeAgentAdapterInput["runtimeAgent"] = {
+      stream(input) {
+        observedProjectContexts.push({
+          projectId: input.context?.projectId,
+          projectSlug: input.context?.projectSlug,
+        });
+        return Promise.resolve({
+          toDataStreamResponse: () => createSseResponse([{ type: "message-finish" }]),
+        });
+      },
+    };
+    let projectContext = { projectId: "project-1", projectSlug: "project-one" };
+    const adapter = createHostedChatRuntimeAgentAdapter({
+      runtimeAgent,
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      resolveProjectContext: () => projectContext,
+    });
+    const abortSignal = new AbortController().signal;
+
+    await adapter.stream({ messages: [], abortSignal });
+    projectContext = { projectId: "project-2", projectSlug: "project-two" };
+    await adapter.stream({ messages: [], abortSignal });
+
+    assertEquals(observedProjectContexts, [
+      { projectId: "project-1", projectSlug: "project-one" },
+      { projectId: "project-2", projectSlug: "project-two" },
+    ]);
   });
 
   it("bridges host-published tool data events into the UI message stream", async () => {
@@ -144,7 +233,10 @@ describe("createHostedChatRuntimeAgentAdapter", () => {
         });
       },
     };
-    const adapter = createHostedChatRuntimeAgentAdapter({ runtimeAgent });
+    const adapter = createHostedChatRuntimeAgentAdapter({
+      runtimeAgent,
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    });
 
     const result = await adapter.stream({
       messages: [
@@ -204,6 +296,7 @@ describe("createHostedChatRuntimeAgentAdapter", () => {
     };
     const adapter = createHostedChatRuntimeAgentAdapter({
       runtimeAgent,
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
       warnOrphanedToolInput: (message, metadata) => warnings.push({ message, metadata }),
     });
 

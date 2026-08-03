@@ -32,6 +32,8 @@ export {
   isSSRDistributedCacheEnabled,
 } from "./cache/index.ts";
 
+export type { ClearSSRModuleCacheForProjectOptions } from "./cache/index.ts";
+
 export { Semaphore } from "./concurrency/index.ts";
 
 import { SSR_MODULE_CACHE_MAX_ENTRIES } from "./constants.ts";

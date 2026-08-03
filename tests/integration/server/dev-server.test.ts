@@ -318,7 +318,11 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
         assertEquals(pre.status, 204);
         const allow = pre.headers.get("allow") ?? pre.headers.get("Allow");
         assert(allow?.includes("POST"));
-        assert((pre.headers.get("access-control-allow-methods") ?? "").includes("POST"));
+        assertEquals(
+          pre.headers.get("access-control-allow-methods"),
+          null,
+          "Plain OPTIONS must not advertise CORS policy without an Origin",
+        );
         await pre.body?.cancel();
 
         controller.abort();

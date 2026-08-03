@@ -10,31 +10,35 @@ describe("proxy upstream error responses", () => {
     const response = createUpstreamTimeoutResponse(12_345);
 
     assertEquals(response.status, 504);
-    assertEquals(response.headers.get("Content-Type"), "application/json");
+    assertEquals(response.headers.get("Content-Type"), "application/json; charset=utf-8");
+    assertEquals(response.headers.get("Cache-Control"), "no-store");
     assertEquals(await response.json(), {
       error: "Gateway Timeout",
       message: "Server request timed out after 12345ms",
     });
   });
 
-  it("creates a proxy failure response from an upstream error", async () => {
-    const response = createUpstreamFailureResponse(new Error("connection refused"));
+  it("returns a generic body that does not leak the upstream error message", async () => {
+    const response = createUpstreamFailureResponse(
+      new Error("connection refused to internal-host:5432"),
+    );
 
     assertEquals(response.status, 502);
-    assertEquals(response.headers.get("Content-Type"), "application/json");
+    assertEquals(response.headers.get("Content-Type"), "application/json; charset=utf-8");
+    // The real error is logged server-side; the client body must stay generic.
     assertEquals(await response.json(), {
-      error: "Proxy Error",
-      message: "connection refused",
+      error: "Bad Gateway",
+      message: "Bad Gateway",
     });
   });
 
-  it("uses a stable fallback message for non-Error upstream failures", async () => {
+  it("uses the same generic body for non-Error upstream failures", async () => {
     const response = createUpstreamFailureResponse("bad failure");
 
     assertEquals(response.status, 502);
     assertEquals(await response.json(), {
-      error: "Proxy Error",
-      message: "Unknown error",
+      error: "Bad Gateway",
+      message: "Bad Gateway",
     });
   });
 });

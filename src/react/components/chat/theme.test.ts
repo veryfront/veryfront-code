@@ -50,3 +50,49 @@ Deno.test("theme module does not expose the removed variant utility", () => {
   const removedExport = ["c", "v", "a"].join("");
   assertEquals(removedExport in theme, false);
 });
+
+Deno.test("every chat cva variant resolves to classes", () => {
+  // message roles
+  const messageRoleExamples = [
+    { role: "system" },
+    { role: "user" },
+    { role: "assistant" },
+    { role: "tool" },
+  ] as const;
+  for (const options of messageRoleExamples) {
+    assert(theme.messageVariants(options).length > 0, `message role="${options.role}"`);
+  }
+  // chat button variants + sizes
+  const buttonVariantExamples = [
+    { variant: "primary" },
+    { variant: "ghost" },
+    { variant: "outline" },
+    { variant: "icon-ghost" },
+  ] as const;
+  for (const options of buttonVariantExamples) {
+    assert(theme.chatButtonVariants(options).length > 0, `button variant="${options.variant}"`);
+  }
+  const buttonSizeExamples = [
+    { size: "sm" },
+    { size: "default" },
+    { size: "icon-xs" },
+    { size: "icon-sm" },
+    { size: "icon-default" },
+    { size: "icon-lg" },
+  ] as const;
+  for (const options of buttonSizeExamples) {
+    assert(theme.chatButtonVariants(options).length > 0, `button size="${options.size}"`);
+  }
+  // chat container layouts
+  const containerVariantExamples = [
+    { variant: "default" },
+    { variant: "embedded" },
+    { variant: "floating" },
+  ] as const;
+  for (const options of containerVariantExamples) {
+    assert(
+      theme.chatContainerVariants(options).length > 0,
+      `container variant="${options.variant}"`,
+    );
+  }
+});

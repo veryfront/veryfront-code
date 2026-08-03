@@ -1,9 +1,27 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
-import { type ModelRuntime, registerModelProvider } from "#veryfront/provider";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { clearModelProviders, type ModelRuntime, registerModelProvider } from "#veryfront/provider";
 import { agent } from "../factory.ts";
+import type { AgentRunModelCallContextEvent } from "../../runtime/model-call-context.ts";
+import { runWithRunEventSink } from "../../runtime/run-event-sink-context.ts";
 import type { ModelTransportRequest } from "../types.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLoggerConfigForTests,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
+
+const originalLogLevel = Deno.env.get("LOG_LEVEL");
+
+function captureLogs(): LogEntry[] {
+  const entries: LogEntry[] = [];
+  Deno.env.set("LOG_LEVEL", "DEBUG");
+  __resetLoggerConfigForTests();
+  __registerLogRecordEmitter((entry) => entries.push(entry));
+  return entries;
+}
 
 function createTextStream(
   parts: Array<
@@ -22,6 +40,14 @@ function createTextStream(
 }
 
 describe("agent provider transport hooks", () => {
+  afterEach(() => {
+    if (originalLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+    else Deno.env.set("LOG_LEVEL", originalLogLevel);
+    __resetLoggerConfigForTests();
+    __resetLogRecordEmitterForTests();
+    clearModelProviders();
+  });
+
   it("lets hosts override the model runtime and transport options for generate()", async () => {
     const captured: {
       request?: ModelTransportRequest;
@@ -84,6 +110,90 @@ describe("agent provider transport hooks", () => {
     assertEquals(captured.generateOptions.providerOptions, {
       veryfront: { projectSlug: "demo-project" },
     });
+  });
+
+  it("records equivalent context through cloud and server-local runtime paths", async () => {
+    const contexts: AgentRunModelCallContextEvent[] = [];
+
+    for (const provider of ["cloud", "local"] as const) {
+      let runtimePrompt: unknown;
+      const runtime: ModelRuntime = {
+        provider,
+        modelId: `${provider}/context-parity`,
+        async doGenerate(options: unknown) {
+          const prompt = (options as { prompt: unknown }).prompt;
+          runtimePrompt = prompt;
+          assertEquals(contexts.at(-1)?.messages, prompt);
+          return {
+            content: [{ type: "text", text: "done" }],
+            finishReason: "stop",
+            usage: {},
+          };
+        },
+        async doStream() {
+          return { stream: createTextStream([{ type: "finish" }]) };
+        },
+      };
+      const assistant = agent({
+        model: `${provider}/context-parity`,
+        system: "Follow the same instructions.",
+        skills: [],
+        resolveModelTransport: () => ({ model: runtime }),
+      });
+
+      await runWithRunEventSink(
+        (event) => {
+          contexts.push(event as unknown as AgentRunModelCallContextEvent);
+        },
+        () => assistant.generate({ input: "Use the same normalized input." }),
+      );
+
+      assertEquals(contexts.at(-1)?.messages, runtimePrompt);
+    }
+
+    assertEquals(contexts.length, 2);
+    assertEquals(contexts[0], contexts[1]);
+    assertEquals(contexts[0], {
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      messages: [
+        { role: "system", content: "Follow the same instructions." },
+        {
+          role: "user",
+          content: [{ type: "text", text: "Use the same normalized input." }],
+        },
+      ],
+    });
+  });
+
+  it("logs generate model remap diagnostics at debug level", async () => {
+    const entries = captureLogs();
+    registerModelProvider("google", (modelId) => ({
+      provider: "google",
+      modelId: `google/${modelId}`,
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "remapped generate" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: createTextStream([{ type: "finish" }]) };
+      },
+    }));
+
+    const assistant = agent({
+      model: "google-ai-studio/gemini-3.1-pro-preview",
+      system: "You are a helpful assistant.",
+    });
+
+    await assistant.generate({ input: "Hello" });
+
+    const entry = entries.find((candidate) =>
+      candidate.message ===
+        '⚡ Using runtime model "google/gemini-3.1-pro-preview" instead of "google-ai-studio/gemini-3.1-pro-preview".'
+    );
+    assertEquals(entry?.level, "debug");
   });
 
   it("uses the agent-configured temperature for generate()", async () => {
@@ -460,5 +570,42 @@ describe("agent provider transport hooks", () => {
     assertEquals(captured.streamOptions.providerOptions, {
       gateway: { branchId: "branch_123" },
     });
+  });
+
+  it("logs stream model remap diagnostics at debug level", async () => {
+    const entries = captureLogs();
+    registerModelProvider("google", (modelId) => ({
+      provider: "google",
+      modelId: `google/${modelId}`,
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        return {
+          stream: createTextStream([
+            { type: "text-delta", text: "remapped stream" },
+            { type: "finish" },
+          ]),
+        };
+      },
+    }));
+
+    const assistant = agent({
+      model: "google-ai-studio/gemini-3.1-pro-preview",
+      system: "You are a helpful assistant.",
+    });
+
+    const response = (await assistant.stream({ input: "Hello" })).toDataStreamResponse();
+    await response.text();
+
+    const entry = entries.find((candidate) =>
+      candidate.message ===
+        '⚡ Using runtime model "google/gemini-3.1-pro-preview" instead of "google-ai-studio/gemini-3.1-pro-preview".'
+    );
+    assertEquals(entry?.level, "debug");
   });
 });

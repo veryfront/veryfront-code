@@ -6,7 +6,8 @@ import {
   HTTP_NOT_FOUND,
   PRIORITY_FALLBACK,
 } from "#veryfront/utils/constants/index.ts";
-import { buildNonceAttribute, escapeHtml } from "#veryfront/html/html-escape.ts";
+import { ErrorPages } from "#veryfront/server/utils/error-html.ts";
+import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 
 export class NotFoundHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -20,7 +21,13 @@ export class NotFoundHandler extends BaseHandler {
 
     try {
       const builder = this.createResponseBuilder(ctx);
-      const html = this.generate404Html(pathname, builder.nonce);
+      // Render the SAME 404 page as the SSR miss path (ssr.handler /
+      // ssr.service) so every not-found — including a fallthrough like
+      // /_veryfront/<missing> that never reaches SSR — looks identical.
+      // Nonce the inline <style>/<script> exactly like the SSR response builder
+      // (ssr-response-builder addNonceToHtmlTags) so the page still renders
+      // styled under a strict nonce-based CSP.
+      const html = addNonceToHtmlTags(ErrorPages.notFound(pathname), builder.nonce);
       const response = builder
         .withCORS(req, ctx.securityConfig?.cors)
         .withSecurity(ctx.securityConfig ?? undefined, req)
@@ -43,114 +50,5 @@ export class NotFoundHandler extends BaseHandler {
 
       return Promise.resolve(this.respond(response));
     }
-  }
-
-  private generate404Html(pathname: string, nonce?: string): string {
-    const nonceAttr = buildNonceAttribute(nonce);
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="utf-8"/>
-    <meta name="viewport" content="width=device-width, initial-scale=1"/>
-    <title>404 Not Found</title>
-    <style${nonceAttr}>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            margin: 0;
-            padding: 40px;
-            background: #f5f5f5;
-            color: #333;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            box-sizing: border-box;
-        }
-        .container {
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            padding: 40px;
-            max-width: 600px;
-            text-align: center;
-        }
-        h1 {
-            font-size: 48px;
-            margin: 0 0 16px 0;
-            color: #000;
-        }
-        h2 {
-            font-size: 24px;
-            font-weight: normal;
-            margin: 0 0 24px 0;
-            color: #666;
-        }
-        p {
-            line-height: 1.6;
-            margin: 0 0 32px 0;
-            color: #666;
-        }
-        code {
-            background: #f5f5f5;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-            font-size: 14px;
-        }
-        a {
-            color: #0066cc;
-            text-decoration: none;
-            font-weight: 500;
-            transition: color 0.2s;
-        }
-        a:hover {
-            color: #0052a3;
-            text-decoration: underline;
-        }
-        .actions {
-            display: flex;
-            gap: 16px;
-            justify-content: center;
-            flex-wrap: wrap;
-        }
-        .button {
-            display: inline-block;
-            padding: 12px 24px;
-            background: #0066cc;
-            color: white;
-            border-radius: 6px;
-            font-weight: 500;
-            transition: background 0.2s;
-        }
-        .button:hover {
-            background: #0052a3;
-            text-decoration: none;
-        }
-        .secondary {
-            background: transparent;
-            color: #0066cc;
-            border: 2px solid #0066cc;
-        }
-        .secondary:hover {
-            background: #0066cc;
-            color: white;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>404</h1>
-        <h2>Page Not Found</h2>
-        <p>
-            The path <code>${escapeHtml(pathname)}</code> was not found on this server.
-        </p>
-        <div class="actions">
-            <a href="/" class="button">Go Home</a>
-            <a href=".." class="button secondary">Go Back</a>
-        </div>
-    </div>
-</body>
-</html>`;
   }
 }

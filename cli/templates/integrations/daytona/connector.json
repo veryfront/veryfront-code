@@ -28,7 +28,7 @@
   ],
   "tools": [
     {
-      "id": "list_sandboxes",
+      "id": "daytona__list_sandboxes",
       "name": "List Sandboxes",
       "description": "List sandboxes in the organization with optional name, label, and state filtering",
       "requiresWrite": false,
@@ -84,7 +84,7 @@
       }
     },
     {
-      "id": "create_sandbox",
+      "id": "daytona__create_sandbox",
       "name": "Create Sandbox",
       "description": "Create a new sandbox, optionally from a snapshot and with custom resources (starts billable compute)",
       "requiresWrite": true,
@@ -136,7 +136,7 @@
       }
     },
     {
-      "id": "get_sandbox",
+      "id": "daytona__get_sandbox",
       "name": "Get Sandbox",
       "description": "Get sandbox details by ID or name, including state, snapshot, resources, and timestamps",
       "requiresWrite": false,
@@ -159,7 +159,7 @@
       }
     },
     {
-      "id": "delete_sandbox",
+      "id": "daytona__delete_sandbox",
       "name": "Delete Sandbox",
       "description": "Delete a sandbox by ID or name, discarding its state and filesystem",
       "requiresWrite": true,
@@ -177,7 +177,7 @@
       }
     },
     {
-      "id": "execute_command",
+      "id": "daytona__execute_command",
       "name": "Execute Command",
       "description": "Execute a shell command inside a running sandbox via the toolbox and return its exit code and output (legacy REST route; Daytona's current toolbox API is SDK-first)",
       "requiresWrite": true,
@@ -211,7 +211,7 @@
       }
     },
     {
-      "id": "start_sandbox",
+      "id": "daytona__start_sandbox",
       "name": "Start Sandbox",
       "description": "Start a stopped sandbox — required before Execute Command, since sandboxes auto-stop after the autoStopInterval (15 minutes by default)",
       "requiresWrite": true,
@@ -229,7 +229,7 @@
       }
     },
     {
-      "id": "stop_sandbox",
+      "id": "daytona__stop_sandbox",
       "name": "Stop Sandbox",
       "description": "Stop a running sandbox to pause billable compute without destroying its state",
       "requiresWrite": true,
@@ -247,7 +247,7 @@
       }
     },
     {
-      "id": "list_snapshots",
+      "id": "daytona__list_snapshots",
       "name": "List Snapshots",
       "description": "List available snapshots (sandbox base images) — use these names or IDs in the snapshot field of Create Sandbox",
       "requiresWrite": false,

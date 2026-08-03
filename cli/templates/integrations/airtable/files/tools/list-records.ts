@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listRecords } from "../../lib/airtable-client.ts";
+import { listRecords } from "../lib/airtable-client.ts";
 
 export default tool({
-  id: "list-records",
+  id: "airtable-list-records",
   description:
     "List records from an Airtable table. Supports filtering with formulas, sorting, and limiting results. Returns record IDs, creation times, and all field values.",
   inputSchema: defineSchema((v) => v.object({

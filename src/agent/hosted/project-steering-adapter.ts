@@ -1,9 +1,9 @@
 import type { Tool } from "#veryfront/tool";
 import { HostedServiceAuthError, isHostedServiceAuthError } from "../service/auth.ts";
 import {
-  listRuntimeBuiltinSkillReferences,
-  readRuntimeBuiltinSkill,
-  readRuntimeBuiltinSkillReferenceFile,
+  listRuntimeBuiltinSkillReferencesWithinLimit,
+  readRuntimeBuiltinSkillReferenceWithinLimit,
+  readRuntimeBuiltinSkillWithinLimit,
 } from "../runtime/builtin-skill-files.ts";
 import {
   createRuntimeLoadSkillTool,
@@ -14,12 +14,16 @@ import {
 } from "../runtime/load-skill-tool.ts";
 import type { MutableAgentProjectContext } from "../project/context.ts";
 import {
-  createRuntimeProjectFilesClient,
+  createStrictRuntimeProjectFilesClient,
   type RuntimeProjectFilesClient,
   type RuntimeProjectFilesClientOptions,
   type RuntimeProjectFilesFetch,
   type RuntimeProjectFilesTrace,
 } from "../runtime/project-files-client.ts";
+import {
+  type SkillDocumentParserProvider,
+  snapshotSkillDocumentParserProvider,
+} from "#veryfront/extensions/parser/skill-document-parser.ts";
 import {
   getRuntimeProjectInstructions,
   getRuntimeProjectSkillCatalog,
@@ -37,7 +41,12 @@ import type {
   RuntimeSkillDefinition,
   RuntimeSkillMetadataLogger,
 } from "../runtime/skill-metadata.ts";
-import { isRuntimeSkillVisibleTo } from "../runtime/skill-metadata.ts";
+import { resolveRuntimeSkillSelectorSnapshotForAgent } from "../runtime/skill-metadata.ts";
+import {
+  assertResolvedSkillSelector,
+  createNoneSkillSelectorSnapshot,
+  type ResolvedSkillSelectorPolicy,
+} from "#veryfront/skill/selector.ts";
 
 /** Public API contract for hosted project steering logger. */
 export type HostedProjectSteeringLogger =
@@ -55,6 +64,7 @@ export type HostedProjectSteeringAdapterOptions = {
   projectSkillLoader?: RuntimeProjectSkillLoader;
   builtinSkills?: readonly RuntimeSkillDefinition[];
   builtinStore?: RuntimeLoadSkillBuiltinStore;
+  skillDocumentParserProvider?: SkillDocumentParserProvider;
 };
 
 /** Context for hosted project skill IDs. */
@@ -67,6 +77,7 @@ export type HostedProjectSkillIdsContext = MutableAgentProjectContext & {
    * visibility beyond the caller's scope.
    */
   agentId?: string;
+  skillSelectorPolicy?: ResolvedSkillSelectorPolicy;
 };
 
 /** Public API contract for hosted project steering adapter. */
@@ -111,38 +122,73 @@ function createProjectFilesClientOptions(
 function createDefaultProjectFilesClient(
   options: HostedProjectSteeringAdapterOptions,
 ): RuntimeProjectFilesClient {
-  return createRuntimeProjectFilesClient(createProjectFilesClientOptions(options));
+  return createStrictRuntimeProjectFilesClient(createProjectFilesClientOptions(options));
 }
 
 function createDefaultProjectSkillLoader(
   options: HostedProjectSteeringAdapterOptions,
   projectFilesClient: RuntimeProjectFilesClient,
+  skillDocumentParserProvider: Readonly<SkillDocumentParserProvider> | undefined,
 ): RuntimeProjectSkillLoader {
   return createRuntimeProjectSkillLoader({
     getProjectFile: projectFilesClient.getProjectFile,
     getProjectFiles: projectFilesClient.getProjectFiles,
     isAccessDeniedError: isHostedServiceAuthError,
     logger: options.logger,
+    skillDocumentParserProvider,
   });
 }
 
 function createDefaultBuiltinStore(): RuntimeLoadSkillBuiltinStore {
   return {
-    readSkill: readRuntimeBuiltinSkill,
-    readReferenceFile: readRuntimeBuiltinSkillReferenceFile,
-    listReferences: listRuntimeBuiltinSkillReferences,
+    readSkill: readRuntimeBuiltinSkillWithinLimit,
+    readReferenceFile: readRuntimeBuiltinSkillReferenceWithinLimit,
+    listReferences: listRuntimeBuiltinSkillReferencesWithinLimit,
   };
+}
+
+function resolveRefreshedSkillSnapshot(input: {
+  skills: readonly RuntimeSkillDefinition[];
+  context: HostedProjectSkillIdsContext;
+}) {
+  const policy = input.context.skillSelectorPolicy;
+
+  if (!policy || policy.kind === "all-visible") {
+    return resolveRuntimeSkillSelectorSnapshotForAgent({
+      skills: input.skills,
+      agentId: input.context.agentId ?? "",
+      selector: policy?.source === "true" ? true : undefined,
+    });
+  }
+
+  if (policy.kind === "none") {
+    return createNoneSkillSelectorSnapshot<RuntimeSkillDefinition>(policy);
+  }
+
+  return resolveRuntimeSkillSelectorSnapshotForAgent({
+    skills: input.skills,
+    agentId: input.context.agentId ?? "",
+    selector: policy.entries,
+  });
 }
 
 /** Create hosted project steering adapter. */
 export function createHostedProjectSteeringAdapter(
   options: HostedProjectSteeringAdapterOptions,
 ): HostedProjectSteeringAdapter {
-  const projectFilesClient = options.projectFilesClient ?? createDefaultProjectFilesClient(options);
+  const skillDocumentParserProvider = options.skillDocumentParserProvider === undefined
+    ? undefined
+    : snapshotSkillDocumentParserProvider(options.skillDocumentParserProvider);
+  const projectFilesClient = options.projectFilesClient ??
+    createDefaultProjectFilesClient(options);
   const projectSkillLoader = options.projectSkillLoader ??
-    createDefaultProjectSkillLoader(options, projectFilesClient);
+    createDefaultProjectSkillLoader(options, projectFilesClient, skillDocumentParserProvider);
   const builtinSkills = options.builtinSkills ??
-    loadRuntimeBuiltinSkillCatalog({ skillsDir: options.skillsDir, logger: options.logger });
+    loadRuntimeBuiltinSkillCatalog({
+      skillsDir: options.skillsDir,
+      logger: options.logger,
+      skillDocumentParserProvider,
+    });
   const builtinStore = options.builtinStore ?? createDefaultBuiltinStore();
 
   async function getProjectInstructions(
@@ -161,6 +207,7 @@ export function createHostedProjectSteeringAdapter(
       ...lookup,
       builtinSkills,
       logger: options.logger,
+      skillDocumentParserProvider,
       getProjectFile: projectFilesClient.getProjectFile,
       getProjectFiles: projectFilesClient.getProjectFiles,
     });
@@ -183,6 +230,7 @@ export function createHostedProjectSteeringAdapter(
         builtinSkillIds: builtinSkills.map((skill) => skill.id),
         builtinStore,
         logger: options.logger,
+        skillDocumentParserProvider,
       }),
     refreshProjectSkillIds: async (context) => {
       const skills = await getSkillsConfig({
@@ -191,20 +239,12 @@ export function createHostedProjectSteeringAdapter(
         branchId: context.branchId,
       });
 
-      // Owner-aware: the refreshed per-run skill set keeps the caller's
-      // scope — never another agent's owned skills — and the source-path
-      // map stays in sync so colocated skills do not go stale.
-      const visibleSkills = skills.filter((skill) =>
-        isRuntimeSkillVisibleTo(skill, { agentId: context.agentId })
-      );
-      context.availableSkillIds = visibleSkills.map((skill) => skill.id);
-      const skillSourcePaths = Object.fromEntries(
-        visibleSkills
-          .filter((skill) => skill.sourcePath)
-          .map((skill) => [skill.id, skill.sourcePath as string]),
-      );
-      context.skillSourcePaths = Object.keys(skillSourcePaths).length > 0
-        ? skillSourcePaths
+      const snapshot = resolveRefreshedSkillSnapshot({ skills, context });
+      assertResolvedSkillSelector(snapshot);
+      context.availableSkillIds = snapshot.allowedSkillIds;
+      context.skillSelectorPolicy = snapshot.policy;
+      context.skillSourcePaths = Object.keys(snapshot.skillSourcePaths).length > 0
+        ? snapshot.skillSourcePaths
         : undefined;
     },
   };

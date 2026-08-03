@@ -3,20 +3,55 @@ import { serverLogger } from "#veryfront/utils";
 import { RSCProductionOptimizer } from "#veryfront/rendering/rsc/production-optimizer.ts";
 import type { RSCRenderer } from "#veryfront/rendering/rsc/server-renderer/index.ts";
 import type { RSCPayload } from "#veryfront/rendering/rsc/types.ts";
-import { createError, getErrorMessage, toError } from "#veryfront/errors/veryfront-error.ts";
-import { COMPONENT_ERROR, PAGE_NOT_FOUND, RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
-import { createErrorResponse } from "#veryfront/errors/http-error.ts";
-import { wrapUnknownError } from "#veryfront/errors/middleware/wrap-unknown.ts";
+import {
+  COMPONENT_ERROR,
+  createError,
+  createErrorResponse,
+  getErrorMessage,
+  PAGE_NOT_FOUND,
+  RENDER_ERROR,
+  toError,
+  wrapUnknownError,
+} from "#veryfront/errors";
 import { extractParams, resolveComponentPath } from "./component-resolver.ts";
 import type { RenderProps } from "./types.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { loadModuleFromSource } from "#veryfront/modules/react-loader/index.ts";
+import { compileContent, extractFrontmatter } from "#veryfront/transforms/mdx/compiler/index.ts";
+import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
+import {
+  type DependencyPinningSnapshot,
+  type DependencyPinningSourceInput,
+  resolveRequestedDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
+
+export interface RenderHandlerModuleOptions {
+  adapter?: RuntimeAdapter;
+  projectId?: string;
+  projectSlug?: string;
+  contentSourceId?: string;
+  dependencyPinningSource?: DependencyPinningSourceInput;
+  reactVersion?: (snapshot: DependencyPinningSnapshot) => Promise<string>;
+  runtimeAdapter?: () => Promise<RuntimeAdapter>;
+  moduleLoader?: typeof loadModuleFromSource;
+}
 
 const logger = serverLogger.component("rsc");
+const fs = createFileSystem();
+
+function isContentComponent(componentPath: string): boolean {
+  return /\.(?:md|mdx)$/i.test(componentPath);
+}
 
 export class RenderHandler {
   constructor(
     private projectDir: string,
     private getRenderer: () => RSCRenderer | null,
-    private isLocalProject: boolean = false,
+    private mode: "development" | "production" = "production",
+    private appDir: string = "app",
+    private moduleOptions: RenderHandlerModuleOptions = {},
   ) {}
 
   async handle(
@@ -25,17 +60,48 @@ export class RenderHandler {
     request?: Request,
   ): Promise<Response> {
     try {
-      const component = await this.loadComponent(pathname);
+      const requestedPinKey = request?.headers.get(RSC_DEPENDENCY_PINNING_HEADER) ?? undefined;
+      const dependencySnapshot = await resolveRequestedDependencyPinningSnapshot(
+        this.moduleOptions.dependencyPinningSource ?? this.projectDir,
+        requestedPinKey,
+      );
+      if (!dependencySnapshot) {
+        throw new Error(`Unknown dependency pinning snapshot: ${requestedPinKey}`);
+      }
+      const reactVersion = await this.moduleOptions.reactVersion?.(dependencySnapshot);
+      const moduleServerOrigin = dependencySnapshot.cacheKey.startsWith("on:") && request
+        ? new URL(request.url).origin
+        : undefined;
+      const component = await this.loadComponent(
+        pathname,
+        dependencySnapshot,
+        reactVersion,
+        moduleServerOrigin,
+      );
       const props = this.buildProps(pathname, searchParams);
-      const payload = await this.renderPayload(component, props);
+      const renderedPayload = await this.renderPayload(component, props, reactVersion);
+      const payload = dependencySnapshot.cacheKey === "off" ? renderedPayload : {
+        ...renderedPayload,
+        dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+      };
       return this.createResponse(payload, request);
     } catch (error) {
       return this.createErrorResponse(error);
     }
   }
 
-  private async loadComponent(pathname: string): Promise<React.ComponentType<RenderProps>> {
-    const componentPath = await resolveComponentPath(pathname, this.projectDir);
+  private async loadComponent(
+    pathname: string,
+    dependencySnapshot: DependencyPinningSnapshot,
+    reactVersion?: string,
+    moduleServerOrigin?: string,
+  ): Promise<React.ComponentType<RenderProps>> {
+    const componentPath = await resolveComponentPath(
+      pathname,
+      this.projectDir,
+      this.moduleOptions.adapter?.fs,
+      this.appDir,
+    );
     if (!componentPath) {
       throw toError(
         createError({
@@ -45,7 +111,12 @@ export class RenderHandler {
       );
     }
 
-    const module = (await import(componentPath)) as Record<string, unknown>;
+    const module = await this.loadComponentModule(
+      componentPath,
+      dependencySnapshot,
+      reactVersion,
+      moduleServerOrigin,
+    );
     const Component = (module.default ?? module.Page ?? module) as unknown;
 
     if (typeof Component !== "function") {
@@ -60,6 +131,68 @@ export class RenderHandler {
     return Component as React.ComponentType<RenderProps>;
   }
 
+  private async loadComponentModule(
+    componentPath: string,
+    dependencySnapshot: DependencyPinningSnapshot,
+    reactVersion?: string,
+    moduleServerOrigin?: string,
+  ): Promise<Record<string, unknown>> {
+    let adapter = this.moduleOptions.adapter;
+
+    if (isContentComponent(componentPath)) {
+      const source = adapter
+        ? await adapter.fs.readFile(componentPath)
+        : await fs.readTextFile(componentPath);
+      const { body, frontmatter } = extractFrontmatter(source);
+      const compiled = await compileContent(
+        this.mode,
+        this.projectDir,
+        body,
+        frontmatter,
+        componentPath,
+        "server",
+      );
+
+      return await mdxRenderer.loadModuleESM(
+        compiled.compiledCode,
+        adapter,
+        this.moduleOptions.projectId ?? this.projectDir,
+        this.projectDir,
+        this.moduleOptions.projectSlug,
+        this.moduleOptions.contentSourceId,
+        reactVersion,
+        dependencySnapshot.cacheKey,
+        dependencySnapshot.dependencies,
+        this.moduleOptions.dependencyPinningSource,
+        moduleServerOrigin,
+      ) as Record<string, unknown>;
+    }
+
+    if (!adapter) {
+      adapter = await (this.moduleOptions.runtimeAdapter ?? (async () => {
+        const { runtime } = await import(
+          "#veryfront/platform/adapters/detect.ts"
+        );
+        return await runtime.get();
+      }))();
+    }
+
+    const source = await adapter.fs.readFile(componentPath);
+    const moduleLoader = this.moduleOptions.moduleLoader ?? loadModuleFromSource;
+    return await moduleLoader(source, componentPath, this.projectDir, adapter, {
+      projectId: this.moduleOptions.projectId ?? this.projectDir,
+      projectSlug: this.moduleOptions.projectSlug,
+      contentSourceId: this.moduleOptions.contentSourceId,
+      dev: this.mode === "development",
+      mode: this.mode === "development" ? "preview" : "production",
+      reactVersion,
+      dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+      dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningSource: this.moduleOptions.dependencyPinningSource,
+      moduleServerOrigin,
+    });
+  }
+
   private buildProps(pathname: string, searchParams: URLSearchParams): RenderProps {
     return {
       params: extractParams(pathname),
@@ -70,6 +203,7 @@ export class RenderHandler {
   private async renderPayload(
     component: React.ComponentType<RenderProps>,
     props: RenderProps,
+    reactVersion?: string,
   ): Promise<RSCPayload> {
     const renderer = this.getRenderer();
     if (!renderer) {
@@ -81,7 +215,9 @@ export class RenderHandler {
       );
     }
 
-    const payload = await renderer.renderToPayload(component, props);
+    const payload = await renderer.renderToPayload(component, props, {
+      reactVersion,
+    });
     if (!payload) {
       throw toError(
         createError({
@@ -91,14 +227,14 @@ export class RenderHandler {
       );
     }
 
-    return this.isLocalProject ? payload : RSCProductionOptimizer.optimizePayload(payload);
+    return this.mode === "development" ? payload : RSCProductionOptimizer.optimizePayload(payload);
   }
 
   private createResponse(payload: RSCPayload, request?: Request): Response {
     const etag = RSCProductionOptimizer.generateETag(payload);
 
     if (request && this.shouldReturn304(request, etag)) {
-      return new Response(null, { status: 304 });
+      return new Response(null, { status: 304, headers: this.buildHeaders(etag) });
     }
 
     return new Response(JSON.stringify(payload), {
@@ -111,10 +247,11 @@ export class RenderHandler {
   }
 
   private buildHeaders(etag: string): Record<string, string> {
-    const isProd = !this.isLocalProject;
+    const isProd = this.mode === "production";
 
     const headers: Record<string, string> = {
       "content-type": "application/json",
+      vary: RSC_DEPENDENCY_PINNING_HEADER,
       etag,
       ...RSCProductionOptimizer.getCacheHeaders({
         isStatic: false,
@@ -156,6 +293,20 @@ export class RenderHandler {
       vfError = wrapUnknownError(error);
     }
 
-    return createErrorResponse(vfError);
+    const response = createErrorResponse(vfError);
+    const varyValues = (response.headers.get("vary") ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (
+      !varyValues.includes("*") &&
+      !varyValues.some((value) =>
+        value.toLowerCase() === RSC_DEPENDENCY_PINNING_HEADER.toLowerCase()
+      )
+    ) {
+      varyValues.push(RSC_DEPENDENCY_PINNING_HEADER);
+      response.headers.set("vary", varyValues.join(", "));
+    }
+    return response;
   }
 }

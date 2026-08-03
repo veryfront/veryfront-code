@@ -39,8 +39,13 @@ import { rateLimit } from "veryfront/middleware";
 const limiter = rateLimit({
   maxRequests: 100, // Max requests per window
   windowMs: 60_000, // 1 minute window
+  trustProxy: true, // Only behind a trusted reverse proxy
 });
 ```
+
+Forwarded client-address headers are ignored by default. If the app is not
+behind a trusted reverse proxy, use `keyGenerator` with a trusted client or
+account identifier.
 
 ### Logging
 
@@ -83,21 +88,20 @@ const pipeline = new MiddlewarePipeline()
   .useFor(/^\/api\/chat\//, timeout({ timeoutMs: 120_000 }));
 ```
 
-### Execute the pipeline
+### Run the pipeline
+
+Use `handle()` to run the middleware chain and then your route handler. If a middleware short-circuits (returns a `Response`, for example a rate-limit rejection), `handle()` returns that response and your handler never runs; otherwise your handler runs as the terminal step:
 
 ```ts
 // app/api/users/route.ts
 const users = [{ id: "user_123", name: "Ada Lovelace" }];
 
-export async function GET(request: Request) {
-  const result = await pipeline.execute(request);
-  if (result) return result; // Middleware returned a response (e.g., rate limit exceeded)
-
-  return Response.json(users);
+export function GET(request: Request) {
+  return pipeline.handle(request, () => Response.json(users));
 }
 ```
 
-The same pipeline can run in a pages router handler by passing `ctx.request`:
+The same pipeline runs in a pages router handler via `ctx.request`:
 
 ```ts
 // pages/api/users.ts
@@ -105,11 +109,8 @@ import type { APIContext } from "veryfront";
 
 const users = [{ id: "user_123", name: "Ada Lovelace" }];
 
-export async function GET(ctx: APIContext) {
-  const result = await pipeline.execute(ctx.request);
-  if (result) return result; // Middleware returned a response (e.g., rate limit exceeded)
-
-  return ctx.json(users);
+export function GET(ctx: APIContext) {
+  return pipeline.handle(ctx.request, () => ctx.json(users));
 }
 ```
 
@@ -119,17 +120,40 @@ Try it with the dev server running:
 curl -i http://localhost:3000/api/users
 ```
 
-The response should include any headers added by the middleware that matched the request. If a middleware returns a `Response`, the route handler stops there and returns that response.
+The response includes any headers added by the middleware that matched the request.
+
+> **`handle()` vs `execute()`.** `execute()` is a lower-level variant with **no terminal handler**: it returns the short-circuiting middleware's `Response`, or a synthesized **404 Not Found** when the chain passes through. It always resolves to a `Response` (never `undefined`), so `if (await pipeline.execute(request))` is always truthy; use `execute()` only when a middleware is always expected to produce the response. For the common "middleware, then my route handler" case, prefer `handle()`.
+
+### In-memory state across requests
+
+Middleware and route handlers created at module scope, for example a `rateLimit()` store or a module-level counter, behave differently by environment:
+
+- **In development**, the dev server re-evaluates each route module on every request so edits hot-reload. A fresh module scope means module-level variables and default in-memory stores are re-created per request: a counter always reads back its initial value, and the default in-memory rate-limit store never accumulates across requests. To exercise threshold behavior in dev, drive the pipeline multiple times within a single request, or use an external store.
+- **In production**, the compiled route module is cached per release, so module-scoped state persists across requests **within one server process and one release**. It is still **not** shared across multiple instances, and it resets on every redeploy (and under memory-pressure eviction).
+
+For anything that must be correct across requests, instances, and deploys, such as rate limiting, counters, and sessions, use an external store (see the `RateLimitStore` interface and the Redis example in the rate-limit reference) rather than module-scoped memory.
 
 ### Cleanup callbacks
 
-Register teardown logic that runs after the response is sent:
+Register teardown logic that runs once per request, after the response body has
+finished, been canceled, or errored:
 
 ```ts
 pipeline.onTeardown(async () => {
   await flushMetrics();
 });
 ```
+
+`onTeardown` callbacks run for every `handle()` and `execute()` call, so a
+module-scoped route pipeline fires them on each request. For streamed responses,
+cleanup waits until the body reaches EOF, is canceled by the consumer, or
+errors. Bodyless, locked, or already-read responses and handler or middleware
+exceptions clean up before the `handle()`/`execute()` promise resolves. Callback
+errors are logged and swallowed, never surfaced to the client.
+
+For long-lived pipelines that need one-shot cleanup on shutdown rather than per
+request, call `pipeline.teardown()` explicitly. Unlike the per-request run,
+`teardown()` drains and discards the callbacks so they never fire again.
 
 ## Custom middleware
 
@@ -156,6 +180,33 @@ const pipeline = new MiddlewarePipeline()
   .use(auth)
   .use(cors({ origin: "*" }));
 ```
+
+## Project-wide root middleware
+
+Add `middleware.ts`, `middleware.js`, or `middleware.mjs` at the project root to run middleware before every project route. Export one middleware function or an array of functions:
+
+```ts
+// middleware.ts
+import type { MiddlewareHandler } from "veryfront/middleware";
+
+const requireAccess: MiddlewareHandler = async (c, next) => {
+  if (!c.request.headers.has("authorization")) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const response = await next();
+  response?.headers.set("x-project-middleware", "applied");
+  return response;
+};
+
+export default requireAccess;
+```
+
+Root middleware has the same ordering and short-circuit contract in local development, dedicated production servers, and the shared hosted runtime. The shared runtime resolves and compiles the file only after it has authenticated the project and selected its release or preview branch. Middleware receives only that request's project environment through `c.env`.
+
+Production middleware is cached by project, environment, and immutable release or preview branch. Preview cache invalidation reloads the file after source changes, and the cache has a fixed entry limit. A missing file passes through normally.
+
+Production loading is fail-closed. If a declared middleware file cannot be read, compiled, or validated as a middleware export, a dedicated server does not start and a shared server returns an error only for the affected project request. Failed shared loads are not cached, so a corrected deployment can recover without restarting unrelated projects. Development loading remains nonfatal and reports the loading error in the server log.
 
 ## Verify it worked
 

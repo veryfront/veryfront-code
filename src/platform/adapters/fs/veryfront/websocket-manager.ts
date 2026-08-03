@@ -1,6 +1,7 @@
 import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
+import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import type { FileCache } from "../cache/file-cache.ts";
-import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
+import type { ProjectFile, VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type {
   ContentSource,
   InvalidationCallbacks,
@@ -36,6 +37,10 @@ const logger = getBaseLogger("SERVER", { injectTraceContext: false }).component(
   "web-socket-manager",
 );
 
+function sanitizeWebSocketLogUrl(url: string | undefined): string | undefined {
+  return typeof url === "string" ? sanitizeUrlForSpan(url) : undefined;
+}
+
 interface WebSocketDeps {
   apiBaseUrl: string;
   apiToken: string;
@@ -43,18 +48,24 @@ interface WebSocketDeps {
   cache: FileCache;
   client: VeryfrontApiClient;
   invalidationCallbacks: InvalidationCallbacks;
+  /**
+   * The project's default branch name. Used to decide whether an unscoped
+   * production poke applies to the current branch preview. Defaults to "main"
+   * when not provided; set this to the project's actual default branch to
+   * avoid skipping valid production pokes on non-"main" default branches.
+   */
+  defaultBranchName?: string;
 
   getContentContext: () => ResolvedContentContext | null;
   getContentSource: () => ContentSource;
   getProjectDir: () => string | undefined;
   clearMemoryCaches: () => void;
-  clearFileListIndex: () => void;
-  setFileListCache: (
+  replaceSourceSnapshot: (
     cacheKey: string,
-    files: Array<{ path: string; content?: string }>,
+    files: ProjectFile[],
   ) => Promise<void>;
   pregenerateStyles?: (
-    files: Array<{ path: string; content?: string }>,
+    files: ProjectFile[],
   ) => Promise<PreviewStyleArtifactInfo | undefined>;
 }
 
@@ -79,7 +90,15 @@ export class WebSocketManager {
     lastPokeTime: 0,
   };
 
-  constructor(private readonly deps: WebSocketDeps) {}
+  private apiToken: string;
+
+  constructor(private readonly deps: WebSocketDeps) {
+    this.apiToken = deps.apiToken;
+  }
+
+  setApiToken(token: string): void {
+    this.apiToken = token;
+  }
 
   private getConnectionLogContext(context: Record<string, unknown> = {}): Record<string, unknown> {
     return getConnectionLogContextHelper(this.deps.projectSlug, context);
@@ -129,12 +148,18 @@ export class WebSocketManager {
     this.cleanupTimers();
 
     if (this.wsConsecutiveFailures >= WS_RECONNECT_MAX_FAILURES) {
-      logger.warn("WebSocket reconnect failure cap reached, resetting failure counter", {
-        consecutiveFailures: this.wsConsecutiveFailures,
-        maxFailures: WS_RECONNECT_MAX_FAILURES,
-        cappedDelayMs: WS_RECONNECT_MAX_DELAY_MS,
-        projectId,
-      });
+      // Intentional infinite-retry: once the failure cap is hit the counter
+      // resets so reconnection continues at the maximum back-off delay rather
+      // than stopping permanently. This is the desired long-running-server behavior.
+      logger.warn(
+        "WebSocket reconnect failure cap reached — resetting counter for continued retry at max delay",
+        {
+          consecutiveFailures: this.wsConsecutiveFailures,
+          maxFailures: WS_RECONNECT_MAX_FAILURES,
+          cappedDelayMs: WS_RECONNECT_MAX_DELAY_MS,
+          projectId,
+        },
+      );
       this.wsConsecutiveFailures = 0;
     }
 
@@ -152,7 +177,7 @@ export class WebSocketManager {
     logger.debug(
       "Connecting to WebSocket",
       this.getConnectionLogContext({
-        url,
+        url: sanitizeWebSocketLogUrl(url),
         consecutiveFailures: this.wsConsecutiveFailures,
       }),
     );
@@ -161,11 +186,12 @@ export class WebSocketManager {
       // Send the API token via a WebSocket subprotocol header instead of
       // a query-string parameter. Query strings can leak into server
       // access logs, proxy logs, and the browser's Referer header.
-      this.ws = new WebSocket(url, [`bearer-${this.deps.apiToken}`]);
+      this.ws = new WebSocket(url, [`bearer-${this.apiToken}`]);
       this.wsConnectionId = crypto.randomUUID().slice(0, 8);
       this.wsErrorLogged = false;
 
       this.ws.onopen = () => {
+        const recoveredFailures = this.wsConsecutiveFailures;
         this.wsConsecutiveFailures = 0;
         logger.debug(
           "WebSocket connected to events channel",
@@ -175,6 +201,18 @@ export class WebSocketManager {
             ...buildContentSourceLabel(this.deps.getContentSource, this.deps.getContentContext),
           }),
         );
+        if (recoveredFailures > 0) {
+          logger.info(
+            "WebSocket reconnect recovered",
+            this.getConnectionLogContext({
+              projectId,
+              project_id: projectId,
+              connectionId: this.wsConnectionId,
+              consecutiveFailures: recoveredFailures,
+              ...buildContentSourceLabel(this.deps.getContentSource, this.deps.getContentContext),
+            }),
+          );
+        }
         this.wsLastPong = Date.now();
         this.startHeartbeat(projectId);
       };
@@ -185,7 +223,9 @@ export class WebSocketManager {
         this.handlePokeMessage(event);
       };
 
-      this.ws.onclose = () => {
+      this.ws.onclose = (event) => {
+        const connectionId = this.wsConnectionId;
+        const url = this.ws?.url;
         this.wsConnectionId = null;
         this.cleanupTimers();
 
@@ -193,12 +233,19 @@ export class WebSocketManager {
 
         this.wsConsecutiveFailures++;
         const delay = this.getReconnectDelay();
-        logger.debug(
-          "WebSocket closed, reconnecting",
+        logger.warn(
+          "WebSocket reconnect scheduled after close",
           this.getConnectionLogContext({
+            projectId,
+            project_id: projectId,
+            connectionId,
+            url: sanitizeWebSocketLogUrl(url),
             delayMs: delay,
             totalPokesReceived: this.pokeMetrics.received,
             consecutiveFailures: this.wsConsecutiveFailures,
+            closeCode: event.code,
+            closeReason: event.reason,
+            wasClean: event.wasClean,
           }),
         );
         this.wsReconnectTimer = setTimeout(() => this.connect(projectId), delay);
@@ -212,7 +259,7 @@ export class WebSocketManager {
             "WebSocket error",
             this.getConnectionLogContext({
               type: event.type,
-              url: (event.target as WebSocket)?.url,
+              url: sanitizeWebSocketLogUrl((event.target as WebSocket)?.url),
               readyState: (event.target as WebSocket)?.readyState,
               consecutiveFailures: this.wsConsecutiveFailures,
             }),
@@ -273,11 +320,36 @@ export class WebSocketManager {
       const message = parsePokeWebSocketMessage(event.data as string);
       if (!message) return;
       const payload = message.payload;
-      const changedPaths = payload.changedPaths as string[] | undefined;
+
+      // Validate payload fields rather than blindly casting Record<string,unknown>.
+      // Unexpected shapes are coerced to safe defaults and logged so malformed
+      // server messages produce a visible warning instead of silent bad values.
+      const rawChangedPaths = payload.changedPaths;
+      const changedPaths: string[] | undefined = Array.isArray(rawChangedPaths) &&
+          rawChangedPaths.every((p) => typeof p === "string")
+        ? (rawChangedPaths as string[])
+        : rawChangedPaths !== undefined
+        ? (logger.warn("[WebSocketManager] POKE payload.changedPaths has unexpected shape", {
+          type: typeof rawChangedPaths,
+        }),
+          undefined)
+        : undefined;
+
       const contentContext = this.deps.getContentContext();
 
-      const pokeBranchId = payload.branchId as string | null | undefined;
-      const pokeBranchName = payload.branchName as string | null | undefined;
+      const rawBranchId = payload.branchId;
+      const pokeBranchId: string | null | undefined = typeof rawBranchId === "string" ||
+          rawBranchId === null ||
+          rawBranchId === undefined
+        ? (rawBranchId as string | null | undefined)
+        : null;
+
+      const rawBranchName = payload.branchName;
+      const pokeBranchName: string | null | undefined = typeof rawBranchName === "string" ||
+          rawBranchName === null ||
+          rawBranchName === undefined
+        ? (rawBranchName as string | null | undefined)
+        : null;
 
       const normalizedBranchId = typeof pokeBranchId === "string" && pokeBranchId.length > 0
         ? pokeBranchId
@@ -356,19 +428,26 @@ export class WebSocketManager {
 
         if (
           !normalizedBranchName && !normalizedBranchId && currentBranch !== null &&
-          currentBranch !== "main"
+          currentBranch !== (this.deps.defaultBranchName ?? "main")
         ) {
-          // Unscoped pokes (no branchId/branchName) are for main branch edits.
-          // Skip only if we're on a named branch (not main).
+          // Unscoped pokes (no branchId/branchName) target the project's default branch.
+          // Skip only if we're previewing a different named branch.
+          // `defaultBranchName` defaults to "main"; set it in deps for projects
+          // using a different default branch (e.g., "master", "develop").
           logger.debug(
             "[WebSocketManager] POKE SKIPPED - unscoped poke for named branch preview",
-            { currentBranch },
+            { currentBranch, defaultBranchName: this.deps.defaultBranchName ?? "main" },
           );
           return;
         }
       }
 
-      const pokeReleaseId = payload.releaseId as string | null | undefined;
+      const rawReleaseId = payload.releaseId;
+      const pokeReleaseId: string | null | undefined = typeof rawReleaseId === "string" ||
+          rawReleaseId === null ||
+          rawReleaseId === undefined
+        ? (rawReleaseId as string | null | undefined)
+        : null;
       const normalizedPokeReleaseId = typeof pokeReleaseId === "string" && pokeReleaseId.length > 0
         ? pokeReleaseId
         : null;
@@ -376,7 +455,13 @@ export class WebSocketManager {
       const isDeploymentPoke = payload.entityType === "deployment";
       const isPublishPoke = isDeploymentPoke || (isProductionMode && !changedPaths?.length);
 
-      const pokeEnvironmentName = payload.environmentName as string | null | undefined;
+      const rawEnvironmentName = payload.environmentName;
+      const pokeEnvironmentName: string | null | undefined =
+        typeof rawEnvironmentName === "string" ||
+          rawEnvironmentName === null ||
+          rawEnvironmentName === undefined
+          ? (rawEnvironmentName as string | null | undefined)
+          : null;
       const normalizedPokeEnvironment =
         typeof pokeEnvironmentName === "string" && pokeEnvironmentName.length > 0
           ? pokeEnvironmentName
@@ -602,9 +687,10 @@ export class WebSocketManager {
         prefixes: ["file:", "stat:", "dir:"],
       });
 
-      this.deps.invalidationCallbacks.invalidateModulePaths?.(changedPaths);
-
       const projectId = this.deps.client.getProjectId();
+      const invalidations: Array<void | Promise<void>> = [
+        this.deps.invalidationCallbacks.invalidateModulePaths?.(changedPaths),
+      ];
       logger.debug("Clearing SSR module cache for HMR", {
         changedPaths,
         projectId,
@@ -612,17 +698,42 @@ export class WebSocketManager {
       });
 
       if (this.deps.invalidationCallbacks.clearSSRModuleCacheForProject && projectId) {
-        this.deps.invalidationCallbacks.clearSSRModuleCacheForProject(projectId);
+        invalidations.push(
+          this.deps.invalidationCallbacks.clearSSRModuleCacheForProject(projectId),
+        );
       } else {
-        this.deps.invalidationCallbacks.clearSSRModuleCache?.();
+        invalidations.push(this.deps.invalidationCallbacks.clearSSRModuleCache?.());
+      }
+      if (projectId) {
+        if (this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject) {
+          invalidations.push(
+            this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject(projectId),
+          );
+        }
+        if (this.deps.invalidationCallbacks.clearProjectDiscoveryCacheForProject) {
+          invalidations.push(
+            this.deps.invalidationCallbacks.clearProjectDiscoveryCacheForProject(projectId),
+          );
+        }
       }
 
       if (this.deps.invalidationCallbacks.clearRendererCacheForProject && projectId) {
-        await this.deps.invalidationCallbacks.clearRendererCacheForProject(projectId);
+        invalidations.push(
+          this.deps.invalidationCallbacks.clearRendererCacheForProject(projectId),
+        );
       }
 
       if (this.deps.invalidationCallbacks.clearProjectCSSCache && this.deps.projectSlug) {
-        this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug);
+        invalidations.push(
+          this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug),
+        );
+      }
+
+      const pendingInvalidations = invalidations.filter(
+        (invalidation): invalidation is Promise<void> => invalidation !== undefined,
+      );
+      if (pendingInvalidations.length > 0) {
+        await Promise.all(pendingInvalidations);
       }
 
       if (contentContext?.sourceType === "branch") {
@@ -630,8 +741,7 @@ export class WebSocketManager {
         try {
           const files = await this.deps.client.listAllFiles();
           const cacheKey = buildFileListCacheKey(contentContext);
-          await this.deps.setFileListCache(cacheKey, files);
-          this.deps.clearFileListIndex();
+          await this.deps.replaceSourceSnapshot(cacheKey, files);
           preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
 
           logger.debug("Fresh files cached (memory + Redis)", {
@@ -731,29 +841,54 @@ export class WebSocketManager {
       this.deps.invalidationCallbacks.clearDomainCache?.();
 
       const projectId = this.deps.client.getProjectId();
+      const invalidations: Array<void | Promise<void>> = [];
 
       if (this.deps.invalidationCallbacks.clearSSRModuleCacheForProject && projectId) {
-        this.deps.invalidationCallbacks.clearSSRModuleCacheForProject(projectId);
+        invalidations.push(
+          this.deps.invalidationCallbacks.clearSSRModuleCacheForProject(projectId),
+        );
       } else {
-        this.deps.invalidationCallbacks.clearSSRModuleCache?.();
+        invalidations.push(this.deps.invalidationCallbacks.clearSSRModuleCache?.());
       }
 
-      if (this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject && projectId) {
-        this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject(projectId);
+      if (projectId) {
+        if (this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject) {
+          invalidations.push(
+            this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject(projectId),
+          );
+        }
+        if (this.deps.invalidationCallbacks.clearProjectDiscoveryCacheForProject) {
+          invalidations.push(
+            this.deps.invalidationCallbacks.clearProjectDiscoveryCacheForProject(projectId),
+          );
+        }
       }
 
-      this.deps.invalidationCallbacks.clearModulePathCache?.();
+      invalidations.push(this.deps.invalidationCallbacks.clearModulePathCache?.());
 
       if (this.deps.invalidationCallbacks.clearSnippetCacheForProject && this.deps.projectSlug) {
-        this.deps.invalidationCallbacks.clearSnippetCacheForProject(this.deps.projectSlug);
+        invalidations.push(
+          this.deps.invalidationCallbacks.clearSnippetCacheForProject(this.deps.projectSlug),
+        );
       }
 
       if (this.deps.invalidationCallbacks.clearRendererCacheForProject && projectId) {
-        await this.deps.invalidationCallbacks.clearRendererCacheForProject(projectId);
+        invalidations.push(
+          this.deps.invalidationCallbacks.clearRendererCacheForProject(projectId),
+        );
       }
 
       if (this.deps.invalidationCallbacks.clearProjectCSSCache && this.deps.projectSlug) {
-        this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug);
+        invalidations.push(
+          this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug),
+        );
+      }
+
+      const pendingInvalidations = invalidations.filter(
+        (invalidation): invalidation is Promise<void> => invalidation !== undefined,
+      );
+      if (pendingInvalidations.length > 0) {
+        await Promise.all(pendingInvalidations);
       }
 
       const totalFileCount = fileBranchCount + fileReleaseCount + fileEnvCount;
@@ -772,8 +907,7 @@ export class WebSocketManager {
         try {
           const files = await this.deps.client.listAllFiles();
           const cacheKey = buildFileListCacheKey(contentContext);
-          await this.deps.setFileListCache(cacheKey, files);
-          this.deps.clearFileListIndex();
+          await this.deps.replaceSourceSnapshot(cacheKey, files);
           preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
 
           logger.debug("FRESH FILES FETCHED", {

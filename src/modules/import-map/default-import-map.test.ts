@@ -27,10 +27,20 @@ describe("modules/import-map/default-import-map", () => {
     it("should include Veryfront framework mappings", () => {
       const imports = getImports();
 
+      assert("veryfront/react" in imports, "should have 'veryfront/react' mapping");
       assert("veryfront/head" in imports, "should have 'veryfront/head' mapping");
       assert("veryfront/router" in imports, "should have 'veryfront/router' mapping");
       assert("veryfront/context" in imports, "should have 'veryfront/context' mapping");
       assert("veryfront/fonts" in imports, "should have 'veryfront/fonts' mapping");
+    });
+
+    it("should map veryfront/react to the browser public barrel", () => {
+      const imports = getImports();
+
+      assertEquals(
+        imports["veryfront/react"],
+        "/_vf_modules/_veryfront/react/public.js?ssr=true",
+      );
     });
 
     it("should include veryfront/react/* alias mappings", () => {

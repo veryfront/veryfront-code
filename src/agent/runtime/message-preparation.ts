@@ -1,4 +1,7 @@
-import { prepareProviderModelMessagesFromUiMessages } from "../../chat/message-prep.ts";
+import {
+  type HistoricalToolInputRetentionOptions,
+  prepareProviderModelMessagesFromUiMessages,
+} from "../../chat/message-prep.ts";
 import type { ChatUiMessage } from "../../chat/types.ts";
 import {
   type AgentRuntimeMessage,
@@ -24,6 +27,7 @@ export type PrepareAgentRuntimeMessagesFromUiMessagesOptions = {
   abortSignal?: AbortSignal;
   fileContentFetchTimeoutMs?: number;
   providerOwnedToolNames?: readonly string[];
+  historicalToolInputRetention?: HistoricalToolInputRetentionOptions;
 };
 
 /** Prepare agent runtime messages from UI messages. */
@@ -66,6 +70,7 @@ export async function prepareAgentRuntimeMessagesFromUiMessages(
   return convertProviderMessagesToAgentRuntimeMessages(
     prepareProviderModelMessagesFromUiMessages(messagesWithFileContent, {
       providerOwnedToolNames: options.providerOwnedToolNames,
+      historicalToolInputRetention: options.historicalToolInputRetention,
     }),
   );
 }

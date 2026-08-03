@@ -17,18 +17,26 @@ export {
 } from "./compat/index.ts";
 
 // Components
-export { AppWrapper, type AppWrapperProps } from "./components/AppWrapper.tsx";
+export {
+  AppWrapper,
+  type AppWrapperProps,
+  type MdxWrapperKind,
+  MdxWrapperRenderError,
+} from "./components/AppWrapper.tsx";
 export { Head } from "./components/Head.tsx";
 export { MDXProvider, type MDXProviderProps, useMDXComponents } from "./components/MDXProvider.tsx";
 export {
   generateBlurDataURL,
   getAspectRatioPadding,
   OptimizedBackgroundImage,
+  type OptimizedBackgroundImageProps,
   OptimizedImage,
+  type OptimizedImageFormat,
   type OptimizedImageProps,
   ResponsiveImageContainer,
   SimpleOptimizedImage,
   useOptimizedImage,
+  type UseOptimizedImageOptions,
 } from "./components/optimized-image/index.ts";
 
 // Primitives (user-facing chat/agent UI)
@@ -77,6 +85,7 @@ export {
   hasCollectedHead,
   type HeadLink,
   type HeadMeta,
+  type HeadStyle,
   resetHeadCollector,
   runWithHeadCollector,
 } from "./head-collector.ts";

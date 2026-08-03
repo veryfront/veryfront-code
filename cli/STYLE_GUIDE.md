@@ -14,9 +14,27 @@ If the implementation is hard to explain, it's a bad idea.
 
 **Human-first**: Default output is for humans. Machine output (`--json`) is opt-in.
 
-**Conversational**: Users iterate through commands. Suggest corrections, show next steps.
+**Restrained**: Default output contains the current state and result, not decoration or coaching.
 
 **Empathetic**: Anticipate confusion. Rewrite errors for humans, not developers.
+
+**Progressive disclosure**: Keep identifiers, configuration detail, docs links, and stack traces behind
+`--verbose`; keep machine detail in `--json`.
+
+### Cloud Workflow
+
+Keep preview and production as two explicit steps:
+
+```text
+veryfront push                                  # Update the stable main preview
+veryfront push --branch feature-auth            # Update an isolated branch preview
+veryfront deploy                                # Promote main to production
+veryfront deploy --environment staging          # Promote main to another environment
+```
+
+`push` prints the Studio and Preview URLs. `deploy` prints the resolved environment URL. Do not
+introduce hidden "last branch" inference or redundant confirmations; use `--branch`,
+`--environment`, and `--dry-run` when the user needs an explicit target or preflight.
 
 ---
 
@@ -26,7 +44,7 @@ If the implementation is hard to explain, it's a bad idea.
 
 ```typescript
 // DO: Clean, minimal success
-console.log("  " + success("✓") + " Deployed to " + brand("myapp.production.veryfront.com"));
+console.log("  ✓ Deployed to " + brand("myapp.production.veryfront.com"));
 
 // DON'T: Noisy, verbose
 console.log(
@@ -47,9 +65,10 @@ console.log("  " + dim("3 files changed"));
 ### Information Hierarchy
 
 ```
-Primary   → brand() or bold()       // What matters most
-Secondary → dim() or muted()        // Supporting details
-Success   → success("✓")            // Completed actions
+Primary   → plain text or bold()    // What matters most
+Action    → brand()                 // Commands, URLs, active cursor/spinner
+Secondary → dim() or muted()        // Supporting details and metadata labels
+Success   → plain "✓"               // Completed actions
 Error     → error("✗")              // Failed actions
 ```
 
@@ -62,11 +81,11 @@ Error     → error("✗")              // Failed actions
 ```typescript
 // DO
 console.log();
-console.log("  " + success("✓") + " Done");
+console.log("  ✓ Done");
 console.log();
 
 // DON'T
-console.log(success("✓") + " Done");
+console.log("✓ Done");
 ```
 
 **Use blank lines to separate logical sections:**
@@ -133,8 +152,8 @@ catch (e) {
 ### Brand Palette
 
 ```typescript
-brand(); // rgb(252,143,93) - Orange, primary actions and highlights
-success(); // rgb(34,197,94)  - Green, completed states
+brand(); // rgb(238,178,146) - Pastel orange, commands, URLs, and active controls
+success(); // rgb(34,197,94)  - Green, semantic health and availability values
 error(); // rgb(239,68,68)  - Red, failures only
 warning(); // rgb(234,179,8)  - Yellow, caution
 muted(); // rgb(113,113,122) - Gray, secondary text
@@ -151,11 +170,12 @@ console.log("  " + warning("!") + " Config key 'port' is deprecated, use 'server
 
 ### Usage Rules
 
-1. **Use color for meaning, not decoration**
+1. **Use brand color for actions and active state, not labels or completed state**
 2. **Red is reserved for errors** - never use for emphasis
 3. **Yellow is for non-fatal warnings** - deprecations, risky config, recoverable issues
 4. **Respect `NO_COLOR` environment variable**
 5. **Disable colors when stdout is not a TTY**
+6. **Do not use boxes, mascots, emoji, shimmer, or decorative dividers in standard output**
 
 ```typescript
 import { isTTY } from "../ui/layout.ts";
@@ -172,7 +192,7 @@ if (!isTTY()) {
 
 | Symbol | Meaning          | Function                                |
 | ------ | ---------------- | --------------------------------------- |
-| `✓`    | Success/Complete | `success("✓")`                          |
+| `✓`    | Success/Complete | plain terminal text                     |
 | `✗`    | Error/Failed     | `error("✗")`                            |
 | `●`    | Active/Current   | `brand("●")`                            |
 | `○`    | Inactive/Pending | `muted("○")`                            |
@@ -187,46 +207,12 @@ if (!isTTY()) {
 
 ## Help Text
 
-### Concise Help (no args)
-
-Show when command is run without required arguments:
-
-```
-  veryfront deploy
-
-  Deploy your project to production.
-
-  Usage: veryfront deploy [options]
-
-  Examples:
-    $ veryfront deploy
-    $ veryfront deploy --env staging
-
-  Run 'veryfront deploy --help' for all options.
-```
-
-### Full Help (--help)
-
-```
-  veryfront deploy
-  Deploy your project to production.
-
-  Usage: veryfront deploy [options]
-  Options:
-    -e, --env <name>      Environment (default: production)
-    -b, --branch <name>   Branch to deploy
-    -f, --force           Skip confirmation
-    -n, --dry-run         Preview without deploying
-
-  Examples:
-    $ veryfront deploy
-    $ veryfront deploy --env staging
-    $ veryfront deploy --branch feature-x --dry-run
-
-  Tips:
-    • Use --dry-run to preview changes before deploying
-    • Press Ctrl+C to cancel at any time
-```
+- Support `-h`, `--help`, `veryfront help`, and `veryfront help <command>`.
+- Show concise help when required input is missing; interactive-by-default commands may prompt.
+- Lead with the common usage and examples, then list options and notes.
+- Keep examples executable and show the long form of flags.
+- Link to the relevant web documentation or support path.
+- Do not print the full help page after a runtime error; show one actionable recovery hint.
 
 ### Conventions
 
@@ -234,10 +220,12 @@ Show when command is run without required arguments:
 | --------------- | ----------------------- |
 | `-h, --help`    | Show help               |
 | `-v, --version` | Show version            |
-| `-f, --force`   | Skip confirmations      |
+| `-y, --yes`     | Skip confirmations      |
+| `-f, --force`   | Command-specific force  |
 | `-n, --dry-run` | Preview without action  |
 | `-q, --quiet`   | Minimal output          |
 | `--json`        | Machine-readable output |
+| `--no-input`    | Disable prompts         |
 | `--no-color`    | Disable colors          |
 
 ---
@@ -257,13 +245,10 @@ Show when command is run without required arguments:
 
 ### Confirmation
 
-```typescript
-// DO: Clear question, obvious default
-console.log("  " + muted("Deploy to production?") + " " + dim("[y/N]"));
-
-// DON'T: Ambiguous
-console.log("Continue? (yes/no/maybe)");
-```
+Confirm destructive or difficult-to-reverse actions. Do not add a second confirmation when the
+command verb already names a recoverable action, such as `push` or `deploy`; provide `--dry-run` for
+users who want a preflight. Every prompt must have a flag or argument equivalent, and `--no-input`
+must prevent all prompting.
 
 ### Progress
 
@@ -298,22 +283,18 @@ tasks.start(deployIdx);
 ### Screen Layout
 
 ```
-┌─────────────────────────────────────┐
-│                                     │  ← Blank line
-│  Title                              │  ← Bold brand
-│                                     │  ← Blank line
-│  Info Section                       │
-│    key  value                       │
-│    key  value                       │
-│                                     │
-│  ● Status message                   │
-│                                     │
-│  enter deploy  l logs  ctrl+c exit  │  ← Help bar
-│                                     │
-│  ▶ Logs (12)                        │  ← Collapsible
-│                                     │
-└─────────────────────────────────────┘
+  ✓ Server ready at http://veryfront.me:3000
+  ✓ MCP ready at http://veryfront.me:3001/mcp
+
+  Projects
+  ❯ my-agent
+    docs
+
+  enter open  n create  ? help  ctrl+c exit
 ```
+
+Keep status, content, and controls in a stable hierarchy. Do not put the primary TUI inside a
+decorative box or reserve space for branding.
 
 ### Keyboard Shortcuts
 
@@ -334,14 +315,17 @@ tasks.start(deployIdx);
 **stdout** is for primary output (results, `--json` data). **stderr** is for human-facing side-effects (progress, spinners, errors). This ensures `--json` output stays parseable when piped:
 
 ```bash
-veryfront deploy --json 2>/dev/null | jq '.url'
+veryfront deploy --branch main --env production --json | tail -n 1 | jq '.data.deploymentId'
 ```
 
-Progress indicators (`createSpinner`) already write to stdout with ANSI clear sequences, so they self-clean in TTY mode and are suppressed in non-TTY mode.
+Human progress must not be emitted on a `--json` path. Interactive spinners may update the TTY in
+place; when stdout is piped, write progress to stderr and disable animation and ANSI control
+sequences.
 
 ### JSON Mode
 
-Commands that support `--json` should return a consistent envelope:
+Commands that support `--json` should return a consistent envelope, or documented NDJSON events for
+streaming operations:
 
 ```typescript
 if (options.json) {
@@ -374,10 +358,10 @@ console.log(JSON.stringify({
 ## Quick Reference
 
 ```typescript
-import { brand, dim, error, muted, success, warning } from "../ui/colors.ts";
+import { brand, dim, error, muted, warning } from "../ui/colors.ts";
 
 // Success
-console.log("  " + success("✓") + " Done");
+console.log("  ✓ Done");
 
 // Error
 console.log("  " + error("✗") + " Failed");
@@ -406,7 +390,10 @@ Before shipping CLI output:
 - [ ] Success uses `✓`, errors use `✗`
 - [ ] Red only for actual errors
 - [ ] Errors are actionable
+- [ ] Errors and warnings use stderr
 - [ ] Works without color (`NO_COLOR=1`)
+- [ ] Animations are disabled outside a TTY
+- [ ] `--no-input` prevents prompts
 - [ ] Long operations show progress (`createSpinner` or `TaskList`)
 - [ ] Ctrl+C exits cleanly
 - [ ] `--json` flag returns `{ success, data?, error? }` envelope (if applicable)

@@ -7,13 +7,14 @@ describe("errors/catalog/module-errors", () => {
   describe("MODULE_ERROR_CATALOG", () => {
     it("should contain all module error slugs", () => {
       const expectedSlugs = [
-        "cache-path-mismatch",
         "module-not-found",
         "import-resolution-error",
         "circular-dependency",
         "invalid-import",
         "dependency-missing",
         "version-mismatch",
+        "lockfile-format-mismatch",
+        "lockfile-read-error",
       ];
 
       for (const slug of expectedSlugs) {
@@ -36,14 +37,8 @@ describe("errors/catalog/module-errors", () => {
       }
     });
 
-    it("should have 7 entries", () => {
-      assertEquals(Object.keys(MODULE_ERROR_CATALOG).length, 7);
-    });
-
-    it("cache-path-mismatch should have an example with curl command", () => {
-      const solution = MODULE_ERROR_CATALOG["cache-path-mismatch"];
-      assertEquals(typeof solution?.example, "string");
-      assertEquals(solution?.example?.includes("curl"), true);
+    it("should have 8 entries", () => {
+      assertEquals(Object.keys(MODULE_ERROR_CATALOG).length, 8);
     });
 
     it("module-not-found should have an example with import map", () => {
@@ -56,6 +51,17 @@ describe("errors/catalog/module-errors", () => {
       const solution = MODULE_ERROR_CATALOG["dependency-missing"];
       assertEquals(typeof solution?.example, "string");
       assertEquals(solution?.example?.includes("react"), true);
+    });
+
+    it("lockfile recovery guidance should use the supported clear command", () => {
+      for (const slug of ["lockfile-format-mismatch", "lockfile-read-error"] as const) {
+        const solution = MODULE_ERROR_CATALOG[slug];
+        assertEquals(
+          solution?.steps?.some((step) => step.includes("veryfront lock --clear")),
+          true,
+          `${slug} should point to the supported destructive recovery command`,
+        );
+      }
     });
   });
 });

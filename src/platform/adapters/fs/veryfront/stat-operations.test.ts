@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import type { ProjectFile, VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import type { ContentContextProvider } from "./file-list-access.ts";
@@ -145,7 +146,7 @@ describe("StatOperations", () => {
       assertEquals(info.size, 0);
     });
 
-    it("should throw for non-existent path", async () => {
+    it("should throw a recognized not-found error for a non-existent path", async () => {
       const statOps = createStatOps(
         createMockClient(),
         new PathNormalizer(),
@@ -157,6 +158,7 @@ describe("StatOperations", () => {
         assertEquals(true, false, "Should have thrown");
       } catch (e) {
         assertExists(e);
+        assertEquals(isNotFoundError(e), true);
       }
     });
 
@@ -244,6 +246,22 @@ describe("StatOperations", () => {
       );
 
       assertEquals(await statOps.exists("nonexistent.tsx"), false);
+    });
+
+    it("should not route existence misses through the public stat span", async () => {
+      const statOps = createStatOps(
+        createMockClient(),
+        new PathNormalizer(),
+        createBranchContextWithFiles([makeFile("pages/index.tsx")]),
+      );
+      let publicStatCalled = false;
+      statOps.stat = async () => {
+        publicStatCalled = true;
+        throw new Error("stat should not be called by exists");
+      };
+
+      assertEquals(await statOps.exists("nonexistent.tsx"), false);
+      assertEquals(publicStatCalled, false);
     });
   });
 

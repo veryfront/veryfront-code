@@ -1,4 +1,5 @@
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "./protocol.ts";
+import { deriveKnowledgeSourceDocumentChunk } from "./knowledge-source-document.ts";
 
 /** Options accepted by hosted UI chunk mapping. */
 export type HostedUiChunkMappingOptions = {
@@ -244,7 +245,9 @@ export function mapHostedStreamPartToChatUiChunks(
       return [{ type: "abort" }];
 
     case "reasoning-start":
-      return [{ type: "reasoning-start", id: options.reasoningMessageId ?? part.id }];
+      return sendReasoning
+        ? [{ type: "reasoning-start", id: options.reasoningMessageId ?? part.id }]
+        : [];
 
     case "reasoning-delta":
       return sendReasoning
@@ -252,12 +255,14 @@ export function mapHostedStreamPartToChatUiChunks(
         : [];
 
     case "reasoning-end":
-      return [{
-        type: "reasoning-end",
-        id: options.reasoningMessageId ?? part.id,
-        ...(typeof part.signature === "string" ? { signature: part.signature } : {}),
-        ...(typeof part.redactedData === "string" ? { redactedData: part.redactedData } : {}),
-      }];
+      return sendReasoning
+        ? [{
+          type: "reasoning-end",
+          id: options.reasoningMessageId ?? part.id,
+          ...(typeof part.signature === "string" ? { signature: part.signature } : {}),
+          ...(typeof part.redactedData === "string" ? { redactedData: part.redactedData } : {}),
+        }]
+        : [];
 
     case "text-start":
       return [{ type: "text-start", id: options.messageId ?? part.id }];
@@ -294,8 +299,21 @@ export function mapHostedStreamPartToChatUiChunks(
         toolCallId: part.toolCall.toolCallId,
       }];
 
-    case "tool-result":
-      return [{ type: "tool-output-available", toolCallId: part.toolCallId, output: part.output }];
+    case "tool-result": {
+      const outputChunk = {
+        type: "tool-output-available" as const,
+        toolCallId: part.toolCallId,
+        output: part.output,
+      };
+      if (!sendSources) {
+        return [outputChunk];
+      }
+      const sourceChunk = deriveKnowledgeSourceDocumentChunk({
+        toolName: part.toolName,
+        output: part.output,
+      });
+      return sourceChunk ? [outputChunk, sourceChunk] : [outputChunk];
+    }
 
     case "tool-error":
       return mapToolErrorPartToUiChunks(part, onError);

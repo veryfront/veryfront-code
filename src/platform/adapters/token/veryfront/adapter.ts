@@ -16,9 +16,16 @@ import {
 
 const logger = baseLogger.component("veryfront-token-adapter");
 
+interface InitializationAttempt {
+  readonly controller: AbortController;
+  readonly promise: Promise<void>;
+}
+
 export class VeryfrontTokenAdapter implements TokenStorageAdapter {
   private client: TokenStorageApiClient;
   private initialized = false;
+  private initialization: InitializationAttempt | null = null;
+  private lifecycleGeneration = 0;
 
   constructor(config: TokenStorageAdapterConfig) {
     const tokenConfig = createTokenConfig(config);
@@ -32,18 +39,25 @@ export class VeryfrontTokenAdapter implements TokenStorageAdapter {
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
+    if (this.initialization) return await this.initialization.promise;
 
     logger.debug("Initializing...");
 
-    const connected = await this.client.ping();
-    if (!connected) {
-      throw TOKEN_STORAGE_ERROR.create({
-        detail: "Failed to connect to Veryfront token storage API",
-      });
-    }
+    const generation = this.lifecycleGeneration;
+    const controller = new AbortController();
+    const initialization: InitializationAttempt = {
+      controller,
+      promise: this.doInitialize(generation, controller.signal),
+    };
+    this.initialization = initialization;
 
-    this.initialized = true;
-    logger.debug("Initialized successfully");
+    try {
+      await initialization.promise;
+    } finally {
+      if (this.initialization === initialization) {
+        this.initialization = null;
+      }
+    }
   }
 
   async get(key: string): Promise<string | null> {
@@ -71,7 +85,34 @@ export class VeryfrontTokenAdapter implements TokenStorageAdapter {
   }
 
   dispose(): void {
+    this.lifecycleGeneration++;
+    this.initialization?.controller.abort(
+      new DOMException("Token storage initialization was invalidated", "AbortError"),
+    );
+    this.initialization = null;
     this.initialized = false;
     logger.debug("Disposed");
+  }
+
+  private async doInitialize(
+    generation: number,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const connected = await this.client.ping(signal);
+    signal.throwIfAborted();
+    if (generation !== this.lifecycleGeneration) {
+      throw new DOMException(
+        "Token storage initialization was invalidated",
+        "AbortError",
+      );
+    }
+    if (!connected) {
+      throw TOKEN_STORAGE_ERROR.create({
+        detail: "Failed to connect to Veryfront token storage API",
+      });
+    }
+
+    this.initialized = true;
+    logger.debug("Initialized successfully");
   }
 }

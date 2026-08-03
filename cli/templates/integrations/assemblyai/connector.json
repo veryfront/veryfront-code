@@ -25,7 +25,7 @@
   ],
   "tools": [
     {
-      "id": "submit_transcript",
+      "id": "assemblyai__submit_transcript",
       "name": "Submit Transcript",
       "description": "Submit an audio or video URL for transcription (processing is asynchronous)",
       "requiresWrite": true,
@@ -50,7 +50,7 @@
       }
     },
     {
-      "id": "get_transcript",
+      "id": "assemblyai__get_transcript",
       "name": "Get Transcript",
       "description": "Get the status and text of a transcript by ID",
       "requiresWrite": false,
@@ -68,7 +68,7 @@
       }
     },
     {
-      "id": "list_transcripts",
+      "id": "assemblyai__list_transcripts",
       "name": "List Transcripts",
       "description": "List transcripts created by the account",
       "requiresWrite": false,
@@ -115,7 +115,7 @@
       }
     },
     {
-      "id": "delete_transcript",
+      "id": "assemblyai__delete_transcript",
       "name": "Delete Transcript",
       "description": "Permanently delete a transcript and its data",
       "requiresWrite": true,

@@ -29,6 +29,13 @@ Deno.test("getHostedStreamErrorText makes hosted stream timeouts transparent", (
   );
 });
 
+Deno.test("getHostedStreamErrorText makes bootstrap stream timeouts transparent", () => {
+  assertEquals(
+    getHostedStreamErrorText(new Error("Chat stream bootstrap timeout after 90000ms")),
+    "This run timed out after 90 seconds before the agent finished. Try again to continue, or narrow the request.",
+  );
+});
+
 Deno.test("getEmptyHostedFinalizedMessageTerminalError returns default empty response error", () => {
   const result = getEmptyHostedFinalizedMessageTerminalError({ finalStep: null });
   assertEquals(result.code, "EMPTY_RESPONSE");

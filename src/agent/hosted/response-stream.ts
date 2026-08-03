@@ -24,6 +24,8 @@ export interface RunHostedResponseStreamWithHeartbeatOptions<TChunk> {
   writer: HostedResponseStreamWriter<TChunk>;
   heartbeat?: HostedResponseStreamHeartbeat<TChunk>;
   runId?: string;
+  /** Optional abort signal for external cancellation of the hosted lifecycle. */
+  abortSignal?: AbortSignal;
 }
 
 function getHeartbeatState(
@@ -74,7 +76,7 @@ export async function runHostedResponseStreamWithHeartbeat<TChunk>(
 
   try {
     await runHostedLifecycle({
-      abortSignal: new AbortController().signal,
+      abortSignal: options.abortSignal ?? new AbortController().signal,
       execution: options.execution,
       adapter: {
         startRun: () => ({ runId: options.runId ?? "response-stream" }),

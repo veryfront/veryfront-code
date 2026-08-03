@@ -4,7 +4,7 @@
  * @module transforms/mdx/esm-module-loader/module-fetcher/persistence
  */
 
-import type { Logger } from "#veryfront/utils/logger/logger.ts";
+import type { Logger } from "#veryfront/utils";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/filename-default-export.ts";
 import { cacheModule } from "./module-cache.ts";
@@ -22,6 +22,8 @@ export interface PersistResolvedModuleInput {
   log: Logger;
   projectSlug: string;
   reactVersion?: string;
+  dependencyPinningCacheKey?: string;
+  moduleServerOrigin?: string;
   distributedCacheWrite?: {
     distributedCache: DistributedCache;
     transformCacheKey: string;
@@ -66,6 +68,8 @@ export async function persistResolvedModule(
     input.pathCache,
     input.log,
     input.reactVersion,
+    input.dependencyPinningCacheKey,
+    input.moduleServerOrigin,
   );
   input.log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule DONE`, {
     projectSlug: input.projectSlug,

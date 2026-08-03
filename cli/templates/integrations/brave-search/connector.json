@@ -27,7 +27,7 @@
   ],
   "tools": [
     {
-      "id": "web_search",
+      "id": "brave-search__web_search",
       "name": "Web Search",
       "description": "Search the web and get ranked results from Brave's independent index",
       "requiresWrite": false,
@@ -85,7 +85,7 @@
       }
     },
     {
-      "id": "news_search",
+      "id": "brave-search__news_search",
       "name": "News Search",
       "description": "Search recent and historical news articles from trusted outlets worldwide",
       "requiresWrite": false,
@@ -152,7 +152,7 @@
       }
     },
     {
-      "id": "image_search",
+      "id": "brave-search__image_search",
       "name": "Image Search",
       "description": "Search Brave's image index and get image URLs with source page metadata",
       "requiresWrite": false,
@@ -194,7 +194,7 @@
       }
     },
     {
-      "id": "video_search",
+      "id": "brave-search__video_search",
       "name": "Video Search",
       "description": "Search for videos and get results with titles, creators, durations, and thumbnails",
       "requiresWrite": false,
@@ -246,7 +246,7 @@
       }
     },
     {
-      "id": "local_descriptions",
+      "id": "brave-search__local_descriptions",
       "name": "Get Local Descriptions",
       "description": "Get AI-generated text descriptions for up to 20 locations using location IDs returned in a Web Search response's locations results",
       "requiresWrite": false,
@@ -264,7 +264,7 @@
       }
     },
     {
-      "id": "local_pois",
+      "id": "brave-search__local_pois",
       "name": "Get Local Places",
       "description": "Get rich details (address, hours, ratings, pictures) for up to 20 locations using location IDs returned in a Web Search response's locations results",
       "requiresWrite": false,

@@ -1,10 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  FRAMEWORK_EMBEDDED_SRC_DIR,
+  FRAMEWORK_SRC_DIR,
   getFrameworkSourceLookupDirs,
   resolveFrameworkSourcePath,
+  resolveRelativeFrameworkSourceImport,
 } from "./framework-source-resolver.ts";
+
+const notFound = (): Error =>
+  Object.assign(new Error("not found"), {
+    code: "ENOENT",
+  });
 
 describe("platform/compat/framework-source-resolver", () => {
   it("prefers live framework src before embedded sources", async () => {
@@ -28,7 +36,7 @@ describe("platform/compat/framework-source-resolver", () => {
             };
           }
 
-          throw new Error("not found");
+          throw notFound();
         },
       },
     });
@@ -52,7 +60,7 @@ describe("platform/compat/framework-source-resolver", () => {
             };
           }
 
-          throw new Error("not found");
+          throw notFound();
         },
       },
     });
@@ -63,6 +71,147 @@ describe("platform/compat/framework-source-resolver", () => {
   it("deduplicates lookup directories while preserving order", () => {
     const lookupDirs = getFrameworkSourceLookupDirs(["/custom", "/custom"]);
     assertEquals(lookupDirs.filter((dir) => dir === "/custom").length, 1);
+  });
+
+  it("prefers pristine embedded sources in compiled binaries", () => {
+    assertEquals(getFrameworkSourceLookupDirs([], true), [
+      FRAMEWORK_EMBEDDED_SRC_DIR,
+      FRAMEWORK_SRC_DIR,
+    ]);
+  });
+
+  it("prefers the embedded counterpart for compiled-binary relative imports", async () => {
+    const livePath = `${FRAMEWORK_SRC_DIR}/react/runtime/core.ts`;
+    const embeddedPath = `${FRAMEWORK_EMBEDDED_SRC_DIR}/react/runtime/core.ts.src`;
+
+    const result = await resolveRelativeFrameworkSourceImport(
+      "../runtime/core.ts",
+      `${FRAMEWORK_SRC_DIR}/react/context/index.tsx`,
+      {
+        compiled: true,
+        exists: (path) => Promise.resolve(path === livePath || path === embeddedPath),
+      },
+    );
+
+    assertEquals(result, embeddedPath);
+  });
+
+  it("keeps relative imports inside the embedded tree when both trees exist", async () => {
+    const livePath = `${FRAMEWORK_SRC_DIR}/react/runtime/core.ts`;
+    const embeddedPath = `${FRAMEWORK_EMBEDDED_SRC_DIR}/react/runtime/core.ts.src`;
+
+    const result = await resolveRelativeFrameworkSourceImport(
+      "../runtime/core.ts",
+      `${FRAMEWORK_EMBEDDED_SRC_DIR}/react/context/index.tsx.src`,
+      {
+        compiled: true,
+        exists: (path) => Promise.resolve(path === livePath || path === embeddedPath),
+      },
+    );
+
+    assertEquals(result, embeddedPath);
+  });
+
+  for (const helper of ["_dnt.shims.js", "_dnt.polyfills.js", "deno.js"]) {
+    it(`resolves published runtime helper ${helper} outside the source tree`, async () => {
+      const packageRoot = "/package/esm";
+      const helperPath = `${packageRoot}/${helper}`;
+
+      const result = await resolveRelativeFrameworkSourceImport(
+        `../../${helper}`,
+        `${packageRoot}/src/html/client-head-manager.js`,
+        {
+          exists: (path) => Promise.resolve(path === helperPath),
+        },
+      );
+
+      assertEquals(result, helperPath);
+    });
+  }
+
+  it("does not resolve published runtime helpers through extension fallback", async () => {
+    const probed: string[] = [];
+    const result = await resolveRelativeFrameworkSourceImport(
+      "../../deno.js",
+      "/package/esm/src/html/client-head-manager.js",
+      {
+        exists: (path) => {
+          probed.push(path);
+          return Promise.resolve(path === "/package/esm/deno.ts");
+        },
+      },
+    );
+
+    assertEquals(result, null);
+    assertEquals(probed, ["/package/esm/deno.js"]);
+  });
+
+  it("rejects other files at the published package root", async () => {
+    let probed = false;
+    const result = await resolveRelativeFrameworkSourceImport(
+      "../../package.json",
+      "/package/esm/src/html/client-head-manager.js",
+      {
+        exists: () => {
+          probed = true;
+          return Promise.resolve(true);
+        },
+      },
+    );
+
+    assertEquals(result, null);
+    assertEquals(probed, false);
+  });
+
+  it("rejects relative imports that escape the framework source tree", async () => {
+    let probed = false;
+    const result = await resolveRelativeFrameworkSourceImport(
+      "../../../../../../etc/passwd",
+      `${FRAMEWORK_SRC_DIR}/react/context/index.tsx`,
+      {
+        exists: () => {
+          probed = true;
+          return Promise.resolve(true);
+        },
+      },
+    );
+
+    assertEquals(result, null);
+    assertEquals(probed, false);
+  });
+
+  it("rejects non-relative and backslash-based framework imports", async () => {
+    const exists = () => Promise.resolve(true);
+    assertEquals(
+      await resolveRelativeFrameworkSourceImport(
+        "/etc/passwd",
+        `${FRAMEWORK_SRC_DIR}/react/context/index.tsx`,
+        { exists },
+      ),
+      null,
+    );
+    assertEquals(
+      await resolveRelativeFrameworkSourceImport(
+        String.raw`..\\..\\secret`,
+        `${FRAMEWORK_SRC_DIR}/react/context/index.tsx`,
+        { exists },
+      ),
+      null,
+    );
+  });
+
+  it("propagates operational stat failures", async () => {
+    await assertRejects(
+      () =>
+        resolveFrameworkSourcePath("react/router", {
+          extraLookupDirs: ["/framework/src"],
+          fileSystem: {
+            stat: () => Promise.reject(new Error("permission denied")),
+          },
+        }),
+      Error,
+      "permission denied",
+    );
   });
 });
 
@@ -125,7 +274,7 @@ describe("framework-source-resolver (VULN-FS-3) — path containment", () => {
               mtime: null,
             };
           }
-          throw new Error("not found");
+          throw notFound();
         },
       },
     });
@@ -153,7 +302,7 @@ describe("framework-source-resolver (VULN-FS-3) — path containment", () => {
               mtime: null,
             };
           }
-          throw new Error("not found");
+          throw notFound();
         },
       },
     });

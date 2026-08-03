@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   clearRequestScopedFileCache,
@@ -80,6 +80,53 @@ describe("MultiProjectFSAdapter", () => {
       withAdapter((adapter) => assertMethod(adapter, "readTextFile"));
     });
 
+    it("should have exact bounded byte read method", () => {
+      withAdapter((adapter) => assertMethod(adapter, "readFileBytesWithinLimit"));
+    });
+
+    it("rejects an invalid exact-read limit before selecting an adapter", async () => {
+      await withAdapterAsync(async (adapter) => {
+        await assertRejects(
+          () => adapter.readFileBytesWithinLimit("asset.css", 0),
+          RangeError,
+          "positive safe integer",
+        );
+      });
+    });
+
+    it("forwards exact reads only to the selected captured authority", async () => {
+      await withAdapterAsync(async (adapter) => {
+        let exactCalls = 0;
+        let unboundedCalls = 0;
+        const source = new Uint8Array([1, 2, 3]);
+        adapter.setDefaultAdapter(
+          {
+            readFileBytesWithinLimit(path: string, byteLimit: number) {
+              exactCalls++;
+              assertEquals(path, "asset.css");
+              assertEquals(byteLimit, 3);
+              return Promise.resolve(source);
+            },
+            readFileBytes() {
+              unboundedCalls++;
+              return Promise.resolve(source);
+            },
+            dispose() {},
+          } as unknown as Parameters<MultiProjectFSAdapter["setDefaultAdapter"]>[0],
+        );
+
+        const result = await adapter.readFileBytesWithinLimit("asset.css", 3);
+        source[0] = 9;
+        assertEquals([...result], [1, 2, 3]);
+        assertEquals(exactCalls, 1);
+        assertEquals(unboundedCalls, 0);
+      });
+    });
+
+    it("should have readOptionalTextFile method", () => {
+      withAdapter((adapter) => assertMethod(adapter, "readOptionalTextFile"));
+    });
+
     it("should have exists method", () => {
       withAdapter((adapter) => assertMethod(adapter, "exists"));
     });
@@ -106,6 +153,13 @@ describe("MultiProjectFSAdapter", () => {
 
     it("should have refreshSourceSnapshot method", () => {
       withAdapter((adapter) => assertMethod(adapter, "refreshSourceSnapshot"));
+    });
+
+    it("should expose source snapshot freshness methods", () => {
+      withAdapter((adapter) => {
+        assertMethod(adapter, "ensureSourceSnapshotFresh");
+        assertMethod(adapter, "getSourceSnapshotVersion");
+      });
     });
 
     it("should have getManagerStats method", () => {
@@ -182,6 +236,124 @@ describe("MultiProjectFSAdapter", () => {
         assertEquals(capturedBranch, "main");
         assertEquals(cachedBeforeRefresh, "stale-content");
         assertEquals(cachedAfterRefresh, undefined);
+      });
+    });
+
+    it("clears request-scoped files only when a freshness check advances the snapshot", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        let freshnessReason: string | undefined;
+        let sourceSnapshotVersion = 6;
+        let freshnessChecks = 0;
+
+        (adapter as any).manager = {
+          getAdapter() {
+            return Promise.resolve({
+              ensureSourceSnapshotFresh(reason?: string) {
+                freshnessReason = reason;
+                freshnessChecks++;
+                if (freshnessChecks === 1) sourceSnapshotVersion++;
+                return Promise.resolve();
+              },
+              getSourceSnapshotVersion() {
+                return sourceSnapshotVersion;
+              },
+            });
+          },
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+
+        try {
+          await adapter.runWithContext(
+            "project-a",
+            "test-token",
+            async () => {
+              setRequestScopedFile("file:pages/index.mdx", "stale-content");
+              await adapter.ensureSourceSnapshotFresh("page-routing");
+              assertEquals(getRequestScopedFile("file:pages/index.mdx"), undefined);
+              assertEquals(await adapter.getSourceSnapshotVersion(), 7);
+
+              setRequestScopedFile("file:pages/index.mdx", "current-content");
+              await adapter.ensureSourceSnapshotFresh("page-routing");
+              assertEquals(getRequestScopedFile("file:pages/index.mdx"), "current-content");
+            },
+            "project-id-a",
+            { branch: "main" },
+          );
+        } finally {
+          (adapter as any).manager = originalManager;
+        }
+
+        assertEquals(freshnessReason, "page-routing");
+      });
+    });
+
+    it("preserves optional snapshot capabilities for legacy project adapters", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+
+        (adapter as any).manager = {
+          getAdapter: () => Promise.resolve({}),
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+
+        try {
+          await adapter.runWithContext(
+            "project-a",
+            "test-token",
+            async () => {
+              await adapter.ensureSourceSnapshotFresh("config-load");
+              assertEquals(await adapter.getSourceSnapshotVersion(), undefined);
+            },
+            "project-id-a",
+            { branch: "main" },
+          );
+        } finally {
+          (adapter as any).manager = originalManager;
+        }
+      });
+    });
+
+    it("delegates optional text reads to the active project adapter", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        let optionalPath: string | undefined;
+        let normalReadCalled = false;
+
+        (adapter as any).manager = {
+          getAdapter() {
+            return Promise.resolve({
+              readOptionalTextFile(path: string) {
+                optionalPath = path;
+                return Promise.resolve("optional stylesheet");
+              },
+              readTextFile() {
+                normalReadCalled = true;
+                return Promise.resolve("normal read");
+              },
+            });
+          },
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+
+        try {
+          const content = await adapter.runWithContext(
+            "project-a",
+            "test-token",
+            () => adapter.readOptionalTextFile("app/globals.css"),
+            "project-id-a",
+            { branch: "main" },
+          );
+
+          assertEquals(content, "optional stylesheet");
+          assertEquals(optionalPath, "app/globals.css");
+          assertEquals(normalReadCalled, false);
+        } finally {
+          (adapter as any).manager = originalManager;
+        }
       });
     });
 

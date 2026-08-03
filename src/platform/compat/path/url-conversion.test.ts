@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { runtimeUsesWindowsPaths } from "./portable.ts";
+import { resolve } from "./resolution.ts";
 import { fromFileUrl, toFileUrl } from "./url-conversion.ts";
 
 describe("url-conversion", () => {
@@ -15,6 +17,13 @@ describe("url-conversion", () => {
 
     it("should decode URI-encoded characters", () => {
       assertEquals(fromFileUrl("file:///home/user/my%20file.ts"), "/home/user/my file.ts");
+    });
+
+    it("should ignore URL search and fragment data", () => {
+      assertEquals(
+        fromFileUrl("file:///tmp/_pins/on%253Asnapshot/file.ts?v=1#module"),
+        "/tmp/_pins/on%3Asnapshot/file.ts",
+      );
     });
 
     it("should handle paths with special characters", () => {
@@ -45,9 +54,77 @@ describe("url-conversion", () => {
       assertEquals(result.href.includes("spaces"), true);
     });
 
+    it("should preserve percent signs as literal path characters", () => {
+      const path = "/tmp/_pins/on%3Asnapshot/file.ts";
+      const result = toFileUrl(path);
+
+      assertEquals(result.href, "file:///tmp/_pins/on%253Asnapshot/file.ts");
+      assertEquals(fromFileUrl(result), path);
+    });
+
+    it("should preserve query and fragment delimiters as literal path characters", () => {
+      const path = "/tmp/cache?variant#module.ts";
+      const result = toFileUrl(path);
+
+      assertEquals(result.href, "file:///tmp/cache%3Fvariant%23module.ts");
+      assertEquals(fromFileUrl(result), path);
+    });
+
+    it("should preserve colons inside POSIX path segments", () => {
+      const path = "/srv/app/node_modules/example/C:/entry.mjs";
+      assertEquals(
+        toFileUrl(path).href,
+        "file:///srv/app/node_modules/example/C:/entry.mjs",
+      );
+    });
+
     it("should handle relative path by resolving", () => {
       const result = toFileUrl("relative/path.ts");
       assertEquals(result.protocol, "file:");
+      const expected = resolve("relative/path.ts");
+      assertEquals(
+        fromFileUrl(result),
+        runtimeUsesWindowsPaths() ? expected.replaceAll("/", "\\") : expected,
+      );
+    });
+
+    it("preserves explicit UNC hosts without inventing ambiguous POSIX paths", () => {
+      const result = toFileUrl(String.raw`\\server\share\extension.ts`);
+      assertEquals(result.href, "file://server/share/extension.ts");
+      if (runtimeUsesWindowsPaths()) {
+        assertEquals(fromFileUrl(result), String.raw`\\server\share\extension.ts`);
+      } else {
+        assertThrows(
+          () => fromFileUrl(result),
+          TypeError,
+          "File URL host must be empty or localhost on non-Windows runtimes",
+        );
+      }
+    });
+
+    it("treats localhost file URLs as local paths", () => {
+      if (!runtimeUsesWindowsPaths()) {
+        assertEquals(fromFileUrl("file://localhost/tmp/file.ts"), "/tmp/file.ts");
+      }
+    });
+
+    it("keeps redundant POSIX root separators local", () => {
+      assertEquals(toFileUrl("//").href, "file:///");
+      if (!runtimeUsesWindowsPaths()) {
+        assertEquals(toFileUrl("//tmp/file.ts").href, "file:///tmp/file.ts");
+        assertEquals(
+          toFileUrl("//server/share/file.ts").href,
+          "file:///server/share/file.ts",
+        );
+      }
+      assertEquals(toFileUrl("///tmp/file.ts").href, "file:///tmp/file.ts");
+      assertEquals(toFileUrl("////tmp/file.ts").href, "file:///tmp/file.ts");
+    });
+
+    it("preserves literal backslashes in POSIX paths", () => {
+      if (runtimeUsesWindowsPaths()) return;
+      const path = String.raw`/tmp/literal\backslash.ts`;
+      assertEquals(fromFileUrl(toFileUrl(path)), path);
     });
   });
 

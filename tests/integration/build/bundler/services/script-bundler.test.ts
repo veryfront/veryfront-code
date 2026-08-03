@@ -16,7 +16,7 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import { writeTextFile } from "#veryfront/testing/deno-compat";
-import * as esbuild from "npm:esbuild@0.28.1";
+import * as esbuild from "veryfront/extensions/bundler";
 import { bundleScript } from "../../../../../src/build/renderer/services/script-bundler.ts";
 import type {
   BundleResult,
@@ -55,7 +55,6 @@ describe(
   { sanitizeOps: false, sanitizeResources: false },
   () => {
     afterAll(async () => {
-      if ((globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) return;
       await esbuild.stop();
     });
 

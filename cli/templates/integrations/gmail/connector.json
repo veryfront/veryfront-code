@@ -42,7 +42,7 @@
   ],
   "tools": [
     {
-      "id": "list_emails",
+      "id": "gmail__list_emails",
       "name": "List Emails",
       "description": "List Gmail message summaries with IDs, sender, recipient, subject, date, snippet, labels, and pagination tokens. Use get-email only when full message content is needed.",
       "requiresWrite": false,
@@ -104,7 +104,7 @@
       }
     },
     {
-      "id": "send_email",
+      "id": "gmail__send_email",
       "name": "Send Email",
       "description": "Send an email to recipients",
       "requiresWrite": true,
@@ -125,7 +125,7 @@
       }
     },
     {
-      "id": "get_email",
+      "id": "gmail__get_email",
       "name": "Get Email",
       "description": "Get a specific email by ID with full content",
       "requiresWrite": false,
@@ -154,7 +154,7 @@
       }
     },
     {
-      "id": "search_emails",
+      "id": "gmail__search_emails",
       "name": "Search Emails",
       "description": "Search Gmail messages and return summaries with IDs, sender, recipient, subject, date, snippet, labels, and pagination tokens.",
       "requiresWrite": false,
@@ -212,7 +212,7 @@
       }
     },
     {
-      "id": "mark_email_read",
+      "id": "gmail__mark_email_read",
       "name": "Mark Email Read",
       "description": "Mark an email as read",
       "requiresWrite": true,
@@ -239,7 +239,7 @@
       }
     },
     {
-      "id": "archive_email",
+      "id": "gmail__archive_email",
       "name": "Archive Email",
       "description": "Archive an email",
       "requiresWrite": true,
@@ -266,7 +266,7 @@
       }
     },
     {
-      "id": "list_labels",
+      "id": "gmail__list_labels",
       "name": "List Labels",
       "description": "List Gmail labels",
       "requiresWrite": false,
@@ -298,7 +298,7 @@
       }
     },
     {
-      "id": "get_label",
+      "id": "gmail__get_label",
       "name": "Get Label",
       "description": "Get a Gmail label",
       "requiresWrite": false,
@@ -316,7 +316,7 @@
       }
     },
     {
-      "id": "create_label",
+      "id": "gmail__create_label",
       "name": "Create Label",
       "description": "Create a Gmail user label",
       "requiresWrite": true,
@@ -345,7 +345,7 @@
       }
     },
     {
-      "id": "update_label",
+      "id": "gmail__update_label",
       "name": "Update Label",
       "description": "Update a Gmail user label",
       "requiresWrite": true,
@@ -382,7 +382,7 @@
       }
     },
     {
-      "id": "delete_label",
+      "id": "gmail__delete_label",
       "name": "Delete Label",
       "description": "Delete a Gmail user label",
       "requiresWrite": true,
@@ -400,7 +400,7 @@
       }
     },
     {
-      "id": "apply_labels",
+      "id": "gmail__apply_labels",
       "name": "Apply Labels",
       "description": "Apply or remove labels on an email",
       "requiresWrite": true,
@@ -428,7 +428,7 @@
       }
     },
     {
-      "id": "modify_email_labels",
+      "id": "gmail__modify_email_labels",
       "name": "Modify Email Labels",
       "description": "Modify labels on an email",
       "requiresWrite": true,
@@ -456,7 +456,7 @@
       }
     },
     {
-      "id": "trash_email",
+      "id": "gmail__trash_email",
       "name": "Trash Email",
       "description": "Move an email to trash",
       "requiresWrite": true,
@@ -474,7 +474,7 @@
       }
     },
     {
-      "id": "untrash_email",
+      "id": "gmail__untrash_email",
       "name": "Untrash Email",
       "description": "Remove an email from trash",
       "requiresWrite": true,
@@ -492,7 +492,7 @@
       }
     },
     {
-      "id": "delete_email",
+      "id": "gmail__delete_email",
       "name": "Delete Email",
       "description": "Permanently delete an email",
       "requiresWrite": true,
@@ -510,7 +510,7 @@
       }
     },
     {
-      "id": "batch_modify_emails",
+      "id": "gmail__batch_modify_emails",
       "name": "Batch Modify Emails",
       "description": "Modify labels on multiple emails",
       "requiresWrite": true,
@@ -535,7 +535,7 @@
       }
     },
     {
-      "id": "batch_delete_emails",
+      "id": "gmail__batch_delete_emails",
       "name": "Batch Delete Emails",
       "description": "Permanently delete multiple emails",
       "requiresWrite": true,
@@ -552,7 +552,7 @@
       }
     },
     {
-      "id": "list_threads",
+      "id": "gmail__list_threads",
       "name": "List Threads",
       "description": "List Gmail threads",
       "requiresWrite": false,
@@ -616,7 +616,7 @@
       }
     },
     {
-      "id": "get_thread",
+      "id": "gmail__get_thread",
       "name": "Get Thread",
       "description": "Get a Gmail thread",
       "requiresWrite": false,
@@ -640,7 +640,7 @@
       }
     },
     {
-      "id": "modify_thread_labels",
+      "id": "gmail__modify_thread_labels",
       "name": "Modify Thread Labels",
       "description": "Modify labels on a Gmail thread",
       "requiresWrite": true,
@@ -668,7 +668,7 @@
       }
     },
     {
-      "id": "trash_thread",
+      "id": "gmail__trash_thread",
       "name": "Trash Thread",
       "description": "Move a Gmail thread to trash",
       "requiresWrite": true,
@@ -686,7 +686,7 @@
       }
     },
     {
-      "id": "untrash_thread",
+      "id": "gmail__untrash_thread",
       "name": "Untrash Thread",
       "description": "Remove a Gmail thread from trash",
       "requiresWrite": true,
@@ -704,7 +704,7 @@
       }
     },
     {
-      "id": "delete_thread",
+      "id": "gmail__delete_thread",
       "name": "Delete Thread",
       "description": "Permanently delete a Gmail thread",
       "requiresWrite": true,
@@ -722,7 +722,7 @@
       }
     },
     {
-      "id": "create_draft",
+      "id": "gmail__create_draft",
       "name": "Create Draft",
       "description": "Create a Gmail draft",
       "requiresWrite": true,
@@ -739,7 +739,7 @@
       }
     },
     {
-      "id": "list_drafts",
+      "id": "gmail__list_drafts",
       "name": "List Drafts",
       "description": "List Gmail drafts",
       "requiresWrite": false,
@@ -795,7 +795,7 @@
       }
     },
     {
-      "id": "get_draft",
+      "id": "gmail__get_draft",
       "name": "Get Draft",
       "description": "Get a Gmail draft",
       "requiresWrite": false,
@@ -819,7 +819,7 @@
       }
     },
     {
-      "id": "update_draft",
+      "id": "gmail__update_draft",
       "name": "Update Draft",
       "description": "Replace a Gmail draft",
       "requiresWrite": true,
@@ -844,7 +844,7 @@
       }
     },
     {
-      "id": "send_draft",
+      "id": "gmail__send_draft",
       "name": "Send Draft",
       "description": "Send an existing Gmail draft",
       "requiresWrite": true,
@@ -861,7 +861,7 @@
       }
     },
     {
-      "id": "delete_draft",
+      "id": "gmail__delete_draft",
       "name": "Delete Draft",
       "description": "Permanently delete a Gmail draft",
       "requiresWrite": true,
@@ -879,7 +879,7 @@
       }
     },
     {
-      "id": "get_attachment",
+      "id": "gmail__get_attachment",
       "name": "Get Attachment",
       "description": "Get a Gmail message attachment",
       "requiresWrite": false,
@@ -903,7 +903,7 @@
       }
     },
     {
-      "id": "get_profile",
+      "id": "gmail__get_profile",
       "name": "Get Profile",
       "description": "Get the Gmail mailbox profile",
       "requiresWrite": false,
@@ -913,7 +913,7 @@
       }
     },
     {
-      "id": "list_history",
+      "id": "gmail__list_history",
       "name": "List History",
       "description": "List Gmail mailbox history changes",
       "requiresWrite": false,

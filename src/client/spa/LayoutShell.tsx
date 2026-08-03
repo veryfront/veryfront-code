@@ -1,5 +1,13 @@
-import { type ComponentType, type ReactNode, Suspense, useEffect, useState } from "react";
+import {
+  type ComponentType,
+  type ReactElement,
+  type ReactNode,
+  Suspense,
+  useEffect,
+  useState,
+} from "react";
 import { getCachedComponent, loadComponent } from "./component-loader.ts";
+import { LAYOUT_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
 
 export interface LayoutInfo {
   kind: "mdx" | "tsx";
@@ -18,7 +26,7 @@ interface LayoutWrapperProps {
   children: ReactNode;
 }
 
-function LayoutLoading(): JSX.Element {
+function LayoutLoading(): ReactElement {
   return (
     <div className="veryfront-layout-loading" style={{ minHeight: "100vh" }}>
       <span className="sr-only">Loading layout...</span>
@@ -26,22 +34,62 @@ function LayoutLoading(): JSX.Element {
   );
 }
 
+function LayoutError(
+  { error, onRetry }: { error: Error; onRetry: () => void },
+): ReactElement {
+  return (
+    <div className="veryfront-layout-error">
+      <h1>Something went wrong</h1>
+      <p>{error.message}</p>
+      <button type="button" onClick={onRetry}>Try again</button>
+    </div>
+  );
+}
+
 type LayoutComponentType = ComponentType<{ children: ReactNode; [key: string]: unknown }>;
 
-function LayoutWrapper({ layout, layoutProps, children }: LayoutWrapperProps): JSX.Element {
-  const [LayoutComponent, setLayoutComponent] = useState<LayoutComponentType | null>(() => {
-    return getCachedComponent(layout.path) as LayoutComponentType | null;
-  });
+interface LayoutLoadState {
+  path: string;
+  Component: LayoutComponentType | null;
+  error: Error | null;
+}
+
+function LayoutWrapper({ layout, layoutProps, children }: LayoutWrapperProps): ReactElement {
+  const [attempt, setAttempt] = useState(0);
+  const [loadState, setLoadState] = useState<LayoutLoadState>(() => ({
+    path: layout.path,
+    Component: getCachedComponent(layout.path) as LayoutComponentType | null,
+    error: null,
+  }));
 
   useEffect(() => {
-    if (LayoutComponent) return;
+    const cached = getCachedComponent(layout.path) as LayoutComponentType | null;
+    if (cached) {
+      setLoadState({ path: layout.path, Component: cached, error: null });
+      return;
+    }
 
     let mounted = true;
+    setLoadState({ path: layout.path, Component: null, error: null });
 
     async function load(): Promise<void> {
       const Component = await loadComponent(layout.path);
-      if (!mounted || !Component) return;
-      setLayoutComponent(() => Component as LayoutComponentType);
+      if (!mounted) return;
+      if (!Component) {
+        setLoadState({
+          path: layout.path,
+          Component: null,
+          error: LAYOUT_NOT_FOUND.create({
+            detail: `Failed to load layout component: ${layout.path}`,
+          }),
+        });
+        return;
+      }
+      setLoadState({
+        path: layout.path,
+        Component: Component as LayoutComponentType,
+        error: null,
+      });
     }
 
     void load();
@@ -49,26 +97,31 @@ function LayoutWrapper({ layout, layoutProps, children }: LayoutWrapperProps): J
     return () => {
       mounted = false;
     };
-  }, [LayoutComponent, layout.path]);
+  }, [attempt, layout.path]);
 
-  if (!LayoutComponent) return <LayoutLoading />;
+  if (loadState.path !== layout.path) return <LayoutLoading />;
+  if (loadState.error) {
+    return <LayoutError error={loadState.error} onRetry={() => setAttempt((value) => value + 1)} />;
+  }
+  if (!loadState.Component) return <LayoutLoading />;
 
+  const LayoutComponent = loadState.Component;
   return <LayoutComponent {...(layoutProps ?? {})}>{children}</LayoutComponent>;
 }
 
 export function LayoutShell(
   { layouts, layoutProps = {}, children }: LayoutShellProps,
-): JSX.Element {
+): ReactElement {
   if (layouts.length === 0) return <>{children}</>;
 
   let tree: ReactNode = children;
 
   for (let i = layouts.length - 1; i >= 0; i--) {
-    const layout = layouts[i];
+    const layout = layouts[i]!;
     const props = layoutProps[layout.path] ?? {};
 
     tree = (
-      <Suspense key={layout.path} fallback={<LayoutLoading />}>
+      <Suspense key={`${layout.path}:${i}`} fallback={<LayoutLoading />}>
         <LayoutWrapper layout={layout} layoutProps={props}>
           {tree}
         </LayoutWrapper>

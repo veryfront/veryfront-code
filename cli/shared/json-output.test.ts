@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
+import { refreshLoggerConfig } from "veryfront/utils";
 import {
   createErrorEnvelope,
   createSuccessEnvelope,
@@ -29,6 +31,25 @@ describe("json-output", () => {
       setJsonMode(true);
       setJsonMode(false);
       assertEquals(isJsonMode(), false);
+    });
+
+    it("restores an absent LOG_LEVEL after leaving JSON mode", () => {
+      setJsonMode(false);
+      const originalLogLevel = getEnv("LOG_LEVEL");
+
+      try {
+        deleteEnv("LOG_LEVEL");
+        setJsonMode(true);
+        assertEquals(getEnv("LOG_LEVEL"), "ERROR");
+
+        setJsonMode(false);
+        assertEquals(getEnv("LOG_LEVEL"), undefined);
+      } finally {
+        setJsonMode(false);
+        if (originalLogLevel === undefined) deleteEnv("LOG_LEVEL");
+        else setEnv("LOG_LEVEL", originalLogLevel);
+        refreshLoggerConfig();
+      }
     });
   });
 
@@ -121,6 +142,26 @@ describe("json-output", () => {
         message: "Tests failed",
       });
       assertEquals(envelope.error.context, undefined);
+    });
+
+    it("carries the registry slug alongside the stable slug when provided", () => {
+      const envelope = createErrorEnvelope("schedule", {
+        code: "USAGE_ERROR",
+        slug: "invalid-arguments",
+        registrySlug: "invalid-argument",
+        message: "Invalid arguments",
+      });
+      assertEquals(envelope.error.slug, "invalid-arguments");
+      assertEquals(envelope.error.registrySlug, "invalid-argument");
+    });
+
+    it("omits the registry slug when not provided", () => {
+      const envelope = createErrorEnvelope("build", {
+        code: "BUILD_ERROR",
+        slug: "build-failed",
+        message: "Build failed",
+      });
+      assertEquals(envelope.error.registrySlug, undefined);
     });
   });
 

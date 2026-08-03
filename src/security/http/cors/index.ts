@@ -25,6 +25,9 @@ export type {
   CORSPreflightOptions,
   CORSValidationResult,
   OriginValidator,
+  SyncCORSConfig,
+  SyncCORSHeaderOptions,
+  SyncOriginValidator,
 } from "./types.ts";
 
 export {

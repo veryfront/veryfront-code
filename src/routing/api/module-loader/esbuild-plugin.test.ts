@@ -1,7 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import { computeIntegrity, type LockfileManager } from "#veryfront/utils";
+import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
 import * as esbuild from "veryfront/extensions/bundler";
 import type {
@@ -305,6 +307,113 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       }
     });
 
+    it("blocks every remote module when the allowed host list is empty", async () => {
+      const originalFetch = globalThis.fetch;
+      let fetchCalls = 0;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin([]);
+      plugin.setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = (() => {
+          fetchCalls += 1;
+          return Promise.resolve(new Response("unexpected"));
+        }) as typeof fetch;
+        const result = await loadHandler({
+          path: "https://esm.sh/yaml@2",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+
+        const errors = (result as { errors?: Array<{ text: string }> }).errors;
+        assertExists(errors?.[0]);
+        assertEquals(errors[0].text.includes("Remote import blocked by allow-list"), true);
+        assertEquals(fetchCalls, 0);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("blocks internal module targets before invoking fetch", async () => {
+      const originalFetch = globalThis.fetch;
+      let fetchCalls = 0;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin(["http://169.254.169.254"]);
+      const mockBuild = createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      );
+      plugin.setup(mockBuild);
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = (() => {
+          fetchCalls += 1;
+          return Promise.resolve(new Response("unexpected"));
+        }) as typeof fetch;
+        const result = await loadHandler({
+          path: "http://169.254.169.254/module.js",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+        const errors = (result as { errors?: Array<{ text: string }> }).errors;
+        assertExists(errors?.[0]);
+        assertEquals(errors[0].text.includes("internal host"), true);
+        assertEquals(fetchCalls, 0);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("reapplies the remote-host allow-list to redirects", async () => {
+      const originalFetch = globalThis.fetch;
+      let fetchCalls = 0;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin({ allowedHosts: ["https://93.184.216.34"] });
+      const mockBuild = createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      );
+      plugin.setup(mockBuild);
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = (() => {
+          fetchCalls += 1;
+          return Promise.resolve(
+            new Response(null, {
+              status: 302,
+              headers: { location: "https://93.184.216.35/module.js" },
+            }),
+          );
+        }) as typeof fetch;
+        const result = await loadHandler({
+          path: "https://93.184.216.34/module.js",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+        const errors = (result as { errors?: Array<{ text: string }> }).errors;
+        assertExists(errors?.[0]);
+        assertEquals(errors[0].text.includes("Remote import blocked by allow-list"), true);
+        assertEquals(fetchCalls, 1);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
     it("serves a previously fetched remote module when the CDN later returns an error", async () => {
       const originalFetch = globalThis.fetch;
       const projectDir = await Deno.makeTempDir();
@@ -394,35 +503,138 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       }
     });
 
-    it("serves freshly fetched remote modules when lockfile flush fails on a read-only filesystem", async () => {
+    it("rejects oversized remote module bodies without retrying", async () => {
+      const originalFetch = globalThis.fetch;
+      let attempts = 0;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin({ allowedHosts: ["https://esm.sh"] });
+      plugin.setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = (async () => {
+          attempts += 1;
+          return new Response("export {};", {
+            headers: {
+              "content-length": String(MAX_BUNDLE_CHUNK_SIZE_BYTES + 1),
+            },
+          });
+        }) as typeof fetch;
+
+        await assertRejects(
+          async () => {
+            await loadHandler!({
+              path: "https://esm.sh/yaml@2",
+              namespace: "http-url",
+              pluginData: undefined,
+              suffix: "",
+            });
+          },
+          Error,
+          `exceeds ${MAX_BUNDLE_CHUNK_SIZE_BYTES} bytes`,
+        );
+        assertEquals(attempts, 1);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("keeps the fetch deadline active while reading a streaming module body", async () => {
+      const originalFetch = globalThis.fetch;
+      let attempts = 0;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin({
+        allowedHosts: ["https://93.184.216.34"],
+        fetchTimeoutMs: 20,
+      });
+      plugin.setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = ((_input, init) => {
+          attempts += 1;
+          const signal = observeFetchRequestInit(init).signal;
+          return Promise.resolve(
+            new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(new TextEncoder().encode("export const pending = "));
+                  signal?.addEventListener("abort", () => controller.error(signal.reason), {
+                    once: true,
+                  });
+                },
+              }),
+            ),
+          );
+        }) as typeof fetch;
+
+        const result = await loadHandler!({
+          path: "https://93.184.216.34/module.js",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+
+        const errors = (result as { errors?: Array<{ text: string }> }).errors;
+        assertExists(errors?.[0]);
+        assertEquals(errors[0].text.includes("Failed to fetch"), true);
+        assertEquals(attempts, 3);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("serves remote modules without repeated warnings when lockfile flush hits a read-only filesystem", async () => {
       const originalFetch = globalThis.fetch;
       const originalWarn = console.warn;
+      const projectDir = await Deno.makeTempDir();
       const moduleSource = "export const ok = true;";
       const warnings: string[] = [];
-      let lockfileSet = false;
+      const entries = new Map<string, {
+        resolved: string;
+        integrity: string;
+        fetchedAt?: string;
+      }>();
+      let lockfileSets = 0;
+      let lockfileFlushes = 0;
+      let failRemoteFetches = false;
       let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
 
       const readOnlyLockfile: LockfileManager = {
         read: () => Promise.resolve(null),
         write: () => Promise.reject(new Error("read-only lockfile")),
-        get: () => Promise.resolve(null),
-        set: () => {
-          lockfileSet = true;
+        get: (url) => Promise.resolve(entries.get(url) ?? null),
+        set: (url, entry) => {
+          lockfileSets += 1;
+          entries.set(url, entry);
           return Promise.resolve();
         },
         has: () => Promise.resolve(false),
         clear: () => Promise.resolve(),
-        flush: () =>
-          Promise.reject(
+        flush: () => {
+          lockfileFlushes += 1;
+          return Promise.reject(
             new Error(
               "Read-only file system (os error 30): writefile '/app/project/veryfront.lock'",
             ),
-          ),
+          );
+        },
       };
 
       const plugin = createHTTPPlugin({
         allowedHosts: ["https://esm.sh"],
         lockfile: readOnlyLockfile,
+        projectDir,
       });
       const mockBuild = createMockBuild(
         () => {},
@@ -438,23 +650,50 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
           warnings.push(args.map(String).join(" "));
         }) as typeof console.warn;
         globalThis.fetch = (async () =>
-          new Response(moduleSource, { status: 200 })) as typeof fetch;
+          failRemoteFetches
+            ? new Response("cdn unavailable", { status: 599 })
+            : new Response(moduleSource, { status: 200 })) as typeof fetch;
 
-        const result = await loadHandler({
-          path: "https://esm.sh/yaml@2",
+        const first = await loadHandler({
+          path: "https://esm.sh/yaml@2/stringify",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+        const second = await loadHandler({
+          path: "https://esm.sh/yaml@2/parse",
           namespace: "http-url",
           pluginData: undefined,
           suffix: "",
         });
 
-        assertEquals((result as { contents: string }).contents, moduleSource);
-        assertEquals(lockfileSet, true);
-        assertEquals(warnings.some((warning) => warning.includes("Error")), true);
+        assertEquals((first as { contents: string }).contents, moduleSource);
+        assertEquals((second as { contents: string }).contents, moduleSource);
+        assertEquals(lockfileSets, 2);
+        assertEquals(lockfileFlushes, 1);
+        assertEquals(warnings, []);
+
+        failRemoteFetches = true;
+        const cached = await loadHandler({
+          path: "https://esm.sh/yaml@2/parse",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+
+        assertEquals((cached as { contents: string }).contents, moduleSource);
+        assertEquals(
+          warnings.some((warning) =>
+            warning.includes("could not persist lockfile entry")
+          ),
+          false,
+        );
         assertEquals(warnings.some((warning) => warning.includes("veryfront.lock")), false);
         assertEquals(warnings.some((warning) => warning.includes("/app/project")), false);
       } finally {
         globalThis.fetch = originalFetch;
         console.warn = originalWarn;
+        await Deno.remove(projectDir, { recursive: true }).catch(() => {});
       }
     });
 

@@ -8,11 +8,16 @@ import {
   defaultTextMapGetter,
   defaultTextMapSetter,
   getGlobalMetricsAPI,
+  getGlobalTelemetryAPISnapshot,
   getGlobalTracerProvider,
+  getMetricsApiRevision,
   getTracer,
+  getTracerProviderRevision,
+  installGlobalTelemetryAPI,
   type MetricsAPI,
   propagation,
   setGlobalActiveSpanAccessor,
+  setGlobalContextAccessor,
   setGlobalMetricsAPI,
   setGlobalTracerProvider,
   type Span,
@@ -104,15 +109,95 @@ describe("observability/tracing/api-shim", () => {
     });
   });
 
+  describe("atomic global telemetry API", () => {
+    it("installs and clears one complete provider generation atomically", () => {
+      const tracerProvider = { getTracer: () => getTracer("fallback") };
+      const metricsApi = { getMeter: () => ({}) } as unknown as MetricsAPI;
+      const owner = installGlobalTelemetryAPI({ tracerProvider, metricsApi });
+
+      const installed = getGlobalTelemetryAPISnapshot();
+      assertEquals(installed.generation, owner.generation);
+      assertEquals(installed.tracerProvider, tracerProvider);
+      assertEquals(installed.metricsApi, metricsApi);
+
+      assertEquals(owner.dispose(), true);
+      assertEquals(owner.dispose(), false);
+      const cleared = getGlobalTelemetryAPISnapshot();
+      assertEquals(cleared.generation > owner.generation, true);
+      assertEquals(cleared.metricsApi, null);
+      assertEquals(
+        cleared.tracerProvider.getTracer("cleared").startSpan("span").spanContext().traceId,
+        "00000000000000000000000000000000",
+      );
+    });
+
+    it("increments both revisions for every explicit install of stable facades", () => {
+      const tracerProvider = { getTracer: () => getTracer("fallback") };
+      const metricsApi = { getMeter: () => ({}) } as unknown as MetricsAPI;
+      const tracerRevision = getTracerProviderRevision();
+      const metricsRevision = getMetricsApiRevision();
+
+      installGlobalTelemetryAPI({ tracerProvider, metricsApi });
+      installGlobalTelemetryAPI({ tracerProvider, metricsApi });
+
+      assertEquals(getTracerProviderRevision(), tracerRevision + 2);
+      assertEquals(getMetricsApiRevision(), metricsRevision + 2);
+    });
+
+    it("does not let a stale owner clear a newer provider generation", () => {
+      const first = installGlobalTelemetryAPI({});
+      const secondProvider = { getTracer: () => getTracer("fallback") };
+      const second = installGlobalTelemetryAPI({ tracerProvider: secondProvider });
+
+      assertEquals(first.dispose(), false);
+      assertEquals(getGlobalTracerProvider(), secondProvider);
+      assertEquals(getGlobalTelemetryAPISnapshot().generation, second.generation);
+    });
+
+    it("pre-reads the complete install input before changing global state", () => {
+      const original = getGlobalTelemetryAPISnapshot();
+      const input = {
+        get tracerProvider(): TracerProvider {
+          return { getTracer: () => getTracer("fallback") };
+        },
+        get metricsApi(): MetricsAPI {
+          throw new Error("hostile metrics getter");
+        },
+      };
+
+      let threw = false;
+      try {
+        installGlobalTelemetryAPI(input);
+      } catch {
+        threw = true;
+      }
+
+      assertEquals(threw, true);
+      const after = getGlobalTelemetryAPISnapshot();
+      assertEquals(after.generation, original.generation);
+      assertEquals(after.tracerProvider, original.tracerProvider);
+      assertEquals(after.metricsApi, original.metricsApi);
+    });
+  });
+
   describe("active-span accessor", () => {
     it("returns real spans once an accessor is wired", () => {
       const real = { updateName() {} } as unknown as Span;
       setGlobalActiveSpanAccessor({
         getActiveSpan: () => real,
         getSpan: () => real,
+        setSpan: (ctx) => ctx,
       });
       assertEquals(trace.getActiveSpan(), real);
       assertEquals(trace.getSpan(context.active()), real);
+    });
+
+    it("stores spans in shim context when no SDK accessor is wired", () => {
+      const real = { updateName() {} } as unknown as Span;
+      const scoped = trace.setSpan(context.active(), real);
+
+      assertEquals(trace.getSpan(scoped), real);
+      assertEquals(context.with(scoped, () => trace.getActiveSpan()), real);
     });
   });
 
@@ -138,6 +223,34 @@ describe("observability/tracing/api-shim", () => {
       };
       return ctx;
     }
+
+    it("derives immutable fallback contexts", () => {
+      const key = Symbol("immutable-context");
+      const base = context.active();
+      const derived = base.setValue(key, "scoped");
+
+      assertEquals(derived === base, false);
+      assertEquals(base.getValue(key), undefined);
+      assertEquals(derived.getValue(key), "scoped");
+
+      const deleted = derived.deleteValue(key);
+      assertEquals(deleted === derived, false);
+      assertEquals(derived.getValue(key), "scoped");
+      assertEquals(deleted.getValue(key), undefined);
+    });
+
+    it("reset installs a fresh fallback context without prior spans", () => {
+      const span = { updateName() {} } as unknown as Span;
+      const beforeReset = context.active();
+      const scoped = trace.setSpan(beforeReset, span);
+      assertEquals(trace.getSpan(scoped), span);
+
+      _resetShimForTests();
+
+      const afterReset = context.active();
+      assertEquals(afterReset === beforeReset, false);
+      assertEquals(trace.getSpan(afterReset), undefined);
+    });
 
     it("context.with sets the active context for the duration of fn then restores it", () => {
       const base = context.active();
@@ -168,6 +281,114 @@ describe("observability/tracing/api-shim", () => {
       assertEquals(threw, true);
       // The finally-restore must put the original context back.
       assertEquals(context.active() === base, true);
+    });
+
+    it("keeps the fallback context active across the awaits it wraps", async () => {
+      const base = context.active();
+      const scoped = makeScopedContext();
+      let synchronousContext: Context | undefined;
+
+      const applicationPromise = context.with(scoped, async () => {
+        synchronousContext = context.active();
+        await Promise.resolve();
+        return context.active();
+      });
+
+      assertEquals(synchronousContext === scoped, true);
+      // The activation stays scoped to its own async work, so ambient reads
+      // outside it are unaffected while it runs.
+      assertEquals(context.active() === base, true);
+      assertEquals(await applicationPromise === scoped, true);
+    });
+
+    it("isolates concurrent fallback activations from each other", async () => {
+      const first = makeScopedContext();
+      const second = makeScopedContext();
+      let releaseFirst!: () => void;
+      const firstGate = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+
+      const firstScope = context.with(first, async () => {
+        await firstGate;
+        return context.active();
+      });
+      const secondScope = context.with(second, async () => {
+        await Promise.resolve();
+        return context.active();
+      });
+
+      assertEquals(await secondScope === second, true);
+      releaseFirst();
+      assertEquals(await firstScope === first, true);
+    });
+
+    it("does not restore a stale span context when an async scope settles after reset", async () => {
+      const staleSpan = { updateName() {} } as unknown as Span;
+      const staleContext = trace.setSpan(context.active(), staleSpan);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const pending = context.with(staleContext, async () => {
+        await gate;
+      });
+
+      _resetShimForTests();
+      const freshContext = context.active();
+      release();
+      await pending;
+
+      assertEquals(context.active() === freshContext, true);
+      assertEquals(trace.getActiveSpan(), undefined);
+    });
+
+    it("does not cross-contaminate overlapping fallback async scopes", async () => {
+      const base = context.active();
+      const first = makeScopedContext();
+      const second = makeScopedContext();
+      let releaseFirst!: () => void;
+      let releaseSecond!: () => void;
+      const firstGate = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const secondGate = new Promise<void>((resolve) => {
+        releaseSecond = resolve;
+      });
+
+      const firstScope = context.with(first, () => {
+        assertEquals(context.active() === first, true);
+        return firstGate;
+      });
+      assertEquals(context.active() === base, true);
+      const secondScope = context.with(second, () => {
+        assertEquals(context.active() === second, true);
+        return secondGate;
+      });
+      assertEquals(context.active() === base, true);
+      releaseFirst();
+      await firstScope;
+      assertEquals(context.active() === base, true);
+
+      releaseSecond();
+      await secondScope;
+      assertEquals(context.active() === base, true);
+    });
+
+    it("delegates active and with to a registered context accessor", () => {
+      const scoped = makeScopedContext();
+      let withContext: Context | null = null;
+      setGlobalContextAccessor({
+        active: () => scoped,
+        with: (ctx, fn) => {
+          withContext = ctx;
+          return fn();
+        },
+      });
+
+      assertEquals(context.active() === scoped, true);
+      assertEquals(context.with(scoped, () => "ok"), "ok");
+      assertEquals(withContext === scoped, true);
     });
   });
 

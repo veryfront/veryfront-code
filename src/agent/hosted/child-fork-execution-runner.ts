@@ -29,10 +29,16 @@ import {
   type AgentRuntimeForkStepRunner,
   runAgentRuntimeForkStep,
 } from "../streaming/fork-runtime-stream.ts";
+import {
+  getActiveHostedRunEventWriterCapability,
+  type HostedRunEventWriterCapability,
+  runWithHostedRunEventWriterCapability,
+} from "./child-run-event-writer-token.ts";
 import type {
   ChildRunExecutionResult,
   ChildRunExecutionSnapshot,
 } from "../child-run/execution-snapshot.ts";
+import type { ChildRunResultMode } from "../child-run/result-summary.ts";
 import type { RuntimeReasoningOption } from "../types.ts";
 import type {
   HostedConversationRunChunkMirrorInstrumentation,
@@ -48,10 +54,22 @@ import { throwIfChildRunAborted } from "../child-run/execution-support.ts";
 import {
   type HostedChildForkRuntimeConfig,
   type HostedChildForkToolInput,
+  type HostedChildInvocationContext,
   resolveHostedChildForkRuntimeConfig,
   type ResolveHostedChildForkRuntimeConfigInput,
   withHostedChildInvocationContext,
 } from "./child-tool-input.ts";
+import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import {
+  type HostedProjectReferenceResolver,
+  requireConfirmedHostedProjectReference,
+  resolveHostedProjectReference,
+} from "./project-reference-resolver.ts";
+import { runWithMandatoryRunEventSink } from "../../runtime/run-event-sink-context.ts";
+import {
+  createDurableRunEventSink,
+  DurableRunEventPersistenceError,
+} from "./durable-run-event-sink.ts";
 
 /** Default value for hosted child fork stream idle timeout ms. */
 export const DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS = 45_000;
@@ -87,6 +105,8 @@ export type HostedChildForkExecutionRunContextFactoryInput<
 > = {
   authToken: string;
   apiUrl: string;
+  /** Exact-child durable event-writer authority. */
+  runEventWriterCapability?: HostedRunEventWriterCapability;
   durableChildRun?: HostedChildRunIdentifiers;
   conversationId?: string;
   parentRunId?: string;
@@ -95,30 +115,40 @@ export type HostedChildForkExecutionRunContextFactoryInput<
   pendingToolLogWriter?: { warn: (message: string, metadata?: Record<string, unknown>) => void };
 };
 
-/** Input payload for execute hosted child fork with prepared tools. */
+/**
+ * Input for a hosted child fork whose tools are already prepared.
+ * Durable execution requires a capability bound to `durableChildRun.childRunId`.
+ */
 export type ExecuteHostedChildForkWithPreparedToolsInput<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 > = {
   authToken: string;
   apiUrl: string;
+  /** Exact-child authority required when `durableChildRun` is present. */
+  runEventWriterCapability?: HostedRunEventWriterCapability;
   projectId?: string | null;
   description: string;
   kind: string;
   provider: string;
   forkModel: string;
+  temperature?: number;
   maxSteps: number;
   effectivePrompt: string;
   forkContext?: HostedChildForkInstructionsContext;
   toolAssembly: DefaultHostedChildForkToolAssemblyResult;
   abortSignal?: AbortSignal;
   durableChildRun?: HostedChildRunIdentifiers;
+  parentConversationId?: string;
   conversationId?: string;
   parentRunId?: string;
+  parentMessageId?: string;
+  trustedInvocationContext?: HostedChildInvocationContext;
   pendingToolLogWriter?: { warn: (message: string, metadata?: Record<string, unknown>) => void };
   logger?: HostedChildForkStreamLogger;
   instrumentation?: HostedChildForkExecutionInstrumentation<TAttributes>;
   providerOptions?: Record<string, unknown>;
   reasoning?: RuntimeReasoningOption;
+  sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
   maxContinuationSteps?: number;
   resolveSystem?: HostedChildForkRuntimeStepSystemResolver;
   buildInstructions?: () => string;
@@ -136,6 +166,7 @@ export type ExecuteHostedChildForkWithPreparedToolsInput<
   postToolIdleTimeoutMs?: number;
   finalizationTimeoutMs?: number;
   startTime?: number;
+  resultMode?: ChildRunResultMode;
   onSettled?: (snapshot: ChildRunExecutionSnapshot) => void | Promise<void>;
   writeLog?: (entry: HostedChildExecutionLogEntry) => void;
   shouldRethrowError?: (error: unknown) => boolean;
@@ -163,8 +194,7 @@ function createForkRunContext<
       : undefined;
 
   return createHostedDurableChildForkRunContext({
-    authToken: input.authToken,
-    apiUrl: input.apiUrl,
+    runEventWriterCapability: input.runEventWriterCapability,
     durableChildRun: input.durableChildRun,
     instrumentation,
     pendingToolLogContext: {
@@ -188,7 +218,11 @@ function defaultResolveSystem(input: {
   return typeof remindedSystem === "string" ? remindedSystem : input.system;
 }
 
-/** Options accepted by execute hosted child fork tool input. */
+/**
+ * Options for executing a hosted child-fork tool input.
+ * When `durableChildRun` is present, `runEventWriterCapability` must carry
+ * exact-child authority; parent and sibling capabilities fail before dispatch.
+ */
 export type ExecuteHostedChildForkToolInputOptions<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 > =
@@ -209,7 +243,8 @@ export type ExecuteHostedChildForkToolInputOptions<
     defaultModel: string;
     defaultMaxSteps: number;
     contextModel?: string;
-    onRequestedProjectId?: (projectId: string) => void | Promise<void>;
+    onRequestedProjectId?: (projectId: string, projectSlug?: string) => void | Promise<void>;
+    resolveProjectReference?: HostedProjectReferenceResolver;
     prepareToolAssembly: (input: {
       runtimeConfig: HostedChildForkRuntimeConfig;
       requestedTools?: HostedChildForkToolInput["tools"];
@@ -229,23 +264,44 @@ export type ExecuteHostedChildForkToolInputOptions<
     ) => RuntimeReasoningOption | undefined;
     resolveModelThinking?: ResolveHostedChildForkRuntimeConfigInput["resolveModelThinking"];
     onRuntimeConfig?: (runtimeConfig: HostedChildForkRuntimeConfig) => void | Promise<void>;
+    inputAlreadyHasInvocationContext?: boolean;
   };
 
-/** Input payload for execute hosted child fork tool. */
-export async function executeHostedChildForkToolInput<
+async function executeHostedChildForkToolInputWithoutWriterAuthority<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 >(
   input: ExecuteHostedChildForkToolInputOptions<TAttributes>,
+  runEventWriterCapability: HostedRunEventWriterCapability | undefined,
 ): Promise<ChildRunExecutionResult> {
-  if (input.forkInput.project_id) {
-    await input.onRequestedProjectId?.(input.forkInput.project_id);
+  const requestedProjectReference = input.forkInput.project_reference;
+  if (requestedProjectReference) {
+    const resolver = input.resolveProjectReference ?? resolveHostedProjectReference;
+    const resolution = await resolver({
+      projectReference: requestedProjectReference,
+      authToken: input.authToken,
+      apiUrl: input.apiUrl,
+      abortSignal: input.abortSignal,
+    });
+    const resolvedProject = requireConfirmedHostedProjectReference(
+      resolution,
+      requestedProjectReference,
+    );
+    await input.onRequestedProjectId?.(
+      resolvedProject.projectId,
+      resolvedProject.projectSlug,
+    );
   }
 
-  const forkInput = withHostedChildInvocationContext(input.forkInput, {
-    conversationId: input.conversationId,
-    parentRunId: input.parentRunId,
-    toolCallId: input.toolCallId,
-  });
+  const forkInput = input.inputAlreadyHasInvocationContext
+    ? input.forkInput
+    : withHostedChildInvocationContext(input.forkInput, {
+      parentConversationId: input.parentConversationId,
+      conversationId: input.conversationId,
+      parentRunId: input.parentRunId,
+      parentMessageId: input.parentMessageId,
+      toolCallId: input.toolCallId,
+      trustedInvocationContext: input.trustedInvocationContext,
+    });
   const runtimeConfig = resolveHostedChildForkRuntimeConfig({
     forkInput,
     contextModel: input.contextModel,
@@ -259,17 +315,23 @@ export async function executeHostedChildForkToolInput<
 
   await input.onRuntimeConfig?.(runtimeConfig);
 
-  const toolAssembly = await input.prepareToolAssembly({
-    runtimeConfig,
-    requestedTools: runtimeConfig.requestedTools,
-    abortSignal: input.abortSignal,
-  });
+  const toolAssembly = await runWithHostedRunEventWriterCapability(
+    runEventWriterCapability,
+    () =>
+      input.prepareToolAssembly({
+        runtimeConfig,
+        requestedTools: runtimeConfig.requestedTools,
+        abortSignal: input.abortSignal,
+      }),
+  );
 
   return executeHostedChildForkWithPreparedTools({
     ...input,
+    runEventWriterCapability,
     description: runtimeConfig.description,
     provider: runtimeConfig.provider,
     forkModel: runtimeConfig.forkModel,
+    temperature: runtimeConfig.temperature,
     maxSteps: runtimeConfig.maxSteps,
     effectivePrompt: runtimeConfig.effectivePrompt,
     toolAssembly,
@@ -281,28 +343,32 @@ export async function executeHostedChildForkToolInput<
       runtimeConfig.forkModel,
       runtimeConfig.thinkingConfig,
     ),
+    resultMode: forkInput.result_mode,
   });
 }
 
-/** Execute hosted child fork with prepared tools. */
-export async function executeHostedChildForkWithPreparedTools<
+/** Input payload for execute hosted child fork tool. */
+export async function executeHostedChildForkToolInput<
+  TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
+>(
+  input: ExecuteHostedChildForkToolInputOptions<TAttributes>,
+): Promise<ChildRunExecutionResult> {
+  const runEventWriterCapability = input.runEventWriterCapability ??
+    getActiveHostedRunEventWriterCapability();
+
+  return await runWithHostedRunEventWriterCapability(
+    undefined,
+    () => executeHostedChildForkToolInputWithoutWriterAuthority(input, runEventWriterCapability),
+  );
+}
+
+async function executeHostedChildForkWithoutWriterAuthority<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 >(
   input: ExecuteHostedChildForkWithPreparedToolsInput<TAttributes>,
+  runContext: HostedDurableChildForkRunContext,
+  startTime: number,
 ): Promise<ChildRunExecutionResult> {
-  const startTime = input.startTime ?? Date.now();
-  const createRunContext = input.createRunContext ?? createForkRunContext;
-  const runContext = createRunContext({
-    authToken: input.authToken,
-    apiUrl: input.apiUrl,
-    durableChildRun: input.durableChildRun,
-    conversationId: input.conversationId,
-    parentRunId: input.parentRunId,
-    description: input.description,
-    instrumentation: input.instrumentation,
-    pendingToolLogWriter: input.pendingToolLogWriter,
-  });
-
   let closeTooling: (() => Promise<void>) | undefined;
   let closeRuntime: (() => Promise<void>) | undefined;
   let childRunMonitorAbortController: AbortController | null = null;
@@ -323,8 +389,10 @@ export async function executeHostedChildForkWithPreparedTools<
       );
     }
 
-    closeTooling = input.toolAssembly.closeTooling;
-    closeRuntime = input.toolAssembly.closeRuntime;
+    const toolAssembly = input.toolAssembly;
+
+    closeTooling = toolAssembly.closeTooling;
+    closeRuntime = toolAssembly.closeRuntime;
     const buildInstructions = input.buildInstructions ??
       (() => buildHostedChildForkInstructions(input.forkContext));
     const sourceInstrumentation = input.instrumentation;
@@ -338,67 +406,96 @@ export async function executeHostedChildForkWithPreparedTools<
       }
       : undefined;
     const startRuntime = input.startRuntime ?? startHostedChildForkRuntimeWithHostTools;
-    const started = await startRuntime({
-      apiUrl: input.apiUrl,
-      authToken: input.authToken,
-      projectId: input.projectId ?? null,
-      provider: input.provider,
-      forkModel: input.forkModel,
-      maxSteps: input.maxSteps,
-      prompt: input.effectivePrompt,
-      maxContinuationSteps: input.maxContinuationSteps ?? 0,
-      abortSignal: input.abortSignal,
-      forkTools: input.toolAssembly.forkTools,
-      forkToolNames: input.toolAssembly.availableToolNames,
-      providerOptions: input.providerOptions,
-      reasoning: input.reasoning,
-      buildInstructions,
-      onBeforeStop: input.onBeforeStop ?? (() => null),
-      durableChildRun: input.durableChildRun,
-      childRunMonitorPollIntervalMs: input.childRunMonitorPollIntervalMs ??
-        DEFAULT_HOSTED_CHILD_STATUS_POLL_INTERVAL_MS,
-      logger: input.logger?.warn ? { warn: input.logger.warn } : undefined,
-      prepareStep: ({ messages, buildInstructions: prepareBuildInstructions, forkToolNames }) =>
-        prepareHostedChildForkRuntimeStepMessages({
-          messages,
-          buildInstructions: prepareBuildInstructions,
-          forkToolNames,
-          resolveSystem: input.resolveSystem ?? defaultResolveSystem,
-        }),
-      runStep: input.runStep ?? runAgentRuntimeForkStep,
-      traceTools,
-    });
+    if (input.durableChildRun && !runContext.durableRunMirror) {
+      throw new DurableRunEventPersistenceError(
+        "Durable hosted child run requires an event mirror",
+      );
+    }
+    const startupRunEventSink = runContext.durableRunMirror
+      ? createDurableRunEventSink({
+        mirror: runContext.durableRunMirror,
+        abortSignal: input.abortSignal,
+      })
+      : undefined;
+    const start = () =>
+      startRuntime({
+        apiUrl: input.apiUrl,
+        authToken: input.authToken,
+        projectId: input.projectId ?? null,
+        provider: input.provider,
+        forkModel: input.forkModel,
+        temperature: input.temperature,
+        maxSteps: input.maxSteps,
+        prompt: input.effectivePrompt,
+        maxContinuationSteps: input.maxContinuationSteps ?? 0,
+        abortSignal: input.abortSignal,
+        forkTools: toolAssembly.forkTools,
+        forkToolNames: toolAssembly.availableToolNames,
+        sourceIntegrationPolicy: input.sourceIntegrationPolicy,
+        providerOptions: input.providerOptions,
+        reasoning: input.reasoning,
+        buildInstructions,
+        onBeforeStop: input.onBeforeStop ?? (() => null),
+        durableChildRun: input.durableChildRun,
+        childRunMonitorPollIntervalMs: input.childRunMonitorPollIntervalMs ??
+          DEFAULT_HOSTED_CHILD_STATUS_POLL_INTERVAL_MS,
+        logger: input.logger?.warn ? { warn: input.logger.warn } : undefined,
+        prepareStep: ({ messages, buildInstructions: prepareBuildInstructions, forkToolNames }) =>
+          prepareHostedChildForkRuntimeStepMessages({
+            messages,
+            buildInstructions: prepareBuildInstructions,
+            forkToolNames,
+            resolveSystem: input.resolveSystem ?? defaultResolveSystem,
+          }),
+        runStep: input.runStep ?? runAgentRuntimeForkStep,
+        traceTools,
+      });
+    const started = await (startupRunEventSink
+      ? runWithMandatoryRunEventSink(startupRunEventSink, start)
+      : start());
     childRunMonitorAbortController = started.childRunMonitorAbortController;
     childRunMonitorPromise = started.childRunMonitorPromise;
+    const streamAbortSignal = input.abortSignal
+      ? AbortSignal.any([input.abortSignal, started.forkStreamAbortController.signal])
+      : started.forkStreamAbortController.signal;
+    const runEventSink = runContext.durableRunMirror
+      ? createDurableRunEventSink({
+        mirror: runContext.durableRunMirror,
+        abortSignal: streamAbortSignal,
+      })
+      : undefined;
 
-    return await executeHostedChildForkRunContextStream({
-      runContext,
-      streamResult: started.streamResult,
-      abortSignal: input.abortSignal,
-      abortForkStream: (error) => {
-        if (!started.forkStreamAbortController.signal.aborted) {
-          started.forkStreamAbortController.abort(error);
-        }
-      },
-      conversationId: input.conversationId,
-      parentRunId: input.parentRunId,
-      description: input.description,
-      kind: input.kind,
-      usage: undefined,
-      maxSteps: input.maxSteps,
-      startTime,
-      finalizationTimeoutMs: input.finalizationTimeoutMs ??
-        DEFAULT_HOSTED_CHILD_FORK_STREAM_FINALIZATION_TIMEOUT_MS,
-      onSettled: input.onSettled,
-      idleTimeoutMs: input.idleTimeoutMs ?? DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS,
-      activeToolTimeoutMs: input.activeToolTimeoutMs ??
-        DEFAULT_HOSTED_CHILD_FORK_STREAM_ACTIVE_TOOL_TIMEOUT_MS,
-      postToolIdleTimeoutMs: input.postToolIdleTimeoutMs ??
-        DEFAULT_HOSTED_CHILD_FORK_STREAM_POST_TOOL_IDLE_TIMEOUT_MS,
-      logger: input.logger,
-      writeLog: input.writeLog,
-      tracePart: input.instrumentation?.tracePart,
-    });
+    const consume = () =>
+      executeHostedChildForkRunContextStream({
+        runContext,
+        streamResult: started.streamResult,
+        abortSignal: input.abortSignal,
+        abortForkStream: (error) => {
+          if (!started.forkStreamAbortController.signal.aborted) {
+            started.forkStreamAbortController.abort(error);
+          }
+        },
+        conversationId: input.conversationId,
+        parentRunId: input.parentRunId,
+        description: input.description,
+        kind: input.kind,
+        usage: undefined,
+        maxSteps: input.maxSteps,
+        resultMode: input.resultMode,
+        startTime,
+        finalizationTimeoutMs: input.finalizationTimeoutMs ??
+          DEFAULT_HOSTED_CHILD_FORK_STREAM_FINALIZATION_TIMEOUT_MS,
+        onSettled: input.onSettled,
+        idleTimeoutMs: input.idleTimeoutMs ?? DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS,
+        activeToolTimeoutMs: input.activeToolTimeoutMs ??
+          DEFAULT_HOSTED_CHILD_FORK_STREAM_ACTIVE_TOOL_TIMEOUT_MS,
+        postToolIdleTimeoutMs: input.postToolIdleTimeoutMs ??
+          DEFAULT_HOSTED_CHILD_FORK_STREAM_POST_TOOL_IDLE_TIMEOUT_MS,
+        logger: input.logger,
+        writeLog: input.writeLog,
+        tracePart: input.instrumentation?.tracePart,
+      });
+    return await (runEventSink ? runWithMandatoryRunEventSink(runEventSink, consume) : consume());
   } catch (error) {
     return handleHostedChildForkRunContextError({
       error,
@@ -426,4 +523,38 @@ export async function executeHostedChildForkWithPreparedTools<
     closeTooling = undefined;
     closeRuntime = undefined;
   }
+}
+
+/** Execute hosted child fork with prepared tools. */
+export async function executeHostedChildForkWithPreparedTools<
+  TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
+>(
+  input: ExecuteHostedChildForkWithPreparedToolsInput<TAttributes>,
+): Promise<ChildRunExecutionResult> {
+  const startTime = input.startTime ?? Date.now();
+  const runEventWriterCapability = input.runEventWriterCapability ??
+    getActiveHostedRunEventWriterCapability();
+  const runContextInput = {
+    authToken: input.authToken,
+    apiUrl: input.apiUrl,
+    ...(runEventWriterCapability ? { runEventWriterCapability } : {}),
+    durableChildRun: input.durableChildRun,
+    conversationId: input.conversationId,
+    parentRunId: input.parentRunId,
+    description: input.description,
+    instrumentation: input.instrumentation,
+    pendingToolLogWriter: input.pendingToolLogWriter,
+  };
+  const runContext = runWithHostedRunEventWriterCapability(
+    runEventWriterCapability,
+    () =>
+      input.createRunContext
+        ? input.createRunContext(runContextInput)
+        : createForkRunContext(runContextInput),
+  );
+
+  return await runWithHostedRunEventWriterCapability(
+    undefined,
+    () => executeHostedChildForkWithoutWriterAuthority(input, runContext, startTime),
+  );
 }

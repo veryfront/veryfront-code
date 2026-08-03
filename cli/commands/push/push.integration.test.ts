@@ -11,7 +11,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertExists } from "#veryfront/testing/assert.ts";
 import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
-import { initVCRTest, isRecording, type VCRTestContext } from "../../test-utils/vcr.ts";
+import { initVCRTest, isRecording, type VCRTestContext } from "../../../tests/support/cli-vcr.ts";
 import { createBranch } from "./command.ts";
 
 describe("push command integration", () => {

@@ -24,7 +24,7 @@ function StepIndicatorDocsPage() {
     <DocsPage>
       <DocsHero
         title="StepIndicator"
-        lead="A labelled divider that separates the steps of a multi-step assistant turn — a check once the step is done, a pulsing dot while it runs. Rendered automatically by `Message` when `showSteps` is on and a turn has more than one step."
+        lead="A labelled divider that separates the steps of a multi-step assistant turn. The default `Message` variant renders it when a turn has more than one step. A composed parts loop can include or omit it."
       />
 
       <DocsSection
@@ -150,7 +150,7 @@ export const Pending: Story = {
 };
 
 export const Composed: Story = {
-  tags: ["!dev"],
+  tags: ["!dev", "acid-test"],
   parameters: {
     docs: {
       source: {

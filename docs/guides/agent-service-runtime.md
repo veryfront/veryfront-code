@@ -8,6 +8,12 @@ An agent service runs your agent as its own process, independent of the app serv
 
 Veryfront Cloud can invoke a push runtime directly against an agent service, which is the main reason to deploy one even when the app and the agent share a host.
 
+Shared and managed dedicated servers use the framework-owned `veryfront serve`
+runtime instead. That runtime discovers all project agents and tools, then routes
+each signed control-plane request by `agentId`. Projects on a managed dedicated
+server do not require a `service.ts` entrypoint. Add one only when you
+intentionally run the standalone Agent Service process described in this guide.
+
 ## Prerequisites
 
 - At least one agent in `agents/` that the service should expose (see
@@ -17,6 +23,8 @@ Veryfront Cloud can invoke a push runtime directly against an agent service, whi
   `VERYFRONT_PROJECT_ID` or `VERYFRONT_PROJECT_SLUG`, and a publicly
   reachable `VERYFRONT_AGENT_SERVICE_URL`. See
   [Configuration](./configuration.md) for the full list.
+- Immutable deployment metadata for `runtimeSource` when the control plane
+  invokes the service.
 
 ## Create a service entrypoint
 
@@ -81,7 +89,8 @@ For non-standard project layouts, configure discovery paths in
 
 Control-plane registration is convention-first. In `auto` mode, the service
 registers only when `VERYFRONT_API_TOKEN` and
-`VERYFRONT_AGENT_SERVICE_URL` are present.
+`VERYFRONT_AGENT_SERVICE_URL` are present. Registration also requires the
+immutable `runtimeSource` binding described below.
 
 ```bash
 VERYFRONT_API_URL=https://api.example.com
@@ -98,6 +107,42 @@ control-plane registration.
 The service name resolves from `VERYFRONT_AGENT_SERVICE_NAME`, then the nearest
 `package.json` or `deno.json` `name`, then `veryfront-agent-service`. Pass
 `serviceName` only when code should override that convention.
+
+## Bind control-plane runs to the deployed source
+
+A standalone agent service discovers one local project snapshot at startup. It
+cannot select another project branch or release for an individual request. Bind
+the service to deployment-owned immutable metadata when it accepts signed
+control-plane runtime invocations:
+
+```ts
+import { startAgentService } from "veryfront/agent";
+
+const environmentName = process.env.DEPLOYED_ENVIRONMENT_NAME;
+const releaseId = process.env.DEPLOYED_RELEASE_ID;
+if (!environmentName || !releaseId) {
+  throw new Error("Missing immutable agent service deployment identity");
+}
+
+await startAgentService({
+  runtimeSource: {
+    type: "environment",
+    environmentName,
+    releaseId,
+  },
+});
+```
+
+The service accepts a control-plane invocation only when its `agentSource`
+exactly matches `runtimeSource`. An unbound service returns
+`CONTROL_PLANE_AGENT_SOURCE_UNBOUND`. A different release or environment
+returns `CONTROL_PLANE_AGENT_SOURCE_MISMATCH`. Branch sources are mutable and
+return `CONTROL_PLANE_AGENT_SOURCE_UNSUPPORTED`.
+
+Do not resolve `runtimeSource` from the latest deployment at request time. Pass
+the environment and release identifiers that produced the running service
+artifact. Direct `/api/runs` requests do not select project source and do not
+require this binding.
 
 ## Add remote MCP tools
 
@@ -140,6 +185,47 @@ If `mcpServers` is omitted, the Veryfront Cloud preset includes
 `veryfrontApiMcpServer()` by default. Pass `mcpServers: []` to run without
 remote MCP tools.
 
+### Reach trusted deployment-local MCP servers
+
+The default remote MCP source uses guarded outbound networking. Keep that
+default for third-party, request-derived, and tenant-configured endpoints.
+
+A separately deployed agent service may need to reach a trusted MCP server on
+a private cluster address. In that case, capture the host transport and the
+exact allowed endpoints once at startup. Use the host transport only for those
+immutable endpoints and preserve the guarded source for everything else:
+
+```ts
+import { startAgentService } from "veryfront/agent";
+import { createRemoteMCPToolSourceFactoryWithTransport } from "veryfront/tool";
+
+function requiredUrl(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing ${name}`);
+  return value;
+}
+
+const hostFetch = globalThis.fetch.bind(globalThis);
+const createRemoteToolSource = createRemoteMCPToolSourceFactoryWithTransport({
+  trustedEndpoints: [
+    requiredUrl("VERYFRONT_MCP_URL"),
+    requiredUrl("VERYFRONT_STUDIO_MCP_URL"),
+  ],
+  requestFetch: hostFetch,
+});
+
+await startAgentService({
+  createRemoteToolSource,
+});
+```
+
+The framework rejects invalid allowlist entries at startup and uses the host
+transport only for an exact normalized URL match. Unmatched, invalid, and
+resolver-based endpoints retain guarded outbound networking. `http:` is
+appropriate only for private deployment-local networking; use `https:` for
+public networks. Never put a callback endpoint or a per-request URL in the
+trusted endpoint list.
+
 ## Refresh runtime state
 
 Use `resolveRuntimeState` when a long-lived service run must refresh
@@ -178,6 +264,92 @@ preparation, or custom infrastructure.
 | `createNodeAgentServiceRuntimeInfrastructure()`    | Create Node config, logging, tracing, and telemetry infrastructure.                  |
 | `prepareVeryfrontCloudAgentServiceChatExecution()` | Prepare Veryfront Cloud chat execution with model, steering, and durable-run wiring. |
 | `createAgentServiceProjectSteering()`              | Bind markdown agent definitions to project steering and skill refresh.               |
+
+## Migrate custom durable child event writers
+
+This migration applies to custom hosted runtimes that call the lower-level
+durable child helpers. Framework-managed `startAgentService()` runtimes create
+and scope writer capabilities internally.
+
+Raw `authToken`, `apiUrl`, and `runEventAppendToken` fields no longer grant
+durable child event-writer authority. The parsed hosted request also excludes
+the writer credential. Keep the credential inside trusted ingress and replace
+the removed fields with an opaque `HostedRunEventWriterCapability`.
+
+Apply the change at every integration point your custom runtime implements:
+
+| Integration point                                                                                     | Migration action                                                                                   |
+| ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `ParsedHostedChatRequest` / `ParsedAgentServiceChatRequest`                                           | Stop reading `runEventAppendToken`; verified ingress retains it privately.                         |
+| `PrepareHostedConversationRootRunContextInput` / `PrepareAgentServiceConversationRootRunContextInput` | Remove `runEventAppendToken`; keep the exact-root capability in trusted host composition.          |
+| `ExecuteHostedDurableChildForkInput`                                                                  | Pass the exact-parent capability; this helper mints the exact-child capability after persistence.  |
+| `DefaultHostedInvokeAgentToolOptions`                                                                 | Pass the current run's exact-parent capability.                                                    |
+| `ExecuteHostedChildForkWithPreparedToolsInput` / `ExecuteHostedChildForkToolInputOptions`             | Pass a capability bound to `durableChildRun.childRunId`.                                           |
+| `HostedDurableChildForkRunContextInput`                                                               | Remove `authToken` and `apiUrl`; pass the exact-child capability.                                  |
+| `HostedDurableRunStartExecutionInput`                                                                 | Accept the required application-facing `rawRequest` in the starter callback.                       |
+| `HostedAgentServiceDetachedExecutionInput` / `AgentServiceDetachedExecutionInput`                     | Accept the required application-facing `rawRequest`; internal control headers are already removed. |
+
+The generated [`veryfront/agent` reference](../api-reference/veryfront/agent.md#type-reference)
+lists the complete properties for these contracts.
+
+1. After trusted ingress verifies an exact root-run append credential, create
+   the root capability. Do not pass a general user API token.
+
+   ```ts
+   import {
+     createHostedRunEventWriterCapability,
+     executeHostedChildForkWithPreparedTools,
+     executeHostedDurableChildFork,
+   } from "veryfront/agent";
+
+   const rootWriter = createHostedRunEventWriterCapability({
+     apiUrl,
+     runId: durableRootRun.runId,
+     runEventAppendToken: verifiedRunEventAppendToken,
+   });
+   ```
+
+2. Pass that exact-parent capability to helpers that own child persistence and
+   capability delegation. Do not pre-mint for these helpers.
+
+   ```ts
+   const result = await executeHostedDurableChildFork({
+     ...input,
+     runEventWriterCapability: rootWriter,
+   });
+   ```
+
+3. For lower-level helpers that receive an already-persisted `durableChildRun`,
+   mint and pass an exact-child capability:
+
+   ```ts
+   const childWriter = await rootWriter.mintChildRunEventWriterCapability(
+     durableChildRun.childRunId,
+     abortSignal,
+   );
+
+   const result = await executeHostedChildForkWithPreparedTools({
+     ...input,
+     durableChildRun,
+     runEventWriterCapability: childWriter,
+   });
+   ```
+
+4. Update detached starter callbacks to accept the isolated request:
+
+   ```ts
+   const startDetachedExecution = async ({
+     execution,
+     abortSignal,
+     rawRequest,
+   }: HostedAgentServiceDetachedExecutionInput<Execution>) => {
+     await host.start({ execution, abortSignal, request: rawRequest });
+   };
+   ```
+
+A durable execution without authority bound to the expected run fails before
+provider dispatch. Token exchange failures are bounded, sanitized, and fail
+closed; callers must not retry by falling back to a user API token.
 
 ## Verify it worked
 

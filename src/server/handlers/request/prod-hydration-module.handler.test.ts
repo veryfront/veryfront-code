@@ -74,7 +74,7 @@ describe("server/handlers/request/prod-hydration-module.handler", () => {
     assertEquals(result.response.headers.get("expires"), null);
 
     const body = await result.response.text();
-    assertStringIncludes(body, "MODULE_SERVER_URL");
+    assertStringIncludes(body, "/_vf_modules");
     assertStringIncludes(body, "renderPage");
   });
 

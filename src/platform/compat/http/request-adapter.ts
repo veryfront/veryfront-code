@@ -20,7 +20,7 @@ export function convertNodeRequestToWebRequest(
   url: string,
 ): Request {
   const method = req.method ?? "GET";
-  const hasBody = !BODYLESS_METHODS.has(method.toUpperCase());
+  const hasBody = requestCanCarryBody(method) && requestDeclaresBody(req.headers);
 
   // `duplex` is part of the WHATWG fetch spec but not yet in the lib.dom
   // `RequestInit` type, hence the intersection.
@@ -37,6 +37,31 @@ export function convertNodeRequestToWebRequest(
   return new Request(url, init);
 }
 
+function requestCanCarryBody(method: string): boolean {
+  return !BODYLESS_METHODS.has(method.toUpperCase());
+}
+
+function requestDeclaresBody(headers: NodeIncomingMessage["headers"]): boolean {
+  const contentLengthHeader = headers["content-length"];
+  const contentLength = Array.isArray(contentLengthHeader)
+    ? contentLengthHeader.find((value) => value.trim().length > 0)
+    : contentLengthHeader;
+  if (
+    contentLength !== undefined &&
+    contentLength.trim() !== "" &&
+    contentLength.trim() !== "0"
+  ) {
+    return true;
+  }
+
+  const transferEncodingHeader = headers["transfer-encoding"];
+  const transferEncoding = Array.isArray(transferEncodingHeader)
+    ? transferEncodingHeader.join(",")
+    : transferEncodingHeader;
+
+  return transferEncoding !== undefined && transferEncoding.trim() !== "";
+}
+
 /**
  * Adapt a Node readable request into a web `ReadableStream` using only the
  * event interface declared on {@link NodeIncomingMessage}, so this stays free
@@ -46,20 +71,60 @@ export function convertNodeRequestToWebRequest(
 function nodeRequestToReadableStream(
   req: NodeIncomingMessage,
 ): ReadableStream<Uint8Array> {
+  let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+  let settled = false;
+
+  const onData = (chunk: Uint8Array): void => {
+    if (settled || !controller) return;
+    controller.enqueue(chunk);
+    // Apply backpressure: once the stream's internal queue is full, pause
+    // the Node request so it stops buffering the whole body in memory.
+    if ((controller.desiredSize ?? 1) <= 0) req.pause?.();
+  };
+  const onEnd = (): void => {
+    if (settled || !controller) return;
+    settled = true;
+    removeListeners();
+    controller.close();
+  };
+  const onError = (error: Error): void => {
+    if (settled || !controller) return;
+    settled = true;
+    removeListeners();
+    controller.error(error);
+  };
+  const onPrematureClose = (): void => {
+    if (settled || !controller) return;
+    settled = true;
+    removeListeners();
+    controller.error(new TypeError("Node request body closed before it completed"));
+  };
+  const removeListeners = (): void => {
+    req.off?.("data", onData);
+    req.off?.("end", onEnd);
+    req.off?.("error", onError);
+    req.off?.("aborted", onPrematureClose);
+    req.off?.("close", onPrematureClose);
+  };
+
   return new ReadableStream<Uint8Array>({
-    start(controller) {
-      req.on("data", (chunk) => {
-        controller.enqueue(chunk);
-        // Apply backpressure: once the stream's internal queue is full, pause
-        // the Node request so it stops buffering the whole body in memory.
-        if ((controller.desiredSize ?? 1) <= 0) req.pause?.();
-      });
-      req.on("end", () => controller.close());
-      req.on("error", (error) => controller.error(error));
+    start(streamController) {
+      controller = streamController;
+      req.on("data", onData);
+      req.on("end", onEnd);
+      req.on("error", onError);
+      req.on("aborted", onPrematureClose);
+      req.on("close", onPrematureClose);
     },
     pull() {
       // The consumer asked for more — resume flowing mode.
-      req.resume?.();
+      if (!settled) req.resume?.();
+    },
+    cancel() {
+      if (settled) return;
+      settled = true;
+      removeListeners();
+      req.destroy?.();
     },
   });
 }

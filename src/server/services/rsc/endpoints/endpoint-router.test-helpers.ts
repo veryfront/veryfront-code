@@ -5,10 +5,29 @@ import type { RSCEndpointParams } from "./types.ts";
 /** Minimal mock adapter with fs operations for module endpoint tests */
 export function createMockAdapter(
   fsOverrides: {
+    knownFiles?: readonly string[];
     exists?: (path: string) => Promise<boolean>;
     readFile?: (path: string) => Promise<string>;
+    stat?: (path: string) => Promise<{
+      isFile: boolean;
+      isDirectory: boolean;
+      size: number;
+      mtime: Date | null;
+    }>;
+    readDir?: (path: string) => AsyncIterable<{
+      name: string;
+      isFile: boolean;
+      isDirectory: boolean;
+      isSymlink: boolean;
+    }>;
   } = {},
 ): RuntimeAdapter {
+  const exists = fsOverrides.exists ??
+    ((path: string) => Promise.resolve(fsOverrides.knownFiles?.includes(path) === true));
+  const readFile = fsOverrides.readFile ?? (async (path: string) => {
+    if (await exists(path)) return "";
+    throw new Deno.errors.NotFound("not found");
+  });
   return {
     id: "memory",
     name: "mock",
@@ -21,13 +40,24 @@ export function createMockAdapter(
       workers: false,
     },
     fs: {
-      exists: fsOverrides.exists ?? (() => Promise.resolve(false)),
-      readFile: fsOverrides.readFile ?? (() => Promise.resolve("")),
+      symlinkSemantics: "none" as const,
+      exists,
+      readFile,
+      readFileBytesWithinLimit: async (path: string, byteLimit: number) => {
+        const bytes = new TextEncoder().encode(await readFile(path));
+        if (bytes.byteLength > byteLimit) throw new RangeError("mock file exceeds byte limit");
+        return bytes;
+      },
       writeFile: () => Promise.resolve(),
-      readDir: () => Promise.resolve([]),
+      readDir: fsOverrides.readDir ?? createKnownFilesReader(fsOverrides.knownFiles ?? []),
       mkdir: () => Promise.resolve(),
       remove: () => Promise.resolve(),
-      stat: () => Promise.resolve({ isFile: true, isDirectory: false, size: 0, mtime: null }),
+      stat: fsOverrides.stat ?? (async (path: string) => {
+        if (await exists(path)) {
+          return { isFile: true, isDirectory: false, size: 0, mtime: null };
+        }
+        throw new Deno.errors.NotFound("not found");
+      }),
     },
     env: {
       get: () => undefined,
@@ -40,6 +70,37 @@ export function createMockAdapter(
     },
     serve: () => Promise.resolve({ close: () => Promise.resolve() } as any),
   } as unknown as RuntimeAdapter;
+}
+
+function createKnownFilesReader(
+  knownFiles: readonly string[],
+): (path: string) => AsyncIterable<{
+  name: string;
+  isFile: boolean;
+  isDirectory: boolean;
+  isSymlink: boolean;
+}> {
+  return async function* (directory: string) {
+    const prefix = directory.replace(/\/+$/, "") + "/";
+    const entries = new Map<string, boolean>();
+    for (const file of knownFiles) {
+      if (!file.startsWith(prefix)) continue;
+      const remainder = file.slice(prefix.length);
+      if (!remainder) continue;
+      const separator = remainder.indexOf("/");
+      const name = separator === -1 ? remainder : remainder.slice(0, separator);
+      entries.set(name, separator !== -1);
+    }
+
+    for (const [name, isDirectory] of entries) {
+      yield {
+        name,
+        isFile: !isDirectory,
+        isDirectory,
+        isSymlink: false,
+      };
+    }
+  };
 }
 
 /** Config with RSC enabled */
@@ -63,6 +124,8 @@ export function makeParams(
     adapter: overrides.adapter ?? createMockAdapter(),
     config: overrides.config,
     ...overrides,
+    isLocalProject: overrides.isLocalProject ?? true,
+    allowHostProjectCodeExecution: overrides.allowHostProjectCodeExecution ?? true,
     req: overrides.req ?? new Request("http://localhost" + overrides.pathname),
   };
 }

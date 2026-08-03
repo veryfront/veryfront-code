@@ -13,7 +13,14 @@ import {
   type SourceSpanReplacement,
 } from "../utils/source-spans.ts";
 import { buildMissingModuleError } from "../missing-module.ts";
-import type { Logger } from "#veryfront/utils/logger/logger.ts";
+import type { Logger } from "#veryfront/utils";
+import { parallelMap } from "#veryfront/utils/parallel.ts";
+import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
+import {
+  assertMdxModuleImportCount,
+  MAX_MDX_MODULE_IMPORTS_PER_FILE,
+  MAX_MDX_MODULE_TRANSFORM_CONCURRENCY,
+} from "./limits.ts";
 
 function matchUnresolvedVfModuleSpecifier(specifier: string): string | null {
   return specifier.match(/^((?:file:\/\/)?\/?\/?_vf_modules\/[^?]+)(?:\?.*)?$/)?.[1] ?? null;
@@ -36,6 +43,7 @@ export function findNestedImports(
     const { original, path: rawPath, start, end } of findStaticImportFromSpans(
       moduleCode,
       matchUnresolvedVfModuleSpecifier,
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
     )
   ) {
     // Strip file:// prefix and leading slashes to get clean _vf_modules/... path
@@ -51,6 +59,7 @@ export function findNestedImports(
     const { original, path, start, end } of findStaticImportFromSpans(
       moduleCode,
       (specifier) => specifier.match(/^(\.\.?\/[^?]+)(?:\?.*)?$/)?.[1],
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
     )
   ) {
     relative.push({
@@ -68,7 +77,11 @@ export function findNestedImports(
  * Check for unresolved /_vf_modules/ imports.
  */
 export function hasUnresolvedImports(moduleCode: string): { count: number; paths: string[] } {
-  const matches = findStaticImportFromSpans(moduleCode, matchUnresolvedVfModuleSpecifier);
+  const matches = findStaticImportFromSpans(
+    moduleCode,
+    matchUnresolvedVfModuleSpecifier,
+    MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+  );
   return {
     count: matches.length,
     paths: matches.map((match) => match.path).slice(0, 5),
@@ -132,6 +145,54 @@ export interface ResolveNestedModuleImportsInput {
   strictMissingModules: boolean;
   fetchAndCacheModule: (path: string, parent?: string) => Promise<string | null>;
   log?: Logger;
+  /**
+   * Path this module's relative imports resolve against. Defaults to
+   * `normalizedPath`; see {@link resolveNestedImportBase}.
+   */
+  parentBasePath?: string;
+}
+
+/**
+ * Whether a path names the index module of its directory.
+ *
+ * The check is on the file name rather than on an extension list: which
+ * extensions reach here depends on the resolver in play (the project adapter
+ * resolves `.md` as well), and a path can arrive either rewritten to `.js` or
+ * still carrying its source extension. A file named `index` is the directory's
+ * module however it is spelled.
+ */
+function namesIndexModule(path: string): boolean {
+  const fileName = path.split("/").pop() ?? "";
+  return stripFileExtension(fileName) === "index";
+}
+
+function stripFileExtension(path: string): string {
+  return path.replace(/\.[^./]+$/, "");
+}
+
+/**
+ * The path a module's own relative imports should resolve against.
+ *
+ * A directory barrel lives at `lib/index.ts` but is addressed as
+ * `_vf_modules/lib`. Resolving its children against `_vf_modules/lib.js` drops
+ * the trailing segment as if it were a filename, so `./constants.js` becomes
+ * `_vf_modules/constants.js`, one directory too high. The file is then not
+ * found and gets replaced by a stub, and the barrel silently stops re-exporting
+ * anything: `does not provide an export named 'COLORS'`.
+ *
+ * When the module actually resolved to an index file, keep the directory
+ * segment by addressing it as `<dir>/index.js`. A path that already names its
+ * own index file is left alone, whichever extension it carries: appending a
+ * second `/index.js` would invent a directory that holds no files at all.
+ */
+export function resolveNestedImportBase(
+  normalizedPath: string,
+  actualFilePath?: string,
+): string {
+  if (!actualFilePath || !namesIndexModule(actualFilePath)) return normalizedPath;
+  if (namesIndexModule(normalizedPath)) return normalizedPath;
+
+  return `${stripFileExtension(normalizedPath)}/index.js`;
 }
 
 /**
@@ -162,14 +223,23 @@ export async function resolveNestedModuleImports(
     ...vfModules.map((module) => ({ ...module, key: "nestedPath" as const })),
     ...relative.map((module) => ({ ...module, key: "relativePath" as const })),
   ];
-  const nestedResults = await Promise.all(
-    allImports.map(async ({ original, path, start, end, key }) => ({
+  assertMdxModuleImportCount(input.normalizedPath, allImports.length);
+
+  const nestedResults: NestedImportResult[] = await parallelMap(
+    allImports,
+    async ({ original, path, start, end, key }) => ({
       original,
       start,
       end,
-      nestedFilePath: await input.fetchAndCacheModule(path, input.normalizedPath),
+      nestedFilePath: await input.fetchAndCacheModule(
+        path,
+        input.parentBasePath ?? input.normalizedPath,
+      ),
       [key]: path,
-    })),
+    }),
+    {
+      semaphore: new Semaphore(MAX_MDX_MODULE_TRANSFORM_CONCURRENCY),
+    },
   );
   input.log?.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing vfModules DONE`, {
     projectSlug: input.projectSlug,

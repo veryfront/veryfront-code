@@ -7,8 +7,8 @@ import type { LayoutItem, MdxBundle, MDXComponents } from "#veryfront/types";
 import type { EntityInfo } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
 import type { ContentProcessor } from "#veryfront/extensions/content/index.ts";
 import type { LayoutComponentCache } from "./utils/component-loader.ts";
@@ -19,12 +19,18 @@ import {
   createErrorBoundary,
   tryLoadReservedInDirs,
 } from "../app-reserved.ts";
-import { detectAppRouter } from "../router-detection.ts";
+import { resolveRouterModeForPage } from "../router-detection.ts";
 import { getProjectReact } from "#veryfront/react";
 import { extract } from "#std/front-matter/yaml.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { resolveFrameworkSourcePath } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { loadModuleFromSource } from "#veryfront/modules/react-loader/index.ts";
+import {
+  type DependencyPinningSourceInput,
+  resolveProjectReactVersion,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import { CLIENT_PAGE_ISLAND_ID } from "#veryfront/rendering/rsc/page-island.ts";
+import { isDotPath } from "../orchestrator/path-helpers.ts";
 
 const logger = rendererLogger.component("layout-applicator");
 
@@ -43,7 +49,13 @@ export interface LayoutApplicationOptions {
   requestUrl?: URL;
   params?: Record<string, string | string[]>;
   frontmatter?: Record<string, unknown>;
+  /** Props from the page's `getServerData`, exposed on the page context as `data`. */
+  pageProps?: Record<string, unknown>;
   headings?: Array<{ id: string; text: string; level: number }>;
+  reactVersion?: string;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningSource?: DependencyPinningSourceInput;
 }
 
 export class LayoutApplicator {
@@ -56,11 +68,17 @@ export class LayoutApplicator {
   private requestUrl?: URL;
   private params?: Record<string, string | string[]>;
   private frontmatter?: Record<string, unknown>;
+  private pageProps?: Record<string, unknown>;
   private headings?: Array<{ id: string; text: string; level: number }>;
   private projectId: string;
   private projectSlug: string;
   private contentSourceId: string;
   private preloadedImportMap?: ImportMapConfig | null;
+  private readonly configuredReactVersion?: string;
+  private readonly dependencyPinningCacheKey?: string;
+  private readonly dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  private readonly dependencyPinningSource?: DependencyPinningSourceInput;
+  private reactVersionPromise: Promise<string> | null = null;
   private frameworkProviderModulesPromise?: Promise<{
     PageContextProvider: BundledReact.ComponentType<Record<string, unknown>>;
     RouterProvider: BundledReact.ComponentType<Record<string, unknown>>;
@@ -80,7 +98,24 @@ export class LayoutApplicator {
     this.requestUrl = options.requestUrl;
     this.params = options.params;
     this.frontmatter = options.frontmatter;
+    this.pageProps = options.pageProps;
     this.headings = options.headings;
+    this.configuredReactVersion = options.reactVersion;
+    this.dependencyPinningCacheKey = options.dependencyPinningCacheKey;
+    this.dependencyPinningDependencies = options.dependencyPinningDependencies;
+    this.dependencyPinningSource = options.dependencyPinningSource;
+  }
+
+  private getReactVersion(): Promise<string> {
+    this.reactVersionPromise ??= this.configuredReactVersion
+      ? Promise.resolve(this.configuredReactVersion)
+      : resolveProjectReactVersion({
+        projectDir: this.projectDir,
+        config: this.config,
+        dependencyPinningCacheKey: this.dependencyPinningCacheKey,
+        dependencyPinningDependencies: this.dependencyPinningDependencies,
+      });
+    return this.reactVersionPromise;
   }
 
   async applyLayouts(
@@ -89,35 +124,73 @@ export class LayoutApplicator {
     layoutBundle: MdxBundle | undefined,
     nestedLayouts: LayoutItem[],
     layoutDataMap?: Map<string, Record<string, unknown>>,
+    clientPageIsland?: { clientLayoutPaths: readonly string[] },
   ): Promise<BundledReact.ReactElement> {
     return await withSpan(
       SpanNames.LAYOUT_APPLY,
       async () => {
-        let wrappedElement = await this.applyLayoutsOnly(
-          pageElement,
-          layoutBundle,
-          nestedLayouts,
-          layoutDataMap,
+        const reactVersion = await this.getReactVersion();
+        let wrappedElement: BundledReact.ReactElement;
+        if (clientPageIsland) {
+          const clientPaths = new Set(clientPageIsland.clientLayoutPaths);
+          const clientLayouts = nestedLayouts.filter((layout) =>
+            clientPaths.has(layout.componentPath ?? layout.path ?? "")
+          );
+          const serverLayouts = nestedLayouts.filter((layout) =>
+            !clientPaths.has(layout.componentPath ?? layout.path ?? "")
+          );
+          const clientTree = await this.applyLayoutsOnly(
+            pageElement,
+            undefined,
+            clientLayouts,
+            layoutDataMap,
+            reactVersion,
+          );
+          const React = await getProjectReact(reactVersion);
+          const island = React.createElement(
+            "div",
+            { id: CLIENT_PAGE_ISLAND_ID },
+            clientTree,
+          ) as BundledReact.ReactElement;
+          wrappedElement = await this.applyLayoutsOnly(
+            island,
+            layoutBundle,
+            serverLayouts,
+            layoutDataMap,
+            reactVersion,
+          );
+        } else {
+          wrappedElement = await this.applyLayoutsOnly(
+            pageElement,
+            layoutBundle,
+            nestedLayouts,
+            layoutDataMap,
+            reactVersion,
+          );
+        }
+
+        const pageFilePath = pageInfo.entity.path;
+        const routerMode = resolveRouterModeForPage(
+          this.projectDir,
+          pageFilePath,
+          this.config,
         );
 
-        const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter, {
-          projectId: this.projectId,
+        const dotPath = isDotPath({
+          slug: pageInfo.entity.slug ?? "",
+          filePath: pageFilePath,
+          projectDir: this.projectDir,
         });
-        const pageFilePath = pageInfo.entity.path;
 
-        const isDotPath = pageFilePath
-          .split("/")
-          .some((s) => s.startsWith(".") && s !== "." && s !== "..");
-
-        if (useAppRouter) {
+        if (routerMode === "app") {
           wrappedElement = await this.wrapWithReservedComponents(wrappedElement, pageFilePath);
-        } else if (isDotPath) {
+        } else if (dotPath) {
           logger.debug("Skipping wrapWithAppComponent - dot-prefixed path");
         } else {
           wrappedElement = await this.wrapWithAppComponent(wrappedElement);
         }
 
-        const React = await getProjectReact();
+        const React = await getProjectReact(reactVersion);
 
         const headingsArray = this.headings ?? [];
         const flatParams = flattenRouteParams(this.params);
@@ -128,6 +201,7 @@ export class LayoutApplicator {
           params: flatParams,
           query,
           frontmatter: this.frontmatter ?? pageInfo.entity.frontmatter ?? {},
+          data: this.pageProps ?? {},
           headings: headingsArray,
           mdxHeadings: headingsArray,
         };
@@ -183,6 +257,7 @@ export class LayoutApplicator {
     layoutBundle: MdxBundle | undefined,
     nestedLayouts: LayoutItem[],
     layoutDataMap?: Map<string, Record<string, unknown>>,
+    reactVersion?: string,
   ): Promise<BundledReact.ReactElement> {
     return await withSpan(
       SpanNames.LAYOUT_APPLY_ONLY,
@@ -208,6 +283,12 @@ export class LayoutApplicator {
             this.projectSlug,
             this.contentSourceId,
             this.preloadedImportMap ?? undefined,
+            reactVersion,
+            this.dependencyPinningCacheKey,
+            this.dependencyPinningDependencies,
+            this.dependencyPinningSource,
+            this.requestUrl?.origin,
+            this.config,
           );
         }
 
@@ -223,6 +304,11 @@ export class LayoutApplicator {
           this.projectId,
           this.projectSlug,
           this.contentSourceId,
+          reactVersion,
+          this.dependencyPinningCacheKey,
+          this.dependencyPinningDependencies,
+          this.dependencyPinningSource,
+          this.requestUrl?.origin,
         );
       },
       {
@@ -270,6 +356,11 @@ export class LayoutApplicator {
       contentSourceId: this.contentSourceId,
       dev: this.mode === "development",
       mode: this.mode,
+      reactVersion: await this.getReactVersion(),
+      dependencyPinningCacheKey: this.dependencyPinningCacheKey,
+      dependencyPinningDependencies: this.dependencyPinningDependencies,
+      dependencyPinningSource: this.dependencyPinningSource,
+      moduleServerOrigin: this.requestUrl?.origin,
     } as const;
 
     const [contextModule, routerModule] = await Promise.all([
@@ -336,14 +427,19 @@ export class LayoutApplicator {
                 projectSlug: this.projectSlug,
                 dev: this.mode === "development",
                 moduleServerUrl: this.config?.dev?.moduleServerUrl,
+                moduleServerOrigin: this.requestUrl?.origin,
                 contentSourceId: this.contentSourceId,
+                reactVersion: await this.getReactVersion(),
+                dependencyPinningCacheKey: this.dependencyPinningCacheKey,
+                dependencyPinningDependencies: this.dependencyPinningDependencies,
+                dependencyPinningSource: this.dependencyPinningSource,
               },
             );
           }
 
           if (!App) return pageElement;
 
-          const React = await getProjectReact();
+          const React = await getProjectReact(await this.getReactVersion());
           logger.debug("Wrapped page with App component");
           return React.createElement(App, { children: pageElement }) as BundledReact.ReactElement;
         } catch (error) {
@@ -387,7 +483,12 @@ export class LayoutApplicator {
           projectSlug: this.projectSlug,
           dev: this.mode === "development",
           moduleServerUrl: this.config?.dev?.moduleServerUrl,
+          moduleServerOrigin: this.requestUrl?.origin,
           contentSourceId: this.contentSourceId,
+          reactVersion: await this.getReactVersion(),
+          dependencyPinningCacheKey: this.dependencyPinningCacheKey,
+          dependencyPinningDependencies: this.dependencyPinningDependencies,
+          dependencyPinningSource: this.dependencyPinningSource,
         },
       );
     } catch (error) {
@@ -403,11 +504,15 @@ export class LayoutApplicator {
     return await withSpan(
       SpanNames.LAYOUT_WRAP_RESERVED,
       async () => {
-        const React = await getProjectReact();
+        const reactVersion = await this.getReactVersion();
+        const React = await getProjectReact(reactVersion);
 
         try {
           const segmentDir = dirname(pageFilePath);
-          const appRootDir = join(this.projectDir, "app");
+          const appRootDir = join(
+            this.projectDir,
+            this.config?.directories?.app ?? "app",
+          );
           const searchDirs = await collectAncestorDirs(segmentDir, appRootDir);
 
           const [loadingComp, errorComp] = await Promise.all([
@@ -419,6 +524,11 @@ export class LayoutApplicator {
               this.adapter,
               this.projectId,
               this.contentSourceId,
+              reactVersion,
+              this.dependencyPinningCacheKey,
+              this.dependencyPinningDependencies,
+              this.dependencyPinningSource,
+              this.requestUrl?.origin,
             ),
             tryLoadReservedInDirs(
               searchDirs,
@@ -428,6 +538,11 @@ export class LayoutApplicator {
               this.adapter,
               this.projectId,
               this.contentSourceId,
+              reactVersion,
+              this.dependencyPinningCacheKey,
+              this.dependencyPinningDependencies,
+              this.dependencyPinningSource,
+              this.requestUrl?.origin,
             ),
           ]);
 

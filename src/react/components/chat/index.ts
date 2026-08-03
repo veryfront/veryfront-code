@@ -28,7 +28,7 @@ export {
   ColorModeScript,
   ColorModeToggle,
   useColorMode,
-} from "./color-mode.tsx";
+} from "../ui/color-mode.tsx";
 
 // ---------------------------------------------------------------------------
 // Design Tokens
@@ -39,7 +39,7 @@ export { ChatStyleProvider, type ChatStyleProviderProps } from "./chat-style-pro
 // ---------------------------------------------------------------------------
 // Chat — Core preset + compound
 // ---------------------------------------------------------------------------
-export { Chat, ChatComponents, type ChatProps } from "./chat.tsx";
+export { Chat, type ChatAgentInfo, type ChatProps } from "./chat.tsx";
 
 // ---------------------------------------------------------------------------
 // Chat — Composition building blocks
@@ -56,8 +56,32 @@ export {
   ChatIf,
   type ChatIfProps,
   ChatInput,
+  type ChatInputActionProps,
+  ChatInputAttach,
+  type ChatInputAttachProps,
+  ChatInputExport,
+  type ChatInputExportProps,
+  ChatInputField,
+  type ChatInputFieldProps,
+  ChatInputModel,
+  type ChatInputModelProps,
   type ChatInputProps,
+  ChatInputRoot,
+  type ChatInputRootProps,
+  ChatInputSend,
+  type ChatInputSendProps,
+  type ChatInputSlottedActionProps,
+  type ChatInputSlottedSubmitProps,
+  ChatInputStop,
+  type ChatInputStopProps,
+  ChatInputSubmit,
+  type ChatInputSubmitProps,
+  ChatInputToolbar,
+  type ChatInputToolbarProps,
+  ChatInputVoice,
+  type ChatInputVoiceProps,
   ChatMessageList,
+  type ChatMessageListContentProps,
   type ChatMessageListProps,
   ChatRoot,
   type ChatRootProps,
@@ -66,8 +90,10 @@ export {
   Message,
   type MessageProps,
   type MessageRootProps,
+  type MessageTokensProps,
   ModelAvatar,
   type ModelAvatarProps,
+  type TokenRowProps,
 } from "./chat.tsx";
 
 // ---------------------------------------------------------------------------
@@ -76,16 +102,64 @@ export {
 export {
   ChatContextProvider,
   type ChatContextValue,
+  ChatInputContextProvider,
+  type ChatInputContextValue,
   ComposerContextProvider,
   type ComposerContextValue,
   MessageContextProvider,
   type MessageContextValue,
+  type MessagePartsData,
   useChatContext,
   useChatContextOptional,
+  useChatInputContext,
+  useChatInputContextOptional,
   useComposerContext,
   useComposerContextOptional,
   useMessageContext,
   useMessageContextOptional,
+  useMessageParts,
+} from "./chat.tsx";
+
+// ---------------------------------------------------------------------------
+// Chat - Conversation session
+// ---------------------------------------------------------------------------
+export {
+  useConversationChat,
+  type UseConversationChatOptions,
+  type UseConversationChatResult,
+} from "./chat.tsx";
+
+// ---------------------------------------------------------------------------
+// Chat - Conversation persistence
+// ---------------------------------------------------------------------------
+export {
+  type ActiveConversationLoadFailure,
+  type Conversation,
+  CONVERSATION_STORAGE_LIMITS,
+  type ConversationPatch,
+  ConversationsContextProvider,
+  type ConversationsContextValue,
+  ConversationsProvider,
+  type ConversationsProviderProps,
+  type ConversationStorageLimits,
+  type ConversationStore,
+  ConversationStoreError,
+  type ConversationStoreOperation,
+  type ConversationSummary,
+  localConversationStore,
+  memoryConversationStore,
+  type StorageLike,
+  useConversation,
+  type UseConversationOptions,
+  type UseConversationPersistenceState,
+  type UseConversationResult,
+  useConversations,
+  type UseConversationsActiveLoadState,
+  useConversationsContext,
+  useConversationsContextOptional,
+  type UseConversationsOptions,
+  type UseConversationsPersistenceState,
+  type UseConversationsResult,
 } from "./chat.tsx";
 
 // ---------------------------------------------------------------------------
@@ -116,7 +190,7 @@ export {
   MessageFeedback,
   ModelSelector,
   QuickActions,
-  ReasoningCard,
+  Reasoning,
   RichCodeBlock,
   Shimmer,
   SkillBadge,
@@ -125,19 +199,22 @@ export {
   Suggestion,
   Suggestions,
   TabSwitcher,
-  ToolCallCard,
+  ToolCall,
   ToolStatusBadge,
+  useReasoning,
+  useToolCall,
   useUpload,
 } from "./chat.tsx";
 export type {
   AttachmentInfo,
   AttachmentPillProps,
   AttachmentsPanelProps,
+  BranchPickerActionProps,
+  BranchPickerCountProps,
   BranchPickerProps,
   ChatSidebarComponent,
   ChatSidebarEmptyProps,
   ChatSidebarGroupProps,
-  ChatSidebarIcons,
   ChatSidebarItemProps,
   ChatSidebarListProps,
   ChatSidebarNewButtonProps,
@@ -149,15 +226,23 @@ export type {
   DropZoneOverlayProps,
   FeedbackValue,
   InferenceBadgeProps,
+  InlineCitationCardProps,
   InlineCitationProps,
+  InlineCitationTriggerProps,
+  MessageActionBarActionProps,
   MessageActionBarProps,
   MessageEditFormProps,
+  MessageFeedbackActionProps,
   MessageFeedbackProps,
   ModelOption,
   ModelSelectorProps,
+  ModelSelectorSearchProps,
   PartGroup,
   QuickAction,
   QuickActionsProps,
+  ReasoningContextValue,
+  ReasoningProps,
+  ReasoningTriggerProps,
   SkillBadgeProps,
   Source,
   SourcesProps,
@@ -165,9 +250,61 @@ export type {
   SuggestionProps,
   SuggestionsProps,
   TabSwitcherProps,
+  ToolCallContextValue,
+  ToolCallProps,
+  ToolCallTriggerProps,
   UploadedFile,
   UseUploadOptions,
   UseUploadResult,
+} from "./chat.tsx";
+
+// Compound component and headless-hook parity with the canonical chat barrel.
+export {
+  AgentAvatar,
+  type AgentAvatarProps,
+  type AttachmentPillContextValue,
+  type AttachmentsPanelActionProps,
+  type AttachmentsPanelContextValue,
+  type AttachmentsPanelEmptyProps,
+  type AttachmentsPanelHeaderProps,
+  type AttachmentsPanelItemProps,
+  type AttachmentsPanelListProps,
+  type AttachmentsPanelLoadingProps,
+  ChatMessagesSkeleton,
+  type ChatMessagesSkeletonProps,
+  mergeProps,
+  type ModelSelectorContentProps,
+  type ModelSelectorContextValue,
+  type ModelSelectorItemProps,
+  type ModelSelectorTriggerProps,
+  SourcePill,
+  type SourcePillProps,
+  type SourcesContextValue,
+  type SourcesListProps,
+  type StepIndicatorContextValue,
+  useAttachmentPill,
+  useAttachments,
+  type UseAttachmentsOptions,
+  useAttachmentsPanel,
+  type UseAttachmentsRequestState,
+  type UseAttachmentsResult,
+  type UseAttachmentsStorageState,
+  useChatInput,
+  type UseChatInputResult,
+  useChatScroll,
+  type UseChatScrollOptions,
+  type UseChatScrollResult,
+  useMessageBranches,
+  type UseMessageBranchesResult,
+  useModelSelector,
+  useSources,
+  useStepIndicator,
+  useStickToBottom,
+  type UseStickToBottomOptions,
+  type UseStickToBottomResult,
+  useUploadsRegistry,
+  type UseUploadsRegistryOptions,
+  type UseUploadsRegistryResult,
 } from "./chat.tsx";
 
 // ---------------------------------------------------------------------------
@@ -179,8 +316,21 @@ export type { AgentCardProps } from "./agent-card.tsx";
 // ---------------------------------------------------------------------------
 // Markdown
 // ---------------------------------------------------------------------------
-export { Markdown } from "./markdown.tsx";
-export type { CodeBlockProps, MarkdownProps } from "./markdown.tsx";
+export {
+  Markdown,
+  MarkdownRendererCapabilityError,
+  MarkdownRendererProvider,
+} from "./markdown.tsx";
+export type {
+  CodeBlockProps,
+  Components,
+  MarkdownComponents,
+  MarkdownElementRendererProps,
+  MarkdownProps,
+  MarkdownRenderer,
+  MarkdownRendererProps,
+  MarkdownRendererProviderProps,
+} from "./markdown.tsx";
 
 // ---------------------------------------------------------------------------
 // Error Boundary

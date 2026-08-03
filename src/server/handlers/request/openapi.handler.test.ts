@@ -51,14 +51,14 @@ function createCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
     projectDir: "/project",
     adapter: { fs: createMockFs().fs } as never,
     config: { openapi: { enabled: true } },
-    isLocalProject: false,
+    isLocalProject: true,
     ...overrides,
   } as unknown as HandlerContext;
 }
 
 describe("server/handlers/request/openapi.handler", () => {
-  describe("proxy mode uses runWithContext", () => {
-    it("should call runWithContext when in proxy mode with extended FS", async () => {
+  describe("remote execution isolation", () => {
+    it("fails closed before route discovery or proxy context setup", async () => {
       const { fs, calls } = createMockFs({ needsContext: true });
       const handler = new OpenAPIHandler();
       const ctx = createCtx({
@@ -74,12 +74,15 @@ describe("server/handlers/request/openapi.handler", () => {
       const req = new Request("https://example.com/_openapi.json");
       const result = await handler.handle(req, ctx);
 
-      assertEquals(result.response?.status, 200);
+      assertEquals(result.response?.status, 503);
       const body = JSON.parse(await result.response!.text());
-      assertEquals(typeof body.paths, "object");
-      assertEquals(calls.includes("runWithContext"), true);
+      assertEquals(body.error, "Isolated OpenAPI generation is unavailable");
+      assertEquals(calls.includes("runWithContext"), false);
+      assertEquals(calls.some((call) => call.startsWith("exists:")), false);
     });
+  });
 
+  describe("local generation", () => {
     it("should NOT call runWithContext for local projects", async () => {
       const { fs, calls } = createMockFs({ needsContext: true });
       const handler = new OpenAPIHandler();
@@ -95,103 +98,6 @@ describe("server/handlers/request/openapi.handler", () => {
 
       assertEquals(result.response?.status, 200);
       assertEquals(calls.includes("runWithContext"), false);
-    });
-
-    it("should NOT call runWithContext when no proxyToken", async () => {
-      const { fs, calls } = createMockFs({ needsContext: true });
-      const handler = new OpenAPIHandler();
-      const ctx = createCtx({
-        adapter: { fs } as never,
-        isLocalProject: false,
-        projectSlug: "test-project",
-        proxyToken: undefined,
-      });
-
-      const req = new Request("https://example.com/_openapi.json");
-      const result = await handler.handle(req, ctx);
-
-      assertEquals(result.response?.status, 200);
-      assertEquals(calls.includes("runWithContext"), false);
-    });
-
-    it("should NOT call runWithContext when extended FS lacks multi-project mode", async () => {
-      const { fs, calls } = createMockFs({ needsContext: true, multiProject: false });
-      const handler = new OpenAPIHandler();
-      const ctx = createCtx({
-        adapter: { fs } as never,
-        isLocalProject: false,
-        projectSlug: "test-project",
-        proxyToken: "test-token",
-        projectId: "proj-123",
-        resolvedEnvironment: "production",
-        parsedDomain: { branch: null } as never,
-      });
-
-      const req = new Request("https://example.com/_openapi.json");
-      const result = await handler.handle(req, ctx);
-
-      assertEquals(result.response?.status, 200);
-      assertEquals(calls.includes("runWithContext"), false);
-    });
-  });
-
-  describe("spec caching", () => {
-    it("should use different cache keys for different branches", async () => {
-      const { fs } = createMockFs({ needsContext: true });
-      const handler = new OpenAPIHandler();
-
-      // First request on branch "main"
-      const ctx1 = createCtx({
-        adapter: { fs } as never,
-        isLocalProject: false,
-        projectSlug: "test-project",
-        proxyToken: "test-token",
-        parsedDomain: { branch: "main" } as never,
-        releaseId: "rel-1",
-      });
-      const req1 = new Request("https://example.com/_openapi.json");
-      const result1 = await handler.handle(req1, ctx1);
-      assertEquals(result1.response?.status, 200);
-
-      // Second request on branch "feature" — should NOT serve stale spec
-      const ctx2 = createCtx({
-        adapter: { fs } as never,
-        isLocalProject: false,
-        projectSlug: "test-project",
-        proxyToken: "test-token",
-        parsedDomain: { branch: "feature" } as never,
-        releaseId: "rel-2",
-      });
-      const req2 = new Request("https://example.com/_openapi.json");
-      const result2 = await handler.handle(req2, ctx2);
-      assertEquals(result2.response?.status, 200);
-
-      // Both should succeed without serving stale cached spec from first branch
-      // (The handler's internal cacheKey should differ for different branches/releases)
-    });
-  });
-
-  describe("spec generation with route discovery in proxy mode", () => {
-    it("should attempt directory existence checks within runWithContext", async () => {
-      const { fs, calls } = createMockFs({ needsContext: true, existsReturn: true });
-      const handler = new OpenAPIHandler();
-      const ctx = createCtx({
-        adapter: { fs } as never,
-        isLocalProject: false,
-        projectSlug: "test-project",
-        proxyToken: "test-token",
-        projectId: "proj-123",
-        resolvedEnvironment: "production",
-        parsedDomain: { branch: null } as never,
-      });
-
-      const req = new Request("https://example.com/_openapi.json");
-      await handler.handle(req, ctx);
-
-      // Verify runWithContext was used and discovery directories were checked
-      assertEquals(calls.includes("runWithContext"), true);
-      const existsCalls = calls.filter((c) => c.startsWith("exists:"));
-      assertEquals(existsCalls.length > 0, true);
     });
   });
 });

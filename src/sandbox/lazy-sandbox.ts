@@ -1,7 +1,8 @@
-import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
+import { REQUEST_ERROR } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-import { logger } from "#veryfront/utils";
+import { logger, sleep } from "#veryfront/utils";
 import { resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
+import { readSandboxFileContent, sandboxSessionRoute } from "./proxy-routes.ts";
 import {
   type BackgroundCommand,
   type BackgroundCommandOutput,
@@ -45,6 +46,16 @@ interface PendingOperation {
   promise: Promise<void>;
 }
 
+interface DataPlaneRoute {
+  baseUrl: string;
+  kind: "internal" | "proxy";
+}
+
+interface TrackedBackgroundCommand {
+  commandsUrl: string;
+  routeKind: DataPlaneRoute["kind"];
+}
+
 const DEFAULT_STARTUP_TIMEOUT_MS = 180_000;
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
@@ -86,6 +97,10 @@ export function resolveDefaultSandboxRuntimeEndpoint(input: { endpoint: string }
   return `http://sandbox.veryfront-sandbox-${shortId}.svc.cluster.local`;
 }
 
+function normalizeDataPlaneBaseUrl(url: string): string {
+  return url.trim().replace(/\/+$/, "");
+}
+
 /** Lazily provisions sandbox sessions and keeps them alive while in use. */
 export class LazySandbox {
   private readonly apiUrl: string;
@@ -117,7 +132,7 @@ export class LazySandbox {
   private heartbeatPromise: PendingOperation | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private lastHeartbeatAt = 0;
-  private readonly activeBackgroundCommandEndpoints = new Map<string, string>();
+  private readonly activeBackgroundCommands = new Map<string, TrackedBackgroundCommand>();
 
   constructor(options: LazySandboxOptions = {}) {
     this.apiUrl = resolveSandboxApiUrl(options);
@@ -202,23 +217,35 @@ export class LazySandbox {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+    let completed = false;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          completed = true;
+          break;
+        }
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
 
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        yield JSON.parse(line) as ExecStreamEvent;
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          yield JSON.parse(line) as ExecStreamEvent;
+        }
       }
-    }
 
-    if (buffer.trim()) {
-      yield JSON.parse(buffer) as ExecStreamEvent;
+      buffer += decoder.decode();
+      if (buffer.trim()) {
+        yield JSON.parse(buffer) as ExecStreamEvent;
+      }
+    } finally {
+      if (!completed) {
+        await reader.cancel().catch(() => {});
+      }
+      reader.releaseLock();
     }
   }
 
@@ -226,7 +253,7 @@ export class LazySandbox {
     await this.touchSession();
 
     const res = await this.fetchControl(
-      `${this.requireEndpoint()}/file?path=${encodeURIComponent(path)}`,
+      `${this.resolveDataPlaneRoute().baseUrl}/file?path=${encodeURIComponent(path)}`,
       {
         headers: this.authHeaders(),
       },
@@ -236,13 +263,13 @@ export class LazySandbox {
       throw REQUEST_ERROR.create({ detail: `Read file failed: ${res.status} ${await res.text()}` });
     }
 
-    return await res.text();
+    return await readSandboxFileContent(res);
   }
 
   async writeFiles(files: Array<{ path: string; content: string }>): Promise<void> {
     await this.touchSession();
 
-    const res = await this.fetchControl(`${this.requireEndpoint()}/files`, {
+    const res = await this.fetchControl(`${this.resolveDataPlaneRoute().baseUrl}/files`, {
       method: "POST",
       headers: this.jsonHeaders(),
       body: JSON.stringify({ files }),
@@ -257,9 +284,10 @@ export class LazySandbox {
 
   async startBackgroundCommand(command: string, options?: ExecOptions): Promise<BackgroundCommand> {
     await this.touchSession();
-    const endpoint = this.resolveRuntimeEndpoint();
+    const route = this.resolveDataPlaneRoute();
 
-    const res = await this.fetchControl(`${endpoint}/exec/commands`, {
+    const commandsUrl = backgroundCommandsUrl(route);
+    const res = await this.fetchControl(commandsUrl, {
       method: "POST",
       headers: this.jsonHeaders(),
       body: JSON.stringify({ command, ...this.resolveExecOptions(options) }),
@@ -272,16 +300,22 @@ export class LazySandbox {
     }
 
     const backgroundCommand = mapBackgroundCommand(await res.json());
-    this.updateTrackedBackgroundCommand(backgroundCommand, endpoint);
+    this.updateTrackedBackgroundCommand(backgroundCommand, {
+      commandsUrl,
+      routeKind: route.kind,
+    });
     return backgroundCommand;
   }
 
   async getBackgroundCommand(commandId: string): Promise<BackgroundCommand> {
-    const endpoint = await this.resolveBackgroundCommandEndpoint(commandId);
+    const route = await this.resolveBackgroundCommandRoute(commandId);
 
-    const res = await this.fetchControl(`${endpoint}/exec/commands/${commandId}`, {
-      headers: this.authHeaders(),
-    });
+    const res = await this.fetchControl(
+      `${route.commandsUrl}/${encodeURIComponent(commandId)}`,
+      {
+        headers: this.authHeaders(),
+      },
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -290,16 +324,19 @@ export class LazySandbox {
     }
 
     const backgroundCommand = mapBackgroundCommand(await res.json());
-    this.updateTrackedBackgroundCommand(backgroundCommand, endpoint);
+    this.updateTrackedBackgroundCommand(backgroundCommand, route);
     return backgroundCommand;
   }
 
   async getBackgroundCommandOutput(commandId: string): Promise<BackgroundCommandOutput> {
-    const endpoint = await this.resolveBackgroundCommandEndpoint(commandId);
+    const route = await this.resolveBackgroundCommandRoute(commandId);
 
-    const res = await this.fetchControl(`${endpoint}/exec/commands/${commandId}/output`, {
-      headers: this.authHeaders(),
-    });
+    const res = await this.fetchControl(
+      `${route.commandsUrl}/${encodeURIComponent(commandId)}/output`,
+      {
+        headers: this.authHeaders(),
+      },
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -315,14 +352,14 @@ export class LazySandbox {
       stdoutTruncated: json.stdout_truncated,
       stderrTruncated: json.stderr_truncated,
     };
-    this.updateTrackedBackgroundCommand(output, endpoint);
+    this.updateTrackedBackgroundCommand(output, route);
     return output;
   }
 
   async listBackgroundCommands(): Promise<BackgroundCommand[]> {
     await this.ensure();
 
-    const res = await this.fetchControl(`${this.requireEndpoint()}/exec/commands`, {
+    const res = await this.fetchControl(backgroundCommandsUrl(this.resolveDataPlaneRoute()), {
       headers: this.authHeaders(),
     });
 
@@ -338,12 +375,15 @@ export class LazySandbox {
   }
 
   async cancelBackgroundCommand(commandId: string): Promise<BackgroundCommand> {
-    const endpoint = await this.resolveBackgroundCommandEndpoint(commandId);
+    const route = await this.resolveBackgroundCommandRoute(commandId);
 
-    const res = await this.fetchControl(`${endpoint}/exec/commands/${commandId}/cancel`, {
-      method: "POST",
-      headers: this.authHeaders(),
-    });
+    const res = await this.fetchControl(
+      `${route.commandsUrl}/${encodeURIComponent(commandId)}/cancel`,
+      {
+        method: "POST",
+        headers: this.authHeaders(),
+      },
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -352,7 +392,7 @@ export class LazySandbox {
     }
 
     const backgroundCommand = mapBackgroundCommand(await res.json());
-    this.updateTrackedBackgroundCommand(backgroundCommand, endpoint);
+    this.updateTrackedBackgroundCommand(backgroundCommand, route);
     return backgroundCommand;
   }
 
@@ -375,7 +415,7 @@ export class LazySandbox {
     const pending = {
       promise: (async () => {
         const res = await this.fetchControl(
-          `${this.apiUrl}/sandbox-sessions/${currentSessionId}/heartbeat`,
+          `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(currentSessionId)}/heartbeat`,
           {
             method: "POST",
             headers: this.authHeaders(),
@@ -384,7 +424,7 @@ export class LazySandbox {
 
         if (!res.ok) {
           if (this.sessionId === currentSessionId) {
-            if (this.activeBackgroundCommandEndpoints.size === 0) {
+            if (this.activeBackgroundCommands.size === 0) {
               await this.deleteSession(currentSessionId);
               this.resetSessionState(currentSessionId);
             }
@@ -522,7 +562,9 @@ export class LazySandbox {
       ? session
       : await this.waitForReadySession(session.id);
 
-    await this.waitForRuntimeDataPlaneReady(readySession);
+    if (this.shouldUseInternalDataPlane(readySession.endpoint, readySession.id)) {
+      await this.waitForRuntimeDataPlaneReady(readySession);
+    }
     return readySession.endpoint;
   }
 
@@ -545,9 +587,12 @@ export class LazySandbox {
   }
 
   private async getSession(sessionId: string): Promise<SandboxSessionRecord> {
-    const res = await this.fetchControl(`${this.apiUrl}/sandbox-sessions/${sessionId}`, {
-      headers: this.authHeaders(),
-    });
+    const res = await this.fetchControl(
+      `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(sessionId)}`,
+      {
+        headers: this.authHeaders(),
+      },
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
@@ -562,11 +607,14 @@ export class LazySandbox {
     const start = Date.now();
 
     while (Date.now() - start < this.startupTimeoutMs) {
-      await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
+      await sleep(this.pollIntervalMs);
 
-      const res = await this.fetchControl(`${this.apiUrl}/sandbox-sessions/${sessionId}`, {
-        headers: this.authHeaders(),
-      });
+      const res = await this.fetchControl(
+        `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(sessionId)}`,
+        {
+          headers: this.authHeaders(),
+        },
+      );
 
       if (!res.ok) {
         continue;
@@ -611,7 +659,7 @@ export class LazySandbox {
         lastFailure = error instanceof Error ? error.message : String(error);
       }
 
-      await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
+      await sleep(this.pollIntervalMs);
     }
 
     throw REQUEST_ERROR.create({
@@ -633,14 +681,26 @@ export class LazySandbox {
     await this.heartbeat();
   }
 
+  private heartbeatFailureCount = 0;
+  private static readonly HEARTBEAT_WARN_AFTER_FAILURES = 3;
+
   private startHeartbeatLoop(): void {
-    if (!this.sessionId || this.heartbeatTimer || this.activeBackgroundCommandEndpoints.size > 0) {
+    if (!this.sessionId || this.heartbeatTimer || this.hasActiveInternalBackgroundCommand()) {
       return;
     }
 
     this.heartbeatTimer = setInterval(() => {
-      void this.heartbeat().catch(() => {
-        // next operation will reprovision
+      void this.heartbeat().then(() => {
+        this.heartbeatFailureCount = 0;
+      }).catch((error) => {
+        this.heartbeatFailureCount++;
+        if (this.heartbeatFailureCount >= LazySandbox.HEARTBEAT_WARN_AFTER_FAILURES) {
+          logger.warn(
+            `[sandbox] Heartbeat has failed ${this.heartbeatFailureCount} consecutive time(s); ` +
+              "sandbox may have been reclaimed. Next operation will attempt to reprovision.",
+            error,
+          );
+        }
       });
     }, this.heartbeatIntervalMs);
   }
@@ -652,10 +712,13 @@ export class LazySandbox {
   }
 
   private async deleteSession(sessionId: string): Promise<void> {
-    await this.fetchControl(`${this.apiUrl}/sandbox-sessions/${sessionId}`, {
-      method: "DELETE",
-      headers: this.authHeaders(),
-    });
+    await this.fetchControl(
+      `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(sessionId)}`,
+      {
+        method: "DELETE",
+        headers: this.authHeaders(),
+      },
+    );
   }
 
   private requireEndpoint(): string {
@@ -672,7 +735,7 @@ export class LazySandbox {
   private resetSessionState(sessionId?: string): void {
     if (!sessionId || this.sessionId === sessionId) {
       this.stopHeartbeatLoop();
-      this.activeBackgroundCommandEndpoints.clear();
+      this.activeBackgroundCommands.clear();
       this.endpoint = null;
       this.sessionId = null;
       this.sessionProjectId = null;
@@ -686,42 +749,59 @@ export class LazySandbox {
     return projectReference ? { ...options, projectReference } : options;
   }
 
-  private async resolveBackgroundCommandEndpoint(commandId: string): Promise<string> {
-    const trackedEndpoint = this.activeBackgroundCommandEndpoints.get(commandId);
-    if (trackedEndpoint) {
-      return trackedEndpoint;
+  private async resolveBackgroundCommandRoute(
+    commandId: string,
+  ): Promise<TrackedBackgroundCommand> {
+    const trackedCommand = this.activeBackgroundCommands.get(commandId);
+    if (trackedCommand) {
+      return trackedCommand;
     }
 
     await this.ensure();
-    return this.resolveRuntimeEndpoint();
+    const route = this.resolveDataPlaneRoute();
+    return {
+      commandsUrl: backgroundCommandsUrl(route),
+      routeKind: route.kind,
+    };
   }
 
   private updateTrackedBackgroundCommand(
     backgroundCommand: Pick<BackgroundCommand, "id" | "status">,
-    endpoint: string,
+    command: TrackedBackgroundCommand,
   ): void {
     if (backgroundCommand.status === "running") {
-      this.activeBackgroundCommandEndpoints.set(backgroundCommand.id, endpoint);
-      this.stopHeartbeatLoop();
+      this.activeBackgroundCommands.set(backgroundCommand.id, command);
+      if (command.routeKind === "internal") {
+        this.stopHeartbeatLoop();
+      }
       return;
     }
 
-    if (!this.activeBackgroundCommandEndpoints.delete(backgroundCommand.id)) {
+    if (!this.activeBackgroundCommands.delete(backgroundCommand.id)) {
       return;
     }
 
-    if (this.activeBackgroundCommandEndpoints.size === 0 && this.endpoint) {
+    if (!this.hasActiveInternalBackgroundCommand() && this.endpoint) {
       this.startHeartbeatLoop();
     }
   }
 
+  private hasActiveInternalBackgroundCommand(): boolean {
+    for (const command of this.activeBackgroundCommands.values()) {
+      if (command.routeKind === "internal") {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private async startExec(command: string, options?: ExecOptions): Promise<Response> {
-    const endpoint = this.resolveRuntimeEndpoint();
+    const route = this.resolveDataPlaneRoute();
     const body = JSON.stringify({ command, ...this.resolveExecOptions(options) });
 
     for (let attempt = 1; attempt <= this.execStartMaxAttempts; attempt += 1) {
       try {
-        const res = await this.fetchExecStart(`${endpoint}/exec`, {
+        const res = await this.fetchExecStart(commandStreamUrl(route), {
           method: "POST",
           headers: this.jsonHeaders(),
           body,
@@ -758,7 +838,7 @@ export class LazySandbox {
   }
 
   private waitForExecStartRetry(): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, this.execStartRetryDelayMs));
+    return sleep(this.execStartRetryDelayMs);
   }
 
   private async reprovisionAfterExecStartFailure(): Promise<void> {
@@ -771,15 +851,42 @@ export class LazySandbox {
     this.resetSessionState(sessionId);
   }
 
-  private resolveRuntimeEndpoint(): string {
-    const endpoint = this.requireEndpoint();
-    const sessionId = this.requireSessionId();
-    return this.resolveRuntimeEndpointFor(endpoint, sessionId);
-  }
-
   private resolveRuntimeEndpointFor(endpoint: string, sessionId: string): string {
     return this.resolveRuntimeEndpointOption?.({ endpoint, sessionId }) ??
       resolveDefaultSandboxRuntimeEndpoint({ endpoint });
+  }
+
+  private shouldUseInternalDataPlane(endpoint: string, sessionId: string): boolean {
+    if (!this.resolveRuntimeEndpointOption) {
+      return false;
+    }
+
+    const runtimeEndpoint = this.resolveRuntimeEndpointFor(endpoint, sessionId);
+    return normalizeDataPlaneBaseUrl(runtimeEndpoint) !== normalizeDataPlaneBaseUrl(endpoint);
+  }
+
+  private resolveDataPlaneRoute(): DataPlaneRoute {
+    const endpoint = this.requireEndpoint();
+    const sessionId = this.requireSessionId();
+    if (!this.resolveRuntimeEndpointOption) {
+      return {
+        baseUrl: sandboxSessionRoute(this.apiUrl, sessionId),
+        kind: "proxy",
+      };
+    }
+
+    const runtimeEndpoint = this.resolveRuntimeEndpointFor(endpoint, sessionId);
+    if (normalizeDataPlaneBaseUrl(runtimeEndpoint) !== normalizeDataPlaneBaseUrl(endpoint)) {
+      return {
+        baseUrl: normalizeDataPlaneBaseUrl(runtimeEndpoint),
+        kind: "internal",
+      };
+    }
+
+    return {
+      baseUrl: sandboxSessionRoute(this.apiUrl, sessionId),
+      kind: "proxy",
+    };
   }
 
   private requireSessionId(): string {
@@ -806,10 +913,30 @@ function isRetryableExecStartStatus(status: number): boolean {
   return status === 502 || status === 503 || status === 504;
 }
 
+function commandStreamUrl(route: DataPlaneRoute): string {
+  return `${route.baseUrl}${route.kind === "internal" ? "/exec" : "/commands/stream"}`;
+}
+
+function backgroundCommandsUrl(route: DataPlaneRoute): string {
+  return `${route.baseUrl}${route.kind === "internal" ? "/exec/commands" : "/commands"}`;
+}
+
+/**
+ * Heuristic: Deno's fetch throws an `Error` with message "fetch failed" (case-
+ * insensitive) when the TCP connection is refused or the host is unreachable.
+ * If Deno changes this wording the check stops matching, causing exec failures
+ * to be treated as non-retryable — fail-safe (agent surfaces an error) but
+ * requires a code update to restore automatic retry.
+ */
 function isRetryableExecStartError(error: unknown): boolean {
   return error instanceof Error && /fetch failed/i.test(error.message);
 }
 
+/**
+ * Heuristic: data-plane readiness failures are identified by a known message
+ * prefix ({@link DATA_PLANE_READINESS_FAILURE_PREFIX}) set by this codebase.
+ * The prefix is stable as long as the caller site is not changed.
+ */
 function isDataPlaneReadinessFailure(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
@@ -820,6 +947,12 @@ function isDataPlaneReadinessFailure(error: unknown): boolean {
     detail?.startsWith(DATA_PLANE_READINESS_FAILURE_PREFIX) === true;
 }
 
+/**
+ * Heuristic: reprovisioning is triggered by known Node.js/Deno error codes on
+ * the error's `cause` (ECONNREFUSED, ECONNRESET, ENOTFOUND, EHOSTUNREACH).
+ * These codes are stable across Deno versions and represent network-layer
+ * failures where the sandbox pod is no longer reachable.
+ */
 function shouldReprovisionAfterExecStartFailure(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;

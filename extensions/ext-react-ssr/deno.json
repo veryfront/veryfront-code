@@ -1,0 +1,33 @@
+{
+  "name": "@veryfront/ext-react-ssr",
+  "version": "0.1.0",
+  "exports": {
+    ".": "./src/index.ts",
+    "./worker-renderer": "./src/worker-renderer.ts"
+  },
+  "veryfront": {
+    "extension": true,
+    "activation": "explicit",
+    "contracts": {
+      "provides": ["IsolatedSsrRendererProvider"]
+    },
+    "capabilities": [],
+    "npm": {
+      "runtimeVersionFromManifest": true,
+      "runtimeDependencies": []
+    }
+  },
+  "imports": {
+    "react": "https://esm.sh/react@19.2.4?target=es2022&deps=csstype@3.2.3",
+    "react-dom/server": "https://esm.sh/react-dom@19.2.4/server?external=react&target=es2022&deps=csstype@3.2.3",
+    "veryfront/extensions": "../../src/extensions/index.ts",
+    "veryfront/extensions/rendering": "../../src/extensions/rendering/index.ts",
+    "@std/assert": "jsr:@std/assert@1.0.19"
+  },
+  "tasks": {
+    "check": "deno check src/index.ts src/worker-renderer.ts src/worker-renderer-source.ts src/*.test.ts",
+    "test": "deno test --allow-read src/",
+    "generate:renderer": "deno run -A scripts/prebundle.ts",
+    "generate:renderer:check": "deno run -A scripts/prebundle.ts --check"
+  }
+}

@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_voices",
+      "id": "elevenlabs__list_voices",
       "name": "List Voices",
       "description": "List and search the voices available to the account",
       "requiresWrite": false,
@@ -72,7 +72,7 @@
       }
     },
     {
-      "id": "get_voice",
+      "id": "elevenlabs__get_voice",
       "name": "Get Voice",
       "description": "Get details about a specific voice",
       "requiresWrite": false,
@@ -90,7 +90,7 @@
       }
     },
     {
-      "id": "list_models",
+      "id": "elevenlabs__list_models",
       "name": "List Models",
       "description": "List the speech models available to the account",
       "requiresWrite": false,
@@ -100,7 +100,7 @@
       }
     },
     {
-      "id": "get_subscription",
+      "id": "elevenlabs__get_subscription",
       "name": "Get Subscription",
       "description": "Get subscription tier, character usage, and limits for the account",
       "requiresWrite": false,
@@ -110,7 +110,7 @@
       }
     },
     {
-      "id": "text_to_speech",
+      "id": "elevenlabs__text_to_speech",
       "name": "Text to Speech",
       "description": "Convert text to speech with a chosen voice; the response is binary audio (not JSON), so route the output to a file or player rather than parsing it",
       "requiresWrite": true,

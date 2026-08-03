@@ -4,21 +4,17 @@ import { createFileSystem } from "veryfront/platform";
 
 // Keep init scaffold aligned with current framework default React major/minor.
 const DEFAULT_INIT_REACT_VERSION = "19.2.4";
-const REQUIRED_INIT_EXTENSION_PACKAGES = [
-  "@veryfront/ext-bundler-esbuild",
-  "@veryfront/ext-content-mdx",
-  "@veryfront/ext-css-tailwind",
-  "@veryfront/ext-parser-babel",
-] as const;
 
 export interface CreatePackageJsonOptions {
   /** Template-owned dependencies that must be installed for generated apps. */
   dependencies?: Record<string, string>;
+  /** Template-owned first-party extension packages aligned to the Veryfront version. */
+  firstPartyExtensions?: readonly string[];
   /**
    * Selected integrations whose `connector.json#npmDependencies` should be
    * merged into the generated project's `package.json#dependencies`.
    * First declaration wins on version collisions; framework pins
-   * (react, react-dom, veryfront, zod) always take precedence.
+   * (react, react-dom, veryfront) always take precedence.
    */
   integrations?: Array<{
     name: string;
@@ -61,8 +57,12 @@ export async function createPackageJson(
 
   const dirName = projectDir.split(/[/\\]/).pop();
   const veryfrontVersionRange = `^${VERSION}`;
+  const firstPartyExtensionPackages = options.firstPartyExtensions ?? [];
   const requiredExtensionDeps = Object.fromEntries(
-    REQUIRED_INIT_EXTENSION_PACKAGES.map((packageName) => [packageName, veryfrontVersionRange]),
+    [...new Set(firstPartyExtensionPackages)].map((packageName) => [
+      packageName,
+      veryfrontVersionRange,
+    ]),
   );
   const packageJson = {
     name: projectName ?? dirName ?? "veryfront-project",
@@ -71,10 +71,12 @@ export async function createPackageJson(
     scripts: {
       dev: "veryfront dev",
       build: "veryfront build",
-      preview: "veryfront preview",
+      start: "veryfront serve",
+      eval: "veryfront eval",
+      deploy: "veryfront deploy",
     },
     pnpm: {
-      onlyBuiltDependencies: ["esbuild", "veryfront"],
+      onlyBuiltDependencies: ["esbuild"],
     },
     dependencies: {
       ...templateDeps,
@@ -83,7 +85,6 @@ export async function createPackageJson(
       react: `^${DEFAULT_INIT_REACT_VERSION}`,
       "react-dom": `^${DEFAULT_INIT_REACT_VERSION}`,
       veryfront: veryfrontVersionRange,
-      zod: "^3.24.0",
     },
   };
 
@@ -93,4 +94,27 @@ export async function createPackageJson(
   );
 
   logger.debug('Created package.json with "type": "module"');
+}
+
+export async function createTypeScriptConfig(projectDir: string): Promise<void> {
+  const fs = createFileSystem();
+  const tsConfig = {
+    compilerOptions: {
+      target: "ES2022",
+      module: "ESNext",
+      moduleResolution: "bundler",
+      strict: true,
+      jsx: "react-jsx",
+      skipLibCheck: true,
+      esModuleInterop: true,
+      paths: { "@/*": ["./*"] },
+    },
+    include: ["**/*.ts", "**/*.tsx"],
+    exclude: ["node_modules"],
+  };
+
+  await fs.writeTextFile(
+    join(projectDir, "tsconfig.json"),
+    `${JSON.stringify(tsConfig, null, 2)}\n`,
+  );
 }

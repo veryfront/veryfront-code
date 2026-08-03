@@ -1,8 +1,13 @@
-import { registerLRUCache } from "#veryfront/cache";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { join } from "#veryfront/compat/path/index.ts";
+import { isAbsolute, join, normalize } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { VERYFRONT_CONFIG_FILES } from "#veryfront/config/config-files.ts";
+import { MAX_PROJECT_SLUG_CODE_UNITS } from "#veryfront/utils/constants/project-identity.ts";
+import { getErrorMessage } from "#veryfront/errors";
+
+const MAX_CONFIGURED_LOCAL_PROJECTS = 1_000;
+const LOCAL_PROJECT_SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 
 interface LocalProjectFileSystem {
   exists(path: string): Promise<boolean> | boolean;
@@ -10,6 +15,7 @@ interface LocalProjectFileSystem {
 
 interface LocalProjectLogger {
   debug(message: string, extra?: Record<string, unknown>): void;
+  warn?(message: string, extra?: Record<string, unknown>): void;
 }
 
 export interface LocalProjectResolverOptions {
@@ -17,38 +23,89 @@ export interface LocalProjectResolverOptions {
   fs?: LocalProjectFileSystem;
   basePath?: () => string;
   logger?: LocalProjectLogger;
+  allowDiscovery?: boolean;
 }
 
 export interface LocalProjectResolver {
+  readonly localProjects: Readonly<Record<string, string>>;
   find(slug: string): Promise<string | undefined>;
+  clear(): void;
 }
 
-/**
- * Bounded cache for project paths discovered dynamically at request time
- * (slug -> absolute path). Configured `localProjects` are never written here,
- * so `ProxyHandler.localProjects` continues to expose only configured projects.
- */
-const discoveredLocalProjects = new LRUCache<string, string>({ maxEntries: 100 });
-registerLRUCache("proxy-discovered-local-projects", discoveredLocalProjects);
+function isCanonicalLocalProjectSlug(slug: string): boolean {
+  return slug.length > 0 &&
+    slug.length <= MAX_PROJECT_SLUG_CODE_UNITS &&
+    LOCAL_PROJECT_SLUG_PATTERN.test(slug);
+}
+
+function snapshotConfiguredProjects(
+  input: Record<string, string> | undefined,
+): Readonly<Record<string, string>> {
+  const result = Object.create(null) as Record<string, string>;
+  if (!input) return Object.freeze(result);
+
+  const descriptors = Object.getOwnPropertyDescriptors(input);
+  const entries = Object.entries(descriptors);
+  if (entries.length > MAX_CONFIGURED_LOCAL_PROJECTS) {
+    throw new RangeError(
+      `Local project configuration cannot exceed ${MAX_CONFIGURED_LOCAL_PROJECTS} entries`,
+    );
+  }
+
+  for (const [slug, descriptor] of entries) {
+    if (!descriptor.enumerable) continue;
+    const path = "value" in descriptor ? descriptor.value : undefined;
+    if (
+      !isCanonicalLocalProjectSlug(slug) ||
+      typeof path !== "string" ||
+      !isAbsolute(path) ||
+      normalize(path) !== path
+    ) {
+      throw new TypeError(`Invalid configured local project entry: ${slug}`);
+    }
+    Object.defineProperty(result, slug, {
+      configurable: false,
+      enumerable: true,
+      value: path,
+      writable: false,
+    });
+  }
+  return Object.freeze(result);
+}
 
 export function createLocalProjectResolver(
   options: LocalProjectResolverOptions,
 ): LocalProjectResolver {
-  const localProjects = options.localProjects ?? {};
+  const localProjects = snapshotConfiguredProjects(options.localProjects);
   const fs = options.fs ?? createFileSystem();
   const getBasePath = options.basePath ?? cwd;
   const logger = options.logger;
+  const allowDiscovery = options.allowDiscovery ?? true;
+  const discoveredLocalProjects = new LRUCache<string, string>({ maxEntries: 100 });
+
+  async function exists(path: string): Promise<boolean> {
+    try {
+      return await fs.exists(path);
+    } catch (error) {
+      logger?.warn?.("Local project discovery filesystem check failed", {
+        path,
+        error: getErrorMessage(error),
+      });
+      throw error;
+    }
+  }
 
   async function find(slug: string): Promise<string | undefined> {
-    const mapped = localProjects[slug];
+    if (!isCanonicalLocalProjectSlug(slug)) return undefined;
+    const mapped = Object.hasOwn(localProjects, slug) ? localProjects[slug] : undefined;
     if (mapped) return mapped;
+    if (!allowDiscovery) return undefined;
 
     const projectDirs = ["projects", "data/projects", "examples"];
     const basePath = getBasePath();
-    // Key the discovery cache by the filesystem root as well as the slug: the
-    // cache is process-wide, so the same slug can resolve to different paths
-    // across handlers/workspaces or after a cwd change. Keying by basePath
-    // prevents a stale entry from one root being proxied for another.
+    if (!isAbsolute(basePath) || normalize(basePath) !== basePath) {
+      throw new TypeError("Local project discovery base path must be canonical and absolute");
+    }
     const cacheKey = `${basePath}\0${slug}`;
 
     const cached = discoveredLocalProjects.get(cacheKey);
@@ -57,37 +114,32 @@ export function createLocalProjectResolver(
     const candidatePaths = projectDirs.map((dir) => join(basePath, dir, slug));
 
     const existingPaths = await Promise.all(
-      candidatePaths.map(async (projectPath) => {
-        try {
-          return (await fs.exists(projectPath)) ? projectPath : null;
-        } catch (_) {
-          return null;
-        }
-      }),
+      candidatePaths.map(async (projectPath) => (await exists(projectPath)) ? projectPath : null),
     );
 
     for (const projectPath of existingPaths) {
       if (!projectPath) continue;
 
-      try {
-        const [hasApp, hasPages, hasComponents] = await Promise.all([
-          fs.exists(join(projectPath, "app")),
-          fs.exists(join(projectPath, "pages")),
-          fs.exists(join(projectPath, "components")),
-        ]);
+      const [hasApp, hasPages, hasComponents, ...configMarkers] = await Promise.all([
+        exists(join(projectPath, "app")),
+        exists(join(projectPath, "pages")),
+        exists(join(projectPath, "components")),
+        ...VERYFRONT_CONFIG_FILES.map((file) => exists(join(projectPath, file))),
+      ]);
 
-        if (!hasApp && !hasPages && !hasComponents) continue;
+      if (!hasApp && !hasPages && !hasComponents && !configMarkers.some(Boolean)) continue;
 
-        discoveredLocalProjects.set(cacheKey, projectPath);
-        logger?.debug("Dynamically discovered local project", { slug, projectPath });
-        return projectPath;
-      } catch (_) {
-        // expected: filesystem check may fail
-      }
+      discoveredLocalProjects.set(cacheKey, projectPath);
+      logger?.debug("Dynamically discovered local project", { slug, projectPath });
+      return projectPath;
     }
 
     return undefined;
   }
 
-  return { find };
+  return {
+    localProjects,
+    find,
+    clear: () => discoveredLocalProjects.clear(),
+  };
 }

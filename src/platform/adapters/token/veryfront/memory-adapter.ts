@@ -6,25 +6,19 @@
  */
 
 import { logger as baseLogger } from "#veryfront/utils";
-import type { TokenStorageAdapter } from "./types.ts";
+import {
+  assertTokenStorageKey,
+  assertTokenStoragePrefix,
+  assertTokenStorageValue,
+  type TokenStorageAdapter,
+} from "./types.ts";
 
 const logger = baseLogger.component("memory-token-adapter");
 
-const STORAGE_KEY = "__veryfront_token_storage__" as const;
-
-interface GlobalWithTokenStorage {
-  __veryfront_token_storage__?: Map<string, string>;
-}
-
-const globalStore = globalThis as GlobalWithTokenStorage;
-
 export class MemoryTokenAdapter implements TokenStorageAdapter {
-  private storage: Map<string, string>;
+  private readonly storage = new Map<string, string>();
 
   constructor() {
-    globalStore[STORAGE_KEY] ??= new Map<string, string>();
-    this.storage = globalStore[STORAGE_KEY] ?? new Map<string, string>();
-
     logger.warn(
       "[MemoryTokenAdapter] Using in-memory storage. " +
         "Tokens will be lost on restart. " +
@@ -37,26 +31,32 @@ export class MemoryTokenAdapter implements TokenStorageAdapter {
   }
 
   get(key: string): Promise<string | null> {
+    assertTokenStorageKey(key);
     return Promise.resolve(this.storage.get(key) ?? null);
   }
 
   set(key: string, value: string): Promise<void> {
+    assertTokenStorageKey(key);
+    assertTokenStorageValue(value);
     this.storage.set(key, value);
     return Promise.resolve();
   }
 
   delete(key: string): Promise<void> {
+    assertTokenStorageKey(key);
     this.storage.delete(key);
     return Promise.resolve();
   }
 
   list(prefix?: string): Promise<string[]> {
+    assertTokenStoragePrefix(prefix);
     const keys = Array.from(this.storage.keys());
     if (!prefix) return Promise.resolve(keys);
     return Promise.resolve(keys.filter((k) => k.startsWith(prefix)));
   }
 
   dispose(): void {
+    this.storage.clear();
     logger.debug("Disposed");
   }
 

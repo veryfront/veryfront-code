@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_models",
+      "id": "groq__list_models",
       "name": "List Models",
       "description": "List the models available on Groq",
       "requiresWrite": false,
@@ -50,7 +50,7 @@
       }
     },
     {
-      "id": "get_model",
+      "id": "groq__get_model",
       "name": "Get Model",
       "description": "Get details about a specific Groq model",
       "requiresWrite": false,
@@ -68,7 +68,7 @@
       }
     },
     {
-      "id": "create_chat_completion",
+      "id": "groq__create_chat_completion",
       "name": "Create Chat Completion",
       "description": "Generate a chat completion from a list of messages",
       "requiresWrite": true,
@@ -98,7 +98,7 @@
       }
     },
     {
-      "id": "list_batches",
+      "id": "groq__list_batches",
       "name": "List Batches",
       "description": "List the organization's batch jobs",
       "requiresWrite": false,

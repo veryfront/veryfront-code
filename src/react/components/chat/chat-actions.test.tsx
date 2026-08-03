@@ -8,10 +8,90 @@
  * lands in the (absent) portal, so we assert on what SSR can see (the trigger)
  * and prove the sub-parts + hook contract structurally.
  */
+import { flushSync } from "react-dom";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
-import { assert, assertStringIncludes } from "#veryfront/testing/assert";
+import {
+  type AnchorHTMLAttributes,
+  type ButtonHTMLAttributes,
+  createElement,
+  forwardRef,
+  type ReactElement,
+  useState,
+} from "react";
+import { JSDOM } from "npm:jsdom@28.0.0";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { ChatActions, useChatActions } from "./chat-actions.tsx";
+
+function installDom(dom: JSDOM): () => void {
+  const window = dom.window;
+  const replacements: Record<string, unknown> = {
+    window,
+    document: window.document,
+    navigator: window.navigator,
+    self: window,
+    Node: window.Node,
+    Element: window.Element,
+    HTMLElement: window.HTMLElement,
+    HTMLButtonElement: window.HTMLButtonElement,
+    KeyboardEvent: window.KeyboardEvent,
+    MouseEvent: window.MouseEvent,
+    requestAnimationFrame: window.requestAnimationFrame.bind(window),
+    cancelAnimationFrame: window.cancelAnimationFrame.bind(window),
+  };
+  const previous = new Map<string, PropertyDescriptor | undefined>();
+
+  for (const [key, value] of Object.entries(replacements)) {
+    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      enumerable: true,
+      value,
+      writable: true,
+    });
+  }
+
+  return () => {
+    for (const key of Object.keys(replacements)) {
+      const descriptor = previous.get(key);
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as Record<string, unknown>)[key];
+    }
+    dom.window.close();
+  };
+}
+
+async function waitFor(
+  condition: () => boolean,
+  message: string,
+  timeoutMs = 3_000,
+): Promise<void> {
+  const startedAt = Date.now();
+  while (!condition()) {
+    if (Date.now() - startedAt > timeoutMs) throw new Error(message);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+async function unmount(root: Root): Promise<void> {
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function keydown(
+  window: JSDOM["window"],
+  target: EventTarget,
+  key: string,
+): KeyboardEvent {
+  const event = new window.KeyboardEvent("keydown", {
+    bubbles: true,
+    cancelable: true,
+    key,
+  });
+  target.dispatchEvent(event);
+  return event;
+}
 
 describe("ChatActions — render-or-compose", () => {
   it("preset (no children) renders the default `+` trigger button", () => {
@@ -28,8 +108,8 @@ describe("ChatActions — render-or-compose", () => {
   it("recompose: a custom Trigger renders in place of the default", () => {
     const html = renderToString(
       <ChatActions.Root>
-        <ChatActions.Trigger>
-          <button type="button">custom-trigger</button>
+        <ChatActions.Trigger className="vf-custom-trigger">
+          <button type="button" className="consumer-trigger">custom-trigger</button>
         </ChatActions.Trigger>
         <ChatActions.Content>
           <ChatActions.Item onSelect={() => {}}>Row</ChatActions.Item>
@@ -38,10 +118,107 @@ describe("ChatActions — render-or-compose", () => {
     );
     // The composed trigger renders; the default `+` button does not.
     assertStringIncludes(html, "custom-trigger");
+    assertStringIncludes(html, "vf-custom-trigger");
+    assertStringIncludes(html, "consumer-trigger");
     assert(
       !html.includes("Add attachments and settings"),
       "custom Trigger must replace the default `+` button",
     );
+  });
+
+  it("defaults only native button triggers and leaves opaque semantics to the child", () => {
+    const OpaqueAnchor = forwardRef<
+      HTMLAnchorElement,
+      AnchorHTMLAttributes<HTMLAnchorElement>
+    >((props, ref) => <a {...props} ref={ref} />);
+    const OpaqueButton = forwardRef<
+      HTMLButtonElement,
+      ButtonHTMLAttributes<HTMLButtonElement>
+    >((props, ref) => <button {...props} ref={ref} />);
+
+    const intrinsicButton = renderToString(
+      <ChatActions.Root>
+        <ChatActions.Trigger>
+          {createElement("button", null, "intrinsic")}
+        </ChatActions.Trigger>
+        <ChatActions.Content />
+      </ChatActions.Root>,
+    );
+    const opaqueButton = renderToString(
+      <ChatActions.Root>
+        <ChatActions.Trigger>
+          <OpaqueButton>opaque</OpaqueButton>
+        </ChatActions.Trigger>
+        <ChatActions.Content />
+      </ChatActions.Root>,
+    );
+    const ownedOpaqueButton = renderToString(
+      <ChatActions.Root>
+        <ChatActions.Trigger>
+          <OpaqueButton type="button">owned opaque</OpaqueButton>
+        </ChatActions.Trigger>
+        <ChatActions.Content />
+      </ChatActions.Root>,
+    );
+    const anchor = renderToString(
+      <ChatActions.Root>
+        <ChatActions.Trigger>
+          <a href="#actions">anchor</a>
+        </ChatActions.Trigger>
+        <ChatActions.Content />
+      </ChatActions.Root>,
+    );
+    const opaqueAnchor = renderToString(
+      <ChatActions.Root>
+        <ChatActions.Trigger>
+          <OpaqueAnchor href="#actions">opaque anchor</OpaqueAnchor>
+        </ChatActions.Trigger>
+        <ChatActions.Content />
+      </ChatActions.Root>,
+    );
+
+    assertStringIncludes(intrinsicButton, 'type="button"');
+    assert(!/<button\b[^>]*\btype=/.test(opaqueButton));
+    assertStringIncludes(ownedOpaqueButton, 'type="button"');
+    assert(!/<a\b[^>]*\btype=/.test(anchor), "anchor triggers must not receive button type");
+    assert(
+      !/<a\b[^>]*\btype=/.test(opaqueAnchor),
+      "opaque anchor triggers must not receive button type",
+    );
+  });
+
+  it("keeps a custom button trigger from submitting its containing form", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { pretendToBeVisual: true, url: "https://example.com/" },
+    );
+    const restore = installDom(dom);
+    const root = createRoot(document.getElementById("root")!);
+    let submissions = 0;
+
+    try {
+      flushSync(() => {
+        root.render(
+          <form onSubmit={() => submissions += 1}>
+            <ChatActions.Root>
+              <ChatActions.Trigger>
+                {createElement("button", null, "Open actions")}
+              </ChatActions.Trigger>
+              <ChatActions.Content />
+            </ChatActions.Root>
+          </form>,
+        );
+      });
+      const trigger = document.querySelector<HTMLButtonElement>("button");
+      assert(trigger);
+      trigger.click();
+
+      assertEquals(trigger.type, "button");
+      assertEquals(submissions, 0);
+    } finally {
+      await unmount(root);
+      restore();
+    }
   });
 
   it("Trigger className merges onto the default `+` button", () => {
@@ -78,5 +255,88 @@ describe("ChatActions — render-or-compose", () => {
       threw = true;
     }
     assert(threw, "useChatActions must throw outside a ChatActions");
+  });
+
+  it("keeps settings open while toggling and owns submenu keyboard navigation", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { pretendToBeVisual: true, url: "https://example.com/" },
+    );
+    const restore = installDom(dom);
+    const rootElement = document.getElementById("root");
+    assert(rootElement);
+    const root = createRoot(rootElement);
+
+    function StatefulActions(): ReactElement {
+      const [autoSubmit, setAutoSubmit] = useState(false);
+      const [autoFixErrors, setAutoFixErrors] = useState(false);
+      return (
+        <div data-vf-chat="">
+          <ChatActions
+            defaultOpen
+            settings={{
+              autoSubmit,
+              autoFixErrors,
+              onAutoSubmitChange: setAutoSubmit,
+              onAutoFixErrorsChange: setAutoFixErrors,
+            }}
+          />
+        </div>
+      );
+    }
+
+    try {
+      flushSync(() => root.render(<StatefulActions />));
+      await waitFor(
+        () => document.querySelectorAll('[role="menu"]').length === 1,
+        "top-level actions menu did not portal",
+      );
+      const trigger = document.querySelector<HTMLElement>(
+        '[role="menuitem"][aria-haspopup="menu"]',
+      );
+      assert(trigger);
+
+      const openEvent = keydown(dom.window, trigger, "ArrowRight");
+      assertEquals(openEvent.defaultPrevented, true);
+      await waitFor(
+        () => document.querySelectorAll('[role="menu"]').length === 2,
+        "settings submenu did not open",
+      );
+      const items = [...document.querySelectorAll<HTMLElement>(
+        '[role="menuitemcheckbox"]',
+      )];
+      assertEquals(items.length, 2);
+      await waitFor(
+        () => document.activeElement === items[0],
+        "settings submenu did not focus its first item",
+      );
+
+      flushSync(() => {
+        items[0]!.dispatchEvent(
+          new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true }),
+        );
+        items[0]!.click();
+      });
+      assertEquals(items[0]!.getAttribute("aria-checked"), "true");
+      assertEquals(document.querySelectorAll('[role="menu"]').length, 2);
+
+      keydown(dom.window, items[0]!, "ArrowDown");
+      assertEquals(document.activeElement, items[1]);
+      const closeEvent = keydown(dom.window, items[1]!, "Escape");
+      assertEquals(closeEvent.defaultPrevented, true);
+      await waitFor(
+        () => document.querySelectorAll('[role="menu"]').length === 1,
+        "Escape did not close only the settings submenu",
+      );
+      assertEquals(document.activeElement, trigger);
+      assertEquals(
+        document.querySelector('[aria-label="Add attachments and settings"]')
+          ?.getAttribute("aria-expanded"),
+        "true",
+      );
+    } finally {
+      await unmount(root);
+      restore();
+    }
   });
 });

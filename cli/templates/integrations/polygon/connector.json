@@ -28,7 +28,7 @@
   ],
   "tools": [
     {
-      "id": "get_aggregates",
+      "id": "polygon__get_aggregates",
       "name": "Get Aggregate Bars",
       "description": "Get OHLCV aggregate bars (candles) for a stock ticker over a custom date range and time window",
       "requiresWrite": false,
@@ -109,7 +109,7 @@
       }
     },
     {
-      "id": "get_previous_close",
+      "id": "polygon__get_previous_close",
       "name": "Get Previous Close",
       "description": "Get the previous trading day's open, high, low, close, and volume for a stock ticker",
       "requiresWrite": false,
@@ -133,7 +133,7 @@
       }
     },
     {
-      "id": "get_daily_open_close",
+      "id": "polygon__get_daily_open_close",
       "name": "Get Daily Open/Close",
       "description": "Get the open, close, high, low, volume, and pre-market/after-hours prices for a stock ticker on a specific date",
       "requiresWrite": false,
@@ -163,7 +163,7 @@
       }
     },
     {
-      "id": "list_tickers",
+      "id": "polygon__list_tickers",
       "name": "Search Tickers",
       "description": "Search and list ticker symbols across stocks, indices, forex, and crypto reference data",
       "requiresWrite": false,
@@ -227,7 +227,7 @@
       }
     },
     {
-      "id": "get_ticker_details",
+      "id": "polygon__get_ticker_details",
       "name": "Get Ticker Details",
       "description": "Get reference details for a single ticker: company name, market, exchange, market cap, description, and identifiers",
       "requiresWrite": false,
@@ -250,7 +250,7 @@
       }
     },
     {
-      "id": "get_market_status",
+      "id": "polygon__get_market_status",
       "name": "Get Market Status",
       "description": "Get the current trading status of US exchanges and market-wide sessions (open, closed, early hours, after hours) — a cheap check before quoting prices",
       "requiresWrite": false,
@@ -260,7 +260,7 @@
       }
     },
     {
-      "id": "get_ticker_news",
+      "id": "polygon__get_ticker_news",
       "name": "Get Ticker News",
       "description": "Get recent news articles for a ticker, including publisher, summary, and per-ticker sentiment insights",
       "requiresWrite": false,

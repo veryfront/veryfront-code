@@ -40,7 +40,7 @@
   ],
   "tools": [
     {
-      "id": "find_customer",
+      "id": "salesforce__find_customer",
       "name": "Find Customer",
       "description": "Find customer contacts with account context for support triage. Pass a focused SOQL query when searching by email, name, phone, or account.",
       "requiresWrite": false,
@@ -61,7 +61,7 @@
       }
     },
     {
-      "id": "search_accounts",
+      "id": "salesforce__search_accounts",
       "name": "Search Accounts",
       "description": "Search Salesforce accounts with business context for support or sales work",
       "requiresWrite": false,
@@ -82,7 +82,7 @@
       }
     },
     {
-      "id": "get_account",
+      "id": "salesforce__get_account",
       "name": "Get Account",
       "description": "Get detailed information about a specific account",
       "requiresWrite": false,
@@ -100,7 +100,7 @@
       }
     },
     {
-      "id": "search_contacts",
+      "id": "salesforce__search_contacts",
       "name": "Search Contacts",
       "description": "Search contacts with account fields for CRM follow-up and support context",
       "requiresWrite": false,
@@ -121,7 +121,7 @@
       }
     },
     {
-      "id": "get_contact",
+      "id": "salesforce__get_contact",
       "name": "Get Contact",
       "description": "Get a Salesforce contact by ID",
       "requiresWrite": false,
@@ -139,7 +139,7 @@
       }
     },
     {
-      "id": "list_cases",
+      "id": "salesforce__list_cases",
       "name": "List Cases",
       "description": "List Service Cloud cases for a customer, account, owner, status, or queue",
       "requiresWrite": false,
@@ -160,7 +160,7 @@
       }
     },
     {
-      "id": "get_case",
+      "id": "salesforce__get_case",
       "name": "Get Case",
       "description": "Get a Service Cloud case by ID",
       "requiresWrite": false,
@@ -178,7 +178,7 @@
       }
     },
     {
-      "id": "list_case_activity",
+      "id": "salesforce__list_case_activity",
       "name": "List Case Activity",
       "description": "List case comments for support handoff, timeline review, and resolution context",
       "requiresWrite": false,
@@ -199,7 +199,7 @@
       }
     },
     {
-      "id": "search_knowledge_articles",
+      "id": "salesforce__search_knowledge_articles",
       "name": "Search Knowledge Articles",
       "description": "Search published Salesforce Knowledge articles that can help answer or deflect a support case",
       "requiresWrite": false,
@@ -220,7 +220,7 @@
       }
     },
     {
-      "id": "list_opportunities",
+      "id": "salesforce__list_opportunities",
       "name": "List Opportunities",
       "description": "List Sales Cloud opportunities for account planning and customer context",
       "requiresWrite": false,
@@ -241,7 +241,7 @@
       }
     },
     {
-      "id": "create_lead",
+      "id": "salesforce__create_lead",
       "name": "Create Lead",
       "description": "Create a new lead in Salesforce CRM",
       "requiresWrite": true,
@@ -279,7 +279,7 @@
       }
     },
     {
-      "id": "create_case",
+      "id": "salesforce__create_case",
       "name": "Create Case",
       "description": "Create a Service Cloud case for customer support",
       "requiresWrite": true,
@@ -326,7 +326,7 @@
       }
     },
     {
-      "id": "add_case_comment",
+      "id": "salesforce__add_case_comment",
       "name": "Add Case Comment",
       "description": "Add a support note or customer-visible comment to a Service Cloud case",
       "requiresWrite": true,
@@ -353,7 +353,7 @@
       }
     },
     {
-      "id": "update_case",
+      "id": "salesforce__update_case",
       "name": "Update Case",
       "description": "Update status, priority, owner, or resolution fields on a Service Cloud case",
       "requiresWrite": true,
@@ -397,7 +397,7 @@
       }
     },
     {
-      "id": "describe_object",
+      "id": "salesforce__describe_object",
       "name": "Describe Object",
       "description": "Get metadata and field definitions for a Salesforce object",
       "requiresWrite": false,
@@ -415,7 +415,7 @@
       }
     },
     {
-      "id": "run_soql_query",
+      "id": "salesforce__run_soql_query",
       "name": "Run SOQL Query",
       "description": "Run a read-only SOQL query for expert inspection when curated tools are not enough",
       "requiresWrite": false,

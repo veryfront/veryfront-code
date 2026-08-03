@@ -58,8 +58,9 @@ describe("server/utils/domain-lookup", () => {
       assertEquals(getEnvironmentType(makeResult("development")), "preview");
     });
 
-    it("should return production for unrecognized env names", () => {
-      assertEquals(getEnvironmentType(makeResult("custom")), "production");
+    it("should return preview for unrecognized env names", () => {
+      // Unknown env names default to "preview" (safe: does not expose production content).
+      assertEquals(getEnvironmentType(makeResult("custom")), "preview");
     });
 
     it("should return production for env containing 'production' substring", () => {

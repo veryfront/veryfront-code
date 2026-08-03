@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_workspaces",
+      "id": "anthropic__list_workspaces",
       "name": "list-workspaces",
       "description": "List all workspaces in the organization",
       "requiresWrite": false,
@@ -75,7 +75,7 @@
       }
     },
     {
-      "id": "get_usage",
+      "id": "anthropic__get_usage",
       "name": "get-usage",
       "description": "Get API usage statistics for a date range",
       "requiresWrite": false,
@@ -121,7 +121,7 @@
       }
     },
     {
-      "id": "list_api_keys",
+      "id": "anthropic__list_api_keys",
       "name": "list-api-keys",
       "description": "List API keys for a workspace or organization",
       "requiresWrite": false,
@@ -177,7 +177,7 @@
       }
     },
     {
-      "id": "list_members",
+      "id": "anthropic__list_members",
       "name": "list-members",
       "description": "List all members in the organization",
       "requiresWrite": false,
@@ -227,7 +227,7 @@
       }
     },
     {
-      "id": "get_organization",
+      "id": "anthropic__get_organization",
       "name": "get-organization",
       "description": "Get organization details and settings",
       "requiresWrite": false,

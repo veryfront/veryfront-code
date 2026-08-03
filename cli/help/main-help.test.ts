@@ -13,8 +13,30 @@ describe("main-help", () => {
       assertEquals(typeof showMainHelp, "function");
     });
 
-    // Note: showMainHelp calls console.log directly
-    // Full output testing would require mocking console.log
-    // The function behavior is verified through integration testing
+    it("documents the non-interactive mode", () => {
+      const originalLog = console.log;
+      const lines: string[] = [];
+      console.log = (...args: unknown[]) => lines.push(args.join(" "));
+      try {
+        showMainHelp();
+      } finally {
+        console.log = originalLog;
+      }
+
+      const output = lines.join("\n");
+      assertEquals(output.includes("--no-input"), true);
+      assertEquals(output.includes("--no-color"), true);
+      assertEquals(output.includes("--no-animation"), true);
+      assertEquals(output.includes("--verbose"), true);
+      assertEquals(output.includes("--quiet"), true);
+      assertEquals(
+        lines.find((line) => line.trimStart().startsWith("Docs:"))?.trim(),
+        "Docs:    https://veryfront.com/docs",
+      );
+      assertEquals(
+        lines.find((line) => line.trimStart().startsWith("Support:"))?.trim(),
+        "Support: https://github.com/veryfront/veryfront-code/issues",
+      );
+    });
   });
 });

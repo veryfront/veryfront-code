@@ -2,10 +2,10 @@ import { extract } from "#std/front-matter/yaml.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
-import { createRuntimePromptBlock } from "./prompt-block.ts";
-import { buildRuntimeAvailableSkillsPromptBlock } from "./skill-prompt.ts";
+import { buildAgentCallContext } from "./call-context.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
-import { AGENT_DELEGATE_TOOL_PREFIX, isProviderSafeDelegateId } from "./agent-delegation-names.ts";
+import { normalizeAgentDelegateIds } from "./agent-delegation-names.ts";
+import { CONFIG_INVALID } from "#veryfront/errors";
 
 /** Zod schema for get runtime agent thinking config. */
 export const getRuntimeAgentThinkingConfigSchema = defineSchema((v) =>
@@ -25,6 +25,28 @@ export type RuntimeAgentThinkingConfig = InferSchema<
   ReturnType<typeof getRuntimeAgentThinkingConfigSchema>
 >;
 
+const getRuntimeAgentMcpToolPolicySchema = defineSchema((v) =>
+  v.object({
+    allow: v.array(v.string().min(1)).optional(),
+    deny: v.array(v.string().min(1)).optional(),
+    approval: v.literal("never").optional(),
+  })
+);
+
+/** Schema for a first-party MCP preset that is safe to serialize with an agent definition. */
+export const getRuntimeAgentMcpServerConfigSchema = defineSchema((v) =>
+  v.object({
+    kind: v.union([v.literal("veryfront-api"), v.literal("veryfront-studio")]),
+    id: v.string().min(1).optional(),
+    toolPolicy: getRuntimeAgentMcpToolPolicySchema().optional(),
+  })
+);
+
+/** First-party MCP preset carried over the hosted agent-definition boundary. */
+export type RuntimeAgentMcpServerConfig = InferSchema<
+  ReturnType<typeof getRuntimeAgentMcpServerConfigSchema>
+>;
+
 /** Zod schema for get runtime agent markdown definition. */
 export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
   v.object({
@@ -38,14 +60,14 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
     temperature: v.number().min(0).max(2).optional(),
     maxSteps: v.number().optional(),
     providerTools: v.array(v.string().min(1)).optional(),
-    skills: v.union([v.literal(true), v.array(v.string().min(1))]).optional(),
+    skills: v.union([v.literal(true), v.literal(false), v.array(v.string().min(1))]).optional(),
     tools: v.union([v.literal(true), v.array(v.string().min(1))]).optional(),
     delegates: v.array(v.string().min(1)).optional(),
+    mcpServers: v.array(getRuntimeAgentMcpServerConfigSchema()).optional(),
   })
 );
 
-/** Default value for runtime agent context marker. */
-export const DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER = "<!-- veryfront-runtime-context -->";
+export { DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER } from "./call-context.ts";
 
 /** Schema for runtime agent markdown definition.
  * @deprecated Use getRuntimeAgentMarkdownDefinitionSchema()
@@ -84,6 +106,7 @@ export type CreateRuntimeAgentSystemMessagesInput = {
   agent: RuntimeAgentMarkdownDefinition;
   runtimeBlocks?: readonly string[];
   skills?: readonly RuntimeSkillDefinition[];
+  availableToolNames?: readonly string[];
   environmentContext?: string;
   runtimeContextMarker?: string;
 };
@@ -101,52 +124,48 @@ function parseThinking(value: unknown): RuntimeAgentThinkingConfig | undefined {
   return undefined;
 }
 
-function parseProviderTools(value: unknown): unknown[] | undefined {
+function parseStringArray(value: unknown, field: string): string[] {
   if (!Array.isArray(value)) {
-    return undefined;
+    throw CONFIG_INVALID.create({
+      detail: `Agent frontmatter "${field}" must be an array of non-empty strings.`,
+    });
   }
 
-  return value;
+  return value.map((entry, index) => {
+    if (typeof entry !== "string" || entry.trim().length === 0) {
+      throw CONFIG_INVALID.create({
+        detail: `Agent frontmatter "${field}" entry ${index + 1} must be a non-empty string.`,
+      });
+    }
+    return entry.trim();
+  });
 }
 
-function parseCapabilitySelector(value: unknown): true | string[] | undefined {
+function parseCapabilitySelector(value: unknown, field: string): true | string[] {
   if (value === true) {
     return true;
   }
-  if (Array.isArray(value)) {
-    const ids = value
-      .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
-      .map((entry) => entry.trim());
-    return ids.length > 0 ? ids : undefined;
-  }
-  return undefined;
+  return parseStringArray(value, field);
 }
 
-function parseDelegates(value: unknown): string[] | undefined {
+function parseSkillSelector(value: unknown): true | false | string[] {
+  if (value === false) {
+    return false;
+  }
+  return parseCapabilitySelector(value, "skills");
+}
+
+function parseDelegates(value: unknown): string[] {
+  return parseStringArray(value, "delegates");
+}
+
+function parseMcpServers(value: unknown): RuntimeAgentMcpServerConfig[] {
   if (!Array.isArray(value)) {
-    return undefined;
+    throw CONFIG_INVALID.create({
+      detail: 'Agent frontmatter "mcp-servers" must be an array of MCP server configurations.',
+    });
   }
-  const ids = value
-    .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
-    .map((entry) => entry.trim());
-  return ids.length > 0 ? ids : undefined;
-}
-
-function validateDelegates(agentId: string, delegates: string[] | undefined): void {
-  if (!delegates) {
-    return;
-  }
-  for (const delegateId of delegates) {
-    if (delegateId === agentId) {
-      throw new Error(`Agent "${agentId}" cannot delegate to itself.`);
-    }
-    if (!isProviderSafeDelegateId(delegateId)) {
-      throw new Error(
-        `Delegate id "${delegateId}" for agent "${agentId}" produces an invalid tool name ` +
-          `"${AGENT_DELEGATE_TOOL_PREFIX}${delegateId}" (must match [A-Za-z0-9_-], max 64 chars).`,
-      );
-    }
-  }
+  return value.map((server) => getRuntimeAgentMcpServerConfigSchema().parse(server));
 }
 
 /** Definition for parse runtime agent markdown. */
@@ -168,11 +187,34 @@ export function parseRuntimeAgentMarkdownDefinition(
   const thinking = parseThinking(attrs.thinking);
   const temperature = typeof attrs.temperature === "number" ? attrs.temperature : undefined;
   const maxSteps = typeof attrs["max-steps"] === "number" ? attrs["max-steps"] : undefined;
-  const providerTools = parseProviderTools(attrs["provider-tools"]);
-  const skills = parseCapabilitySelector(attrs.skills);
-  const tools = parseCapabilitySelector(attrs.tools);
-  const delegates = parseDelegates(attrs.delegates);
-  validateDelegates(parsedInput.id, delegates);
+  const providerTools = Object.hasOwn(attrs, "provider-tools")
+    ? parseStringArray(attrs["provider-tools"], "provider-tools")
+    : undefined;
+  const skills = Object.hasOwn(attrs, "skills") ? parseSkillSelector(attrs.skills) : undefined;
+  const tools = Object.hasOwn(attrs, "tools")
+    ? parseCapabilitySelector(attrs.tools, "tools")
+    : undefined;
+  const delegates = normalizeAgentDelegateIds(
+    parsedInput.id,
+    Object.hasOwn(attrs, "delegates") ? parseDelegates(attrs.delegates) : undefined,
+  );
+  if (tools === true && delegates?.length) {
+    throw CONFIG_INVALID.create({
+      detail:
+        `Agent frontmatter for "${parsedInput.id}" cannot combine delegates with tools: true. ` +
+        "Declare the required tools by name so delegate capabilities remain explicit.",
+    });
+  }
+  if (Object.hasOwn(attrs, "mcp-servers") && Object.hasOwn(attrs, "mcpServers")) {
+    throw CONFIG_INVALID.create({
+      detail: 'Agent frontmatter must use only one of "mcp-servers" or "mcpServers".',
+    });
+  }
+  const mcpServers = Object.hasOwn(attrs, "mcp-servers")
+    ? parseMcpServers(attrs["mcp-servers"])
+    : Object.hasOwn(attrs, "mcpServers")
+    ? parseMcpServers(attrs.mcpServers)
+    : undefined;
 
   return getRuntimeAgentMarkdownDefinitionSchema().parse({
     id: parsedInput.id,
@@ -188,69 +230,32 @@ export function parseRuntimeAgentMarkdownDefinition(
     ...(skills === undefined ? {} : { skills }),
     ...(tools === undefined ? {} : { tools }),
     ...(delegates === undefined ? {} : { delegates }),
+    ...(mcpServers === undefined ? {} : { mcpServers }),
   });
 }
 
-function splitRuntimeAgentInstructions(input: {
-  instructions: string;
-  runtimeContextMarker: string;
-}): { before: string; after: string | null } {
-  const markerIndex = input.instructions.indexOf(input.runtimeContextMarker);
-
-  if (markerIndex < 0) {
-    return { before: input.instructions, after: null };
-  }
-
-  return {
-    before: input.instructions.slice(0, markerIndex).trim(),
-    after: input.instructions.slice(markerIndex + input.runtimeContextMarker.length).trim() || null,
-  };
-}
-
-/** Create runtime agent system messages. */
+/**
+ * Create runtime agent system messages.
+ *
+ * Assembly is delegated to {@link buildAgentCallContext}, which deduplicates:
+ * a runtime block whose leading tag already appears as a complete element in
+ * the agent's instructions is dropped rather than emitted twice.
+ */
 export function createRuntimeAgentSystemMessages(
   input: CreateRuntimeAgentSystemMessagesInput,
 ): ChatSystemMessage[] {
-  const runtimeContextMarker = input.runtimeContextMarker ?? DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER;
-  const splitInstructions = splitRuntimeAgentInstructions({
+  return buildAgentCallContext({
     instructions: input.agent.instructions,
-    runtimeContextMarker,
+    ...(input.runtimeContextMarker === undefined
+      ? {}
+      : { runtimeContextMarker: input.runtimeContextMarker }),
+    ...(input.runtimeBlocks === undefined ? {} : { extraBlocks: input.runtimeBlocks }),
+    ...(input.skills === undefined ? {} : { skills: input.skills }),
+    ...(input.availableToolNames === undefined
+      ? {}
+      : { availableToolNames: input.availableToolNames }),
+    ...(input.environmentContext === undefined
+      ? {}
+      : { environmentContext: input.environmentContext }),
   });
-  const staticParts: string[] = [];
-
-  if (splitInstructions.before) {
-    staticParts.push(splitInstructions.before);
-  }
-
-  staticParts.push(...(input.runtimeBlocks ?? []).filter((block) => block.length > 0));
-
-  if (splitInstructions.after) {
-    staticParts.push(splitInstructions.after);
-  }
-
-  if (input.skills?.length) {
-    staticParts.push(buildRuntimeAvailableSkillsPromptBlock(input.skills));
-  }
-
-  const result: ChatSystemMessage[] = [
-    {
-      role: "system",
-      content: staticParts.join("\n\n"),
-      providerOptions: {
-        anthropic: { cacheControl: { type: "ephemeral" } },
-      },
-    },
-  ];
-
-  if (input.environmentContext) {
-    result.push({
-      role: "system",
-      content: createRuntimePromptBlock({
-        name: "environment_context",
-        content: input.environmentContext,
-      }),
-    });
-  }
-
-  return result;
 }

@@ -1,141 +1,64 @@
 import { getEnv } from "#veryfront/platform/compat/process.ts";
-import { logger as baseLogger } from "./logger/logger.ts";
-import { DEPENDENCY_MISSING, INITIALIZATION_ERROR } from "#veryfront/errors";
+import {
+  ensureRedisRuntimeProvider,
+  getRegisteredRedisRuntimeProvider,
+} from "#veryfront/extensions/distributed/defaults.ts";
+import type {
+  RedisClient,
+  RedisClientOptions,
+  RedisRuntimeProvider,
+} from "#veryfront/extensions/distributed/redis-runtime-provider.ts";
 
-const logger = baseLogger.component("redis");
+export type { RedisClient, RedisClientOptions };
 
-export interface RedisClient {
-  connect(): Promise<void>;
-  disconnect(): Promise<void>;
-  get(key: string): Promise<string | null>;
-  mGet(keys: string[]): Promise<Array<string | null>>;
-  set(key: string, value: string, options?: { EX?: number }): Promise<string | null>;
-  del(key: string | string[]): Promise<number>;
-  scan(
-    cursor: number,
-    options?: { MATCH?: string; COUNT?: number },
-  ): Promise<{ cursor: number; keys: string[] }>;
-  expire(key: string, seconds: number): Promise<number>;
-  on?(event: string, listener: (...args: unknown[]) => void): void;
-  isOpen?: boolean;
+const sharedClientOwners = new Set<Readonly<RedisRuntimeProvider>>();
+const resolvingOwners = new Set<Promise<void>>();
+let disconnecting: Promise<void> | null = null;
+
+export function getRedisClient(options: RedisClientOptions = {}): Promise<RedisClient> {
+  if (disconnecting) return disconnecting.then(() => getRedisClient(options));
+
+  const resolving = ensureRedisRuntimeProvider().then((provider) => {
+    sharedClientOwners.add(provider);
+    return provider;
+  });
+  const trackedResolution = resolving.then(
+    () => undefined,
+    () => undefined,
+  ).finally(() => {
+    resolvingOwners.delete(trackedResolution);
+  });
+  resolvingOwners.add(trackedResolution);
+  return resolving.then((provider) => provider.getClient(options));
 }
 
-export interface RedisClientOptions {
-  url?: string;
-  connectTimeout?: number;
-  autoReconnect?: boolean;
-  tls?: boolean;
-  password?: string;
-  username?: string;
-}
+/** Disconnect and clear the shared client so the next call reconnects fresh. */
+export function disconnectRedisClient(): Promise<void> {
+  if (disconnecting) return disconnecting;
 
-/**
- * Minimal subset of `@redis/client`'s `createClient` options that we actually
- * pass. Declared locally so we don't depend on the untyped npm surface (the
- * module is loaded via a dynamic `import()` and is otherwise `any`).
- */
-interface RedisClientFactoryOptions {
-  url?: string;
-  socket?: { tls?: boolean };
-  password?: string;
-  username?: string;
-}
-
-let sharedClient: RedisClient | null = null;
-let connectionPromise: Promise<RedisClient> | null = null;
-let isConnecting = false;
-let connectionFailed = false;
-let lastConnectionAttempt = 0;
-
-const RECONNECT_DELAY_MS = 5000;
-
-export async function getRedisClient(options: RedisClientOptions = {}): Promise<RedisClient> {
-  if (sharedClient && sharedClient.isOpen !== false) return sharedClient;
-
-  if (connectionFailed && Date.now() - lastConnectionAttempt < RECONNECT_DELAY_MS) {
-    throw INITIALIZATION_ERROR.create({
-      detail: "[Redis] Connection recently failed, waiting before retry",
-    });
-  }
-
-  if (isConnecting && connectionPromise) return connectionPromise;
-
-  isConnecting = true;
-  lastConnectionAttempt = Date.now();
-  connectionPromise = createClient(options);
-
-  try {
-    sharedClient = await connectionPromise;
-    connectionFailed = false;
-    logger.info("Connected successfully");
-    return sharedClient;
-  } catch (error) {
-    connectionFailed = true;
-    sharedClient = null;
-    throw error;
-  } finally {
-    isConnecting = false;
-    connectionPromise = null;
-  }
-}
-
-async function createClient(options: RedisClientOptions): Promise<RedisClient> {
-  let createClientFn: ((opts: RedisClientFactoryOptions) => RedisClient) | undefined;
-
-  try {
-    const redisClientModule = "npm:@redis/client@1.5.8";
-    const mod = await import(redisClientModule);
-    createClientFn = mod.createClient as (opts: RedisClientFactoryOptions) => RedisClient;
-  } catch (error) {
-    logger.debug("Failed to load @redis/client module", { error });
-    throw DEPENDENCY_MISSING.create({
-      detail:
-        "[Redis] Failed to load @redis/client. Install with: deno add npm:@redis/client@1.5.8",
-    });
-  }
-
-  const url = options.url ?? getEnv("REDIS_URL");
-  const useTls = options.tls ?? url?.startsWith("rediss://") ?? false;
-
-  if (!useTls && getEnv("NODE_ENV") === "production") {
-    logger.warn(
-      "Redis connection without TLS in production. Set REDIS_URL to rediss:// or pass tls: true.",
+  const pending = (async () => {
+    await Promise.allSettled([...resolvingOwners]);
+    const currentProvider = getRegisteredRedisRuntimeProvider();
+    if (currentProvider) sharedClientOwners.add(currentProvider);
+    const owners = [...sharedClientOwners];
+    const results = await Promise.allSettled(
+      owners.map((provider) => provider.disconnectClient()),
     );
-  }
-
-  const clientOpts: RedisClientFactoryOptions = { url };
-  if (useTls) {
-    clientOpts.socket = { tls: true };
-  }
-  const password = options.password ?? getEnv("REDIS_PASSWORD");
-  if (password) {
-    clientOpts.password = password;
-  }
-  const username = options.username ?? getEnv("REDIS_USERNAME");
-  if (username) {
-    clientOpts.username = username;
-  }
-
-  const client = createClientFn(clientOpts);
-
-  if (typeof client.on === "function") {
-    client.on("error", (err: unknown) => {
-      logger.error("Client error", err);
-      connectionFailed = true;
+    const failures: unknown[] = [];
+    results.forEach((result, index) => {
+      if (result.status === "fulfilled") sharedClientOwners.delete(owners[index]!);
+      else failures.push(result.reason);
     });
-
-    client.on("reconnecting", () => {
-      logger.info("Reconnecting...");
-    });
-
-    client.on("ready", () => {
-      logger.info("Ready");
-      connectionFailed = false;
-    });
-  }
-
-  await client.connect();
-  return client;
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(failures, "Redis shared client disconnect failed");
+    }
+  })();
+  const tracked = pending.finally(() => {
+    if (disconnecting === tracked) disconnecting = null;
+  });
+  disconnecting = tracked;
+  return tracked;
 }
 
 export function isRedisConfigured(): boolean {

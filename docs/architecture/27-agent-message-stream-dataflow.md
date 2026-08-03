@@ -167,6 +167,12 @@ when the tool input is complete enough to commit.
 `invoke_agent` creates an isolated child run. The child receives its own
 conversation context and tool inventory. The parent transcript receives a compact
 summary/result and durable child-run identifiers, not the full child transcript.
+For cross-project delegation, `project_reference` accepts a project UUID or slug.
+The hosted runtime resolves it to the canonical project UUID before selecting
+project-agent settings, changing project context, or creating the child run.
+The default `result_mode` is `summary`; use `structured` when critical contract
+ids such as model ids, tool ids, provider tool ids, and import paths must survive
+a bounded summary. Use `full` only when the parent needs exact delegated output.
 
 When the parent needs the child to act on critical facts from prior tool
 results, it should pass generic `context`. This is the child execution payload:
@@ -302,3 +308,37 @@ domain outcome as an infrastructure failure.
 - [Kimi models overview](https://platform.kimi.ai/docs/models)
 - [Kimi K2.6 quickstart](https://platform.kimi.ai/docs/guide/kimi-k2-6-quickstart)
 - [Kimi OpenAI migration guide](https://platform.kimi.ai/docs/guide/migrating-from-openai-to-kimi)
+
+## Stream Lifecycle frames and delivery boundary
+
+Every provider stream attempt is interpreted once by the Stream Lifecycle
+module into three frame classes:
+
+- **Semantic** frames change the reconstructable run state (text, reasoning,
+  committed tool input, provider tool output, usage, step finish).
+- **Telemetry** frames are observational (tool input status, heartbeats).
+  Status telemetry cannot extend semantic deadlines or turn an empty response
+  into a valid one.
+- **Diagnostic** frames are restricted evidence (protocol repairs, deadline
+  decisions) and are never public run history.
+
+Local tool execution occurs after a `tool_handoff` Stream Outcome in the outer
+agent loop; a provider-attempt boundary never terminates the agent run.
+
+```text
+provider attempt
+  RuntimeStreamPart -> Provider Adapter -> Stream Lifecycle -> Live Adapter -> Data Stream bytes
+                                              |
+                                              +-> Stream Outcome
+
+agent loop
+  provider attempt -> local tool execution -> provider attempt -> finalization
+
+hosted compatibility through Gate 4
+  Data Stream bytes -> ChatUiMessageChunk -> durable mirror / AG-UI
+
+Phase 5 target
+  lifecycle frames + outcomes + local tool events + fallback + child progress
+                              -> source-tagged Stream Delivery envelope
+                              -> live / durable / AG-UI Adapters
+```

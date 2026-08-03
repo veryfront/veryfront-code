@@ -20,6 +20,7 @@ import {
   splitKnownFileExtension,
 } from "./read-operations-helpers.ts";
 import type { ResolvedContentContext } from "./types.ts";
+import { requireBoundedFileReadLimit } from "../../bounded-file-read.ts";
 
 export {
   endRequestMetrics,
@@ -78,6 +79,94 @@ export class ReadOperations {
     );
   }
 
+  readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    const admittedLimit = requireBoundedFileReadLimit(byteLimit);
+    return withSpan(
+      "fs.veryfront.readFileBytesWithinLimit",
+      async () => {
+        const normalizedPath = this.normalizer.normalize(path);
+        assertProjectSourcePath(normalizedPath);
+        const context = this.contextProvider?.getContentContext() ?? null;
+        const { apiPath, hasKnownExtension, isPublished } = buildReadFetchState({
+          normalizedPath,
+          contentContext: context,
+          contextProvider: this.contextProvider,
+          getOriginalApiPath: this.getOriginalApiPath,
+        });
+
+        try {
+          const lastSlash = normalizedPath.lastIndexOf("/");
+          const hasExplicitExtension = hasKnownExtension ||
+            normalizedPath.indexOf(".", lastSlash + 1) !== -1;
+          if (!hasExplicitExtension) {
+            for (const candidate of buildExtensionCandidatePaths(normalizedPath)) {
+              const candidateApiPath = this.getOriginalApiPath?.(candidate) ?? candidate;
+              try {
+                return await this.readExactApiPath(
+                  candidateApiPath,
+                  admittedLimit,
+                  isPublished,
+                  context,
+                  true,
+                );
+              } catch (error) {
+                if (!isNotFoundLikeError(error)) throw error;
+              }
+            }
+          }
+
+          try {
+            return await this.readExactApiPath(apiPath, admittedLimit, isPublished, context);
+          } catch (error) {
+            if (!isPublished || !isNotFoundLikeError(error)) throw error;
+            const split = splitKnownFileExtension(apiPath);
+            if (!split) throw error;
+            for (const extension of EXTENSION_PRIORITY) {
+              if (extension === split.originalExtension) continue;
+              try {
+                return await this.readExactApiPath(
+                  split.basePath + extension,
+                  admittedLimit,
+                  true,
+                  context,
+                  true,
+                );
+              } catch (candidateError) {
+                if (!isNotFoundLikeError(candidateError)) throw candidateError;
+              }
+            }
+            throw error;
+          }
+        } catch (error) {
+          if (isNotFoundLikeError(error)) {
+            throw createNotFoundLikeError(normalizedPath);
+          }
+          throw error;
+        }
+      },
+      { "fs.path": path, "fs.maximum_bytes": admittedLimit },
+    );
+  }
+
+  private readExactApiPath(
+    apiPath: string,
+    admittedLimit: number,
+    isPublished: boolean,
+    context: ResolvedContentContext | null,
+    expectedMissing = false,
+  ): Promise<Uint8Array> {
+    const options = expectedMissing ? { expectedMissing: true } : undefined;
+    return isPublished
+      ? this.client.getPublishedFileContentBytesWithinLimit(
+        apiPath,
+        admittedLimit,
+        context?.releaseId ?? undefined,
+        context?.environmentName ?? undefined,
+        options,
+      )
+      : this.client.getFileContentBytesWithinLimit(apiPath, admittedLimit, options);
+  }
+
   readTextFile(path: string): Promise<string> {
     return withSpan(
       "fs.veryfront.readTextFile",
@@ -85,6 +174,19 @@ export class ReadOperations {
         const normalizedPath = this.normalizer.normalize(path);
         logger.debug("readTextFile called", { path, normalizedPath });
         return this.fetchContent(normalizedPath);
+      },
+      { "fs.path": path },
+    );
+  }
+
+  readOptionalTextFile(path: string): Promise<string> {
+    return withSpan(
+      "fs.veryfront.readOptionalTextFile",
+      async () => {
+        const normalizedPath = this.normalizer.normalize(path);
+        const apiPath = this.getOriginalApiPath?.(normalizedPath) ?? normalizedPath;
+        logger.debug("readOptionalTextFile called", { path, normalizedPath, apiPath });
+        return await this.client.getOptionalFileContent(apiPath);
       },
       { "fs.path": path },
     );

@@ -47,6 +47,21 @@ export interface Snapshot {
   manifests: Record<string, Manifest>;
 }
 
+type SnapshotFetch = (
+  input: string | URL | Request,
+  init?: RequestInit,
+) => Promise<Response>;
+
+export interface DependencySnapshotSubmissionOptions {
+  repository: string;
+  token: string;
+  fetch?: SnapshotFetch;
+  sleep?: (delayMs: number) => Promise<void>;
+  retryDelaysMs?: readonly number[];
+}
+
+const DEFAULT_SUBMISSION_RETRY_DELAYS_MS = [1_000, 2_000, 4_000] as const;
+
 const DETECTOR = {
   name: "veryfront-deno-lock",
   version: "1.0.0",
@@ -203,16 +218,21 @@ export function manifestsFromLock(
   const workspaceDependencies = lock.workspace?.dependencies ??
     Object.keys(lock.specifiers ?? {});
   addManifest("deno.json", workspaceDependencies);
-  const memberDependencies = new Map(Object.entries(lock.workspace?.members ?? {}));
+  const memberDependencies = new Map(
+    Object.entries(lock.workspace?.members ?? {}),
+  );
   for (const memberPath of options.workspaceMembers ?? []) {
     if (!memberDependencies.has(memberPath)) {
       memberDependencies.set(memberPath, { dependencies: [] });
     }
   }
 
-  for (const [memberPath, member] of [...memberDependencies].sort(([left], [right]) =>
-    left.localeCompare(right)
-  )) {
+  for (
+    const [memberPath, member] of [...memberDependencies].sort((
+      [left],
+      [right],
+    ) => left.localeCompare(right))
+  ) {
     addManifest(`${memberPath}/deno.json`, member.dependencies ?? []);
   }
 
@@ -242,6 +262,53 @@ export function snapshotFromLock(
   };
 }
 
+function isTransientSubmissionStatus(status: number): boolean {
+  return status === 429 || status >= 500 && status <= 599;
+}
+
+function sleep(delayMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+export async function submitDependencySnapshot(
+  snapshot: Snapshot,
+  options: DependencySnapshotSubmissionOptions,
+): Promise<Response> {
+  const fetchSnapshot = options.fetch ?? globalThis.fetch;
+  const wait = options.sleep ?? sleep;
+  const retryDelays = options.retryDelaysMs ??
+    DEFAULT_SUBMISSION_RETRY_DELAYS_MS;
+  const url =
+    `https://api.github.com/repos/${options.repository}/dependency-graph/snapshots`;
+
+  for (let attempt = 0;; attempt++) {
+    try {
+      const response = await fetchSnapshot(url, {
+        method: "POST",
+        headers: {
+          "Accept": "application/vnd.github+json",
+          "Authorization": `Bearer ${options.token}`,
+          "Content-Type": "application/json",
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+        body: JSON.stringify(snapshot),
+      });
+
+      if (
+        !isTransientSubmissionStatus(response.status) ||
+        attempt >= retryDelays.length
+      ) {
+        return response;
+      }
+      await response.body?.cancel();
+    } catch (error) {
+      if (attempt >= retryDelays.length) throw error;
+    }
+
+    await wait(retryDelays[attempt]);
+  }
+}
+
 function requireEnv(name: string): string {
   const v = Deno.env.get(name);
   if (!v) throw new Error(`Missing required env var: ${name}`);
@@ -252,7 +319,9 @@ function normalizeWorkspaceMemberPath(path: string): string {
   return path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "");
 }
 
-function workspaceMembersFromDenoConfig(config: { workspace?: unknown }): string[] {
+function workspaceMembersFromDenoConfig(
+  config: { workspace?: unknown },
+): string[] {
   if (!Array.isArray(config.workspace)) return [];
   return config.workspace
     .filter((entry): entry is string => typeof entry === "string")
@@ -285,19 +354,10 @@ if (import.meta.main) {
       0,
     );
 
-  const res = await fetch(
-    `https://api.github.com/repos/${repo}/dependency-graph/snapshots`,
-    {
-      method: "POST",
-      headers: {
-        "Accept": "application/vnd.github+json",
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json",
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-      body: JSON.stringify(snapshot),
-    },
-  );
+  const res = await submitDependencySnapshot(snapshot, {
+    repository: repo,
+    token,
+  });
 
   const body = await res.text();
   if (!res.ok) {

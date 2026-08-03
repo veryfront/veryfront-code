@@ -14,24 +14,34 @@ import {
   validatePlatformCompatibility,
 } from "#veryfront/platform/core-platform.ts";
 import { registerTool } from "#veryfront/mcp";
-import { toolRegistry } from "#veryfront/tool";
-import { skillRegistry } from "#veryfront/skill/registry.ts";
-import { buildSkillManifestPrompt } from "#veryfront/skill/prompt-augmentation.ts";
-import {
-  buildWorkManifestPrompt,
-  resolveWorkReferences,
-} from "#veryfront/work/prompt-augmentation.ts";
+import { assertLocalToolId, toolRegistry, toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
+import type { Skill } from "#veryfront/skill/types.ts";
 import {
   createExecuteSkillScriptTool,
   createLoadSkillReferenceTool,
   createLoadSkillTool,
 } from "#veryfront/skill/tools.ts";
 import { agentRegistry } from "./composition/index.ts";
-import { agentLogger } from "#veryfront/utils/logger/logger.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { agentLogger } from "#veryfront/utils";
+import { createError, INVALID_ARGUMENT, toError } from "#veryfront/errors";
 import { COMMON_BLOCKED_PATTERNS, securityMiddleware } from "./middleware/security/validator.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveConfiguredAgentModel } from "./runtime/model-resolution.ts";
+import { setEffectiveAgentSystem } from "./runtime/effective-agent-system.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import { getMessageSchema } from "./schemas/agent.schema.ts";
+import {
+  isRequestBodyTooLargeError,
+  readBodyWithLimit,
+} from "#veryfront/security/input-validation/limits.ts";
+import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
+import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-schema-validator.ts";
+import { buildAgentDelegateTools } from "./runtime/agent-delegation.ts";
+import { normalizeAgentDelegateIds } from "./runtime/agent-delegation-names.ts";
+import { buildAgentCallContext } from "./runtime/call-context.ts";
+import type { RuntimeSkillDefinition } from "./runtime/skill-metadata.ts";
+import { flattenSystemInstructions } from "./runtime/tool-inventory.ts";
 
 const STREAMING_HEADERS: Record<string, string> = {
   "Content-Type": "text/event-stream",
@@ -40,11 +50,72 @@ const STREAMING_HEADERS: Record<string, string> = {
   "x-vercel-ai-ui-message-stream": "v1",
 };
 
+const getAgentRespondRequestSchema = defineSchema((v) =>
+  v.object({
+    messages: v.array(getMessageSchema()).optional().default([]),
+    context: v.record(v.string(), v.unknown()).optional(),
+    model: v.string().optional(),
+    maxOutputTokens: v.number().int().positive().optional(),
+  })
+);
+
+async function parseAgentRespondRequest(request: Request) {
+  let data: unknown;
+  try {
+    data = JSON.parse(await readBodyWithLimit(request, DEFAULT_MAX_BODY_SIZE_BYTES));
+  } catch (error) {
+    const tooLarge = isRequestBodyTooLargeError(error);
+    return Response.json(
+      { error: tooLarge ? "Request body too large" : "Malformed JSON request body" },
+      { status: tooLarge ? 413 : 400 },
+    );
+  }
+
+  const parsed = getAgentRespondRequestSchema().safeParse(data);
+  if (parsed.success) return parsed.data;
+
+  return Response.json(
+    { error: "Invalid agent request" },
+    { status: 400 },
+  );
+}
+
 const SKILL_TOOL_REGISTRATIONS = [
   { id: "load_skill", create: createLoadSkillTool },
   { id: "load_skill_reference", create: createLoadSkillReferenceTool },
   { id: "execute_skill_script", create: createExecuteSkillScriptTool },
 ] as const;
+
+function isExplicitNoneSkillSelector(skills: AgentConfig["skills"]): boolean {
+  return skills === false || (Array.isArray(skills) && skills.length === 0);
+}
+
+/**
+ * Projects a registered skill onto the runtime skill shape the shared skills
+ * renderer consumes. Instructions stay empty: the call context advertises
+ * skills, and `load_skill` delivers their bodies.
+ */
+function toRuntimeSkillDefinition(skill: Skill): RuntimeSkillDefinition {
+  return {
+    id: skill.id,
+    name: skill.metadata.name,
+    ...(skill.metadata.displayName ? { displayName: skill.metadata.displayName } : {}),
+    description: skill.metadata.description,
+    instructions: "",
+    allowedTools: skill.metadata.allowedTools ?? [],
+  };
+}
+
+function withAllowedSkillIdsContext(
+  context: Record<string, unknown> | undefined,
+  allowedSkillIds: readonly string[],
+  shouldAttachAllowedSkillIds: boolean,
+): Record<string, unknown> | undefined {
+  if (!shouldAttachAllowedSkillIds) {
+    return context;
+  }
+  return { ...context, allowedSkillIds: [...allowedSkillIds] };
+}
 
 function createAgentStreamResult(stream: ReadableStream<Uint8Array>): AgentStreamResult {
   return {
@@ -70,15 +141,28 @@ export function agent(config: AgentConfig): Agent {
   }
 
   const id = config.id ?? generateAgentId();
+  const delegates = normalizeAgentDelegateIds(id, config.delegates);
+  const skillsConfig = config.skills === false ? [] : config.skills;
+  const shouldAttachAllowedSkillIds = skillsConfig !== undefined;
+
+  const resolveSkillSnapshot = () =>
+    skillRegistryInternal.resolveSelectorForAgent(skillsConfig, { agentId: id });
+
+  if (Array.isArray(skillsConfig) && skillsConfig.length > 0) {
+    resolveSkillSnapshot();
+  }
 
   const publicConfig: ResolvedAgentConfig = {
     ...config,
+    ...(delegates === undefined ? {} : { delegates }),
     model: resolveConfiguredAgentModel(config.model),
   };
 
   if (config.tools && config.tools !== true) {
     for (const [name, entry] of Object.entries(config.tools)) {
       if (!entry || typeof entry !== "object") continue;
+      assertLocalToolId(name);
+      assertLocalToolId(entry.id);
       if (isRuntimeLocalTool(entry)) continue;
 
       const normalizedTool = entry.id === name ? entry : { ...entry, id: name };
@@ -87,58 +171,89 @@ export function agent(config: AgentConfig): Agent {
     }
   }
 
-  // Skill tool registration (immutable config merge)
+  // Skill tools are framework infrastructure shared by skill-enabled agents.
+  // Project skills remain project-scoped and owner-aware at resolution time.
   let mergedToolsConfig = config.tools;
+  const shouldExposeSkillTools = !isExplicitNoneSkillSelector(config.skills);
 
-  if (config.skills) {
-    // Skill tools (load_skill, load_skill_reference, execute_skill_script) are
-    // framework infrastructure — shared across all projects. Project tools and
-    // skills themselves remain project-scoped. Using registerShared avoids
-    // scope mismatch between module-load time and request-handling time.
-    for (const registration of SKILL_TOOL_REGISTRATIONS) {
-      if (!toolRegistry.has(registration.id)) {
-        toolRegistry.registerShared(registration.id, registration.create());
-      }
-    }
-
-    // Ensure skill tools are enabled for this agent even when config.tools is undefined
-    if (config.tools !== true) {
-      mergedToolsConfig = {
-        ...(config.tools ?? {}),
-        "load_skill": true,
-        "load_skill_reference": true,
-        "execute_skill_script": true,
-      };
+  ensureBuiltinSchemaValidator();
+  for (const registration of SKILL_TOOL_REGISTRATIONS) {
+    if (!toolRegistry.has(registration.id)) {
+      toolRegistryInternal.registerShared(registration.id, registration.create());
     }
   }
 
-  // System prompt augmentation with Work context and skill manifest.
-  // Re-resolve registry-backed entries at invocation time so HMR changes are picked up.
-  const originalSystem = config.system;
-  const workAugmentedSystem = config.work
-    ? async () => {
-      const basePrompt = typeof originalSystem === "function"
-        ? await originalSystem()
-        : originalSystem;
-      const workPrompt = buildWorkManifestPrompt(resolveWorkReferences(config.work!));
-      if (!workPrompt) return basePrompt ?? "You are a helpful assistant.";
-      return `${basePrompt ?? "You are a helpful assistant."}\n\n${workPrompt}`;
-    }
-    : originalSystem;
+  if (config.tools !== true) {
+    const configuredTools = { ...(config.tools ?? {}) };
+    for (const registration of SKILL_TOOL_REGISTRATIONS) {
+      if (!shouldExposeSkillTools) {
+        delete configuredTools[registration.id];
+        continue;
+      }
 
-  const augmentedSystem = config.skills
-    ? async () => {
-      // Owner-aware: the manifest only ever advertises skills visible to this
-      // agent (unowned project skills plus its own), matching skill-tool
-      // enforcement at execution time.
-      const currentSkills = skillRegistry.resolveForAgent(config.skills!, { agentId: id });
-      const basePrompt = typeof workAugmentedSystem === "function"
-        ? await workAugmentedSystem()
-        : workAugmentedSystem;
-      if (!currentSkills.size) return basePrompt ?? "You are a helpful assistant.";
-      return `${basePrompt}\n\n${buildSkillManifestPrompt(currentSkills)}`;
+      const configuredTool = configuredTools[registration.id];
+      if (typeof configuredTool === "object" && configuredTool !== null) {
+        continue;
+      }
+
+      configuredTools[registration.id] = registration.create({
+        resolveAllowedSkillIds: () => resolveSkillSnapshot().allowedSkillIds,
+      });
     }
-    : workAugmentedSystem;
+    const hasConfiguredTools = Object.keys(configuredTools).length > 0;
+    mergedToolsConfig = hasConfiguredTools || config.tools !== undefined
+      ? configuredTools
+      : undefined;
+  }
+
+  if (delegates?.length) {
+    if (mergedToolsConfig === true) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Agent "${id}" cannot combine delegates with tools: true. ` +
+          "Declare the required tools by name so delegate capabilities remain explicit.",
+      });
+    }
+    mergedToolsConfig = {
+      ...(mergedToolsConfig ?? {}),
+      ...buildAgentDelegateTools({ delegates, selfId: id }),
+    };
+  }
+
+  // Call context assembled at invocation time so registry-backed skills pick up
+  // HMR changes and host-supplied project/environment facts stay current.
+  const originalSystem = config.system;
+  const configuredToolNames = mergedToolsConfig === true
+    ? [
+      "form_input",
+      ...(shouldExposeSkillTools ? ["load_skill"] : []),
+      "tool_search",
+      ...(config.providerTools ?? []),
+    ].sort()
+    : mergedToolsConfig === undefined
+    ? undefined
+    : Object.entries(mergedToolsConfig)
+      .filter(([, entry]) => entry !== false)
+      .map(([name]) => name)
+      .sort();
+
+  const augmentedSystem = async () => {
+    // Owner-aware: omitted selectors advertise every skill visible to this
+    // agent (unowned project skills plus its own). Explicit lists, including
+    // an empty list, retain their authored catalog selection.
+    const snapshot = resolveSkillSnapshot();
+    const basePrompt =
+      (typeof originalSystem === "function" ? await originalSystem() : originalSystem) ??
+        "You are a helpful assistant.";
+
+    return flattenSystemInstructions(buildAgentCallContext({
+      instructions: basePrompt,
+      skills: snapshot.definitions.map(toRuntimeSkillDefinition),
+      includeSkillToolUsage: true,
+      ...(configuredToolNames === undefined ? {} : { availableToolNames: configuredToolNames }),
+      ...(config.projectContext ? { projectContext: config.projectContext } : {}),
+      ...(config.environmentContext ? { environmentContext: config.environmentContext } : {}),
+    }));
+  };
 
   const resolvedMiddleware = resolveSecurityMiddleware(config);
 
@@ -185,7 +300,24 @@ export function agent(config: AgentConfig): Agent {
     generate(input): Promise<AgentResponse> {
       return withSpan(
         "agent.factory.generate",
-        () => runtime.generate(input.input, input.context, input.model, input.maxOutputTokens),
+        () => {
+          const skillSnapshot = resolveSkillSnapshot();
+          return runtime.generate(
+            input.input,
+            withAllowedSkillIdsContext(
+              input.context,
+              skillSnapshot.allowedSkillIds,
+              shouldAttachAllowedSkillIds,
+            ),
+            input.model,
+            input.maxOutputTokens,
+            input.abortSignal,
+            {
+              toolReplacements: input.tools,
+              retainSkillLoaderTools: input.retainSkillLoaderTools,
+            },
+          );
+        },
         { "agent.id": id },
       );
     },
@@ -204,9 +336,14 @@ export function agent(config: AgentConfig): Agent {
             ]
             : (input.messages ?? []);
 
+          const skillSnapshot = resolveSkillSnapshot();
           const stream = await runtime.stream(
             inputMessages,
-            input.context,
+            withAllowedSkillIdsContext(
+              input.context,
+              skillSnapshot.allowedSkillIds,
+              shouldAttachAllowedSkillIds,
+            ),
             {
               onToolCall: input.onToolCall,
               onChunk: input.onChunk,
@@ -227,12 +364,8 @@ export function agent(config: AgentConfig): Agent {
       return withSpan(
         "agent.factory.respond",
         async () => {
-          const body: {
-            messages?: Message[];
-            context?: Record<string, unknown>;
-            model?: string;
-            maxOutputTokens?: number;
-          } = await request.json();
+          const body = await parseAgentRespondRequest(request);
+          if (body instanceof Response) return body;
 
           // Validate model override against allowlist when configured
           const modelOverride = body.model;
@@ -249,10 +382,15 @@ export function agent(config: AgentConfig): Agent {
             }
           }
 
-          const messages = body.messages ?? [];
+          const messages = body.messages;
+          const skillSnapshot = resolveSkillSnapshot();
           const stream = await runtime.stream(
             messages,
-            body.context,
+            withAllowedSkillIdsContext(
+              body.context,
+              skillSnapshot.allowedSkillIds,
+              shouldAttachAllowedSkillIds,
+            ),
             undefined,
             modelOverride,
             body.maxOutputTokens,
@@ -277,6 +415,7 @@ export function agent(config: AgentConfig): Agent {
     },
   };
 
+  setEffectiveAgentSystem(agentInstance, augmentedSystem);
   agentRegistry.register(id, agentInstance);
 
   return agentInstance;

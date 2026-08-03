@@ -25,6 +25,15 @@ type ParallelOptions = {
   timeoutMs?: number;
 };
 
+function resolveParallelSemaphore(options: ParallelOptions): Semaphore {
+  if (options.semaphore !== undefined) return options.semaphore;
+  if (options.concurrency === undefined) return apiSemaphore;
+  if (!Number.isSafeInteger(options.concurrency) || options.concurrency < 1) {
+    throw new RangeError("parallel concurrency must be a positive safe integer");
+  }
+  return new Semaphore(options.concurrency);
+}
+
 async function acquireOrThrow(
   semaphore: Semaphore,
   timeoutMs: number,
@@ -50,7 +59,7 @@ export function parallelMap<T, R>(
     async () => {
       if (items.length === 0) return [];
 
-      const semaphore = options.semaphore ?? apiSemaphore;
+      const semaphore = resolveParallelSemaphore(options);
       const timeoutMs = options.timeoutMs ?? ACQUIRE_TIMEOUT_MS;
       const results: R[] = new Array(items.length);
 
@@ -83,72 +92,4 @@ export function parallelAll<T extends readonly (() => Promise<unknown>)[]>(
     (fn) => fn(),
     options,
   ) as Promise<{ [K in keyof T]: Awaited<ReturnType<T[K]>> }>;
-}
-
-export function parallelFind<T>(
-  items: T[],
-  predicate: (item: T, index: number) => Promise<boolean>,
-  options: ParallelOptions = {},
-): Promise<T | undefined> {
-  return withSpan(
-    "utils.parallelFind",
-    async () => {
-      if (items.length === 0) return undefined;
-
-      const semaphore = options.semaphore ?? apiSemaphore;
-      const timeoutMs = options.timeoutMs ?? ACQUIRE_TIMEOUT_MS;
-      let found: T | undefined;
-      let foundIndex = Infinity;
-
-      await Promise.all(
-        items.map(async (item, index) => {
-          if (index >= foundIndex) return;
-
-          await acquireOrThrow(semaphore, timeoutMs, "parallelFind");
-          try {
-            if (index >= foundIndex) return;
-
-            const matches = await predicate(item, index);
-            if (!matches || index >= foundIndex) return;
-
-            found = item;
-            foundIndex = index;
-          } finally {
-            semaphore.release();
-          }
-        }),
-      );
-
-      return found;
-    },
-    { "parallel.itemCount": items.length },
-  );
-}
-
-export function parallelFilter<T>(
-  items: T[],
-  predicate: (item: T, index: number) => Promise<boolean>,
-  options: ParallelOptions = {},
-): Promise<T[]> {
-  return withSpan(
-    "utils.parallelFilter",
-    async () => {
-      const results = await parallelMap(
-        items,
-        async (item, index) => ({ item, keep: await predicate(item, index) }),
-        options,
-      );
-
-      return results.filter((r) => r.keep).map((r) => r.item);
-    },
-    { "parallel.itemCount": items.length },
-  );
-}
-
-export function createSemaphore(permits: number): Semaphore {
-  return new Semaphore(permits);
-}
-
-export function getApiSemaphore(): Semaphore {
-  return apiSemaphore;
 }

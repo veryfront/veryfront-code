@@ -31,7 +31,8 @@ export interface ToolListEntry {
 
 export interface MCPRegistry {
   tools: Map<string, Tool>;
-  resources: Map<string, Resource>;
+  // deno-lint-ignore no-explicit-any -- heterogeneous resources validate params through schemas
+  resources: Map<string, Resource<any, any>>;
   prompts: Map<string, Prompt>;
 }
 

@@ -25,7 +25,7 @@
   ],
   "tools": [
     {
-      "id": "list_projects",
+      "id": "launchdarkly__list_projects",
       "name": "List Projects",
       "description": "List projects in the LaunchDarkly account",
       "requiresWrite": false,
@@ -53,7 +53,7 @@
       }
     },
     {
-      "id": "list_flags",
+      "id": "launchdarkly__list_flags",
       "name": "List Feature Flags",
       "description": "List feature flags in a project, optionally scoped to one environment",
       "requiresWrite": false,
@@ -107,7 +107,7 @@
       }
     },
     {
-      "id": "get_flag",
+      "id": "launchdarkly__get_flag",
       "name": "Get Feature Flag",
       "description": "Get a feature flag including its variations and per-environment configuration",
       "requiresWrite": false,
@@ -136,7 +136,7 @@
       }
     },
     {
-      "id": "list_environments",
+      "id": "launchdarkly__list_environments",
       "name": "List Environments",
       "description": "List environments in a LaunchDarkly project",
       "requiresWrite": false,
@@ -165,7 +165,7 @@
       }
     },
     {
-      "id": "toggle_flag",
+      "id": "launchdarkly__toggle_flag",
       "name": "Toggle Feature Flag",
       "description": "Turn a feature flag on or off in one environment using a semantic patch instruction",
       "requiresWrite": true,

@@ -27,7 +27,7 @@
   ],
   "tools": [
     {
-      "id": "list_profiles",
+      "id": "klaviyo__list_profiles",
       "name": "List Profiles",
       "description": "List customer profiles",
       "requiresWrite": false,
@@ -75,7 +75,7 @@
       }
     },
     {
-      "id": "get_profile",
+      "id": "klaviyo__get_profile",
       "name": "Get Profile",
       "description": "Get a customer profile by ID",
       "requiresWrite": false,
@@ -102,7 +102,7 @@
       }
     },
     {
-      "id": "create_profile",
+      "id": "klaviyo__create_profile",
       "name": "Create Profile",
       "description": "Create a new customer profile",
       "requiresWrite": true,
@@ -130,7 +130,7 @@
       }
     },
     {
-      "id": "list_lists",
+      "id": "klaviyo__list_lists",
       "name": "List Lists",
       "description": "List marketing lists",
       "requiresWrite": false,
@@ -166,7 +166,7 @@
       }
     },
     {
-      "id": "list_segments",
+      "id": "klaviyo__list_segments",
       "name": "List Segments",
       "description": "List audience segments",
       "requiresWrite": false,
@@ -190,7 +190,7 @@
       }
     },
     {
-      "id": "list_metrics",
+      "id": "klaviyo__list_metrics",
       "name": "List Metrics",
       "description": "List tracked event metrics (e.g. Placed Order, Opened Email)",
       "requiresWrite": false,
@@ -214,7 +214,7 @@
       }
     },
     {
-      "id": "create_event",
+      "id": "klaviyo__create_event",
       "name": "Create Event",
       "description": "Track a custom event for a profile",
       "requiresWrite": true,

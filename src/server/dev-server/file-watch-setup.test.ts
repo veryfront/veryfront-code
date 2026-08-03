@@ -4,11 +4,15 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isIgnoredOutputDir, shouldIgnorePath } from "./file-watch-setup.ts";
 
 describe("shouldIgnorePath", () => {
-  it("ignores paths inside generated/output directories", () => {
+  it("ignores generated/output directory events and their contents", () => {
     expect(shouldIgnorePath("/proj/node_modules/foo/index.js")).toBe(true);
+    expect(shouldIgnorePath("/proj/node_modules")).toBe(true);
     expect(shouldIgnorePath("/proj/.git/HEAD")).toBe(true);
     expect(shouldIgnorePath("/proj/.cache/bundle.js")).toBe(true);
+    expect(shouldIgnorePath("/proj/.veryfront")).toBe(true);
     expect(shouldIgnorePath("/proj/.veryfront/manifest.json")).toBe(true);
+    expect(shouldIgnorePath(String.raw`C:\proj\.veryfront`)).toBe(true);
+    expect(shouldIgnorePath(String.raw`C:\proj\.veryfront\manifest.json`)).toBe(true);
   });
 
   it("ignores the Playwright MCP output directory (regression for #1977)", () => {
@@ -19,6 +23,13 @@ describe("shouldIgnorePath", () => {
     expect(shouldIgnorePath("/proj/.playwright-mcp/screenshot.png")).toBe(true);
   });
 
+  it("ignores OMX runtime state and log output directories", () => {
+    expect(shouldIgnorePath("/proj/.omx/state/session.json")).toBe(true);
+    expect(shouldIgnorePath("/proj/.omx/logs/runtime.log")).toBe(true);
+    expect(shouldIgnorePath(String.raw`C:\proj\.omx\state\session.json`)).toBe(true);
+    expect(shouldIgnorePath(String.raw`C:\proj\.omx\logs\runtime.log`)).toBe(true);
+  });
+
   it("ignores generated-artifact extensions anywhere in the tree", () => {
     // Defends against tools that write logs outside a known output directory.
     expect(shouldIgnorePath("/proj/server.log")).toBe(true);
@@ -26,9 +37,17 @@ describe("shouldIgnorePath", () => {
     expect(shouldIgnorePath("/proj/scratch.tmp")).toBe(true);
   });
 
+  it("ignores transient middleware modules written beside root middleware", () => {
+    expect(shouldIgnorePath("/proj/.vf-middleware-123.mjs")).toBe(true);
+    expect(shouldIgnorePath(String.raw`C:\proj\.vf-middleware-123.mjs`)).toBe(true);
+    expect(shouldIgnorePath("/proj/.vf-middleware-config.ts")).toBe(false);
+  });
+
   it("does not ignore legitimate source files", () => {
     expect(shouldIgnorePath("/proj/pages/index.tsx")).toBe(false);
     expect(shouldIgnorePath("/proj/components/Button.jsx")).toBe(false);
+    expect(shouldIgnorePath("/proj/.veryfront.config.ts")).toBe(false);
+    expect(shouldIgnorePath("/proj/my-node_modules/index.ts")).toBe(false);
     expect(shouldIgnorePath("/proj/lib/util.ts")).toBe(false);
     expect(shouldIgnorePath("/proj/styles/app.css")).toBe(false);
     expect(shouldIgnorePath("/proj/content/post.mdx")).toBe(false);

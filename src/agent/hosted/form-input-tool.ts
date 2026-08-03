@@ -1,4 +1,5 @@
 import { tool, type ToolExecutionContext } from "#veryfront/tool";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { containsExactArtifactPathValue } from "../artifacts/slash-command-artifact-policy.ts";
 import type { ChatUiMessage, ChatUiMessagePart } from "../../chat/types.ts";
 import type { HostedSubmittedFormInputResult } from "./chat-runtime-contract.ts";
@@ -47,10 +48,10 @@ async function executeDurableFormInputFlow(
   execContext?: ToolExecutionContext,
 ) {
   if (!context.conversationId) {
-    throw new Error("form_input requires a durable conversation context");
+    throw INVALID_ARGUMENT.create({ detail: "form_input requires a durable conversation context" });
   }
   if (!context.parentRunId) {
-    throw new Error("form_input requires a durable run context");
+    throw INVALID_ARGUMENT.create({ detail: "form_input requires a durable run context" });
   }
 
   const conversationId = context.conversationId;

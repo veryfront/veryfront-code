@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "send_email",
+      "id": "resend__send_email",
       "name": "Send Email",
       "description": "Send an email",
       "requiresWrite": true,
@@ -73,7 +73,7 @@
       }
     },
     {
-      "id": "get_email",
+      "id": "resend__get_email",
       "name": "Get Email",
       "description": "Get a sent email and its delivery status by ID",
       "requiresWrite": false,
@@ -91,7 +91,7 @@
       }
     },
     {
-      "id": "list_domains",
+      "id": "resend__list_domains",
       "name": "List Domains",
       "description": "List sending domains and their verification status",
       "requiresWrite": false,
@@ -116,7 +116,7 @@
       }
     },
     {
-      "id": "list_audiences",
+      "id": "resend__list_audiences",
       "name": "List Audiences",
       "description": "List audiences (contact groups)",
       "requiresWrite": false,
@@ -129,7 +129,7 @@
       }
     },
     {
-      "id": "list_contacts",
+      "id": "resend__list_contacts",
       "name": "List Contacts",
       "description": "List contacts in an audience",
       "requiresWrite": false,
@@ -150,7 +150,7 @@
       }
     },
     {
-      "id": "create_contact",
+      "id": "resend__create_contact",
       "name": "Create Contact",
       "description": "Add a contact to an audience",
       "requiresWrite": true,

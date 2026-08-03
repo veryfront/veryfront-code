@@ -24,14 +24,51 @@ function createClassListStub(): {
   };
 }
 
+/**
+ * `style` stub — a plain bag (so `el.style.color = "red"` works) that also
+ * carries the CSSOM methods libraries call during render (`setProperty`,
+ * `getPropertyValue`, `removeProperty`). Without these, any lib that sets a CSS
+ * custom property while rendering (Floating UI, Radix Presence, vaul) throws
+ * "el.style.setProperty is not a function" on the server.
+ */
+function createStyleStub(): {
+  setProperty: (propertyName?: string, value?: string, priority?: string) => void;
+  getPropertyValue: (propertyName?: string) => string;
+  removeProperty: (propertyName?: string) => string;
+  item: (index?: number) => string;
+  cssText: string;
+  length: number;
+  [key: string]: unknown;
+} {
+  return {
+    setProperty: noop,
+    getPropertyValue: () => emptyString,
+    removeProperty: () => emptyString,
+    item: () => emptyString,
+    cssText: emptyString,
+    length: 0,
+  };
+}
+
 export function createElementStub(): {
-  style: Record<string, unknown>;
+  style: ReturnType<typeof createStyleStub>;
   classList: ReturnType<typeof createClassListStub>;
   dataset: Record<string, unknown>;
   setAttribute: () => void;
   getAttribute: () => null;
+  setAttributeNS: () => void;
+  getAttributeNS: () => null;
   removeAttribute: () => void;
   hasAttribute: () => false;
+  closest: () => null;
+  matches: () => false;
+  contains: () => false;
+  focus: () => void;
+  blur: () => void;
+  click: () => void;
+  scrollIntoView: () => void;
+  getClientRects: () => [];
+  remove: () => void;
   appendChild: () => void;
   removeChild: () => void;
   insertBefore: () => void;
@@ -69,13 +106,24 @@ export function createElementStub(): {
   lastChild: null;
 } {
   return {
-    style: {},
+    style: createStyleStub(),
     classList: createClassListStub(),
     dataset: {},
     setAttribute: noop,
     getAttribute: noopNull,
+    setAttributeNS: noop,
+    getAttributeNS: noopNull,
     removeAttribute: noop,
     hasAttribute: noopFalse,
+    closest: noopNull,
+    matches: noopFalse,
+    contains: noopFalse,
+    focus: noop,
+    blur: noop,
+    click: noop,
+    scrollIntoView: noop,
+    getClientRects: noopEmptyArray,
+    remove: noop,
     appendChild: noop,
     removeChild: noop,
     insertBefore: noop,
@@ -133,16 +181,14 @@ export function createDocumentStub(): {
   getElementsByClassName: () => [];
   getElementsByTagName: () => [];
   getElementsByName: () => [];
-  documentElement: {
-    style: Record<string, unknown>;
-    classList: Omit<ReturnType<typeof createClassListStub>, "toggle">;
-  };
-  body: {
-    style: Record<string, unknown>;
-    classList: Omit<ReturnType<typeof createClassListStub>, "toggle">;
-    appendChild: () => void;
-  };
-  head: { appendChild: () => void; removeChild: () => void };
+  documentElement: ReturnType<typeof createElementStub>;
+  body: ReturnType<typeof createElementStub>;
+  head: ReturnType<typeof createElementStub>;
+  activeElement: null;
+  hidden: false;
+  visibilityState: "visible";
+  createDocumentFragment: () => ReturnType<typeof createElementStub>;
+  createComment: () => { textContent: string };
   readyState: "complete";
   cookie: string;
   domain: string;
@@ -156,12 +202,6 @@ export function createDocumentStub(): {
   styleSheets: [];
   adoptedStyleSheets: [];
 } {
-  const classList = {
-    add: noop,
-    remove: noop,
-    contains: noopFalse,
-  };
-
   return {
     __veryfrontSSRStub: true,
     exitFullscreen: undefined,
@@ -183,9 +223,21 @@ export function createDocumentStub(): {
     getElementsByTagName: noopEmptyArray,
     getElementsByName: noopEmptyArray,
 
-    documentElement: { style: {}, classList },
-    body: { style: {}, classList, appendChild: noop },
-    head: { appendChild: noop, removeChild: noop },
+    // documentElement/body get the full element stub surface so libraries that
+    // read attributes during render (sonner, next-themes, focus/scroll-lock
+    // helpers) don't crash on a missing `getAttribute`/`setAttribute`.
+    documentElement: createElementStub(),
+    body: createElementStub(),
+    // head gets the full element stub too, so CSS-in-JS libraries (emotion,
+    // styled-components, etc.) that insert <style> tags via
+    // `document.head.insertBefore(...)` during SSR don't crash on a missing
+    // `insertBefore`.
+    head: createElementStub(),
+    activeElement: null,
+    hidden: false,
+    visibilityState: "visible",
+    createDocumentFragment: createElementStub,
+    createComment: () => ({ textContent: emptyString }),
     readyState: "complete",
     cookie: emptyString,
     domain: emptyString,
@@ -309,6 +361,9 @@ export function createWindowStub(): {
   URLSearchParams: typeof globalThis.URLSearchParams;
   TextEncoder: typeof globalThis.TextEncoder;
   TextDecoder: typeof globalThis.TextDecoder;
+  ResizeObserver: ReturnType<typeof createObserverClass>;
+  IntersectionObserver: ReturnType<typeof createObserverClass>;
+  MutationObserver: ReturnType<typeof createObserverClass>;
 } {
   return {
     __veryfrontSSRStub: true,
@@ -424,6 +479,9 @@ export function createWindowStub(): {
     URLSearchParams: globalThis.URLSearchParams,
     TextEncoder: globalThis.TextEncoder,
     TextDecoder: globalThis.TextDecoder,
+    ResizeObserver: createObserverClass("ResizeObserver"),
+    IntersectionObserver: createObserverClass("IntersectionObserver"),
+    MutationObserver: createObserverClass("MutationObserver"),
   };
 }
 
@@ -431,4 +489,31 @@ export function createElementClass(name: string): { new (): object } {
   const ElementClass = class {};
   Object.defineProperty(ElementClass, "name", { value: name });
   return ElementClass;
+}
+
+/**
+ * Observer stub class for `ResizeObserver` / `IntersectionObserver` /
+ * `MutationObserver`. Libraries that construct one eagerly (at module or render
+ * scope, not inside an effect) otherwise throw "ResizeObserver is not defined"
+ * during SSR. The instance carries the no-op observe/disconnect surface so a
+ * lib that also *calls* those during render doesn't crash either.
+ */
+export function createObserverClass(name: string): {
+  new (callback?: unknown): {
+    observe: () => void;
+    unobserve: () => void;
+    disconnect: () => void;
+    takeRecords: () => [];
+  };
+} {
+  const ObserverClass = class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+    takeRecords(): [] {
+      return [];
+    }
+  };
+  Object.defineProperty(ObserverClass, "name", { value: name });
+  return ObserverClass;
 }

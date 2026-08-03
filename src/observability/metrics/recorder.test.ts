@@ -60,6 +60,11 @@ function createMockInstruments(): MetricsInstruments & {
   _buildDuration: MockHistogram;
   _bundleSizeHistogram: MockHistogram;
   _bundleCounter: MockCounter;
+  _dependencyArtifactBuildCounter: MockCounter;
+  _dependencyArtifactBuildDuration: MockHistogram;
+  _dependencyArtifactBuildBytes: MockHistogram;
+  _dependencyArtifactBuildAssetCount: MockHistogram;
+  _dependencyArtifactBuildExternalImportCount: MockHistogram;
   _dataFetchDuration: MockHistogram;
   _dataFetchCounter: MockCounter;
   _dataFetchErrorCounter: MockCounter;
@@ -87,6 +92,11 @@ function createMockInstruments(): MetricsInstruments & {
   const buildDuration = createMockHistogram();
   const bundleSizeHistogram = createMockHistogram();
   const bundleCounter = createMockCounter();
+  const dependencyArtifactBuildCounter = createMockCounter();
+  const dependencyArtifactBuildDuration = createMockHistogram();
+  const dependencyArtifactBuildBytes = createMockHistogram();
+  const dependencyArtifactBuildAssetCount = createMockHistogram();
+  const dependencyArtifactBuildExternalImportCount = createMockHistogram();
   const dataFetchDuration = createMockHistogram();
   const dataFetchCounter = createMockCounter();
   const dataFetchErrorCounter = createMockCounter();
@@ -116,15 +126,31 @@ function createMockInstruments(): MetricsInstruments & {
     buildDuration: buildDuration as never,
     bundleSizeHistogram: bundleSizeHistogram as never,
     bundleCounter: bundleCounter as never,
+    dependencyArtifactBuildCounter: dependencyArtifactBuildCounter as never,
+    dependencyArtifactBuildDuration: dependencyArtifactBuildDuration as never,
+    dependencyArtifactBuildBytes: dependencyArtifactBuildBytes as never,
+    dependencyArtifactBuildAssetCount: dependencyArtifactBuildAssetCount as never,
+    dependencyArtifactBuildExternalImportCount: dependencyArtifactBuildExternalImportCount as never,
     dataFetchDuration: dataFetchDuration as never,
     dataFetchCounter: dataFetchCounter as never,
     dataFetchErrorCounter: dataFetchErrorCounter as never,
     corsRejectionCounter: corsRejectionCounter as never,
     securityHeadersCounter: securityHeadersCounter as never,
+    errorCounter: null,
     memoryUsageGauge: null,
     heapUsageGauge: null,
     heapTotalGauge: null,
     heapPercentGauge: null,
+    streamLifecycleOutcomeCounter: null,
+    streamLifecycleDeadlineCounter: null,
+    streamLifecycleTelemetryCounter: null,
+    streamLifecycleRepairCounter: null,
+    streamLifecycleShadowDivergenceCounter: null,
+    streamLifecycleAttemptDuration: null,
+    streamLifecycleFirstProgressDuration: null,
+    streamLifecycleSemanticIdleDuration: null,
+    streamLifecycleToolInputDuration: null,
+    streamLifecycleToolExecutionDuration: null,
 
     _httpRequestCounter: httpRequestCounter,
     _httpRequestDuration: httpRequestDuration,
@@ -147,6 +173,11 @@ function createMockInstruments(): MetricsInstruments & {
     _buildDuration: buildDuration,
     _bundleSizeHistogram: bundleSizeHistogram,
     _bundleCounter: bundleCounter,
+    _dependencyArtifactBuildCounter: dependencyArtifactBuildCounter,
+    _dependencyArtifactBuildDuration: dependencyArtifactBuildDuration,
+    _dependencyArtifactBuildBytes: dependencyArtifactBuildBytes,
+    _dependencyArtifactBuildAssetCount: dependencyArtifactBuildAssetCount,
+    _dependencyArtifactBuildExternalImportCount: dependencyArtifactBuildExternalImportCount,
     _dataFetchDuration: dataFetchDuration,
     _dataFetchCounter: dataFetchCounter,
     _dataFetchErrorCounter: dataFetchErrorCounter,
@@ -175,6 +206,51 @@ describe("observability/metrics/recorder", () => {
   });
 
   describe("recordHttpRequest", () => {
+    it("repairs poisoned state and saturates active request counters", () => {
+      runtimeState.activeRequests = Number.NaN;
+      recorder.recordHttpRequest();
+      assertEquals(runtimeState.activeRequests, 1);
+
+      runtimeState.activeRequests = Number.MAX_SAFE_INTEGER;
+      recorder.recordHttpRequest();
+      assertEquals(runtimeState.activeRequests, Number.MAX_SAFE_INTEGER);
+    });
+
+    it("updates state when attribute enumeration and getters are hostile", () => {
+      const getterAttributes: Record<string, string> = {};
+      Object.defineProperty(getterAttributes, "route", {
+        enumerable: true,
+        get() {
+          throw new Error("hostile attribute getter");
+        },
+      });
+
+      recorder.recordHttpRequest(getterAttributes);
+      recorder.recordHttpRequest(
+        new Proxy({}, {
+          ownKeys() {
+            throw new Error("hostile attribute enumeration");
+          },
+        }),
+      );
+
+      assertEquals(runtimeState.activeRequests, 2);
+      assertEquals(instruments._httpRequestCounter._value, 2);
+    });
+
+    it("isolates instrument failures and still updates runtime state", () => {
+      instruments.httpRequestCounter = {
+        add() {
+          throw new Error("telemetry counter failed");
+        },
+      } as never;
+
+      recorder.recordHttpRequest();
+
+      assertEquals(runtimeState.activeRequests, 1);
+      assertEquals(instruments._httpActiveRequests._value, 1);
+    });
+
     it("should increment http request counter and active requests", () => {
       recorder.recordHttpRequest();
       assertEquals(instruments._httpRequestCounter._value, 1);
@@ -188,6 +264,18 @@ describe("observability/metrics/recorder", () => {
       assertEquals(instruments._httpRequestCounter._lastAttributes, attrs);
     });
 
+    it("redacts sensitive and URL credential attributes", () => {
+      recorder.recordHttpRequest({
+        apiKey: "secret",
+        endpoint: "https://example.test/path?token=secret",
+      });
+
+      assertEquals(instruments._httpRequestCounter._lastAttributes, {
+        apiKey: "[REDACTED]",
+        endpoint: "https://example.test/path?token=[REDACTED]",
+      });
+    });
+
     it("should accumulate multiple requests", () => {
       recorder.recordHttpRequest();
       recorder.recordHttpRequest();
@@ -198,6 +286,13 @@ describe("observability/metrics/recorder", () => {
   });
 
   describe("recordHttpRequestComplete", () => {
+    it("does not make active request state or gauges negative", () => {
+      recorder.recordHttpRequestComplete(100);
+
+      assertEquals(runtimeState.activeRequests, 0);
+      assertEquals(instruments._httpActiveRequests._value, 0);
+    });
+
     it("should record duration and decrement active requests", () => {
       runtimeState.activeRequests = 1;
       recorder.recordHttpRequestComplete(150);
@@ -230,6 +325,16 @@ describe("observability/metrics/recorder", () => {
   });
 
   describe("recordCacheSet", () => {
+    it("repairs poisoned state and saturates cache size", () => {
+      runtimeState.cacheSize = Number.NaN;
+      recorder.recordCacheSet();
+      assertEquals(runtimeState.cacheSize, 1);
+
+      runtimeState.cacheSize = Number.MAX_SAFE_INTEGER;
+      recorder.recordCacheSet();
+      assertEquals(runtimeState.cacheSize, Number.MAX_SAFE_INTEGER);
+    });
+
     it("should increment set counter and cache size", () => {
       recorder.recordCacheSet();
       assertEquals(instruments._cacheSetCounter._value, 1);
@@ -245,6 +350,15 @@ describe("observability/metrics/recorder", () => {
   });
 
   describe("recordCacheInvalidate", () => {
+    it("ignores negative invalidation counts", () => {
+      runtimeState.cacheSize = 4;
+
+      recorder.recordCacheInvalidate(-2);
+
+      assertEquals(runtimeState.cacheSize, 4);
+      assertEquals(instruments._cacheInvalidateCounter._value, 0);
+    });
+
     it("should increment invalidation counter and reduce cache size", () => {
       runtimeState.cacheSize = 10;
       recorder.recordCacheInvalidate(3);
@@ -260,6 +374,14 @@ describe("observability/metrics/recorder", () => {
   });
 
   describe("setCacheSize", () => {
+    it("normalizes negative and non-finite cache sizes", () => {
+      recorder.setCacheSize(-2);
+      assertEquals(runtimeState.cacheSize, 0);
+
+      recorder.setCacheSize(Number.POSITIVE_INFINITY);
+      assertEquals(runtimeState.cacheSize, 0);
+    });
+
     it("should set cache size directly", () => {
       recorder.setCacheSize(42);
       assertEquals(runtimeState.cacheSize, 42);
@@ -273,6 +395,14 @@ describe("observability/metrics/recorder", () => {
   });
 
   describe("recordRender", () => {
+    it("never sends non-finite or unsafe durations to a metrics backend", () => {
+      recorder.recordRender(Number.POSITIVE_INFINITY);
+      assertEquals(instruments._renderDuration._value, 0);
+
+      recorder.recordRender(Number.MAX_VALUE);
+      assertEquals(instruments._renderDuration._value, Number.MAX_SAFE_INTEGER);
+    });
+
     it("should record render duration and increment counter", () => {
       recorder.recordRender(200);
       assertEquals(instruments._renderDuration._value, 200);
@@ -357,6 +487,103 @@ describe("observability/metrics/recorder", () => {
     });
   });
 
+  describe("recordDependencyArtifactBuild", () => {
+    it("should record lifecycle, output, and remaining external metrics", () => {
+      recorder.recordDependencyArtifactBuild({
+        event: "success",
+        durationMs: 120,
+        totalBytes: 2048,
+        assetCount: 3,
+        remainingExternalImportCount: 1,
+      });
+
+      assertEquals(instruments._dependencyArtifactBuildCounter._value, 1);
+      assertEquals(
+        instruments._dependencyArtifactBuildCounter._lastAttributes,
+        { event: "success" },
+      );
+      assertEquals(instruments._dependencyArtifactBuildDuration._value, 120);
+      assertEquals(instruments._dependencyArtifactBuildBytes._value, 2048);
+      assertEquals(instruments._dependencyArtifactBuildAssetCount._value, 3);
+      assertEquals(
+        instruments._dependencyArtifactBuildExternalImportCount._value,
+        1,
+      );
+    });
+
+    it("should label failed builds without recording unavailable output", () => {
+      recorder.recordDependencyArtifactBuild({
+        event: "failure",
+        durationMs: 40,
+        failureCode: "dependency_artifact_graph_incomplete",
+      });
+
+      assertEquals(instruments._dependencyArtifactBuildCounter._value, 1);
+      assertEquals(
+        instruments._dependencyArtifactBuildCounter._lastAttributes,
+        {
+          event: "failure",
+          failure_code: "dependency_artifact_graph_incomplete",
+        },
+      );
+      assertEquals(instruments._dependencyArtifactBuildDuration._value, 40);
+      assertEquals(instruments._dependencyArtifactBuildBytes._value, 0);
+      assertEquals(instruments._dependencyArtifactBuildAssetCount._value, 0);
+    });
+
+    it("normalizes dependency artifact measurements", () => {
+      recorder.recordDependencyArtifactBuild({
+        event: "success",
+        durationMs: Number.POSITIVE_INFINITY,
+        totalBytes: Number.MAX_SAFE_INTEGER + 100,
+        assetCount: 3.9,
+        remainingExternalImportCount: -1,
+      });
+
+      assertEquals(instruments._dependencyArtifactBuildDuration._value, 0);
+      assertEquals(
+        instruments._dependencyArtifactBuildBytes._value,
+        Number.MAX_SAFE_INTEGER,
+      );
+      assertEquals(instruments._dependencyArtifactBuildAssetCount._value, 3);
+      assertEquals(
+        instruments._dependencyArtifactBuildExternalImportCount._value,
+        0,
+      );
+    });
+
+    it("isolates dependency artifact builds from telemetry backend failures", () => {
+      let attemptedWrites = 0;
+      instruments._dependencyArtifactBuildCounter.add = () => {
+        attemptedWrites += 1;
+        throw new Error("counter unavailable");
+      };
+      for (
+        const histogram of [
+          instruments._dependencyArtifactBuildDuration,
+          instruments._dependencyArtifactBuildBytes,
+          instruments._dependencyArtifactBuildAssetCount,
+          instruments._dependencyArtifactBuildExternalImportCount,
+        ]
+      ) {
+        histogram.record = () => {
+          attemptedWrites += 1;
+          throw new Error("histogram unavailable");
+        };
+      }
+
+      recorder.recordDependencyArtifactBuild({
+        event: "success",
+        durationMs: 120,
+        totalBytes: 2048,
+        assetCount: 3,
+        remainingExternalImportCount: 1,
+      });
+
+      assertEquals(attemptedWrites, 5);
+    });
+  });
+
   describe("recordDataFetch", () => {
     it("should record data fetch duration and increment counter", () => {
       recorder.recordDataFetch(100);
@@ -411,15 +638,31 @@ describe("observability/metrics/recorder", () => {
         buildDuration: null,
         bundleSizeHistogram: null,
         bundleCounter: null,
+        dependencyArtifactBuildCounter: null,
+        dependencyArtifactBuildDuration: null,
+        dependencyArtifactBuildBytes: null,
+        dependencyArtifactBuildAssetCount: null,
+        dependencyArtifactBuildExternalImportCount: null,
         dataFetchDuration: null,
         dataFetchCounter: null,
         dataFetchErrorCounter: null,
         corsRejectionCounter: null,
         securityHeadersCounter: null,
+        errorCounter: null,
         memoryUsageGauge: null,
         heapUsageGauge: null,
         heapTotalGauge: null,
         heapPercentGauge: null,
+        streamLifecycleOutcomeCounter: null,
+        streamLifecycleDeadlineCounter: null,
+        streamLifecycleTelemetryCounter: null,
+        streamLifecycleRepairCounter: null,
+        streamLifecycleShadowDivergenceCounter: null,
+        streamLifecycleAttemptDuration: null,
+        streamLifecycleFirstProgressDuration: null,
+        streamLifecycleSemanticIdleDuration: null,
+        streamLifecycleToolInputDuration: null,
+        streamLifecycleToolExecutionDuration: null,
       };
       const nullRecorder = new MetricsRecorder(nullInstruments, runtimeState);
 
@@ -441,10 +684,12 @@ describe("observability/metrics/recorder", () => {
       nullRecorder.recordRSCError();
       nullRecorder.recordBuild(100);
       nullRecorder.recordBundle(100);
+      nullRecorder.recordDependencyArtifactBuild({ event: "claim" });
       nullRecorder.recordDataFetch(100);
       nullRecorder.recordDataFetchError();
       nullRecorder.recordCorsRejection();
       nullRecorder.recordSecurityHeaders();
+      nullRecorder.recordError();
     });
   });
 });

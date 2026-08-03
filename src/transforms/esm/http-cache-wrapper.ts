@@ -35,6 +35,8 @@ import {
   VeryfrontError,
 } from "./http-cache-invariants.ts";
 import { looksLikeHtmlContent as looksLikeHtml } from "./html-content.ts";
+import { fingerprintImportMap, type HttpCacheIdentityMetadata } from "./http-cache-helpers.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 
 const logger = rendererLogger.component("http-cache-wrapper");
 
@@ -51,6 +53,74 @@ let testDistributedCacheAccessor: (() => Promise<CacheBackend | null>) | null = 
 
 function resolveDistributedCache(): Promise<CacheBackend | null> {
   return testDistributedCacheAccessor ? testDistributedCacheAccessor() : getDistributedCache();
+}
+
+function parseStringRecord(value: unknown): Record<string, string> | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value);
+  if (entries.some(([, entry]) => typeof entry !== "string")) return undefined;
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+function parseImportMap(value: unknown): ImportMapConfig | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const rawImportMap = value as Record<string, unknown>;
+  const imports = parseStringRecord(rawImportMap.imports);
+  if (rawImportMap.imports !== undefined && imports === undefined) return null;
+
+  let scopes: Record<string, Record<string, string>> | undefined;
+  if (rawImportMap.scopes !== undefined) {
+    if (
+      !rawImportMap.scopes || typeof rawImportMap.scopes !== "object" ||
+      Array.isArray(rawImportMap.scopes)
+    ) return null;
+    scopes = {};
+    for (const [scope, rawScopedImports] of Object.entries(rawImportMap.scopes)) {
+      const scopedImports = parseStringRecord(rawScopedImports);
+      if (!scopedImports) return null;
+      scopes[scope] = scopedImports;
+    }
+  }
+
+  return { imports, scopes };
+}
+
+interface HttpCacheIdentityReference {
+  url: string;
+  reactVersion?: string;
+  importMapFingerprint: string;
+}
+
+function parseIdentityMetadata(
+  value: string,
+): HttpCacheIdentityMetadata | HttpCacheIdentityReference | null {
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object" || typeof parsed.url !== "string") return null;
+    if (parsed.reactVersion !== undefined && typeof parsed.reactVersion !== "string") return null;
+
+    // Backward compatibility for v2 records written before import maps were shared.
+    if (parsed.importMap !== undefined) {
+      const importMap = parseImportMap(parsed.importMap);
+      return importMap
+        ? {
+          url: parsed.url,
+          reactVersion: parsed.reactVersion as string | undefined,
+          importMap,
+        }
+        : null;
+    }
+
+    if (typeof parsed.importMapFingerprint !== "string") return null;
+    return {
+      url: parsed.url,
+      reactVersion: parsed.reactVersion as string | undefined,
+      importMapFingerprint: parsed.importMapFingerprint,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function __setDistributedCacheAccessorForTests(
@@ -287,6 +357,7 @@ class HttpBundleCache {
     code: LocalModuleCode,
     url: NormalizedUrl | string,
     ttl: number = HTTP_MODULE_DISTRIBUTED_TTL_SEC,
+    identityMetadata?: HttpCacheIdentityMetadata,
   ): Promise<void> {
     const distributed = await resolveDistributedCache();
     if (!distributed) return;
@@ -303,11 +374,32 @@ class HttpBundleCache {
 
       const portableStr = unbrand(portableCode);
 
-      await Promise.all([
+      const writes = [
         distributed.set(distributedKey("url", hashStr), portableStr, ttl),
         distributed.set(distributedKey("code", hashStr), portableStr, ttl),
         distributed.set(distributedKey("hash", hashStr), urlStr, ttl),
-      ]);
+      ];
+      if (identityMetadata) {
+        const importMapFingerprint = identityMetadata.importMapFingerprint ??
+          await fingerprintImportMap(identityMetadata.importMap);
+        writes.push(
+          distributed.set(
+            distributedKey("import-map", importMapFingerprint),
+            JSON.stringify(identityMetadata.importMap),
+            ttl,
+          ),
+          distributed.set(
+            distributedKey("identity", hashStr),
+            JSON.stringify({
+              url: identityMetadata.url,
+              reactVersion: identityMetadata.reactVersion,
+              importMapFingerprint,
+            }),
+            ttl,
+          ),
+        );
+      }
+      await Promise.all(writes);
 
       logger.debug("Stored code in distributed cache", { hash: hashStr });
     } catch (error) {
@@ -393,6 +485,40 @@ class HttpBundleCache {
     }
   }
 
+  /** Return the full rewrite identity needed to reproduce a bundle by URL. */
+  async getIdentityMetadata(
+    hash: BundleHash | string,
+  ): Promise<HttpCacheIdentityMetadata | null> {
+    const distributed = await resolveDistributedCache();
+    if (!distributed) return null;
+
+    const hashStr = typeof hash === "string" ? hash : unbrand(hash);
+    try {
+      const raw = await distributed.get(distributedKey("identity", hashStr));
+      if (!raw) return null;
+      const parsed = parseIdentityMetadata(raw);
+      if (!parsed || "importMap" in parsed) return parsed;
+
+      const rawImportMap = await distributed.get(
+        distributedKey("import-map", parsed.importMapFingerprint),
+      );
+      if (!rawImportMap) return null;
+      let importMapValue: unknown;
+      try {
+        importMapValue = JSON.parse(rawImportMap);
+      } catch {
+        return null;
+      }
+      const importMap = parseImportMap(importMapValue);
+      if (!importMap) return null;
+      if (await fingerprintImportMap(importMap) !== parsed.importMapFingerprint) return null;
+
+      return { ...parsed, importMap };
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * Delete a bundle from distributed cache.
    * Removes all keys associated with the hash (code, url, hash mapping).
@@ -412,6 +538,7 @@ class HttpBundleCache {
         distributed.del(distributedKey("url", hashStr)),
         distributed.del(distributedKey("code", hashStr)),
         distributed.del(distributedKey("hash", hashStr)),
+        distributed.del(distributedKey("identity", hashStr)),
       ]);
 
       logger.info("Deleted bundle from distributed cache", { hash: hashStr });

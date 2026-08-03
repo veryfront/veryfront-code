@@ -6,8 +6,10 @@
 
 // Core types from base.ts — only the frequently-imported interfaces/types
 export type {
+  BoundedFileSystemAdapter,
   DirEntry,
   EnvironmentAdapter,
+  ExactBoundedFileSystemAdapter,
   FileChangeEvent,
   FileChangeKind,
   FileInfo,
@@ -28,6 +30,12 @@ export type {
   WebSocketUpgradeResponse,
 } from "./base.ts";
 export { createWebSocketUpgradeResponse, isWebSocketUpgradeResponse } from "./base.ts";
+export {
+  FileSnapshotChangedError,
+  FileSnapshotPathError,
+  isFileSnapshotChangedError,
+  isFileSnapshotPathError,
+} from "./file-snapshot-error.ts";
 
 // Detection & registry
 export { getAdapter } from "./detect.ts";

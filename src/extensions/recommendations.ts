@@ -10,7 +10,11 @@ const recommendations = new Map<string, string>([
   // esbuild are co-bundled into ext-bundler-esbuild).
   ["ModuleLexer", "@veryfront/ext-bundler-esbuild"],
   ["TokenCacheStore", "@veryfront/ext-cache-redis"],
+  ["RedisRuntimeProvider", "npm:@veryfront/ext-redis"],
   ["CSSProcessor", "@veryfront/ext-css-tailwind"],
+  ["CSSOptimizationEngine", "@veryfront/ext-css-lightning"],
+  ["CSSPurgingEngine", "@veryfront/ext-css-purgecss"],
+  ["ImageOptimizationEngine", "@veryfront/ext-image-sharp"],
   ["ContentProcessor", "@veryfront/ext-content-mdx"],
   ["DocumentExtractor", "@veryfront/ext-document-kreuzberg"],
   ["AuthProvider", "@veryfront/ext-auth-jwt"],
@@ -23,6 +27,7 @@ const recommendations = new Map<string, string>([
   ["SchemaValidator", "@veryfront/ext-schema-zod"],
   ["SqliteStore", "@veryfront/ext-db-sqlite"],
   ["SandboxShellToolsProvider", "@veryfront/ext-sandbox-shell-tools"],
+  ["NodeWebSocketServerProvider", "@veryfront/ext-node-websocket-ws"],
 ]);
 
 /** Return recommendation. */

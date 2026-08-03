@@ -28,7 +28,7 @@
   ],
   "tools": [
     {
-      "id": "list_surveys",
+      "id": "surveymonkey__list_surveys",
       "name": "List Surveys",
       "description": "List surveys owned by or shared with the authenticated account",
       "requiresWrite": false,
@@ -82,7 +82,7 @@
       }
     },
     {
-      "id": "get_survey_details",
+      "id": "surveymonkey__get_survey_details",
       "name": "Get Survey Details",
       "description": "Get a survey's full design, including pages, questions, and answer option IDs needed to interpret responses",
       "requiresWrite": false,
@@ -100,7 +100,7 @@
       }
     },
     {
-      "id": "list_survey_responses",
+      "id": "surveymonkey__list_survey_responses",
       "name": "List Survey Responses",
       "description": "List full responses for a survey, including each answer keyed by question and choice IDs",
       "requiresWrite": false,
@@ -133,7 +133,7 @@
       }
     },
     {
-      "id": "get_response_details",
+      "id": "surveymonkey__get_response_details",
       "name": "Get Response Details",
       "description": "Get a single survey response with all answers expanded",
       "requiresWrite": false,
@@ -157,7 +157,7 @@
       }
     },
     {
-      "id": "get_survey_rollups",
+      "id": "surveymonkey__get_survey_rollups",
       "name": "Get Survey Rollups",
       "description": "Get aggregated answer counts and statistics per question — summarize results without paging every response",
       "requiresWrite": false,
@@ -195,7 +195,7 @@
       }
     },
     {
-      "id": "list_survey_folders",
+      "id": "surveymonkey__list_survey_folders",
       "name": "List Survey Folders",
       "description": "List the survey folders in the account to find folder IDs for filtering surveys",
       "requiresWrite": false,
@@ -222,7 +222,7 @@
       }
     },
     {
-      "id": "list_collectors",
+      "id": "surveymonkey__list_collectors",
       "name": "List Collectors",
       "description": "List the collectors (web links, email invitations, etc.) that gather responses for a survey",
       "requiresWrite": false,

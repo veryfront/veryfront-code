@@ -1,13 +1,20 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
+import { JSDOM } from "npm:jsdom@28.0.0";
 import { PageTransition } from "./page-transition.ts";
 import type { RouteData } from "./page-loader.ts";
 
 interface MockElement {
   id?: string;
   innerHTML?: string;
+  ownerDocument?: MockDocument;
   style?: { opacity?: string; display?: string };
   classList?: {
     toggle: (className: string, force?: boolean) => void;
@@ -20,9 +27,14 @@ interface MockElement {
   append?: (...nodes: MockElement[]) => void;
   setAttribute?: (name: string, value: string) => void;
   getAttribute?: (name: string) => string | null;
+  removeAttribute?: (name: string) => void;
+  attributes?: Array<{ name: string; value: string }>;
+  parentElement?: MockElement | null;
   textContent?: string;
   tagName?: string;
   _children?: MockElement[];
+  children?: MockElement[];
+  remove?: () => void;
   className?: string;
   onclick?: (() => void) | null;
   type?: string;
@@ -58,6 +70,7 @@ function setupMockDOM(): {
 
   let scrollToX = 0;
   let scrollToY = 0;
+  let fallbackDocumentTitle = "Original Title";
 
   const mockRootChildren: MockElement[] = [];
   let mockRootInnerHTML = "";
@@ -104,28 +117,66 @@ function setupMockDOM(): {
   };
 
   const mockHeadElements: MockElement[] = [];
+  const knownHeadAttributes = [
+    "data-vf-head",
+    "data-vf-react-head",
+    "data-vf-react-head-owner",
+    "data-vf-route-head",
+    "data-vf-shell-head",
+    "data-veryfront-managed",
+    "charset",
+    "name",
+    "property",
+    "rel",
+    "content",
+    "href",
+  ];
+  const matchesHeadSelector = (element: MockElement, selector: string): boolean => {
+    return selector.split(",").some((rawSelector) => {
+      const part = rawSelector.trim();
+      const tag = part.match(/^[a-z]+/i)?.[0]?.toUpperCase();
+      if (tag && element.tagName !== tag) return false;
+      const attribute = part.match(/\[([^=\]]+)="([^"]*)"\]/);
+      if (!attribute) return tag !== undefined;
+      return element.getAttribute?.(attribute[1] ?? "") === attribute[2];
+    });
+  };
+  const removeHeadElement = (element: MockElement) => {
+    const index = mockHeadElements.indexOf(element);
+    if (index !== -1) mockHeadElements.splice(index, 1);
+    element.parentElement = null;
+  };
   const mockHead: MockElement = {
-    querySelectorAll: (selector: string) => {
-      if (selector !== '[data-veryfront-managed="1"]') return [];
-      return mockHeadElements.filter((el) => el.getAttribute?.("data-veryfront-managed") === "1");
-    },
+    children: mockHeadElements,
+    querySelectorAll: (selector: string) =>
+      mockHeadElements.filter((element) => matchesHeadSelector(element, selector)),
     appendChild: (child: MockElement) => {
+      child.parentElement = mockHead;
+      if (!child.attributes) {
+        Object.defineProperty(child, "attributes", {
+          configurable: true,
+          get: () =>
+            knownHeadAttributes.flatMap((name) => {
+              const value = child.getAttribute?.(name);
+              return value === null || value === undefined ? [] : [{ name, value }];
+            }),
+        });
+      }
+      if (!child.remove) child.remove = () => removeHeadElement(child);
       mockHeadElements.push(child);
     },
     querySelector: (selector: string) =>
-      mockHeadElements.find((el) => {
-        if (selector.includes('name="description"')) {
-          return el.getAttribute?.("name") === "description";
-        }
-        if (selector.includes('property="og:title"')) {
-          return el.getAttribute?.("property") === "og:title";
-        }
-        return false;
-      }) ?? null,
+      mockHeadElements.find((element) => matchesHeadSelector(element, selector)) ?? null,
   };
 
   const mockDocument: MockDocument = {
-    title: "Original Title",
+    get title() {
+      return mockHeadElements.find((element) => element.tagName === "TITLE")?.textContent ??
+        fallbackDocumentTitle;
+    },
+    set title(value: string | undefined) {
+      fallbackDocumentTitle = value ?? "";
+    },
     body: mockBody,
     head: mockHead,
     getElementById: (id: string) => {
@@ -142,15 +193,20 @@ function setupMockDOM(): {
       let onclick: (() => void) | null = null;
       let type = "";
 
-      return {
+      const element: MockElement = {
         tagName: tag.toUpperCase(),
         _children: children,
+        get attributes() {
+          return [...attributes].map(([name, value]) => ({ name, value }));
+        },
         setAttribute: (name: string, value: string) => {
           attributes.set(name, value);
           if (name === "class") className = value;
           if (name === "type") type = value;
         },
         getAttribute: (name: string) => attributes.get(name) ?? null,
+        removeAttribute: (name: string) => attributes.delete(name),
+        remove: () => removeHeadElement(element),
         appendChild: (child: MockElement) => {
           children.push(child);
         },
@@ -183,8 +239,10 @@ function setupMockDOM(): {
           type = value;
         },
       };
+      return element;
     },
   };
+  mockRoot.ownerDocument = mockDocument;
 
   (globalThis as any).document = mockDocument;
   (globalThis as any).scrollTo = (x: number, y: number) => {
@@ -221,6 +279,58 @@ function withMocks(
   };
 }
 
+function installRouteDOM(head: string): {
+  window: JSDOM["window"];
+  restore: () => void;
+} {
+  const dom = new JSDOM(
+    `<!doctype html><html><head>${head}</head><body><main id="root"></main></body></html>`,
+    { url: "https://example.com/", runScripts: "dangerously" },
+  );
+  const keys = [
+    "window",
+    "document",
+    "Node",
+    "Element",
+    "HTMLElement",
+    "HTMLTemplateElement",
+    "DocumentFragment",
+    "scrollTo",
+  ] as const;
+  const previous = new Map<string, PropertyDescriptor | undefined>();
+  for (const key of keys) previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+
+  const replacements: Record<(typeof keys)[number], unknown> = {
+    window: dom.window,
+    document: dom.window.document,
+    Node: dom.window.Node,
+    Element: dom.window.Element,
+    HTMLElement: dom.window.HTMLElement,
+    HTMLTemplateElement: dom.window.HTMLTemplateElement,
+    DocumentFragment: dom.window.DocumentFragment,
+    scrollTo: () => {},
+  };
+  for (const key of keys) {
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      value: replacements[key],
+      writable: true,
+    });
+  }
+
+  return {
+    window: dom.window,
+    restore: () => {
+      for (const key of keys) {
+        const descriptor = previous.get(key);
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else delete (globalThis as Record<string, unknown>)[key];
+      }
+      dom.window.close();
+    },
+  };
+}
+
 describe("PageTransition", () => {
   describe("Constructor", () => {
     it(
@@ -235,7 +345,7 @@ describe("PageTransition", () => {
   describe("updatePage", () => {
     it(
       "should update document title when frontmatter includes title",
-      withMocks((mocks) => {
+      withMocks(async (mocks) => {
         const pageTransition = new PageTransition(() => {});
         const data: RouteData = {
           html: "<div>Content</div>",
@@ -243,6 +353,7 @@ describe("PageTransition", () => {
         };
 
         pageTransition.updatePage(data, false, 0);
+        await delay(200);
 
         assertEquals(
           mocks.mockDocument.title,
@@ -253,8 +364,258 @@ describe("PageTransition", () => {
     );
 
     it(
-      "should not update document title when frontmatter has no title",
-      withMocks((mocks) => {
+      "commits destination metadata after retiring the previous React head",
+      withMocks(async (mocks) => {
+        const attributes = new Map<string, string>([
+          ["data-vf-head", "true"],
+          ["data-vf-react-head", "true"],
+          ["name", "description"],
+          ["content", "Previous description"],
+        ]);
+        const oldMeta: MockElement = {
+          tagName: "META",
+          getAttribute: (name) => attributes.get(name) ?? null,
+          setAttribute: (name, value) => attributes.set(name, value),
+          remove: () => {
+            const children = mocks.mockDocument.head?.children ?? [];
+            const index = children.indexOf(oldMeta);
+            if (index !== -1) children.splice(index, 1);
+          },
+        };
+        mocks.mockDocument.head?.appendChild?.(oldMeta);
+
+        const pageTransition = new PageTransition(() => {});
+        pageTransition.updatePage(
+          {
+            html: "<main>Destination</main>",
+            frontmatter: {
+              title: "Destination title",
+              description: "Destination description",
+            },
+          },
+          false,
+          0,
+        );
+
+        await delay(200);
+
+        assertEquals(mocks.mockDocument.title, "Destination title");
+        assertEquals(
+          mocks.mockDocument.querySelector?.('meta[name="description"]')?.getAttribute?.(
+            "content",
+          ),
+          "Destination description",
+        );
+        assertEquals(oldMeta.getAttribute?.("content"), "Previous description");
+        assertEquals(
+          mocks.mockDocument.head?.children?.includes(oldMeta),
+          false,
+        );
+      }),
+    );
+
+    it("rejects scripted destinations before mutating the current document", () => {
+      const dom = new JSDOM(
+        `<!doctype html><html><head>
+          <title data-vf-head="true">Previous</title>
+          <meta data-vf-head="true" name="description" content="Previous">
+        </head><body><main id="root"></main></body></html>`,
+        { url: "https://example.com/", runScripts: "dangerously" },
+      );
+      const keys = [
+        "window",
+        "document",
+        "Node",
+        "Element",
+        "HTMLElement",
+        "HTMLTemplateElement",
+        "DocumentFragment",
+        "scrollTo",
+      ] as const;
+      const previous = new Map<string, PropertyDescriptor | undefined>();
+      for (const key of keys) {
+        previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+      }
+
+      const window = dom.window as typeof dom.window & {
+        __routeHeadRuns?: number;
+        __routeBodyRuns?: number;
+      };
+      const replacements: Record<(typeof keys)[number], unknown> = {
+        window,
+        document: window.document,
+        Node: window.Node,
+        Element: window.Element,
+        HTMLElement: window.HTMLElement,
+        HTMLTemplateElement: window.HTMLTemplateElement,
+        DocumentFragment: window.DocumentFragment,
+        scrollTo: () => {},
+      };
+      for (const key of keys) {
+        Object.defineProperty(globalThis, key, {
+          configurable: true,
+          value: replacements[key],
+          writable: true,
+        });
+      }
+
+      try {
+        const pageTransition = new PageTransition(() => {});
+        assertThrows(
+          () =>
+            pageTransition.updatePage(
+              {
+                html: `<vf-head>
+              <title>Directive title</title>
+              <meta name="description" content="Directive description">
+              <script>window.__routeHeadRuns=(window.__routeHeadRuns||0)+1;</script>
+            </vf-head>
+            <main>Destination</main>
+            <script>window.__routeBodyRuns=(window.__routeBodyRuns||0)+1;</script>`,
+                frontmatter: {
+                  title: "Frontmatter title",
+                  description: "Frontmatter description",
+                },
+              },
+              false,
+              0,
+            ),
+          TypeError,
+          "Scripted routes require a full document navigation",
+        );
+        assertEquals(window.document.title, "Previous");
+        assertEquals(
+          window.document.head.querySelectorAll('meta[name="description"]').length,
+          1,
+        );
+        assertEquals(
+          window.document.head.querySelector('meta[name="description"]')?.getAttribute(
+            "content",
+          ),
+          "Previous",
+        );
+        assertEquals(window.__routeHeadRuns, undefined);
+        assertEquals(window.__routeBodyRuns, undefined);
+      } finally {
+        for (const key of keys) {
+          const descriptor = previous.get(key);
+          if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+          else delete (globalThis as Record<string, unknown>)[key];
+        }
+        dom.window.close();
+      }
+    });
+
+    it("retires page metadata across repeated navigations without touching third-party head", async () => {
+      const { window, restore } = installRouteDOM(`
+        <title data-vf-shell-head="true">Initial title</title>
+        <meta data-vf-shell-head="true" name="description" content="Initial description">
+        <link data-vf-shell-head="true" rel="canonical" href="https://example.com/initial">
+        <meta data-vf-shell-head="true" name="viewport" content="width=device-width">
+        <link data-vf-shell-head="true" rel="manifest" href="/app.webmanifest">
+        <style data-veryfront-managed="1">.initial{color:red}</style>
+        <meta id="third-party" name="description" content="Third-party description">
+      `);
+      try {
+        const targetDocument = window.document;
+        const viewport = targetDocument.head.querySelector('meta[name="viewport"]');
+        const manifest = targetDocument.head.querySelector('link[rel="manifest"]');
+        const thirdParty = targetDocument.getElementById("third-party");
+        assertExists(viewport);
+        assertExists(manifest);
+        assertExists(thirdParty);
+        const pageTransition = new PageTransition(() => {});
+
+        pageTransition.updatePage(
+          {
+            html: "<main>Page B</main>",
+            frontmatter: {
+              title: "Page B",
+              description: "Page B description",
+              ogTitle: "Page B social",
+            },
+          },
+          false,
+          0,
+        );
+        await delay(200);
+
+        assertEquals(
+          targetDocument.querySelector('title[data-vf-route-head="true"]')?.textContent,
+          "Page B",
+        );
+        assertEquals(
+          targetDocument.querySelector('meta[data-vf-route-head="true"][name="description"]')
+            ?.getAttribute("content"),
+          "Page B description",
+        );
+        assertEquals(targetDocument.querySelectorAll('meta[name="description"]').length, 2);
+        assertEquals(targetDocument.querySelector('link[rel="canonical"]'), null);
+        assertEquals(targetDocument.querySelector("style"), null);
+        assertStrictEquals(targetDocument.querySelector('meta[name="viewport"]'), viewport);
+        assertStrictEquals(targetDocument.querySelector('link[rel="manifest"]'), manifest);
+        assertStrictEquals(targetDocument.getElementById("third-party"), thirdParty);
+
+        pageTransition.updatePage(
+          {
+            html: "<main>Page C</main>",
+            frontmatter: {
+              title: "Page C",
+              description: "Page C description",
+              ogTitle: "Page C social",
+            },
+          },
+          false,
+          0,
+        );
+        await delay(200);
+
+        assertEquals(targetDocument.querySelectorAll('title[data-vf-route-head="true"]').length, 1);
+        assertEquals(
+          targetDocument.querySelector('title[data-vf-route-head="true"]')?.textContent,
+          "Page C",
+        );
+        assertEquals(
+          targetDocument.querySelectorAll(
+            'meta[data-vf-route-head="true"][name="description"]',
+          ).length,
+          1,
+        );
+        assertEquals(
+          targetDocument.querySelector('meta[data-vf-route-head="true"][property="og:title"]')
+            ?.getAttribute("content"),
+          "Page C social",
+        );
+
+        pageTransition.updatePage(
+          {
+            html: "<main>Page D</main>",
+            frontmatter: {},
+          },
+          false,
+          0,
+        );
+        await delay(200);
+
+        assertEquals(
+          targetDocument.querySelector('title[data-vf-route-head="true"]')?.textContent,
+          "Page C",
+        );
+        assertEquals(targetDocument.querySelectorAll('meta[data-vf-route-head="true"]').length, 0);
+        assertEquals(targetDocument.querySelectorAll('meta[name="description"]').length, 1);
+        assertStrictEquals(targetDocument.getElementById("third-party"), thirdParty);
+        assertStrictEquals(targetDocument.querySelector('meta[name="viewport"]'), viewport);
+        assertStrictEquals(targetDocument.querySelector('link[rel="manifest"]'), manifest);
+        assertEquals(viewport.getAttribute("data-vf-shell-head"), "true");
+        assertEquals(manifest.getAttribute("data-vf-shell-head"), "true");
+      } finally {
+        restore();
+      }
+    });
+
+    it(
+      "preserves an unowned document title when frontmatter has no title",
+      withMocks(async (mocks) => {
         const pageTransition = new PageTransition(() => {});
         const originalTitle = mocks.mockDocument.title;
         const data: RouteData = {
@@ -263,6 +624,7 @@ describe("PageTransition", () => {
         };
 
         pageTransition.updatePage(data, false, 0);
+        await delay(200);
 
         assertEquals(
           mocks.mockDocument.title,
@@ -317,23 +679,102 @@ describe("PageTransition", () => {
     );
 
     it(
-      "should allow framework-managed inline scripts in transition HTML",
+      "cancels a pending commit when a newer destination supersedes it",
       withMocks(async (mocks) => {
         const pageTransition = new PageTransition(() => {});
+        pageTransition.updatePage(
+          { html: "<main>Stale</main>", frontmatter: {} },
+          false,
+          0,
+        );
+        pageTransition.updatePage(
+          { html: "<main>Current</main>", frontmatter: {} },
+          false,
+          0,
+        );
+
+        await delay(200);
+
+        assertEquals(mocks.mockRoot.innerHTML, "<main>Current</main>");
+        assertEquals(mocks.mockRoot.style?.opacity, "1");
+      }),
+    );
+
+    it(
+      "rejects malformed managed head before mutating route or opacity",
+      withMocks((mocks) => {
+        const pageTransition = new PageTransition(() => {});
+        mocks.mockRoot.innerHTML = "Current route";
+
+        assertThrows(
+          () =>
+            pageTransition.updatePage(
+              {
+                html: "<main>Destination</main>",
+                frontmatter: {},
+                managedHead: [{
+                  tagName: "meta",
+                  attributes: [["Name", "description"]],
+                }],
+              },
+              false,
+              0,
+            ),
+          TypeError,
+          "not canonical",
+        );
+        assertEquals(mocks.mockRoot.innerHTML, "Current route");
+        assertEquals(mocks.mockRoot.style?.opacity, "1");
+      }),
+    );
+
+    it(
+      "rejects inline scripts before fading or replacing the current route",
+      withMocks((mocks) => {
+        const pageTransition = new PageTransition(() => {});
+        const originalHtml = mocks.mockRoot.innerHTML;
         const data: RouteData = {
           html:
             '<main>Theme page</main><script nonce="">document.documentElement.dataset.theme="dark"</script>',
           frontmatter: {},
         };
 
-        pageTransition.updatePage(data, false, 0);
+        assertThrows(
+          () => pageTransition.updatePage(data, false, 0),
+          TypeError,
+          "Scripted routes require a full document navigation",
+        );
+        assertEquals(mocks.mockRoot.innerHTML, originalHtml);
+        assertEquals(mocks.mockRoot.style?.opacity, "1");
+      }),
+    );
+
+    it(
+      "retires React head ownership even without a legacy head directive",
+      withMocks(async (mocks) => {
+        let removed = false;
+        const reactHeadNode: MockElement = {
+          tagName: "META",
+          getAttribute: (name: string) => name === "data-vf-head" ? "true" : null,
+          remove: () => {
+            removed = true;
+          },
+        };
+        mocks.mockDocument.head?.appendChild?.(reactHeadNode);
+
+        const pageTransition = new PageTransition(() => {});
+        pageTransition.updatePage(
+          { html: "<main>Destination</main>", frontmatter: {} },
+          false,
+          0,
+        );
 
         await delay(200);
 
         assertEquals(
-          mocks.mockRoot.innerHTML,
-          data.html,
-          "Root element should accept trusted transition HTML that contains scripts",
+          removed,
+          true,
+          "Replacing the React route must remove its document-level head nodes",
         );
       }),
     );
@@ -351,18 +792,40 @@ describe("PageTransition", () => {
     );
 
     it(
-      "should not perform transition when html is empty string",
-      withMocks((mocks) => {
+      "should keep the current route when the destination reported no html",
+      withMocks(async (mocks) => {
+        // A backstop: a destination with no route content is handed to the
+        // document loader before it reaches a soft transition. If one ever
+        // arrives here anyway, it must not blank the mounted app.
         const pageTransition = new PageTransition(() => {});
-        const originalHtml = mocks.mockRoot.innerHTML;
-        const data: RouteData = { html: "", frontmatter: {} };
+        mocks.mockRoot.innerHTML = "Previous content";
+        const data: RouteData = { html: undefined, frontmatter: {} };
 
         pageTransition.updatePage(data, false, 0);
+        await delay(200);
 
         assertEquals(
           mocks.mockRoot.innerHTML,
-          originalHtml,
-          "Root element should not change when html is empty",
+          "Previous content",
+          "A destination without route content must leave the live app mounted",
+        );
+      }),
+    );
+
+    it(
+      "should clear the route when html is an empty string",
+      withMocks(async (mocks) => {
+        const pageTransition = new PageTransition(() => {});
+        mocks.mockRoot.innerHTML = "Previous content";
+        const data: RouteData = { html: "", frontmatter: {} };
+
+        pageTransition.updatePage(data, false, 0);
+        await delay(200);
+
+        assertEquals(
+          mocks.mockRoot.innerHTML,
+          "",
+          "An intentionally empty destination should clear the route",
         );
       }),
     );
@@ -488,6 +951,25 @@ describe("PageTransition", () => {
 
         const pageTransition = new PageTransition(() => {});
         pageTransition.showError(new Error("Test error"));
+      }),
+    );
+
+    it(
+      "retires React head ownership before replacing the root with an error",
+      withMocks((mocks) => {
+        let removed = false;
+        mocks.mockDocument.head?.appendChild?.({
+          tagName: "META",
+          getAttribute: (name: string) => name === "data-vf-head" ? "true" : null,
+          remove: () => {
+            removed = true;
+          },
+        });
+
+        const pageTransition = new PageTransition(() => {});
+        pageTransition.showError(new Error("Route failed"));
+
+        assertEquals(removed, true);
       }),
     );
 

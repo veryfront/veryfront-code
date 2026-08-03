@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_meetings",
+      "id": "fathom__list_meetings",
       "name": "List Meetings",
       "description": "List recorded meetings, optionally including summaries and action items",
       "requiresWrite": false,
@@ -88,7 +88,7 @@
       }
     },
     {
-      "id": "get_transcript",
+      "id": "fathom__get_transcript",
       "name": "Get Transcript",
       "description": "Get the transcript of a recording",
       "requiresWrite": false,
@@ -106,7 +106,7 @@
       }
     },
     {
-      "id": "get_summary",
+      "id": "fathom__get_summary",
       "name": "Get Summary",
       "description": "Get the AI summary of a recording",
       "requiresWrite": false,
@@ -124,7 +124,7 @@
       }
     },
     {
-      "id": "list_teams",
+      "id": "fathom__list_teams",
       "name": "List Teams",
       "description": "List teams in the Fathom workspace",
       "requiresWrite": false,
@@ -141,7 +141,7 @@
       }
     },
     {
-      "id": "list_team_members",
+      "id": "fathom__list_team_members",
       "name": "List Team Members",
       "description": "List team members in the Fathom workspace",
       "requiresWrite": false,

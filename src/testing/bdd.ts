@@ -195,6 +195,10 @@ function withEnvOverlay<T extends TestFn | (() => void)>(fn: T): T {
   if (!overlay) return fn;
 
   return ((...args: unknown[]) => {
+    if (getActiveEnvOverlay()) {
+      return Promise.resolve().then(() => fn(...(args as [])));
+    }
+
     if (overlay.run) {
       return overlay.run(
         new Map<string, string | null>(),
@@ -207,6 +211,15 @@ function withEnvOverlay<T extends TestFn | (() => void)>(fn: T): T {
     }
 
     return fn(...(args as []));
+  }) as T;
+}
+
+function withoutEnvOverlay<T extends TestFn | (() => void)>(fn: T): T {
+  const overlay = getEnvOverlayStorage();
+  if (!overlay?.run) return fn;
+
+  return ((...args: unknown[]) => {
+    return overlay.run!(null, () => Promise.resolve().then(() => fn(...(args as []))));
   }) as T;
 }
 
@@ -449,6 +462,26 @@ function requireImpl(): BddImpl {
   );
 }
 
+let denoDescribeDepth = 0;
+
+function withDenoSuiteEnvOverlay(testFn: () => void): () => void {
+  return () => {
+    const isTopLevelSuite = denoDescribeDepth === 0;
+    if (isTopLevelSuite) {
+      denoBdd!.beforeEach(() => {
+        getEnvOverlayStorage()?.enterWith?.(new Map<string, string | null>());
+      });
+    }
+
+    denoDescribeDepth++;
+    try {
+      testFn();
+    } finally {
+      denoDescribeDepth--;
+    }
+  };
+}
+
 function getNameAndFn<T extends TestFn | (() => void)>(
   nameOrOptions: string | (TestOptions & { name: string }),
   optionsOrFn?: TestOptions | T,
@@ -475,12 +508,13 @@ export function describe(
   if (!testFn) throw new Error("describe requires a test function");
 
   const denoOptions = normalizeDenoOptions(options);
+  const suiteWithEnv = withDenoSuiteEnvOverlay(testFn);
   if (hasOptions(denoOptions)) {
-    denoBdd.describe({ name, ...denoOptions }, testFn);
+    denoBdd.describe({ name, ...denoOptions }, suiteWithEnv);
     return;
   }
 
-  denoBdd.describe(name, testFn);
+  denoBdd.describe(name, suiteWithEnv);
 }
 
 describe.skip = function skip(
@@ -491,7 +525,7 @@ describe.skip = function skip(
   const { name, testFn } = getNameAndFn(nameOrOptions, optionsOrFn, fn);
 
   if (denoBdd) {
-    denoBdd.describe({ name, ignore: true }, testFn);
+    denoBdd.describe({ name, ignore: true }, withDenoSuiteEnvOverlay(testFn));
     return;
   }
 
@@ -508,7 +542,7 @@ describe.only = function only(
   const { name, testFn } = getNameAndFn(nameOrOptions, optionsOrFn, fn);
 
   if (denoBdd) {
-    denoBdd.describe({ name, only: true }, testFn);
+    denoBdd.describe({ name, only: true }, withDenoSuiteEnvOverlay(testFn));
     return;
   }
 
@@ -584,29 +618,32 @@ export function beforeEach(fn: HookFn): void {
 
 /** Register a hook after each BDD test. */
 export function afterEach(fn: HookFn): void {
+  const hookWithEnv = withEnvOverlay(fn);
   if (denoBdd) {
-    denoBdd.afterEach(fn);
+    denoBdd.afterEach(hookWithEnv);
     return;
   }
-  requireImpl().afterEach(fn);
+  requireImpl().afterEach(hookWithEnv);
 }
 
 /** Register a hook before all BDD tests in a group. */
 export function beforeAll(fn: HookFn): void {
+  const hostHook = withoutEnvOverlay(fn);
   if (denoBdd) {
-    denoBdd.beforeAll(fn);
+    denoBdd.beforeAll(hostHook);
     return;
   }
-  requireImpl().beforeAll(fn);
+  requireImpl().beforeAll(hostHook);
 }
 
 /** Register a hook after all BDD tests in a group. */
 export function afterAll(fn: HookFn): void {
+  const hostHook = withoutEnvOverlay(fn);
   if (denoBdd) {
-    denoBdd.afterAll(fn);
+    denoBdd.afterAll(hostHook);
     return;
   }
-  requireImpl().afterAll(fn);
+  requireImpl().afterAll(hostHook);
 }
 
 /** Shared test value. */

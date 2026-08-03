@@ -14,8 +14,8 @@ import { createResponseBuilder } from "#veryfront/security/index.ts";
 import { resetApiHandler } from "../handlers/request/api/pages-api-handler.ts";
 import { clearLayoutDiscoveryCache } from "#veryfront/rendering/layouts/index.ts";
 import { clearRendererCacheForProject } from "#veryfront/rendering/renderer.ts";
-import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
-import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
+import { getErrorCollector, getLogBuffer } from "#veryfront/observability";
+import { invalidateRSCHandlersForProject } from "#veryfront/server/services/rsc/endpoints/handler-registry.ts";
 
 const logger = serverLogger.component("dev");
 
@@ -26,7 +26,6 @@ export class RequestHandler {
     private projectDir: string,
     private adapter: RuntimeAdapter,
     private isReady: () => boolean,
-    private isDebug: () => boolean,
     private config?: VeryfrontConfig,
     private defaultProjectSlug?: string,
     private defaultProjectId?: string,
@@ -135,7 +134,6 @@ export class RequestHandler {
       const { createVeryfrontHandler } = await import("../runtime-handler/index.ts");
       this.runtimeHandler = createVeryfrontHandler(this.projectDir, this.adapter, {
         projectDir: this.projectDir,
-        debug: this.isDebug(),
         moduleServerUrl: "/_vf_modules",
         config: this.config,
         defaultProjectSlug: this.defaultProjectSlug,
@@ -149,6 +147,7 @@ export class RequestHandler {
 
   invalidateRuntimeHandler(): void {
     this.runtimeHandler = undefined;
+    invalidateRSCHandlersForProject(this.projectDir, this.defaultProjectId);
 
     resetApiHandler(this.projectDir).catch((error) => {
       logger.debug("resetApiHandler failed", error);

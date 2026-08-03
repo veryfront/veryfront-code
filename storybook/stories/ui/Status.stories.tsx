@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Status } from "../../../src/react/components/chat/ui/index.ts";
+import { Status } from "../../../src/react/components/ui/index.ts";
 import {
   DocsCode,
   DocsComposition,
@@ -10,7 +10,7 @@ import {
   DocsSection,
 } from "../../.storybook/docs";
 
-const importCode = `import { Status } from "veryfront/chat/ui"`;
+const importCode = `import { Status } from "veryfront/ui"`;
 
 const compositionTree = `Status`;
 
@@ -103,7 +103,7 @@ function StatusDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/Status",
+  title: "UI/Status",
   component: Status,
   tags: ["autodocs"],
   args: {

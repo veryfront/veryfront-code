@@ -13,6 +13,7 @@ import {
 } from "../../.storybook/docs";
 import {
   attachments,
+  chatMessages,
   createChangeHandler,
   filesToAttachments,
   modelOptions,
@@ -26,20 +27,18 @@ const agentOptions: AgentOption[] = [
   { id: "researcher", name: "Research Agent" },
 ];
 
-const compositionTree = `ChatInput  <- input form (forwardRef to the outer div)
-  +-- InputBox  <- multiline message input
-  +-- footer toolbar
-      +-- + menu  <- attach files
-      +-- AgentPicker  <- agent selector pill (toolbarStart slot)
-      +-- ModelSelector  <- shown when models + onModelChange are set
-      +-- submit  <- send / stop`;
+const compositionTree = `ChatInput  <- batteries-included input form
+  +-- ChatInput.Root     <- composer state provider
+  +-- ChatInput.Field    <- multiline message input
+  +-- ChatInput.Toolbar  <- action layout slot
+      +-- Attach / Model / Export / Voice / Stop / Send`;
 
 function ChatInputDocsPage() {
   return (
     <DocsPage>
       <DocsHero
         title="ChatInput"
-        lead="The chat input area — message field, attachments, agent + model selectors, and submit, wired through controlled props (Studio `PromptInput`)."
+        lead="The chat input area: message field, attachments, agent and model selectors, and submit, wired through controlled props."
       />
 
       <DocsSection
@@ -72,7 +71,7 @@ function ChatInputDocsPage() {
 
       <DocsSection
         title="Composed"
-        description="`ChatInput` is render-or-compose. Drop to `ChatInput.Root` (provides ComposerContext) and arrange `ChatInput.Field` + the toolbar sub-parts (`Send`/`Attach`/`Model`/…) yourself — each takes `icon`, `className`, and an `onClick(e, next)`."
+        description="`ChatInput` is render-or-compose. Use `ChatInput.Root` (provides ComposerContext) and arrange `ChatInput.Field` with the toolbar sub-parts (`Send`/`Attach`/`Model`/`Export` and others). Presence controls which actions render."
       >
         <DocsExampleAuto of={Composed} />
       </DocsSection>
@@ -129,7 +128,7 @@ function ChatInputDocsPage() {
             {
               name: "onVoice",
               type: "() => void",
-              description: "Enables the voice-input control",
+              description: "Action used by a composed ChatInput.Voice",
             },
             {
               name: "isListening",
@@ -183,17 +182,6 @@ function ChatInputDocsPage() {
               description: "Called to remove a pending attachment",
             },
             {
-              name: "showExport",
-              type: "boolean",
-              default: "false",
-              description: "Show the export-as-Markdown action",
-            },
-            {
-              name: "messages",
-              type: "ChatMessage[]",
-              description: "Messages used by the export action",
-            },
-            {
               name: "className",
               type: "string",
               description: "Additional class names for the wrapper",
@@ -244,7 +232,7 @@ function ComposerReview({
   const addFiles = (list: FileList) =>
     setFiles((current) => [...current, ...filesToAttachments(list)]);
 
-  // Rendered exactly as it appears inside <Chat> — no review chrome — so the
+  // Rendered exactly as it appears inside <Chat>, with no review chrome, so the
   // composer looks identical across the ChatInput and Chat docs.
   return (
     <div className="vf-story-canvas">
@@ -256,7 +244,6 @@ function ComposerReview({
           isLoading={isLoading}
           placeholder="Type a prompt or a question..."
           stop={() => undefined}
-          onVoice={() => undefined}
           models={modelOptions}
           model={model}
           onModelChange={setModel}
@@ -348,7 +335,9 @@ const addFiles = (list: FileList) =>
 };
 
 function ComposedComposer(): React.ReactElement {
-  const [input, setInput] = React.useState("Composed from ChatInput.Root + parts");
+  const [input, setInput] = React.useState(
+    "Composed from ChatInput.Root + parts",
+  );
   return (
     <div className="vf-story-canvas">
       <div className="mx-auto w-full max-w-[850px]">
@@ -357,16 +346,19 @@ function ComposedComposer(): React.ReactElement {
           onChange={createChangeHandler(setInput)}
           onSubmit={() => undefined}
           onAttach={() => undefined}
+          onVoice={() => undefined}
           models={modelOptions}
           model={modelOptions[0]?.value}
           onModelChange={() => undefined}
         >
           <div className="rounded-[var(--radius-lg)] bg-[var(--secondary)] px-4 pt-3 pb-3 shadow-sm">
-            <ChatInput.Field placeholder="Composed composer…" />
+            <ChatInput.Field placeholder="Composed composer..." />
             <div className="mt-2.5 flex items-center justify-between">
               <ChatInput.Attach />
               <div className="flex items-center gap-1.5">
                 <ChatInput.Model />
+                <ChatInput.Export messages={chatMessages} />
+                <ChatInput.Voice />
                 <ChatInput.Send
                   icon={<span className="text-[15px] leading-none">🚀</span>}
                   onClick={(_e, next) => {
@@ -384,17 +376,25 @@ function ComposedComposer(): React.ReactElement {
 }
 
 export const Composed: Story = {
-  tags: ["!dev"],
+  tags: ["!dev", "acid-test"],
   render: () => <ComposedComposer />,
   parameters: {
     docs: {
       source: {
-        code: `<ChatInput.Root input={input} onChange={onChange} onSubmit={submit} onAttach={attach}>
-  <div className="… card">
-    <ChatInput.Field placeholder="Composed composer…" />
+        code: `<ChatInput.Root
+  input={input}
+  onChange={onChange}
+  onSubmit={submit}
+  onAttach={attach}
+  onVoice={toggleVoice}
+>
+  <div className="... card">
+    <ChatInput.Field placeholder="Composed composer..." />
     <div className="toolbar">
       <ChatInput.Attach />
       <ChatInput.Model />
+      <ChatInput.Export messages={messages} />
+      <ChatInput.Voice />
       <ChatInput.Send
         icon={<RocketIcon />}
         onClick={(e, next) => { console.log("send"); next(); }}

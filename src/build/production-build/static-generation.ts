@@ -15,14 +15,15 @@ import { loadClientStyles } from "./asset-generation.ts";
 import { buildImportMap } from "#veryfront/html/utils.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import {
+  acquireCSSGenerationSession,
   cacheCSSAsync,
   extractCandidatesFromFiles,
   generateTailwindCSS,
   hashCSS,
 } from "#veryfront/html/styles-builder/index.ts";
-import { DEFAULT_STYLESHEET } from "#veryfront/html/styles-builder/css-hash-cache.ts";
 import { FRAMEWORK_CANDIDATES } from "#veryfront/server/handlers/dev/framework-candidates.generated.ts";
 import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
+import { SSG_GENERATION_ERROR } from "#veryfront/errors";
 
 export interface PageRenderResult {
   html: string;
@@ -58,6 +59,8 @@ export interface SSGOptions {
   /** React version for import map generation */
   reactVersion?: string;
   releaseAssetManifest?: ReleaseAssetManifest | null;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
 }
 
 function getOutputPath(outputDir: string, slug: string): string {
@@ -76,6 +79,28 @@ function defaultTraceStep<T>(_: string, fn: () => Promise<T>): Promise<T> {
 
 function getByteLength(text: string): number {
   return new TextEncoder().encode(text).length;
+}
+
+function createStaticRouteContext(
+  path: string,
+  baseUrl: string,
+): { staticDataOnly: true; url: URL } {
+  // Static route paths are root-relative; baseUrl supplies only the URL origin.
+  const url = new URL(path, baseUrl || "http://localhost");
+  return {
+    staticDataOnly: true,
+    url,
+  };
+}
+
+function getConfiguredModuleServerOrigin(baseUrl?: string): string | undefined {
+  if (!baseUrl) return undefined;
+  try {
+    const url = new URL(baseUrl);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.origin : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function hasImportMapScript(html: string): boolean {
@@ -166,23 +191,21 @@ async function prepareAppRouteStylesheet(
   });
   for (const candidate of FRAMEWORK_CANDIDATES) candidates.add(candidate);
 
-  const generated = await generateTailwindCSS(stylesheet, candidates, {
+  const generationSession = acquireCSSGenerationSession(true);
+  const resolvedStylesheet = stylesheet ?? generationSession.compilationSession.defaultStylesheet;
+  const generated = await generateTailwindCSS(resolvedStylesheet, candidates, {
     minify: true,
     environment: "production",
     buildMode: "production",
-  });
-
-  if (generated.error) {
-    logger.error("Failed to generate App Router CSS:", generated.error);
-    return undefined;
-  }
+  }, { generationSession });
 
   const hash = hashCSS(generated.css);
   if (!hash) return undefined;
 
   await cacheCSSAsync(generated.css, hash, {
     candidates,
-    stylesheet: stylesheet ?? DEFAULT_STYLESHEET,
+    stylesheet: resolvedStylesheet,
+    pipelineIdentity: generated.cacheIdentity,
   });
 
   if (!options.dryRun) {
@@ -215,12 +238,16 @@ export async function buildPagesRoutes(
 
   for (const route of routes) {
     try {
+      const staticRouteContext = createStaticRouteContext(route.path, baseUrl);
       const result = await traceStep(
         `page:${route.slug}`,
         () =>
           renderer.renderPage(route.slug, {
             contentSourceId,
+            ...staticRouteContext,
             releaseAssetManifest: options.releaseAssetManifest,
+            dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+            dependencyPinningDependencies: options.dependencyPinningDependencies,
           }),
       );
 
@@ -242,7 +269,10 @@ export async function buildPagesRoutes(
         const importMap = await buildImportMap({
           projectDir: options.projectDir,
           config: options.config,
+          moduleServerOrigin: getConfiguredModuleServerOrigin(baseUrl),
           releaseAssetManifest: options.releaseAssetManifest,
+          dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+          dependencyPinningDependencies: options.dependencyPinningDependencies,
         });
         enhancedHtml = enhancedHtml.replace(
           "</head>",
@@ -288,10 +318,6 @@ ${clientStyles}
 
       await traceStep(`write:${route.slug}`, () => adapter.fs.writeFile(outputPath, enhancedHtml));
 
-      stats.pages++;
-      stats.totalSize += getByteLength(enhancedHtml);
-      stats.ssgPaths.push(route.path);
-
       const pageData = {
         slug: route.slug,
         path: route.path,
@@ -314,9 +340,17 @@ ${clientStyles}
         await traceStep(`module:${route.slug}`, () => adapter.fs.writeFile(modulePath, moduleCode));
       }
 
+      stats.pages++;
+      stats.totalSize += getByteLength(enhancedHtml);
+      stats.ssgPaths.push(route.path);
       logger.debug(`Built page: ${route.slug}`);
     } catch (error) {
       logger.error(`Failed to build ${route.slug}:`, error);
+      throw SSG_GENERATION_ERROR.create({
+        detail: `Failed to build page ${route.path}`,
+        cause: error,
+        context: { route: route.path },
+      });
     }
   }
 
@@ -340,7 +374,7 @@ export async function buildAppRoutes(
   const stats: SSGStats = { pages: 0, totalSize: 0, ssgPaths: [] };
   if (appRoutes.length === 0) return stats;
 
-  logger.info("Building App Router static pages...");
+  logger.debug("Building App Router static pages...");
   const stylesheetHref = await traceStep(
     "app:styles",
     () => prepareAppRouteStylesheet(options),
@@ -355,10 +389,14 @@ export async function buildAppRoutes(
           routePath: route.path,
           pageFile: route.pageFile,
           contentSourceId,
+          moduleServerOrigin: getConfiguredModuleServerOrigin(options.baseUrl),
           reactVersion,
+          config: options.config,
           releaseAssetManifest: options.releaseAssetManifest,
           stylesheetHref,
           includePreviewStylesheet: false,
+          dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+          dependencyPinningDependencies: options.dependencyPinningDependencies,
         }));
 
       const outputPath = getAppRouteOutputPath(outputDir, route.path);
@@ -373,6 +411,11 @@ export async function buildAppRoutes(
       stats.totalSize += getByteLength(html);
     } catch (error) {
       logger.error(`Failed to build app route ${route.path}:`, error);
+      throw SSG_GENERATION_ERROR.create({
+        detail: `Failed to build app route ${route.path}`,
+        cause: error,
+        context: { route: route.path },
+      });
     }
   }
 

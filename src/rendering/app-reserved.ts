@@ -2,6 +2,7 @@ import * as BundledReact from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { normalizePath } from "#veryfront/utils/path-utils.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 
 type ReservedComponent = BundledReact.ComponentType<{ error?: Error; reset?: () => void }>;
 
@@ -73,7 +74,12 @@ export function createErrorBoundary(
   };
 }
 
-export async function tryLoadReservedInDirs(
+/**
+ * Like {@link tryLoadReservedInDirs}, but also returns the absolute source path
+ * of the file that was loaded — the client hydration bundle needs the path (in
+ * the same absolute form as `appPath`) to load the same component in the browser.
+ */
+export async function loadReservedWithPath(
   dirs: string[],
   which: keyof typeof RESERVED_COMPONENTS,
   projectDir: string,
@@ -81,7 +87,12 @@ export async function tryLoadReservedInDirs(
   adapter: RuntimeAdapter,
   projectId?: string,
   contentSourceId?: string,
-): Promise<ReservedComponent | null> {
+  reactVersion?: string,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
+): Promise<{ component: ReservedComponent; filePath: string } | null> {
   const join = (a: string, b: string) => `${a.replace(/\/$/, "")}/${b.replace(/^\//, "")}`;
   const candidateName = RESERVED_COMPONENTS[which];
   const { loadComponentFromSource } = await import(
@@ -97,8 +108,15 @@ export async function tryLoadReservedInDirs(
           projectId: projectId ?? projectDir,
           dev: true,
           contentSourceId,
+          reactVersion,
+          moduleServerOrigin,
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+          dependencyPinningSource,
         });
-        if (typeof Cmp === "function") return Cmp as ReservedComponent;
+        if (typeof Cmp === "function") {
+          return { component: Cmp as ReservedComponent, filePath: file };
+        }
       } catch (_) {
         /* expected: component not found in this path, continue to next */
       }
@@ -106,4 +124,35 @@ export async function tryLoadReservedInDirs(
   }
 
   return null;
+}
+
+export async function tryLoadReservedInDirs(
+  dirs: string[],
+  which: keyof typeof RESERVED_COMPONENTS,
+  projectDir: string,
+  mode: "development" | "production",
+  adapter: RuntimeAdapter,
+  projectId?: string,
+  contentSourceId?: string,
+  reactVersion?: string,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
+): Promise<ReservedComponent | null> {
+  const loaded = await loadReservedWithPath(
+    dirs,
+    which,
+    projectDir,
+    mode,
+    adapter,
+    projectId,
+    contentSourceId,
+    reactVersion,
+    dependencyPinningCacheKey,
+    dependencyPinningDependencies,
+    dependencyPinningSource,
+    moduleServerOrigin,
+  );
+  return loaded?.component ?? null;
 }

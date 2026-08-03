@@ -9,6 +9,11 @@ export interface BuildInstruments {
   buildDuration: Histogram | null;
   bundleSizeHistogram: Histogram | null;
   bundleCounter: Counter | null;
+  dependencyArtifactBuildCounter: Counter | null;
+  dependencyArtifactBuildDuration: Histogram | null;
+  dependencyArtifactBuildBytes: Histogram | null;
+  dependencyArtifactBuildAssetCount: Histogram | null;
+  dependencyArtifactBuildExternalImportCount: Histogram | null;
 }
 
 export function createBuildInstruments(
@@ -32,5 +37,28 @@ export function createBuildInstruments(
       description: "Total number of bundles created",
       unit: "bundles",
     }),
+    dependencyArtifactBuildCounter: meter.createCounter(
+      `${prefix}.dependency_artifact.builds`,
+      { description: "Dependency artifact build lifecycle events", unit: "events" },
+    ),
+    dependencyArtifactBuildDuration: meter.createHistogram(
+      `${prefix}.dependency_artifact.build.duration`,
+      { description: "Dependency artifact build duration", unit: "ms" },
+    ),
+    dependencyArtifactBuildBytes: meter.createHistogram(
+      `${prefix}.dependency_artifact.build.bytes`,
+      { description: "Dependency artifact build output bytes", unit: "bytes" },
+    ),
+    dependencyArtifactBuildAssetCount: meter.createHistogram(
+      `${prefix}.dependency_artifact.build.assets`,
+      { description: "Dependency artifact build asset count", unit: "assets" },
+    ),
+    dependencyArtifactBuildExternalImportCount: meter.createHistogram(
+      `${prefix}.dependency_artifact.build.external_imports`,
+      {
+        description: "Allowed external imports remaining after artifact materialization",
+        unit: "imports",
+      },
+    ),
   };
 }

@@ -205,7 +205,7 @@ export const AttachOnly: Story = {
 };
 
 export const Composed: Story = {
-  tags: ["!dev"],
+  tags: ["!dev", "acid-test"],
   render: () => (
     <StoryFrame maxWidth="420px">
       <ReviewSurface label="Composed">

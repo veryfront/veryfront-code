@@ -81,9 +81,10 @@ function addToolParts(
       toolCallId: tool.toolCallId,
       toolName: tool.toolName,
       state: tool.state,
-      input: tool.input,
-      output: tool.output,
-      errorText: tool.error,
+      ...(tool.input !== undefined ? { input: tool.input } : {}),
+      ...(tool.output !== undefined ? { output: tool.output } : {}),
+      ...(tool.error !== undefined ? { errorText: tool.error } : {}),
+      ...(tool.providerExecuted !== undefined ? { providerExecuted: tool.providerExecuted } : {}),
     };
 
     const part: ChatMessagePart = tool.dynamic

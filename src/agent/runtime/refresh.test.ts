@@ -1,11 +1,34 @@
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type ModelRuntime } from "#veryfront/provider";
-import { tool } from "#veryfront/tool";
+import { type RemoteToolSource, tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { registerSkill } from "#veryfront/skill/registry.ts";
 import { agent } from "../index.ts";
-import type { Message, RuntimeStateRequest, ToolExecutionResultRequest } from "../types.ts";
+import type {
+  AgentConfig,
+  AgentResponse,
+  Message,
+  RuntimeStateRequest,
+  ToolExecutionResultRequest,
+} from "../types.ts";
+import type { RuntimeRemoteToolConfig } from "./mcp-server-tool-sources.ts";
+import type { TextGenerationRuntimeMessage } from "./text-generation-runtime-message-types.ts";
+import { flattenSystemInstructions, withRuntimeToolInventory } from "./tool-inventory.ts";
+import { getRuntimeProjectSkillCatalog } from "./project-skill-catalog.ts";
+import {
+  createRuntimeProjectSkillLoader,
+  type RuntimeProjectSkillContext,
+} from "./project-skill-loader.ts";
+import { hasSubmittedFormInputResult } from "./skill-policy-enforcement.ts";
+import { isRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
+import { normalizeInput } from "./input-utils.ts";
+
+function eagerAgent(config: Parameters<typeof agent>[0]): ReturnType<typeof agent> {
+  return agent({ ...config, __vfToolLoadingMode: "eager" } as Parameters<typeof agent>[0]);
+}
 
 function createRuntimeStream(parts: unknown[]) {
   return new ReadableStream<unknown>({
@@ -29,6 +52,21 @@ function extractSystemPrompt(options: unknown): string {
     .filter((entry) => entry?.role === "system" && typeof entry.content === "string")
     .map((entry) => entry.content as string)
     .join("\n");
+}
+
+function extractRuntimeToolNames(options: unknown): string[] {
+  const tools = (options as { tools?: unknown }).tools;
+  if (Array.isArray(tools)) {
+    return tools.map((entry) => {
+      const toolEntry = entry as { name?: unknown; id?: unknown };
+      return typeof toolEntry.name === "string"
+        ? toolEntry.name
+        : typeof toolEntry.id === "string"
+        ? toolEntry.id
+        : "";
+    }).sort();
+  }
+  return Object.keys((tools as Record<string, unknown> | undefined) ?? {}).sort();
 }
 
 function supplierInvoiceEvidenceMessages(): Message[] {
@@ -76,10 +114,136 @@ function supplierInvoiceEvidenceMessages(): Message[] {
   ];
 }
 
+function submittedFormWithActiveSkillMessages(): Message[] {
+  return [
+    {
+      id: "skill-result",
+      role: "tool",
+      parts: [{
+        type: "tool-result",
+        toolCallId: "load-plan",
+        toolName: "load_skill",
+        result: {
+          skillId: "plan",
+          instructions: "# Plan",
+          allowedTools: ["load_skill"],
+          references: ["references/guide.md"],
+          scripts: [],
+        },
+      }],
+    },
+    {
+      id: "form-result",
+      role: "tool",
+      parts: [{
+        type: "tool-result",
+        toolCallId: "collect-plan-input",
+        toolName: "form_input",
+        result: { submitted: true, values: { topic: "Runtime policy" } },
+      }],
+    },
+  ];
+}
+
 describe("agent runtime refresh hooks", () => {
+  it("requires universal load_skill to establish policy before parallel tool calls", async () => {
+    const rootPath = await Deno.makeTempDir();
+    let writeExecutions = 0;
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/universal-skill-policy",
+      async doGenerate() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "write-before-skill",
+                toolName: "write_report",
+                input: '{"path":"report.md"}',
+              },
+              {
+                type: "tool-call",
+                toolCallId: "load-policy",
+                toolName: "load_skill",
+                input: '{"skillId":"read-only-review"}',
+              },
+              {
+                type: "tool-call",
+                toolCallId: "write-after-skill",
+                toolName: "write_report",
+                input: '{"path":"second-report.md"}',
+              },
+            ],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
+      },
+    };
+    const writeReport = tool({
+      id: "write_report",
+      description: "Write a report",
+      inputSchema: defineSchema((v) => v.object({ path: v.string() }))(),
+      execute: () => {
+        writeExecutions++;
+        return { ok: true };
+      },
+    });
+
+    try {
+      await Deno.writeTextFile(
+        `${rootPath}/SKILL.md`,
+        "---\nname: review\ndescription: Review one report\nallowed-tools: [write_report]\n---\nRead the input before deciding whether to write the report.\n",
+      );
+      registerSkill("read-only-review", {
+        id: "read-only-review",
+        metadata: {
+          name: "review",
+          description: "Review one report",
+          allowedTools: ["write_report"],
+        },
+        rootPath,
+      });
+      const assistant = eagerAgent({
+        id: "universal-skill-policy-agent",
+        model: "hosted/universal-skill-policy",
+        system: "Use the matching skill.",
+        tools: { write_report: writeReport },
+        maxSteps: 2,
+        resolveModelTransport: async () => ({ model }),
+      });
+
+      const response = await assistant.generate({ input: "Review this report" });
+
+      assertEquals(writeExecutions, 0);
+      assertEquals(
+        response.toolCalls.filter((call) => call.name === "write_report").map((call) =>
+          call.status
+        ),
+        ["error", "error"],
+      );
+    } finally {
+      skillRegistryInternal.clearAll();
+      await Deno.remove(rootPath, { recursive: true });
+    }
+  });
+
   it("continues suppressed unavailable tool calls with a user recovery turn after assistant text", async () => {
     const observedPrompts: Array<Array<{ role?: string; content?: unknown }>> = [];
+    const observedRuntimeMessages: Message[][] = [];
     let callCount = 0;
+    let finishedResponse: AgentResponse | undefined;
     const model: ModelRuntime = {
       provider: "hosted",
       modelId: "hosted/suppressed-tool-recovery",
@@ -100,14 +264,14 @@ describe("agent runtime refresh hooks", () => {
           return {
             stream: createRuntimeStream([
               { type: "text-delta", text: "I will reload the skill." },
-              { type: "tool-input-start", id: "tc-stale", toolName: "load_skill" },
-              { type: "tool-input-delta", id: "tc-stale", delta: '{"skillId":"create-agent"}' },
+              { type: "tool-input-start", id: "tc-stale", toolName: "stale_tool" },
+              { type: "tool-input-delta", id: "tc-stale", delta: '{"query":"create-agent"}' },
               { type: "tool-input-end", id: "tc-stale" },
               {
                 type: "tool-call",
                 toolCallId: "tc-stale",
-                toolName: "load_skill",
-                input: { skillId: "create-agent" },
+                toolName: "stale_tool",
+                input: { query: "create-agent" },
               },
               { type: "finish", finishReason: "tool-calls" },
             ]),
@@ -123,9 +287,119 @@ describe("agent runtime refresh hooks", () => {
       },
     };
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/suppressed-tool-recovery",
       system: "Recover from stale tools.",
+      maxSteps: 2,
+      resolveModelTransport: async () => ({ model }),
+      resolveRuntimeState({ messages }) {
+        observedRuntimeMessages.push(messages);
+        return {};
+      },
+    });
+
+    await (await assistant.stream({
+      messages: submittedFormWithActiveSkillMessages(),
+      onFinish: (response) => {
+        finishedResponse = response;
+      },
+    })).toDataStreamResponse().text();
+
+    assertEquals(callCount, 2);
+    const runtimeMessages = observedRuntimeMessages[1] ?? [];
+    assertEquals(runtimeMessages.at(-1)?.role, "user");
+    assertEquals(
+      isRuntimeGeneratedUserMessage(runtimeMessages.at(-1) ?? {}),
+      true,
+    );
+    const retryPrompt = observedPrompts[1] ?? [];
+    assertEquals(retryPrompt.at(-1)?.role, "user");
+    assertEquals(
+      JSON.stringify(retryPrompt.at(-1)?.content).includes(
+        "ignored unavailable tool call(s): stale_tool",
+      ),
+      true,
+    );
+    const completedResponse = finishedResponse as AgentResponse | undefined;
+    assertExists(completedResponse);
+    const recoveryMessage = completedResponse.messages.find((message) =>
+      message.id.startsWith("runtime_note_")
+    );
+    assertExists(recoveryMessage);
+    assertEquals(isRuntimeGeneratedUserMessage(recoveryMessage), true);
+    assertEquals(hasSubmittedFormInputResult(completedResponse.messages), true);
+    assertEquals(hasSubmittedFormInputResult(normalizeInput(completedResponse.messages)), true);
+  });
+
+  it("keeps valid parallel tool results before suppressed-tool recovery guidance", async () => {
+    const observedPrompts: TextGenerationRuntimeMessage[][] = [];
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/mixed-suppressed-tool-recovery",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream(options: unknown) {
+        callCount++;
+        observedPrompts.push(
+          (options as { prompt?: TextGenerationRuntimeMessage[] }).prompt ?? [],
+        );
+
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "tc-stale",
+                toolName: "stale_tool",
+                input: { query: "ignored" },
+              },
+              {
+                type: "tool-call",
+                toolCallId: "tc-github",
+                toolName: "get_github",
+                input: { query: "pull requests" },
+              },
+              {
+                type: "tool-call",
+                toolCallId: "tc-slack",
+                toolName: "get_slack",
+                input: { query: "daily channel" },
+              },
+              { type: "finish", finishReason: "tool-calls" },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "Recovered." },
+            { type: "finish", finishReason: "stop" },
+          ]),
+        };
+      },
+    };
+    const getGithub = tool({
+      id: "get_github",
+      description: "Get GitHub integration details",
+      inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+      execute: ({ query }) => ({ integration: "github", query }),
+    });
+    const getSlack = tool({
+      id: "get_slack",
+      description: "Get Slack integration details",
+      inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+      execute: ({ query }) => ({ integration: "slack", query }),
+    });
+    const assistant = eagerAgent({
+      model: "hosted/mixed-suppressed-tool-recovery",
+      system: "Recover from stale tools after checking integrations.",
+      tools: { get_github: getGithub, get_slack: getSlack },
       maxSteps: 2,
       resolveModelTransport: async () => ({ model }),
     });
@@ -134,10 +408,53 @@ describe("agent runtime refresh hooks", () => {
 
     assertEquals(callCount, 2);
     const retryPrompt = observedPrompts[1] ?? [];
-    assertEquals(retryPrompt.at(-1)?.role, "user");
+    assertEquals(
+      retryPrompt.slice(-3).map((message) => message.role),
+      ["assistant", "tool", "user"],
+    );
+    assertEquals(retryPrompt.at(-3), {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "tc-github",
+          toolName: "get_github",
+          input: { query: "pull requests" },
+        },
+        {
+          type: "tool-call",
+          toolCallId: "tc-slack",
+          toolName: "get_slack",
+          input: { query: "daily channel" },
+        },
+      ],
+    });
+    assertEquals(retryPrompt.at(-2), {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "tc-github",
+          toolName: "get_github",
+          output: {
+            type: "json",
+            value: { integration: "github", query: "pull requests" },
+          },
+        },
+        {
+          type: "tool-result",
+          toolCallId: "tc-slack",
+          toolName: "get_slack",
+          output: {
+            type: "json",
+            value: { integration: "slack", query: "daily channel" },
+          },
+        },
+      ],
+    });
     assertEquals(
       JSON.stringify(retryPrompt.at(-1)?.content).includes(
-        "ignored unavailable tool call(s): load_skill",
+        "ignored unavailable tool call(s): stale_tool",
       ),
       true,
     );
@@ -180,7 +497,7 @@ describe("agent runtime refresh hooks", () => {
       }),
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/tool-result-generate",
       system: "Generate tool result hook test",
       tools: { write_report: writeReport },
@@ -207,13 +524,303 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolResults[0]?.context?.projectId, "project-generate");
   });
 
-  it("removes provider-native tools from the forced final response after create_agent", async () => {
+  it("preserves the finish reason when generate() stops without final text", async () => {
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/empty-final-text",
+      async doGenerate() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "write-1",
+              toolName: "write_report",
+              input: '{"path":"research/report.md"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+
+        return {
+          content: [],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 },
+        };
+      },
+      async doStream() {
+        return {
+          stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]),
+        };
+      },
+    };
+
+    const writeReport = tool({
+      id: "write_report",
+      description: "Write a report",
+      inputSchema: defineSchema((v) => v.object({ path: v.string() }))(),
+      execute: ({ path }) => ({ path, created: true }),
+    });
+
+    const assistant = eagerAgent({
+      model: "hosted/empty-final-text",
+      system: "Write the report and summarize the result.",
+      tools: { write_report: writeReport },
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = await assistant.generate({ input: "Write a report" });
+
+    assertEquals(callCount, 2);
+    assertEquals(response.status, "completed");
+    assertEquals(response.text, "");
+    assertEquals(response.metadata?.finishReason, "stop");
+    assertEquals(response.toolCalls[0]?.status, "completed");
+  });
+
+  it("classifies structured errors returned during generate()", async () => {
     const toolNamesByStep: string[][] = [];
     let callCount = 0;
     const model: ModelRuntime = {
       provider: "anthropic",
       modelId: "claude-sonnet-4-6",
+      async doGenerate(options) {
+        const rawTools = (options as { tools?: unknown }).tools;
+        const toolNames = Array.isArray(rawTools)
+          ? rawTools.map((entry) =>
+            (entry as { name?: string; id?: string }).name ??
+              (entry as { name?: string; id?: string }).id ?? ""
+          )
+          : Object.keys((rawTools as Record<string, unknown> | undefined) ?? {});
+        toolNamesByStep.push(toolNames);
+        callCount++;
+
+        if (callCount === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "update-agent-generate-error-1",
+              toolName: "update_agent",
+              input: '{"id":"jira-agent"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+
+        return {
+          content: [{ type: "text", text: "I can retry with the required input." }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return {
+          stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]),
+        };
+      },
+    };
+
+    const updateError = {
+      error: "tool_error",
+      message: "Invalid input - system: system or system_prompt is required",
+    };
+    const updateAgent = tool({
+      id: "update_agent",
+      description: "Update a Studio project agent",
+      inputSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+      execute: () => updateError,
+    });
+
+    const assistant = eagerAgent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Update agents and recover from failed tool calls.",
+      tools: { update_agent: updateAgent },
+      providerTools: ["web_search", "web_fetch"],
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = await assistant.generate({
+      input: "Attach the project skill to my Jira agent",
+    });
+
+    assertEquals(toolNamesByStep.length, 2);
+    assertEquals(toolNamesByStep[1]?.includes("update_agent"), true);
+    assertEquals(toolNamesByStep[1]?.includes("web_search"), true);
+    assertEquals(toolNamesByStep[1]?.includes("web_fetch"), true);
+    assertEquals(response.toolCalls[0]?.status, "error");
+    assertEquals(response.toolCalls[0]?.error, updateError.message);
+    assertEquals(response.toolCalls[0]?.result, updateError);
+  });
+
+  it("forces a final response after create_agent succeeds during generate()", async () => {
+    const toolNamesByStep: string[][] = [];
+    const systemPromptsByStep: string[] = [];
+    let callCount = 0;
+    let executionCount = 0;
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate(options) {
+        systemPromptsByStep.push(extractSystemPrompt(options));
+        const rawTools = (options as { tools?: unknown }).tools;
+        const toolNames = Array.isArray(rawTools)
+          ? rawTools.map((entry) =>
+            (entry as { name?: string; id?: string }).name ??
+              (entry as { name?: string; id?: string }).id ?? ""
+          )
+          : Object.keys((rawTools as Record<string, unknown> | undefined) ?? {});
+        toolNamesByStep.push(toolNames);
+        callCount++;
+
+        if (callCount === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "create-agent-generate-1",
+              toolName: "create_agent",
+              input: '{"id":"gmail-assistant-e2e"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+
+        if (callCount === 2) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "create-agent-generate-guessed-2",
+              toolName: "create_agent",
+              input: '{"id":"guessed-second-agent"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+
+        return {
+          content: [{ type: "text", text: "Created Gmail Assistant." }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return {
+          stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]),
+        };
+      },
+    };
+
+    const createAgent = tool({
+      id: "create_agent",
+      description: "Create a Studio project agent",
+      inputSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+      execute: async ({ id }) => {
+        executionCount++;
+        return {
+          id,
+          name: "Gmail Assistant",
+          source_path: `agents/${id}.ts`,
+        };
+      },
+    });
+
+    const assistant = eagerAgent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: flattenSystemInstructions(
+        withRuntimeToolInventory(
+          "Create agents and summarize successful tool results.",
+          ["create_agent", "web_fetch", "web_search"],
+        ),
+      ),
+      tools: { create_agent: createAgent },
+      providerTools: ["web_search", "web_fetch"],
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = await assistant.generate({ input: "Create a Gmail agent" });
+
+    assertEquals(toolNamesByStep.length, 3);
+    assertEquals(toolNamesByStep[0]?.includes("create_agent"), true);
+    assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
+    assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
+    assertEquals(toolNamesByStep[1], ["load_skill"]);
+    assertEquals(systemPromptsByStep[1]?.includes("- create_agent"), false);
+    assertEquals(systemPromptsByStep[1]?.includes("- load_skill"), true);
+    assertEquals(executionCount, 1);
+    assertEquals(response.toolCalls[1]?.status, "error");
+    assertEquals(
+      response.toolCalls[1]?.error,
+      'Tool "create_agent" is not available in the current model step',
+    );
+  });
+
+  it("omits provider-native tools unsupported by the configured model", async () => {
+    let capturedSystem = "";
+    const model: ModelRuntime = {
+      provider: "google",
+      modelId: "gemini-3.5-flash",
+      async doGenerate(options) {
+        capturedSystem = extractSystemPrompt(options);
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "google/gemini-3.5-flash",
+      system: flattenSystemInstructions(
+        withRuntimeToolInventory("Use configured tools.", ["web_search", "web_fetch"]),
+      ),
+      providerTools: ["web_search", "web_fetch"],
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await assistant.generate({ input: "Search the web" });
+
+    // Google exposes neither native tool, so neither may reach the inventory.
+    assertEquals(capturedSystem.includes("- web_search"), false);
+    assertEquals(capturedSystem.includes("- web_fetch"), false);
+  });
+
+  it("removes provider-native tools from the forced final response after create_agent", async () => {
+    const toolNamesByStep: string[][] = [];
+    let callCount = 0;
+    let executionCount = 0;
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
       async doGenerate() {
+        if (callCount === 2) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "create-agent-guessed-2",
+                toolName: "create_agent",
+                input: '{"id":"guessed-second-agent"}',
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+
         return {
           content: [{ type: "text", text: "unused" }],
           finishReason: "stop",
@@ -266,14 +873,17 @@ describe("agent runtime refresh hooks", () => {
       id: "create_agent",
       description: "Create a Studio project agent",
       inputSchema: defineSchema((v) => v.object({ id: v.string() }))(),
-      execute: async ({ id }) => ({
-        id,
-        name: "Gmail Assistant",
-        source_path: `agents/${id}.ts`,
-      }),
+      execute: async ({ id }) => {
+        executionCount++;
+        return {
+          id,
+          name: "Gmail Assistant",
+          source_path: `agents/${id}.ts`,
+        };
+      },
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "anthropic/claude-sonnet-4-6",
       system: "Create agents and summarize successful tool results.",
       tools: { create_agent: createAgent },
@@ -291,7 +901,8 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolNamesByStep[0]?.includes("create_agent"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
-    assertEquals(toolNamesByStep[1], []);
+    assertEquals(toolNamesByStep[1], ["load_skill"]);
+    assertEquals(executionCount, 1);
   });
 
   for (const agentWriteToolName of ["create_agent", "update_agent"] as const) {
@@ -423,7 +1034,7 @@ describe("agent runtime refresh hooks", () => {
         },
       });
 
-      const assistant = agent({
+      const assistant = eagerAgent({
         model: "anthropic/claude-sonnet-4-6",
         system:
           `Create scheduled agents. After ${agentWriteToolName} succeeds, call create_schedule before final output.`,
@@ -445,7 +1056,7 @@ describe("agent runtime refresh hooks", () => {
       assertEquals(toolNamesByStep[0]?.includes("create_schedule"), true);
       assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
       assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
-      assertEquals(toolNamesByStep[1], ["create_schedule"]);
+      assertEquals(toolNamesByStep[1], ["create_schedule", "load_skill"]);
       assertEquals(toolNamesByStep.length, 3);
       assertEquals(executedTools, [agentWriteToolName, "create_schedule"]);
     });
@@ -515,7 +1126,7 @@ describe("agent runtime refresh hooks", () => {
       },
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "anthropic/claude-sonnet-4-6",
       system: "Create agents and recover from failed tool calls.",
       tools: { create_agent: createAgent },
@@ -534,6 +1145,195 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolNamesByStep[1]?.includes("create_agent"), true);
     assertEquals(toolNamesByStep[1]?.includes("web_search"), true);
     assertEquals(toolNamesByStep[1]?.includes("web_fetch"), true);
+  });
+
+  it("keeps tools available after update_agent returns a structured error", async () => {
+    const toolNamesByStep: string[][] = [];
+    let callCount = 0;
+    let finishedResponse: AgentResponse | undefined;
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream(options) {
+        const rawTools = (options as { tools?: unknown }).tools;
+        const toolNames = Array.isArray(rawTools)
+          ? rawTools.map((entry) =>
+            (entry as { name?: string; id?: string }).name ??
+              (entry as { name?: string; id?: string }).id ?? ""
+          )
+          : Object.keys((rawTools as Record<string, unknown> | undefined) ?? {});
+        toolNamesByStep.push(toolNames);
+        callCount++;
+
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "update-agent-error-1",
+                toolName: "update_agent",
+                input: '{"id":"jira-agent"}',
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "I can retry with the required input." },
+            {
+              type: "finish",
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
+          ]),
+        };
+      },
+    };
+
+    const updateError = {
+      error: "tool_error",
+      message: "Invalid input - system: system or system_prompt is required",
+    };
+    const updateAgent = tool({
+      id: "update_agent",
+      description: "Update a Studio project agent",
+      inputSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+      execute: () => updateError,
+    });
+
+    const assistant = eagerAgent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Update agents and recover from failed tool calls.",
+      tools: { update_agent: updateAgent },
+      providerTools: ["web_search", "web_fetch"],
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = (await assistant.stream({
+      input: "Attach the project skill to my Jira agent",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse();
+
+    const streamBody = await response.text();
+    assertEquals(toolNamesByStep.length, 2);
+    assertEquals(toolNamesByStep[0]?.includes("update_agent"), true);
+    assertEquals(toolNamesByStep[1]?.includes("update_agent"), true);
+    assertEquals(toolNamesByStep[1]?.includes("web_search"), true);
+    assertEquals(toolNamesByStep[1]?.includes("web_fetch"), true);
+    assertEquals(streamBody.includes('"type":"tool-output-error"'), true);
+    assertEquals(streamBody.includes('"type":"tool-output-available"'), false);
+    assertEquals(streamBody.includes(updateError.message), true);
+    assertExists(finishedResponse);
+    assertEquals(finishedResponse.toolCalls[0]?.status, "error");
+    assertEquals(finishedResponse.toolCalls[0]?.error, updateError.message);
+    assertEquals(finishedResponse.toolCalls[0]?.result, updateError);
+  });
+
+  it("streams integration authentication actions without flattening their structured output", async () => {
+    let callCount = 0;
+    let finishedResponse: AgentResponse | undefined;
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "gmail-list-emails-auth-1",
+                toolName: "gmail__list_emails",
+                input: {},
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "Connect Gmail to continue." },
+            {
+              type: "finish",
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
+          ]),
+        };
+      },
+    };
+    const authenticationRequired = {
+      error: "authentication_required",
+      integration: "gmail",
+      connectUrl: "https://api.example.test/oauth/connect/gmail?projectId=project-1",
+      message: "Authentication required for Gmail.",
+    };
+    const gmailSource: RemoteToolSource = {
+      id: "gmail",
+      listTools: () =>
+        Promise.resolve([{
+          name: "gmail__list_emails",
+          description: "List Gmail messages",
+          parameters: { type: "object", properties: {} },
+        }]),
+      executeTool: () => Promise.resolve(authenticationRequired),
+    };
+    const assistant = eagerAgent(
+      {
+        model: "anthropic/claude-sonnet-4-6",
+        system: "Use Gmail when requested.",
+        tools: { gmail__list_emails: true },
+        __vfRemoteToolSources: [gmailSource],
+        __vfAllowedRemoteTools: ["gmail__list_emails"],
+        maxSteps: 2,
+        resolveModelTransport: async () => ({ model }),
+      } as AgentConfig & RuntimeRemoteToolConfig,
+    );
+
+    const response = (await assistant.stream({
+      input: "Summarize my inbox",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse();
+    const streamBody = await response.text();
+
+    assertEquals(callCount, 2);
+    assertEquals(streamBody.includes('"type":"tool-output-available"'), true);
+    assertEquals(streamBody.includes('"type":"tool-output-error"'), false);
+    assertEquals(streamBody.includes('"error":"authentication_required"'), true);
+    assertEquals(streamBody.includes(authenticationRequired.connectUrl), true);
+    assertExists(finishedResponse);
+    assertEquals(finishedResponse.toolCalls[0]?.status, "completed");
+    assertEquals(finishedResponse.toolCalls[0]?.result, authenticationRequired);
   });
 
   it("keeps skill file tools hidden after a failed load_skill attempt", async () => {
@@ -604,7 +1404,7 @@ describe("agent runtime refresh hooks", () => {
       execute: () => ({ content: "reference" }),
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "anthropic/claude-sonnet-4-6",
       system: "Recover from a missing skill.",
       tools: {
@@ -693,7 +1493,7 @@ describe("agent runtime refresh hooks", () => {
       }),
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "anthropic/claude-sonnet-4-6",
       system: "Update agents and summarize successful tool results.",
       tools: { update_agent: updateAgent },
@@ -711,7 +1511,7 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolNamesByStep[0]?.includes("update_agent"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
-    assertEquals(toolNamesByStep[1], []);
+    assertEquals(toolNamesByStep[1], ["load_skill"]);
   });
 
   it("notifies configured hooks after stream() executes a tool", async () => {
@@ -771,7 +1571,7 @@ describe("agent runtime refresh hooks", () => {
       }),
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/tool-result-stream",
       system: "Stream tool result hook test",
       tools: { write_report: writeReport },
@@ -843,7 +1643,7 @@ describe("agent runtime refresh hooks", () => {
       },
     };
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/text-placeholder-stream",
       system: "Placeholder recovery regression test",
       maxSteps: 2,
@@ -914,7 +1714,14 @@ describe("agent runtime refresh hooks", () => {
       id: "load_skill",
       description: "Load a skill",
       inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
-      execute: () => ({ skillId: "build", maxSteps: 160 }),
+      execute: () => ({
+        skillId: "build",
+        instructions: "# Build",
+        allowedTools: ["invoke_agent"],
+        references: [],
+        scripts: [],
+        maxSteps: 160,
+      }),
     });
     const invokeAgent = tool({
       id: "invoke_agent",
@@ -928,7 +1735,7 @@ describe("agent runtime refresh hooks", () => {
       )(),
       execute: ({ max_steps }) => ({ ok: true, max_steps }),
     });
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/skill-invoke-generate",
       system: "Skill override generate test",
       tools: { load_skill: loadSkill, invoke_agent: invokeAgent },
@@ -1015,7 +1822,14 @@ describe("agent runtime refresh hooks", () => {
       id: "load_skill",
       description: "Load a skill",
       inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
-      execute: () => ({ skillId: "build", maxSteps: 160 }),
+      execute: () => ({
+        skillId: "build",
+        instructions: "# Build",
+        allowedTools: ["invoke_agent"],
+        references: [],
+        scripts: [],
+        maxSteps: 160,
+      }),
     });
     const invokeAgent = tool({
       id: "invoke_agent",
@@ -1029,7 +1843,7 @@ describe("agent runtime refresh hooks", () => {
       )(),
       execute: ({ max_steps }) => ({ ok: true, max_steps }),
     });
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/skill-invoke-stream",
       system: "Skill override stream test",
       tools: { load_skill: loadSkill, invoke_agent: invokeAgent },
@@ -1107,7 +1921,7 @@ describe("agent runtime refresh hooks", () => {
       )(),
       execute: ({ max_steps }) => ({ ok: true, max_steps }),
     });
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/skill-resume-stream",
       system: "Skill resumed stream test",
       tools: { invoke_agent: invokeAgent },
@@ -1144,7 +1958,10 @@ describe("agent runtime refresh hooks", () => {
           toolName: "load_skill",
           result: {
             skillId: "supplier-invoice-processing",
+            instructions: "# Supplier invoice processing",
             allowedTools: ["invoke_agent"],
+            references: [],
+            scripts: [],
             maxSteps: 160,
           },
         }],
@@ -1215,7 +2032,7 @@ describe("agent runtime refresh hooks", () => {
         return { ok: true };
       },
     });
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/invoke-agent-evidence-generate",
       system: "Supplier invoice orchestrator",
       tools: { invoke_agent: invokeAgent },
@@ -1293,7 +2110,7 @@ describe("agent runtime refresh hooks", () => {
         return { ok: true };
       },
     });
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/invoke-agent-evidence-stream",
       system: "Supplier invoice orchestrator",
       tools: { invoke_agent: invokeAgent },
@@ -1386,7 +2203,7 @@ describe("agent runtime refresh hooks", () => {
       },
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/runtime-refresh-generate",
       system: "Base system prompt",
       tools: {
@@ -1501,7 +2318,7 @@ describe("agent runtime refresh hooks", () => {
       execute: async ({ projectId }) => ({ projectId }),
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/runtime-refresh-stream",
       system: "Base streaming system prompt",
       tools: { switch_project: switchProject },
@@ -1533,5 +2350,222 @@ describe("agent runtime refresh hooks", () => {
       "Refreshed streaming system prompt",
     ]);
     assertEquals(body.includes("stream done"), true);
+  });
+
+  it("generate and stream permit an advertised active-skill reference after form submission", async () => {
+    let generateCalls = 0;
+    let streamCalls = 0;
+    const generateToolNames: string[][] = [];
+    const streamToolNames: string[][] = [];
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/post-form-skill-reference",
+      async doGenerate(options: unknown) {
+        generateToolNames.push(extractRuntimeToolNames(options));
+        generateCalls++;
+        if (generateCalls === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "read-plan-guide-generate",
+              toolName: "load_skill",
+              input: JSON.stringify({ skillId: "plan", file: "references/guide.md" }),
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+        return {
+          content: [{ type: "text", text: "generate done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream(options: unknown) {
+        streamToolNames.push(extractRuntimeToolNames(options));
+        streamCalls++;
+        if (streamCalls === 1) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "read-plan-guide-stream",
+                toolName: "load_skill",
+                input: JSON.stringify({ skillId: "plan", file: "references/guide.md" }),
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "stream done" },
+            {
+              type: "finish",
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
+          ]),
+        };
+      },
+    };
+    const loadSkill = tool({
+      id: "load_skill",
+      description: "Load a skill",
+      inputSchema: defineSchema((v) =>
+        v.object({
+          skillId: v.string(),
+          file: v.string().optional(),
+        })
+      )(),
+      execute: ({ skillId, file }) => ({
+        skillId,
+        file,
+        content: "Guide",
+      }),
+    });
+    const assistant = eagerAgent({
+      id: "post-form-skill-reference-agent",
+      model: "hosted/post-form-skill-reference",
+      system: "Plan assistant",
+      skills: true,
+      tools: {
+        load_skill: loadSkill,
+        read_secret: tool({
+          id: "read_secret",
+          description: "Read a secret outside the active skill policy",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({ secret: true }),
+        }),
+      },
+      maxSteps: 2,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const generated = await assistant.generate({
+      input: submittedFormWithActiveSkillMessages(),
+    });
+    const streamed = await (await assistant.stream({
+      messages: submittedFormWithActiveSkillMessages(),
+    })).toDataStreamResponse().text();
+
+    assertEquals(generated.toolCalls[0]?.error, undefined);
+    assertEquals(generated.toolCalls[0]?.status, "completed");
+    assertEquals(generated.toolCalls[0]?.result, {
+      skillId: "plan",
+      file: "references/guide.md",
+      content: "Guide",
+    });
+    assertEquals(streamed.includes("stream done"), true);
+    assertEquals(streamed.includes("Guide"), true);
+    assertEquals(generateToolNames, [["load_skill"], ["load_skill"]]);
+    assertEquals(streamToolNames, [["load_skill"], ["load_skill"]]);
+  });
+
+  it("generate and stream load advertised provider-safe root-owned project skills", async () => {
+    const contentsByPath: Record<string, string> = {
+      "agents/foo_bar/AGENT.md": "---\nname: foo_bar\ndescription: Owner\n---\nOwner",
+      "agents/foo_bar/SKILL.md":
+        "---\nname: foo_bar\ndescription: Root underscore skill\n---\nUse foo_bar.",
+      "agents/ReleaseNotes/AGENT.md": "---\nname: ReleaseNotes\ndescription: Owner\n---\nOwner",
+      "agents/ReleaseNotes/SKILL.md":
+        "---\nname: ReleaseNotes\ndescription: Root uppercase skill\n---\nUse ReleaseNotes.",
+    };
+    const paths = Object.keys(contentsByPath);
+    const getProjectFile = ({ path }: { path: string }) =>
+      Promise.resolve(
+        Object.hasOwn(contentsByPath, path) ? { path, content: contentsByPath[path]! } : null,
+      );
+    const getProjectFiles = () => Promise.resolve(paths.map((path) => ({ path })));
+    const catalog = await getRuntimeProjectSkillCatalog({
+      projectId: "project-1",
+      authToken: "token",
+      builtinSkills: [],
+      getProjectFile,
+      getProjectFiles,
+    });
+    const skillSourcePaths = Object.fromEntries(
+      catalog.flatMap((skill) => skill.sourcePath ? [[skill.id, skill.sourcePath]] : []),
+    );
+    const loader = createRuntimeProjectSkillLoader({ getProjectFile, getProjectFiles });
+    const projectSkillContext: RuntimeProjectSkillContext = {
+      projectId: "project-1",
+      authToken: "token",
+      skillSourcePaths,
+    };
+    const loadedIds: string[] = [];
+    const loadSkill = tool({
+      id: "load_root_owned_skill",
+      description: "Load one advertised project skill",
+      inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+      execute: async ({ skillId }) => {
+        const loaded = await loader.loadProjectSkill(projectSkillContext, skillId);
+        if (loaded) loadedIds.push(skillId);
+        return loaded;
+      },
+    });
+    let generateCalls = 0;
+    let streamCalls = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/provider-safe-root-skills",
+      async doGenerate() {
+        generateCalls++;
+        return {
+          content: [{
+            type: "tool-call",
+            toolCallId: `root-skill-generate-${generateCalls}`,
+            toolName: "load_root_owned_skill",
+            input: JSON.stringify({ skillId: "foo_bar" }),
+          }],
+          finishReason: "tool-calls",
+        };
+      },
+      async doStream() {
+        streamCalls++;
+        return {
+          stream: createRuntimeStream([
+            {
+              type: "tool-call",
+              toolCallId: `root-skill-stream-${streamCalls}`,
+              toolName: "load_root_owned_skill",
+              input: JSON.stringify({ skillId: "ReleaseNotes" }),
+            },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      },
+    };
+    const assistant = eagerAgent({
+      id: "provider-safe-root-skill-agent",
+      model: "hosted/provider-safe-root-skills",
+      system: "Load the advertised skill.",
+      skills: true,
+      tools: { load_root_owned_skill: loadSkill },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      resolveRuntimeState: () => ({
+        systemPrompt: "Load the advertised skill.",
+        context: {
+          projectId: "project-1",
+          authToken: "token",
+          availableSkillIds: catalog.map((skill) => skill.id),
+          skillSourcePaths,
+        },
+      }),
+    });
+
+    const generated = await assistant.generate({ input: "Load foo_bar" });
+    const streamed = await (await assistant.stream({ input: "Load ReleaseNotes" }))
+      .toDataStreamResponse().text();
+
+    assertEquals(catalog.map((skill) => skill.id), ["foo_bar", "ReleaseNotes"]);
+    assertEquals(generated.toolCalls[0]?.status, "completed");
+    assertEquals(streamed.includes("Use ReleaseNotes."), true);
+    assertEquals(loadedIds, ["foo_bar", "ReleaseNotes"]);
   });
 });

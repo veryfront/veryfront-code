@@ -109,6 +109,7 @@ export type ChatFileUiPart = {
   mediaType: string;
   url: string;
   filename?: string;
+  size?: number;
 };
 
 /** File UI part enriched with upload metadata. */
@@ -302,6 +303,7 @@ export interface ChatRuntimeOverrides {
   allowedTools?: string[];
   thinking?: false | number;
   maxSteps?: number;
+  maxOutputTokens?: number;
 }
 
 /** Public API contract for project file. */
@@ -336,6 +338,10 @@ export const getChatRequestContextSchema = defineSchema((v) =>
     projectId: v.string().nullable(),
     projectSlug: v.string().optional(),
     branchId: v.string().nullable(),
+    runtimeTargetKind: v.enum(["main_branch", "environment", "preview_branch"] as const)
+      .nullable()
+      .optional(),
+    runtimeTargetEnvironmentId: v.string().uuid().nullable().optional(),
     environmentContext: v.string().optional(),
   }).strict()
 );
@@ -371,8 +377,8 @@ const getChildRunAuditSchema = defineSchema((v) =>
   v.object({
     status: getChildRunAuditStatusSchema(),
     description: v.string().optional(),
-    steps: v.number().optional(),
-    durationMs: v.number().optional(),
+    steps: v.number().int().nonnegative().optional(),
+    durationMs: v.number().nonnegative().optional(),
     toolCalls: v.array(getChildRunAuditToolCallSchema()).optional(),
     toolResults: v.array(getChildRunAuditToolResultSchema()).optional(),
     terminalErrorCode: v.string().nullable().optional(),
@@ -382,12 +388,12 @@ const getChildRunAuditSchema = defineSchema((v) =>
 
 const getMessageMetadataUsageSchema = defineSchema((v) =>
   v.object({
-    inputTokens: v.number().optional(),
-    outputTokens: v.number().optional(),
-    reasoningTokens: v.number().optional(),
-    cachedInputTokens: v.number().optional(),
-    cacheCreationInputTokens: v.number().optional(),
-    cacheReadInputTokens: v.number().optional(),
+    inputTokens: v.number().int().nonnegative().optional(),
+    outputTokens: v.number().int().nonnegative().optional(),
+    reasoningTokens: v.number().int().nonnegative().optional(),
+    cachedInputTokens: v.number().int().nonnegative().optional(),
+    cacheCreationInputTokens: v.number().int().nonnegative().optional(),
+    cacheReadInputTokens: v.number().int().nonnegative().optional(),
   }).strict()
 );
 
@@ -407,17 +413,17 @@ export const getMessageMetadataSchema = defineSchema((v) =>
     streamingMessageId: v.string().optional(),
     childRunAudit: getChildRunAuditSchema().optional(),
     usage: getMessageMetadataUsageSchema().optional(),
-    billableInputTokens: v.number().optional(),
-    billableOutputTokens: v.number().optional(),
-    costUsd: v.number().optional(),
-    providerInputCostUsd: v.number().optional(),
-    providerOutputCostUsd: v.number().optional(),
-    providerCostUsd: v.number().optional(),
-    veryfrontInputChargeUsd: v.number().optional(),
-    veryfrontOutputChargeUsd: v.number().optional(),
-    veryfrontChargeUsd: v.number().optional(),
-    veryfrontBilledUsd: v.number().optional(),
-    costCredits: v.number().optional(),
+    billableInputTokens: v.number().int().nonnegative().optional(),
+    billableOutputTokens: v.number().int().nonnegative().optional(),
+    costUsd: v.number().nonnegative().optional(),
+    providerInputCostUsd: v.number().nonnegative().optional(),
+    providerOutputCostUsd: v.number().nonnegative().optional(),
+    providerCostUsd: v.number().nonnegative().optional(),
+    veryfrontInputChargeUsd: v.number().nonnegative().optional(),
+    veryfrontOutputChargeUsd: v.number().nonnegative().optional(),
+    veryfrontChargeUsd: v.number().nonnegative().optional(),
+    veryfrontBilledUsd: v.number().nonnegative().optional(),
+    costCredits: v.number().nonnegative().optional(),
     costSource: v.enum(["gateway", "missing", "partial"] as const).optional(),
     billingMode: v.enum(["direct", "deferred"] as const).optional(),
     usageCaptureStatus: v.enum(["complete", "partial", "missing"] as const).optional(),
@@ -512,6 +518,7 @@ const getFileUiPartWithUploadSchema = defineSchema((v) =>
     mediaType: nonEmptyString(v),
     url: nonEmptyString(v),
     filename: nonEmptyString(v).optional(),
+    size: v.number().int().nonnegative().optional(),
     uploadId: nonEmptyString(v).optional(),
     uploadPath: nonEmptyString(v).optional(),
   }).strip()

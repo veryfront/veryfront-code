@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_organizations",
+      "id": "buildkite__list_organizations",
       "name": "List Organizations",
       "description": "List Buildkite organizations the token can access",
       "requiresWrite": false,
@@ -36,7 +36,7 @@
       }
     },
     {
-      "id": "list_pipelines",
+      "id": "buildkite__list_pipelines",
       "name": "List Pipelines",
       "description": "List pipelines in an organization",
       "requiresWrite": false,
@@ -79,7 +79,7 @@
       }
     },
     {
-      "id": "get_pipeline",
+      "id": "buildkite__get_pipeline",
       "name": "Get Pipeline",
       "description": "Get a pipeline's configuration and build stats",
       "requiresWrite": false,
@@ -103,7 +103,7 @@
       }
     },
     {
-      "id": "list_builds",
+      "id": "buildkite__list_builds",
       "name": "List Builds",
       "description": "List builds for a pipeline, optionally filtered by branch or state",
       "requiresWrite": false,
@@ -163,7 +163,7 @@
       }
     },
     {
-      "id": "get_build",
+      "id": "buildkite__get_build",
       "name": "Get Build",
       "description": "Get a build including its jobs and their states",
       "requiresWrite": false,
@@ -193,7 +193,7 @@
       }
     },
     {
-      "id": "create_build",
+      "id": "buildkite__create_build",
       "name": "Create Build",
       "description": "Trigger a new build on a pipeline",
       "requiresWrite": true,

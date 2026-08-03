@@ -9,7 +9,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { makeTempDir, remove } from "#veryfront/compat/fs.ts";
-import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
+import {
+  createTestEnvironmentConfig,
+  type EnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
 import { deleteToken, readToken, saveToken } from "./token-store.ts";
 import { type CallbackServer, getCallbackUrl, startCallbackServer } from "./callback-server.ts";
 import { scaleMs } from "#veryfront/testing";
@@ -17,11 +20,11 @@ import { scaleMs } from "#veryfront/testing";
 describe("CLI Auth Integration", { sanitizeOps: false, sanitizeResources: false }, () => {
   let server: CallbackServer | null = null;
   let tempDir: string;
-  let originalXdgConfig: string | undefined;
+  let testEnv: EnvironmentConfig;
 
   async function cleanupToken(): Promise<void> {
     try {
-      await deleteToken();
+      await deleteToken(testEnv);
     } catch {
       // Ignore
     }
@@ -29,11 +32,13 @@ describe("CLI Auth Integration", { sanitizeOps: false, sanitizeResources: false 
 
   beforeAll(async () => {
     tempDir = await makeTempDir({ prefix: "cli-auth-integration-" });
-    originalXdgConfig = getEnv("XDG_CONFIG_HOME");
+    testEnv = createTestEnvironmentConfig({
+      homeDir: tempDir,
+      xdgConfigHome: tempDir,
+    });
   });
 
   beforeEach(async () => {
-    setEnv("XDG_CONFIG_HOME", tempDir);
     await cleanupToken();
   });
 
@@ -44,13 +49,6 @@ describe("CLI Auth Integration", { sanitizeOps: false, sanitizeResources: false 
     }
 
     await cleanupToken();
-
-    if (originalXdgConfig !== undefined) {
-      setEnv("XDG_CONFIG_HOME", originalXdgConfig);
-      return;
-    }
-
-    deleteEnv("XDG_CONFIG_HOME");
   });
 
   afterAll(async () => {
@@ -76,9 +74,9 @@ describe("CLI Auth Integration", { sanitizeOps: false, sanitizeResources: false 
       const result = await callbackPromise;
       assertEquals(result.token, testToken);
 
-      await saveToken(result.token);
+      await saveToken(result.token, testEnv);
 
-      const storedToken = await readToken();
+      const storedToken = await readToken(testEnv);
       assertEquals(storedToken, testToken);
     });
 
@@ -107,26 +105,26 @@ describe("CLI Auth Integration", { sanitizeOps: false, sanitizeResources: false 
     it("should persist token across sessions", async () => {
       const testToken = "persistent-token";
 
-      await saveToken(testToken);
+      await saveToken(testToken, testEnv);
 
-      const token = await readToken();
+      const token = await readToken(testEnv);
       assertEquals(token, testToken);
     });
 
     it("should overwrite old token on re-login", async () => {
-      await saveToken("old-token");
-      await saveToken("new-token");
+      await saveToken("old-token", testEnv);
+      await saveToken("new-token", testEnv);
 
-      const token = await readToken();
+      const token = await readToken(testEnv);
       assertEquals(token, "new-token");
     });
 
     it("should clear token on logout", async () => {
-      await saveToken("session-token");
-      assertEquals(await readToken(), "session-token");
+      await saveToken("session-token", testEnv);
+      assertEquals(await readToken(testEnv), "session-token");
 
-      await deleteToken();
-      assertEquals(await readToken(), null);
+      await deleteToken(testEnv);
+      assertEquals(await readToken(testEnv), null);
     });
   });
 

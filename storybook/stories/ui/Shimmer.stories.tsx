@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Shimmer } from "../../../src/react/components/chat/ui/index.ts";
+import { Shimmer } from "../../../src/react/components/ui/index.ts";
 import {
   DocsCode,
   DocsComposition,
@@ -10,7 +10,7 @@ import {
   DocsSection,
 } from "../../.storybook/docs";
 
-const importCode = `import { Shimmer } from "veryfront/chat/ui"`;
+const importCode = `import { Shimmer } from "veryfront/ui"`;
 
 const compositionTree = `Shimmer`;
 
@@ -85,7 +85,7 @@ function ShimmerDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/Shimmer",
+  title: "UI/Shimmer",
   component: Shimmer,
   tags: ["autodocs"],
   args: {

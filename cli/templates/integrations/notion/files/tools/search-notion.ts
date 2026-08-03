@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getPageTitle, searchNotion } from "../../lib/notion-client.ts";
+import { getPageTitle, searchNotion } from "../lib/notion-client.ts";
 
 export default tool({
-  id: "search-notion",
+  id: "notion-search-notion",
   description:
     "Search for pages and databases in the connected Notion workspace. Returns matching pages with their titles and IDs.",
   inputSchema: defineSchema((v) => v.object({

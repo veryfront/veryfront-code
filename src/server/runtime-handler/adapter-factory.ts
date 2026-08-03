@@ -7,13 +7,18 @@
  * @module server/runtime-handler/adapter-factory
  */
 
-import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
-import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+import { getBaseLogger } from "#veryfront/utils";
+import { CACHE_INVARIANT_VIOLATION, getErrorMessage } from "#veryfront/errors";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { getConfig } from "#veryfront/config/loader.ts";
+import {
+  getConfig,
+  getHostedConfig,
+  type PreparedHostedConfigContext,
+} from "#veryfront/config/loader.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { isConfigOptionalControlPlaneRunRequest } from "#veryfront/channels/control-plane.ts";
 import { timeAsync } from "./request-lifecycle.ts";
 import {
   defaultDiscoveryCache,
@@ -22,7 +27,6 @@ import {
 } from "./local-project-discovery.ts";
 import type { ParsedDomain } from "../utils/domain-parser.ts";
 import { isProxyTrusted } from "../utils/proxy-trust.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const baseLogger = getBaseLogger("SERVER");
 
@@ -67,10 +71,51 @@ interface AdapterResolutionOptions {
   environmentName: string | undefined;
   /** Parsed domain info */
   parsedDomain: ParsedDomain;
+  /** Request pathname, used to decide whether config failures can safely fall back. */
+  pathname?: string;
   /** Whether running in proxy mode */
   isProxyMode: boolean;
+  /** Result of an earlier proxy trust check, when already available. */
+  proxyTrusted?: boolean;
   /** Optional injectable cache (defaults to module-level singleton) */
   cache?: ProjectDiscoveryCache;
+  /**
+   * Authenticated source and environment snapshot for hosted config. Proxy
+   * config must never derive either value independently inside this factory.
+   */
+  prepareHostedConfigContext?: (
+    isLocalProject: boolean,
+  ) => Promise<PreparedHostedConfigContext>;
+}
+
+function usesExactSourceConfig(opts: AdapterResolutionOptions): boolean {
+  return opts.isProxyMode &&
+    !!opts.projectSlug &&
+    !!opts.proxyToken &&
+    isConfigOptionalControlPlaneRunRequest(opts.req.method, opts.pathname);
+}
+
+function shouldDeferConfigLoad(opts: AdapterResolutionOptions): boolean {
+  if (usesExactSourceConfig(opts)) return true;
+  // There is no immutable production source to evaluate until resolution has
+  // selected a release. Let environment resolution return its canonical 404.
+  return opts.isProxyMode && !!opts.projectSlug && opts.proxyEnv === "production" &&
+    !opts.releaseId;
+}
+
+async function prepareProxyConfigLoad(
+  opts: AdapterResolutionOptions,
+  isLocalProject: boolean,
+): Promise<PreparedHostedConfigContext & { cacheKey: string }> {
+  if (!opts.projectSlug || !opts.prepareHostedConfigContext) {
+    throw CACHE_INVARIANT_VIOLATION.create({
+      detail: "Proxy project config requires an authenticated declarative evaluation context",
+    });
+  }
+  return {
+    cacheKey: opts.projectId ?? opts.projectSlug,
+    ...await opts.prepareHostedConfigContext(isLocalProject),
+  };
 }
 
 /**
@@ -95,15 +140,11 @@ export async function resolveAdapter(
   // SECURITY: `x-project-path` is a client-controlled header. Honouring it from any
   // request would let an attacker reaching the runtime directly aim project discovery
   // (and therefore `/_veryfront/fs/...`) at arbitrary filesystem paths (VULN-SRV-3).
-  // Only read it when the request is proxy-trusted: either the operator opted in via
-  // VERYFRONT_TRUST_FORWARDED_HEADERS=1, or the request carries a dispatch JWS that
-  // verifies against CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY. Mere header presence is
-  // NOT sufficient — a direct-access attacker could otherwise spoof `x-project-path`
-  // by attaching any value in `x-veryfront-dispatch-jws`.
-  const publicKeyPem = opts.adapter.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
-    getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+  // Only read it when the operator explicitly declares a private, sanitising
+  // upstream topology. An operation-scoped dispatch JWS does not bind this path
+  // override and therefore cannot authorize generic proxy headers.
   const proxyTrusted = opts.isProxyMode &&
-    (await isProxyTrusted(opts.req, { publicKeyPem }));
+    (opts.proxyTrusted ?? await isProxyTrusted(opts.req));
   const trustedHeaderProjectPath = proxyTrusted
     ? opts.req.headers.get("x-project-path")?.trim() || undefined
     : undefined;
@@ -134,8 +175,19 @@ export async function resolveAdapter(
 
     effectiveAdapter = cache.adapters.get(effectiveProjectDir)!;
 
-    // Load project-specific config
-    try {
+    if (shouldDeferConfigLoad(opts)) {
+      effectiveConfig = undefined;
+    } else if (opts.isProxyMode) {
+      const hosted = await prepareProxyConfigLoad(opts, true);
+      effectiveConfig = await timeAsync(
+        "config:load-project",
+        () =>
+          getHostedConfig(effectiveProjectDir, effectiveAdapter, {
+            ...hosted,
+            signal: opts.req.signal,
+          }),
+      );
+    } else {
       effectiveConfig = await timeAsync(
         "config:load-project",
         () => getConfig(effectiveProjectDir, effectiveAdapter),
@@ -147,41 +199,55 @@ export async function resolveAdapter(
         layout: effectiveConfig?.layout,
         router: effectiveConfig?.router,
       });
-    } catch (error) {
-      logger.warn("Failed to load project config, using defaults", {
-        projectSlug: opts.projectSlug,
-        projectDir: effectiveProjectDir,
-        error: getErrorMessage(error),
-      });
     }
   } else if (opts.isProxyMode && opts.projectSlug && opts.proxyToken) {
+    if (shouldDeferConfigLoad(opts)) {
+      logger.debug("Skipping outer config load for exact-source control-plane request", {
+        projectSlug: opts.projectSlug,
+        projectId: opts.projectId,
+        pathname: opts.pathname,
+      });
+      effectiveConfig = undefined;
+      return {
+        projectDir: effectiveProjectDir,
+        adapter: effectiveAdapter,
+        config: effectiveConfig,
+        isLocalProject,
+      };
+    }
+
     // Load config via proxy mode with project context.
     // Unlike local projects, proxy mode config loading failures are propagated
     // because proceeding without config causes silent 404s for valid projects.
     try {
-      effectiveConfig = await timeAsync("config:load-proxy-project", () => {
+      effectiveConfig = await timeAsync("config:load-proxy-project", async () => {
+        const hosted = await prepareProxyConfigLoad(opts, false);
+        const loadCurrentConfig = async (): Promise<VeryfrontConfig> => {
+          // Config controls route and primitive discovery, so it must be read
+          // from the same current snapshot that those consumers will retain.
+          await effectiveAdapter.fs.ensureSourceSnapshotFresh?.("config-load");
+          return await getHostedConfig(effectiveProjectDir, effectiveAdapter, {
+            ...hosted,
+            signal: opts.req.signal,
+          });
+        };
+
         if (isExtendedFSAdapter(effectiveAdapter.fs) && effectiveAdapter.fs.runWithContext) {
           return effectiveAdapter.fs.runWithContext(
             opts.projectSlug!,
             opts.proxyToken!,
-            async () => {
-              return await getConfig(effectiveProjectDir, effectiveAdapter, {
-                cacheKey: opts.projectId ?? opts.projectSlug,
-              });
-            },
+            loadCurrentConfig,
             opts.projectId,
             {
-              productionMode: opts.proxyEnv === "production",
-              releaseId: opts.releaseId,
-              branch: opts.branch ?? opts.parsedDomain.branch ?? null,
-              environmentName: opts.environmentName,
+              productionMode: hosted.sourceContext.productionMode,
+              releaseId: hosted.sourceContext.releaseId,
+              branch: hosted.sourceContext.branch,
+              environmentName: hosted.sourceContext.environmentName,
             },
           );
         }
 
-        return getConfig(effectiveProjectDir, effectiveAdapter, {
-          cacheKey: opts.projectId ?? opts.projectSlug,
-        });
+        return loadCurrentConfig();
       });
 
       logger.debug("Loaded config in proxy mode", {

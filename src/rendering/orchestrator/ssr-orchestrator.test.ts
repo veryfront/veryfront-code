@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { SSROrchestrator, type SSROrchestratorConfig } from "./ssr-orchestrator.ts";
 import * as React from "react";
@@ -11,6 +11,8 @@ import {
   recordModuleToSession,
   startRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/render-sessions.ts";
+import { getHeadCollectorNonce } from "#veryfront/react/head-collector.ts";
+import type { SSRRenderOptions } from "../ssr-renderer.ts";
 
 function createMockConfig(overrides: Partial<SSROrchestratorConfig> = {}): SSROrchestratorConfig {
   return {
@@ -45,6 +47,40 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
   });
 
   describe("performSSRRendering", () => {
+    it("binds the response nonce only while the React render is active", async () => {
+      let observedNonce: string | undefined;
+      let forwardedNonce: string | undefined;
+      const config = createMockConfig({
+        ssrRenderer: {
+          renderToHTML: async (_element: React.ReactElement, options: SSRRenderOptions) => {
+            observedNonce = getHeadCollectorNonce();
+            forwardedNonce = options.nonce;
+            return { html: "<div>rendered</div>", stream: null };
+          },
+        } as unknown as SSROrchestratorConfig["ssrRenderer"],
+      });
+
+      const orchestrator = new SSROrchestrator(config);
+      await orchestrator.performSSRRendering(
+        React.createElement("div"),
+        {
+          meta: { title: "Test", slug: "/test" },
+          pageBundle: {
+            compiledCode: "",
+            frontmatter: {},
+            globals: {},
+            headings: [],
+            nodeMap: new Map(),
+          },
+        } as any,
+        { nonce: "response-nonce" },
+      );
+
+      assertEquals(observedNonce, "response-nonce");
+      assertEquals(forwardedNonce, "response-nonce");
+      assertEquals(getHeadCollectorNonce(), undefined);
+    });
+
     it("should render a simple element to full HTML", async () => {
       const config = createMockConfig();
       const orchestrator = new SSROrchestrator(config);
@@ -167,6 +203,45 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       assertEquals(typeof result.ssrHash, "string");
     });
 
+    it("preserves stream readiness metadata through HTML shell generation", async () => {
+      const allReady = Promise.resolve();
+      const mockStream = Object.assign(new ReadableStream(), { allReady });
+      const finalStream = new ReadableStream();
+
+      const config = createMockConfig({
+        ssrRenderer: {
+          renderToHTML: async () => ({
+            html: "",
+            stream: mockStream,
+          }),
+        } as unknown as SSROrchestratorConfig["ssrRenderer"],
+        htmlGenerator: {
+          generateFullHTML: async () => "",
+          generateHTMLStream: async () => finalStream,
+        } as unknown as SSROrchestratorConfig["htmlGenerator"],
+      });
+
+      const orchestrator = new SSROrchestrator(config);
+      const element = React.createElement("div") as React.ReactElement;
+
+      const result = await orchestrator.performSSRRendering(
+        element,
+        {
+          meta: { title: "Stream", slug: "/stream" },
+          pageBundle: {
+            compiledCode: "",
+            frontmatter: {},
+            globals: {},
+            headings: [],
+            nodeMap: new Map(),
+          },
+        } as any,
+        { delivery: "stream" },
+      );
+
+      assertEquals((result.finalStream as { allReady?: Promise<unknown> }).allReady, allReady);
+    });
+
     it("finalizes the render session before HTML shell generation", async () => {
       clearAllManifests();
       startRenderSession("render-session-1", "project-slug", "test-page");
@@ -208,6 +283,116 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       );
 
       clearAllManifests();
+    });
+
+    it("renders app-router error boundaries inside route layouts with request options", async () => {
+      const pageError = new Error("page failed");
+      let renderCount = 0;
+      let wrappedProps: unknown;
+      let wrappedUrl: URL | undefined;
+      let wrappedParams: Record<string, string | string[]> | undefined;
+      let wrappedProjectSlug: string | undefined;
+      let wrappedClientPageIsland: unknown;
+      let wrappedFrontmatter: Record<string, unknown> | undefined;
+
+      const config = createMockConfig({
+        ssrRenderer: {
+          renderToHTML: async (element: React.ReactElement) => {
+            renderCount += 1;
+            if (renderCount === 1) throw pageError;
+            assertEquals(element.type, "section");
+            return {
+              html: "<section data-boundary>wrapped error</section>",
+              stream: null,
+            };
+          },
+        } as unknown as SSROrchestratorConfig["ssrRenderer"],
+        htmlGenerator: {
+          resolveErrorComponent: async () => ({
+            element: React.createElement("div", { id: "error-boundary" }),
+            path: "/project/app/blog/error.tsx",
+          }),
+          generateFullHTML: async (ctx: { html: string }) =>
+            `<!doctype html><html><body>${ctx.html}</body></html>`,
+          generateHTMLStream: async () => new ReadableStream(),
+        } as unknown as SSROrchestratorConfig["htmlGenerator"],
+        layoutOrchestrator: {
+          applyLayoutsAndWrappers: async (
+            element: unknown,
+            _pageInfo: unknown,
+            _layoutBundle: unknown,
+            _nestedLayouts: unknown,
+            _layoutDataMap: unknown,
+            url: URL | undefined,
+            params: Record<string, string | string[]> | undefined,
+            frontmatter: Record<string, unknown> | undefined,
+            _headings: unknown,
+            projectSlug: string | undefined,
+            clientPageIsland: unknown,
+            props: Record<string, unknown> | undefined,
+          ) => {
+            wrappedUrl = url;
+            wrappedParams = params;
+            wrappedProjectSlug = projectSlug;
+            wrappedClientPageIsland = clientPageIsland;
+            wrappedProps = props;
+            wrappedFrontmatter = frontmatter;
+            return React.createElement("section", null, element as React.ReactNode);
+          },
+        } as unknown as SSROrchestratorConfig["layoutOrchestrator"],
+      });
+
+      const orchestrator = new SSROrchestrator(config);
+      const url = new URL("http://localhost/blog/hello?draft=1");
+      const clientPageIsland = { mode: "client-page" };
+      let signal: (Error & { errorBoundaryHtml?: string }) | undefined;
+
+      try {
+        await orchestrator.performSSRRendering(
+          React.createElement("main"),
+          {
+            meta: { title: "Blog", slug: "/blog/hello" },
+            pageInfo: {
+              entity: {
+                path: "/project/app/blog/[slug]/page.tsx",
+                frontmatter: { section: "blog" },
+              },
+            } as any,
+            pageBundle: {
+              compiledCode: "",
+              frontmatter: { title: "Hello" },
+              globals: {},
+              headings: [{ id: "intro", text: "Intro", level: 2 }],
+              nodeMap: new Map(),
+            },
+            layoutBundle: undefined,
+            nestedLayouts: [{ kind: "tsx", componentPath: "/project/app/layout.tsx" }],
+            collectedMetadata: {},
+            slug: "/blog/hello",
+            cssImports: [],
+            options: {
+              url,
+              params: { slug: "hello" },
+              props: { preview: true },
+              projectSlug: "docs",
+              clientPageIsland: clientPageIsland as any,
+            },
+          } as any,
+        );
+      } catch (error) {
+        signal = error as Error & { errorBoundaryHtml?: string };
+      }
+
+      assert(signal);
+      assertEquals(signal.message, "app-router-error-boundary-rendered");
+      assertEquals(signal.errorBoundaryHtml?.includes("wrapped error"), true);
+      assertEquals(renderCount, 2);
+      assertEquals(wrappedUrl, url);
+      assertEquals(wrappedParams, { slug: "hello" });
+      assertEquals(wrappedProjectSlug, "docs");
+      assertEquals(wrappedClientPageIsland, clientPageIsland);
+      assertEquals(wrappedProps, { preview: true });
+      assertEquals(wrappedFrontmatter, { section: "blog", title: "Hello" });
     });
   });
 });

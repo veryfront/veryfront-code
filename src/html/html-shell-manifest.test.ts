@@ -9,7 +9,7 @@ import type { RenderMetadata } from "#veryfront/types";
 import type { HTMLGenerationOptions } from "./types.ts";
 import {
   clearReleaseAssetManifestCache,
-  configureReleaseAssetManifestFetcher,
+  registerManifestFetcherForRelease,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import {
   RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
@@ -22,6 +22,8 @@ const PAGE_HASH = "a".repeat(64);
 const CHAT_HASH = "b".repeat(64);
 const COMPONENT_HASH = "d".repeat(64);
 const REACT_HASH = "e".repeat(64);
+const PIN_KEY_A = "on:z7bg3qnfgtcb";
+const ENCODED_PIN_KEY_A = encodeURIComponent(PIN_KEY_A);
 
 function meta(): RenderMetadata {
   return { title: "T", slug: "index", frontmatter: {} };
@@ -39,15 +41,28 @@ function prodOptions(overrides: Partial<HTMLGenerationOptions> = {}): HTMLGenera
   };
 }
 
+function extractImportMap(html: string): Record<string, string> {
+  const match = html.match(/<script type="importmap">\s*([\s\S]*?)\s*<\/script>/);
+  assert(match?.[1], "expected an inline import map");
+  return (JSON.parse(match[1]) as { imports?: Record<string, string> }).imports ?? {};
+}
+
+function extractModulePreloadHrefs(html: string): string[] {
+  return Array.from(
+    html.matchAll(/<link rel="modulepreload" href="([^"]+)">/g),
+    (match) => match[1]!,
+  );
+}
+
 function manifest(): ReleaseAssetManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: "p",
     releaseId: "rel-1",
     releaseVersion: 1,
     manifestVersion: 1,
     builderVersion: "0.1.765",
-    sourceContentHash: "",
+    sourceContentHash: "a".repeat(64),
     createdAt: "2026-06-12T00:00:00.000Z",
     assetBasePath: "/_vf/assets",
     modules: {
@@ -56,7 +71,7 @@ function manifest(): ReleaseAssetManifest {
     css: [],
     routes: { "/": { modules: ["pages/index.tsx"], css: [] } },
     dependencies: {},
-    fallback: { mode: "jit", gaps: [] },
+    dependencyMode: "immutable",
   };
 }
 
@@ -68,29 +83,30 @@ describe("html shell release asset manifest consumption", () => {
   afterEach(() => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalFlag ?? "");
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalDependencyFlag ?? "");
-    configureReleaseAssetManifestFetcher(undefined);
     clearReleaseAssetManifestCache();
   });
 
-  it("is byte-identical with the flag off (no hashed URLs)", async () => {
+  it("keeps module URLs unhashed with the flag off", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "");
-    configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "ready", manifest: manifest() })
+    registerManifestFetcherForRelease(
+      "rel-1",
+      () => Promise.resolve({ state: "ready", manifest_version: 1, manifest: manifest() }),
     );
 
     const withReleaseId = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
-    const withoutReleaseId = await generateHTMLShellParts(meta(), prodOptions());
-
-    // No asset rewriting; falls back to /_vf_modules/* exactly as today.
+    // The release id remains request metadata, but does not enable asset rewriting.
     assert(!withReleaseId.start.includes("/_vf/assets/"));
-    assertStringIncludes(withReleaseId.start, "/_vf_modules/pages/index.js");
-    assertEquals(withReleaseId.start, withoutReleaseId.start);
+    assertEquals(
+      extractModulePreloadHrefs(withReleaseId.start).includes("/_vf_modules/pages/index.js"),
+      true,
+    );
   });
 
   it("emits a hashed asset URL for a covered page when the flag is on", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
-    configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "ready", manifest: manifest() })
+    registerManifestFetcherForRelease(
+      "rel-1",
+      () => Promise.resolve({ state: "ready", manifest_version: 1, manifest: manifest() }),
     );
 
     const result = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
@@ -99,7 +115,6 @@ describe("html shell release asset manifest consumption", () => {
 
   it("version-stamps fallback module URLs when manifest lookup is enabled but unavailable", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
-    configureReleaseAssetManifestFetcher(undefined);
 
     const result = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
 
@@ -107,11 +122,39 @@ describe("html shell release asset manifest consumption", () => {
     assert(!result.start.includes("/_vf/assets/"));
   });
 
+  it("preserves release params when pinning fallback page and import-map modules", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+
+    const result = await generateHTMLShellParts(
+      meta(),
+      prodOptions({
+        releaseId: "rel-1",
+        dependencyPinningCacheKey: PIN_KEY_A,
+        dependencyPinningDependencies: {
+          react: "18.3.1",
+          veryfront: "0.1.10",
+        },
+      }),
+    );
+    const imports = extractImportMap(result.start);
+
+    assertStringIncludes(
+      result.start,
+      `/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/pages/index.js?vf_release=rel-1&amp;vf_runtime=${VERYFRONT_VERSION}`,
+    );
+    assertEquals(
+      imports["veryfront/router"],
+      `/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/_veryfront/react/runtime/core.js`,
+    );
+    assertEquals(imports["@/"], `/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/`);
+  });
+
   it("uses manifest route closure preloads for index routes", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
-    configureReleaseAssetManifestFetcher(() =>
+    registerManifestFetcherForRelease("rel-1", () =>
       Promise.resolve({
         state: "ready",
+        manifest_version: 1,
         manifest: {
           ...manifest(),
           modules: {
@@ -128,8 +171,7 @@ describe("html shell release asset manifest consumption", () => {
           },
           routes: { "/": { modules: ["pages/index.tsx", "components/Hero.tsx"], css: [] } },
         },
-      })
-    );
+      }));
     const result = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
     assertStringIncludes(result.start, `/_vf/assets/${COMPONENT_HASH}.js`);
   });
@@ -137,21 +179,22 @@ describe("html shell release asset manifest consumption", () => {
   it("emits the manifest CSS asset link when the manifest carries CSS", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     const CSS_HASH = "c".repeat(64);
-    configureReleaseAssetManifestFetcher(() =>
+    registerManifestFetcherForRelease("rel-1", () =>
       Promise.resolve({
         state: "ready",
+        manifest_version: 1,
         manifest: {
           ...manifest(),
           css: [{
             contentHash: CSS_HASH,
             size: 10,
             contentType: "text/css",
-            styleProfileHash: "sp",
+            styleProfileHash: "d".repeat(64),
+            cssPipelineIdentity: "tailwind-v4",
           }],
           routes: { "/": { modules: ["pages/index.tsx"], css: [CSS_HASH] } },
         },
-      })
-    );
+      }));
     const result = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
     assertStringIncludes(result.start, `/_vf/assets/${CSS_HASH}.css`);
     // The JIT project-CSS link is replaced, not duplicated.
@@ -160,9 +203,10 @@ describe("html shell release asset manifest consumption", () => {
 
   it("keeps covered HTTP import-map dependencies on CDN URLs by default", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
-    configureReleaseAssetManifestFetcher(() =>
+    registerManifestFetcherForRelease("rel-1", () =>
       Promise.resolve({
         state: "ready",
+        manifest_version: 1,
         manifest: {
           ...manifest(),
           dependencies: {
@@ -173,8 +217,7 @@ describe("html shell release asset manifest consumption", () => {
             },
           },
         },
-      })
-    );
+      }));
     const result = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
     assertStringIncludes(result.start, `"react":"https://esm.sh/react@19.2.4`);
     assert(!result.start.includes(`"react":"/_vf/assets/${REACT_HASH}.js"`));
@@ -184,9 +227,10 @@ describe("html shell release asset manifest consumption", () => {
   it("rewrites covered HTTP import-map dependencies when explicitly enabled", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
-    configureReleaseAssetManifestFetcher(() =>
+    registerManifestFetcherForRelease("rel-1", () =>
       Promise.resolve({
         state: "ready",
+        manifest_version: 1,
         manifest: {
           ...manifest(),
           dependencies: {
@@ -197,8 +241,7 @@ describe("html shell release asset manifest consumption", () => {
             },
           },
         },
-      })
-    );
+      }));
     const result = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
     assertStringIncludes(result.start, `"react":"/_vf/assets/${REACT_HASH}.js"`);
     assertStringIncludes(result.start, `"react-dom/client":"https://esm.sh/react-dom@19.2.4`);
@@ -206,16 +249,18 @@ describe("html shell release asset manifest consumption", () => {
 
   it("uses one ready manifest snapshot on a cold first render", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
-    configureReleaseAssetManifestFetcher(() =>
+    registerManifestFetcherForRelease("rel-1", () =>
       Promise.resolve({
         state: "ready",
+        manifest_version: 1,
         manifest: {
           ...manifest(),
           css: [{
             contentHash: "f".repeat(64),
             size: 10,
             contentType: "text/css",
-            styleProfileHash: "sp",
+            styleProfileHash: "d".repeat(64),
+            cssPipelineIdentity: "tailwind-v4",
           }],
           dependencies: {
             "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022": {
@@ -225,8 +270,7 @@ describe("html shell release asset manifest consumption", () => {
             },
           },
         },
-      })
-    );
+      }));
 
     const result = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
     assertStringIncludes(result.start, `/_vf/assets/${PAGE_HASH}.js`);
@@ -236,8 +280,9 @@ describe("html shell release asset manifest consumption", () => {
 
   it("treats an undefined manifest option as absent and fetches the ready manifest", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
-    configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "ready", manifest: manifest() })
+    registerManifestFetcherForRelease(
+      "rel-1",
+      () => Promise.resolve({ state: "ready", manifest_version: 1, manifest: manifest() }),
     );
 
     const result = await generateHTMLShellParts(
@@ -255,9 +300,10 @@ describe("html shell release asset manifest consumption", () => {
 
   it("keeps covered framework import-map entries on the module-server path", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
-    configureReleaseAssetManifestFetcher(() =>
+    registerManifestFetcherForRelease("rel-1", () =>
       Promise.resolve({
         state: "ready",
+        manifest_version: 1,
         manifest: {
           ...manifest(),
           dependencies: {
@@ -268,21 +314,22 @@ describe("html shell release asset manifest consumption", () => {
             },
           },
         },
-      })
-    );
+      }));
     const result = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
     assert(!result.start.includes(`/_vf/assets/${CHAT_HASH}.js`));
-    assertStringIncludes(
-      result.start,
-      `"veryfront/chat":"/_vf_modules/_veryfront/chat/index.js?vf_release=rel-1&vf_runtime=${VERYFRONT_VERSION}"`,
+    const imports = extractImportMap(result.start);
+    assertEquals(
+      imports["veryfront/chat"],
+      `/_vf_modules/_veryfront/chat/index.js?vf_release=rel-1&vf_runtime=${VERYFRONT_VERSION}`,
     );
-    assertStringIncludes(result.start, `"@/":"/_vf_modules/"`);
+    assertEquals(imports["@/"], "/_vf_modules/");
   });
 
   it("falls back to the existing URL for an uncovered page when the flag is on", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
-    configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "ready", manifest: manifest() })
+    registerManifestFetcherForRelease(
+      "rel-1",
+      () => Promise.resolve({ state: "ready", manifest_version: 1, manifest: manifest() }),
     );
 
     const result = await generateHTMLShellParts(
@@ -290,6 +337,9 @@ describe("html shell release asset manifest consumption", () => {
       prodOptions({ releaseId: "rel-1", pagePath: "/proj/pages/uncovered.tsx" }),
     );
     assertStringIncludes(result.start, "/_vf_modules/pages/uncovered.js");
-    assert(!result.start.includes(`/_vf/assets/${PAGE_HASH}.js`));
+    assertEquals(
+      extractModulePreloadHrefs(result.start).includes(`/_vf/assets/${PAGE_HASH}.js`),
+      false,
+    );
   });
 });

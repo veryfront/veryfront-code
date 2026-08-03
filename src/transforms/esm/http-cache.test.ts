@@ -1,15 +1,39 @@
 import "#veryfront/schemas/_test-setup.ts";
 /** @module transforms/esm/http-cache.test */
 
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+  assertNotEquals,
+  assertRejects,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
-import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
+import {
+  makeTempDir,
+  readDir,
+  readTextFile,
+  remove,
+  writeTextFile,
+} from "#veryfront/testing/deno-compat.ts";
 import {
   __clearInFlightHttpFetches,
+  __injectCachesForTests,
   __test_extractBundleDeps,
+  cacheHttpImportsToLocal,
+  cacheModuleToLocal,
   ensureHttpBundlesExist,
+  extractSourceUrl,
+  normalizeHttpUrl,
 } from "./http-cache.ts";
+import { __setDistributedCacheAccessorForTests } from "./http-cache-wrapper.ts";
+import type { CacheBackend } from "#veryfront/cache/types.ts";
+import { buildHttpCacheIdentity } from "./http-cache-helpers.ts";
+import { simpleHash } from "#veryfront/utils/hash-utils.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
+import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
 
 /** Duplicated from http-cache.ts for isolated unit testing of the pattern. */
 const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
@@ -26,7 +50,986 @@ function extractBundleHashes(code: string): string[] {
   return hashes;
 }
 
+/** Minimal distributed cache backend backed by a map the test can inspect. */
+function createMemoryBackend(store: Map<string, string>): CacheBackend {
+  return {
+    type: "memory",
+    get: (key) => Promise.resolve(store.get(key) ?? null),
+    set: (key, value) => {
+      store.set(key, value);
+      return Promise.resolve();
+    },
+    del: (key) => {
+      store.delete(key);
+      return Promise.resolve();
+    },
+  };
+}
+
+async function withIsolatedHttpCache<T>(
+  tempPrefix: string,
+  mockFetch: typeof fetch,
+  run: (tempDir: string) => Promise<T>,
+): Promise<T> {
+  const tempDir = await makeTempDir({ prefix: tempPrefix });
+
+  try {
+    return await withMockFetch(mockFetch, async () => {
+      __injectCachesForTests({
+        cachedPaths: new Map(),
+        processingStack: new Set(),
+        lastDistributedRefresh: new Map(),
+      });
+      __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
+
+      try {
+        return await run(tempDir);
+      } finally {
+        __injectCachesForTests(null);
+        __setDistributedCacheAccessorForTests(null);
+        __clearInFlightHttpFetches();
+      }
+    });
+  } finally {
+    await remove(tempDir, { recursive: true });
+  }
+}
+
 describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, () => {
+  it("rejects internal module URLs before invoking fetch", async () => {
+    let fetchCount = 0;
+    await withIsolatedHttpCache(
+      "vf-esm-internal-egress-",
+      (() => {
+        fetchCount += 1;
+        return Promise.resolve(new Response("unexpected"));
+      }) as typeof fetch,
+      async (tempDir) => {
+        await assertRejects(
+          () => cacheModuleToLocal("http://169.254.169.254/module.js", tempDir),
+          Error,
+          "internal host",
+        );
+      },
+    );
+    assertEquals(fetchCount, 0);
+  });
+
+  it("retries transient esm.sh failures before failing a render", async () => {
+    const moduleUrl = "https://esm.sh/react@19.0.0/jsx-runtime?target=es2022";
+    let fetchCount = 0;
+
+    const mockFetch = (() => {
+      fetchCount += 1;
+      if (fetchCount === 1) {
+        return Promise.resolve(new Response("upstream failure", { status: 502 }));
+      }
+      return Promise.resolve(
+        new Response("export const jsx = () => null;", {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-retry-", mockFetch, async (tempDir) => {
+      const cachedUrl = await cacheModuleToLocal(moduleUrl, tempDir, "19.0.0");
+
+      assert(cachedUrl.startsWith("file://"));
+      assertEquals(fetchCount, 2);
+    });
+  });
+
+  it("pins same-origin module-server imports before fetching", async () => {
+    const origin = "http://93.184.216.34:3000";
+    const source = `export { value } from "${origin}/_vf_modules/shared/Absolute.js";`;
+    const snapshotKey = "on:snapshot-a";
+    const fetchedUrls: string[] = [];
+
+    await withIsolatedHttpCache(
+      "vf-esm-module-origin-pins-",
+      ((input) => {
+        fetchedUrls.push(String(input));
+        return Promise.resolve(
+          new Response(`export const value = "abs";`, {
+            headers: { "content-type": "application/javascript" },
+          }),
+        );
+      }) as typeof fetch,
+      async (tempDir) => {
+        const result = await cacheHttpImportsToLocal(source, {
+          cacheDir: tempDir,
+          importMap: { imports: {}, scopes: {} },
+          moduleServerOrigin: origin,
+          dependencyPinningCacheKey: snapshotKey,
+        });
+
+        assertEquals(result.code.includes("file://"), true);
+      },
+    );
+
+    assertEquals(fetchedUrls.length, 1);
+    const fetchedUrlString = fetchedUrls[0];
+    assert(fetchedUrlString);
+    const fetchedUrl = new URL(fetchedUrlString);
+    assertEquals(fetchedUrl.origin, origin);
+    assertEquals(fetchedUrl.pathname, "/_vf_modules/shared/Absolute.js");
+    assertEquals(fetchedUrl.searchParams.get("ssr"), "true");
+    assertEquals(fetchedUrl.searchParams.get("pins"), snapshotKey);
+  });
+
+  it("does not retry permanent HTTP module failures", async () => {
+    let fetchCount = 0;
+    let bodyCancelled = false;
+
+    const mockFetch = (() => {
+      fetchCount += 1;
+      return Promise.resolve(
+        new Response(
+          new ReadableStream({
+            cancel() {
+              bodyCancelled = true;
+            },
+          }),
+          { status: 404 },
+        ),
+      );
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-permanent-failure-", mockFetch, async (tempDir) => {
+      const error = await assertRejects(
+        () =>
+          cacheModuleToLocal(
+            "https://esm.sh/missing-package?access_token=super-secret",
+            tempDir,
+          ),
+        Error,
+      );
+      assertEquals(fetchCount, 1);
+      assertEquals(bodyCancelled, true);
+      assertInstanceOf(error, Error);
+      assert(!error.message.includes("super-secret"));
+    });
+  });
+
+  it("retries failures while reading an HTTP module body", async () => {
+    let fetchCount = 0;
+
+    const mockFetch = (() => {
+      fetchCount += 1;
+      if (fetchCount === 1) {
+        return Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.error(new TypeError("body disconnected"));
+              },
+            }),
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response("export const recovered = true;", {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-body-retry-", mockFetch, async (tempDir) => {
+      const cachedUrl = await cacheModuleToLocal(
+        "https://esm.sh/body-disconnect",
+        tempDir,
+      );
+
+      assert(cachedUrl.startsWith("file://"));
+      assertEquals(fetchCount, 2);
+    });
+  });
+
+  it("rejects an oversized module body without retrying", async () => {
+    let fetchCount = 0;
+    let bodyCancelled = false;
+    const mockFetch = (() => {
+      fetchCount += 1;
+      return Promise.resolve(
+        new Response(
+          new ReadableStream({
+            cancel() {
+              bodyCancelled = true;
+            },
+          }),
+          {
+            headers: {
+              "content-length": String(MAX_BUNDLE_CHUNK_SIZE_BYTES + 1),
+            },
+          },
+        ),
+      );
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-oversized-response-", mockFetch, async (tempDir) => {
+      const error = await assertRejects(
+        () => cacheModuleToLocal("https://esm.sh/oversized", tempDir),
+        Error,
+        `response exceeds ${MAX_BUNDLE_CHUNK_SIZE_BYTES} bytes`,
+      );
+
+      assertInstanceOf(error, Error);
+      assertEquals(fetchCount, 1);
+      assertEquals(bodyCancelled, true);
+    });
+  });
+
+  it("retries a network rejection before succeeding", async () => {
+    let fetchCount = 0;
+    const mockFetch = (() => {
+      fetchCount += 1;
+      if (fetchCount === 1) return Promise.reject(new TypeError("network unavailable"));
+      return Promise.resolve(new Response("export const recovered = true;"));
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-network-retry-", mockFetch, async (tempDir) => {
+      const cachedUrl = await cacheModuleToLocal("https://esm.sh/network-retry", tempDir);
+
+      assert(cachedUrl.startsWith("file://"));
+      assertEquals(fetchCount, 2);
+    });
+  });
+
+  it("does not expose URL credentials after network retries are exhausted", async () => {
+    let fetchCount = 0;
+    const secretUrl = "https://esm.sh/network-failure?access_token=super-secret";
+    const mockFetch = (() => {
+      fetchCount += 1;
+      return Promise.reject(new TypeError(`network unavailable for ${secretUrl}`));
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-network-failure-", mockFetch, async (tempDir) => {
+      const error = await assertRejects(
+        () => cacheModuleToLocal(secretUrl, tempDir),
+        Error,
+      );
+
+      assertEquals(fetchCount, 3);
+      assertInstanceOf(error, Error);
+      assert(!error.message.includes("super-secret"));
+    });
+  });
+
+  it("does not expose URL credentials when an upstream returns HTML", async () => {
+    const secretUrl = "https://esm.sh/html-failure?access_token=super-secret";
+    const mockFetch = (() =>
+      Promise.resolve(
+        new Response("<!doctype html><title>upstream failure</title>", {
+          headers: { "content-type": "text/html" },
+        }),
+      )) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-html-failure-", mockFetch, async (tempDir) => {
+      const error = await assertRejects(
+        () => cacheModuleToLocal(secretUrl, tempDir),
+        Error,
+      );
+
+      assertInstanceOf(error, Error);
+      assert(!error.message.includes("super-secret"));
+      assertEquals(
+        error.message,
+        "Received HTML instead of JavaScript from https://esm.sh/html-failure. " +
+          "The package may not exist or failed to build on esm.sh.",
+      );
+    });
+  });
+
+  it("bounds transient failure attempts and cancels every response body", async () => {
+    let fetchCount = 0;
+    let cancelledBodies = 0;
+    const mockFetch = (() => {
+      fetchCount += 1;
+      return Promise.resolve(
+        new Response(
+          new ReadableStream({
+            cancel() {
+              cancelledBodies += 1;
+            },
+          }),
+          { status: 503 },
+        ),
+      );
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-exhausted-retry-", mockFetch, async (tempDir) => {
+      const error = await assertRejects(
+        () => cacheModuleToLocal("https://esm.sh/exhausted", tempDir),
+        Error,
+      );
+
+      assertEquals(fetchCount, 3);
+      assertEquals(cancelledBodies, 3);
+      assertInstanceOf(error, Error);
+      assert(error.message.includes("503"));
+    });
+  });
+
+  it("preserves and shares canonical React versions across project import maps", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-react-singleton-cache-" });
+    const originalFetch = globalThis.fetch;
+    const reactUrl = "https://esm.sh/react@19.0.0?target=es2022";
+    const requestedUrls: string[] = [];
+    let fetchCount = 0;
+
+    __injectCachesForTests({
+      cachedPaths: new Map(),
+      processingStack: new Set(),
+      lastDistributedRefresh: new Map(),
+    });
+    __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
+    globalThis.fetch = ((input: string | URL | Request) => {
+      fetchCount += 1;
+      requestedUrls.push(String(input));
+      return Promise.resolve(
+        new Response("export default { version: '19.0.0' };", {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    try {
+      const source = `import React from "${reactUrl}"; export default React;`;
+      const first = await cacheHttpImportsToLocal(source, {
+        cacheDir: tempDir,
+        reactVersion: "19.0.0",
+        importMap: {
+          imports: {
+            react: "https://esm.sh/react@19.2.4?target=es2022",
+            unrelated: "https://93.184.216.35/a.js",
+          },
+          scopes: {},
+        },
+      });
+      const second = await cacheHttpImportsToLocal(source, {
+        cacheDir: tempDir,
+        importMap: {
+          imports: {
+            react: "https://esm.sh/react@19.2.4?target=es2022",
+            unrelated: "https://93.184.216.35/b.js",
+          },
+          scopes: {},
+        },
+      });
+      const firstPath = first.code.match(/file:\/\/([^"']+\.mjs)/)?.[1];
+      const secondPath = second.code.match(/file:\/\/([^"']+\.mjs)/)?.[1];
+
+      assert(firstPath);
+      assert(secondPath);
+      assertEquals(secondPath, firstPath);
+      assertEquals(fetchCount, 1);
+      assert(requestedUrls.some((url) => url.includes("react@19.0.0")));
+      assertEquals(requestedUrls.some((url) => url.includes("react@19.2.4")), false);
+    } finally {
+      globalThis.fetch = originalFetch;
+      __injectCachesForTests(null);
+      __setDistributedCacheAccessorForTests(null);
+      __clearInFlightHttpFetches();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("aligns explicit React URLs to the resolved project version", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-react-version-align-" });
+    const originalFetch = globalThis.fetch;
+    const requestedUrls: string[] = [];
+
+    __injectCachesForTests({
+      cachedPaths: new Map(),
+      processingStack: new Set(),
+      lastDistributedRefresh: new Map(),
+    });
+    __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
+    globalThis.fetch = ((input: string | URL | Request) => {
+      requestedUrls.push(String(input));
+      return Promise.resolve(
+        new Response("export default { version: '19.0.0' };", {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    try {
+      await cacheHttpImportsToLocal(
+        'import React from "https://esm.sh/react@18.3.1?target=es2022";',
+        {
+          cacheDir: tempDir,
+          reactVersion: "19.0.0",
+          importMap: {
+            imports: { react: "https://esm.sh/react@19.2.4?target=es2022" },
+            scopes: {},
+          },
+        },
+      );
+
+      assert(requestedUrls.some((url) => url.includes("react@19.0.0")));
+      assertEquals(requestedUrls.some((url) => url.includes("react@18.3.1")), false);
+      assertEquals(requestedUrls.some((url) => url.includes("react@19.2.4")), false);
+    } finally {
+      globalThis.fetch = originalFetch;
+      __injectCachesForTests(null);
+      __setDistributedCacheAccessorForTests(null);
+      __clearInFlightHttpFetches();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("isolates rewritten modules with the same URL and React version by import map", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-import-map-cache-" });
+    const originalFetch = globalThis.fetch;
+    const rootUrl = "https://93.184.216.34/root.js";
+
+    __injectCachesForTests({
+      cachedPaths: new Map(),
+      processingStack: new Set(),
+      lastDistributedRefresh: new Map(),
+    });
+    __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
+    globalThis.fetch = ((input: string | URL | Request) => {
+      const url = String(input);
+      const code = url.startsWith(rootUrl)
+        ? 'import { marker } from "mapped-dependency"; export { marker };'
+        : url.includes("dependency-a.js")
+        ? 'export const marker = "A";'
+        : 'export const marker = "B";';
+      return Promise.resolve(
+        new Response(code, {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    try {
+      const source = `import { marker } from "${rootUrl}"; export { marker };`;
+      const first = await cacheHttpImportsToLocal(source, {
+        cacheDir: tempDir,
+        reactVersion: "19.0.0",
+        importMap: {
+          imports: {
+            "mapped-dependency": "https://93.184.216.35/dependency-a.js",
+            unused: "https://93.184.216.35/unused.js",
+          },
+          scopes: {
+            "/scope-b/": { z: "https://93.184.216.35/z.js", a: "https://93.184.216.35/a.js" },
+            "/scope-a/": { x: "https://93.184.216.35/x.js" },
+          },
+        },
+      });
+      const second = await cacheHttpImportsToLocal(source, {
+        cacheDir: tempDir,
+        reactVersion: "19.0.0",
+        importMap: {
+          imports: { "mapped-dependency": "https://93.184.216.35/dependency-b.js" },
+          scopes: {},
+        },
+      });
+      const reorderedFirst = await cacheHttpImportsToLocal(source, {
+        cacheDir: tempDir,
+        reactVersion: "19.0.0",
+        importMap: {
+          imports: {
+            unused: "https://93.184.216.35/unused.js",
+            "mapped-dependency": "https://93.184.216.35/dependency-a.js",
+          },
+          scopes: {
+            "/scope-a/": { x: "https://93.184.216.35/x.js" },
+            "/scope-b/": { a: "https://93.184.216.35/a.js", z: "https://93.184.216.35/z.js" },
+          },
+        },
+      });
+      const differentScope = await cacheHttpImportsToLocal(source, {
+        cacheDir: tempDir,
+        reactVersion: "19.0.0",
+        importMap: {
+          imports: {
+            "mapped-dependency": "https://93.184.216.35/dependency-a.js",
+            unused: "https://93.184.216.35/unused.js",
+          },
+          scopes: {
+            "/scope-b/": {
+              z: "https://93.184.216.35/z-v2.js",
+              a: "https://93.184.216.35/a.js",
+            },
+            "/scope-a/": { x: "https://93.184.216.35/x.js" },
+          },
+        },
+      });
+      const firstPath = first.code.match(/file:\/\/([^"']+\.mjs)/)?.[1];
+      const secondPath = second.code.match(/file:\/\/([^"']+\.mjs)/)?.[1];
+      const reorderedFirstPath = reorderedFirst.code.match(/file:\/\/([^"']+\.mjs)/)?.[1];
+      const differentScopePath = differentScope.code.match(/file:\/\/([^"']+\.mjs)/)?.[1];
+
+      assert(firstPath);
+      assert(secondPath);
+      assert(reorderedFirstPath);
+      assert(differentScopePath);
+      assertNotEquals(firstPath, secondPath);
+      assertNotEquals(await readTextFile(firstPath), await readTextFile(secondPath));
+      assertEquals(reorderedFirstPath, firstPath);
+      assertNotEquals(differentScopePath, firstPath);
+    } finally {
+      globalThis.fetch = originalFetch;
+      __injectCachesForTests(null);
+      __setDistributedCacheAccessorForTests(null);
+      __clearInFlightHttpFetches();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("does not coalesce concurrent modules whose import maps collide under legacy hashing", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-import-map-collision-" });
+    const originalFetch = globalThis.fetch;
+    const rootUrl = "https://93.184.216.34/collision.js";
+    let fetchCount = 0;
+
+    __injectCachesForTests({
+      cachedPaths: new Map(),
+      processingStack: new Set(),
+      lastDistributedRefresh: new Map(),
+    });
+    __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
+    globalThis.fetch = (async () => {
+      fetchCount += 1;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return new Response("export const value = true;", {
+        headers: { "content-type": "application/javascript" },
+      });
+    }) as typeof fetch;
+
+    try {
+      const source = `import { value } from "${rootUrl}"; export { value };`;
+      const [aaResult, bbResult] = await Promise.all([
+        cacheHttpImportsToLocal(source, {
+          cacheDir: tempDir,
+          importMap: { imports: { collision: "Aa" }, scopes: {} },
+        }),
+        cacheHttpImportsToLocal(source, {
+          cacheDir: tempDir,
+          importMap: { imports: { collision: "BB" }, scopes: {} },
+        }),
+      ]);
+      const aaPath = aaResult.code.match(/file:\/\/([^"']+\.mjs)/)?.[1];
+      const bbPath = bbResult.code.match(/file:\/\/([^"']+\.mjs)/)?.[1];
+
+      assert(aaPath);
+      assert(bbPath);
+      assertNotEquals(aaPath, bbPath);
+      assertEquals(fetchCount, 2);
+    } finally {
+      globalThis.fetch = originalFetch;
+      __injectCachesForTests(null);
+      __setDistributedCacheAccessorForTests(null);
+      __clearInFlightHttpFetches();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("tracks circular processing by the full cache identity", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-processing-identity-" });
+    const originalFetch = globalThis.fetch;
+    const rootUrl = "https://93.184.216.34/circular-identity.js";
+    const options = {
+      cacheDir: tempDir,
+      reactVersion: "19.0.0",
+      importMap: {
+        imports: { dependency: "https://93.184.216.35/dependency.js" },
+        scopes: {},
+      },
+    };
+    const expectedIdentity = await buildHttpCacheIdentity(rootUrl, options);
+    const active = new Set<string>();
+    const hasCalls: string[] = [];
+    const addCalls: string[] = [];
+    const deleteCalls: string[] = [];
+    const processingStack = {
+      has(value: string) {
+        hasCalls.push(value);
+        return active.has(value);
+      },
+      add(value: string) {
+        addCalls.push(value);
+        active.add(value);
+        return this;
+      },
+      delete(value: string) {
+        deleteCalls.push(value);
+        return active.delete(value);
+      },
+    };
+
+    __injectCachesForTests({
+      cachedPaths: new Map(),
+      processingStack,
+      lastDistributedRefresh: new Map(),
+    });
+    __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response("export const value = true;", {
+          headers: { "content-type": "application/javascript" },
+        }),
+      )) as typeof fetch;
+
+    try {
+      await cacheHttpImportsToLocal(
+        `import { value } from "${rootUrl}"; export { value };`,
+        options,
+      );
+
+      assertEquals(hasCalls, [expectedIdentity]);
+      assertEquals(addCalls, [expectedIdentity]);
+      assertEquals(deleteCalls, [expectedIdentity]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      __injectCachesForTests(null);
+      __setDistributedCacheAccessorForTests(null);
+      __clearInFlightHttpFetches();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("rejects and does not persist a module whose lazy dependency failed to prefetch", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-degraded-artifact-" });
+    const originalFetch = globalThis.fetch;
+    const parentUrl = "https://93.184.216.34/degraded-parent.js";
+    const childUrl = "https://93.184.216.34/degraded-child.js";
+    const distributed = new Map<string, string>();
+    let parentFetches = 0;
+
+    __injectCachesForTests({
+      cachedPaths: new Map(),
+      processingStack: new Set(),
+      lastDistributedRefresh: new Map(),
+    });
+    __setDistributedCacheAccessorForTests(() => Promise.resolve(createMemoryBackend(distributed)));
+    globalThis.fetch = ((input: string | URL | Request) => {
+      if (String(input) === childUrl) {
+        return Promise.resolve(new Response("upstream failure", { status: 502 }));
+      }
+      parentFetches += 1;
+      return Promise.resolve(
+        new Response(`export const load = () => import("${childUrl}");`, {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    try {
+      const source = `import { load } from "${parentUrl}"; export { load };`;
+      const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+
+      await assertRejects(() => cacheHttpImportsToLocal(source, options), Error, "Failed to fetch");
+      assertEquals(parentFetches, 1);
+      assertEquals(distributed.size, 0);
+
+      await assertRejects(() => cacheHttpImportsToLocal(source, options), Error, "Failed to fetch");
+      assertEquals(parentFetches, 2);
+      assertEquals(distributed.size, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+      __injectCachesForTests(null);
+      __setDistributedCacheAccessorForTests(null);
+      __clearInFlightHttpFetches();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("fails instead of emitting an internal dynamic import after egress denial", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-egress-denied-dynamic-import-" });
+    const originalFetch = globalThis.fetch;
+    const parentUrl = "https://93.184.216.34/parent.js";
+    const internalUrl = "http://169.254.169.254/latest/meta-data";
+    let internalFetches = 0;
+
+    __injectCachesForTests({
+      cachedPaths: new Map(),
+      processingStack: new Set(),
+      lastDistributedRefresh: new Map(),
+    });
+    __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
+    globalThis.fetch = ((input: string | URL | Request) => {
+      if (String(input) === internalUrl) internalFetches += 1;
+      return Promise.resolve(
+        new Response(`export const load = () => import("${internalUrl}");`, {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    try {
+      await assertRejects(
+        () =>
+          cacheHttpImportsToLocal(
+            `import { load } from "${parentUrl}"; export { load };`,
+            { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } },
+          ),
+        OutboundRequestBlockedError,
+        "internal host",
+      );
+      assertEquals(internalFetches, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+      __injectCachesForTests(null);
+      __setDistributedCacheAccessorForTests(null);
+      __clearInFlightHttpFetches();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("persists a module whose lazy dependency prefetched successfully", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-healthy-artifact-" });
+    const originalFetch = globalThis.fetch;
+    const parentUrl = "https://93.184.216.34/healthy-parent.js";
+    const childUrl = "https://93.184.216.34/healthy-child.js";
+    const distributed = new Map<string, string>();
+    let parentFetches = 0;
+
+    __injectCachesForTests({
+      cachedPaths: new Map(),
+      processingStack: new Set(),
+      lastDistributedRefresh: new Map(),
+    });
+    __setDistributedCacheAccessorForTests(() => Promise.resolve(createMemoryBackend(distributed)));
+    globalThis.fetch = ((input: string | URL | Request) => {
+      if (String(input) === childUrl) {
+        return Promise.resolve(
+          new Response("export const child = true;", {
+            headers: { "content-type": "application/javascript" },
+          }),
+        );
+      }
+      parentFetches += 1;
+      return Promise.resolve(
+        new Response(`export const load = () => import("${childUrl}");`, {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    try {
+      const source = `import { load } from "${parentUrl}"; export { load };`;
+      const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+
+      await cacheHttpImportsToLocal(source, options);
+      assertEquals(parentFetches, 1);
+      assert(distributed.size > 0, "Expected a healthy module to reach the distributed cache");
+
+      await cacheHttpImportsToLocal(source, options);
+      assertEquals(parentFetches, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      __injectCachesForTests(null);
+      __setDistributedCacheAccessorForTests(null);
+      __clearInFlightHttpFetches();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("creates the same complete manifest for network, disk, and memory cache hits", async () => {
+    const rootUrl = "https://93.184.216.34/manifest-root.js";
+    const childUrl = "https://93.184.216.34/manifest-child.js";
+    let fetchCount = 0;
+
+    const mockFetch = ((input: string | URL | Request) => {
+      fetchCount += 1;
+      const code = String(input) === rootUrl
+        ? `import { child } from "${childUrl}"; export { child };`
+        : "export const child = true;";
+      return Promise.resolve(
+        new Response(code, {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-complete-manifest-", mockFetch, async (tempDir) => {
+      const source = `import { child } from "${rootUrl}"; export { child };`;
+      const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+
+      const networkResult = await cacheHttpImportsToLocal(source, options);
+      assert(networkResult.bundleManifestId, "Expected a manifest after the network fetch");
+
+      __injectCachesForTests({
+        cachedPaths: new Map(),
+        processingStack: new Set(),
+        lastDistributedRefresh: new Map(),
+      });
+      const diskResult = await cacheHttpImportsToLocal(source, options);
+      assertEquals(diskResult.bundleManifestId, networkResult.bundleManifestId);
+
+      const memoryResult = await cacheHttpImportsToLocal(source, options);
+      assertEquals(memoryResult.bundleManifestId, networkResult.bundleManifestId);
+      assertEquals(fetchCount, 2, "Expected one network request per module");
+    });
+  });
+
+  it("creates complete manifests for every request sharing an in-flight fetch", async () => {
+    const moduleUrl = "https://93.184.216.34/in-flight-manifest.js";
+    let fetchCount = 0;
+    const mockFetch = (async () => {
+      fetchCount += 1;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return new Response("export const value = true;", {
+        headers: { "content-type": "application/javascript" },
+      });
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-in-flight-manifest-", mockFetch, async (tempDir) => {
+      const source = `import { value } from "${moduleUrl}"; export { value };`;
+      const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+
+      const [first, second] = await Promise.all([
+        cacheHttpImportsToLocal(source, options),
+        cacheHttpImportsToLocal(source, options),
+      ]);
+
+      assert(first.bundleManifestId);
+      assertEquals(second.bundleManifestId, first.bundleManifestId);
+      assertEquals(fetchCount, 1);
+    });
+  });
+
+  it("reconstructs a complete manifest from distributed-cache bundles", async () => {
+    const rootUrl = "https://93.184.216.34/distributed-manifest-root.js";
+    const childUrl = "https://93.184.216.34/distributed-manifest-child.js";
+    const distributed = new Map<string, string>();
+    let fetchCount = 0;
+    const mockFetch = ((input: string | URL | Request) => {
+      fetchCount += 1;
+      const code = String(input) === rootUrl
+        ? `import { child } from "${childUrl}"; export { child };`
+        : "export const child = true;";
+      return Promise.resolve(
+        new Response(code, {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-distributed-manifest-", mockFetch, async (tempDir) => {
+      __setDistributedCacheAccessorForTests(() =>
+        Promise.resolve(createMemoryBackend(distributed))
+      );
+      const source = `import { child } from "${rootUrl}"; export { child };`;
+      const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+      const networkResult = await cacheHttpImportsToLocal(source, options);
+      assert(networkResult.bundleManifestId);
+
+      for await (const entry of readDir(tempDir)) {
+        if (entry.isFile && entry.name.endsWith(".mjs")) {
+          await remove(join(tempDir, entry.name));
+        }
+      }
+      __injectCachesForTests({
+        cachedPaths: new Map(),
+        processingStack: new Set(),
+        lastDistributedRefresh: new Map(),
+      });
+
+      const distributedResult = await cacheHttpImportsToLocal(source, options);
+
+      assertEquals(distributedResult.bundleManifestId, networkResult.bundleManifestId);
+      assertEquals(fetchCount, 2, "Expected the second transform to avoid network requests");
+    });
+  });
+
+  it("rejects instead of publishing a partial manifest", async () => {
+    const healthyUrl = "https://93.184.216.34/healthy-manifest-entry.js";
+    const parentUrl = "https://93.184.216.34/degraded-manifest-entry.js";
+    const childUrl = "https://93.184.216.34/unavailable-lazy-entry.js";
+    const mockFetch = ((input: string | URL | Request) => {
+      const url = String(input);
+      if (url === childUrl) {
+        return Promise.resolve(new Response("upstream failure", { status: 502 }));
+      }
+      const code = url === parentUrl
+        ? `export const load = () => import("${childUrl}");`
+        : "export const healthy = true;";
+      return Promise.resolve(
+        new Response(code, {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-partial-manifest-", mockFetch, async (tempDir) => {
+      await assertRejects(
+        () =>
+          cacheHttpImportsToLocal(
+            [
+              `import { healthy } from "${healthyUrl}";`,
+              `import { load } from "${parentUrl}";`,
+              "export { healthy, load };",
+            ].join("\n"),
+            { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } },
+          ),
+        Error,
+        "Failed to fetch",
+      );
+    });
+  });
+
+  it("rewrites react-dom dependencies with the requested React version", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-react-version-cache-" });
+    const originalFetch = globalThis.fetch;
+    const requestedUrls: string[] = [];
+
+    __injectCachesForTests({
+      cachedPaths: new Map(),
+      processingStack: new Set(),
+      lastDistributedRefresh: new Map(),
+    });
+    __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
+    globalThis.fetch = ((input: string | URL | Request) => {
+      const url = String(input);
+      requestedUrls.push(url);
+      const code = url.includes("react-dom@18.3.1")
+        ? 'import React from "react"; export const version = React.version;'
+        : 'export default { version: "18.3.1" };';
+      return Promise.resolve(
+        new Response(code, {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    try {
+      const rootUrl = "https://esm.sh/react-dom@18.3.1/server?external=react&target=es2022";
+      const cachedRootUrl = await cacheModuleToLocal(rootUrl, tempDir, "18.3.1");
+      const cachedRootPath = cachedRootUrl.replace(/^file:\/\//, "");
+      const legacyCachePath = join(tempDir, `http-${simpleHash(normalizeHttpUrl(rootUrl))}.mjs`);
+      const rootCode = await readTextFile(cachedRootPath);
+
+      assertNotEquals(cachedRootPath, legacyCachePath);
+      assert(rootCode.includes('from "./http-'));
+      assertEquals(rootCode.includes('from "react"'), false);
+      assert(
+        requestedUrls.some((url) => url.includes("/react@18.3.1")),
+        "Expected React 18 dependency URL, got: " + requestedUrls.join(", "),
+      );
+      assertEquals(requestedUrls.some((url) => url.includes("/react@19.2.4")), false);
+
+      const sourceUrls: string[] = [];
+      for await (const entry of readDir(tempDir)) {
+        if (!entry.isFile || !entry.name.endsWith(".mjs")) continue;
+        const sourceUrl = extractSourceUrl(await readTextFile(join(tempDir, entry.name)));
+        if (sourceUrl) sourceUrls.push(sourceUrl);
+      }
+      assert(sourceUrls.some((url) => url.includes("/react@18.3.1")));
+    } finally {
+      globalThis.fetch = originalFetch;
+      __injectCachesForTests(null);
+      __setDistributedCacheAccessorForTests(null);
+      __clearInFlightHttpFetches();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   describe("HTTP_BUNDLE_PATTERN regex", () => {
     it("matches numeric-only hashes (production repro: 390496888)", () => {
       const code = `import foo from "file:///app/.cache/veryfront-http-bundle/http-390496888.mjs"`;

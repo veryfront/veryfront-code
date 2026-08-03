@@ -567,47 +567,39 @@ WebSocket (Bidirectional):
 ```typescript
 // app/api/agent/ws/route.ts
 import {
-  AgentController,
+  AgentControllerRegistry,
   createWebSocketHandler,
   RedisEventPublisher,
   streamingClaudeCodeAgent,
 } from "veryfront/workflow/claude-code";
 
+const registry = new AgentControllerRegistry({
+  approvalTimeout: 60_000,
+  onCancel: (reason) => console.log(`Agent cancelled: ${reason}`),
+});
+
+const redisPublisher = new RedisEventPublisher({
+  url: Deno.env.get("REDIS_URL")!,
+});
+const eventSubscriptions = new WeakMap<object, () => void>();
+
 export const GET = createWebSocketHandler({
   getRunId: (req) => new URL(req.url).searchParams.get("runId"),
+  registry,
 
-  onConnection: async (publisher, runId) => {
-    // Create agent controller for handling commands
-    const controller = new AgentController(publisher, {
-      approvalTimeout: 60000,
-      onCancel: (reason) => {
-        console.log(`Agent cancelled: ${reason}`);
-        // Cleanup logic here
-      },
-    });
-
-    // Subscribe to Redis events (from worker)
-    const redisPublisher = new RedisEventPublisher({
-      url: Deno.env.get("REDIS_URL")!,
-    });
-
-    await redisPublisher.subscribe(runId, (event) => {
+  onConnection: async ({ publisher, run }) => {
+    const unsubscribe = await redisPublisher.subscribe(run.runId, (event) => {
       publisher.send(event);
     });
-
-    // Forward commands to worker via Redis
-    publisher.onCommand(async (command) => {
-      await redisPublisher.publish({
-        type: "command",
-        command,
-        runId,
-        timestamp: Date.now(),
-      });
-    });
+    eventSubscriptions.set(publisher, unsubscribe);
   },
 
-  onClose: (runId) => {
-    console.log(`Client disconnected: ${runId}`);
+  onClose: ({ publisher, run }) => {
+    eventSubscriptions.get(publisher)?.();
+    eventSubscriptions.delete(publisher);
+    // A socket close detaches only this transport generation. Call
+    // registry.releaseRun(run) when the workflow run itself terminates.
+    console.log(`Client disconnected: ${run.runId}`);
   },
 });
 ```
@@ -1010,7 +1002,7 @@ import type { APIContext } from "veryfront";
 import { createRedisBackend } from "veryfront/workflow/backends/redis";
 
 export async function POST(ctx: APIContext) {
-  const { task, mode, maxIterations } = await ctx.json();
+  const { task, mode, maxIterations } = await ctx.body();
 
   const backend = createRedisBackend({
     url: Deno.env.get("REDIS_URL")!,

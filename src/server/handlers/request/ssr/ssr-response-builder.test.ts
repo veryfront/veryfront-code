@@ -144,7 +144,7 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
       assertEquals(response.status, 304);
     });
 
-    it("returns fresh nonce-bearing HTML instead of 304 for matching etag", async () => {
+    it("returns fresh HTML without granting its application tags the response nonce", async () => {
       const etag = '"abc123"';
       const req = new Request("http://localhost/", {
         headers: { "if-none-match": etag },
@@ -156,7 +156,7 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
       const response = await buildSSRResponse(req, ctx, result, builder);
 
       assertEquals(response.status, 200);
-      assertEquals(await response.text(), '<script nonce="nonce-123">window.__vf=1</script>');
+      assertEquals(await response.text(), "<script>window.__vf=1</script>");
     });
 
     it("does NOT return 304 for matching etag in dev mode", async () => {
@@ -212,7 +212,7 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
       assertEquals(response.headers.get("cache-control"), "public, max-age=0");
     });
 
-    it("preserves streaming while adding nonces to inline tags", async () => {
+    it("preserves streaming without granting application tags the response nonce", async () => {
       let releaseSecondChunk: (() => void) | undefined;
       const secondChunkReady = new Promise<void>((resolve) => {
         releaseSecondChunk = resolve;
@@ -248,7 +248,7 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
       ]);
       if (timeoutId) clearTimeout(timeoutId);
 
-      assertEquals(new TextDecoder().decode(firstChunk.value), '<script nonce="nonce-123">');
+      assertEquals(new TextDecoder().decode(firstChunk.value), "<script>");
 
       releaseSecondChunk?.();
       const secondChunk = await reader.read();
@@ -343,7 +343,23 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
       assertEquals(body.includes('<script nonce="nonce-123">'), true);
     });
 
-    it("adds the builder nonce to inline tags in streaming HTML responses", async () => {
+    it("adds the builder nonce only to explicitly framework-owned HTML", async () => {
+      const req = new Request("http://localhost/");
+      const ctx = makeCtx();
+      const result = makeResult({
+        html: "<style>.error{color:red}</style><script>window.__vf_error=1</script>",
+        htmlProvenance: "framework",
+      });
+      const builder = new ResponseBuilder({ nonce: "nonce-123" });
+
+      const response = await buildSSRResponse(req, ctx, result, builder);
+      const body = await response.text();
+
+      assertEquals(body.includes('<style nonce="nonce-123">'), true);
+      assertEquals(body.includes('<script nonce="nonce-123">'), true);
+    });
+
+    it("does not grant the builder nonce to application tags in streaming HTML", async () => {
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
           controller.enqueue(
@@ -362,8 +378,10 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
       const response = await buildSSRResponse(req, ctx, result, builder);
       const body = await response.text();
 
-      assertEquals(body.includes('<style nonce="nonce-123">.app{color:red}</style>'), true);
-      assertEquals(body.includes('<script nonce="nonce-123">window.__vf=1</script>'), true);
+      assertEquals(body.includes('<style nonce="nonce-123">'), false);
+      assertEquals(body.includes('<script nonce="nonce-123">'), false);
+      assertEquals(body.includes("<style>.app{color:red}</style>"), true);
+      assertEquals(body.includes("<script>window.__vf=1</script>"), true);
     });
   });
 });

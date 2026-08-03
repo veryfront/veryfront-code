@@ -7,8 +7,8 @@
  * @module build/transforms/mdx/esm-module-loader/loader
  */
 
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { MDXModule } from "../types.ts";
 import type { ESMLoaderContext } from "./types.ts";
 import { doLoadModuleESM } from "./module-writer.ts";

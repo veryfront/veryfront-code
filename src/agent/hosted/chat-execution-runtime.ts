@@ -2,9 +2,10 @@ import {
   buildChatStreamChunkMessageMetadata,
   extractChatMessageMetadata,
 } from "../../chat/chat-ui-message-helpers.ts";
-import { getLastStreamStep } from "../../chat/final-step-fallback.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
 import type { HostedConversationRootRunContext } from "../conversation/root-run-lifecycle.ts";
+import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
 import {
   createHostedAgentRunSpanController,
   createHostedRootRunLifecycleRuntimeAdapter,
@@ -38,8 +39,6 @@ import {
   type MirroredToolChunkState,
 } from "../streaming/mirrored-tool-chunk-state.ts";
 import {
-  finalizeHostedDetached,
-  finalizeHostedResponse,
   type FinalizeHostedResponseOptions,
   type HostedDetachedFinalizationState,
   type HostedResponseFinalizationState,
@@ -47,14 +46,25 @@ import {
 import {
   getEmptyHostedFinalizedMessageTerminalError,
   getHostedStreamErrorText,
-  shouldFailEmptyHostedFinalizedMessage,
 } from "./stream-terminal-error.ts";
 import type { BuildChatStreamChunkMessageMetadataInput } from "../../chat/chat-ui-message-helpers.ts";
 import {
   createChatStreamWatchdog,
   DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS,
 } from "../../chat/stream-watchdog.ts";
+import { unrefTimer } from "../../platform/compat/process.ts";
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
+import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
+import { finalizeHostedChatRun } from "./hosted-chat-finalization.ts";
+import {
+  runWithMandatoryRunEventSink,
+  scopeAsyncIterableWithMandatoryRunEventSink,
+} from "../../runtime/run-event-sink-context.ts";
+import type { AgentRunEventSink } from "../../runtime/model-call-context.ts";
+import {
+  createDurableRunEventSink,
+  DurableRunEventPersistenceError,
+} from "./durable-run-event-sink.ts";
 export type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 
 const INCOMPLETE_TOOL_CALLS_PART_ERROR_TEXT = "Assistant ended before tool execution completed";
@@ -95,6 +105,7 @@ export interface HostedChatExecutionRuntimeBootstrap {
   capturedMessageId: string | null;
   capturedConversationId?: string;
   mirroredToolChunkState: MirroredToolChunkState;
+  runEventSink?: AgentRunEventSink;
 }
 
 /** Input payload for create hosted chat execution runtime bootstrap. */
@@ -109,6 +120,7 @@ export interface CreateHostedChatExecutionRuntimeBootstrapInput {
   createRootStreamWatchdog?: () => HostedChatExecutionRootStreamWatchdog;
   streamBootstrapKeepaliveIntervalMs?: number;
   streamBootstrapTimeoutMs?: number;
+  durableRunEventMirror?: ConversationRunChunkMirror;
 }
 
 /** Input payload for create hosted chat execution runtime. */
@@ -147,6 +159,7 @@ export interface CreateBootstrappedHostedChatExecutionRuntimeInput {
   upstreamParentConversationId?: string;
   upstreamParentRunId?: string;
   spawnedFromToolCallId?: string;
+  traceAttributes?: Parameters<HostedAgentRunSpanController["setAttributes"]>[0];
   tracer: HostedAgentRunTracer;
   resolveProvider: (modelId: string) => string;
   traceStream?: CreateHostedChatExecutionRuntimeBootstrapInput["traceStream"];
@@ -220,8 +233,17 @@ function createHostedChatExecutionCleanup(cleanup: () => Promise<void>): () => P
   };
 }
 
+// `invoke_agent` can legitimately run longer than the idle timeout (it delegates
+// to a sub-agent), so hosted runs must exempt it from the watchdog's idle abort.
+// The shared watchdog no longer bakes this product-specific name into its default,
+// so the exemption is passed explicitly here at the hosted call site.
+const HOSTED_LONG_RUNNING_TOOL_NAMES = ["invoke_agent"] as const;
+
 function createDefaultHostedChatExecutionRootStreamWatchdog(): HostedChatExecutionRootStreamWatchdog {
-  return createChatStreamWatchdog();
+  return createChatStreamWatchdog({
+    longRunningToolNames: HOSTED_LONG_RUNNING_TOOL_NAMES,
+    longRunningToolPrefixes: [AGENT_DELEGATE_TOOL_PREFIX],
+  });
 }
 
 function resolveStreamBootstrapKeepaliveIntervalMs(intervalMs: number | undefined): number {
@@ -252,12 +274,7 @@ function createStreamBootstrapWatchdogKeepalive(input: {
   const timeoutMs = resolveStreamBootstrapTimeoutMs(input.timeoutMs);
   const timeoutController = new AbortController();
   const interval = setInterval(() => {
-    input.rootStreamWatchdog.observe({
-      type: "message-metadata",
-      messageMetadata: {
-        createdAt: new Date().toISOString(),
-      },
-    });
+    input.rootStreamWatchdog.keepAlive();
   }, intervalMs);
   const timeout = setTimeout(() => {
     timeoutController.abort(
@@ -265,6 +282,8 @@ function createStreamBootstrapWatchdogKeepalive(input: {
     );
     clearInterval(interval);
   }, timeoutMs);
+  unrefTimer(interval);
+  unrefTimer(timeout);
 
   return {
     signal: timeoutController.signal,
@@ -293,7 +312,12 @@ export async function createHostedChatExecutionRuntimeBootstrap(
   const cleanup = createHostedChatExecutionCleanup(input.cleanup);
   const streamingMessageId = input.lifecycleAdapter.durableRootRun?.messageId ?? null;
   if (input.conversationId && !streamingMessageId) {
-    throw new Error("DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION");
+    throw INVALID_ARGUMENT.create({ detail: "DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION" });
+  }
+  if (input.lifecycleAdapter.durableRootRun && !input.durableRunEventMirror) {
+    throw new DurableRunEventPersistenceError(
+      "Durable hosted root run requires an authorized private event mirror",
+    );
   }
 
   const rootStreamWatchdog = input.createRootStreamWatchdog
@@ -309,16 +333,23 @@ export async function createHostedChatExecutionRuntimeBootstrap(
     rootStreamWatchdog.signal,
     bootstrapKeepalive.signal,
   ]);
+  const runEventSink = input.durableRunEventMirror
+    ? createDurableRunEventSink({
+      mirror: input.durableRunEventMirror,
+      abortSignal: streamAbortSignal,
+    })
+    : undefined;
 
   let streamResult: HostedChatRuntimeStreamResult;
   try {
+    const startStream = () =>
+      input.agent.stream({
+        messages: input.finalMessages,
+        abortSignal: streamAbortSignal,
+      });
     streamResult = await traceHostedChatRuntimeStream(
       input.traceStream,
-      () =>
-        input.agent.stream({
-          messages: input.finalMessages,
-          abortSignal: streamAbortSignal,
-        }),
+      () => runEventSink ? runWithMandatoryRunEventSink(runEventSink, startStream) : startStream(),
     );
   } catch (error) {
     rootStreamWatchdog.dispose();
@@ -336,6 +367,7 @@ export async function createHostedChatExecutionRuntimeBootstrap(
     capturedMessageId: streamingMessageId,
     ...(input.conversationId ? { capturedConversationId: input.conversationId } : {}),
     mirroredToolChunkState: createMirroredToolChunkState(),
+    ...(runEventSink ? { runEventSink } : {}),
   };
 }
 
@@ -361,6 +393,9 @@ async function createBootstrappedHostedChatRuntime(
       lifecycleAdapter,
       finalMessages: input.finalMessages,
       conversationId: input.conversationId,
+      ...(input.rootRunContext.privateDurableRunMirror
+        ? { durableRunEventMirror: input.rootRunContext.privateDurableRunMirror }
+        : {}),
       abortSignal: input.abortSignal,
       traceStream: input.traceStream,
       ...(input.createRootStreamWatchdog
@@ -406,15 +441,18 @@ export async function createBootstrappedHostedChatExecutionRuntime(
   const agentRunSpan = createHostedAgentRunSpanController({
     tracer: input.tracer,
     spanName: input.spanName,
-    operationName: "chat",
+    operationName: "invoke_agent",
     conversationId: input.conversationId,
     projectId: input.projectId,
     userId: input.userId,
     agentId: input.agentId,
+    agentName: input.agentName,
+    modelId: input.modelId,
     rootRun: input.rootRunContext.durableRootRun,
     upstreamParentConversationId: input.upstreamParentConversationId,
     upstreamParentRunId: input.upstreamParentRunId,
     spawnedFromToolCallId: input.spawnedFromToolCallId,
+    traceAttributes: input.traceAttributes,
   });
 
   try {
@@ -611,31 +649,23 @@ async function finalizeResponseFinish(input: {
   mirroredToolChunkState: MirroredToolChunkState;
   capturedMessageId: string | null;
   incompleteToolCallsPartErrorText: string;
+  flushPendingDerivedSource: () => Promise<void>;
   cleanup: () => Promise<void>;
   logger?: HostedChatExecutionRuntimeLogger;
 }): Promise<void> {
-  const hooks = createHostedChatStreamFinalizationHooks({
-    lifecycleAdapter: input.lifecycleAdapter,
-    cleanup: input.cleanup,
-    streamError: input.lastStreamError,
-    logger: input.logger,
-  });
-  const buildState = createHostedChatFinalizeResponseBuildState({
+  await input.flushPendingDerivedSource();
+  await finalizeHostedChatRun({
+    kind: "response",
     responseMessage: input.responseMessage,
     isAborted: input.isAborted,
+    streamResult: input.streamResult,
     lifecycleAdapter: input.lifecycleAdapter,
     mirroredToolChunkState: input.mirroredToolChunkState,
     capturedMessageId: input.capturedMessageId,
     incompleteToolCallsPartErrorText: input.incompleteToolCallsPartErrorText,
-  });
-
-  await finalizeHostedResponse({
-    isAborted: input.isAborted,
-    getFinalStep: () => getLastStreamStep(input.streamResult),
-    buildState,
-    shouldFailEmptyMessage: ({ isAborted, message }) =>
-      shouldFailEmptyHostedFinalizedMessage({ isAborted, message }),
-    ...hooks,
+    cleanup: input.cleanup,
+    logger: input.logger,
+    streamError: input.lastStreamError,
   });
 }
 
@@ -651,27 +681,18 @@ async function finalizeDetachedStreamEnd(input: {
   cleanup: () => Promise<void>;
   logger?: HostedChatExecutionRuntimeLogger;
 }): Promise<void> {
-  const hooks = createHostedChatStreamFinalizationHooks({
+  await finalizeHostedChatRun({
+    kind: "detached",
+    isAborted: input.isAborted,
+    mirroredDurableOutput: input.mirroredDurableOutput,
+    streamResult: input.streamResult,
     lifecycleAdapter: input.lifecycleAdapter,
-    cleanup: input.cleanup,
-    streamError: input.lastStreamError,
-    logger: input.logger,
-  });
-  const buildState = createHostedChatFinalizeDetachedBuildState({
     capturedMessageId: input.capturedMessageId,
-    isAborted: input.isAborted,
-    lifecycleAdapter: input.lifecycleAdapter,
     mirroredToolChunkState: input.mirroredToolChunkState,
-    mirroredDurableOutput: input.mirroredDurableOutput,
     incompleteToolCallsPartErrorText: input.incompleteToolCallsPartErrorText,
-  });
-
-  await finalizeHostedDetached({
-    isAborted: input.isAborted,
-    mirroredDurableOutput: input.mirroredDurableOutput,
-    getFinalStep: () => getLastStreamStep(input.streamResult),
-    buildState,
-    ...hooks,
+    cleanup: input.cleanup,
+    logger: input.logger,
+    streamError: input.lastStreamError,
   });
 }
 
@@ -682,7 +703,7 @@ function resolveStreamingMessageId(input: {
 }): string | null {
   const streamingMessageId = input.lifecycleAdapter.durableRootRun?.messageId ?? null;
   if (input.conversationId && !streamingMessageId) {
-    throw new Error("DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION");
+    throw INVALID_ARGUMENT.create({ detail: "DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION" });
   }
 
   if (streamingMessageId) {
@@ -700,6 +721,7 @@ export function createHostedChatExecutionRuntime(
   let lastStreamError: unknown = null;
   let finishHandlerStarted = false;
   let mirroredDurableOutput = false;
+  let flushPendingDerivedSource = async (): Promise<void> => {};
   const incompleteToolCallsPartErrorText = input.incompleteToolCallsPartErrorText ??
     INCOMPLETE_TOOL_CALLS_PART_ERROR_TEXT;
   const streamingMessageId = resolveStreamingMessageId({
@@ -764,6 +786,7 @@ export function createHostedChatExecutionRuntime(
           mirroredToolChunkState: input.bootstrap.mirroredToolChunkState,
           capturedMessageId: input.bootstrap.capturedMessageId,
           incompleteToolCallsPartErrorText,
+          flushPendingDerivedSource,
           cleanup: input.bootstrap.cleanup,
           logger: input.logger,
         }).catch((error) =>
@@ -792,7 +815,16 @@ export function createHostedChatExecutionRuntime(
     const responseMessageId = input.responseMessageId;
     streamOptions.generateMessageId = () => responseMessageId;
   }
-  const agentUIStream = input.bootstrap.streamResult.toUIMessageStream(streamOptions);
+  const createAgentUiStream = () => input.bootstrap.streamResult.toUIMessageStream(streamOptions);
+  const unscopedAgentUIStream = input.bootstrap.runEventSink
+    ? runWithMandatoryRunEventSink(input.bootstrap.runEventSink, createAgentUiStream)
+    : createAgentUiStream();
+  const agentUIStream = input.bootstrap.runEventSink
+    ? scopeAsyncIterableWithMandatoryRunEventSink(
+      input.bootstrap.runEventSink,
+      unscopedAgentUIStream,
+    )
+    : unscopedAgentUIStream;
 
   return {
     agentUIStream: createHostedMirroredUiStream({
@@ -802,6 +834,9 @@ export function createHostedChatExecutionRuntime(
       appendChunk: (chunk) => input.bootstrap.lifecycleAdapter.durableRunMirror?.handleChunk(chunk),
       setMirroredOutput: (value) => {
         mirroredDurableOutput = value;
+      },
+      registerPendingDerivedSourceFlush: (flush) => {
+        flushPendingDerivedSource = flush;
       },
       logger: input.logger,
     }),

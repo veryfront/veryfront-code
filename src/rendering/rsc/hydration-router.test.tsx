@@ -38,6 +38,27 @@ describe("rendering/rsc/wrapWithRouterProvider", () => {
     assertStringIncludes(html, "5:hi");
   });
 
+  it("threads getServerData props to usePageContext().data for hydrated components", async () => {
+    const doc = docWithImportMap({ "veryfront/router": "https://example.com/router.js" });
+
+    const Consumer = (): React.ReactElement => {
+      const p = usePageContext();
+      return <i>data:{String(p.data.greeting)}</i>;
+    };
+
+    const wrapped = await wrapWithRouterProvider(
+      React.createElement(Consumer),
+      { params: {}, frontmatter: {}, props: { greeting: "from-server" } },
+      doc,
+    );
+
+    // `props` from the hydration payload reaches `usePageContext().data`, so a
+    // hydrated client tree under an App/RSC page reseeds with the same server
+    // data the server render used — not an empty object.
+    const html = renderToStaticMarkup(wrapped as React.ReactElement);
+    assertStringIncludes(html, "data:from-server");
+  });
+
   it("preserves all catch-all route segments (joins array params)", async () => {
     const doc = docWithImportMap({ "veryfront/router": "https://example.com/router.js" });
 

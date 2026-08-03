@@ -5,14 +5,17 @@ import {
   serverLogger as logger,
 } from "#veryfront/utils";
 import type { WebSocketContext } from "#veryfront/server/dev-server/hmr-types.ts";
+import { getWebSocketMessageAdmission } from "#veryfront/utils/websocket-message-size.ts";
 
 export function setupWebSocketHandlers(
   socket: WebSocket,
   context: WebSocketContext,
 ): void {
   context.clients.add(socket);
+  let cleanupComplete = false;
 
   function sendConnectedMessage(): void {
+    if (cleanupComplete) return;
     logger.debug("HMR client connected", { totalClients: context.clients.size });
 
     try {
@@ -34,28 +37,52 @@ export function setupWebSocketHandlers(
   }
 
   function cleanup(): void {
+    if (cleanupComplete) return;
+    cleanupComplete = true;
+    socket.onopen = null;
+    socket.onmessage = null;
     context.clients.delete(socket);
-    context.rateLimiter.cleanup(socket);
+    try {
+      context.rateLimiter.cleanup(socket);
+    } catch (error) {
+      logger.debug("Error cleaning up HMR rate-limit state", error);
+    }
+  }
+
+  /**
+   * Release server-side state before asking the peer to close. A client that
+   * stalls the close handshake must not be able to keep its registration and
+   * rate-limit entry alive by never letting `onclose` fire.
+   */
+  function closeAndCleanup(code: number, reason: string): void {
+    cleanup();
+    try {
+      socket.close(code, reason);
+    } catch (error) {
+      logger.debug("Error closing HMR WebSocket client", error);
+    }
   }
 
   socket.onmessage = (event) => {
+    if (cleanupComplete) return;
     try {
-      const messageSize = typeof event.data === "string"
-        ? event.data.length
-        : event.data.byteLength ?? 0;
+      const admission = getWebSocketMessageAdmission(
+        event.data,
+        context.maxMessageSize,
+      );
 
-      if (messageSize > context.maxMessageSize) {
+      if (!admission.accepted) {
         logger.warn("HMR message too large, closing connection", {
-          size: messageSize,
+          sizeAtLeast: admission.sizeBytes,
           max: context.maxMessageSize,
         });
-        socket.close(HMR_CLOSE_MESSAGE_TOO_LARGE, "Message too large");
+        closeAndCleanup(HMR_CLOSE_MESSAGE_TOO_LARGE, "Message too large");
         return;
       }
 
       if (!context.rateLimiter.check(socket)) {
         logger.warn("HMR rate limit exceeded, closing connection");
-        socket.close(HMR_CLOSE_RATE_LIMIT, "Rate limit exceeded");
+        closeAndCleanup(HMR_CLOSE_RATE_LIMIT, "Rate limit exceeded");
         return;
       }
 

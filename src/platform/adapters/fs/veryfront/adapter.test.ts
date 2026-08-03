@@ -1,18 +1,28 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
-import { buildFileListCacheKey } from "./cache-keys.ts";
+import { buildFileCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
 import { createAdapter, seedCachedFiles, waitFor } from "./adapter.test-helpers.ts";
 import type { ResolvedContentContext } from "./types.ts";
 import {
+  addPendingInvalidation,
+  clearAllPendingInvalidations,
+  removePendingInvalidation,
+} from "./invalidation-state.ts";
+import {
   clearReleaseAssetManifestCache,
   getReadyManifestForRender,
+  getReadyManifestForRenderAsync,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 
 describe("VeryfrontFSAdapter", () => {
+  afterEach(() => {
+    clearAllPendingInvalidations();
+  });
+
   describe("class", () => {
     it("should export VeryfrontFSAdapter class", () => {
       assertExists(VeryfrontFSAdapter);
@@ -93,12 +103,15 @@ describe("VeryfrontFSAdapter", () => {
       "setContentContext",
       "resolveFile",
       "readFileBytes",
+      "readFileBytesWithinLimit",
       "getAllSourceFiles",
       "getEntityIdForPath",
       "getFilePathByEntityId",
       "getPokeMetrics",
       "getClient",
       "refreshSourceSnapshot",
+      "ensureSourceSnapshotFresh",
+      "getSourceSnapshotVersion",
     ] as const;
 
     for (const method of methods) {
@@ -106,6 +119,163 @@ describe("VeryfrontFSAdapter", () => {
         assertEquals(typeof (createAdapter() as any)[method], "function");
       });
     }
+  });
+
+  describe("bounded byte reads", () => {
+    it("delegates to the exact reader after bounded context initialization", async () => {
+      const adapter = new VeryfrontFSAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          projectId: "test-project-id",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      let exactCall: [string, number] | undefined;
+      const internals = adapter as unknown as {
+        readOps: {
+          readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array>;
+        };
+      };
+      internals.readOps.readFileBytesWithinLimit = (path, byteLimit) => {
+        exactCall = [path, byteLimit];
+        return Promise.resolve(new Uint8Array([7, 8]));
+      };
+
+      assertEquals([...await adapter.readFileBytesWithinLimit("manifest.json", 2)], [7, 8]);
+      assertEquals(exactCall, ["manifest.json", 2]);
+    });
+
+    it("refreshes and retries a bounded branch read after a not-found miss", async () => {
+      const adapter = new VeryfrontFSAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          projectId: "test-project-id",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      const exactCalls: Array<[string, number]> = [];
+      let refreshCalls = 0;
+      const internals = adapter as unknown as {
+        readOps: {
+          readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array>;
+        };
+      };
+      internals.readOps.readFileBytesWithinLimit = (path, byteLimit) => {
+        exactCalls.push([path, byteLimit]);
+        return exactCalls.length === 1
+          ? Promise.reject(new Error(`404 Not Found: ${path}`))
+          : Promise.resolve(new Uint8Array([9, 8]));
+      };
+      adapter.refreshSourceSnapshot = (reason) => {
+        refreshCalls++;
+        assertEquals(reason, "branch-miss:manifest.json");
+        return Promise.resolve();
+      };
+
+      assertEquals([...await adapter.readFileBytesWithinLimit("manifest.json", 2)], [9, 8]);
+      assertEquals(exactCalls, [
+        ["manifest.json", 2],
+        ["manifest.json", 2],
+      ]);
+      assertEquals(refreshCalls, 1);
+    });
+
+    it("rejects an invalid limit before initialization", async () => {
+      const adapter = createAdapter();
+      let initializeCalls = 0;
+      (adapter as unknown as { initialize(): Promise<void> }).initialize = () => {
+        initializeCalls++;
+        return Promise.resolve();
+      };
+
+      await assertRejects(
+        () => adapter.readFileBytesWithinLimit("manifest.json", 0),
+        RangeError,
+        "positive safe integer",
+      );
+      assertEquals(initializeCalls, 0);
+    });
+  });
+
+  describe("request tokens", () => {
+    it("syncs request-scoped tokens into the WebSocket manager", () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "static-token",
+          projectSlug: "test-project",
+          cache: { enabled: false },
+        },
+      });
+      let websocketToken: string | undefined;
+
+      (adapter as unknown as { wsManager: { setApiToken: (token: string) => void } }).wsManager = {
+        setApiToken: (token: string) => {
+          websocketToken = token;
+        },
+      };
+
+      adapter.setRequestToken("fresh-request-token");
+      assertEquals(websocketToken, "fresh-request-token");
+
+      adapter.clearRequestToken();
+      assertEquals(websocketToken, "static-token");
+    });
+
+    it("invalidates snapshots and cached file lists across request-authority changes", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "static-token",
+          projectSlug: "test-project",
+          cache: { enabled: true },
+        },
+      });
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+      seedCachedFiles(adapter, [{ path: "tenant-a.ts", content: "tenant-a" }]);
+
+      const internals = adapter as unknown as {
+        getCachedFileListSync(): Array<{ path: string; content?: string }> | undefined;
+        getCurrentSourceSnapshotIdentity(): string | undefined;
+        initialized: boolean;
+        sourceSnapshotCheckedAt: number;
+        sourceSnapshotIdentity: string | undefined;
+        sourceSnapshotFiles: Array<{ path: string; content?: string }> | undefined;
+        sourceSnapshotRefreshPromise: Promise<void> | null;
+      };
+      internals.initialized = true;
+      internals.sourceSnapshotIdentity = internals.getCurrentSourceSnapshotIdentity();
+      internals.sourceSnapshotCheckedAt = Date.now();
+      internals.sourceSnapshotFiles = [{ path: "tenant-a.ts", content: "tenant-a" }];
+      internals.sourceSnapshotRefreshPromise = new Promise(() => {});
+      assertEquals(internals.getCachedFileListSync()?.[0]?.path, "tenant-a.ts");
+
+      let refreshCalls = 0;
+      adapter.refreshSourceSnapshot = () => {
+        refreshCalls++;
+        return Promise.resolve();
+      };
+      const before = adapter.getSourceSnapshotVersion();
+
+      adapter.setRequestToken("tenant-token");
+      assertEquals(internals.getCachedFileListSync(), undefined);
+      assertEquals(internals.sourceSnapshotRefreshPromise, null);
+      await adapter.ensureSourceSnapshotFresh("new-authority");
+      adapter.setRequestToken("static-token");
+
+      assertEquals(refreshCalls, 1);
+      assertEquals(adapter.getSourceSnapshotVersion() > before, true);
+    });
   });
 
   describe("content context", () => {
@@ -147,6 +317,41 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(ctx?.environmentName, "production");
     });
 
+    it("pins environment client fallbacks to the resolved release", async () => {
+      const adapter = createAdapter();
+      const client = adapter.getClient();
+      adapter.setContentContext({
+        sourceType: "environment",
+        projectSlug: "test-project",
+        environmentName: "production",
+        releaseId: "release-before-redeploy",
+      });
+
+      assertEquals(client.getContext(), {
+        type: "release",
+        version: "release-before-redeploy",
+      });
+
+      (client as unknown as {
+        getFileById: (entityId: string) => Promise<{ path: string; content: string }>;
+      }).getFileById = (entityId) => {
+        assertEquals(entityId, "entity-from-old-release");
+        assertEquals(client.getContext(), {
+          type: "release",
+          version: "release-before-redeploy",
+        });
+        return Promise.resolve({
+          path: "pages/old-release.tsx",
+          content: "old release",
+        });
+      };
+
+      assertEquals(await adapter.getFilePathByEntityIdAsync("entity-from-old-release"), {
+        path: "pages/old-release.tsx",
+        body: "old release",
+      });
+    });
+
     it("should set release context", () => {
       const adapter = createAdapter();
       adapter.setContentContext({
@@ -177,16 +382,18 @@ describe("VeryfrontFSAdapter", () => {
         assertEquals(requestedReleaseId, releaseId);
         return {
           state: "ready",
+          manifest_version: 2,
           manifest: {
-            schemaVersion: 1,
+            schemaVersion: 2,
             projectId: "project-123",
             releaseId,
             releaseVersion: 1,
             manifestVersion: 2,
             builderVersion: "0.1.765",
-            sourceContentHash: "",
+            sourceContentHash: "a".repeat(64),
             createdAt: "2026-06-12T00:00:00.000Z",
             assetBasePath: "/_vf/assets",
+            dependencyMode: "source",
             modules: {
               "pages/index.tsx": {
                 contentHash,
@@ -197,7 +404,6 @@ describe("VeryfrontFSAdapter", () => {
             css: [],
             routes: { "/": { modules: ["pages/index.tsx"], css: [] } },
             dependencies: {},
-            fallback: { mode: "jit", gaps: [] },
           },
         };
       };
@@ -212,6 +418,48 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(getReadyManifestForRender(releaseId), null);
       await waitFor(async () => getReadyManifestForRender(releaseId)?.manifestVersion === 2);
       assertEquals(fetchCount, 1);
+    });
+
+    it("should stop awaiting a manifest request when the release context loses ownership", async () => {
+      setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+      const releaseId = "release-env-abort";
+      const adapter = createAdapter();
+      let requestStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        requestStarted = resolve;
+      });
+      const neverSettles = new Promise<never>(() => {});
+      let requestSignal: AbortSignal | undefined;
+
+      (adapter.getClient() as unknown as {
+        getReleaseAssetManifest: (
+          releaseId: string,
+          projectRef?: string,
+          signal?: AbortSignal,
+        ) => Promise<never>;
+      }).getReleaseAssetManifest = (requestedReleaseId, _projectRef, signal) => {
+        assertEquals(requestedReleaseId, releaseId);
+        requestSignal = signal;
+        requestStarted();
+        return neverSettles;
+      };
+
+      adapter.setContentContext({
+        sourceType: "release",
+        projectSlug: "test-project",
+        releaseId,
+      });
+      const manifest = getReadyManifestForRenderAsync(releaseId);
+      await started;
+
+      adapter.setContentContext({
+        sourceType: "release",
+        projectSlug: "test-project",
+        releaseId: "release-env-next",
+      });
+
+      assertEquals(requestSignal?.aborted, true);
+      assertEquals(await manifest, null);
     });
 
     it("should register a release asset manifest fetcher when initialize resolves the release id", async () => {
@@ -243,8 +491,9 @@ describe("VeryfrontFSAdapter", () => {
           page_info: { has_more: boolean; next: null };
           release_id: string;
         }>;
-        listAllEnvironmentFiles: (
-          environmentName: string,
+        listPublishedFiles: (
+          projectId?: string,
+          releaseId?: string,
         ) => Promise<Array<{ path: string; content?: string }>>;
         getReleaseAssetManifest: (releaseId: string) => Promise<{
           state: string;
@@ -263,8 +512,9 @@ describe("VeryfrontFSAdapter", () => {
           release_id: releaseId,
         });
       };
-      client.listAllEnvironmentFiles = (environmentName) => {
-        assertEquals(environmentName, "production");
+      client.listPublishedFiles = (projectId, requestedReleaseId) => {
+        assertEquals(projectId, undefined);
+        assertEquals(requestedReleaseId, releaseId);
         return Promise.resolve(files);
       };
       client.getReleaseAssetManifest = async (requestedReleaseId) => {
@@ -272,16 +522,18 @@ describe("VeryfrontFSAdapter", () => {
         assertEquals(requestedReleaseId, releaseId);
         return {
           state: "ready",
+          manifest_version: 3,
           manifest: {
-            schemaVersion: 1,
+            schemaVersion: 2,
             projectId: "project-123",
             releaseId,
             releaseVersion: 1,
             manifestVersion: 3,
             builderVersion: "0.1.792",
-            sourceContentHash: "",
+            sourceContentHash: "a".repeat(64),
             createdAt: "2026-06-12T00:00:00.000Z",
             assetBasePath: "/_vf/assets",
+            dependencyMode: "source",
             modules: {
               "pages/index.tsx": {
                 contentHash,
@@ -292,7 +544,6 @@ describe("VeryfrontFSAdapter", () => {
             css: [],
             routes: { "/": { modules: ["pages/index.tsx"], css: [] } },
             dependencies: {},
-            fallback: { mode: "jit", gaps: [] },
           },
         };
       };
@@ -325,16 +576,18 @@ describe("VeryfrontFSAdapter", () => {
         assertEquals(requestedReleaseId, releaseId);
         return {
           state: "ready",
+          manifest_version: 1,
           manifest: {
-            schemaVersion: 1,
+            schemaVersion: 2,
             projectId: "project-123",
             releaseId,
             releaseVersion: 1,
             manifestVersion: 1,
             builderVersion: "0.1.765",
-            sourceContentHash: "",
+            sourceContentHash: "a".repeat(64),
             createdAt: "2026-06-12T00:00:00.000Z",
             assetBasePath: "/_vf/assets",
+            dependencyMode: "source",
             modules: {
               "pages/index.tsx": {
                 contentHash,
@@ -345,7 +598,6 @@ describe("VeryfrontFSAdapter", () => {
             css: [],
             routes: { "/": { modules: ["pages/index.tsx"], css: [] } },
             dependencies: {},
-            fallback: { mode: "jit", gaps: [] },
           },
         };
       };
@@ -418,6 +670,44 @@ describe("VeryfrontFSAdapter", () => {
       adapter.setContentContext(ctx);
 
       assertEquals(adapter.getContentContext()?.branch, "main");
+    });
+
+    it("detects a source-context ABA change during an in-flight exact read", async () => {
+      const adapter = createAdapter();
+      const originalContext: ResolvedContentContext = {
+        sourceType: "release",
+        projectSlug: "test-project",
+        releaseId: "release-a",
+      };
+      adapter.setContentContext(originalContext);
+      const before = adapter.getSourceSnapshotVersion();
+      const readStarted = Promise.withResolvers<void>();
+      const releaseRead = Promise.withResolvers<void>();
+      const internals = adapter as unknown as {
+        ensureExactReadInitialized(): Promise<void>;
+        readOps: {
+          readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array>;
+        };
+      };
+      internals.ensureExactReadInitialized = () => Promise.resolve();
+      internals.readOps.readFileBytesWithinLimit = async () => {
+        readStarted.resolve();
+        await releaseRead.promise;
+        return new Uint8Array([1]);
+      };
+
+      const pendingRead = adapter.readFileBytesWithinLimit("config.json", 1);
+      await readStarted.promise;
+      adapter.setContentContext({
+        sourceType: "release",
+        projectSlug: "test-project",
+        releaseId: "release-b",
+      });
+      adapter.setContentContext(originalContext);
+      releaseRead.resolve();
+
+      assertEquals([...(await pendingRead)], [1]);
+      assertEquals(adapter.getSourceSnapshotVersion() > before, true);
     });
 
     it("should detect context change between different source types", () => {
@@ -717,6 +1007,701 @@ describe("VeryfrontFSAdapter", () => {
       });
     });
 
+    it("does not reuse a freshness lease after the request branch changes", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          getContext: () => { type: string; name?: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+
+      let listAllFilesCalls = 0;
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        const branch = client.getContext().name ?? "main";
+        return Promise.resolve([{
+          path: "pages/index.tsx",
+          version_id: branch,
+          content: branch,
+        }]);
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+      assertEquals(await adapter.readTextFile("pages/index.tsx"), "main");
+
+      adapter.setRequestBranch("draft");
+      await adapter.ensureSourceSnapshotFresh("draft-request");
+
+      assertEquals(listAllFilesCalls, 2);
+      assertEquals(await adapter.readTextFile("pages/index.tsx"), "draft");
+
+      adapter.clearRequestBranch();
+      await adapter.ensureSourceSnapshotFresh("main-request");
+
+      assertEquals(listAllFilesCalls, 3);
+      assertEquals(await adapter.readTextFile("pages/index.tsx"), "main");
+    });
+
+    it("discards an in-flight refresh when the request branch changes", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          getContext: () => { type: string; name?: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+
+      let listAllFilesCalls = 0;
+      let finishMainRefresh: (() => void) | undefined;
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        const branch = client.getContext().name ?? "main";
+        const files = [{
+          path: "pages/index.tsx",
+          version_id: branch,
+          content: branch,
+        }];
+
+        if (listAllFilesCalls !== 2) return Promise.resolve(files);
+        return new Promise((resolve) => {
+          finishMainRefresh = () => resolve(files);
+        });
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+      (adapter as unknown as { sourceSnapshotCheckedAt: number }).sourceSnapshotCheckedAt = 0;
+
+      const mainRefresh = adapter.ensureSourceSnapshotFresh("main-request");
+      await waitFor(async () => finishMainRefresh !== undefined);
+
+      adapter.setRequestBranch("draft");
+      const draftRefresh = adapter.ensureSourceSnapshotFresh("draft-request");
+      finishMainRefresh?.();
+
+      await Promise.all([mainRefresh, draftRefresh]);
+
+      assertEquals(listAllFilesCalls, 3);
+      assertEquals(await adapter.readTextFile("pages/index.tsx"), "draft");
+    });
+
+    it("refreshes a stale branch snapshot once when a pushed file is missing", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const staleFiles = [{
+        path: "components/GraphViewer.tsx",
+        content: "import '../lib/graph-performance';",
+      }];
+      const refreshedFiles = [
+        ...staleFiles,
+        {
+          path: "lib/graph-performance.ts",
+          content: "export const chooseSampleSize = () => 10000;",
+        },
+      ];
+      const secondRefreshFiles = [
+        ...refreshedFiles,
+        {
+          path: "lib/second-pushed-file.ts",
+          content: "export const second = true;",
+        },
+      ];
+
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+          getFileContent: (path: string) => Promise<string>;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        if (listAllFilesCalls === 1) return Promise.resolve(staleFiles);
+        if (listAllFilesCalls === 2) return Promise.resolve(refreshedFiles);
+        return Promise.resolve(secondRefreshFiles);
+      };
+      client.getFileContent = (path: string) => Promise.resolve(`network content for ${path}`);
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+
+      const content = await adapter.readTextFile("lib/graph-performance.ts");
+
+      assertEquals(content, "export const chooseSampleSize = () => 10000;");
+      assertEquals(listAllFilesCalls, 2);
+
+      const secondContent = await adapter.readTextFile("lib/second-pushed-file.ts");
+
+      assertEquals(secondContent, "export const second = true;");
+      assertEquals(listAllFilesCalls, 3);
+    });
+
+    it("leases an unchanged branch snapshot without relying on the file-list cache", async () => {
+      let routerInvalidations = 0;
+      let ssrInvalidations = 0;
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+        invalidationCallbacks: {
+          clearRouterDetectionCacheForProject: () => {
+            routerInvalidations++;
+          },
+          clearSSRModuleCacheForProject: () => {
+            ssrInvalidations++;
+          },
+        },
+      });
+
+      const firstFiles = [{
+        path: "pages/review.tsx",
+        version_id: "version-1",
+        content: "export default function Review() { return null; }",
+      }];
+      const changedFiles = [{
+        path: "app/review/page.tsx",
+        version_id: "version-2",
+        content: "export default function Review() { return null; }",
+      }];
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id?: string; content?: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = async () => {
+        listAllFilesCalls++;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return listAllFilesCalls < 3 ? firstFiles : changedFiles;
+      };
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+
+      const initialSnapshotVersion = adapter.getSourceSnapshotVersion();
+      assertEquals(initialSnapshotVersion > 0, true);
+      assertEquals(listAllFilesCalls, 1);
+
+      (adapter as unknown as { sourceSnapshotCheckedAt: number }).sourceSnapshotCheckedAt = 0;
+      await Promise.all([
+        adapter.ensureSourceSnapshotFresh("first-concurrent-check"),
+        adapter.ensureSourceSnapshotFresh("second-concurrent-check"),
+        adapter.ensureSourceSnapshotFresh("third-concurrent-check"),
+      ]);
+
+      assertEquals(listAllFilesCalls, 2);
+      assertEquals(adapter.getSourceSnapshotVersion(), initialSnapshotVersion);
+      assertEquals(routerInvalidations, 0);
+      assertEquals(ssrInvalidations, 0);
+
+      (adapter as unknown as { sourceSnapshotCheckedAt: number }).sourceSnapshotCheckedAt = 0;
+      await adapter.ensureSourceSnapshotFresh("changed-source-check");
+
+      assertEquals(listAllFilesCalls, 3);
+      assertEquals(adapter.getSourceSnapshotVersion() > initialSnapshotVersion, true);
+      assertEquals(routerInvalidations, 1);
+      assertEquals(ssrInvalidations, 1);
+    });
+
+    it("keeps freshness followers attached until SSR invalidation completes", async () => {
+      const invalidationStarted = Promise.withResolvers<void>();
+      const releaseInvalidation = Promise.withResolvers<void>();
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+        invalidationCallbacks: {
+          clearSSRModuleCacheForProject: async () => {
+            invalidationStarted.resolve();
+            await releaseInvalidation.promise;
+          },
+        },
+      });
+
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve([{
+          path: "pages/review.tsx",
+          version_id: `version-${listAllFilesCalls}`,
+          content: `export const version = ${listAllFilesCalls};`,
+        }]);
+      };
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+      (adapter as unknown as { sourceSnapshotCheckedAt: number }).sourceSnapshotCheckedAt = 0;
+
+      const leader = adapter.ensureSourceSnapshotFresh("leader");
+      await invalidationStarted.promise;
+
+      let followerFinished = false;
+      const follower = adapter.ensureSourceSnapshotFresh("follower").then(() => {
+        followerFinished = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assertEquals(followerFinished, false);
+
+      releaseInvalidation.resolve();
+      await Promise.all([leader, follower]);
+      assertEquals(followerFinished, true);
+      assertEquals(listAllFilesCalls, 2);
+    });
+
+    it("does not let an older refresh overwrite a pushed source snapshot", async () => {
+      const refreshStarted = Promise.withResolvers<void>();
+      const releaseRefresh = Promise.withResolvers<
+        Array<{ path: string; version_id: string; content: string }>
+      >();
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const initialFiles = [{
+        path: "pages/review.tsx",
+        version_id: "version-1",
+        content: "export const version = 1;",
+      }];
+      const pushedFiles = [{
+        path: "pages/review.tsx",
+        version_id: "version-2",
+        content: "export const version = 2;",
+      }];
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        if (listAllFilesCalls === 1) return Promise.resolve(initialFiles);
+        refreshStarted.resolve();
+        return releaseRefresh.promise;
+      };
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+      const context = adapter.getContentContext();
+      assertExists(context);
+
+      const staleRefresh = adapter.refreshSourceSnapshot("poll");
+      await refreshStarted.promise;
+
+      await (adapter as unknown as {
+        replaceSourceSnapshot: (
+          cacheKey: string,
+          files: typeof pushedFiles,
+        ) => Promise<void>;
+      }).replaceSourceSnapshot(buildFileListCacheKey(context), pushedFiles);
+      const pushedVersion = adapter.getSourceSnapshotVersion();
+
+      releaseRefresh.resolve(initialFiles);
+      await staleRefresh;
+
+      assertEquals(adapter.getSourceSnapshotVersion(), pushedVersion);
+      assertEquals(await adapter.getAllSourceFiles(), pushedFiles);
+    });
+
+    it("does not reuse source snapshot generations across adapter instances", async () => {
+      async function initializeAdapter(
+        projectSlug: string,
+        projectId: string,
+      ): Promise<VeryfrontFSAdapter> {
+        const adapter = createAdapter({
+          veryfront: {
+            apiBaseUrl: "https://api.example.com",
+            apiToken: "test-token",
+            projectSlug,
+            contentSource: { type: "branch", branch: "main" },
+            cache: { enabled: true },
+          },
+        });
+        const client = (adapter as unknown as {
+          client: {
+            initialize: () => Promise<void>;
+            getProjectSlug: () => string;
+            getProjectId: () => string;
+            getCachedProject: () => { provider: string; layout: string };
+            listAllFiles: () => Promise<
+              Array<{ path: string; version_id?: string; content?: string }>
+            >;
+          };
+        }).client;
+
+        client.initialize = () => Promise.resolve();
+        client.getProjectSlug = () => projectSlug;
+        client.getProjectId = () => projectId;
+        client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+        client.listAllFiles = () =>
+          Promise.resolve([{
+            path: "agents/support.ts",
+            version_id: "version-1",
+            content: "export default {};",
+          }]);
+        (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+          .connect = () => {};
+
+        await adapter.initialize();
+        return adapter;
+      }
+
+      const first = await initializeAdapter("first-project", "project-1");
+      const second = await initializeAdapter("second-project", "project-2");
+
+      assertEquals(
+        first.getSourceSnapshotVersion() === second.getSourceSnapshotVersion(),
+        false,
+      );
+
+      first.dispose();
+      second.dispose();
+    });
+
+    it("refreshes a stale branch snapshot when resolveFile returns a cached miss", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const staleFiles = [{
+        path: "components/GraphViewer.tsx",
+        content: "import '../lib/graph-performance';",
+      }];
+      const refreshedFiles = [
+        ...staleFiles,
+        {
+          path: "lib/graph-performance.ts",
+          content: "export const chooseSampleSize = () => 10000;",
+        },
+      ];
+
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+          searchFiles: (_pattern: string) => Promise<Array<{ path: string }>>;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve(listAllFilesCalls === 1 ? staleFiles : refreshedFiles);
+      };
+      client.searchFiles = () => Promise.resolve([]);
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+      assertEquals(
+        await adapter.resolveFile("components/GraphViewer"),
+        "components/GraphViewer.tsx",
+      );
+
+      const branchSourcePrefix = buildFileCacheKeyPrefix(adapter.getContentContext());
+      let resolvedPath: string | null;
+      try {
+        addPendingInvalidation(branchSourcePrefix);
+        resolvedPath = await adapter.resolveFile("lib/graph-performance");
+      } finally {
+        removePendingInvalidation(branchSourcePrefix);
+      }
+
+      assertEquals(resolvedPath, "lib/graph-performance.ts");
+      assertEquals(listAllFilesCalls, 3);
+    });
+
+    it("does not refresh a normal resolveFile miss without pending branch invalidation", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+          searchFiles: (_pattern: string) => Promise<Array<{ path: string }>>;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve([{
+          path: "pages/index.tsx",
+          content: "export default function Page() { return null; }",
+        }]);
+      };
+      client.searchFiles = () => Promise.resolve([]);
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+
+      const resolvedPath = await adapter.resolveFile("optional/missing-page");
+
+      assertEquals(resolvedPath, null);
+      assertEquals(listAllFilesCalls, 1);
+    });
+
+    it("refreshes a stale branch snapshot when readdir sees a new empty directory miss", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const staleFiles = [{
+        path: "components/GraphViewer.tsx",
+        content: "import '../lib/graph-performance';",
+      }];
+      const refreshedFiles = [
+        ...staleFiles,
+        {
+          path: "lib/graph-performance.ts",
+          content: "export const chooseSampleSize = () => 10000;",
+        },
+      ];
+
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve(listAllFilesCalls === 1 ? staleFiles : refreshedFiles);
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+      assertEquals((await adapter.readdir("components")).map((entry) => entry.path), [
+        "components/GraphViewer.tsx",
+      ]);
+
+      const branchSourcePrefix = buildFileCacheKeyPrefix(adapter.getContentContext());
+      let entries: Array<{ path: string }>;
+      try {
+        addPendingInvalidation(branchSourcePrefix);
+        entries = await adapter.readdir("lib");
+      } finally {
+        removePendingInvalidation(branchSourcePrefix);
+      }
+
+      assertEquals(entries.map((entry) => entry.path), ["lib/graph-performance.ts"]);
+      assertEquals(listAllFilesCalls, 3);
+    });
+
+    it("does not refresh a normal empty directory listing without pending branch invalidation", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve([{
+          path: "pages/index.tsx",
+          content: "export default function Page() { return null; }",
+        }]);
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+
+      const entries = await adapter.readdir("optional");
+
+      assertEquals(entries, []);
+      assertEquals(listAllFilesCalls, 1);
+    });
+
     it("should rehydrate a missing file list cache in the background", async () => {
       const adapter = createAdapter({
         veryfront: {
@@ -879,8 +1864,9 @@ describe("VeryfrontFSAdapter", () => {
           getProjectId: () => string;
           getCachedProject: () => { provider: string; layout: string };
           listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
-          listAllEnvironmentFiles: (
-            environmentName: string,
+          listPublishedFiles: (
+            projectId?: string,
+            releaseId?: string,
           ) => Promise<Array<{ path: string; content?: string }>>;
         };
       }).client;
@@ -890,8 +1876,9 @@ describe("VeryfrontFSAdapter", () => {
       client.getProjectId = () => "project-123";
       client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
       client.listAllFiles = () => Promise.resolve(files);
-      client.listAllEnvironmentFiles = (environmentName) => {
-        assertEquals(environmentName, "production");
+      client.listPublishedFiles = (projectId, releaseId) => {
+        assertEquals(projectId, undefined);
+        assertEquals(releaseId, "release-123");
         return Promise.resolve(files);
       };
 

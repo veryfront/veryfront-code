@@ -15,7 +15,6 @@ describe(
   { sanitizeOps: false, sanitizeResources: false },
   () => {
     afterAll(async () => {
-      if ((globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) return;
       await esbuild.stop();
     });
 
@@ -61,12 +60,7 @@ describe(
         let result: string;
 
         beforeAll(async () => {
-          (globalThis as Record<string, unknown>).__vfTestPreserveEsbuild = true;
           result = await generateClientModule();
-        });
-
-        afterAll(() => {
-          delete (globalThis as Record<string, unknown>).__vfTestPreserveEsbuild;
         });
 
         it("should return a non-empty string", () => {
@@ -124,13 +118,8 @@ describe(
         let result: string;
 
         beforeAll(async () => {
-          (globalThis as Record<string, unknown>).__vfTestPreserveEsbuild = true;
           // deno-lint-ignore no-explicit-any
           result = await generateRouterScript(null as any);
-        });
-
-        afterAll(() => {
-          delete (globalThis as Record<string, unknown>).__vfTestPreserveEsbuild;
         });
 
         it("should return the same output as generateClientModule", async () => {
@@ -155,13 +144,8 @@ describe(
         let result: string;
 
         beforeAll(async () => {
-          (globalThis as Record<string, unknown>).__vfTestPreserveEsbuild = true;
           // deno-lint-ignore no-explicit-any
           result = await generatePrefetchScript(null as any);
-        });
-
-        afterAll(() => {
-          delete (globalThis as Record<string, unknown>).__vfTestPreserveEsbuild;
         });
 
         it("should return a non-empty string", () => {

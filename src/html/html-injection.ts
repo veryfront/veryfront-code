@@ -7,8 +7,11 @@ import {
   generateScriptTags,
   generateStyleTags,
 } from "./tag-generators.ts";
-import { buildNonceAttribute } from "./html-escape.ts";
-import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
+import { buildNonceAttribute, escapeHTML } from "./html-escape.ts";
+import {
+  escapeInlineJsonText,
+  jsonForInlineScript,
+} from "#veryfront/security/client/html-sanitizer.ts";
 import {
   getDevScripts,
   getDevStyles,
@@ -16,6 +19,34 @@ import {
   getProdScripts,
   getStudioScripts,
 } from "./dev-scripts.ts";
+import { PROJECT_STYLESHEET_IDS } from "./project-stylesheet-ids.ts";
+import { buildReleaseAssetModules } from "#veryfront/release-assets/client-module-map.ts";
+import {
+  type ConfiguredRouteDirectories,
+  routeForConfiguredPage,
+} from "#veryfront/release-assets/route-path.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+
+function escapeRegExpLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Presence checks are scoped to real stylesheet markup. Bare substrings such
+// as `data-id="..."`, `data-href="..."`, non-stylesheet links, or a CSS URL
+// in ordinary text must not suppress the required injection. The configured
+// ids are regex-escaped before interpolation.
+const PROJECT_STYLESHEET_ID_PATTERNS = PROJECT_STYLESHEET_IDS.map((id) =>
+  new RegExp(
+    `(?:^|\\s)id\\s*=\\s*(["'])${escapeRegExpLiteral(id)}\\1(?=\\s|/?>|$)`,
+    "i",
+  )
+);
+const STYLESHEET_ELEMENT_PATTERN = /<(?:link|style)\b[^>]*>/gi;
+const STYLE_ELEMENT_PATTERN = /^<style\b/i;
+const LINK_REL_ATTRIBUTE_PATTERN = /(?:^|\s)rel\s*=\s*(["'])([^"']*)\1(?=\s|\/?>|$)/i;
+const LINK_HREF_ATTRIBUTE_PATTERN = /(?:^|\s)href\s*=\s*(["'])([^"']*)\1(?=\s|\/?>|$)/i;
+const PREVIEW_PROJECT_STYLESHEET_PATTERN = /\/_vf_styles\/styles\.css(?:\?[^"']*)?$/i;
+const PRODUCTION_PROJECT_STYLESHEET_PATTERN = /\/_vf\/css\/[^"']+\.css$/i;
 
 export interface InjectHTMLContentOptions {
   mode: string;
@@ -54,6 +85,12 @@ export interface InjectHTMLContentOptions {
   importMapJson?: string;
   /** Framework-generated project stylesheet for production shells */
   projectStylesheetHref?: string;
+  /** Request-scoped dependency snapshot used to version RSC module imports. */
+  dependencyPinningCacheKey?: string;
+  /** Ready release asset manifest used to hydrate full HTML client pages */
+  releaseAssetManifest?: ReleaseAssetManifest | null;
+  /** Configured route directories used to map physical page paths to route keys */
+  directories?: ConfiguredRouteDirectories;
 }
 
 function toProjectRelativePath(absolutePath: string, projectDir?: string): string {
@@ -65,9 +102,31 @@ function toProjectRelativePath(absolutePath: string, projectDir?: string): strin
 }
 
 function hasProjectStylesheet(html: string): boolean {
-  return /id=["']vf-tailwind-css["']/i.test(html) ||
-    /href=["'][^"']*\/_vf_styles\/styles\.css(?:\?[^"']*)?["']/i.test(html) ||
-    /href=["'][^"']*\/_vf\/css\/[^"']+\.css["']/i.test(html);
+  for (const match of html.matchAll(STYLESHEET_ELEMENT_PATTERN)) {
+    const element = match[0];
+    const hasProjectId = PROJECT_STYLESHEET_ID_PATTERNS.some((pattern) => pattern.test(element));
+    if (STYLE_ELEMENT_PATTERN.test(element)) {
+      if (hasProjectId) return true;
+      continue;
+    }
+
+    const rel = LINK_REL_ATTRIBUTE_PATTERN.exec(element)?.[2];
+    if (!rel?.split(/\s+/).some((token) => token.toLowerCase() === "stylesheet")) {
+      continue;
+    }
+    if (hasProjectId) return true;
+
+    const href = LINK_HREF_ATTRIBUTE_PATTERN.exec(element)?.[2];
+    if (
+      href &&
+      (PREVIEW_PROJECT_STYLESHEET_PATTERN.test(href) ||
+        PRODUCTION_PROJECT_STYLESHEET_PATTERN.test(href))
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export function injectHTMLContent(
@@ -79,8 +138,11 @@ export function injectHTMLContent(
   let html = template;
 
   html = html.replace(/{{\s*content\s*}}/gi, content);
-  html = html.replace(/{{\s*title\s*}}/gi, metadata.title ?? "");
-  html = html.replace(/{{\s*description\s*}}/gi, metadata.description ?? "");
+  // Escape title and description: these come from user-authored frontmatter and
+  // may appear in both text nodes and attribute values (e.g. <title> and <meta
+  // content="">). escapeHTML handles &, <, >, ", and ' for both contexts.
+  html = html.replace(/{{\s*title\s*}}/gi, escapeHTML(metadata.title ?? ""));
+  html = html.replace(/{{\s*description\s*}}/gi, escapeHTML(metadata.description ?? ""));
 
   if (/{{\s*meta\s*}}/i.test(html)) {
     html = html.replace(/{{\s*meta\s*}}/gi, generateMetaTags(metadata));
@@ -101,8 +163,9 @@ export function injectHTMLContent(
   // Inject import map into <head> for ESM module resolution (must be before any module scripts)
   if (options.importMapJson && /<\/head>/i.test(html)) {
     const nonceAttr = buildNonceAttribute(options.nonce);
-    const importMapTag =
-      `<script type="importmap"${nonceAttr}>\n${options.importMapJson}\n</script>`;
+    const importMapTag = `<script type="importmap"${nonceAttr}>\n${
+      escapeInlineJsonText(options.importMapJson)
+    }\n</script>`;
     html = html.replace(/<\/head>/i, `${importMapTag}\n</head>`);
   }
 
@@ -118,28 +181,50 @@ export function injectHTMLContent(
     html = html.replace(/<\/head>/i, `${getPreviewStylesheetLink()}\n</head>`);
   }
 
+  const hasBodyOpen = /<body\b[^>]*>/i.test(html);
   const hasBodyClose = /<\/body>/i.test(html);
 
-  // Inject hydration data for 'use client' pages (before scripts, so client.js can find it)
-  if (options.pagePath && options.isClientPage && hasBodyClose) {
+  const clientPagePath = options.isClientPage === true ? options.pagePath : undefined;
+  const dependencyPinningCacheKey = options.dependencyPinningCacheKey?.startsWith("on:")
+    ? options.dependencyPinningCacheKey
+    : undefined;
+
+  // Client pages need the full hydration payload. Other full documents still
+  // need the immutable dependency token before client.js boots so any RSC
+  // transport it starts remains on the document's snapshot.
+  if ((clientPagePath || dependencyPinningCacheKey) && hasBodyOpen && hasBodyClose) {
     // Serialize with jsonForInlineScript, not raw JSON.stringify: route params
     // (and slug) are URL-derived and decoded, so a segment like `%3C/script%3E`
     // would otherwise break out of the <script> tag (reflected XSS). This escapes
     // `<`, `>`, `&`, and line separators, matching the main shell hydration path.
     const hydrationData = jsonForInlineScript({
-      pagePath: toProjectRelativePath(options.pagePath, options.projectDir),
-      slug: options.slug,
-      isClientPage: true,
-      params: options.params ?? {},
-      clientModuleStrategy: determineClientModuleStrategy({
-        isLocalProject: options.isLocalProject ?? options.mode === "development",
-        environment: options.environment,
-      }),
+      ...(clientPagePath
+        ? {
+          pagePath: toProjectRelativePath(clientPagePath, options.projectDir),
+          slug: options.slug,
+          isClientPage: true,
+          params: options.params ?? {},
+          clientModuleStrategy: determineClientModuleStrategy({
+            isLocalProject: options.isLocalProject ?? options.mode === "development",
+            environment: options.environment,
+          }),
+          releaseAssetModules: buildReleaseAssetModules(options.releaseAssetManifest, {
+            route: routeForConfiguredPage(
+              toProjectRelativePath(clientPagePath, options.projectDir),
+              options.directories,
+            ),
+          }),
+        }
+        : {}),
+      ...(dependencyPinningCacheKey ? { dependencyPinningCacheKey } : {}),
     });
     const nonceAttr = buildNonceAttribute(options.nonce);
     const hydrationScript =
       `<script id="veryfront-hydration-data" type="application/json"${nonceAttr}>${hydrationData}</script>`;
-    html = html.replace(/<\/body>/i, `${hydrationScript}</body>`);
+    html = html.replace(
+      /<body\b[^>]*>/i,
+      (openingBody) => `${openingBody}${hydrationScript}`,
+    );
   }
 
   if (options.mode === "development") {

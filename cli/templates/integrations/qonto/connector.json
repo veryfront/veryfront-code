@@ -28,7 +28,7 @@
   ],
   "tools": [
     {
-      "id": "get_organization",
+      "id": "qonto__get_organization",
       "name": "Get Organization",
       "description": "Retrieve the authenticated organization with its bank accounts, including IBAN, BIC, currency, status, and current/authorized balances",
       "requiresWrite": false,
@@ -46,7 +46,7 @@
       }
     },
     {
-      "id": "list_transactions",
+      "id": "qonto__list_transactions",
       "name": "List Transactions",
       "description": "List transactions for one bank account (identified by bank_account_id or IBAN) with status, side, and date filtering",
       "requiresWrite": false,
@@ -142,7 +142,7 @@
       }
     },
     {
-      "id": "get_transaction",
+      "id": "qonto__get_transaction",
       "name": "Get Transaction",
       "description": "Retrieve a single transaction by its UUID, optionally embedding VAT details, labels, or attachments",
       "requiresWrite": false,
@@ -165,7 +165,7 @@
       }
     },
     {
-      "id": "list_transaction_attachments",
+      "id": "qonto__list_transaction_attachments",
       "name": "List Transaction Attachments",
       "description": "List the attachments (receipts, invoices) of a transaction with download URLs",
       "requiresWrite": false,
@@ -193,7 +193,7 @@
       }
     },
     {
-      "id": "upload_transaction_attachment",
+      "id": "qonto__upload_transaction_attachment",
       "name": "Upload Transaction Attachment",
       "description": "Upload a receipt or invoice (JPEG, PNG, or PDF) onto a transaction to justify it for bookkeeping; the file is processed in the background, so the attachment is not visible immediately",
       "requiresWrite": true,
@@ -227,7 +227,7 @@
       }
     },
     {
-      "id": "get_attachment",
+      "id": "qonto__get_attachment",
       "name": "Get Attachment",
       "description": "Retrieve an attachment by id to get a fresh download URL — URLs returned by the attachment endpoints expire after 30 minutes, so re-fetch before any delayed download",
       "requiresWrite": false,
@@ -245,7 +245,7 @@
       }
     },
     {
-      "id": "list_supplier_invoices",
+      "id": "qonto__list_supplier_invoices",
       "name": "List Supplier Invoices",
       "description": "List the organization's supplier invoices (accounts payable inbox) with status and payment matching; available on all price plans except Solo Basic",
       "requiresWrite": false,

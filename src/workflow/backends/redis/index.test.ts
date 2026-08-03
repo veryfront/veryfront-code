@@ -14,6 +14,16 @@ import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { RedisBackend } from "./index.ts";
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 import type { PendingApproval, WorkflowRun } from "../../types.ts";
+import { MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES } from "../../limits.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { WorkflowRunManager } from "../../worker/run-manager.ts";
+import type {
+  RunExecutionConfig,
+  RunExecutionInfo,
+  RunExecutor,
+} from "../../worker/executors/types.ts";
+
+const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
 class MockRedisAdapter implements RedisAdapter {
   store = new Map<string, string>();
@@ -127,6 +137,164 @@ class MockRedisAdapter implements RedisAdapter {
   // and extend (P)EXPIREs it, atomically with respect to the JS event loop.
   eval(script: string, keys: string[], args: string[]): Promise<unknown> {
     const key = keys[0]!;
+
+    if (script.includes("retained-list-append")) {
+      let list = this.lists.get(key);
+      if (!list) {
+        list = [];
+        this.lists.set(key, list);
+      }
+      list.push(args[0]!);
+      const maxEntries = Number(args[1]);
+      if (list.length > maxEntries) list.splice(0, list.length - maxEntries);
+      return Promise.resolve(list.length);
+    }
+
+    if (script.includes("conditional-stalled-run-claim")) {
+      const claimKey = keys[1]!;
+      const observedActivity = args[0]!;
+      const workerId = args[1]!;
+      const claimDuration = Number(args[2]);
+      const now = args[3]!;
+      const hash = this.hashes.get(key);
+      if (!hash || hash.get("status") !== "running") return Promise.resolve(0);
+      const activity = hash.get("heartbeatAt") || hash.get("startedAt") || hash.get("createdAt");
+      if (activity !== observedActivity || this.store.has(claimKey)) return Promise.resolve(0);
+
+      this.store.set(claimKey, workerId);
+      this.expiries.set(claimKey, claimDuration);
+      hash.set("workerId", workerId);
+      hash.set("heartbeatAt", now);
+      if (!hash.get("startedAt")) hash.set("startedAt", now);
+      return Promise.resolve(1);
+    }
+
+    if (script.includes("conditional-owned-append")) {
+      const expectedCount = Number(args[0]);
+      const expectedStatuses = args.slice(1, expectedCount + 1);
+      const expectedWorkerId = args[expectedCount + 1]!;
+      const storageKey = args[expectedCount + 2]!;
+      const value = args[expectedCount + 3]!;
+      const hash = this.hashes.get(key);
+      if (
+        !hash || !expectedStatuses.includes(hash.get("status") ?? "") ||
+        hash.get("workerId") !== expectedWorkerId
+      ) {
+        return Promise.resolve(0);
+      }
+
+      let list = this.lists.get(storageKey);
+      if (!list) {
+        list = [];
+        this.lists.set(storageKey, list);
+      }
+      list.push(value);
+      const maxEntries = Number(args[expectedCount + 4]);
+      if (Number.isSafeInteger(maxEntries) && maxEntries > 0 && list.length > maxEntries) {
+        list.splice(0, list.length - maxEntries);
+      }
+      return Promise.resolve(1);
+    }
+
+    if (script.includes("conditional-approval-patch")) {
+      const approvalId = args[0]!;
+      const patch = JSON.parse(args[1]!);
+      const list = this.lists.get(key);
+      if (list) {
+        for (let i = 0; i < list.length; i++) {
+          const approval = JSON.parse(list[i]!);
+          if (approval.id === approvalId) {
+            list[i] = JSON.stringify({ ...approval, ...patch, id: approvalId });
+            return Promise.resolve(1);
+          }
+        }
+      }
+      return Promise.resolve(0);
+    }
+
+    if (script.includes("conditional-approval-decision")) {
+      const approvalId = args[0]!;
+      const newStatus = args[1]!;
+      const decidedBy = args[2]!;
+      const decidedAt = args[3]!;
+      const hasComment = args[4] === "1";
+      const comment = args[5];
+      const list = this.lists.get(key);
+      if (list) {
+        for (let i = 0; i < list.length; i++) {
+          const approval = JSON.parse(list[i]!);
+          if (approval.id === approvalId) {
+            if (approval.status !== "pending") return Promise.resolve(2);
+            approval.status = newStatus;
+            approval.decidedBy = decidedBy;
+            approval.decidedAt = decidedAt;
+            if (hasComment) approval.comment = comment;
+            else delete approval.comment;
+            list[i] = JSON.stringify(approval);
+            return Promise.resolve(1);
+          }
+        }
+      }
+      return Promise.resolve(0);
+    }
+
+    if (script.includes("conditional-run-update")) {
+      const expectedCount = Number(args[0]);
+      const expectedStatuses = args.slice(1, expectedCount + 1);
+      const nextStatus = args[expectedCount + 1]!;
+      const statusPrefix = args[expectedCount + 2]!;
+      const runId = args[expectedCount + 3]!;
+      const expectedWorkerId = args[expectedCount + 4]!;
+      const hash = this.hashes.get(key);
+      const oldStatus = hash?.get("status");
+      if (!hash || !oldStatus || !expectedStatuses.includes(oldStatus)) {
+        return Promise.resolve(0);
+      }
+      if (expectedWorkerId && hash.get("workerId") !== expectedWorkerId) {
+        return Promise.resolve(0);
+      }
+
+      if (nextStatus && oldStatus !== nextStatus) {
+        hash.set("status", nextStatus);
+        this.sets.get(statusPrefix + oldStatus)?.delete(runId);
+        let nextSet = this.sets.get(statusPrefix + nextStatus);
+        if (!nextSet) {
+          nextSet = new Set();
+          this.sets.set(statusPrefix + nextStatus, nextSet);
+        }
+        nextSet.add(runId);
+      }
+
+      for (let i = expectedCount + 5; i < args.length; i += 2) {
+        hash.set(args[i]!, args[i + 1]!);
+      }
+      return Promise.resolve(1);
+    }
+
+    // Atomic status-move script: reads old status from the run hash, then moves
+    // the run between status index sets and writes the new status.
+    // KEYS[1]=runKey, ARGV[1]=runId, ARGV[2]=newStatus, ARGV[3]=statusIndexPrefix
+    if (script.includes("hget") && script.includes("srem") && script.includes("sadd")) {
+      const runId = args[0]!;
+      const newStatus = args[1]!;
+      const statusPrefix = args[2]!;
+      const hash = this.hashes.get(key);
+      const old = hash?.get("status");
+
+      if (old === newStatus) return Promise.resolve(0);
+      if (hash) hash.set("status", newStatus);
+
+      if (old && old !== "") this.sets.get(statusPrefix + old)?.delete(runId);
+
+      let newSet = this.sets.get(statusPrefix + newStatus);
+      if (!newSet) {
+        newSet = new Set();
+        this.sets.set(statusPrefix + newStatus, newSet);
+      }
+      newSet.add(runId);
+      return Promise.resolve(1);
+    }
+
     const token = args[0];
     const owns = this.store.get(key) === token;
 
@@ -228,7 +396,13 @@ class MockRedisAdapter implements RedisAdapter {
     return Promise.resolve([{ key: streamKey, messages: [{ id: msg.id, data: msg.data }] }]);
   }
 
-  xgroupCreate(_key: string, _group: string, _id: string, _mkstream?: boolean): Promise<string> {
+  xgroupCreate(key: string, group: string, _id: string, _mkstream?: boolean): Promise<string> {
+    let groups = this.groups.get(key);
+    if (!groups) {
+      groups = new Set();
+      this.groups.set(key, groups);
+    }
+    groups.add(group);
     return Promise.resolve("OK");
   }
 
@@ -252,6 +426,27 @@ class MockRedisAdapter implements RedisAdapter {
   }
 }
 
+class RecordingRunExecutor implements RunExecutor {
+  readonly createdRunIds: string[] = [];
+
+  createRunExecution(config: RunExecutionConfig): Promise<string> {
+    this.createdRunIds.push(config.run.id);
+    return Promise.resolve(config.executionId);
+  }
+
+  getRunExecutionStatus(_executionId: string): Promise<RunExecutionInfo | null> {
+    return Promise.resolve(null);
+  }
+
+  listRunExecutions(_managerId: string): Promise<RunExecutionInfo[]> {
+    return Promise.resolve([]);
+  }
+
+  deleteRunExecution(_executionId: string): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
 function createTestRun(id: string, overrides: Partial<WorkflowRun> = {}): WorkflowRun {
   return {
     id,
@@ -265,6 +460,8 @@ function createTestRun(id: string, overrides: Partial<WorkflowRun> = {}): Workfl
     pendingApprovals: [],
     createdAt: new Date("2025-01-01T00:00:00Z"),
     ...overrides,
+    sourceIntegrationPolicy: overrides.sourceIntegrationPolicy ??
+      UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
   };
 }
 
@@ -293,6 +490,10 @@ describe("RedisBackend", () => {
   describe("initialize", () => {
     it("should create consumer group", async () => {
       await backend.initialize();
+      assertEquals(
+        mockRedis.groups.get("test:stream:schema-v1"),
+        new Set(["test:group:schema-v1"]),
+      );
     });
 
     it("should be idempotent", async () => {
@@ -302,6 +503,16 @@ describe("RedisBackend", () => {
   });
 
   describe("createRun / getRun", () => {
+    it("stores new runs in a schema-versioned custom-prefix namespace", async () => {
+      await backend.createRun(createTestRun("run-versioned-namespace"));
+
+      assertEquals(
+        mockRedis.hashes.has("test:schema-v1:run:run-versioned-namespace"),
+        true,
+      );
+      assertEquals(mockRedis.hashes.has("test:run:run-versioned-namespace"), false);
+    });
+
     it("should create and retrieve a run", async () => {
       await backend.createRun(createTestRun("run-1"));
 
@@ -310,6 +521,36 @@ describe("RedisBackend", () => {
       assertEquals(retrieved.id, "run-1");
       assertEquals(retrieved.workflowId, "wf-1");
       assertEquals(retrieved.status, "pending");
+    });
+
+    it("should persist the source integration policy snapshot", async () => {
+      const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy({
+        allow: { confluence: { allowedTools: ["get_page"] } },
+      });
+      await backend.createRun(createTestRun("run-source-policy", { sourceIntegrationPolicy }));
+
+      const retrieved = await backend.getRun("run-source-policy");
+      assertExists(retrieved);
+      assertEquals(retrieved.sourceIntegrationPolicy, sourceIntegrationPolicy);
+    });
+
+    it("rejects a malformed source policy before persisting a run", async () => {
+      const run = createTestRun("run-malformed-source-policy", {
+        sourceIntegrationPolicy: {
+          schemaVersion: 1,
+          mode: "allowlist",
+          integrations: {
+            confluence: { allowedToolIds: ["get_page", "get_page"] },
+          },
+        },
+      });
+
+      await assertRejects(
+        () => backend.createRun(run),
+        Error,
+        "invalid source integration policy snapshot",
+      );
+      assertEquals(await backend.getRun(run.id), null);
     });
 
     it("should return null for non-existent run", async () => {
@@ -386,6 +627,168 @@ describe("RedisBackend", () => {
       const updated = await backend.getRun("run-u2");
       assertEquals(updated?.output, { value: 42 });
     });
+
+    it("should atomically reject a patch when the current status is not expected", async () => {
+      await backend.createRun(createTestRun("run-cas"));
+
+      assertEquals(
+        await backend.updateRunIfStatus("run-cas", ["running"], {
+          status: "completed",
+          output: { stale: true },
+        }),
+        false,
+      );
+      assertEquals((await backend.getRun("run-cas"))?.status, "pending");
+      assertEquals((await backend.getRun("run-cas"))?.output, undefined);
+
+      assertEquals(
+        await backend.updateRunIfStatus("run-cas", ["pending"], {
+          status: "running",
+          workerId: "worker-cas",
+        }),
+        true,
+      );
+      const updated = await backend.getRun("run-cas");
+      assertEquals(updated?.status, "running");
+      assertEquals(updated?.workerId, "worker-cas");
+      assertEquals(await backend.listRuns({ status: "pending" }), []);
+      assertEquals(
+        (await backend.listRuns({ status: "running" })).map((run) => run.id),
+        ["run-cas"],
+      );
+      assertEquals(await backend.countRuns({ status: "pending" }), 0);
+      assertEquals(await backend.countRuns({ status: "running" }), 1);
+    });
+
+    it("moves conditional status updates between current-schema index sets", async () => {
+      const runId = "run-cas-index";
+      await backend.createRun(createTestRun(runId));
+
+      assertEquals(
+        await backend.updateRunIfStatus(runId, ["pending"], { status: "running" }),
+        true,
+      );
+
+      assertEquals(
+        mockRedis.sets.get("test:schema-v1:index:status:pending")?.has(runId),
+        false,
+      );
+      assertEquals(
+        mockRedis.sets.get("test:schema-v1:index:status:running")?.has(runId),
+        true,
+      );
+      assertEquals(mockRedis.sets.has("test:index:status:running"), false);
+      assertEquals(await backend.listRuns({ status: "pending" }), []);
+      assertEquals(
+        (await backend.listRuns({ status: "running" })).map((run) => run.id),
+        [runId],
+      );
+      assertEquals(await backend.countRuns({ status: "pending" }), 0);
+      assertEquals(await backend.countRuns({ status: "running" }), 1);
+    });
+
+    it("should atomically reject a patch from a stale worker owner", async () => {
+      await backend.createRun(createTestRun("run-owner-cas"));
+      await backend.updateRun("run-owner-cas", {
+        status: "running",
+        workerId: "worker-new",
+      });
+
+      assertEquals(
+        await backend.updateRunIfStatusAndWorker(
+          "run-owner-cas",
+          ["running"],
+          "worker-old",
+          { status: "failed" },
+        ),
+        false,
+      );
+      assertEquals((await backend.getRun("run-owner-cas"))?.status, "running");
+
+      assertEquals(
+        await backend.updateRunIfStatusAndWorker(
+          "run-owner-cas",
+          ["running"],
+          "worker-new",
+          { status: "failed" },
+        ),
+        true,
+      );
+      assertEquals((await backend.getRun("run-owner-cas"))?.status, "failed");
+    });
+
+    it("rejects attempts to mutate immutable run identity and policy fields", async () => {
+      const run = createTestRun("run-immutable-fields");
+      await backend.createRun(run);
+      const unsafeUpdateRun = backend.updateRun.bind(backend) as (
+        runId: string,
+        patch: Record<string, unknown>,
+      ) => Promise<void>;
+
+      await assertRejects(
+        () =>
+          unsafeUpdateRun(run.id, {
+            workflowId: "other-workflow",
+            sourceIntegrationPolicy: normalizeSourceIntegrationPolicy({ allow: {} }),
+          }),
+        Error,
+        "immutable",
+      );
+
+      const stored = await backend.getRun(run.id);
+      assertEquals(stored?.workflowId, run.workflowId);
+      assertEquals(stored?.sourceIntegrationPolicy, run.sourceIntegrationPolicy);
+    });
+
+    it("rejects immutable tenant changes through conditional update methods", async () => {
+      const tenant = {
+        projectSlug: "original-project",
+        token: "original-token",
+        productionMode: false,
+        releaseId: null,
+      };
+      const run = createTestRun("run-immutable-tenant", {
+        status: "running",
+        workerId: "worker-1",
+        _tenant: tenant,
+      });
+      await backend.createRun(run);
+      const replacementTenant = {
+        ...tenant,
+        projectSlug: "other-project",
+        token: "other-token",
+      };
+      const unsafeConditionalUpdate = backend.updateRunIfStatus.bind(backend) as (
+        runId: string,
+        statuses: WorkflowRun["status"][],
+        patch: Record<string, unknown>,
+      ) => Promise<boolean>;
+      const unsafeOwnedConditionalUpdate = backend.updateRunIfStatusAndWorker.bind(backend) as (
+        runId: string,
+        statuses: WorkflowRun["status"][],
+        workerId: string,
+        patch: Record<string, unknown>,
+      ) => Promise<boolean>;
+
+      await assertRejects(
+        () => unsafeConditionalUpdate(run.id, ["running"], { _tenant: replacementTenant }),
+        Error,
+        "immutable",
+      );
+      await assertRejects(
+        () =>
+          unsafeOwnedConditionalUpdate(
+            run.id,
+            ["running"],
+            "worker-1",
+            { _tenant: replacementTenant },
+          ),
+        Error,
+        "immutable",
+      );
+
+      assertEquals((await backend.getRun(run.id))?._tenant, tenant);
+    });
   });
 
   describe("deleteRun", () => {
@@ -401,6 +804,63 @@ describe("RedisBackend", () => {
   });
 
   describe("listRuns", () => {
+    it("never reads legacy rows or indexes when querying the current schema", async () => {
+      mockRedis.hashes.set(
+        "test:run:legacy-run",
+        new Map([
+          ["id", "legacy-run"],
+          ["workflowId", "wf-1"],
+          ["status", "pending"],
+        ]),
+      );
+      mockRedis.sets.set("test:index:runs", new Set(["legacy-run"]));
+      mockRedis.sets.set("test:index:status:pending", new Set(["legacy-run"]));
+      mockRedis.sets.set("test:index:workflow:wf-1", new Set(["legacy-run"]));
+      await backend.createRun(createTestRun("current-run"));
+
+      assertEquals(await backend.getRun("legacy-run"), null);
+      assertEquals((await backend.listRuns({})).map((run) => run.id), ["current-run"]);
+      assertEquals(
+        (await backend.listRuns({ status: "pending" })).map((run) => run.id),
+        ["current-run"],
+      );
+      assertEquals(
+        (await backend.listRuns({ workflowId: "wf-1" })).map((run) => run.id),
+        ["current-run"],
+      );
+      assertEquals(await backend.countRuns({}), 1);
+      assertEquals(await backend.countRuns({ status: "pending" }), 1);
+      assertEquals(await backend.countRuns({ workflowId: "wf-1" }), 1);
+    });
+
+    it("does not let a legacy pending row poison run-manager polling", async () => {
+      mockRedis.hashes.set(
+        "test:run:legacy-pending",
+        new Map([
+          ["id", "legacy-pending"],
+          ["workflowId", "wf-1"],
+          ["status", "pending"],
+        ]),
+      );
+      mockRedis.sets.set("test:index:status:pending", new Set(["legacy-pending"]));
+      await backend.createRun(createTestRun("current-pending"));
+      const executor = new RecordingRunExecutor();
+      const manager = new WorkflowRunManager({
+        backend,
+        executor,
+        pollInterval: 1_000_000,
+      });
+
+      await manager.start();
+      try {
+        await (manager as unknown as { poll(): Promise<void> }).poll();
+      } finally {
+        await manager.stop();
+      }
+
+      assertEquals(executor.createdRunIds, ["current-pending"]);
+    });
+
     it("should list all runs", async () => {
       await backend.createRun(createTestRun("run-a"));
       await backend.createRun(createTestRun("run-b"));
@@ -485,6 +945,107 @@ describe("RedisBackend", () => {
       const all = await backend.getCheckpoints("run-cp2");
       assertEquals(all.length, 2);
     });
+
+    it("bounds unconditional checkpoint history at the shared limit", async () => {
+      for (let index = 0; index <= MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES; index++) {
+        await backend.saveCheckpoint("run-cp-bounded", {
+          id: `cp-${index}`,
+          nodeId: `step-${index}`,
+          timestamp: new Date(index),
+          context: { input: {} },
+          nodeStates: {},
+        });
+      }
+
+      const checkpoints = await backend.getCheckpoints("run-cp-bounded");
+      assertEquals(checkpoints.length, MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES);
+      assertEquals(checkpoints[0]?.id, "cp-1");
+      assertEquals(checkpoints.at(-1)?.id, `cp-${MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES}`);
+    });
+
+    it("should condition checkpoint appends on the canonical run owner", async () => {
+      await backend.createRun(createTestRun("run-cp-owned", {
+        status: "running",
+        workerId: "worker-new",
+      }));
+      const checkpoint = {
+        id: "cp-owned",
+        nodeId: "step-owned",
+        timestamp: new Date(),
+        context: { input: {} },
+        nodeStates: {},
+      };
+
+      assertEquals(
+        await backend.saveCheckpointIfStatusAndWorker(
+          "synthetic-child-run",
+          "run-cp-owned",
+          ["running"],
+          "worker-old",
+          checkpoint,
+        ),
+        false,
+      );
+      assertEquals(
+        await backend.saveCheckpointIfStatusAndWorker(
+          "synthetic-child-run",
+          "run-cp-owned",
+          ["running"],
+          "worker-new",
+          checkpoint,
+        ),
+        true,
+      );
+      assertEquals((await backend.getCheckpoints("synthetic-child-run"))[0]?.id, "cp-owned");
+    });
+
+    it("bounds owned checkpoint history without mutating it after a failed fence", async () => {
+      await backend.createRun(createTestRun("run-cp-owned-bounded", {
+        status: "running",
+        workerId: "worker-current",
+      }));
+
+      for (let index = 0; index <= MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES; index++) {
+        assertEquals(
+          await backend.saveCheckpointIfStatusAndWorker(
+            "run-cp-owned-bounded",
+            "run-cp-owned-bounded",
+            ["running"],
+            "worker-current",
+            {
+              id: `owned-${index}`,
+              nodeId: `step-${index}`,
+              timestamp: new Date(index),
+              context: { input: {} },
+              nodeStates: {},
+            },
+          ),
+          true,
+        );
+      }
+
+      const beforeFailedFence = await backend.getCheckpoints("run-cp-owned-bounded");
+      assertEquals(beforeFailedFence.length, MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES);
+      assertEquals(beforeFailedFence[0]?.id, "owned-1");
+
+      assertEquals(
+        await backend.saveCheckpointIfStatusAndWorker(
+          "run-cp-owned-bounded",
+          "run-cp-owned-bounded",
+          ["running"],
+          "worker-stale",
+          {
+            id: "must-not-append",
+            nodeId: "step-stale",
+            timestamp: new Date(),
+            context: { input: {} },
+            nodeStates: {},
+          },
+        ),
+        false,
+      );
+      assertEquals(await backend.getCheckpoints("run-cp-owned-bounded"), beforeFailedFence);
+    });
   });
 
   describe("approvals", () => {
@@ -523,6 +1084,40 @@ describe("RedisBackend", () => {
       assertEquals(await backend.getPendingApproval("run-ap3", "nope"), null);
     });
 
+    it("should condition approval appends on owner and patch notification metadata", async () => {
+      await backend.createRun(createTestRun("run-ap-owned", {
+        status: "waiting",
+        workerId: "worker-new",
+      }));
+      const approval = makeApproval("ap-owned");
+
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          "run-ap-owned",
+          ["waiting"],
+          "worker-old",
+          approval,
+        ),
+        false,
+      );
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          "run-ap-owned",
+          ["waiting"],
+          "worker-new",
+          approval,
+        ),
+        true,
+      );
+      await backend.updatePendingApproval("run-ap-owned", approval.id, {
+        notificationError: "delivery failed",
+      });
+      assertEquals(
+        (await backend.getPendingApproval("run-ap-owned", approval.id))?.notificationError,
+        "delivery failed",
+      );
+    });
+
     it("should update approval decision", async () => {
       await backend.createRun(createTestRun("run-ap4"));
       await backend.savePendingApproval("run-ap4", makeApproval("ap-4"));
@@ -545,9 +1140,76 @@ describe("RedisBackend", () => {
         "Approval not found",
       );
     });
+
+    it("updateApproval returns true and records the decision when the approval is pending", async () => {
+      await backend.createRun(createTestRun("run-ap-true"));
+      await backend.savePendingApproval("run-ap-true", makeApproval("ap-true"));
+
+      // Applied path: the pending precondition holds, so the decision lands.
+      assertEquals(
+        await backend.updateApproval("run-ap-true", "ap-true", {
+          approved: true,
+          approver: "admin",
+          comment: "looks good",
+        }),
+        true,
+      );
+
+      // The approval left the pending set and recorded the decider verbatim.
+      assertEquals(await backend.getPendingApprovals("run-ap-true"), []);
+      const stored = JSON.parse(mockRedis.lists.get("test:schema-v1:approvals:run-ap-true")![0]!);
+      assertEquals(stored.status, "approved");
+      assertEquals(stored.decidedBy, "admin");
+      assertEquals(stored.comment, "looks good");
+    });
+
+    it("updateApproval returns false (no-op) once the approval is already decided", async () => {
+      await backend.createRun(createTestRun("run-ap-decided"));
+      await backend.savePendingApproval("run-ap-decided", makeApproval("ap-decided"));
+
+      // First decision wins the race and applies.
+      assertEquals(
+        await backend.updateApproval("run-ap-decided", "ap-decided", {
+          approved: true,
+          approver: "first",
+        }),
+        true,
+      );
+
+      // Second, concurrent decision arrives after the approval is no longer
+      // pending: the precondition rejects it, so it is a no-op returning false
+      // rather than overwriting the first decision (lost-race path).
+      assertEquals(
+        await backend.updateApproval("run-ap-decided", "ap-decided", {
+          approved: false,
+          approver: "second",
+        }),
+        false,
+      );
+
+      const stored = JSON.parse(
+        mockRedis.lists.get("test:schema-v1:approvals:run-ap-decided")![0]!,
+      );
+      assertEquals(stored.status, "approved");
+      assertEquals(stored.decidedBy, "first");
+    });
   });
 
   describe("enqueue / dequeue", () => {
+    it("never consumes entries from the legacy unversioned stream", async () => {
+      mockRedis.streams.set("test:stream", [{
+        id: "legacy-1",
+        data: {
+          runId: "legacy-run",
+          workflowId: "wf-legacy",
+          createdAt: new Date().toISOString(),
+        },
+      }]);
+
+      assertEquals(await backend.dequeue(), null);
+      assertEquals(mockRedis.streams.get("test:stream")?.length, 1);
+    });
+
     it("should enqueue and dequeue a job", async () => {
       await backend.enqueue({
         runId: "run-q1",
@@ -560,6 +1222,8 @@ describe("RedisBackend", () => {
       assertExists(job);
       assertEquals(job.runId, "run-q1");
       assertEquals(job.workflowId, "wf-1");
+      assertEquals(mockRedis.streams.has("test:stream"), false);
+      assertEquals(mockRedis.streams.has("test:stream:schema-v1"), true);
     });
 
     it("should return null when queue is empty", async () => {
@@ -569,7 +1233,7 @@ describe("RedisBackend", () => {
 
   describe("locking", () => {
     it("should acquire and release a lock", async () => {
-      assertEquals(await backend.acquireLock("run-lock", 5000), true);
+      assertExists(await backend.acquireLock("run-lock", 5000));
       assertEquals(await backend.isLocked("run-lock"), true);
 
       await backend.releaseLock("run-lock");
@@ -577,8 +1241,8 @@ describe("RedisBackend", () => {
     });
 
     it("should fail to acquire lock when already held", async () => {
-      assertEquals(await backend.acquireLock("run-lock2", 5000), true);
-      assertEquals(await backend.acquireLock("run-lock2", 5000), false);
+      assertExists(await backend.acquireLock("run-lock2", 5000));
+      assertEquals(await backend.acquireLock("run-lock2", 5000), null);
     });
 
     it("should extend an existing lock", async () => {
@@ -592,8 +1256,8 @@ describe("RedisBackend", () => {
 
     it("releaseLock should not delete a lock owned by another worker", async () => {
       // Worker A acquires the lock.
-      assertEquals(await backend.acquireLock("run-own", 5000), true);
-      const lockKey = "test:lock:run-own";
+      assertExists(await backend.acquireLock("run-own", 5000));
+      const lockKey = "test:schema-v1:lock:run-own";
 
       // Simulate lock expiry + worker B acquiring it: overwrite the stored
       // value with worker B's token.
@@ -605,10 +1269,29 @@ describe("RedisBackend", () => {
       assertEquals(mockRedis.store.get(lockKey), "worker-B-token");
     });
 
+    it("stale token should not release or extend a lease reacquired by this backend", async () => {
+      const lockKey = "test:schema-v1:lock:run-reacquired";
+      const staleToken = await backend.acquireLock("run-reacquired", 5000);
+      assertExists(staleToken);
+
+      // Simulate expiry before the same backend instance acquires a new lease.
+      mockRedis.store.delete(lockKey);
+      const currentToken = await backend.acquireLock("run-reacquired", 5000);
+      assertExists(currentToken);
+
+      assertEquals(await backend.extendLock("run-reacquired", 5000, staleToken), false);
+      await backend.releaseLock("run-reacquired", staleToken);
+      assertEquals(mockRedis.store.get(lockKey), currentToken);
+
+      assertEquals(await backend.extendLock("run-reacquired", 5000, currentToken), true);
+      await backend.releaseLock("run-reacquired", currentToken);
+      assertEquals(mockRedis.store.get(lockKey), undefined);
+    });
+
     it("extendLock should not extend a lock owned by another worker", async () => {
       // Worker A acquires the lock.
-      assertEquals(await backend.acquireLock("run-own2", 5000), true);
-      const lockKey = "test:lock:run-own2";
+      assertExists(await backend.acquireLock("run-own2", 5000));
+      const lockKey = "test:schema-v1:lock:run-own2";
 
       // Simulate worker B taking over the lock.
       mockRedis.store.set(lockKey, "worker-B-token");
@@ -639,7 +1322,7 @@ describe("RedisBackend", () => {
         return realDel(...keys);
       };
 
-      assertEquals(await backend.acquireLock("run-atomic", 5000), true);
+      assertExists(await backend.acquireLock("run-atomic", 5000));
       await backend.releaseLock("run-atomic");
 
       // One atomic eval, and no separate get/del round-trips for the release.
@@ -651,7 +1334,7 @@ describe("RedisBackend", () => {
     });
 
     it("compare-and-delete deletes only on a matching token", async () => {
-      const key = "test:lock:cad";
+      const key = "test:schema-v1:lock:cad";
 
       // Mismatched token -> script must be a no-op and return 0.
       mockRedis.store.set(key, "owner-token");
@@ -709,6 +1392,30 @@ describe("RedisBackend", () => {
       assertEquals(run?.workerId, "worker-a");
       assertExists(run?.heartbeatAt);
     });
+
+    it("does not claim after a concurrent heartbeat refresh", async () => {
+      await backend.createRun(
+        createTestRun("run-claim-refreshed", {
+          status: "running",
+          startedAt: new Date(Date.now() - 120_000),
+        }),
+      );
+      const originalEval = mockRedis.eval.bind(mockRedis);
+      mockRedis.eval = (script, keys, args) => {
+        if (script.includes("conditional-stalled-run-claim")) {
+          mockRedis.hashes.get(keys[0]!)?.set("heartbeatAt", new Date().toISOString());
+        }
+        return originalEval(script, keys, args);
+      };
+
+      assertEquals(
+        await backend.claimStalledRun("run-claim-refreshed", "worker-a", 60_000),
+        false,
+      );
+      const run = await backend.getRun("run-claim-refreshed");
+      assertEquals(run?.workerId, undefined);
+      assertEquals(mockRedis.store.has("test:schema-v1:claim:run-claim-refreshed"), false);
+    });
   });
 
   describe("healthCheck", () => {
@@ -726,22 +1433,67 @@ describe("RedisBackend", () => {
 
   describe("deserialization errors", () => {
     it("should throw on missing id field", async () => {
-      mockRedis.hashes.set("test:run:bad1", new Map([["workflowId", "wf"]]));
+      mockRedis.hashes.set("test:schema-v1:run:bad1", new Map([["workflowId", "wf"]]));
       await assertRejects(() => backend.getRun("bad1"), Error, "missing 'id'");
     });
 
     it("should throw on missing workflowId field", async () => {
-      mockRedis.hashes.set("test:run:bad2", new Map([["id", "bad2"]]));
+      mockRedis.hashes.set("test:schema-v1:run:bad2", new Map([["id", "bad2"]]));
       await assertRejects(() => backend.getRun("bad2"), Error, "missing 'workflowId'");
+    });
+
+    it("should throw on a missing source integration policy snapshot", async () => {
+      mockRedis.hashes.set(
+        "test:schema-v1:run:missing-source-policy",
+        new Map([
+          ["id", "missing-source-policy"],
+          ["workflowId", "wf"],
+        ]),
+      );
+      await assertRejects(
+        () => backend.getRun("missing-source-policy"),
+        Error,
+        "missing 'sourceIntegrationPolicy'",
+      );
+    });
+
+    it("should throw on a corrupt source integration policy snapshot", async () => {
+      mockRedis.hashes.set(
+        "test:schema-v1:run:corrupt-source-policy",
+        new Map([
+          ["id", "corrupt-source-policy"],
+          ["workflowId", "wf"],
+          [
+            "sourceIntegrationPolicy",
+            JSON.stringify({
+              schemaVersion: 1,
+              mode: "allowlist",
+              integrations: {
+                confluence: { allowedToolIds: ["get_page", "get_page"] },
+              },
+            }),
+          ],
+        ]),
+      );
+
+      await assertRejects(
+        () => backend.getRun("corrupt-source-policy"),
+        Error,
+        "invalid source integration policy snapshot",
+      );
     });
 
     it("should throw on invalid status", async () => {
       mockRedis.hashes.set(
-        "test:run:bad3",
+        "test:schema-v1:run:bad3",
         new Map([
           ["id", "bad3"],
           ["workflowId", "wf"],
           ["status", "invalidStatus"],
+          [
+            "sourceIntegrationPolicy",
+            JSON.stringify(UNRESTRICTED_SOURCE_INTEGRATION_POLICY),
+          ],
         ]),
       );
       await assertRejects(() => backend.getRun("bad3"), Error, "unknown status");
@@ -749,11 +1501,15 @@ describe("RedisBackend", () => {
 
     it("should throw on invalid JSON in fields", async () => {
       mockRedis.hashes.set(
-        "test:run:bad4",
+        "test:schema-v1:run:bad4",
         new Map([
           ["id", "bad4"],
           ["workflowId", "wf"],
           ["status", "pending"],
+          [
+            "sourceIntegrationPolicy",
+            JSON.stringify(UNRESTRICTED_SOURCE_INTEGRATION_POLICY),
+          ],
           ["input", "{invalid-json"],
         ]),
       );
@@ -777,8 +1533,65 @@ describe("RedisBackend", () => {
   });
 
   describe("acknowledge", () => {
-    it("should resolve without error", async () => {
+    it("should resolve without error when nothing was dequeued", async () => {
       await backend.acknowledge("run-ack");
+    });
+
+    it("should XACK the exact stream message read by dequeue", async () => {
+      const ackCalls: Array<{ key: string; group: string; ids: string[] }> = [];
+      const realXack = mockRedis.xack.bind(mockRedis);
+      mockRedis.xack = (key: string, group: string, ...ids: string[]) => {
+        ackCalls.push({ key, group, ids });
+        return realXack(key, group, ...ids);
+      };
+
+      await backend.enqueue({
+        runId: "run-ackx",
+        workflowId: "wf-1",
+        input: {},
+        createdAt: new Date(),
+      });
+
+      const job = await backend.dequeue();
+      assertExists(job);
+      assertEquals(job.runId, "run-ackx");
+
+      await backend.acknowledge("run-ackx");
+
+      assertEquals(ackCalls.length, 1);
+      assertEquals(ackCalls[0]!.key, "test:stream:schema-v1");
+      assertEquals(ackCalls[0]!.group, "test:group:schema-v1");
+      assertEquals(ackCalls[0]!.ids.length, 1);
+
+      // Second acknowledge is a no-op (already acked, nothing tracked).
+      await backend.acknowledge("run-ackx");
+      assertEquals(ackCalls.length, 1);
+    });
+
+    it("nack XACKs the consumed message before re-enqueueing", async () => {
+      const ackCalls: string[][] = [];
+      const realXack = mockRedis.xack.bind(mockRedis);
+      mockRedis.xack = (key: string, group: string, ...ids: string[]) => {
+        ackCalls.push(ids);
+        return realXack(key, group, ...ids);
+      };
+
+      await backend.createRun(createTestRun("run-nack-ack"));
+      await backend.enqueue({
+        runId: "run-nack-ack",
+        workflowId: "wf-1",
+        input: {},
+        createdAt: new Date(),
+      });
+
+      await backend.dequeue();
+      await backend.nack("run-nack-ack");
+
+      // Old PEL entry acked exactly once, and a fresh job is queued.
+      assertEquals(ackCalls.length, 1);
+      const requeued = await backend.dequeue();
+      assertExists(requeued);
+      assertEquals(requeued.runId, "run-nack-ack");
     });
   });
 
@@ -791,7 +1604,7 @@ describe("RedisBackend", () => {
       });
       await ttlBackend.createRun(createTestRun("run-ttl"));
 
-      assertEquals(mockRedis.expiries.has("ttl:run:run-ttl"), true);
+      assertEquals(mockRedis.expiries.has("ttl:schema-v1:run:run-ttl"), true);
     });
   });
 
@@ -810,6 +1623,32 @@ describe("RedisBackend", () => {
       const results = await backend.listPendingApprovals({ status: "pending" });
       assertEquals(results.length, 1);
       assertEquals(results[0]!.approval.id, "ap-x");
+    });
+  });
+
+  describe("run indexes", () => {
+    it("does not discover or backfill rows missing from the versioned index", async () => {
+      await backend.createRun(createTestRun("orphaned-run"));
+      mockRedis.sets.delete("test:schema-v1:index:runs");
+
+      const runs = await backend.listRuns({});
+
+      assertEquals(runs, []);
+      assertEquals(mockRedis.sets.has("test:schema-v1:index:runs"), false);
+    });
+
+    it("counts the intersection of workflow and status indexes", async () => {
+      await backend.createRun(createTestRun("pending-x", { workflowId: "wf-x" }));
+      await backend.createRun(
+        createTestRun("running-x", { workflowId: "wf-x", status: "running" }),
+      );
+      await backend.createRun(createTestRun("pending-y", { workflowId: "wf-y" }));
+
+      assertEquals(await backend.countRuns({ workflowId: "wf-x", status: "pending" }), 1);
+      assertEquals(await backend.countRuns({ workflowId: "wf-x" }), 2);
+      assertEquals(await backend.countRuns({ status: ["pending", "running"] }), 3);
+      assertEquals(await backend.countRuns({ createdAfter: new Date("2026-01-01") }), 0);
+      assertEquals(await backend.countRuns({ createdBefore: new Date("2024-01-01") }), 0);
     });
   });
 });

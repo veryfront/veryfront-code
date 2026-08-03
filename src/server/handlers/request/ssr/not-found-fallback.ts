@@ -2,15 +2,43 @@ import type { HandlerContext } from "../../types.ts";
 import type { ResponseBuilder } from "#veryfront/security/index.ts";
 import { join as joinPath } from "#veryfront/compat/path/index.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
+import {
+  type DependencyPinningSnapshot,
+  resolveDependencyPinningSnapshot,
+  resolveProjectReactVersion,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
+import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
+
+type AppReservedModule = typeof import("../../../../rendering/app-reserved.ts");
+type ReservedComponentLoader = AppReservedModule["tryLoadReservedInDirs"];
+
+let injectedReservedComponentLoader: ReservedComponentLoader | null = null;
+
+export function __setReservedComponentLoaderForTests(
+  loader: ReservedComponentLoader | null,
+): void {
+  injectedReservedComponentLoader = loader;
+}
 
 export async function tryNotFoundFallback(
   req: Request,
   slug: string,
   ctx: HandlerContext,
   builder: ResponseBuilder,
+  requestedDependencySnapshot?: DependencyPinningSnapshot,
 ): Promise<Response | null> {
   try {
-    const appRoot = joinPath(ctx.projectDir, "app");
+    const dependencyPinningSource = createHandlerDependencyPinningSource(ctx);
+    const dependencySnapshot = await resolveDependencyPinningSnapshot(
+      dependencyPinningSource,
+      requestedDependencySnapshot?.cacheKey,
+      requestedDependencySnapshot?.dependencies,
+    );
+    const appRoot = joinPath(
+      ctx.projectDir,
+      ctx.config?.directories?.app ?? "app",
+    );
 
     try {
       const st = await ctx.adapter.fs.stat(appRoot);
@@ -25,8 +53,17 @@ export async function tryNotFoundFallback(
     const { collectAncestorDirs, tryLoadReservedInDirs } = await import(
       "../../../../rendering/app-reserved.ts"
     );
+    const loadReservedComponent = injectedReservedComponentLoader ??
+      tryLoadReservedInDirs;
 
     const dirs = await collectAncestorDirs(searchBase, appRoot);
+    const reactVersion = await resolveProjectReactVersion({
+      projectDir: ctx.projectDir,
+      config: ctx.config,
+      dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+      dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningSource,
+    });
     const contentSourceId = ctx.enriched?.contentSourceId ??
       computeContentSourceId(
         !!ctx.isLocalProject,
@@ -35,7 +72,7 @@ export async function tryNotFoundFallback(
         ctx.releaseId,
       );
 
-    const NotFoundComp = await tryLoadReservedInDirs(
+    const NotFoundComp = await loadReservedComponent(
       dirs,
       "notFound",
       ctx.projectDir,
@@ -43,20 +80,34 @@ export async function tryNotFoundFallback(
       ctx.adapter,
       ctx.projectId,
       contentSourceId,
+      reactVersion,
+      dependencySnapshot.cacheKey,
+      dependencySnapshot.dependencies,
+      dependencyPinningSource,
+      new URL(req.url).origin,
     );
 
     if (!NotFoundComp) return null;
 
-    const React = await import("react");
-    const { renderToStringAdapter } = await import(
+    const { getProjectReact, renderToStringAdapter } = await import(
       "#veryfront/react/compat/ssr-adapter/index.ts"
     );
+    const React = await getProjectReact(reactVersion);
 
     const element = React.createElement(NotFoundComp, {});
     let inner: string;
 
     try {
-      inner = await renderToStringAdapter(element);
+      const rendered = await runWithHeadCollector(
+        (renderContext) =>
+          renderToStringAdapter(element, {
+            nonce: builder.nonce,
+            renderContext,
+            reactVersion,
+          }),
+        { nonce: builder.nonce },
+      );
+      inner = rendered.result;
     } catch (_) {
       /* expected: SSR render may fail, fall back to text extraction */
       inner = (await extractNotFoundText(dirs, ctx)) ?? "<p>Not Found</p>";

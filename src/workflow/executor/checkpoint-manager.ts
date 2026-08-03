@@ -17,6 +17,12 @@ export interface ResumeInfo {
   nodeStates: Record<string, NodeState>;
 }
 
+/** Canonical run identity used to fence auxiliary writes from stale workers. */
+export interface CheckpointOwnership {
+  runId: string;
+  workerId: string;
+}
+
 export class CheckpointManager {
   private config: CheckpointManagerConfig;
 
@@ -24,9 +30,28 @@ export class CheckpointManager {
     this.config = { debug: false, ...config };
   }
 
-  async save(runId: string, checkpoint: Checkpoint): Promise<void> {
+  async save(
+    runId: string,
+    checkpoint: Checkpoint,
+    ownership?: CheckpointOwnership,
+  ): Promise<boolean> {
     logger.debug("Saving checkpoint", { checkpointId: checkpoint.id, runId });
+
+    if (ownership) {
+      const saveOwned = this.config.backend.saveCheckpointIfStatusAndWorker;
+      if (!saveOwned) return false;
+      return await saveOwned.call(
+        this.config.backend,
+        runId,
+        ownership.runId,
+        ["running"],
+        ownership.workerId,
+        checkpoint,
+      );
+    }
+
     await this.config.backend.saveCheckpoint(runId, checkpoint);
+    return true;
   }
 
   async createCheckpoint(
@@ -52,8 +77,8 @@ export class CheckpointManager {
   }
 
   async getAll(runId: string): Promise<Checkpoint[]> {
-    const { getCheckpoints } = this.config.backend;
-    if (getCheckpoints) return getCheckpoints(runId);
+    const { backend } = this.config;
+    if (backend.getCheckpoints) return backend.getCheckpoints(runId);
 
     const latest = await this.getLatest(runId);
     return latest ? [latest] : [];
@@ -130,13 +155,12 @@ export class CheckpointManager {
     return checkpointDefaults[config.type] ?? false;
   }
 
+  /** Retain the newest appended checkpoints, independent of their durable timestamps. */
   async cleanup(runId: string, keepCount: number = 5): Promise<void> {
     const all = await this.getAll(runId);
     if (all.length <= keepCount) return;
 
-    all.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-
-    const idsToDelete = all.slice(keepCount).map((c) => c.id);
+    const idsToDelete = all.slice(0, all.length - keepCount).map((checkpoint) => checkpoint.id);
     if (idsToDelete.length === 0) return;
 
     logger.debug("Cleaning up old checkpoints", {

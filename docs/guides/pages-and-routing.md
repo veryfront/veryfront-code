@@ -77,6 +77,9 @@ app/
 
 `/dashboard/settings` renders inside both the root layout and the dashboard layout.
 
+`layout.tsx` and the other supported `layout.*` extensions are reserved layout metadata at every
+directory level in both routers. They wrap descendant pages and never create a `/layout` route.
+
 ## Dynamic routes
 
 Use brackets for dynamic segments:
@@ -146,6 +149,51 @@ function PageTitle() {
   return <h1>{frontmatter.title}</h1>;
 }
 ```
+
+### Override rendered MDX elements
+
+Wrap an MDX page or layout with `MDXProvider` to replace generated elements:
+
+```tsx
+import type React from "react";
+import { MDXProvider } from "veryfront/mdx";
+
+const docsComponents = {
+  h1: (props: React.ComponentProps<"h1">) => <h1 className="docs-title" {...props} />,
+  a: (props: React.ComponentProps<"a">) => <a {...props} rel="noreferrer" />,
+};
+
+export default function DocsLayout({ children }: { children: React.ReactNode }) {
+  return <MDXProvider components={docsComponents}>{children}</MDXProvider>;
+}
+```
+
+Nested providers inherit entries from outer providers. A nearer provider wins
+for duplicate keys. Call `useMDXComponents(localOverrides)` when a component
+needs the effective map; local entries take final precedence.
+
+`MDXProvider` supplies application-owned React components to already compiled
+MDX. It does not compile or sanitize arbitrary strings. Render runtime Markdown
+strings with `veryfront/markdown`.
+
+### Reading server data from a layout or nested component
+
+A page's [`getServerData`](./data-fetching.md) props are passed to the page
+component. To read them from a layout or a deeply-nested component without
+prop-drilling, use `usePageContext().data`:
+
+```tsx
+import { usePageContext } from "veryfront/context";
+
+function Greeting() {
+  const { data } = usePageContext();
+  return <p>{data.greeting as string}</p>;
+}
+```
+
+`data` is the object your page returned as `getServerData`'s `props`. It is
+populated identically on the server render, in the hydration markup, and after
+client-side navigation. A page without `getServerData` sees an empty object.
 
 ## Client components
 

@@ -8,9 +8,9 @@
 
 import { exists, readDir, readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path";
-import { agentLogger } from "#veryfront/utils/logger/logger.ts";
-import { ensureError } from "#veryfront/errors/veryfront-error.ts";
-import { parseSkillFrontmatter, validateSkillMetadata } from "#veryfront/skill/parser.ts";
+import { agentLogger } from "#veryfront/utils";
+import { ensureError } from "#veryfront/errors";
+import { parseSkillFrontmatter, validateSkillFileMetadata } from "#veryfront/skill/parser.ts";
 import { SKILL_MD_FILENAME } from "#veryfront/skill/types.ts";
 import type { Skill } from "#veryfront/skill";
 import type { FileDiscoveryContext } from "../types.ts";
@@ -82,15 +82,11 @@ export async function discoverSkills(
       const parsed = await parseSkillFrontmatter(content);
 
       // Validate metadata (directory name as fallback for skill name)
-      const metadata = validateSkillMetadata(parsed.frontmatter, entry.name);
+      const metadata = validateSkillFileMetadata(parsed.frontmatter, entry.name);
 
-      // Warn if metadata name differs from directory name, use directory name as ID
+      // The directory is the canonical identity; legacy/display-style names
+      // are preserved only as display metadata.
       const skillId = entry.name;
-      if (metadata.name !== entry.name) {
-        logger.warn(
-          `Skill "${metadata.name}" in directory "${entry.name}" — using directory name as ID`,
-        );
-      }
 
       // Check for duplicate IDs (first wins)
       if (skills.has(skillId)) {

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { EvalReport } from "veryfront/eval";
 import {
@@ -14,6 +14,12 @@ function createReport(): EvalReport {
     definitionId: "eval:deep-research",
     targetKind: "agent",
     target: "agent:researcher",
+    dataset: {
+      kind: "json",
+      path: "private/evals/deep-research.json",
+      examples: 1,
+      hash: "sha256:fixture-dataset",
+    },
     startedAt: "2026-01-01T00:00:00.000Z",
     endedAt: "2026-01-01T00:00:02.000Z",
     summary: {
@@ -40,9 +46,22 @@ function createReport(): EvalReport {
         exampleId: "q1",
         repetition: 1,
         input: { question: "What changed?", privateContext: "secret" },
+        executionInput: { query: "private docs" },
         output: { text: "The plan changed." },
         reference: { text: "Plan update" },
         metadata: { topic: "planning", tenantId: "tenant-secret" },
+        retrievedContext: [{
+          source: "internal-doc-1",
+          title: "Private roadmap",
+          content: "secret roadmap passage",
+          metadata: { tenantId: "tenant-secret" },
+        }],
+        citations: [{
+          source: "internal-doc-1",
+          text: "[1]",
+          quote: "secret roadmap passage",
+          metadata: { tenantId: "tenant-secret" },
+        }],
         trace: {
           events: [{ type: "message", content: "private model output" }],
           toolCalls: [{
@@ -116,12 +135,61 @@ describe("EvalReportExporterRegistry", () => {
     const exportedRecord = exportedReport.records[0];
     assert(exportedRecord);
     assertEquals(exportedRecord.input, "[redacted]");
+    assertEquals(exportedRecord.executionInput, "[redacted]");
     assertEquals(exportedRecord.output, "[redacted]");
     assertEquals(exportedRecord.reference, "[redacted]");
+    assertEquals(exportedRecord.retrievedContext, []);
+    assertEquals(exportedRecord.citations, []);
     assertEquals(exportedRecord.metadata, { topic: "planning" });
     assertEquals(exportedRecord.trace, { events: [], toolCalls: [] });
     assertEquals(exportedRecord.metrics?.[0]?.explanation, undefined);
     assertEquals(exportedRecord.metrics?.[0]?.evidence, undefined);
+    assertEquals(exportedReport.dataset, {
+      kind: "json",
+      examples: 1,
+      hash: "sha256:fixture-dataset",
+    });
+  });
+
+  it("uses call-time exporter membership throughout an in-flight export", async () => {
+    const registry = createEvalReportExporterRegistry();
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const calls: string[] = [];
+
+    registry.register({
+      id: "blocking",
+      async export() {
+        calls.push("blocking");
+        started.resolve();
+        await release.promise;
+      },
+    });
+    registry.register({
+      id: "registered-at-start",
+      export() {
+        calls.push("registered-at-start");
+      },
+    });
+
+    const inFlight = registry.export(createReport());
+    await started.promise;
+
+    registry.unregister("registered-at-start");
+    registry.register({
+      id: "registered-late",
+      export() {
+        calls.push("registered-late");
+      },
+    });
+    release.resolve();
+
+    const results = await inFlight;
+    assertEquals(calls, ["blocking", "registered-at-start"]);
+    assertEquals(results.map((result) => result.exporterId), [
+      "blocking",
+      "registered-at-start",
+    ]);
   });
 
   it("continues exporting when one exporter fails", async () => {
@@ -150,14 +218,166 @@ describe("EvalReportExporterRegistry", () => {
     ]);
   });
 
+  it("continues after a thrown value whose coercion also throws", async () => {
+    const registry = createEvalReportExporterRegistry();
+    let secondExporterCalled = false;
+    const hostileThrownValue = {
+      toString(): string {
+        throw new Error("coercion escaped");
+      },
+    };
+
+    registry.register({
+      id: "hostile",
+      export() {
+        throw hostileThrownValue;
+      },
+    });
+    registry.register({
+      id: "healthy",
+      export() {
+        secondExporterCalled = true;
+      },
+    });
+
+    assertEquals(await registry.export(createReport()), [
+      {
+        exporterId: "hostile",
+        ok: false,
+        error: "[unprintable thrown value]",
+      },
+      { exporterId: "healthy", ok: true },
+    ]);
+    assert(secondExporterCalled);
+  });
+
+  it("captures the exporter id once at registration", async () => {
+    const registry = createEvalReportExporterRegistry();
+    let idReads = 0;
+    const exporter = {
+      get id(): string {
+        idReads++;
+        if (idReads > 1) throw new Error("id read more than once");
+        return "stable";
+      },
+      export() {},
+    };
+
+    registry.register(exporter);
+
+    assertEquals(await registry.export(createReport()), [
+      { exporterId: "stable", ok: true },
+    ]);
+    assertEquals(idReads, 1);
+  });
+
+  it("rejects malformed exporter registrations", () => {
+    const registry = createEvalReportExporterRegistry();
+
+    assertThrows(
+      () => registry.register({ id: " ", export() {} }),
+      TypeError,
+      "non-empty canonical string",
+    );
+    assertThrows(
+      () =>
+        registry.register({
+          id: "missing-export",
+        } as never),
+      TypeError,
+      'method "export"',
+    );
+  });
+
+  it("redacts export context metadata unless keys are explicitly allowed", async () => {
+    const registry = createEvalReportExporterRegistry();
+    const exportedContexts: unknown[] = [];
+
+    registry.register({
+      id: "capture",
+      export(_report, context) {
+        exportedContexts.push(context);
+      },
+    });
+
+    await registry.export(createReport(), {
+      metadata: {
+        release: "2026-01-01",
+        tenantId: "tenant-secret",
+      },
+      redaction: { metadataAllowlist: ["release"] },
+    });
+
+    assertEquals(exportedContexts, [
+      {
+        metadata: { release: "2026-01-01" },
+        redaction: { metadataAllowlist: ["release"] },
+      },
+    ]);
+  });
+
+  it("isolates exporter context mutations from later redaction decisions", async () => {
+    const registry = createEvalReportExporterRegistry();
+    const exportedReports: EvalReport[] = [];
+    const exportedContexts: unknown[] = [];
+
+    registry.register({
+      id: "mutator",
+      export(_report, context) {
+        context.redaction ??= {};
+        context.redaction.includeInputs = true;
+        context.redaction.metadataAllowlist?.push("tenantId");
+        context.metadata = { tenantId: "mutated" };
+      },
+    });
+    registry.register({
+      id: "capture",
+      export(report, context) {
+        exportedReports.push(report);
+        exportedContexts.push(context);
+      },
+    });
+
+    const context = {
+      metadata: {
+        topic: "planning",
+        tenantId: "tenant-secret",
+      },
+      redaction: { metadataAllowlist: ["topic"] },
+    };
+
+    await registry.export(createReport(), context);
+
+    const exportedRecord = exportedReports[0]?.records[0];
+    assert(exportedRecord);
+    assertEquals(exportedRecord.input, "[redacted]");
+    assertEquals(exportedRecord.metadata, { topic: "planning" });
+    assertEquals(exportedContexts, [
+      {
+        metadata: { topic: "planning" },
+        redaction: { metadataAllowlist: ["topic"] },
+      },
+    ]);
+    assertEquals(context, {
+      metadata: {
+        topic: "planning",
+        tenantId: "tenant-secret",
+      },
+      redaction: { metadataAllowlist: ["topic"] },
+    });
+  });
+
   it("keeps full record fields only when export redaction explicitly allows them", () => {
     const redacted = redactEvalReportForExport(createReport(), {
       includeInputs: true,
       includeOutputs: true,
       includeReferences: true,
       includeTraces: true,
+      includeRetrievedContext: true,
+      includeCitations: true,
       includeMetricEvidence: true,
       includeMetricExplanations: true,
+      includeDatasetPath: true,
       metadataAllowlist: ["topic", "tenantId"],
     });
     const record = redacted.records[0];
@@ -167,8 +387,21 @@ describe("EvalReportExporterRegistry", () => {
       question: "What changed?",
       privateContext: "secret",
     });
+    assertEquals(record.executionInput, { query: "private docs" });
     assertEquals(record.output, { text: "The plan changed." });
     assertEquals(record.reference, { text: "Plan update" });
+    assertEquals(record.retrievedContext, [{
+      source: "internal-doc-1",
+      title: "Private roadmap",
+      content: "secret roadmap passage",
+      metadata: { tenantId: "tenant-secret" },
+    }]);
+    assertEquals(record.citations, [{
+      source: "internal-doc-1",
+      text: "[1]",
+      quote: "secret roadmap passage",
+      metadata: { tenantId: "tenant-secret" },
+    }]);
     assertEquals(record.metadata, { topic: "planning", tenantId: "tenant-secret" });
     assertEquals(record.trace.events.length, 1);
     assertEquals(record.trace.toolCalls.length, 1);
@@ -184,6 +417,12 @@ describe("EvalReportExporterRegistry", () => {
     assertEquals(record.metrics?.[0]?.evidence, {
       output: "The plan changed.",
       reference: "Plan update",
+    });
+    assertEquals(redacted.dataset, {
+      kind: "json",
+      path: "private/evals/deep-research.json",
+      examples: 1,
+      hash: "sha256:fixture-dataset",
     });
   });
 });

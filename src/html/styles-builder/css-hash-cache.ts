@@ -1,393 +1,316 @@
 /**
- * CSS hash-based distributed cache.
+ * Content-addressed CSS cache with provider-identified JIT inputs.
  *
- * Manages CSS caching by content hash, supporting both local in-memory
- * and distributed (API/Redis) backends. Provides unified cache entries
- * that store CSS alongside its generation inputs for JIT regeneration.
+ * CSS payloads are keyed by their full SHA-256 identity. Regeneration inputs
+ * live in the same versioned entry and are usable only by the exact captured
+ * CSS pipeline identity that created them; the former split legacy-input
+ * fallback is intentionally unsupported.
  *
  * @module html/styles-builder/css-hash-cache
  */
 
-import {
-  type CacheBackend,
-  createCacheBackend,
-  MemoryCacheBackend,
-} from "#veryfront/cache/backend.ts";
-import { serverLogger } from "#veryfront/utils";
+import { type CacheBackend, createCacheBackend } from "#veryfront/cache/backend.ts";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import { hashCSS } from "./candidate-extractor.ts";
+import { assertCSSPipelineIdentity, serverLogger } from "#veryfront/utils";
+import { normalizeCSSCandidates } from "#veryfront/utils/css-candidate-admission.ts";
 import {
-  buildCSSCacheEntry,
-  parseCSSCacheEntry,
-  resolveStylesheet,
-} from "./tailwind-compiler-utils.ts";
+  assertCSSFileContent,
+  assertCSSOutputContent,
+} from "#veryfront/utils/css-content-admission.ts";
+import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
+import {
+  detachRetainedString,
+  estimateRetainedStringBytes,
+} from "#veryfront/utils/retained-string.ts";
+import { assertCSSContentIdentity, hashCSS, isCSSContentHash } from "./css-identity.ts";
 
-const logger = serverLogger.component("tailwind");
-
-// ============================================================================
-// Types
-// ============================================================================
-
-/**
- * Unified CSS cache entry - stores CSS and inputs together.
- * This ensures CSS and its regeneration inputs always expire together,
- * enabling reliable JIT regeneration across pods.
- */
-export interface CSSCacheEntry {
-  css: string;
-  candidates: string[];
-  stylesheet: string;
-}
-
-/**
- * CSS inputs cache entry - stores the inputs needed to regenerate CSS.
- * Keyed by CSS hash, stores candidates and stylesheet for JIT regeneration.
- */
-interface CSSInputsCacheEntry {
-  candidates: string[];
-  stylesheet: string;
-}
-
-// ============================================================================
-// Constants
-// ============================================================================
-
-export const DEFAULT_STYLESHEET = `@import "tailwindcss";
-@plugin "@tailwindcss/typography";
-@custom-variant dark (&:is(.dark, [data-theme="dark"]) *, &:is(.dark, [data-theme="dark"]));`;
-
-// CSS cache TTL: 24 hours (API maximum) for content-addressed immutable resources.
+const logger = serverLogger.component("css-cache");
+const CSS_CACHE_SCHEMA = "v3";
 const CSS_CACHE_TTL_SECONDS = 24 * 3600;
+const LOCAL_CACHE_MAX_ENTRIES = 100;
+const LOCAL_CACHE_MAX_BYTES = 64 * 1024 * 1024;
+const MAX_SERIALIZED_CSS_CACHE_BYTES = 128 * 1024 * 1024;
 
-const LOCAL_CACHE_MAX_SIZE = 100;
-const LOCAL_CSS_INPUTS_CACHE_MAX = 50;
-
-// ============================================================================
-// Distributed cache initialization infrastructure
-// ============================================================================
-
-interface DistributedCacheInitOptions {
-  getCache: () => CacheBackend | null;
-  getCacheInitPromise: () => Promise<CacheBackend> | null;
-  setCache: (cache: CacheBackend) => void;
-  setCacheInitPromise: (promise: Promise<CacheBackend>) => void;
-  keyPrefix: string;
-  localFallbackSize: number;
-  initializedLog: string;
-  initFailureLog: string;
+export interface CSSCacheEntry {
+  readonly css: string;
+  readonly candidates: string[];
+  readonly stylesheet: string;
+  readonly pipelineIdentity?: string;
 }
 
-async function getOrInitializeDistributedCache(
-  options: DistributedCacheInitOptions,
-): Promise<CacheBackend> {
-  const existing = options.getCache();
-  if (existing) return existing;
-
-  const pending = options.getCacheInitPromise();
-  if (pending) return pending;
-
-  const initPromise = (async () => {
-    try {
-      const backend = await createCacheBackend({ keyPrefix: options.keyPrefix });
-      options.setCache(backend);
-      logger.debug(options.initializedLog, { type: backend.type });
-      return backend;
-    } catch (error) {
-      logger.warn(options.initFailureLog, { error });
-      const fallback = new MemoryCacheBackend(options.localFallbackSize);
-      options.setCache(fallback);
-      return fallback;
-    }
-  })();
-
-  options.setCacheInitPromise(initPromise);
-  return initPromise;
+export interface CSSRegenerationInputs {
+  readonly candidates: string[];
+  readonly stylesheet: string;
+  readonly pipelineIdentity: string;
 }
 
-// ============================================================================
-// Bounded local cache utility
-// ============================================================================
-
-function storeInBoundedLocalCache<T>(
-  cache: Map<string, T>,
-  maxSize: number,
-  key: string,
-  entry: T,
-): void {
-  if (cache.has(key)) return;
-
-  if (cache.size >= maxSize) {
-    const firstKey = cache.keys().next().value as string | undefined;
-    if (firstKey) cache.delete(firstKey);
-  }
-
-  cache.set(key, entry);
+interface LocalCSSCacheEntry {
+  readonly value: CSSCacheEntry;
+  readonly retainedBytes: number;
 }
-
-// ============================================================================
-// CSS cache state
-// ============================================================================
 
 let cssCache: CacheBackend | null = null;
 let cssCacheInitPromise: Promise<CacheBackend> | null = null;
+let localCacheBytes = 0;
+const localCssCache = new Map<string, LocalCSSCacheEntry>();
 
-const localCssCache = new Map<string, CSSCacheEntry>();
+function getVersionedCacheKey(hash: string): string {
+  return `${CSS_CACHE_SCHEMA}:${hash}`;
+}
 
-const cssCacheOptions: DistributedCacheInitOptions = {
-  getCache: () => cssCache,
-  getCacheInitPromise: () => cssCacheInitPromise,
-  setCache: (cache) => {
-    cssCache = cache;
-  },
-  setCacheInitPromise: (promise) => {
-    cssCacheInitPromise = promise;
-  },
-  keyPrefix: "css",
-  localFallbackSize: LOCAL_CACHE_MAX_SIZE,
-  initializedLog: "[tailwind] CSS cache initialized",
-  initFailureLog: "[tailwind] Failed to initialize distributed CSS cache, using memory",
-};
+async function getCssCache(): Promise<CacheBackend> {
+  if (cssCache) return cssCache;
+  if (cssCacheInitPromise) return await cssCacheInitPromise;
+  const pending = createCacheBackend({ keyPrefix: "css" });
+  cssCacheInitPromise = pending;
+  try {
+    cssCache = await pending;
+    return cssCache;
+  } finally {
+    if (cssCacheInitPromise === pending) cssCacheInitPromise = null;
+  }
+}
 
-function getCssCache(): Promise<CacheBackend> {
-  return getOrInitializeDistributedCache(cssCacheOptions);
+function estimateEntryBytes(hash: string, entry: CSSCacheEntry): number {
+  let bytes = estimateRetainedStringBytes(hash) + estimateRetainedStringBytes(entry.css) +
+    estimateRetainedStringBytes(entry.stylesheet) +
+    (entry.pipelineIdentity === undefined
+      ? 0
+      : estimateRetainedStringBytes(entry.pipelineIdentity));
+  for (const candidate of entry.candidates) bytes += estimateRetainedStringBytes(candidate) + 8;
+  return bytes + 128;
+}
+
+function removeLocalEntry(hash: string): void {
+  const existing = localCssCache.get(hash);
+  if (!existing) return;
+  localCssCache.delete(hash);
+  localCacheBytes -= existing.retainedBytes;
 }
 
 function storeInLocalCache(hash: string, entry: CSSCacheEntry): void {
-  storeInBoundedLocalCache(localCssCache, LOCAL_CACHE_MAX_SIZE, hash, entry);
+  const retainedHash = detachRetainedString(hash);
+  const retainedBytes = estimateEntryBytes(retainedHash, entry);
+  removeLocalEntry(hash);
+  while (
+    localCssCache.size >= LOCAL_CACHE_MAX_ENTRIES ||
+    localCacheBytes + retainedBytes > LOCAL_CACHE_MAX_BYTES
+  ) {
+    const oldest = localCssCache.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    removeLocalEntry(oldest);
+  }
+  if (retainedBytes > LOCAL_CACHE_MAX_BYTES) return;
+  localCssCache.set(retainedHash, { value: entry, retainedBytes });
+  localCacheBytes += retainedBytes;
 }
 
-function touchLocalCache(hash: string, entry: CSSCacheEntry): void {
+function touchLocalEntry(hash: string, entry: LocalCSSCacheEntry): CSSCacheEntry {
   localCssCache.delete(hash);
   localCssCache.set(hash, entry);
+  return entry.value;
 }
 
-// ============================================================================
-// CSS inputs cache state
-// ============================================================================
-
-let cssInputsCache: CacheBackend | null = null;
-let cssInputsCacheInitPromise: Promise<CacheBackend> | null = null;
-const localCssInputsCache = new Map<string, CSSInputsCacheEntry>();
-
-const cssInputsCacheOptions: DistributedCacheInitOptions = {
-  getCache: () => cssInputsCache,
-  getCacheInitPromise: () => cssInputsCacheInitPromise,
-  setCache: (cache) => {
-    cssInputsCache = cache;
+function createCSSCacheEntry(
+  css: unknown,
+  inputs?: {
+    candidates: string[] | Set<string>;
+    stylesheet: string;
+    pipelineIdentity: string;
   },
-  setCacheInitPromise: (promise) => {
-    cssInputsCacheInitPromise = promise;
-  },
-  keyPrefix: "css-inputs",
-  localFallbackSize: LOCAL_CSS_INPUTS_CACHE_MAX,
-  initializedLog: "[tailwind] CSS inputs cache initialized",
-  initFailureLog: "[tailwind] Failed to initialize CSS inputs cache, using memory",
-};
-
-function getCssInputsCache(): Promise<CacheBackend> {
-  return getOrInitializeDistributedCache(cssInputsCacheOptions);
+): CSSCacheEntry {
+  if (typeof css !== "string") throw new TypeError("Cached CSS output must be a string");
+  assertCSSOutputContent(css, "Cached CSS output");
+  const admittedCandidates = inputs === undefined ? [] : normalizeCSSCandidates(inputs.candidates);
+  const candidates = new Array<string>(admittedCandidates.length);
+  for (let index = 0; index < admittedCandidates.length; index++) {
+    candidates[index] = detachRetainedString(admittedCandidates[index]!);
+  }
+  const stylesheet = detachRetainedString(inputs?.stylesheet ?? "");
+  assertCSSFileContent(stylesheet, "Cached CSS regeneration stylesheet");
+  const pipelineIdentity = inputs === undefined ? undefined : detachRetainedString(
+    assertCSSPipelineIdentity(inputs.pipelineIdentity, "CSS regeneration pipeline identity"),
+  );
+  return Object.freeze({
+    css: detachRetainedString(css),
+    candidates: Object.freeze(candidates) as unknown as string[],
+    stylesheet,
+    pipelineIdentity,
+  });
 }
 
-function storeInLocalCssInputsCache(hash: string, entry: CSSInputsCacheEntry): void {
-  storeInBoundedLocalCache(localCssInputsCache, LOCAL_CSS_INPUTS_CACHE_MAX, hash, entry);
+function serializeCSSCacheEntry(entry: CSSCacheEntry): string {
+  const serialized = JSON.stringify(entry);
+  if (utf8ByteLength(serialized, MAX_SERIALIZED_CSS_CACHE_BYTES) > MAX_SERIALIZED_CSS_CACHE_BYTES) {
+    throw new TypeError(
+      `Serialized CSS cache entry exceeds ${MAX_SERIALIZED_CSS_CACHE_BYTES} bytes`,
+    );
+  }
+  return serialized;
 }
 
-// ============================================================================
-// Public API - CSS cache operations
-// ============================================================================
+function readOwnDataProperty(value: object, key: PropertyKey): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
 
-/**
- * Cache CSS with its generation inputs for JIT regeneration.
- * Stores CSS and inputs together so they expire at the same time,
- * ensuring any pod can regenerate the CSS if needed.
- */
+function parseCSSCacheEntry(raw: string): CSSCacheEntry | undefined {
+  if (
+    typeof raw !== "string" ||
+    utf8ByteLength(raw, MAX_SERIALIZED_CSS_CACHE_BYTES) > MAX_SERIALIZED_CSS_CACHE_BYTES
+  ) return undefined;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+  const css = readOwnDataProperty(parsed, "css");
+  const rawCandidates = readOwnDataProperty(parsed, "candidates");
+  const stylesheet = readOwnDataProperty(parsed, "stylesheet");
+  const pipelineIdentity = readOwnDataProperty(parsed, "pipelineIdentity");
+  if (
+    typeof css !== "string" ||
+    !Array.isArray(rawCandidates) ||
+    typeof stylesheet !== "string"
+  ) return undefined;
+  let entry: CSSCacheEntry;
+  try {
+    if (rawCandidates.length > 0 && typeof pipelineIdentity !== "string") return undefined;
+    entry = createCSSCacheEntry(
+      css,
+      rawCandidates.length === 0 && pipelineIdentity === undefined ? undefined : {
+        candidates: rawCandidates,
+        stylesheet,
+        pipelineIdentity: assertCSSPipelineIdentity(pipelineIdentity),
+      },
+    );
+  } catch {
+    return undefined;
+  }
+  return entry;
+}
+
+function isEntryForHash(entry: CSSCacheEntry, hash: string): boolean {
+  if (!isCSSContentHash(hash)) return false;
+  try {
+    assertCSSContentIdentity(entry.css, hash);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function readDistributedEntry(hash: string): Promise<CSSCacheEntry | undefined> {
+  try {
+    const cache = await getCssCache();
+    const raw = await cache.get(getVersionedCacheKey(hash));
+    if (!raw) return undefined;
+    const entry = parseCSSCacheEntry(raw);
+    if (!entry || !isEntryForHash(entry, hash)) return undefined;
+    storeInLocalCache(hash, entry);
+    return entry;
+  } catch (error) {
+    logger.debug("Failed to read CSS cache entry", { hash, error });
+    return undefined;
+  }
+}
+
+async function getCSSCacheEntry(hash: string): Promise<CSSCacheEntry | undefined> {
+  if (!isCSSContentHash(hash)) return undefined;
+  const local = localCssCache.get(hash);
+  if (local) {
+    const entry = touchLocalEntry(hash, local);
+    if (isEntryForHash(entry, hash)) return entry;
+    removeLocalEntry(hash);
+  }
+  return await readDistributedEntry(hash);
+}
+
+/** Store CSS and, when supplied, the exact inputs needed for JIT regeneration. */
 export async function cacheCSSAsync(
   css: string,
   hash?: string,
-  inputs?: { candidates: string[] | Set<string>; stylesheet: string },
+  inputs?: {
+    candidates: string[] | Set<string>;
+    stylesheet: string;
+    pipelineIdentity: string;
+  },
 ): Promise<string> {
-  const resolvedHash = hash ?? hashCSS(css);
-  const entry: CSSCacheEntry = buildCSSCacheEntry(css, inputs, DEFAULT_STYLESHEET);
-
+  const entry = createCSSCacheEntry(css, inputs);
+  const resolvedHash = hashCSS(entry.css);
+  if (hash !== undefined) assertCSSContentIdentity(entry.css, hash);
   storeInLocalCache(resolvedHash, entry);
-
   try {
     const cache = await getCssCache();
-    await cache.set(resolvedHash, JSON.stringify(entry), CSS_CACHE_TTL_SECONDS);
+    await cache.set(
+      getVersionedCacheKey(resolvedHash),
+      serializeCSSCacheEntry(entry),
+      CSS_CACHE_TTL_SECONDS,
+    );
   } catch (error) {
-    logger.debug("Failed to store CSS in distributed cache", {
-      hash: resolvedHash,
-      error,
-    });
+    logger.debug("Failed to store CSS in distributed cache", { hash: resolvedHash, error });
   }
-
   return resolvedHash;
 }
 
 export function getCSSByHash(hash: string): string | undefined {
-  const entry = localCssCache.get(hash);
-  if (entry) {
-    touchLocalCache(hash, entry);
-    return entry.css;
-  }
+  if (!isCSSContentHash(hash)) return undefined;
+  const local = localCssCache.get(hash);
+  if (!local) return undefined;
+  const entry = touchLocalEntry(hash, local);
+  if (isEntryForHash(entry, hash)) return entry.css;
+  removeLocalEntry(hash);
   return undefined;
 }
 
 export async function getCSSByHashAsync(hash: string): Promise<string | undefined> {
+  if (!isCSSContentHash(hash)) return undefined;
   return await withSpan(
     SpanNames.HTML_GET_CSS_BY_HASH,
-    async () => {
-      const local = localCssCache.get(hash);
-      if (local) {
-        touchLocalCache(hash, local);
-        return local.css;
-      }
-
-      try {
-        const cache = await getCssCache();
-        const raw = await cache.get(hash);
-        if (!raw) return undefined;
-
-        const entry = parseCSSCacheEntry(raw, DEFAULT_STYLESHEET);
-
-        storeInLocalCache(hash, entry);
-        logger.debug("CSS cache hit from distributed cache", { hash });
-        return entry.css;
-      } catch (error) {
-        logger.debug("Failed to read from distributed CSS cache", { hash, error });
-        return undefined;
-      }
-    },
+    async () => (await getCSSCacheEntry(hash))?.css,
     { "css.hash": hash },
   );
 }
 
 export function clearCSSCache(): void {
   localCssCache.clear();
-  localCssInputsCache.clear();
+  localCacheBytes = 0;
 }
 
-/**
- * Cache legacy CSS regeneration inputs by hash.
- * Maintains backward compatibility with older cache layouts that stored inputs separately.
- */
-export async function cacheCSSInputsAsync(
-  hash: string,
-  inputs: { candidates: string[] | Set<string>; stylesheet: string },
-): Promise<void> {
-  const entry: CSSInputsCacheEntry = {
-    candidates: Array.isArray(inputs.candidates) ? inputs.candidates : [...inputs.candidates],
-    stylesheet: resolveStylesheet(inputs.stylesheet, DEFAULT_STYLESHEET),
-  };
-
-  storeInLocalCssInputsCache(hash, entry);
-
-  try {
-    const cache = await getCssInputsCache();
-    await cache.set(hash, JSON.stringify(entry), CSS_CACHE_TTL_SECONDS);
-  } catch (error) {
-    logger.debug("Failed to store CSS inputs in distributed cache", {
-      hash,
-      error,
-    });
-  }
-}
-
-// ============================================================================
-// JIT regeneration helpers
-// ============================================================================
-
-/**
- * Get CSS cache entry with inputs for JIT regeneration.
- * Returns the full entry (CSS + inputs) if available.
- */
-async function getCSSCacheEntry(hash: string): Promise<CSSCacheEntry | undefined> {
-  const local = localCssCache.get(hash);
-  if (local && local.candidates.length > 0) {
-    touchLocalCache(hash, local);
-    return local;
-  }
-
-  try {
-    const cache = await getCssCache();
-    const raw = await cache.get(hash);
-    if (!raw) return undefined;
-
-    const entry = parseCSSCacheEntry(raw, DEFAULT_STYLESHEET);
-    storeInLocalCache(hash, entry);
-    return entry;
-  } catch (error) {
-    logger.debug("Failed to read CSS cache entry", { hash, error });
-  }
-
-  return undefined;
-}
-
-/**
- * Get CSS generation inputs by hash for JIT regeneration.
- */
-async function getCSSInputsByHash(hash: string): Promise<CSSInputsCacheEntry | undefined> {
-  const local = localCssInputsCache.get(hash);
-  if (local) return local;
-
-  try {
-    const cache = await getCssInputsCache();
-    const raw = await cache.get(hash);
-    if (!raw) return undefined;
-
-    const entry = JSON.parse(raw) as CSSInputsCacheEntry;
-    storeInLocalCssInputsCache(hash, entry);
-    logger.debug("CSS inputs cache hit from distributed cache", { hash });
-    return entry;
-  } catch (error) {
-    logger.debug("Failed to read CSS inputs from distributed cache", { hash, error });
-    return undefined;
-  }
-}
-
-function toCSSInputsEntry(cacheEntry: CSSCacheEntry | undefined): CSSInputsCacheEntry | undefined {
-  if (!cacheEntry || cacheEntry.candidates.length === 0) return undefined;
-  return {
-    candidates: cacheEntry.candidates,
-    stylesheet: cacheEntry.stylesheet,
-  };
-}
-
-/**
- * Resolve regeneration inputs from unified or legacy cache.
- * Tries unified cache (CSS + inputs together) first, then falls back to
- * legacy separate inputs cache for backward compatibility.
- */
+/** Resolve JIT inputs only when they match the currently captured pipeline. */
 export async function resolveRegenerationInputs(
   expectedHash: string,
-): Promise<CSSInputsCacheEntry | undefined> {
-  const unifiedEntry = await getCSSCacheEntry(expectedHash);
-  const unifiedInputs = toCSSInputsEntry(unifiedEntry);
-  if (unifiedInputs) {
-    logger.debug("Found inputs in unified CSS cache", { hash: expectedHash });
-    return unifiedInputs;
-  }
-
-  return await getCSSInputsByHash(expectedHash);
+  pipelineIdentity: string,
+): Promise<CSSRegenerationInputs | undefined> {
+  const expectedPipelineIdentity = assertCSSPipelineIdentity(pipelineIdentity);
+  const entry = await getCSSCacheEntry(expectedHash);
+  if (
+    !entry ||
+    entry.candidates.length === 0 ||
+    entry.pipelineIdentity !== expectedPipelineIdentity
+  ) return undefined;
+  return {
+    candidates: [...entry.candidates],
+    stylesheet: entry.stylesheet,
+    pipelineIdentity: expectedPipelineIdentity,
+  };
 }
 
-/**
- * Persist a regenerated CSS entry to both local and distributed caches.
- */
+/** Persist a verified regenerated entry under its immutable content identity. */
 export async function persistRegeneratedCSSEntry(
   hash: string,
   entry: CSSCacheEntry,
 ): Promise<void> {
-  storeInLocalCache(hash, entry);
-
-  try {
-    const cache = await getCssCache();
-    await cache.set(hash, JSON.stringify(entry), CSS_CACHE_TTL_SECONDS);
-  } catch (error) {
-    logger.error("CSS cache write failed", {
-      hash: hash.slice(-20),
-      error: error instanceof Error ? error.message : String(error),
-    });
+  if (entry.pipelineIdentity === undefined) {
+    throw new TypeError("Regenerated CSS entry requires a pipeline identity");
   }
+  await cacheCSSAsync(entry.css, hash, {
+    candidates: entry.candidates,
+    stylesheet: entry.stylesheet,
+    pipelineIdentity: entry.pipelineIdentity,
+  });
 }

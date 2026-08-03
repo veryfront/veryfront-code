@@ -2,7 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { type ModelRuntime, registerModelProvider } from "#veryfront/provider";
+import { createToolsFromRemoteDefinitions, type RemoteToolSource } from "#veryfront/tool";
 import type { AgentResponse, Message as AgentMessage } from "../schemas/index.ts";
+import type { AgentRunModelCallContextEvent } from "../../runtime/model-call-context.ts";
+import { runWithRunEventSink } from "../../runtime/run-event-sink-context.ts";
 import {
   applyPartToStreamedStepState,
   buildForkRuntimeStepFromResponse,
@@ -478,6 +482,231 @@ describe("agent/fork-runtime-stream", () => {
     assertEquals(traceCalls, ["tool.create_file"]);
     assertEquals(attributes, [{ toolName: "create_file", toolCallId: "tool-call-1" }]);
     assertEquals(parts, [{ type: "text-delta", text: "Done." }]);
+  });
+
+  it("preserves and executes an authorized remote alias across repeated child runtimes", async () => {
+    const providerId = "child-remote-tool-regression";
+    let streamCalls = 0;
+    let providerToolNames: string[] = [];
+    const remoteExecutions: Array<{
+      toolName: string;
+      args: Record<string, unknown>;
+      toolCallId: string | undefined;
+    }> = [];
+    const model: ModelRuntime = {
+      provider: providerId,
+      modelId: `${providerId}/demo`,
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "Done." }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream(options: unknown) {
+        streamCalls++;
+        const childOrdinal = Math.ceil(streamCalls / 2);
+        const tools = (options as { tools?: Array<{ name?: string }> }).tools ?? [];
+        providerToolNames = tools.flatMap((tool) =>
+          typeof tool.name === "string" ? [tool.name] : []
+        );
+        return {
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              if (streamCalls % 2 === 1) {
+                controller.enqueue({
+                  type: "tool-call",
+                  toolCallId: `upload-call-${childOrdinal}`,
+                  toolName: "upload_attachment",
+                  input: { attachmentId: `attachment-${childOrdinal}` },
+                });
+                controller.enqueue({ type: "finish", finishReason: "tool-calls" });
+              } else {
+                controller.enqueue({ type: "text-delta", text: "Done." });
+                controller.enqueue({ type: "finish", finishReason: "stop" });
+              }
+              controller.close();
+            },
+          }),
+        };
+      },
+    };
+    registerModelProvider(providerId, () => model);
+
+    const source: RemoteToolSource = {
+      id: "veryfront-api",
+      listTools: async () => [],
+      executeTool: async (toolName, args, context) => {
+        remoteExecutions.push({
+          toolName,
+          args,
+          toolCallId: context?.toolCallId,
+        });
+        return { uploaded: true };
+      },
+    };
+    const remoteTools = createToolsFromRemoteDefinitions(source, [{
+      name: "gmail__upload_attachment",
+      description: "Upload an attachment to Gmail.",
+      parameters: {
+        type: "object",
+        properties: {
+          attachmentId: { type: "string" },
+        },
+        required: ["attachmentId"],
+      },
+    }]);
+    const uploadAttachment = remoteTools.gmail__upload_attachment;
+    assertExists(uploadAttachment);
+    const forkTools = { upload_attachment: uploadAttachment };
+
+    const childParts: ForkPart[][] = [];
+    const childContexts: AgentRunModelCallContextEvent[][] = [];
+    for (const childOrdinal of [1, 2]) {
+      const { streamResult, forkToolNames } = startAgentRuntimeForkWithHostTools({
+        apiUrl: "https://api.example.com",
+        authToken: "auth-token",
+        projectId: "project-1",
+        provider: providerId,
+        forkModel: `${providerId}/demo`,
+        maxSteps: 2,
+        prompt: `Inspect attachment ${childOrdinal}.`,
+        forkTools,
+        buildInstructions: () => "Base instructions.",
+        traceTools: {
+          trace: (_spanName, operation) => operation(),
+        },
+      });
+      assertEquals(forkToolNames, ["upload_attachment"]);
+
+      const parts: ForkPart[] = [];
+      const contexts: AgentRunModelCallContextEvent[] = [];
+      await runWithRunEventSink(
+        (event) => {
+          contexts.push(event as unknown as AgentRunModelCallContextEvent);
+        },
+        async () => {
+          for await (const part of streamResult.fullStream) {
+            parts.push(part);
+          }
+        },
+      );
+      childParts.push(parts);
+      childContexts.push(contexts);
+    }
+
+    assertEquals(providerToolNames, ["upload_attachment"]);
+    assertEquals(streamCalls, 4);
+    assertEquals(childContexts.map((contexts) => contexts.length), [2, 2]);
+    for (let index = 0; index < childContexts.length; index += 1) {
+      const contexts = childContexts[index] ?? [];
+      const first = JSON.stringify(contexts[0]);
+      const second = JSON.stringify(contexts[1]);
+      assertEquals(first.includes(`Inspect attachment ${index + 1}.`), true);
+      assertEquals(first.includes("Base instructions."), true);
+      assertEquals(second.includes(`upload-call-${index + 1}`), true);
+      assertEquals(second.includes(`attachment-${index + 1}`), true);
+      assertEquals(second.includes("uploaded"), true);
+      assertEquals(second.includes("ROOT_CROSS_RUN_SENTINEL"), false);
+    }
+    assertEquals(remoteExecutions, [
+      {
+        toolName: "gmail__upload_attachment",
+        args: { attachmentId: "attachment-1" },
+        toolCallId: "upload-call-1",
+      },
+      {
+        toolName: "gmail__upload_attachment",
+        args: { attachmentId: "attachment-2" },
+        toolCallId: "upload-call-2",
+      },
+    ]);
+    for (const parts of childParts) {
+      assertEquals(
+        parts.some((part) =>
+          part.type === "tool-call" &&
+          part.toolName === "upload_attachment"
+        ),
+        true,
+      );
+      assertEquals(
+        parts.some((part) =>
+          part.type === "tool-result" &&
+          part.toolName === "upload_attachment" &&
+          (part.output as { uploaded?: boolean }).uploaded === true
+        ),
+        true,
+      );
+      assertEquals(parts.at(-1), { type: "text-delta", text: "Done." });
+    }
+  });
+
+  it("keeps denied integration tools out of child runtime requests", async () => {
+    const capturedInputs: RunAgentRuntimeForkStepInput[] = [];
+    let localExecutions = 0;
+    const sourceIntegrationPolicy = {
+      schemaVersion: 1 as const,
+      mode: "allowlist" as const,
+      integrations: { gmail: { allowedToolIds: ["list_emails"] } },
+    };
+    const response: AgentResponse = {
+      text: "Done.",
+      messages: [],
+      toolCalls: [],
+      status: "completed",
+      metadata: { finishReason: "stop" },
+    };
+
+    const { streamResult, forkToolNames } = startAgentRuntimeForkWithHostTools({
+      apiUrl: "https://api.example.com",
+      authToken: "auth-token",
+      projectId: "project-1",
+      provider: "anthropic",
+      forkModel: "anthropic/claude-sonnet-4",
+      maxSteps: 1,
+      prompt: "Inspect mail.",
+      sourceIntegrationPolicy,
+      forkToolNames: [
+        "gmail__delete_email",
+        "futureconnector__read",
+        "gmail__list_emails",
+        "local_search",
+      ],
+      forkTools: {
+        local_search: {
+          description: "Search local data.",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => {
+            localExecutions += 1;
+            return { ok: true };
+          },
+        },
+      },
+      runStep: async (input) => {
+        capturedInputs.push(input);
+        const localSearch = input.runtimeTools.local_search;
+        if (localSearch && typeof localSearch !== "boolean") {
+          await localSearch.execute({}, { toolCallId: "call-local-search" });
+        }
+        return {
+          stream: createRuntimeEventStream([{ type: "text-delta", delta: "Done." }]),
+          responsePromise: Promise.resolve(response),
+        };
+      },
+      buildInstructions: () => "Base instructions.",
+    });
+
+    for await (const _part of streamResult.fullStream) {
+      // Consume stream.
+    }
+
+    assertEquals(forkToolNames.sort(), ["gmail__list_emails", "local_search"]);
+    assertEquals(capturedInputs[0]?.forkToolNames.sort(), [
+      "gmail__list_emails",
+      "local_search",
+    ]);
+    assertEquals(Object.keys(capturedInputs[0]?.runtimeTools ?? {}), ["local_search"]);
+    assertEquals(localExecutions, 1);
   });
 
   it("passes requested provider-native tools into child fork runtime steps", async () => {

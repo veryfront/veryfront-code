@@ -78,6 +78,30 @@ register("SchemaValidator", createZodAdapter());
 
 `toJsonSchema(schema)` converts any `Schema<T>` to a JSON Schema object for OpenAPI or tool-call definitions.
 
+`compileJsonSchema(schema)` compiles raw JSON Schema with strict validation,
+standard formats, and no coercion, default insertion, or removal of additional
+properties.
+
+| Boundary                          | Limit                                         |
+| --------------------------------- | --------------------------------------------- |
+| Schema depth                      | 64 levels                                     |
+| Schema nodes                      | 8,192                                         |
+| Serialized schema                 | 512 KiB                                       |
+| Schema string                     | 256 KiB                                       |
+| Schema property name              | 4 KiB UTF-8                                   |
+| Code-generating collection fanout | 256 entries                                   |
+| Nested compilation work           | 24,000 units                                  |
+| Validation input                  | 128 levels, 100,000 nodes, 4 MiB serialized   |
+| Compiled-validator cache          | 128 entries and 2 MiB aggregate source weight |
+
+Schemas and inputs must be data-only JSON. Accessors, symbol or hidden keys,
+custom object prototypes, cycles, sparse arrays, and revoked proxies are
+rejected without invoking property getters, setters, iterators, or `toJSON`.
+Inspecting a Proxy necessarily invokes its reflection traps; a trap may run or
+throw before the value is rejected. Successful validation returns the
+adapter-owned input snapshot. Cache eviction is least-recently used when either
+cache limit is exceeded.
+
 ## Running Tests
 
 ```sh

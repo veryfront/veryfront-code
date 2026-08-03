@@ -34,7 +34,7 @@
   ],
   "tools": [
     {
-      "id": "list_leads",
+      "id": "close__list_leads",
       "name": "List Leads",
       "description": "List or search leads in Close using the lead query language",
       "requiresWrite": false,
@@ -80,7 +80,7 @@
       }
     },
     {
-      "id": "get_lead",
+      "id": "close__get_lead",
       "name": "Get Lead",
       "description": "Get full details of a Close lead, including contacts and opportunities",
       "requiresWrite": false,
@@ -98,7 +98,7 @@
       }
     },
     {
-      "id": "create_lead",
+      "id": "close__create_lead",
       "name": "Create Lead",
       "description": "Create a new lead in Close, optionally with contacts",
       "requiresWrite": true,
@@ -131,7 +131,7 @@
       }
     },
     {
-      "id": "update_lead",
+      "id": "close__update_lead",
       "name": "Update Lead",
       "description": "Update fields on an existing Close lead",
       "requiresWrite": true,
@@ -167,7 +167,7 @@
       }
     },
     {
-      "id": "list_opportunities",
+      "id": "close__list_opportunities",
       "name": "List Opportunities",
       "description": "List opportunities, optionally filtered by lead",
       "requiresWrite": false,
@@ -196,7 +196,7 @@
       }
     },
     {
-      "id": "create_opportunity",
+      "id": "close__create_opportunity",
       "name": "Create Opportunity",
       "description": "Create an opportunity on a Close lead",
       "requiresWrite": true,
@@ -234,7 +234,7 @@
       }
     },
     {
-      "id": "list_contacts",
+      "id": "close__list_contacts",
       "name": "List Contacts",
       "description": "List contacts, optionally filtered by lead",
       "requiresWrite": false,

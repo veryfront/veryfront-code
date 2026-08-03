@@ -1,6 +1,11 @@
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  MAX_OBSERVABILITY_CONFIG_TEXT_LENGTH,
+  MAX_OBSERVABILITY_NAME_LENGTH,
+  MAX_REQUEST_PROFILE_PHASES,
+} from "./limits.ts";
+import {
   buildServerTimingHeader,
   finalizeRequestProfiling,
   isRequestProfilingEnabled,
@@ -13,7 +18,11 @@ import {
   withServerTimingHeader,
 } from "./request-profiler.ts";
 
-const ENV_KEYS = ["VERYFRONT_ENABLE_PERF_PROFILING", "VERYFRONT_ENABLE_SERVER_TIMING"] as const;
+const ENV_KEYS = [
+  "VERYFRONT_ENABLE_PERF_PROFILING",
+  "VERYFRONT_ENABLE_SERVER_TIMING",
+  "VERYFRONT_DISABLE_SLOW_REQUEST_PROFILING",
+] as const;
 
 function clearProfilerEnv(): void {
   for (const key of ENV_KEYS) Deno.env.delete(key);
@@ -25,7 +34,14 @@ describe("request profiler", () => {
     resetRequestProfiles();
   });
 
-  it("keeps normal HTML requests unprofiled by default", () => {
+  it("profiles normal HTML requests by default for slow-completion diagnostics", () => {
+    assertEquals(isRequestProfilingEnabled("/"), true);
+    assertEquals(snapshotRequestProfiles().enabled, true);
+  });
+
+  it("can disable default slow-completion profiling", () => {
+    Deno.env.set("VERYFRONT_DISABLE_SLOW_REQUEST_PROFILING", "1");
+
     assertEquals(isRequestProfilingEnabled("/"), false);
     assertEquals(snapshotRequestProfiles().enabled, false);
   });
@@ -55,6 +71,109 @@ describe("request profiler", () => {
     assertEquals(result.status, 200);
     assert("runtime.resolve_project" in result.phases);
     assertEquals(result.phases["render.cache_hit"], 0);
+  });
+
+  it("returns detached records and normalizes explicit phase durations", async () => {
+    const returned = await runWithRequestProfiling(
+      {
+        category: "html",
+        method: "GET",
+        pathname: "/profiled",
+      },
+      async () => {
+        markRequestProfilePhase("invalid", -5);
+        markRequestProfilePhase("invalid", Number.POSITIVE_INFINITY);
+        return finalizeRequestProfiling(200);
+      },
+    );
+    assertExists(returned);
+    returned.pathname = "/mutated";
+    returned.phases.invalid = 99;
+
+    const firstSnapshot = snapshotRequestProfiles();
+    assertEquals(firstSnapshot.records[0]?.pathname, "/profiled");
+    assertEquals(firstSnapshot.records[0]?.phases.invalid, 0);
+
+    const firstRecord = firstSnapshot.records[0];
+    assertExists(firstRecord);
+    firstRecord.pathname = "/snapshot-mutated";
+    firstRecord.phases.invalid = 100;
+
+    const secondSnapshot = snapshotRequestProfiles();
+    assertEquals(secondSnapshot.records[0]?.pathname, "/profiled");
+    assertEquals(secondSnapshot.records[0]?.phases.invalid, 0);
+  });
+
+  it("saturates accumulated phase durations at a finite safe bound", async () => {
+    const record = await runWithRequestProfiling(
+      {
+        category: "html",
+        method: "GET",
+        pathname: "/profiled",
+      },
+      async () => {
+        markRequestProfilePhase("overflow", Number.MAX_SAFE_INTEGER);
+        markRequestProfilePhase("overflow", Number.MAX_SAFE_INTEGER);
+        return finalizeRequestProfiling(200);
+      },
+    );
+
+    assertExists(record);
+    assertEquals(record.phases.overflow, Number.MAX_SAFE_INTEGER);
+    assert(Number.isFinite(record.totalMs));
+    assert(record.totalMs <= Number.MAX_SAFE_INTEGER);
+  });
+
+  it("bounds phase cardinality and finalizes each request session once", async () => {
+    const results = await runWithRequestProfiling(
+      {
+        category: "html",
+        method: "GET",
+        pathname: "/profiled",
+      },
+      async () => {
+        for (let index = 0; index < MAX_REQUEST_PROFILE_PHASES + 20; index++) {
+          markRequestProfilePhase(`phase-${index}`, 1);
+        }
+        return [
+          finalizeRequestProfiling(200),
+          finalizeRequestProfiling(500),
+        ] as const;
+      },
+    );
+
+    assertExists(results[0]);
+    assertEquals(Object.keys(results[0].phases).length, MAX_REQUEST_PROFILE_PHASES);
+    assertEquals(results[1], null);
+    assertEquals(snapshotRequestProfiles().records.length, 1);
+  });
+
+  it("bounds retained request identity and fails open for malformed options", async () => {
+    const record = await runWithRequestProfiling(
+      {
+        category: "c".repeat(MAX_OBSERVABILITY_NAME_LENGTH + 100),
+        method: "m".repeat(MAX_OBSERVABILITY_NAME_LENGTH + 100),
+        pathname: `/${"p".repeat(MAX_OBSERVABILITY_CONFIG_TEXT_LENGTH + 100)}`,
+        projectSlug: "s".repeat(MAX_OBSERVABILITY_NAME_LENGTH + 100),
+        requestMode: "r".repeat(MAX_OBSERVABILITY_NAME_LENGTH + 100),
+      },
+      async () => finalizeRequestProfiling(200),
+    );
+
+    assertExists(record);
+    assertEquals(record.category.length, MAX_OBSERVABILITY_NAME_LENGTH);
+    assertEquals(record.method.length, MAX_OBSERVABILITY_NAME_LENGTH);
+    assertEquals(record.pathname.length, MAX_OBSERVABILITY_CONFIG_TEXT_LENGTH);
+    assertEquals(record.projectSlug?.length, MAX_OBSERVABILITY_NAME_LENGTH);
+    assertEquals(record.requestMode?.length, MAX_OBSERVABILITY_NAME_LENGTH);
+
+    let calls = 0;
+    const result = await runWithRequestProfiling(
+      { category: "html", method: "GET", pathname: 1 } as never,
+      async () => ++calls,
+    );
+    assertEquals(result, 1);
+    assertEquals(calls, 1);
   });
 
   it("profiles page-data requests when Server-Timing diagnostics are enabled", () => {

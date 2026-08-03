@@ -10,6 +10,7 @@ on:
       - "deno.json"
       - "docs/getting-started/**"
       - "docs/guides/**"
+      - "docs/concepts/**"
       - "docs/api-reference/**"
       - "docs/integrations.md"
   workflow_dispatch:

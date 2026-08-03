@@ -1,12 +1,16 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../../../create-strict-context.ts";
 
 /** Public API contract for source. */
 export interface Source {
+  /** Display title shown in the pill (truncated when long). */
   title: string;
+  /** Link to the source; consumers wire it up via `onSourceClick`. */
   url?: string;
+  /** Relevance score (0-1); colors the pill's trailing dot. */
   score?: number;
+  /** Short excerpt shown in the hover preview popover. */
   snippet?: string;
 }
 
@@ -21,36 +25,63 @@ export interface Source {
 
 /** Per-list state shared with `Sources.*` sub-parts. */
 export interface SourcesContextValue {
+  /** The sources rendered as pills in the row. */
   sources: Source[];
+  /** Click handler, invoked with the source and its index. */
   onSourceClick?: (source: Source, index: number) => void;
 }
 
-const SourcesContext = React.createContext<SourcesContextValue | null>(null);
+const [SourcesContext, useSourcesContext] = createStrictContext<SourcesContextValue>(
+  "useSources",
+  "a Sources",
+);
 
-/** Read the enclosing `Sources` state. Throws when used outside a `Sources`. */
-export function useSources(): SourcesContextValue {
-  const ctx = React.useContext(SourcesContext);
-  if (!ctx) {
-    throw COMPONENT_ERROR.create({
-      detail: "useSources must be used within a Sources",
-    });
-  }
-  return ctx;
+/**
+ * Read the state provided by `Sources.Root` (sources + click handler). Use it to
+ * build a custom row part; throws when called outside a `Sources`.
+ *
+ * @example
+ * ```tsx
+ * function SourceCount() {
+ *   const { sources } = useSources();
+ *   return <span>{sources.length} sources</span>;
+ * }
+ * // <Sources.Root sources={sources}><SourceCount /></Sources.Root>
+ * ```
+ */
+export const useSources = useSourcesContext;
+
+/**
+ * Read the enclosing `Sources` state if present, or `null` outside one. Lets a
+ * leaf like `Message.Source` opt into the row's `onSourceClick` without failing
+ * when rendered standalone.
+ *
+ * @example
+ * ```tsx
+ * function OptionalSourceCount() {
+ *   const ctx = useSourcesOptional();
+ *   if (!ctx) return null; // rendered outside a <Sources>
+ *   return <span>{ctx.sources.length} sources</span>;
+ * }
+ * ```
+ */
+export function useSourcesOptional(): SourcesContextValue | null {
+  return React.useContext(SourcesContext);
 }
 
 /** Props accepted by `Sources` / `Sources.Root`. */
 export interface SourcesProps {
+  /** The sources to render as pills. Renders nothing when empty. */
   sources: Source[];
   className?: string;
+  /** Click handler, invoked with the clicked source and its index. */
   onSourceClick?: (source: Source, index: number) => void;
-  /**
-   * @deprecated Compose `Sources.Pill` children instead. Optional render-prop
-   * for each source pill; when provided, the default anatomy maps items through
-   * it rather than rendering `Sources.Pill` directly.
-   */
-  renderPill?: (source: Source, index: number) => React.ReactNode;
+  /** Render each source yourself instead of using `Sources.Pill`. */
+  renderItem?: (options: { item: Source; index: number }) => React.ReactNode;
   /** Compose your own row; when omitted, the default anatomy is rendered. */
   children?: React.ReactNode;
+  /** React 19: `ref` is a regular prop, forwarded to the row wrapper. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /**
@@ -58,53 +89,49 @@ export interface SourcesProps {
  * default anatomy (`List` of `Pill`s); pass children to recompose. Renders
  * nothing when the source list is empty.
  */
-const SourcesRoot = React.forwardRef<HTMLDivElement, SourcesProps>(
-  function Sources(
-    { sources, className, onSourceClick, renderPill, children },
-    ref,
-  ) {
-    if (sources.length === 0) return null;
+function SourcesRoot(
+  { sources, className, onSourceClick, renderItem, children, ref }: SourcesProps,
+): React.ReactElement | null {
+  if (sources.length === 0) return null;
 
-    const context: SourcesContextValue = { sources, onSourceClick };
+  const context: SourcesContextValue = { sources, onSourceClick };
 
-    return (
-      <SourcesContext.Provider value={context}>
-        <div
-          ref={ref}
-          className={cn("mt-1", className)}
-        >
-          {children ?? <SourcesList renderPill={renderPill} />}
-        </div>
-      </SourcesContext.Provider>
-    );
-  },
-);
+  return (
+    <SourcesContext.Provider value={context}>
+      <div
+        ref={ref}
+        className={cn("mt-1", className)}
+      >
+        {children ?? <SourcesList renderItem={renderItem} />}
+      </div>
+    </SourcesContext.Provider>
+  );
+}
 SourcesRoot.displayName = "Sources.Root";
 
 /** Props for `Sources.List` — the flex-wrap row of pills. */
 export interface SourcesListProps {
   className?: string;
-  /**
-   * @deprecated Compose `Sources.Pill` children instead. Optional render-prop
-   * for each source pill.
-   */
-  renderPill?: (source: Source, index: number) => React.ReactNode;
+  /** Render each source yourself instead of using `Sources.Pill`. */
+  renderItem?: (options: { item: Source; index: number }) => React.ReactNode;
   /** Compose your own pills; when omitted, one `Sources.Pill` per source. */
   children?: React.ReactNode;
+  /** React 19: ref is a regular prop, forwarded to the flex-wrap row. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** The flex-wrap row. Renders one `Sources.Pill` per source by default. */
 function SourcesList(
-  { className, renderPill, children }: SourcesListProps,
+  { className, renderItem, children, ref }: SourcesListProps,
 ): React.JSX.Element {
   const { sources, onSourceClick } = useSources();
   return (
-    <div className={cn("flex flex-wrap gap-2", className)}>
+    <div ref={ref} className={cn("flex flex-wrap gap-2", className)}>
       {children ?? sources.map((source, index) =>
-        renderPill
+        renderItem
           ? (
             <React.Fragment key={`${source.title}-${index}`}>
-              {renderPill(source, index)}
+              {renderItem({ item: source, index })}
             </React.Fragment>
           )
           : (
@@ -123,20 +150,25 @@ SourcesList.displayName = "Sources.List";
 
 /** Props accepted by an individual source pill. */
 export interface SourcePillProps {
+  /** The source this pill represents. */
   source: Source;
+  /** Zero-based position in the list; rendered as the pill's `index + 1` badge. */
   index: number;
+  /** Click handler for the pill; when omitted the pill is non-interactive. */
   onClick?: () => void;
   className?: string;
+  /** React 19: ref is a regular prop, forwarded to the pill's root wrapper. */
+  ref?: React.Ref<HTMLSpanElement>;
 }
 
 /** Render a single source pill with hover preview and score-color behaviour. */
 export function SourcePill(
-  { source, index, onClick, className }: SourcePillProps,
+  { source, index, onClick, className, ref }: SourcePillProps,
 ): React.ReactElement {
   const [showPreview, setShowPreview] = React.useState(false);
 
   return (
-    <span className="relative">
+    <span ref={ref} className="relative">
       <button
         type="button"
         onClick={onClick}

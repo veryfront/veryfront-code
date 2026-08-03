@@ -42,31 +42,31 @@
   ],
   "tools": [
     {
-      "id": "list_products",
+      "id": "shopify__list_products",
       "name": "List Products",
       "description": "List products in your Shopify store",
       "requiresWrite": false
     },
     {
-      "id": "get_product",
+      "id": "shopify__get_product",
       "name": "Get Product",
       "description": "Get details of a specific product",
       "requiresWrite": false
     },
     {
-      "id": "list_orders",
+      "id": "shopify__list_orders",
       "name": "List Orders",
       "description": "List orders from your Shopify store",
       "requiresWrite": false
     },
     {
-      "id": "get_order",
+      "id": "shopify__get_order",
       "name": "Get Order",
       "description": "Get details of a specific order",
       "requiresWrite": false
     },
     {
-      "id": "list_customers",
+      "id": "shopify__list_customers",
       "name": "List Customers",
       "description": "List customers in your Shopify store",
       "requiresWrite": false

@@ -7,11 +7,12 @@
  * keepalive pings, debounced updates, and CSS hot-swap.
  */
 
+import { studioTargetOriginHelperSource } from "#veryfront/security/http/studio-origin-policy.ts";
+import { PROJECT_STYLESHEET_IDS } from "#veryfront/html";
+
 interface HMRScriptOptions {
   /** Log prefix for console messages */
   logPrefix: string;
-  /** Whether to use debug-gated logging (localStorage VERYFRONT_DEBUG_HMR) */
-  debugMode: boolean;
 }
 
 /**
@@ -25,7 +26,19 @@ interface HMRScriptOptions {
  * 5. Browser fetches fresh versions of all modules in the dependency tree
  */
 function getUpdateJSFunction(logPrefix: string): string {
+  const stylesheetIds = JSON.stringify(PROJECT_STYLESHEET_IDS);
   return `
+  const PROJECT_STYLESHEET_IDS = ${stylesheetIds};
+  let stylesheetUpdateQueue = Promise.resolve();
+
+  function getProjectStylesheet() {
+    for (const id of PROJECT_STYLESHEET_IDS) {
+      const stylesheet = document.getElementById(id);
+      if (stylesheet) return stylesheet;
+    }
+    return null;
+  }
+
   function refreshStylesheets(changedPath) {
     // Try targeted stylesheet refresh first
     if (changedPath) {
@@ -33,32 +46,24 @@ function getUpdateJSFunction(logPrefix: string): string {
         const href = link.getAttribute('href');
         if (href && href.includes(changedPath)) {
           link.setAttribute('href', href.split('?')[0] + '?t=' + Date.now());
-          ${
-    logPrefix === "[HMR]"
-      ? `console.log('${logPrefix} Updated stylesheet:', changedPath);`
-      : `dlog('${logPrefix} Updated stylesheet:', changedPath);`
-  }
+          dlog('${logPrefix} Updated stylesheet:', changedPath);
           return true;
         }
       }
     }
 
-    // Fall back to Tailwind CSS link refresh
-    const tailwind = document.getElementById('vf-tailwind-css');
-    if (tailwind) {
-      tailwind.href = '/_vf_styles/styles.css?t=' + Date.now();
-      ${
-    logPrefix === "[HMR]"
-      ? `console.log('${logPrefix} Tailwind CSS refreshed');`
-      : `dlog('${logPrefix} Tailwind CSS refreshed');`
-  }
+    // Fall back to the generated project stylesheet.
+    const projectStylesheet = getProjectStylesheet();
+    if (projectStylesheet instanceof HTMLLinkElement) {
+      projectStylesheet.href = '/_vf_styles/styles.css?t=' + Date.now();
+      dlog('${logPrefix} Project stylesheet refreshed');
       return true;
     }
     return false;
   }
 
-  async function swapTailwindStylesheet(nextHref) {
-    const current = document.getElementById('vf-tailwind-css');
+  async function swapProjectStylesheet(nextHref) {
+    const current = getProjectStylesheet();
     if (!(current instanceof HTMLLinkElement) || !nextHref || !current.parentNode) {
       return false;
     }
@@ -76,7 +81,7 @@ function getUpdateJSFunction(logPrefix: string): string {
     }
 
     pending.removeAttribute('id');
-    pending.setAttribute('data-vf-tailwind-pending', 'true');
+    pending.setAttribute('data-vf-stylesheet-pending', 'true');
     pending.href = nextHref;
 
     await new Promise((resolve, reject) => {
@@ -99,8 +104,8 @@ function getUpdateJSFunction(logPrefix: string): string {
           return;
         }
 
-        pending.removeAttribute('data-vf-tailwind-pending');
-        pending.id = 'vf-tailwind-css';
+        pending.removeAttribute('data-vf-stylesheet-pending');
+        pending.id = current.id;
         current.remove();
         resolve(true);
       }
@@ -121,20 +126,27 @@ function getUpdateJSFunction(logPrefix: string): string {
     return true;
   }
 
-  async function applyStyleUpdate(changedPath, styleHref) {
+  function applyStyleUpdate(changedPath, styleHref) {
+    const update = stylesheetUpdateQueue.then(() =>
+      applyStyleUpdateNow(changedPath, styleHref)
+    );
+    stylesheetUpdateQueue = update.then(
+      () => undefined,
+      () => undefined,
+    );
+    return update;
+  }
+
+  async function applyStyleUpdateNow(changedPath, styleHref) {
     if (styleHref) {
       try {
-        const swapped = await swapTailwindStylesheet(styleHref);
+        const swapped = await swapProjectStylesheet(styleHref);
         if (swapped) {
-          ${
-    logPrefix === "[HMR]"
-      ? `console.log('${logPrefix} Swapped stylesheet:', styleHref);`
-      : `dlog('${logPrefix} Swapped stylesheet:', styleHref);`
-  }
+          dlog('${logPrefix} Swapped stylesheet:', styleHref);
           return true;
         }
       } catch (error) {
-        console.warn('${logPrefix} Failed to swap stylesheet:', error);
+        dlog('${logPrefix} Failed to swap stylesheet:', error);
       }
     }
 
@@ -146,11 +158,7 @@ function getUpdateJSFunction(logPrefix: string): string {
   }
 
   async function updateJS(path, styleHref) {
-    ${
-    logPrefix === "[HMR]"
-      ? `console.log('${logPrefix} Updating JS module:', path);`
-      : `dlog('${logPrefix} Updating JS module:', path);`
-  }
+    dlog('${logPrefix} Updating JS module:', path);
 
     try {
       const timestamp = Date.now();
@@ -166,7 +174,7 @@ function getUpdateJSFunction(logPrefix: string): string {
         window.__veryfrontClearComponentCache();
       }
 
-      // Refresh Tailwind CSS (new classes may be needed from JS changes)
+      // Refresh generated project CSS (source changes may introduce new candidates).
       await applyStyleUpdate(path, styleHref);
 
       // Re-render the page with fresh modules
@@ -193,22 +201,19 @@ function getUpdateJSFunction(logPrefix: string): string {
 }
 
 function generateHMRClient(opts: HMRScriptOptions): string {
-  const { logPrefix, debugMode } = opts;
+  const { logPrefix } = opts;
 
-  const debugPreamble = debugMode
-    ? `
+  const debugPreamble = `
   const HMR_DEBUG = (() => {
     try { return window.localStorage.getItem('VERYFRONT_DEBUG_HMR') === '1'; } catch (_) { return false; }
   })();
-  const dlog = (...args) => { if (HMR_DEBUG) console.log(...args); };`
-    : "";
-
-  // In debug mode, use dlog for non-critical messages; otherwise use console.log
-  const log = debugMode ? "dlog" : "console.log";
+  const dlog = (...args) => { if (HMR_DEBUG) console.log(...args); };`;
 
   return `
 // Veryfront HMR Client (${logPrefix})
 (function() {${debugPreamble}
+
+  ${studioTargetOriginHelperSource()}
 
   // Notify Studio that the app is ready (clears loading indicator)
   if (window.parent !== window) {
@@ -217,7 +222,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
         action: 'appUpdated',
         isInitialLoad: true,
         url: window.location.href
-      }, '*');
+      }, vfStudioTargetOrigin());
     } catch (_) { /* cross-origin iframe - expected */ }
   }
 
@@ -248,19 +253,22 @@ function generateHMRClient(opts: HMRScriptOptions): string {
   function notifyStudio() {
     if (window.parent === window) return;
     try {
-      window.parent.postMessage({ action: 'appUpdated', url: window.location.href }, '*');
+      window.parent.postMessage(
+        { action: 'appUpdated', url: window.location.href },
+        vfStudioTargetOrigin(),
+      );
     } catch (_) { /* expected: cross-origin iframe */ }
   }
 
   function notifyStudioAndReload(reason) {
     const now = Date.now();
     if (now - lastReloadAt < RELOAD_THROTTLE_MS) {
-      ${log}('${logPrefix} Reload throttled:', reason || 'unknown');
+      dlog('${logPrefix} Reload throttled:', reason || 'unknown');
       return;
     }
     lastReloadAt = now;
 
-    if (reason) console.warn('${logPrefix} Reloading page:', reason);
+    if (reason) dlog('${logPrefix} Reloading page:', reason);
     notifyStudio();
     window.location.reload();
   }
@@ -270,7 +278,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
 
     reconnectAttempts++;
     const delay = getReconnectDelay();
-    ${log}('${logPrefix} Reconnecting in ' + Math.round(delay / 1000) + 's...');
+    dlog('${logPrefix} Reconnecting in ' + Math.round(delay / 1000) + 's...');
 
     reconnectTimerId = setTimeout(() => {
       reconnectTimerId = null;
@@ -284,12 +292,12 @@ function generateHMRClient(opts: HMRScriptOptions): string {
     pingIntervalId = setInterval(() => {
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       if (Date.now() - lastPongAt > PONG_TIMEOUT_MS) {
-        console.warn('${logPrefix} Pong timeout, reconnecting...');
+        dlog('${logPrefix} Pong timeout, reconnecting...');
         try { ws.close(); } catch (_) { /* expected: socket already closed */ }
         return;
       }
       try { ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() })); }
-      catch (e) { console.warn('${logPrefix} Ping failed:', e && e.message ? e.message : e); }
+      catch (e) { dlog('${logPrefix} Ping failed:', e && e.message ? e.message : e); }
     }, PING_INTERVAL_MS);
   }
 
@@ -311,7 +319,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
         reconnectTimerId = null;
       }
       startPing();
-      ${log}('${logPrefix} Connected to ' + wsUrl);
+      dlog('${logPrefix} Connected to ' + wsUrl);
     };
 
     ws.onmessage = (event) => {
@@ -319,7 +327,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
         const data = JSON.parse(event.data);
         switch (data.type) {
           case 'connected':
-            ${log}('${logPrefix} Server acknowledged connection');
+            dlog('${logPrefix} Server acknowledged connection');
             break;
           case 'pong':
             lastPongAt = Date.now();
@@ -335,7 +343,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
             notifyStudioAndReload('server-reload');
             break;
           default:
-            ${log}('${logPrefix} Unknown message type:', data.type);
+            dlog('${logPrefix} Unknown message type:', data.type);
         }
       } catch (e) {
         console.error('${logPrefix} Failed to parse message:', e);
@@ -343,7 +351,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
     };
 
     ws.onerror = () => {
-      ${log}('${logPrefix} WebSocket error');
+      dlog('${logPrefix} WebSocket error');
     };
 
     ws.onclose = () => {
@@ -361,7 +369,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
 
   async function handleUpdate(update) {
     if (!update.path) {
-      console.warn('${logPrefix} Update message missing path');
+      dlog('${logPrefix} Update message missing path');
       return;
     }
 
@@ -392,7 +400,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
       updateDebounceTimer = null;
 
       if (paths.length > 1) {
-        ${log}('${logPrefix} Processing ' + paths.length + ' batched updates');
+        dlog('${logPrefix} Processing ' + paths.length + ' batched updates');
       }
 
       // Single re-render handles all paths (server propagates timestamps to all imports)
@@ -420,16 +428,16 @@ ${getUpdateJSFunction(logPrefix)}
 
 /**
  * HMR script for local development.
- * Uses console.log for all messages since dev is single-user.
+ * Routine lifecycle messages are available when VERYFRONT_DEBUG_HMR=1.
  */
 export function getHMRScript(_port: number): string {
-  return generateHMRClient({ logPrefix: "[HMR]", debugMode: false });
+  return generateHMRClient({ logPrefix: "[HMR]" });
 }
 
 /**
  * HMR script for preview mode.
- * Uses debug-gated logging (localStorage VERYFRONT_DEBUG_HMR=1) to reduce noise.
+ * Routine lifecycle messages are available when VERYFRONT_DEBUG_HMR=1.
  */
 export function getPreviewHMRScript(): string {
-  return generateHMRClient({ logPrefix: "[Preview HMR]", debugMode: true });
+  return generateHMRClient({ logPrefix: "[Preview HMR]" });
 }

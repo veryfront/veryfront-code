@@ -44,6 +44,11 @@ export interface MetricsInstruments {
   buildDuration: Histogram | null;
   bundleSizeHistogram: Histogram | null;
   bundleCounter: Counter | null;
+  dependencyArtifactBuildCounter: Counter | null;
+  dependencyArtifactBuildDuration: Histogram | null;
+  dependencyArtifactBuildBytes: Histogram | null;
+  dependencyArtifactBuildAssetCount: Histogram | null;
+  dependencyArtifactBuildExternalImportCount: Histogram | null;
 
   dataFetchDuration: Histogram | null;
   dataFetchCounter: Counter | null;
@@ -58,6 +63,17 @@ export interface MetricsInstruments {
   heapPercentGauge: ObservableGauge | null;
 
   errorCounter: Counter | null;
+
+  streamLifecycleOutcomeCounter: Counter | null;
+  streamLifecycleDeadlineCounter: Counter | null;
+  streamLifecycleTelemetryCounter: Counter | null;
+  streamLifecycleRepairCounter: Counter | null;
+  streamLifecycleShadowDivergenceCounter: Counter | null;
+  streamLifecycleAttemptDuration: Histogram | null;
+  streamLifecycleFirstProgressDuration: Histogram | null;
+  streamLifecycleSemanticIdleDuration: Histogram | null;
+  streamLifecycleToolInputDuration: Histogram | null;
+  streamLifecycleToolExecutionDuration: Histogram | null;
 }
 
 /** Configuration used by metrics. */

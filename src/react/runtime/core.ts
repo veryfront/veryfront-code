@@ -1,4 +1,14 @@
 import React, { useEffect } from "react";
+import {
+  descriptorFromHeadProps,
+  HEAD_REACT_OWNER_ATTRIBUTE,
+  HEAD_SERVER_COMMIT_ATTRIBUTE,
+  HEAD_SSR_PAYLOAD_ATTRIBUTE,
+  type ManagedHeadDescriptor,
+  serializeManagedHeadPayload,
+} from "#veryfront/html/managed-head-protocol.ts";
+import { getClientHeadManager, getManagedHeadNonce } from "#veryfront/html/client-head-manager.ts";
+import { useServerRenderContext } from "#veryfront/react/server-render-context.ts";
 
 /** Router state exposed through `useRouter()`. */
 export interface RouterValue {
@@ -70,18 +80,37 @@ export interface PageContextValue {
   query: Record<string, string>;
   /** Parsed page frontmatter. */
   frontmatter: Record<string, unknown>;
+  /**
+   * Props returned by the page's `getServerData` (the object under its
+   * `props` key). Exposed here so layouts and nested components can read
+   * server data without prop-drilling from the page. Empty object when the
+   * page has no `getServerData`. Populated identically on the server render,
+   * the hydration seed, and client navigation.
+   */
+  data: Record<string, unknown>;
   /** Headings discovered in the page content. */
   headings: MdxHeading[];
   /** MDX headings discovered in the page content. */
   mdxHeadings: MdxHeading[];
 }
 
+/**
+ * Input accepted by {@link PageContextProvider}. `data` (the page's
+ * `getServerData` props) is optional here so seeds built before the field
+ * existed keep compiling; the provider merges the seed over
+ * {@link defaultPageContext}, so an omitted field surfaces as its documented
+ * empty default rather than `undefined`.
+ */
+export type PageContextSeed =
+  & Omit<PageContextValue, "data">
+  & { data?: Record<string, unknown> };
+
 /** Props accepted by `<PageContextProvider>`. */
 export interface PageContextProviderProps {
   /** React children rendered within the page context. */
   children: React.ReactNode;
-  /** Page context value to expose to descendants. */
-  pageContext?: PageContextValue;
+  /** Page context seed to expose to descendants. */
+  pageContext?: PageContextSeed;
 }
 
 const defaultRouter: RouterValue = {
@@ -104,13 +133,13 @@ const defaultPageContext: PageContextValue = {
   params: {},
   query: {},
   frontmatter: {},
+  data: {},
   headings: [],
   mdxHeadings: [],
 };
 
 const ROUTER_CONTEXT_SYMBOL = Symbol.for("veryfront.react.router-context");
 const PAGE_CONTEXT_SYMBOL = Symbol.for("veryfront.react.page-context");
-const HEAD_COLLECTOR_SYMBOL = Symbol.for("veryfront.react.collect-head");
 
 const globalRouterContext = globalThis as typeof globalThis & {
   [ROUTER_CONTEXT_SYMBOL]?: React.Context<RouterValue>;
@@ -120,43 +149,24 @@ const globalPageContext = globalThis as typeof globalThis & {
   [PAGE_CONTEXT_SYMBOL]?: React.Context<PageContextValue>;
 };
 
-type CollectHeadFn = (data: {
-  title?: string;
-  description?: string;
-  metas?: Array<{ name?: string; property?: string; content: string }>;
-  links?: Array<Record<string, string>>;
-  styles?: string[];
-  scripts?: Array<Record<string, string | undefined>>;
-}) => void;
-
 const RouterContext = globalRouterContext[ROUTER_CONTEXT_SYMBOL] ??
   (globalRouterContext[ROUTER_CONTEXT_SYMBOL] = React.createContext<RouterValue>(defaultRouter));
 
 const PageContextContext = globalPageContext[PAGE_CONTEXT_SYMBOL] ??
   (globalPageContext[PAGE_CONTEXT_SYMBOL] = React.createContext(defaultPageContext));
 
-function isServerEnvironment(): boolean {
-  const ssrFlag = (globalThis as Record<string, unknown>).__VERYFRONT_SSR__;
-  if (ssrFlag === true) return true;
-  return typeof window === "undefined";
-}
+type ClientHeadDescriptor = ManagedHeadDescriptor;
 
-function getDocumentNonce(): string | undefined {
-  if (typeof document === "undefined") return undefined;
-
-  const element = document.querySelector<HTMLElement>("script[nonce], style[nonce], link[nonce]");
-  if (!element) return undefined;
-
-  const nonce = element.nonce || element.getAttribute("nonce") || "";
-  return nonce || undefined;
-}
-
-function collectHead(data: Parameters<CollectHeadFn>[0]): void {
-  const collector = (globalThis as typeof globalThis & {
-    [HEAD_COLLECTOR_SYMBOL]?: CollectHeadFn;
-  })[HEAD_COLLECTOR_SYMBOL];
-
-  collector?.(data);
+function createClientHeadDescriptor(
+  child: React.ReactElement,
+  nonce: string | undefined,
+): ClientHeadDescriptor | null {
+  if (typeof child.type !== "string") return null;
+  return descriptorFromHeadProps(
+    child.type,
+    child.props as Record<string, unknown>,
+    nonce,
+  );
 }
 
 /** How a navigation should affect the history stack. */
@@ -185,7 +195,7 @@ interface NavigationStore {
 
 const NAVIGATION_STORE_KEY = Symbol.for("veryfront.navigation.store.v1");
 
-function getNavigationStore(): NavigationStore {
+export function getNavigationStore(): NavigationStore {
   const holder = globalThis as Record<symbol, unknown>;
   const existing = holder[NAVIGATION_STORE_KEY] as NavigationStore | undefined;
   if (existing) return existing;
@@ -311,6 +321,13 @@ export interface HydrationWrapOptions {
   params?: Record<string, string>;
   /** Page frontmatter, exposed reactively through `usePageContext()`. */
   frontmatter?: Record<string, unknown>;
+  /**
+   * Props returned by the page's `getServerData`, exposed as
+   * `usePageContext().data`. Seeded here so a hydrated client tree under an
+   * App/RSC page reads the same server data the server render saw, instead of
+   * an empty object.
+   */
+  data?: Record<string, unknown>;
 }
 
 /**
@@ -352,6 +369,7 @@ export function wrapForHydration(
     params,
     query,
     frontmatter: options.frontmatter ?? {},
+    data: options.data ?? {},
   };
   return React.createElement(RouterProvider, {
     router,
@@ -393,16 +411,20 @@ export function PageContextProvider({
   children,
   pageContext,
 }: PageContextProviderProps): React.ReactElement {
-  const seed = pageContext ?? defaultPageContext;
   const router = React.useContext(RouterContext);
   const hasRouter = router !== defaultRouter;
 
   const value = React.useMemo<PageContextValue>(
-    () =>
-      hasRouter
+    () => {
+      // Merge the seed over defaults so a seed that omits a newer field (e.g.
+      // `data`) still exposes it as its documented empty default, and unchecked
+      // JS callers never read `undefined` off the context.
+      const seed: PageContextValue = { ...defaultPageContext, ...pageContext };
+      return hasRouter
         ? { ...seed, path: router.pathname, query: router.query, params: router.params }
-        : seed,
-    [seed, hasRouter, router.pathname, router.query, router.params],
+        : seed;
+    },
+    [pageContext, hasRouter, router.pathname, router.query, router.params],
   );
 
   return React.createElement(PageContextContext.Provider, { value }, children);
@@ -413,141 +435,78 @@ export function usePageContext(): PageContextValue {
   return React.useContext(PageContextContext);
 }
 
+/**
+ * Flattens `Head` children into host elements, unwrapping React fragments so
+ * `<Head><>…</></Head>` behaves like direct children — matching React's
+ * transparent-fragment semantics. `React.Children` already flattens arrays
+ * (so `.map()` works), but passes a fragment through as a single element whose
+ * `type` is `Symbol(react.fragment)`, which matched none of the tag branches
+ * and was silently dropped.
+ */
+function flattenHeadChildren(children: React.ReactNode): React.ReactElement[] {
+  const out: React.ReactElement[] = [];
+  React.Children.forEach(children, (child) => {
+    if (!React.isValidElement(child)) return;
+    if (child.type === React.Fragment) {
+      const nested = (child.props as { children?: React.ReactNode }).children;
+      out.push(...flattenHeadChildren(nested));
+      return;
+    }
+    out.push(child);
+  });
+  return out;
+}
+
 /** Applies document head elements during SSR and client rendering. */
 export function Head({ children }: { children: React.ReactNode }): React.ReactElement {
-  const isSSR = isServerEnvironment();
-
-  if (isSSR && children) {
-    React.Children.forEach(children, (child) => {
-      if (!React.isValidElement(child)) return;
-
-      const { type } = child;
-      const props = child.props as Record<string, unknown>;
-      if (typeof type !== "string" || type === "body") return;
-
-      if (type === "title") {
-        collectHead({ title: String(props.children ?? "") });
-        return;
-      }
-
-      if (type === "meta") {
-        collectHead({
-          metas: [{
-            name: props.name as string | undefined,
-            property: props.property as string | undefined,
-            content: String(props.content ?? ""),
-          }],
-        });
-        return;
-      }
-
-      if (type === "link") {
-        const link: Record<string, string> = {};
-        for (const [key, value] of Object.entries(props)) {
-          if (value != null) link[key] = String(value);
-        }
-        collectHead({ links: [link] });
-        return;
-      }
-
-      if (type === "style") {
-        collectHead({ styles: [String(props.children ?? "")] });
-        return;
-      }
-
-      if (type === "script") {
-        const script: Record<string, string | undefined> = {};
-        for (const [key, value] of Object.entries(props)) {
-          if (key === "children" || key === "dangerouslySetInnerHTML") continue;
-          if (value != null) script[key] = String(value);
-        }
-        if (props.dangerouslySetInnerHTML) {
-          const html = props.dangerouslySetInnerHTML as { __html?: string };
-          if (html.__html) script.content = html.__html;
-        } else if (typeof props.children === "string") {
-          script.content = props.children;
-        }
-        collectHead({ scripts: [script] });
-      }
-    });
-  }
+  const serverRenderContext = useServerRenderContext();
+  const ownerRef = React.useRef<object | null>(null);
+  const anchorRef = React.useRef<HTMLDivElement | null>(null);
+  const managerRef = React.useRef<ReturnType<typeof getClientHeadManager> | null>(
+    null,
+  );
+  if (!ownerRef.current) ownerRef.current = {};
+  const payload = serializeManagedHeadPayload(
+    flattenHeadChildren(children)
+      .map((child) => createClientHeadDescriptor(child, undefined))
+      .filter((descriptor): descriptor is ClientHeadDescriptor => descriptor !== null),
+  );
+  const serverCommitToken = serverRenderContext?.registerHeadPayload(payload);
 
   useEffect(() => {
-    if (!children) return;
+    const owner = ownerRef.current;
+    const anchor = anchorRef.current;
+    const ownerDocument = anchor?.ownerDocument;
+    if (!owner || !anchor || !ownerDocument) return;
 
-    const addedElements: Element[] = [];
-    const nonce = getDocumentNonce();
+    const nonce = getManagedHeadNonce(ownerDocument);
+    const descriptors = flattenHeadChildren(children)
+      .map((child) => createClientHeadDescriptor(child, nonce))
+      .filter((descriptor): descriptor is ClientHeadDescriptor => descriptor !== null);
+    const manager = getClientHeadManager(ownerDocument);
+    if (managerRef.current && managerRef.current !== manager) {
+      managerRef.current.deactivate(owner);
+    }
+    manager.update(owner, anchor, descriptors);
+    managerRef.current = manager;
+  });
 
-    React.Children.forEach(children, (child) => {
-      if (!React.isValidElement(child)) return;
-
-      const { type } = child;
-      const props = child.props as Record<string, unknown>;
-      if (typeof type !== "string" || type === "body") return;
-
-      if (type === "title") {
-        document.title = String(props.children ?? "");
-        return;
-      }
-
-      const element = document.createElement(type);
-      if ((type === "style" || type === "script") && !props.nonce && nonce) {
-        element.setAttribute("nonce", nonce);
-      }
-
-      if (type === "script") {
-        const src = props.src as string | undefined;
-        const id = props.id as string | undefined;
-
-        if (id && document.querySelector(`script[data-vf-head][id="${id}"]`)) return;
-        if (src && document.querySelector(`script[data-vf-head][src="${src}"]`)) return;
-
-        const content = typeof props.children === "string"
-          ? props.children
-          : (props.dangerouslySetInnerHTML as { __html?: string })?.__html;
-        if (content && !id) {
-          let sum = 0;
-          for (let i = 0; i < Math.min(content.length, 200); i++) {
-            sum = ((sum << 5) - sum + content.charCodeAt(i)) | 0;
-          }
-          const hash = `vf${Math.abs(sum).toString(36)}`;
-          if (document.querySelector(`script[data-vf-head][data-vf-hash="${hash}"]`)) return;
-          element.setAttribute("data-vf-hash", hash);
-        }
-        element.setAttribute("data-vf-head", "true");
-      }
-
-      for (const [key, value] of Object.entries(props)) {
-        if (key === "children") continue;
-
-        let attrName = key;
-        if (key === "className") attrName = "class";
-        else if (key === "htmlFor") attrName = "for";
-
-        if (typeof value === "boolean") {
-          if (value) element.setAttribute(attrName, "");
-          continue;
-        }
-
-        if (value != null) element.setAttribute(attrName, String(value));
-      }
-
-      if (typeof props.children === "string") {
-        element.textContent = props.children;
-      }
-
-      element.setAttribute("data-veryfront-managed", "1");
-      document.head.appendChild(element);
-      addedElements.push(element);
-    });
-
+  useEffect(() => {
+    const owner = ownerRef.current;
+    if (!owner) return;
     return () => {
-      for (const el of addedElements) el.remove();
+      managerRef.current?.deactivate(owner);
+      managerRef.current = null;
     };
-  }, [children]);
+  }, []);
 
   return React.createElement("div", {
+    ref: anchorRef,
     "data-veryfront-head": "1",
+    [HEAD_REACT_OWNER_ATTRIBUTE]: "1",
+    [HEAD_SERVER_COMMIT_ATTRIBUTE]: serverCommitToken,
+    [HEAD_SSR_PAYLOAD_ATTRIBUTE]: payload,
+    suppressHydrationWarning: true,
     style: { display: "none" },
   });
 }

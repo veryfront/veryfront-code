@@ -1,3 +1,7 @@
+import { safeJsonParse } from "#veryfront/utils/json.ts";
+export { safeJsonParse };
+export type { SafeJsonParseResult } from "#veryfront/utils/json.ts";
+
 /** Error shape for parsed provider. */
 export interface ParsedProviderError {
   code: string;
@@ -36,34 +40,85 @@ const AI_PROVIDER_BILLING_ERROR = {
   status: 502,
 } as const;
 
+const MAX_PROVIDER_ERROR_DEPTH = 64;
+const MAX_PROVIDER_ERROR_TEXT_CHARS = 256 * 1024;
+const MAX_EMBEDDED_JSON_CANDIDATES = 32;
+
 function isErrorRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Result returned from safe JSON parse. */
-export type SafeJsonParseResult = { ok: true; value: unknown } | { ok: false; error: Error };
-
-/** Parse JSON safely without throwing. */
-export function safeJsonParse(value: string): SafeJsonParseResult {
-  try {
-    return { ok: true, value: JSON.parse(value) };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error : new Error(String(error)) };
-  }
-}
-
 function parseErrorJson(value: string): unknown | null {
+  if (value.length > MAX_PROVIDER_ERROR_TEXT_CHARS) {
+    return null;
+  }
   const parsed = safeJsonParse(value);
   return parsed.ok ? parsed.value : null;
 }
 
-function parseEmbeddedErrorJson(value: string): unknown | null {
-  const jsonStart = value.indexOf("{");
-  if (jsonStart < 0) {
-    return null;
+function findJsonObjectEnd(value: string, startIndex: number): number | null {
+  const closingTokens: string[] = ["}"];
+  let inString = false;
+  let escaped = false;
+
+  for (let index = startIndex + 1; index < value.length; index++) {
+    const character = value[index]!;
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (character === '"') {
+      inString = true;
+    } else if (character === "{") {
+      closingTokens.push("}");
+    } else if (character === "[") {
+      closingTokens.push("]");
+    } else if (character === "}" || character === "]") {
+      if (closingTokens.at(-1) !== character) {
+        return null;
+      }
+      closingTokens.pop();
+      if (closingTokens.length === 0) {
+        return index + 1;
+      }
+    }
   }
 
-  return parseErrorJson(value.slice(jsonStart));
+  return null;
+}
+
+function parseEmbeddedErrorJson(value: string): unknown | null {
+  const boundedValue = value.slice(0, MAX_PROVIDER_ERROR_TEXT_CHARS);
+  let candidateCount = 0;
+
+  for (let startIndex = 0; startIndex < boundedValue.length; startIndex++) {
+    if (boundedValue[startIndex] !== "{") {
+      continue;
+    }
+    candidateCount += 1;
+    if (candidateCount > MAX_EMBEDDED_JSON_CANDIDATES) {
+      return null;
+    }
+
+    const endIndex = findJsonObjectEnd(boundedValue, startIndex);
+    if (endIndex === null) {
+      continue;
+    }
+
+    const parsed = parseErrorJson(boundedValue.slice(startIndex, endIndex));
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  return null;
 }
 
 /** Parses known problem body. */
@@ -100,7 +155,19 @@ export function parseKnownProblemBody(body: unknown): ParsedProviderError | null
   return null;
 }
 
-/** Message shape for is credit limit. */
+// ─── Message-text heuristics ─────────────────────────────────────────────────
+// The functions below classify provider errors by matching natural-language
+// substrings in error messages. This is intentional: providers often do not
+// include structured error codes in all response shapes, so text matching is
+// the only reliable signal. Keep these as the fallback path — wherever the
+// provider DOES return a structured `type` field (e.g. Anthropic's `body.type`)
+// the structured code is preferred (handled above in parseKnownProviderBody).
+//
+// MAINTENANCE: If a provider rewords an error message, the affected check will
+// silently fall back to EXTERNAL_SERVICE_ERROR. Update the relevant substring
+// list and add a test case when that happens.
+
+/** Returns true when the normalizedMessage indicates a credit or spend limit error. */
 export function isCreditLimitMessage(normalizedMessage: string): boolean {
   return (
     normalizedMessage.includes("credit limit") ||
@@ -124,6 +191,11 @@ function isAssistantPrefillUnsupportedMessage(message: string): boolean {
   return mentionsAssistantPrefill && rejectsAssistantPrefill;
 }
 
+// Detects provider-side billing errors reported via invalid_request_error messages.
+// Requires three independent signals to reduce false positives: the message must
+// mention (a) a known provider API, (b) billing/account, and (c) low credit balance.
+// If any provider stops including all three signals, this silently returns false —
+// the call site falls through to EXTERNAL_SERVICE_ERROR, which is the safe default.
 function isProviderBillingMessage(normalizedMessage: string): boolean {
   const mentionsProviderApi = normalizedMessage.includes("anthropic api") ||
     normalizedMessage.includes("openai api") ||
@@ -141,7 +213,12 @@ function isProviderBillingMessage(normalizedMessage: string): boolean {
 function parseKnownProviderBody(
   body: unknown,
   seen: WeakSet<object> = new WeakSet(),
+  depth = 0,
 ): ParsedProviderError | null {
+  if (depth >= MAX_PROVIDER_ERROR_DEPTH) {
+    return null;
+  }
+
   const problemMatch = parseKnownProblemBody(body);
   if (problemMatch) {
     return problemMatch;
@@ -157,7 +234,7 @@ function parseKnownProviderBody(
   seen.add(body);
 
   if (isErrorRecord(body.error)) {
-    const nestedError = parseKnownProviderBody(body.error, seen);
+    const nestedError = parseKnownProviderBody(body.error, seen, depth + 1);
     if (nestedError) {
       return nestedError;
     }
@@ -239,10 +316,18 @@ function extractResponseBody(error: unknown): string | undefined {
 
 /** Error shape for parse provider. */
 export function parseProviderError(error: unknown): ParsedProviderError {
-  return parseProviderErrorInner(error, new WeakSet());
+  return parseProviderErrorInner(error, new WeakSet(), 0);
 }
 
-function parseProviderErrorInner(error: unknown, seen: WeakSet<object>): ParsedProviderError {
+function parseProviderErrorInner(
+  error: unknown,
+  seen: WeakSet<object>,
+  depth: number,
+): ParsedProviderError {
+  if (depth >= MAX_PROVIDER_ERROR_DEPTH) {
+    return DEFAULT_EXTERNAL_SERVICE_ERROR;
+  }
+
   if (isErrorRecord(error)) {
     if (seen.has(error)) {
       return DEFAULT_EXTERNAL_SERVICE_ERROR;
@@ -265,7 +350,7 @@ function parseProviderErrorInner(error: unknown, seen: WeakSet<object>): ParsedP
   }
 
   if (isErrorRecord(error) && "lastError" in error) {
-    const nested = parseProviderErrorInner(error.lastError, seen);
+    const nested = parseProviderErrorInner(error.lastError, seen, depth + 1);
     if (
       nested.code !== DEFAULT_EXTERNAL_SERVICE_ERROR.code ||
       nested.message !== DEFAULT_EXTERNAL_SERVICE_ERROR.message

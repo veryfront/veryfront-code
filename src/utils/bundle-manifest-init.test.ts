@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { getBundleManifestTTL } from "./bundle-manifest-init.ts";
+import { getBundleManifestTTL, initializeBundleManifest } from "./bundle-manifest-init.ts";
 import { BUNDLE_MANIFEST_DEV_TTL_MS, BUNDLE_MANIFEST_PROD_TTL_MS } from "./constants/cache.ts";
 
 describe("getBundleManifestTTL", () => {
@@ -42,5 +42,31 @@ describe("getBundleManifestTTL", () => {
     assertExists(prodTTL);
     assertExists(devTTL);
     assertEquals(prodTTL > devTTL, true);
+  });
+});
+
+describe("initializeBundleManifest", () => {
+  it("rejects explicit redis backend config instead of silently falling back to memory", async () => {
+    await assertRejects(
+      () =>
+        initializeBundleManifest(
+          { cache: { bundleManifest: { enabled: true, type: "redis" } } },
+          "production",
+        ),
+      Error,
+      'Bundle manifest store type "redis" is configured but is not implemented',
+    );
+  });
+
+  it("rejects explicit kv backend config instead of silently falling back to memory", async () => {
+    await assertRejects(
+      () =>
+        initializeBundleManifest(
+          { cache: { bundleManifest: { enabled: true, type: "kv" } } },
+          "production",
+        ),
+      Error,
+      'Bundle manifest store type "kv" is configured but is not implemented',
+    );
   });
 });

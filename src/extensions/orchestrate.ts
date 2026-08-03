@@ -8,9 +8,12 @@
  * @module extensions/orchestrate
  */
 
-import { basename, dirname } from "@std/path";
+import { basename, dirname } from "#veryfront/compat/path";
+import { getDeferredExtensionState } from "./deferred-extension.ts";
 import * as defaultDiscovery from "./discovery.ts";
+import type { BoundExtensionEntrypoint } from "./entrypoint-identity.ts";
 import { loadExtensionFactory as defaultLoadFactory } from "./factory-loader.ts";
+import { FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES } from "./first-party-defaults.ts";
 import { ExtensionLoader } from "./loader.ts";
 import type {
   Extension,
@@ -39,7 +42,18 @@ export interface OrchestrateOptions {
   /** Per-extension setup() timeout in milliseconds. Defaults to 30 000 ms.
    *  Pass `0` to disable. */
   setupTimeoutMs?: number;
-  /** @internal Override discovery functions in tests. */
+  /**
+   * @internal Release process-global resources owned by the previous
+   * generation after its teardown and before candidate setup begins.
+   */
+  beforeActivate?: () => void | Promise<void>;
+  /**
+   * @internal Override discovery functions in tests.
+   *
+   * This is a trusted injection seam, not an untrusted-data boundary. A custom
+   * implementation controls import targets directly and must return ordinary
+   * data objects, not live or revoked Proxies.
+   */
   discovery?: {
     discoverPackageExtensions: typeof defaultDiscovery.discoverPackageExtensions;
     discoverProjectExtensions: typeof defaultDiscovery.discoverProjectExtensions;
@@ -49,6 +63,26 @@ export interface OrchestrateOptions {
   /** @internal Override factory loading in tests. */
   loadFactory?: typeof defaultLoadFactory;
 }
+
+// The contract registry is process-global, so production orchestration must
+// have one serialized generation owner. Direct ExtensionLoader construction is
+// still available for tests and low-level use, but overlapping direct loaders
+// are intentionally outside the supported lifecycle contract.
+let orchestrationTail: Promise<void> = Promise.resolve();
+let activeLoader: ExtensionLoader | undefined;
+let failedCandidate: ExtensionLoader | undefined;
+const FIRST_PARTY_BUILTIN_PACKAGE_TO_EXTENSION = new Map(
+  FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES.map((policy) => [
+    `@veryfront/${policy.sourceDirectory}`,
+    policy.name,
+  ]),
+);
+const FIRST_PARTY_BUILTIN_EXTENSION_TO_PACKAGE = new Map(
+  FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES.map((policy) => [
+    policy.name,
+    `@veryfront/${policy.sourceDirectory}`,
+  ]),
+);
 
 function isDisableDirective(
   entry: ExtensionConfigEntry,
@@ -71,8 +105,7 @@ function isDisableDirective(
  */
 function projectExtensionNameFromPath(path: string): string | undefined {
   let current = dirname(path);
-  // Safety limit in case of a malformed path that never reaches a root.
-  for (let i = 0; i < 8; i++) {
+  while (true) {
     const parent = dirname(current);
     if (basename(parent) === "extensions") {
       return basename(current);
@@ -80,7 +113,46 @@ function projectExtensionNameFromPath(path: string): string | undefined {
     if (parent === current) return undefined;
     current = parent;
   }
-  return undefined;
+}
+
+interface FactoryLoadTarget {
+  path: string;
+  binding?: BoundExtensionEntrypoint;
+}
+
+interface PackageLoadCandidate {
+  packageName: string;
+  metadata: defaultDiscovery.PackageMetadata;
+  target: FactoryLoadTarget;
+}
+
+interface ProjectLoadCandidate {
+  extensionName?: string;
+  target: FactoryLoadTarget;
+}
+
+function buildDisableFilters(
+  disables: Array<{ name: string; enabled: false }>,
+): { extensionNames: Set<string>; packageNames: Set<string> } {
+  const extensionNames = new Set<string>();
+  const packageNames = new Set<string>();
+  for (const { name } of disables) {
+    extensionNames.add(name);
+    packageNames.add(name);
+    const extensionName = FIRST_PARTY_BUILTIN_PACKAGE_TO_EXTENSION.get(name);
+    if (extensionName) extensionNames.add(extensionName);
+    const packageName = FIRST_PARTY_BUILTIN_EXTENSION_TO_PACKAGE.get(name);
+    if (packageName) packageNames.add(packageName);
+  }
+  return { extensionNames, packageNames };
+}
+
+function isDeferredBuiltinPackageHit(
+  hit: PackageLoadCandidate,
+  ordinaryBuiltinExtensionNames: ReadonlySet<string>,
+): boolean {
+  const extensionName = FIRST_PARTY_BUILTIN_PACKAGE_TO_EXTENSION.get(hit.packageName);
+  return extensionName !== undefined && !ordinaryBuiltinExtensionNames.has(extensionName);
 }
 
 /**
@@ -89,9 +161,10 @@ function projectExtensionNameFromPath(path: string): string | undefined {
  * Pipeline:
  *   1. Split `config.extensions` into resolved entries and disable directives.
  *   2. Discover extensions from package, project, and local sources.
- *   3. Skip loading factories for package- and project-source extensions whose
- *      names appear in the disable set (local-file names are not reliable
- *      pre-load and are filtered after `mergeExtensions`).
+ *   3. Omit explicit-only discovered extensions and skip loading factories
+ *      for package- and project-source extensions whose names appear in the
+ *      disable set (local-file names are not reliable pre-load and are
+ *      filtered after `mergeExtensions`).
  *   4. Dynamic-import factories for every remaining discovered path.
  *   5. Merge sources honoring priority `config > package > project > local-file`.
  *   6. Construct an `ExtensionLoader` and run `setupAll`.
@@ -100,7 +173,18 @@ function projectExtensionNameFromPath(path: string): string | undefined {
  * partial rollback internally. The error is re-thrown unchanged so callers
  * can surface the extension name to the user.
  */
-export async function orchestrateExtensions(
+export function orchestrateExtensions(
+  options: OrchestrateOptions,
+): Promise<ExtensionLoader> {
+  const result = orchestrationTail.then(() => orchestrateExtensionGeneration(options));
+  orchestrationTail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+async function orchestrateExtensionGeneration(
   options: OrchestrateOptions,
 ): Promise<ExtensionLoader> {
   const { projectDir, config, logger } = options;
@@ -127,42 +211,89 @@ export async function orchestrateExtensions(
   // extensions the user has explicitly turned off. A factory whose module
   // fails to import or invoke would otherwise take down bootstrap even
   // though the user asked for it to be disabled.
-  const disabledNames = new Set(disables.map((d) => d.name));
+  const disabled = buildDisableFilters(disables);
+  // First-party deferred packages stay lazy even when a reduced caller omits
+  // their candidate. Ordinary builtins are exempt so package discovery keeps
+  // its documented priority over direct builtin entries with the same name.
+  const ordinaryBuiltinExtensionNames = new Set(
+    (options.builtinExtensions ?? [])
+      .filter((entry) => getDeferredExtensionState(entry) === undefined)
+      .map((entry) => entry.extension.name),
+  );
 
-  const [packageHits, projectPaths, localPaths] = await Promise.all([
-    disc.discoverPackageExtensions(projectDir),
-    disc.discoverProjectExtensions(projectDir),
-    disc.discoverLocalExtensions(projectDir),
-  ]);
+  let packageHits: PackageLoadCandidate[];
+  let projectHits: ProjectLoadCandidate[];
+  let localPaths: string[];
+  if (options.discovery) {
+    const [discoveredPackages, projectPaths, discoveredLocalPaths] = await Promise.all([
+      disc.discoverPackageExtensions(projectDir),
+      disc.discoverProjectExtensions(projectDir),
+      disc.discoverLocalExtensions(projectDir),
+    ]);
+    packageHits = discoveredPackages.map((hit) => ({
+      packageName: hit.packageName,
+      metadata: hit.metadata,
+      target: { path: hit.importTarget },
+    }));
+    projectHits = projectPaths.map((path) => ({
+      extensionName: projectExtensionNameFromPath(path),
+      target: { path },
+    }));
+    localPaths = discoveredLocalPaths;
+  } else {
+    const [discoveredPackages, discoveredProjects, discoveredLocalPaths] = await Promise.all([
+      defaultDiscovery.discoverBoundPackageExtensions(projectDir),
+      defaultDiscovery.discoverBoundProjectExtensions(projectDir),
+      defaultDiscovery.discoverLocalExtensions(projectDir),
+    ]);
+    packageHits = discoveredPackages.map((hit) => ({
+      packageName: hit.packageName,
+      metadata: hit.metadata,
+      target: { path: hit.binding.path, binding: hit.binding },
+    }));
+    projectHits = discoveredProjects.map((hit) => ({
+      extensionName: hit.extensionName,
+      target: { path: hit.binding.path, binding: hit.binding },
+    }));
+    localPaths = discoveredLocalPaths;
+  }
 
-  // Package hits carry the package name directly — filter before loading.
-  const enabledPackageNames = packageHits
-    .map((hit) => hit.packageName)
-    .filter((name) => !disabledNames.has(name));
+  // Package hits retain the lexical name for disable directives, but loading
+  // uses the canonical target captured while that package manifest was read.
+  // This prevents an import map from redirecting the authorized package name.
+  const enabledPackageTargets = packageHits
+    .filter((hit) => defaultDiscovery.resolvePackageActivation(hit.metadata) === "auto")
+    .filter((hit) =>
+      !disabled.packageNames.has(hit.packageName) &&
+      !disabled.extensionNames.has(hit.packageName) &&
+      !isDeferredBuiltinPackageHit(hit, ordinaryBuiltinExtensionNames)
+    )
+    .map((hit) => hit.target);
 
   // Project paths have the shape `<projectDir>/extensions/<name>/src/index.ts`
   // (or `<projectDir>/extensions/<name>/index.ts`). `mergeExtensions` is the
   // safety net for any path whose name cannot be derived.
-  const enabledProjectPaths = projectPaths.filter((path) => {
-    const name = projectExtensionNameFromPath(path);
-    return name === undefined || !disabledNames.has(name);
-  });
+  const enabledProjectTargets = projectHits
+    .filter((hit) =>
+      hit.extensionName === undefined || !disabled.extensionNames.has(hit.extensionName)
+    )
+    .map((hit) => hit.target);
 
   // Local-file paths cannot be reliably filtered pre-load: the filename
   // (`foo.extension.ts`) is not guaranteed to match the extension name
   // declared by the factory. `mergeExtensions` applies the post-hoc filter.
   const packageResolved = await loadAllFactories(
-    enabledPackageNames,
+    enabledPackageTargets,
     "package",
     loadFactory,
   );
   const projectResolved = await loadAllFactories(
-    enabledProjectPaths,
+    enabledProjectTargets,
     "project",
     loadFactory,
   );
   const localResolved = await loadAllFactories(
-    localPaths,
+    localPaths.map((path) => ({ path })),
     "local-file",
     loadFactory,
   );
@@ -172,7 +303,7 @@ export async function orchestrateExtensions(
     packageResolved,
     projectResolved,
     localResolved,
-    disables,
+    [...disabled.extensionNames].map((name) => ({ name, enabled: false as const })),
     options.builtinExtensions,
   );
 
@@ -180,20 +311,55 @@ export async function orchestrateExtensions(
   if (options.primeContracts) {
     loader.primeContracts(options.primeContracts);
   }
-  await loader.setupAll(merged, config as Record<string, unknown>, {
-    setupTimeoutMs: options.setupTimeoutMs,
-  });
+  let activationStarted = false;
+  try {
+    await loader.setupAll(merged, config as Record<string, unknown>, {
+      setupTimeoutMs: options.setupTimeoutMs,
+      beforeTransition: async () => {
+        // A failed candidate already owns the fail-closed transition fence.
+        // Finish its late cleanup before the replacement acquires a new fence.
+        const failed = failedCandidate;
+        if (failed) {
+          await failed.awaitLateSetupCleanup();
+          if (failedCandidate === failed) failedCandidate = undefined;
+        }
+      },
+      beforeActivate: async () => {
+        // Candidate discovery, factory loading, flattening, validation,
+        // conflict checks, and topology all completed before this hook. The
+        // new transition fence is active before old-generation teardown.
+        const previous = activeLoader;
+        if (previous) {
+          await previous.teardownAll();
+          if (activeLoader === previous) activeLoader = undefined;
+        }
+        await options.beforeActivate?.();
+        activationStarted = true;
+      },
+    });
+  } catch (error) {
+    if (activationStarted) {
+      activeLoader = undefined;
+      // setupAll rejects promptly on timeout but retains its own losing setup
+      // and cleanup barrier. Keep the candidate reachable so the next
+      // generation cannot activate until that barrier succeeds.
+      failedCandidate = loader;
+    }
+    throw error;
+  }
+
+  activeLoader = loader;
   return loader;
 }
 
 async function loadAllFactories(
-  paths: string[],
+  targets: FactoryLoadTarget[],
   source: ExtensionSource,
   loadFactory: typeof defaultLoadFactory,
 ): Promise<ResolvedExtension[]> {
   const resolved: ResolvedExtension[] = [];
-  for (const path of paths) {
-    resolved.push(await loadFactory(path, source));
+  for (const target of targets) {
+    resolved.push(await loadFactory(target.path, source, undefined, target.binding));
   }
   return resolved;
 }

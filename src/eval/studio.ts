@@ -8,6 +8,9 @@ export const getEvalStudioCapabilitySchema = defineSchema((v) =>
   v.enum(["project.evals.read", "project.evals.write", "project.evals.run"] as const)
 );
 
+/** Schema for an Eval target primitive kind. */
+export const getEvalTargetKindSchema = defineSchema((v) => v.enum(["agent", "tool"] as const));
+
 /** Schema for an editable Eval source field name. */
 export const getEvalEditableFieldSchema = defineSchema((v) =>
   v.enum(
@@ -20,6 +23,7 @@ export const getEvalEditableFieldSchema = defineSchema((v) =>
       "tags",
       "metadata",
       "metrics",
+      "input",
       "check",
     ] as const,
   )
@@ -166,7 +170,7 @@ export const getEvalSourceDocumentSchema = defineSchema((v) =>
     id: v.string(),
     name: v.string(),
     description: v.string().optional(),
-    targetKind: v.literal("agent"),
+    targetKind: getEvalTargetKindSchema(),
     target: v.string(),
     source: getEvalSourceReferenceSchema(),
     dataset: getEvalSourceDatasetSchema(),
@@ -206,7 +210,7 @@ export const getEvalRunSchema = defineSchema((v) =>
     runId: v.string(),
     evalId: v.string(),
     status: v.enum(["pending", "running", "waiting", "completed", "failed", "cancelled"] as const),
-    targetKind: v.literal("agent"),
+    targetKind: getEvalTargetKindSchema(),
     target: v.string(),
     source: getEvalSourceReferenceSchema().optional(),
     summary: v.object({
@@ -310,7 +314,10 @@ export function createEvalSourceDocument(
   options: CreateEvalSourceDocumentOptions = {},
 ): EvalSourceDocument {
   const { definition } = discovered;
-  const dynamicFields: EvalEditableField[] = definition.check ? ["check"] : [];
+  const dynamicFields: EvalEditableField[] = [
+    ...(definition.input ? ["input" as const] : []),
+    ...(definition.check ? ["check" as const] : []),
+  ];
 
   return getEvalSourceDocumentSchema().parse({
     kind: "eval-source-document",

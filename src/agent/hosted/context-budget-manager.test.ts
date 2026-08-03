@@ -79,6 +79,42 @@ Deno.test("applyContextBudget returns unchanged messages when under budget", asy
   assertEquals(result.diagnostics.compacted, false);
 });
 
+Deno.test("applyContextBudget reports token category diagnostics even when under budget", async () => {
+  const messages = [
+    message("user-1", "user", "Read the file"),
+    {
+      id: "assistant-tool-1",
+      role: "assistant",
+      parts: [{
+        type: "tool-call",
+        toolCallId: "tool-large-input",
+        toolName: "update_file",
+        args: {
+          path: "components/GraphViewer.tsx",
+          content: "large generated file body ".repeat(500),
+        },
+      }],
+      timestamp: 1,
+    },
+    toolResultMessage("tool-result-1", "tool-large-input"),
+  ] satisfies AgentRuntimeMessage[];
+
+  const result = await applyContextBudget(messages, {
+    tokenBudget: 20_000,
+    reserveTokens: 1_000,
+    recentTailTokens: 1_000,
+    summaryGenerator: () => ({ text: "unused" }),
+  });
+
+  const beforeBreakdown = result.diagnostics.beforeBreakdown;
+  const afterBreakdown = result.diagnostics.afterBreakdown;
+
+  assertExists(beforeBreakdown);
+  assertExists(afterBreakdown);
+  assertEquals(beforeBreakdown.toolCallInputTokens > 0, true);
+  assertEquals(afterBreakdown.toolCallInputTokens, beforeBreakdown.toolCallInputTokens);
+});
+
 Deno.test("applyContextBudget compacts oversized history into summary plus retained tail", async () => {
   const messages = [
     message("user-1", "user", "Older goal ".repeat(200)),

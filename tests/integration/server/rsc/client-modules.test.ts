@@ -32,7 +32,7 @@ describe("RSC Client Modules Tests", { sanitizeOps: false, sanitizeResources: fa
       await withTestContext("rsc-client-module", async (context) => {
         await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
-          `export default { experimental: { rsc: true } };`,
+          `export default { experimental: { rsc: true }, security: { csrf: true } };`,
         );
 
         const { startProductionServer } = await import(
@@ -100,7 +100,7 @@ describe("RSC Client Modules Tests", { sanitizeOps: false, sanitizeResources: fa
       await withTestContext("rsc-client-page-render", async (context) => {
         await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
-          `export default { experimental: { rsc: true } };`,
+          `export default { experimental: { rsc: true }, security: { csrf: true } };`,
         );
 
         await remove(join(context.projectDir, "app"), { recursive: true });

@@ -40,7 +40,7 @@
   ],
   "tools": [
     {
-      "id": "list_objects",
+      "id": "attio__list_objects",
       "name": "List Objects",
       "description": "List object types in the Attio workspace (people, companies, deals, and custom objects)",
       "requiresWrite": false,
@@ -53,7 +53,7 @@
       }
     },
     {
-      "id": "query_records",
+      "id": "attio__query_records",
       "name": "Query Records",
       "description": "Query records of an object with optional filters and sorts",
       "requiresWrite": false,
@@ -105,7 +105,7 @@
       }
     },
     {
-      "id": "get_record",
+      "id": "attio__get_record",
       "name": "Get Record",
       "description": "Get a single record of an object by ID",
       "requiresWrite": false,
@@ -132,7 +132,7 @@
       }
     },
     {
-      "id": "create_record",
+      "id": "attio__create_record",
       "name": "Create Record",
       "description": "Create a new record of an object (person, company, deal, or custom object)",
       "requiresWrite": true,
@@ -160,7 +160,7 @@
       }
     },
     {
-      "id": "update_record",
+      "id": "attio__update_record",
       "name": "Update Record",
       "description": "Update attribute values on an existing record",
       "requiresWrite": true,
@@ -194,7 +194,7 @@
       }
     },
     {
-      "id": "list_lists",
+      "id": "attio__list_lists",
       "name": "List Lists",
       "description": "List all lists in the Attio workspace",
       "requiresWrite": false,

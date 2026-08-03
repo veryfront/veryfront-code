@@ -3,7 +3,9 @@ import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   checkMemoryPressure,
-  clearAllCaches,
+  DEFAULT_PROFILER_CRITICAL_THRESHOLD,
+  DEFAULT_PROFILER_WARNING_THRESHOLD,
+  evaluateMemoryPressure,
   forceGC,
   getCacheStats,
   getHeapStats,
@@ -232,6 +234,36 @@ describe("memory/profiler", () => {
       const heap = getHeapStats();
       assert(Math.abs(pressure.heapUsedPercent - heap.heapUsedPercent) < 5);
     });
+
+    it("uses the default 65 percent warning threshold inclusively", () => {
+      assertEquals(DEFAULT_PROFILER_WARNING_THRESHOLD, 65);
+      assertEquals(evaluateMemoryPressure(64.99), {
+        critical: false,
+        warning: false,
+      });
+      assertEquals(evaluateMemoryPressure(65), {
+        critical: false,
+        warning: true,
+      });
+    });
+
+    it("uses the critical threshold inclusively and reports a warning", () => {
+      assertEquals(DEFAULT_PROFILER_CRITICAL_THRESHOLD, 80);
+      assertEquals(evaluateMemoryPressure(80), {
+        critical: true,
+        warning: true,
+      });
+    });
+
+    it("reports a warning for critical pressure when warning is configured higher", () => {
+      assertEquals(
+        evaluateMemoryPressure(80, { warning: 90, critical: 80 }),
+        {
+          critical: true,
+          warning: true,
+        },
+      );
+    });
   });
 
   describe("setHeapWarningThreshold", () => {
@@ -264,17 +296,6 @@ describe("memory/profiler", () => {
 
     it("should handle stop when not started", () => {
       stopMemoryMonitoring();
-    });
-  });
-
-  describe("clearAllCaches", () => {
-    it("should not throw when no caches are registered", () => {
-      clearAllCaches();
-    });
-
-    it("should not throw when caches are registered", () => {
-      registerCache("test-cache", () => ({ name: "test-cache", entries: 5 }));
-      clearAllCaches();
     });
   });
 });

@@ -8,6 +8,7 @@ import {
   mapAgUiRuntimeMessagesToChatUiMessages,
   parseSseEvent,
 } from "./ag-ui.ts";
+import type { ChatUiMessageChunk } from "./protocol.ts";
 
 describe("chat/ag-ui", () => {
   it("keeps the public browser entrypoint off server-side data stream imports", async () => {
@@ -25,6 +26,10 @@ describe("chat/ag-ui", () => {
     assertEquals(parsed.id, 12);
     assertEquals(parsed.event, "Custom");
     assertEquals(parsed.data, '{"name":"alpha",\n"value":1}');
+    assertEquals(parseSseEvent("id:\ndata: empty").id, null);
+    assertEquals(parseSseEvent("id: -1\ndata: negative").id, null);
+    assertEquals(parseSseEvent("id: 1.5\ndata: fractional").id, null);
+    assertEquals(parseSseEvent("id: 0\ndata: valid").id, 0);
   });
 
   it("decodes AG-UI SSE chunks into canonical chat stream events", () => {
@@ -78,6 +83,7 @@ describe("chat/ag-ui", () => {
 
     assertEquals(result.events.map((entry) => entry.eventId), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     assertEquals(state.lastEventId, 10);
+    assertEquals(state.toolCalls.size, 0);
     assertEquals(result.remainder, "");
 
     const chatEvents = result.events.flatMap((entry) => entry.chatEvents);
@@ -144,6 +150,83 @@ describe("chat/ag-ui", () => {
       delta: "partial",
     }]);
     assertEquals(flushed.remainder, "");
+  });
+
+  it("preserves an SSE CRLF pair split across transport chunks", () => {
+    const state = createAgUiChatEventDecoderState();
+    const initial = decodeAgUiSseChunk(
+      state,
+      "event: TextMessageContent\r",
+    );
+
+    assertEquals(initial.events, []);
+
+    const completed = decodeAgUiSseChunk(
+      state,
+      '\ndata: {"messageId":"msg-1","contentId":"text:0","delta":"hello"}\r\n\r\n',
+    );
+
+    assertEquals(completed.events.length, 1);
+    assertEquals(completed.events[0]?.chatEvents, [{
+      type: "text-delta",
+      id: "msg-1",
+      contentId: "text:0",
+      delta: "hello",
+    }]);
+    assertEquals(completed.remainder, "");
+  });
+
+  it("bounds incomplete and individual SSE frames", () => {
+    assertThrows(
+      () => createAgUiChatEventDecoderState({ maxFrameChars: 0 }),
+      RangeError,
+      "maxFrameChars",
+    );
+
+    const incomplete = createAgUiChatEventDecoderState({ maxFrameChars: 8 });
+    assertThrows(
+      () => decodeAgUiSseChunk(incomplete, "123456789"),
+      RangeError,
+      "maximum frame size",
+    );
+
+    const complete = createAgUiChatEventDecoderState({ maxFrameChars: 8 });
+    assertThrows(
+      () => decodeAgUiSseChunk(complete, "123456789\n\n"),
+      RangeError,
+      "maximum frame size",
+    );
+  });
+
+  it("releases unfinished tool state when a run terminates", () => {
+    const state = createAgUiChatEventDecoderState();
+    decodeAgUiSseChunk(
+      state,
+      [
+        "event: ToolCallStart",
+        'data: {"toolCallId":"tool-1","toolCallName":"load_skill"}',
+        "",
+        "event: RunFinished",
+        "data: {}",
+        "",
+        "",
+      ].join("\n"),
+    );
+
+    assertEquals(state.toolCalls.size, 0);
+  });
+
+  it("exposes file metadata on the canonical UI chunk type", () => {
+    const chunk = {
+      type: "file",
+      url: "https://cdn.example.com/report.pdf",
+      mediaType: "application/pdf",
+      filename: "report.pdf",
+      size: 42,
+    } satisfies ChatUiMessageChunk;
+
+    assertEquals(chunk.filename, "report.pdf");
+    assertEquals(chunk.size, 42);
   });
 
   it("preserves AG-UI text content ids when decoding chat stream events", () => {
@@ -365,6 +448,31 @@ describe("chat/ag-ui", () => {
         providerExecuted: true,
       },
     ]);
+  });
+
+  it("parses complete JSON number grammar in serialized tool results", () => {
+    const state = createAgUiChatEventDecoderState();
+    const exponent = decodeAgUiSseChunk(
+      state,
+      'event: ToolCallResult\ndata: {"toolCallId":"tool-exponent","content":"1e3"}\n\n',
+    );
+    const leadingZero = decodeAgUiSseChunk(
+      state,
+      'event: ToolCallResult\ndata: {"toolCallId":"tool-leading-zero","content":"01"}\n\n',
+    );
+
+    assertEquals(exponent.events[0]?.chatEvents.at(-1), {
+      type: "tool-output-available",
+      toolCallId: "tool-exponent",
+      output: 1_000,
+      providerExecuted: true,
+    });
+    assertEquals(leadingZero.events[0]?.chatEvents.at(-1), {
+      type: "tool-output-available",
+      toolCallId: "tool-leading-zero",
+      output: "01",
+      providerExecuted: true,
+    });
   });
 
   it("retains decoded wire events alongside canonical chat events", () => {

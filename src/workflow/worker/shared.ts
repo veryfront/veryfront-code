@@ -1,8 +1,13 @@
 import { env as getProcessEnv } from "#veryfront/compat/process.ts";
+import { sanitizeTerminalDiagnosticText } from "#veryfront/errors/safe-diagnostics.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
+import { WorkflowClient } from "../api/workflow-client.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
+import type { StepExecutorConfig } from "../executor/step-executor.ts";
+import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
+import { reconcileWorkflowRunControl } from "../runtime/workflow-run-control.ts";
 import type { CapturedTenantContext, WorkflowRun } from "../types.ts";
 
 interface EntrypointLogger {
@@ -14,6 +19,27 @@ interface EntrypointLogger {
 interface EntrypointExitCodes {
   SUCCESS: number;
   WORKFLOW_FAILED: number;
+}
+
+/** Return the immutable worker owner assigned to this isolated run execution. */
+export function getRunExecutionWorkerId(): string | undefined {
+  const executionId = getEnv("RUN_EXECUTION_ID");
+  return executionId ? `run-execution:${executionId}` : undefined;
+}
+
+/** Create an isolated executor with durable approval handling and no background timer. */
+export function createIsolatedWorkflowExecutor(
+  backend: WorkflowBackend,
+  debug = false,
+  stepExecutor?: StepExecutorConfig,
+): WorkflowExecutor {
+  const client = new WorkflowClient({
+    backend,
+    debug,
+    executor: stepExecutor ? { stepExecutor } : undefined,
+    approval: { expirationCheckInterval: 0 },
+  });
+  return client.getExecutor();
 }
 
 export function getTenantFromEnv(): CapturedTenantContext | undefined {
@@ -42,6 +68,7 @@ export async function hydrateRunContextEnv(
   backend: WorkflowBackend,
   runId: string,
   run: WorkflowRun,
+  expectedWorkerId?: string,
 ): Promise<WorkflowRun> {
   const injectedEnv = mergeInjectedWorkflowEnv(run.context.env, getProcessEnv());
   if (!injectedEnv) {
@@ -54,14 +81,16 @@ export async function hydrateRunContextEnv(
     return run;
   }
 
-  await backend.updateRun(runId, {
-    context: {
-      ...run.context,
+  const outcome = await reconcileWorkflowRunControl({
+    backend,
+    operation: {
+      type: "hydrate-env",
+      run,
       env: injectedEnv,
+      expectedWorkerId,
     },
   });
-
-  return (await backend.getRun(runId)) ?? run;
+  return outcome.run ?? (await backend.getRun(runId)) ?? run;
 }
 
 export function getFinalRunExitCode(
@@ -71,26 +100,43 @@ export function getFinalRunExitCode(
   finalRun: WorkflowRun | null,
   debug = false,
 ): number {
+  const sanitizedRunId = sanitizeTerminalDiagnosticText(runId);
+
   switch (finalRun?.status) {
     case "completed":
       if (debug) {
-        logger.info(`Workflow completed successfully: ${runId}`);
+        logger.info(`Workflow completed successfully: ${sanitizedRunId}`);
       }
       return exitCodes.SUCCESS;
 
     case "failed":
-      logger.error(`Workflow failed: ${runId}`, finalRun.error);
+      logger.error(`Workflow failed: ${sanitizedRunId}`, finalRun.error);
       return exitCodes.WORKFLOW_FAILED;
 
     case "waiting":
       if (debug) {
-        logger.info(`Workflow paused (waiting): ${runId}`);
+        logger.info(`Workflow paused (waiting): ${sanitizedRunId}`);
       }
       return exitCodes.SUCCESS;
 
+    case "cancelled":
+      logger.warn(`Workflow was cancelled: ${sanitizedRunId}`);
+      return exitCodes.WORKFLOW_FAILED;
+
+    case "pending":
+    case "running":
+      logger.warn(
+        `Workflow did not reach a durable final state: ${finalRun.status} (runId: ${sanitizedRunId})`,
+      );
+      return exitCodes.WORKFLOW_FAILED;
+
     default:
-      logger.warn(`Unexpected final status: ${finalRun?.status}`);
-      return exitCodes.SUCCESS;
+      logger.warn(
+        finalRun
+          ? `Unexpected final status: ${finalRun.status} (runId: ${sanitizedRunId})`
+          : `Workflow run was not found after execution: ${sanitizedRunId}`,
+      );
+      return exitCodes.WORKFLOW_FAILED;
   }
 }
 
@@ -100,16 +146,18 @@ export async function failRunExecution(
   exitCodes: EntrypointExitCodes,
   runId: string,
   error: unknown,
+  expectedWorkerId?: string,
 ): Promise<number> {
   logger.error("Execution error:", error);
 
-  await backend.updateRun(runId, {
-    status: "failed",
-    error: {
-      message: `EXECUTION_ERROR: ${error instanceof Error ? error.message : String(error)}`,
-      stack: error instanceof Error ? error.stack : undefined,
+  await reconcileWorkflowRunControl({
+    backend,
+    operation: {
+      type: "fail-execution",
+      runId,
+      error,
+      expectedWorkerId,
     },
-    completedAt: new Date(),
   });
 
   return exitCodes.WORKFLOW_FAILED;

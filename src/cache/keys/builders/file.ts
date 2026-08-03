@@ -11,13 +11,12 @@ import { VERSION } from "#veryfront/utils/version.ts";
 import { CacheKeyPrefix, type FileOperationContext } from "../prefixes.ts";
 import { hashPathWithName } from "../utils.ts";
 import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
+import { encodeCacheSourceIdentity, type EncodedCacheSourceIdentity } from "../source-identity.ts";
 
-function getSourceTypeKey(sourceType: "branch" | "release" | "environment"): string {
-  return sourceType === "environment" ? "env" : sourceType;
-}
-
-function buildSourceQualifier(ctx: FileOperationContext): string {
-  if (ctx.sourceType === "branch") return ctx.branch ?? "main";
+function encodeFileSourceIdentity(ctx: FileOperationContext): EncodedCacheSourceIdentity {
+  if (ctx.sourceType === "branch") {
+    return encodeCacheSourceIdentity({ type: "branch", branch: ctx.branch ?? "main" });
+  }
 
   if (!ctx.releaseId) {
     throw CACHE_INVARIANT_VIOLATION.create({
@@ -25,9 +24,15 @@ function buildSourceQualifier(ctx: FileOperationContext): string {
     });
   }
 
-  if (ctx.sourceType === "release") return ctx.releaseId;
+  if (ctx.sourceType === "release") {
+    return encodeCacheSourceIdentity({ type: "release", releaseId: ctx.releaseId });
+  }
 
-  return `${ctx.environmentName}:${ctx.releaseId}`;
+  return encodeCacheSourceIdentity({
+    type: "environment",
+    environmentName: ctx.environmentName ?? "",
+    releaseId: ctx.releaseId,
+  });
 }
 
 function buildFileOperationPrefix(
@@ -36,9 +41,9 @@ function buildFileOperationPrefix(
   unknownKey: string,
 ): string {
   if (!ctx) return unknownKey;
-  return `${prefix}:${getSourceTypeKey(ctx.sourceType)}:${ctx.projectSlug}:${
-    buildSourceQualifier(ctx)
-  }`;
+  const source = encodeFileSourceIdentity(ctx);
+  const sourceTypeKey = source.type === "environment" ? "env" : source.type;
+  return `${prefix}:${sourceTypeKey}:${ctx.projectSlug}:${source.qualifier}`;
 }
 
 export function buildFileCacheKeyPrefix(ctx: FileOperationContext | null | undefined): string {
@@ -61,9 +66,47 @@ export function buildFileOperationCacheKey(prefix: string, path: string): string
   return `${prefix}:${path}`;
 }
 
-export function buildConfigCacheKey(projectIdOrDir: string, isVirtualFilesystem: boolean): string {
+export interface VirtualConfigSourceContext {
+  productionMode: boolean;
+  releaseId?: string | null;
+  branch?: string | null;
+  environmentName?: string | null;
+}
+
+function buildVirtualConfigSourceQualifier(context: VirtualConfigSourceContext): string {
+  if (!context.productionMode) {
+    const source = encodeCacheSourceIdentity({
+      type: "branch",
+      branch: context.branch ?? "main",
+    });
+    return `source:${source.key}`;
+  }
+
+  if (!context.releaseId) {
+    throw CACHE_INVARIANT_VIOLATION.create({
+      detail: "Virtual production config cache keys require a releaseId",
+    });
+  }
+
+  const source = context.environmentName
+    ? encodeCacheSourceIdentity({
+      type: "environment",
+      environmentName: context.environmentName,
+      releaseId: context.releaseId,
+    })
+    : encodeCacheSourceIdentity({ type: "release", releaseId: context.releaseId });
+  return `source:${source.key}`;
+}
+
+export function buildConfigCacheKey(
+  projectIdOrDir: string,
+  isVirtualFilesystem: boolean,
+  sourceContext?: VirtualConfigSourceContext,
+): string {
   const baseKey = isVirtualFilesystem
-    ? `${CacheKeyPrefix.CONFIG_VIRTUAL}:${projectIdOrDir}`
+    ? `${CacheKeyPrefix.CONFIG_VIRTUAL}:${projectIdOrDir}${
+      sourceContext ? `:${buildVirtualConfigSourceQualifier(sourceContext)}` : ""
+    }`
     : `${CacheKeyPrefix.CONFIG}:${hashPathWithName(projectIdOrDir)}`;
 
   return `${baseKey}:${VERSION}`;

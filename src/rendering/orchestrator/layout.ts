@@ -12,6 +12,11 @@ import { clearImportMapCache, preloadImportMap } from "#veryfront/modules/import
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import {
+  type DependencyPinningSourceInput,
+  resolveProjectReactVersion,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import type { ComponentRegistry } from "../ssr/component-registry.ts";
 
 const logger = rendererLogger.component("layout-orchestrator");
 
@@ -27,7 +32,14 @@ export interface LayoutOrchestratorConfig {
   layoutCollector: LayoutCollector;
   layoutCompiler: LayoutCompiler;
   layoutCache: LayoutComponentCache;
-  componentRegistry: MDXComponents;
+  componentRegistry: MDXComponents | ComponentRegistry;
+}
+
+function isSnapshotAwareComponentRegistry(
+  value: MDXComponents | ComponentRegistry,
+): value is ComponentRegistry {
+  return typeof (value as ComponentRegistry).prepareDependencySnapshot ===
+    "function";
 }
 
 export interface LayoutCollectionResult {
@@ -58,9 +70,33 @@ interface LayoutPreloadSummary {
 export class LayoutOrchestrator {
   private config: LayoutOrchestratorConfig;
   private _preloadedImportMap: ImportMapConfig | null = null;
+  private reactVersionPromise: Promise<string> | null = null;
 
   constructor(config: LayoutOrchestratorConfig) {
     this.config = config;
+  }
+
+  private getReactVersion(
+    dependencyPinningCacheKey?: string,
+    dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  ): Promise<string> {
+    if (
+      dependencyPinningDependencies !== undefined ||
+      dependencyPinningCacheKey?.startsWith("on:")
+    ) {
+      return resolveProjectReactVersion({
+        projectDir: this.config.projectDir,
+        config: this.config.config,
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies,
+      });
+    }
+
+    this.reactVersionPromise ??= resolveProjectReactVersion({
+      projectDir: this.config.projectDir,
+      config: this.config.config,
+    });
+    return this.reactVersionPromise;
   }
 
   getPreloadedImportMap(): ImportMapConfig | null {
@@ -90,7 +126,13 @@ export class LayoutOrchestrator {
     );
   }
 
-  preloadLayoutModules(nestedLayouts: LayoutItem[]): Promise<LayoutPreloadSummary> {
+  preloadLayoutModules(
+    nestedLayouts: LayoutItem[],
+    dependencyPinningCacheKey?: string,
+    dependencyPinningDependencies?: Readonly<Record<string, string>>,
+    dependencyPinningSource?: DependencyPinningSourceInput,
+    moduleServerOrigin?: string,
+  ): Promise<LayoutPreloadSummary> {
     return withSpan(
       "layout.preloadModules",
       async () => {
@@ -115,6 +157,11 @@ export class LayoutOrchestrator {
           };
         }
 
+        const reactVersion = await this.getReactVersion(
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+        );
+
         logger.debug("Preloading layout modules", {
           tsxCount: tsxLayouts.length,
           mdxCount: mdxLayouts.length,
@@ -131,6 +178,11 @@ export class LayoutOrchestrator {
                   this.config.projectDir,
                   this.config.adapter,
                   this.config.projectId,
+                  {
+                    projectDir: this.config.projectDir,
+                    contentSourceId: this.config.contentSourceId,
+                    config: this.config.config,
+                  },
                 );
                 this._preloadedImportMap = importMap;
                 return { type: "importMap" as const, success: true };
@@ -160,6 +212,12 @@ export class LayoutOrchestrator {
                   this.config.projectId,
                   this.config.projectSlug,
                   this.config.contentSourceId,
+                  reactVersion,
+                  undefined,
+                  dependencyPinningCacheKey,
+                  dependencyPinningDependencies,
+                  dependencyPinningSource,
+                  moduleServerOrigin,
                 );
                 return { type: "tsx" as const, path: componentPath, success: true };
               } catch (error) {
@@ -191,6 +249,12 @@ export class LayoutOrchestrator {
                   this.config.projectId,
                   this.config.projectSlug,
                   this.config.contentSourceId,
+                  reactVersion,
+                  dependencyPinningCacheKey,
+                  dependencyPinningDependencies,
+                  dependencyPinningSource,
+                  moduleServerOrigin,
+                  this.config.config,
                 );
                 return { type: "mdx" as const, path: layout.path, success: true };
               } catch (error) {
@@ -267,13 +331,34 @@ export class LayoutOrchestrator {
     frontmatter?: Record<string, unknown>,
     headings?: Array<{ id: string; text: string; level: number }>,
     projectSlug?: string,
+    clientPageIsland?: { clientLayoutPaths: readonly string[] },
+    pageProps?: Record<string, unknown>,
+    dependencyPinningCacheKey?: string,
+    dependencyPinningDependencies?: Readonly<Record<string, string>>,
+    dependencyPinningSource?: DependencyPinningSourceInput,
   ): Promise<React.ReactElement> {
     return withSpan(
       "layout.applyLayoutsAndWrappers",
       async () => {
+        const reactVersion = await this.getReactVersion(
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+        );
+        const registryComponents = isSnapshotAwareComponentRegistry(
+            this.config.componentRegistry,
+          )
+          ? this.config.componentRegistry.getAllAsComponents(
+            await this.config.componentRegistry.prepareDependencySnapshot(
+              dependencyPinningCacheKey,
+              dependencyPinningDependencies,
+              dependencyPinningSource,
+              requestUrl?.origin,
+            ),
+          )
+          : this.config.componentRegistry;
         const mergedComponents = {
           ...createDefaultMDXComponents(),
-          ...this.config.componentRegistry,
+          ...registryComponents,
         };
 
         const layoutApplicator = new LayoutApplicator({
@@ -291,7 +376,12 @@ export class LayoutOrchestrator {
           requestUrl,
           params,
           frontmatter,
+          pageProps,
           headings,
+          reactVersion,
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+          dependencyPinningSource,
         });
 
         const pageType = pageElement.type;
@@ -305,6 +395,7 @@ export class LayoutOrchestrator {
           layoutBundle,
           nestedLayouts,
           layoutDataMap,
+          clientPageIsland,
         );
 
         const resultType = result.type;

@@ -3,25 +3,37 @@
  * Computes depsHash for transform cache keys.
  */
 
-import { computeHash } from "#veryfront/utils";
+import { computeHash, logger as baseLogger } from "#veryfront/utils";
 import { parseAllImports } from "#veryfront/transforms/import-rewriter/parse-cache.ts";
+
+const logger = baseLogger.component("dependency-graph");
 
 export class DependencyGraph {
   private dependencies = new Map<string, Set<string>>();
   private dependents = new Map<string, Set<string>>();
 
   addModule(filePath: string, dependencies: string[]): void {
-    const deps = this.dependencies.get(filePath) ?? new Set<string>();
+    // REPLACE the dependency set rather than unioning: when a module is edited
+    // and re-added, imports it no longer has must be dropped, otherwise removed
+    // edges linger and invalidation is computed against stale dependencies.
+    const nextDeps = new Set(dependencies);
 
-    for (const dep of dependencies) {
-      deps.add(dep);
+    const prevDeps = this.dependencies.get(filePath);
+    if (prevDeps) {
+      for (const oldDep of prevDeps) {
+        if (!nextDeps.has(oldDep)) {
+          this.dependents.get(oldDep)?.delete(filePath);
+        }
+      }
+    }
 
+    for (const dep of nextDeps) {
       const depsOfDep = this.dependents.get(dep) ?? new Set<string>();
       depsOfDep.add(filePath);
       this.dependents.set(dep, depsOfDep);
     }
 
-    this.dependencies.set(filePath, deps);
+    this.dependencies.set(filePath, nextDeps);
   }
 
   getDirectDependencies(filePath: string): string[] {
@@ -46,6 +58,19 @@ export class DependencyGraph {
     visited.delete(filePath);
 
     return Array.from(visited);
+  }
+
+  removeModule(filePath: string): void {
+    const previousDeps = this.dependencies.get(filePath);
+    if (previousDeps) {
+      for (const dep of previousDeps) {
+        const dependents = this.dependents.get(dep);
+        dependents?.delete(filePath);
+        if (dependents?.size === 0) this.dependents.delete(dep);
+      }
+    }
+
+    this.dependencies.delete(filePath);
   }
 
   wouldCreateCycle(from: string, to: string): boolean {
@@ -136,6 +161,29 @@ export function createDependencyHashCache(): DependencyHashCache {
   };
 }
 
+export function invalidateDependencyHashCache(
+  cache: DependencyHashCache,
+  changedPaths: Iterable<string>,
+): number {
+  const modulesToInvalidate = new Set<string>();
+
+  for (const changedPath of changedPaths) {
+    modulesToInvalidate.add(changedPath);
+    for (const dependent of cache.graph.getDependents(changedPath)) {
+      modulesToInvalidate.add(dependent);
+    }
+  }
+
+  for (const filePath of modulesToInvalidate) {
+    cache.completedModules.delete(filePath);
+    cache.contentHashes.delete(filePath);
+    cache.inProgressModules.delete(filePath);
+    cache.graph.removeModule(filePath);
+  }
+
+  return modulesToInvalidate.size;
+}
+
 export async function extractImports(code: string): Promise<string[]> {
   const parsed = await parseAllImports(code);
   return parsed.imports.map((imp) => imp.specifier);
@@ -163,7 +211,7 @@ export function normalizeSpecifierToPath(
   projectDir: string,
 ): string {
   if (specifier.startsWith("@/")) {
-    return normalizeExtension(`${projectDir}/${specifier.slice(2)}`);
+    return normalizeDependencyPath(`${projectDir}/${specifier.slice(2)}`, fromFile);
   }
 
   if (specifier.startsWith("./") || specifier.startsWith("../")) {
@@ -175,14 +223,26 @@ export function normalizeSpecifierToPath(
       else if (part !== ".") parts.push(part);
     }
 
-    return normalizeExtension(`/${parts.join("/")}`);
+    return normalizeDependencyPath(`/${parts.join("/")}`, fromFile);
   }
 
   if (specifier.startsWith("file://")) {
-    return normalizeExtension(specifier.slice(7));
+    return normalizeDependencyPath(specifier.slice(7), fromFile);
   }
 
   return specifier;
+}
+
+function normalizeDependencyPath(path: string, fromFile: string): string {
+  if (
+    fromFile.endsWith(".src") &&
+    !path.endsWith(".src") &&
+    /\.(?:[cm]?[jt]sx?|mdx?)$/.test(path)
+  ) {
+    return `${path}.src`;
+  }
+
+  return normalizeExtension(path);
 }
 
 function normalizeExtension(path: string): string {
@@ -217,7 +277,11 @@ async function enqueueDependencyGraphBuild(
   build: () => Promise<void>,
 ): Promise<void> {
   const queuedBuild = cache.buildQueue.then(build);
-  cache.buildQueue = queuedBuild.catch(() => {});
+  // Keep the queue chain alive for the next enqueue even if this build rejects,
+  // but log rather than silently swallowing so build failures are observable.
+  cache.buildQueue = queuedBuild.catch((error) => {
+    logger.debug("Dependency graph build failed", { error });
+  });
   await queuedBuild;
 }
 
@@ -230,6 +294,14 @@ async function buildDependencyGraph(
 ): Promise<void> {
   if (cache.completedModules.has(filePath)) return;
   if (visited.has(filePath)) return;
+  // NOTE: a completed module whose file is edited in place while the SAME cache
+  // is reused keeps its stale content hash here. That staleness must be resolved
+  // by evicting the edited file (and its dependents) from the cache at the
+  // watch/transform layer on the edit event — NOT by re-reading every completed
+  // module on each traversal, which would defeat cross-root read de-duplication.
+  // The stale-EDGE half of that hazard is handled in addModule() above, which
+  // replaces (rather than unions) a module's dependency set when it is re-added.
+
   visited.add(filePath);
 
   const inProgress = cache.inProgressModules.get(filePath);
@@ -261,26 +333,43 @@ async function buildDependencyGraphFresh(
   projectDir: string,
   visited: Set<string>,
 ): Promise<void> {
+  let content: string;
   try {
-    const content = await getContent(filePath);
-    cache.contentHashes.set(filePath, await computeHash(content));
+    content = await getContent(filePath);
+  } catch (error) {
+    // A read failure may be transient (e.g., the file is mid-write during a hot
+    // reload). Record an empty dependency set for this traversal but do NOT mark
+    // the module completed, so the next computeDepsHash call re-scans it instead
+    // of permanently serving a wrong/empty dependency hash until process restart.
+    cache.graph.addModule(filePath, []);
+    logger.debug("Dependency read failed; will re-scan on next build", { filePath, error });
+    return;
+  }
 
+  cache.contentHashes.set(filePath, await computeHash(content));
+
+  let normalizedDeps: string[];
+  try {
     const allImports = await extractImports(content);
-    const normalizedDeps = filterLocalImports(allImports).map((spec) =>
+    normalizedDeps = filterLocalImports(allImports).map((spec) =>
       normalizeSpecifierToPath(spec, filePath, projectDir)
     );
-
-    cache.graph.addModule(filePath, normalizedDeps);
-
-    await Promise.all(
-      normalizedDeps.map((dep) =>
-        buildDependencyGraph(dep, cache, getContent, projectDir, visited)
-      ),
-    );
-  } catch (_) {
-    // expected: file may not exist or imports may fail to parse
+  } catch (error) {
+    // A parse failure is deterministic for this exact content, so recording empty
+    // deps and marking completed is safe — re-parsing identical bytes would fail
+    // the same way. (If the file later changes, its content hash changes and the
+    // transform cache key changes regardless.)
     cache.graph.addModule(filePath, []);
-  } finally {
     cache.completedModules.add(filePath);
+    logger.debug("Dependency parse failed", { filePath, error });
+    return;
   }
+
+  cache.graph.addModule(filePath, normalizedDeps);
+
+  await Promise.all(
+    normalizedDeps.map((dep) => buildDependencyGraph(dep, cache, getContent, projectDir, visited)),
+  );
+
+  cache.completedModules.add(filePath);
 }

@@ -3,10 +3,37 @@ import "#veryfront/schemas/_test-setup.ts";
  * Tests for MCP deploy tool
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertMatch } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { triggerDeploy, vfTriggerDeploy } from "./deploy-tool.ts";
+import { createDeployProject, type DeployProject } from "../../shared/deployment/deploy-project.ts";
+import {
+  createPushedProject,
+  InMemoryDeployControlPlane,
+  PROJECT_SLUG,
+  withDeployEnv,
+  withFetchStub,
+} from "../../test-utils/deploy-test-support.ts";
+
+function toolDeployProject(controlPlane: InMemoryDeployControlPlane): DeployProject {
+  return createDeployProject({
+    polling: {
+      assetManifestPollIntervalMs: 1,
+      assetManifestTimeoutMs: 100,
+      environmentPollIntervalMs: 1,
+      environmentTimeoutMs: 1_000,
+    },
+    controlPlaneFactory: () => controlPlane,
+  });
+}
+
+function throwingDeployProject(error: unknown): DeployProject {
+  return {
+    execute() {
+      return Promise.reject(error);
+    },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Tool definition (shape)
@@ -126,230 +153,181 @@ describe("mcp/tools/deploy-tool", () => {
 
   describe("triggerDeploy auth error", () => {
     it("returns structured error when VERYFRONT_API_TOKEN is not set", async () => {
-      const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
-      try {
-        Deno.env.delete("VERYFRONT_API_TOKEN");
+      const result = await withDeployEnv(
+        () =>
+          triggerDeploy({
+            projectSlug: "my-app",
+            environment: "production",
+            branch: "main",
+          }),
+        { VERYFRONT_API_TOKEN: null },
+      );
 
-        const result = await triggerDeploy({
-          projectSlug: "my-app",
-          environment: "production",
-          branch: "main",
-        });
-
-        assertEquals(result.success, false);
-        assertEquals(
-          result.error,
-          "Not authenticated. Run 'veryfront login' first.",
-        );
-      } finally {
-        if (originalToken !== undefined) {
-          Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
-        } else {
-          Deno.env.delete("VERYFRONT_API_TOKEN");
-        }
-      }
+      assertEquals(result.success, false);
+      if (result.success) throw new Error("unreachable");
+      assertEquals(
+        result.error,
+        "Not authenticated. Run 'veryfront login' first.",
+      );
     });
   });
 
   // ---------------------------------------------------------------------------
-  // Happy path with mock fetch
+  // Deploy Execution (real module over the fake control plane)
   // ---------------------------------------------------------------------------
 
   describe("triggerDeploy happy path", () => {
-    it("creates release and deployment, returns structured result", async () => {
-      const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
-      try {
-        Deno.env.set("VERYFRONT_API_TOKEN", "test-token-abc");
+    it("returns deployment evidence with the live URL after a verified deploy", async () => {
+      await withDeployEnv(async () => {
+        const { projectDir } = await createPushedProject();
+        const controlPlane = new InMemoryDeployControlPlane();
+        let readinessProbes = 0;
+        try {
+          const result = await withFetchStub(
+            () => {
+              readinessProbes++;
+              return new Response("ready");
+            },
+            () =>
+              triggerDeploy(
+                { projectSlug: PROJECT_SLUG, environment: "production", branch: "main" },
+                { projectDir, deployProject: toolDeployProject(controlPlane) },
+              ),
+          );
 
-        const capturedRequests: { method: string; url: string }[] = [];
-
-        const result = await withMockFetch(
-          async (input: string | URL | Request, init?: RequestInit) => {
-            const request = input instanceof Request ? input : new Request(input, init);
-            const url = request.url;
-            const method = request.method;
-            capturedRequests.push({ method, url });
-
-            // GET /projects/my-app/environments
-            if (method === "GET" && url.includes("/environments")) {
-              return Response.json({
-                data: [
-                  { id: "env-1", name: "production", protected: true },
-                  { id: "env-2", name: "staging", protected: false },
-                ],
-              });
-            }
-
-            // POST /projects/my-app/releases
-            if (method === "POST" && url.includes("/releases")) {
-              return Response.json({
-                id: "rel-42",
-                name: "Release 42",
-                version: "v1.0.42",
-                export_status: "completed",
-                build_status: "completed",
-                deploy_status: "pending",
-              });
-            }
-
-            // POST /projects/my-app/deployments
-            if (method === "POST" && url.includes("/deployments")) {
-              return Response.json({
-                id: "deploy-99",
-                release: "rel-42",
-                environment: "env-1",
-              });
-            }
-
-            return new Response("Not Found", { status: 404 });
-          },
-          async () =>
-            await triggerDeploy({
-              projectSlug: "my-app",
-              environment: "production",
-              branch: "main",
-            }),
-        );
-
-        assertEquals(result.success, true);
-        assertEquals(result.deploymentId, "deploy-99");
-        assertEquals(result.release, {
-          id: "rel-42",
-          name: "Release 42",
-          version: "v1.0.42",
-        });
-        assertEquals(result.environment, {
-          id: "env-1",
-          name: "production",
-        });
-
-        // Verify correct API calls were made
-        assertEquals(capturedRequests.length, 3);
-        assertEquals(capturedRequests[0].method, "GET");
-        assertEquals(capturedRequests[0].url.includes("/environments"), true);
-        assertEquals(capturedRequests[1].method, "POST");
-        assertEquals(capturedRequests[1].url.includes("/releases"), true);
-        assertEquals(capturedRequests[2].method, "POST");
-        assertEquals(capturedRequests[2].url.includes("/deployments"), true);
-      } finally {
-        if (originalToken !== undefined) {
-          Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
-        } else {
-          Deno.env.delete("VERYFRONT_API_TOKEN");
+          assertEquals(result.success, true, "verified deploy should succeed");
+          if (!result.success) throw new Error("unreachable");
+          assertEquals(result.deploymentId, "deployment-1", "deployment evidence returned");
+          assertEquals(result.projectSlug, PROJECT_SLUG, "canonical project slug returned");
+          assertEquals(result.release.id, "release-1", "release evidence returned");
+          assertMatch(result.url, /^https:\/\//, "live URL returned");
+          assertEquals(
+            controlPlane.deploymentReadCount >= 1,
+            true,
+            "deployment verification must run before success",
+          );
+          assertEquals(
+            readinessProbes >= 1,
+            true,
+            "environment readiness must be probed before success",
+          );
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
         }
-      }
+      });
+    });
+
+    it("targets the requested project slug instead of local configuration", async () => {
+      await withDeployEnv(async () => {
+        const { projectDir } = await createPushedProject();
+        const controlPlane = new InMemoryDeployControlPlane();
+        try {
+          const result = await withFetchStub(
+            () => new Response("ready"),
+            () =>
+              triggerDeploy(
+                { projectSlug: "other-project", environment: "production", branch: "main" },
+                { projectDir, deployProject: toolDeployProject(controlPlane) },
+              ),
+          );
+
+          assertEquals(result.success, true, "request-scoped deploy should succeed");
+          assertEquals(
+            controlPlane.projectLookups[0],
+            "other-project",
+            "project lookup must use the tool input slug",
+          );
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
     });
   });
-
-  // ---------------------------------------------------------------------------
-  // Environment not found
-  // ---------------------------------------------------------------------------
 
   describe("triggerDeploy environment not found", () => {
     it("returns structured error when environment does not exist", async () => {
-      const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
-      try {
-        Deno.env.set("VERYFRONT_API_TOKEN", "test-token-abc");
+      await withDeployEnv(async () => {
+        const { projectDir } = await createPushedProject();
+        const controlPlane = new InMemoryDeployControlPlane();
+        controlPlane.environment = null;
+        try {
+          const result = await withFetchStub(
+            () => new Response("ready"),
+            () =>
+              triggerDeploy(
+                { projectSlug: PROJECT_SLUG, environment: "missing", branch: "main" },
+                { projectDir, deployProject: toolDeployProject(controlPlane) },
+              ),
+          );
 
-        const result = await withMockFetch(
-          async (input: string | URL | Request, init?: RequestInit) => {
-            const request = input instanceof Request ? input : new Request(input, init);
-
-            if (request.method === "GET" && request.url.includes("/environments")) {
-              return Response.json({ data: [] });
-            }
-
-            return new Response("Not Found", { status: 404 });
-          },
-          async () =>
-            await triggerDeploy({
-              projectSlug: "my-app",
-              environment: "nonexistent",
-              branch: "main",
-            }),
-        );
-
-        assertEquals(result.success, false);
-        assertEquals(result.error, 'Environment "nonexistent" not found.');
-      } finally {
-        if (originalToken !== undefined) {
-          Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
-        } else {
-          Deno.env.delete("VERYFRONT_API_TOKEN");
+          assertEquals(result.success, false, "missing environment must fail");
+          if (result.success) throw new Error("unreachable");
+          assertMatch(result.error, /[Ee]nvironment/, "failure reason surfaced");
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
         }
-      }
+      });
     });
   });
 
   // ---------------------------------------------------------------------------
-  // API error handling
+  // Error mapping (tool envelope over Deploy Execution failures)
   // ---------------------------------------------------------------------------
 
   describe("triggerDeploy API error", () => {
     it("returns structured error on API failure", async () => {
-      const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
-      try {
-        Deno.env.set("VERYFRONT_API_TOKEN", "test-token-abc");
-
-        const result = await withMockFetch(
-          async () =>
-            Response.json(
-              { error: "forbidden", message: "Access denied" },
-              { status: 403 },
+      const result = await withDeployEnv(() =>
+        triggerDeploy(
+          { projectSlug: "my-app", environment: "production", branch: "main" },
+          {
+            deployProject: throwingDeployProject(
+              Object.assign(new Error("Access denied"), { status: 403 }),
             ),
-          async () =>
-            await triggerDeploy({
-              projectSlug: "my-app",
-              environment: "production",
-              branch: "main",
-            }),
-        );
+          },
+        )
+      );
 
-        assertEquals(result.success, false);
-        assertExists(result.error);
-      } finally {
-        if (originalToken !== undefined) {
-          Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
-        } else {
-          Deno.env.delete("VERYFRONT_API_TOKEN");
-        }
-      }
+      assertEquals(result.success, false);
+      if (result.success) throw new Error("unreachable");
+      assertExists(result.error);
     });
 
-    it("returns auth error on 401 response", async () => {
-      const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
-      try {
-        Deno.env.set("VERYFRONT_API_TOKEN", "invalid-token");
-
-        const result = await withMockFetch(
-          async () =>
-            Response.json(
-              {
-                error: "unauthorized",
-                message: "API request failed: 401 Unauthorized",
-              },
-              { status: 401 },
+    it("returns auth error on 401 failures", async () => {
+      const result = await withDeployEnv(() =>
+        triggerDeploy(
+          { projectSlug: "my-app", environment: "production", branch: "main" },
+          {
+            deployProject: throwingDeployProject(
+              Object.assign(new Error("API request failed: 401 Unauthorized"), {
+                status: 401,
+              }),
             ),
-          async () =>
-            await triggerDeploy({
-              projectSlug: "my-app",
-              environment: "production",
-              branch: "main",
-            }),
-        );
+          },
+        )
+      );
 
-        assertEquals(result.success, false);
-        assertEquals(
-          result.error,
-          "Not authenticated. Run 'veryfront login' first.",
-        );
-      } finally {
-        if (originalToken !== undefined) {
-          Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
-        } else {
-          Deno.env.delete("VERYFRONT_API_TOKEN");
-        }
-      }
+      assertEquals(result.success, false);
+      if (result.success) throw new Error("unreachable");
+      assertEquals(
+        result.error,
+        "Not authenticated. Run 'veryfront login' first.",
+      );
+    });
+
+    it("does not treat 401 digits embedded in another error as an auth failure", async () => {
+      const sourceError =
+        "Release rel-42 source does not match pushed commit abc401def0000000000000000000000000000000";
+
+      const result = await withDeployEnv(() =>
+        triggerDeploy(
+          { projectSlug: "my-app", environment: "production", branch: "main" },
+          { deployProject: throwingDeployProject(new Error(sourceError)) },
+        )
+      );
+
+      assertEquals(result.success, false);
+      if (result.success) throw new Error("unreachable");
+      assertEquals(result.error, sourceError);
     });
   });
 });

@@ -41,7 +41,7 @@
   ],
   "tools": [
     {
-      "id": "list_deals",
+      "id": "pipedrive__list_deals",
       "name": "List Deals",
       "description": "List deals in the Pipedrive account",
       "requiresWrite": false,
@@ -125,7 +125,7 @@
       }
     },
     {
-      "id": "get_deal",
+      "id": "pipedrive__get_deal",
       "name": "Get Deal",
       "description": "Get full details of a Pipedrive deal",
       "requiresWrite": false,
@@ -146,7 +146,7 @@
       }
     },
     {
-      "id": "create_deal",
+      "id": "pipedrive__create_deal",
       "name": "Create Deal",
       "description": "Create a new deal in Pipedrive",
       "requiresWrite": true,
@@ -191,7 +191,7 @@
       }
     },
     {
-      "id": "update_deal",
+      "id": "pipedrive__update_deal",
       "name": "Update Deal",
       "description": "Update fields on an existing Pipedrive deal",
       "requiresWrite": true,
@@ -230,7 +230,7 @@
       }
     },
     {
-      "id": "list_persons",
+      "id": "pipedrive__list_persons",
       "name": "List Persons",
       "description": "List persons (contacts) in the Pipedrive account",
       "requiresWrite": false,
@@ -262,7 +262,7 @@
       }
     },
     {
-      "id": "create_person",
+      "id": "pipedrive__create_person",
       "name": "Create Person",
       "description": "Create a new person (contact) in Pipedrive",
       "requiresWrite": true,
@@ -294,7 +294,7 @@
       }
     },
     {
-      "id": "list_organizations",
+      "id": "pipedrive__list_organizations",
       "name": "List Organizations",
       "description": "List organizations in the Pipedrive account",
       "requiresWrite": false,

@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_inquiries",
+      "id": "persona__list_inquiries",
       "name": "List Inquiries",
       "description": "List Persona inquiries for KYC and onboarding review",
       "requiresWrite": false,
@@ -49,7 +49,7 @@
       }
     },
     {
-      "id": "get_inquiry",
+      "id": "persona__get_inquiry",
       "name": "Get Inquiry",
       "description": "Get a Persona inquiry by ID",
       "requiresWrite": false,
@@ -67,7 +67,7 @@
       }
     },
     {
-      "id": "approve_inquiry",
+      "id": "persona__approve_inquiry",
       "name": "Approve Inquiry",
       "description": "Approve a Persona inquiry after compliance review",
       "requiresWrite": true,
@@ -85,7 +85,7 @@
       }
     },
     {
-      "id": "decline_inquiry",
+      "id": "persona__decline_inquiry",
       "name": "Decline Inquiry",
       "description": "Decline a Persona inquiry after compliance review",
       "requiresWrite": true,

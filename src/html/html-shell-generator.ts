@@ -1,14 +1,9 @@
 import type { ComponentProps, RenderMetadata } from "#veryfront/types";
-import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolver.ts";
+import { isAbsolute, resolve } from "#veryfront/platform/compat/path/index.ts";
+import { profilePhase, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import { profilePhase } from "#veryfront/observability/request-profiler.ts";
-import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import { serverLogger } from "#veryfront/utils";
 import { isMarkdownPreview as checkMarkdownPreview } from "#veryfront/transforms/md/utils.ts";
-import {
-  generateModulePreloadHintsFromManifest,
-  getRouteManifest,
-} from "#veryfront/modules/manifest/route-module-manifest.ts";
 import {
   getReadyManifestForRenderAsync,
   isReleaseAssetManifestEnabled,
@@ -25,6 +20,7 @@ import { routeForPage } from "#veryfront/release-assets/route-path.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { buildNonceAttribute, escapeHTML } from "./html-escape.ts";
+import { HEAD_SHELL_PROVENANCE_ATTRIBUTE } from "./managed-head-protocol.ts";
 import {
   generateHydrationData,
   getDevScripts,
@@ -40,12 +36,14 @@ import {
 } from "./styles-builder/index.ts";
 import type { HTMLGenerationOptions } from "./types.ts";
 import { buildImportMap, buildRootAttributes, shouldDisableLayout } from "./utils.ts";
+import { appendDependencyPinningPathKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 
 function pathToModuleUrl(
   path: string,
   studioEmbed?: boolean,
   manifest?: ReleaseAssetManifest | null,
   fallbackReleaseId?: string,
+  dependencyPinningCacheKey?: string,
 ): string {
   if (!path) return "";
 
@@ -61,8 +59,12 @@ function pathToModuleUrl(
     ? `/_vf_modules/${path}.js`
     : `/_vf_modules/${withExtReplaced}`;
 
-  if (studioEmbed) return `${urlBase}?studio_embed=true`;
-  return fallbackReleaseId ? appendReleaseModuleVersion(urlBase, fallbackReleaseId) : urlBase;
+  const moduleUrl = studioEmbed
+    ? `${urlBase}?studio_embed=true`
+    : fallbackReleaseId
+    ? appendReleaseModuleVersion(urlBase, fallbackReleaseId)
+    : urlBase;
+  return appendDependencyPinningPathKey(moduleUrl, dependencyPinningCacheKey);
 }
 
 function appendReleaseModuleVersion(url: string, releaseId: string): string {
@@ -83,7 +85,13 @@ function getRelativePagePath(
   const normalized = fullPath.replace(/\\/g, "/");
   if (!projectDir) return normalized.replace(/^\//, "");
 
-  return resolveRelativePath(normalized, projectDir);
+  const projectRoot = resolve(projectDir).replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+  const candidate = resolve(isAbsolute(normalized) ? normalized : `${projectRoot}/${normalized}`)
+    .replace(/\\/g, "/");
+  const projectPrefix = projectRoot.endsWith("/") ? projectRoot : `${projectRoot}/`;
+
+  if (!candidate.startsWith(projectPrefix)) return "";
+  return candidate.slice(projectPrefix.length);
 }
 
 type ProjectCSSResult = Awaited<ReturnType<typeof getProjectCSS>> | null;
@@ -110,13 +118,21 @@ function generateModulePreloadHints(
 
   function addHint(moduleUrl: string): void {
     if (!moduleUrl || addedUrls.has(moduleUrl)) return;
-    hints.push(`<link rel="modulepreload" href="${moduleUrl}">`);
+    hints.push(`<link rel="modulepreload" href="${escapeHTML(moduleUrl)}">`);
     addedUrls.add(moduleUrl);
   }
 
   if (options.pagePath) {
     const relativePath = getRelativePagePath(options.pagePath, projectDir);
-    addHint(pathToModuleUrl(relativePath, studioEmbed, releaseManifest, fallbackReleaseId));
+    addHint(
+      pathToModuleUrl(
+        relativePath,
+        studioEmbed,
+        releaseManifest,
+        fallbackReleaseId,
+        options.dependencyPinningCacheKey,
+      ),
+    );
   }
 
   for (const layout of options.nestedLayouts ?? []) {
@@ -124,7 +140,15 @@ function generateModulePreloadHints(
     if (!layoutPath) continue;
 
     const relativePath = getRelativePagePath(layoutPath, projectDir);
-    addHint(pathToModuleUrl(relativePath, studioEmbed, releaseManifest, fallbackReleaseId));
+    addHint(
+      pathToModuleUrl(
+        relativePath,
+        studioEmbed,
+        releaseManifest,
+        fallbackReleaseId,
+        options.dependencyPinningCacheKey,
+      ),
+    );
   }
 
   // Skip manifest-based preloads in preview/studio-embed mode:
@@ -138,11 +162,6 @@ function generateModulePreloadHints(
     ? getRelativePagePath(options.pagePath, projectDir)
     : "";
   const releaseManifestRoute = relativePagePath ? routeForPage(relativePagePath) ?? "" : "";
-  const legacyModuleManifestRoute = relativePagePath
-    ? relativePagePath
-      .replace(/\.(tsx|ts|jsx|mdx)$/, "")
-      .replace(/^pages\//, "")
-    : "";
 
   // Manifest-covered routes: preload the full closure from the manifest.
   if (releaseManifest) {
@@ -150,27 +169,6 @@ function generateModulePreloadHints(
       addHint(url);
     }
     return hints.join("\n  ");
-  }
-
-  const projectSlug = options.projectSlug ?? options.projectId;
-  const manifest = getRouteManifest(projectSlug, legacyModuleManifestRoute);
-  if (!manifest || manifest.renderCount <= 0) return hints.join("\n  ");
-
-  for (
-    const hint of generateModulePreloadHintsFromManifest(
-      projectSlug,
-      legacyModuleManifestRoute,
-      50,
-    )
-  ) {
-    const rawHref = hint.match(/href="([^"]+)"/)?.[1];
-    const href = rawHref && fallbackReleaseId && rawHref.startsWith("/_vf_modules/")
-      ? appendReleaseModuleVersion(rawHref, fallbackReleaseId)
-      : rawHref;
-    if (!href || addedUrls.has(href)) continue;
-
-    hints.push(href === rawHref ? hint : hint.replace(/href="([^"]+)"/, `href="${href}"`));
-    addedUrls.add(href);
   }
 
   return hints.join("\n  ");
@@ -183,6 +181,7 @@ export function generateHTMLShellParts(
   props?: ComponentProps,
   contentForTailwind?: string,
   projectCSSPromise?: Promise<ProjectCSSResult>,
+  hydrationDataOverrides?: { managedHeadPayload?: string },
 ): Promise<{ start: string; end: string }> {
   return withSpan(
     SpanNames.HTML_GENERATE_SHELL_PARTS,
@@ -194,6 +193,7 @@ export function generateHTMLShellParts(
         props,
         contentForTailwind,
         projectCSSPromise,
+        hydrationDataOverrides,
       ),
     {
       "html.slug": meta.slug || "",
@@ -211,6 +211,7 @@ async function generateHTMLShellPartsImpl(
   props?: ComponentProps,
   contentForTailwind?: string,
   prefetchedProjectCSSPromise?: Promise<ProjectCSSResult>,
+  hydrationDataOverrides?: { managedHeadPayload?: string },
 ): Promise<{ start: string; end: string }> {
   const stylesheetContent = options.globalCSS;
 
@@ -242,6 +243,7 @@ async function generateHTMLShellPartsImpl(
     styleTags,
     lang,
     bodyClass,
+    managedHeadPayload,
   } = processMetadata(meta);
 
   const noLayout = shouldDisableLayout(meta.frontmatter);
@@ -272,6 +274,9 @@ async function generateHTMLShellPartsImpl(
   const importMapPromise = buildImportMap({
     projectDir: options.projectDir,
     config: options.config,
+    moduleServerOrigin: options.moduleServerOrigin,
+    dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+    dependencyPinningDependencies: options.dependencyPinningDependencies,
     customImports: options.importMap,
     pretty: useDevScripts,
     releaseAssetManifest: releaseManifest,
@@ -282,7 +287,10 @@ async function generateHTMLShellPartsImpl(
     params ?? {},
     props ?? {},
     { ...options, releaseAssetManifest: releaseManifest },
-    { pretty: useDevScripts },
+    {
+      pretty: useDevScripts,
+      managedHeadPayload: hydrationDataOverrides?.managedHeadPayload ?? managedHeadPayload,
+    },
   );
 
   const nonce = options.nonce ?? "";
@@ -304,7 +312,7 @@ async function generateHTMLShellPartsImpl(
   // jsx-runtime is discovered late (only when modules execute), adding ~500ms latency.
   const jsxRuntimeUrl = importMap.imports["react/jsx-runtime"];
   const criticalDepsPreload = jsxRuntimeUrl
-    ? `<link rel="modulepreload" href="${jsxRuntimeUrl}">`
+    ? `<link rel="modulepreload" href="${escapeHTML(jsxRuntimeUrl)}">`
     : "";
   const prodHydrationModulePreload = useDevScripts
     ? ""
@@ -400,10 +408,10 @@ async function generateHTMLShellPartsImpl(
   const start = `<!DOCTYPE html>
 <html ${htmlAttrs}>
 <head>
+  ${metaTags}
   ${hydrationErrorSuppression}
   ${themePersistenceScript}
-  ${metaTags}
-  <title>${escapeHTML(effectiveTitle)}</title>
+  <title ${HEAD_SHELL_PROVENANCE_ATTRIBUTE}="true">${escapeHTML(effectiveTitle)}</title>
 
   <!-- Import map for ESM module resolution -->
   <script type="importmap"${nonceAttr}>
@@ -425,6 +433,11 @@ async function generateHTMLShellPartsImpl(
   ${slugForOverlay}
 </head>
 <body${bodyClass ? ` class="${escapeHTML(bodyClass)}"` : ""} suppressHydrationWarning>
+  <!-- Server-owned hydration metadata; this must remain the first body element. -->
+  <script id="veryfront-hydration-data" type="application/json"${nonceAttr}>
+  ${hydrationDataJson}
+  </script>
+
   <div ${rootAttributes}>`;
 
   const relativePagePath = getRelativePagePath(options.pagePath, options.projectDir);
@@ -462,11 +475,6 @@ mermaid.run();
 
   const end = `</div>
   <div id="veryfront-portals"></div>
-
-  <!-- Hydration metadata for component tree reconstruction -->
-  <script id="veryfront-hydration-data" type="application/json"${nonceAttr}>
-  ${hydrationDataJson}
-  </script>
 
   ${scriptTags}
   ${modeScripts}

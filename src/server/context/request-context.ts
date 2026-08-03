@@ -9,15 +9,38 @@ export interface RequestContext {
   mode: "preview" | "production";
 }
 
-export function createRequestContext(req: Request): RequestContext {
-  const effectiveHost = getEffectiveRequestHost(req);
+export interface CreateRequestContextOptions {
+  /** Whether the request has already passed the proxy trust check. */
+  proxyTrusted?: boolean;
+  /**
+   * Whether a missing request credential may use the standalone host API
+   * token. Shared proxy requests must set this to false so attacker-selected
+   * project identity is never combined with a host credential.
+   */
+  allowHostTokenFallback?: boolean;
+}
+
+export function createRequestContext(
+  req: Request,
+  options: CreateRequestContextOptions = {},
+): RequestContext {
+  // x-forwarded-host is only trustworthy when the operator has explicitly opted
+  // into trusting forwarded headers. A direct-access attacker cannot set this
+  // env var, so gating on it prevents Host / preview-mode spoofing via a
+  // client-supplied x-forwarded-host (VULN-SRV-1 / VULN-SRV-2). Dispatch-JWS
+  // trust requires async verification, so the runtime handler passes that
+  // request-scoped result through options. Direct callers fail closed unless
+  // the operator explicitly trusts forwarded headers.
+  const trustProxy = options.proxyTrusted ??
+    getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
+  const effectiveHost = getEffectiveRequestHost(req, undefined, trustProxy);
   const parsed = parseProjectDomain(effectiveHost);
   const headerProjectSlug = req.headers.get("x-project-slug")?.trim() || undefined;
 
   // Mode derives from server-trusted signals only. The `x-environment` header
   // is client-controlled and must NOT be able to flip a production request
   // into preview mode (VULN-SRV-1 / VULN-SRV-2). Preview is determined by the
-  // HTTP Host / X-Forwarded-Host — those are terminated at the edge proxy and
+  // HTTP Host / X-Forwarded-Host. Those are terminated at the edge proxy and
   // are the same signal used for routing, so they're the correct source of
   // truth.
   const mode: "preview" | "production" =
@@ -28,7 +51,8 @@ export function createRequestContext(req: Request): RequestContext {
   return {
     // Framework-owned token: bypass project env overlay so proxy mode works
     // when a remote project overlay is active.
-    token: req.headers.get("x-token") ?? getHostEnv("VERYFRONT_API_TOKEN") ?? "",
+    token: req.headers.get("x-token") ??
+      (options.allowHostTokenFallback === false ? "" : getHostEnv("VERYFRONT_API_TOKEN") ?? ""),
     slug: headerProjectSlug ?? parsed.slug ?? "",
     branch: parsed.branch,
     mode,

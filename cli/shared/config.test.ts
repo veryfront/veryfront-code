@@ -6,10 +6,39 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createApiClient, readConfigFile, resolveConfig, resolveConfigWithAuth } from "./config.ts";
+import {
+  createApiClient,
+  isRetryableApiReadError,
+  readConfigFile,
+  resolveConfig,
+  resolveConfigWithAuth,
+  resolveConfigWithAuthDetails,
+} from "./config.ts";
 import type { ResolvedConfig } from "./config.ts";
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { join } from "veryfront/platform/path";
+import { __resetEnvLoaderForTests, loadEnv } from "veryfront/utils/env-loader";
+import { deleteToken, saveToken } from "../auth/token-store.ts";
+
+describe("isRetryableApiReadError", () => {
+  it("retries gateway and connection failures but not authoritative client statuses", () => {
+    assertEquals(isRetryableApiReadError({ status: 503 }), true);
+    assertEquals(
+      isRetryableApiReadError(Object.assign(new Error("connection reset"), {
+        code: "ECONNRESET",
+      })),
+      true,
+    );
+    assertEquals(
+      isRetryableApiReadError(Object.assign(new Error("unauthorized"), {
+        cause: Object.assign(new Error("connection reset"), { code: "ECONNRESET" }),
+        status: 401,
+      })),
+      false,
+    );
+    assertEquals(isRetryableApiReadError(new DOMException("cancelled", "AbortError")), false);
+  });
+});
 
 function createMockEnv(overrides: Partial<EnvironmentConfig> = {}): EnvironmentConfig {
   return {
@@ -20,6 +49,31 @@ function createMockEnv(overrides: Partial<EnvironmentConfig> = {}): EnvironmentC
     isProduction: true,
     ...overrides,
   } as EnvironmentConfig;
+}
+
+function projectIdOf(config: ResolvedConfig): string | undefined {
+  return (config as ResolvedConfig & { projectId?: string }).projectId;
+}
+
+async function writeRawProjectLink(
+  projectDir: string,
+  link: {
+    controlPlane?: string;
+    projectId?: string;
+    projectSlug?: string;
+  } = {},
+): Promise<void> {
+  await Deno.mkdir(join(projectDir, ".veryfront"), { recursive: true });
+  await Deno.writeTextFile(
+    join(projectDir, ".veryfront", "project.json"),
+    JSON.stringify({
+      version: 1,
+      controlPlane: "https://api.veryfront.com",
+      projectId: "linked-project-id",
+      projectSlug: "linked-project",
+      ...link,
+    }),
+  );
 }
 
 describe("resolveConfig", () => {
@@ -152,6 +206,81 @@ describe("resolveConfigWithAuth", () => {
     assertEquals(config.apiUrl, "https://api.veryfront.com");
   });
 
+  it("prefers the token store over a project .env API token for management commands", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const configHome = await Deno.makeTempDir();
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+
+    try {
+      __resetEnvLoaderForTests();
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      await Deno.writeTextFile(join(tempDir, ".env"), "VERYFRONT_API_TOKEN=runtime-token\n");
+      await loadEnv({ cwd: tempDir });
+
+      const env = createMockEnv({
+        apiToken: "runtime-token",
+        projectSlug: "test-project",
+        xdgConfigHome: configHome,
+      });
+      await saveToken("stored-user-token", env);
+
+      const config = await resolveConfigWithAuth(tempDir, env);
+
+      assertEquals(config.apiToken, "stored-user-token");
+    } finally {
+      await deleteToken(createMockEnv({ xdgConfigHome: configHome }));
+      await Deno.remove(tempDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+      __resetEnvLoaderForTests();
+
+      if (originalApiToken === undefined) {
+        Deno.env.delete("VERYFRONT_API_TOKEN");
+      } else {
+        Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
+      }
+    }
+  });
+
+  it("prefers veryfront.json token over project .env and token store for management commands", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const configHome = await Deno.makeTempDir();
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+
+    try {
+      __resetEnvLoaderForTests();
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      await Deno.writeTextFile(join(tempDir, ".env"), "VERYFRONT_API_TOKEN=runtime-token\n");
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({ apiToken: "config-token", projectSlug: "test-project" }),
+      );
+      await loadEnv({ cwd: tempDir });
+
+      const env = createMockEnv({
+        apiToken: "runtime-token",
+        projectSlug: "test-project",
+        xdgConfigHome: configHome,
+      });
+      await saveToken("stored-user-token", env);
+
+      const config = await resolveConfigWithAuth(tempDir, env);
+
+      assertEquals(config.apiToken, "config-token");
+      assertEquals(config.apiTokenSource, "config-file");
+    } finally {
+      await deleteToken(createMockEnv({ xdgConfigHome: configHome }));
+      await Deno.remove(tempDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+      __resetEnvLoaderForTests();
+
+      if (originalApiToken === undefined) {
+        Deno.env.delete("VERYFRONT_API_TOKEN");
+      } else {
+        Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
+      }
+    }
+  });
+
   it("uses tenant project context when explicit project slug is absent", async () => {
     const env = createMockEnv({
       apiToken: "env-token",
@@ -219,6 +348,160 @@ describe("resolveConfigWithAuth", () => {
     }
   });
 
+  it("prefers module config projectSlug over a local project link", async () => {
+    const tempDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.config.js"),
+        'export default { projectSlug: "from-module" };\n',
+      );
+      await writeRawProjectLink(tempDir, {
+        controlPlane: "https://api.other.veryfront.com",
+        projectSlug: "from-link",
+      });
+
+      const details = await resolveConfigWithAuthDetails(
+        tempDir,
+        createMockEnv({ apiToken: "env-token", projectSlug: undefined }),
+      );
+
+      assertEquals(details.config.projectSlug, "from-module");
+      assertEquals(projectIdOf(details.config), undefined);
+      assertEquals(details.projectReferenceSource, {
+        kind: "module-config",
+        name: "veryfront.config.js",
+      });
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("prefers veryfront.json projectSlug over a local project link", async () => {
+    const tempDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({ projectSlug: "from-json" }),
+      );
+      await writeRawProjectLink(tempDir, {
+        controlPlane: "https://api.other.veryfront.com",
+        projectSlug: "from-link",
+      });
+
+      const details = await resolveConfigWithAuthDetails(
+        tempDir,
+        createMockEnv({ apiToken: "env-token", projectSlug: undefined }),
+      );
+
+      assertEquals(details.config.projectSlug, "from-json");
+      assertEquals(projectIdOf(details.config), undefined);
+      assertEquals(details.projectReferenceSource, {
+        kind: "json-config",
+        name: "veryfront.json",
+      });
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("prefers tenant project context over a local project link", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const previousTenantProjectSlug = Deno.env.get("TENANT_PROJECT_SLUG");
+    try {
+      await writeRawProjectLink(tempDir, {
+        controlPlane: "https://api.other.veryfront.com",
+        projectSlug: "from-link",
+      });
+      Deno.env.set("TENANT_PROJECT_SLUG", "from-tenant");
+
+      const details = await resolveConfigWithAuthDetails(
+        tempDir,
+        createMockEnv({ apiToken: "env-token", projectSlug: undefined }),
+      );
+
+      assertEquals(details.config.projectSlug, "from-tenant");
+      assertEquals(projectIdOf(details.config), undefined);
+      assertEquals(details.projectReferenceSource, {
+        kind: "tenant-environment",
+        name: "TENANT_PROJECT_SLUG",
+      });
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+      if (previousTenantProjectSlug === undefined) {
+        Deno.env.delete("TENANT_PROJECT_SLUG");
+      } else {
+        Deno.env.set("TENANT_PROJECT_SLUG", previousTenantProjectSlug);
+      }
+    }
+  });
+
+  it("uses a matching local project link before inferred project names", async () => {
+    const tempDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(join(tempDir, "package.json"), JSON.stringify({ name: "inferred" }));
+      await writeRawProjectLink(tempDir, {
+        controlPlane: "https://api.veryfront.com/",
+        projectId: "project-123",
+        projectSlug: "from-link",
+      });
+
+      const details = await resolveConfigWithAuthDetails(
+        tempDir,
+        createMockEnv({ apiToken: "env-token", projectSlug: undefined }),
+      );
+
+      assertEquals(details.config.projectSlug, "from-link");
+      assertEquals(projectIdOf(details.config), "project-123");
+      assertEquals(details.projectReferenceSource, {
+        kind: "local-link",
+        name: ".veryfront/project.json",
+      });
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("rejects a local project link for a different control plane", async () => {
+    const tempDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(join(tempDir, "package.json"), JSON.stringify({ name: "inferred" }));
+      await writeRawProjectLink(tempDir, {
+        controlPlane: "https://api.other.veryfront.com",
+        projectSlug: "from-link",
+      });
+
+      await assertRejects(
+        () =>
+          resolveConfigWithAuthDetails(
+            tempDir,
+            createMockEnv({ apiToken: "env-token", projectSlug: undefined }),
+          ),
+        Error,
+        ".veryfront/project.json",
+      );
+      await assertRejects(
+        () =>
+          resolveConfigWithAuthDetails(
+            tempDir,
+            createMockEnv({ apiToken: "env-token", projectSlug: undefined }),
+          ),
+        Error,
+        "https://api.other.veryfront.com",
+      );
+      await assertRejects(
+        () =>
+          resolveConfigWithAuthDetails(
+            tempDir,
+            createMockEnv({ apiToken: "env-token", projectSlug: undefined }),
+          ),
+        Error,
+        "https://api.veryfront.com",
+      );
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
   it("uses tenant project id when no project slug is available", async () => {
     const env = createMockEnv({
       apiToken: "env-token",
@@ -234,6 +517,7 @@ describe("resolveConfigWithAuth", () => {
       const config = await resolveConfigWithAuth("/tmp/test-dir", env);
 
       assertEquals(config.projectSlug, "tenant-project-id");
+      assertEquals(config.projectId, "tenant-project-id");
     } finally {
       if (previousTenantProjectSlug === undefined) {
         Deno.env.delete("TENANT_PROJECT_SLUG");
@@ -246,6 +530,46 @@ describe("resolveConfigWithAuth", () => {
       } else {
         Deno.env.set("TENANT_PROJECT_ID", previousTenantProjectId);
       }
+    }
+  });
+});
+
+describe("createApiClient", () => {
+  it("uses problem JSON detail and suggestion in API errors", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((_input: unknown, _init?: RequestInit) =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            title: "Validation failed",
+            status: 400,
+            detail: "Project slug is reserved.",
+            suggestion: "Choose another project name.",
+            slug: "validation-failed",
+          }),
+          {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      )) as typeof fetch;
+
+    try {
+      const client = createApiClient(
+        {
+          apiUrl: "https://api.test.veryfront.com",
+          apiToken: "token",
+          projectSlug: "admin",
+        } satisfies ResolvedConfig,
+      );
+
+      await assertRejects(
+        () => client.get("/projects/admin"),
+        Error,
+        "Project slug is reserved. Choose another project name.",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
     }
   });
 });
@@ -304,6 +628,34 @@ describe("createApiClient", () => {
         globalThis.fetch = originalFetch;
       }
     });
+  });
+
+  it("explains project .env token shadowing on auth-like management API failures", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((_input: unknown, _init?: RequestInit) => {
+      return Promise.resolve(
+        new Response(JSON.stringify({ message: "API request failed: 403 Forbidden" }), {
+          status: 403,
+          statusText: "Forbidden",
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    }) as typeof fetch;
+
+    try {
+      const client = createApiClient(makeConfig({
+        apiToken: "runtime-token",
+        apiTokenSource: "env-file",
+      }));
+
+      await assertRejects(
+        () => client.get("/projects/test/files"),
+        Error,
+        "VERYFRONT_API_TOKEN was loaded from a project .env file",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   describe("retry on transient failures for idempotent requests", () => {
@@ -390,6 +742,55 @@ describe("createApiClient", () => {
         globalThis.fetch = originalFetch;
       }
     });
+
+    it("retries PUT after a nested ECONNRESET and preserves the request body", async () => {
+      let callCount = 0;
+      const requestBodies: string[] = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = ((_input: unknown, init?: RequestInit) => {
+        callCount++;
+        requestBodies.push(String(init?.body));
+        if (callCount === 1) {
+          const cause = Object.assign(new Error("read failed"), { code: "ECONNRESET" });
+          return Promise.reject(new TypeError("fetch failed", { cause }));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ updated: true }), { status: 200 }));
+      }) as typeof fetch;
+
+      try {
+        const client = createApiClient(makeConfig());
+        const result = await client.put<{ updated: boolean }>("/test", { content: "same" });
+        assertEquals(result.updated, true);
+        assertEquals(callCount, 2);
+        assertEquals(requestBodies, [
+          JSON.stringify({ content: "same" }),
+          JSON.stringify({ content: "same" }),
+        ]);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("retries PUT on 502 and succeeds on the second attempt", async () => {
+      let callCount = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = ((_input: unknown, _init?: RequestInit) => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.resolve(new Response("bad gateway", { status: 502 }));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ updated: true }), { status: 200 }));
+      }) as typeof fetch;
+
+      try {
+        const client = createApiClient(makeConfig());
+        const result = await client.put<{ updated: boolean }>("/test", { content: "same" });
+        assertEquals(result.updated, true);
+        assertEquals(callCount, 2);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 
   describe("retry behavior for non-idempotent requests", () => {
@@ -449,6 +850,28 @@ describe("createApiClient", () => {
           () => client.post("/test", {}),
           Error,
           "connection reset",
+        );
+        assertEquals(callCount, 1);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("does NOT retry POST when fetch wraps ECONNRESET in a cause", async () => {
+      let callCount = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = ((_input: unknown, _init?: RequestInit) => {
+        callCount++;
+        const cause = Object.assign(new Error("read failed"), { code: "ECONNRESET" });
+        return Promise.reject(new TypeError("fetch failed", { cause }));
+      }) as typeof fetch;
+
+      try {
+        const client = createApiClient(makeConfig());
+        await assertRejects(
+          () => client.post("/test", {}),
+          TypeError,
+          "fetch failed",
         );
         assertEquals(callCount, 1);
       } finally {

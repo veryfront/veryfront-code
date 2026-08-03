@@ -1,13 +1,14 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
-import { bold, cyan, dim, green, yellow } from "#cli/ui";
+import { dim } from "#cli/ui";
 import { join } from "veryfront/platform/path";
-import { cliLogger } from "#cli/utils";
+import { cliLogger, isVerbose, logSuccess } from "#cli/utils";
 import { cwd } from "veryfront/platform";
 import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
-import { exitProcess, showLogo } from "#cli/utils";
+import { showHeader } from "#cli/utils";
 import type { ParsedArgs } from "#cli/shared/types";
+import { ensureBuiltinContentProcessor } from "../../shared/ensure-content-processor.ts";
 
 /**
  * Schema factory for build command arguments
@@ -17,9 +18,11 @@ export const getBuildArgsSchema = defineSchema((v) =>
     output: v.string().optional(),
     preset: v.string().optional(),
     split: v.boolean().default(true),
+    noSplit: v.boolean().default(false),
     compress: v.boolean().default(true),
+    noCompress: v.boolean().default(false),
     prefetch: v.boolean().default(true),
-    ssg: v.boolean().default(false),
+    ssg: v.boolean().optional(),
     noSsg: v.boolean().default(false),
     include: v.array(v.string()).optional(),
     exclude: v.array(v.string()).optional(),
@@ -41,7 +44,9 @@ export const parseBuildArgs = createArgParser(BuildArgsSchema, {
   output: CommonArgs.output,
   preset: { keys: ["preset"], type: "string" },
   split: { keys: ["split"], type: "boolean" },
+  noSplit: { keys: ["no-split"], type: "boolean" },
   compress: { keys: ["compress"], type: "boolean" },
+  noCompress: { keys: ["no-compress"], type: "boolean" },
   prefetch: { keys: ["prefetch"], type: "boolean" },
   ssg: { keys: ["ssg"], type: "boolean" },
   noSsg: { keys: ["no-ssg"], type: "boolean" },
@@ -51,13 +56,14 @@ export const parseBuildArgs = createArgParser(BuildArgsSchema, {
 });
 
 export async function handleBuildCommand(args: ParsedArgs): Promise<void> {
-  showLogo();
+  showHeader();
   const opts = parseArgsOrThrow(parseBuildArgs, "build", args);
   await ensureCliBundlerContracts();
   const projectDir = cwd();
   const preset = opts.preset?.toLowerCase();
 
   if (preset === "embedded") {
+    await ensureBuiltinContentProcessor();
     await handleEmbeddedBuild(projectDir, opts.output);
     return;
   }
@@ -66,17 +72,17 @@ export async function handleBuildCommand(args: ParsedArgs): Promise<void> {
   await buildCommand({
     projectDir,
     outputDir: opts.output,
-    splitting: opts.split,
-    compress: opts.compress,
+    splitting: opts.split && !opts.noSplit,
+    compress: opts.compress && !opts.noCompress,
     prefetch: opts.prefetch,
-    ssg: opts.ssg && !opts.noSsg,
+    // Tri-state: explicit --no-ssg wins, an explicit --ssg / --ssg=false is
+    // passed through, and an omitted flag stays undefined so the build can
+    // fall back to build.ssg from veryfront.config.ts (and its default).
+    ssg: opts.noSsg ? false : opts.ssg,
     include: opts.include,
     exclude: opts.exclude,
     dryRun: opts.dryRun,
   });
-
-  // Build tools (esbuild) may leave hanging timers; force clean exit
-  exitProcess(0);
 }
 
 async function handleEmbeddedBuild(projectDir: string, outputDir?: string): Promise<void> {
@@ -84,13 +90,11 @@ async function handleEmbeddedBuild(projectDir: string, outputDir?: string): Prom
 
   const finalOutput = outputDir ?? join(projectDir, "dist");
 
-  cliLogger.info(bold(cyan("\n🔗 Veryfront Embedded Preset Build\n")));
-  cliLogger.info("Starting embedded preset build");
-  cliLogger.info(yellow("\nBuild Configuration:"));
-  cliLogger.info(`  ${dim("Project:")}    ${projectDir}`);
-  cliLogger.info(`  ${dim("Output:")}     ${finalOutput}`);
-  cliLogger.info(`  ${dim("Preset:")}     embedded`);
-  cliLogger.info("\n");
+  cliLogger.info("Building embedded preset...");
+  if (isVerbose()) {
+    cliLogger.info(`  ${dim("Project:")} ${projectDir}`);
+    cliLogger.info(`  ${dim("Output:")} ${finalOutput}`);
+  }
 
   await buildEmbeddedPreset({
     projectDir,
@@ -98,8 +102,6 @@ async function handleEmbeddedBuild(projectDir: string, outputDir?: string): Prom
     runtime: "deno",
   });
 
-  cliLogger.info(`\n${green("✓")}${bold(green(" Embedded bundle created!\n"))}`);
-
-  const { getPostBuildTips } = await import("../../help/tips.ts");
-  console.log(getPostBuildTips());
+  logSuccess("Built embedded preset");
+  cliLogger.info(`  ${finalOutput}\n`);
 }

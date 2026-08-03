@@ -1,16 +1,9 @@
-import {
-  FORBIDDEN_PATH_PATTERNS,
-  MAX_PATH_LENGTH,
-  MAX_PATH_TRAVERSAL_DEPTH,
-} from "#veryfront/utils/constants/security.ts";
+import { MAX_PATH_LENGTH, MAX_PATH_TRAVERSAL_DEPTH } from "#veryfront/utils/constants/security.ts";
 
 export function validatePathSecurity(path: string): boolean {
   if (path == null) return false;
   if (path.length > MAX_PATH_LENGTH) return false;
-
-  for (const pattern of FORBIDDEN_PATH_PATTERNS) {
-    if (pattern.test(path)) return false;
-  }
+  if (path.includes("\0")) return false;
 
   const parts = path.split(/[\/\\]/);
   let depth = 0;

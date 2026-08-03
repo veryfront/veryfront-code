@@ -64,6 +64,35 @@ describe("doctor/server-checks", () => {
       const hasWarning = results.some((r) => r.status === "warn");
       assertEquals(hasWarning, true);
     });
+
+    it("uses the requested server port for every endpoint probe", async () => {
+      const originalFetch = globalThis.fetch;
+      const urls: string[] = [];
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = input instanceof Request ? input.url : String(input);
+        urls.push(url);
+
+        const body = url.endsWith("/manifest")
+          ? JSON.stringify({ hash: "test" })
+          : url.endsWith("/_metrics")
+          ? JSON.stringify({ counters: {} })
+          : "ok";
+        return Promise.resolve(new Response(body, { status: 200 }));
+      }) as typeof fetch;
+
+      try {
+        await checkRSCEndpoints(4321);
+        await checkRSCCounters(4321);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+
+      assertEquals(urls, [
+        "http://127.0.0.1:4321/_veryfront/rsc/manifest",
+        "http://127.0.0.1:4321/_veryfront/rsc/stream",
+        "http://127.0.0.1:4321/_metrics",
+      ]);
+    });
   });
 
   describe("checkRSCCounters", () => {

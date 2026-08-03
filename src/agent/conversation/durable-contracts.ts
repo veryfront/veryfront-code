@@ -1,11 +1,12 @@
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
+import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
 
 /** Zod schema for get conversation run targets. */
 export const getConversationRunTargetsSchema = defineSchema((v) =>
   v.object({
-    sourceTargetKind: v.enum(["project", "preview_branch"]).nullable(),
-    runtimeTargetKind: v.enum(["main_branch", "preview_branch"]).nullable(),
+    sourceTargetKind: v.enum(["project", "environment", "preview_branch"]).nullable(),
+    runtimeTargetKind: v.enum(["main_branch", "environment", "preview_branch"]).nullable(),
+    targetEnvironmentId: v.string().uuid().nullable().optional(),
     targetBranchId: v.string().uuid().nullable(),
   })
 );
@@ -15,35 +16,60 @@ export const getConversationRunTargetsSchema = defineSchema((v) =>
  */
 export const ConversationRunTargetsSchema = lazySchema(getConversationRunTargetsSchema);
 
+/** Source target kind recorded on project-backed conversation runs. */
+export type ConversationRunSourceTargetKind = "project" | "environment" | "preview_branch";
+
+/** Runtime target kind recorded on project-backed conversation runs. */
+export type ConversationRunRuntimeTargetKind = "main_branch" | "environment" | "preview_branch";
+
 /** Public API contract for conversation run targets. */
-export type ConversationRunTargets = InferSchema<
-  ReturnType<typeof getConversationRunTargetsSchema>
->;
+export interface ConversationRunTargets {
+  sourceTargetKind: ConversationRunSourceTargetKind | null;
+  runtimeTargetKind: ConversationRunRuntimeTargetKind | null;
+  targetEnvironmentId?: string | null;
+  targetBranchId: string | null;
+}
 
 /** Resolves conversation run targets. */
 export function resolveConversationRunTargets(input: {
   projectId?: string | null;
+  runtimeTargetKind?: "main_branch" | "environment" | "preview_branch" | null;
+  environmentId?: string | null;
   branchId?: string | null;
 }): ConversationRunTargets {
+  if (!input.projectId) {
+    return getConversationRunTargetsSchema().parse({
+      sourceTargetKind: null,
+      runtimeTargetKind: null,
+      targetEnvironmentId: null,
+      targetBranchId: null,
+    }) as ConversationRunTargets;
+  }
+
+  if (input.runtimeTargetKind === "environment" && input.environmentId) {
+    return getConversationRunTargetsSchema().parse({
+      sourceTargetKind: "environment",
+      runtimeTargetKind: "environment",
+      targetEnvironmentId: input.environmentId,
+      targetBranchId: null,
+    }) as ConversationRunTargets;
+  }
+
   return getConversationRunTargetsSchema().parse(
-    !input.projectId
-      ? {
-        sourceTargetKind: null,
-        runtimeTargetKind: null,
-        targetBranchId: null,
-      }
-      : input.branchId
+    input.branchId
       ? {
         sourceTargetKind: "preview_branch",
         runtimeTargetKind: "preview_branch",
+        targetEnvironmentId: null,
         targetBranchId: input.branchId,
       }
       : {
         sourceTargetKind: "project",
         runtimeTargetKind: "main_branch",
+        targetEnvironmentId: null,
         targetBranchId: null,
       },
-  );
+  ) as ConversationRunTargets;
 }
 
 /** Zod schema for get conversation run status. */
@@ -56,6 +82,21 @@ export const getConversationRunStatusSchema = defineSchema((v) =>
  */
 export const ConversationRunStatusSchema = lazySchema(getConversationRunStatusSchema);
 
+/** Stream protocol version recorded on canonical run metadata. */
+export type StreamProtocolVersion = 1 | 2;
+
+/**
+ * Resolve the stream protocol version from canonical run metadata. Absent or
+ * unrecognized metadata is version 1; version 2 is never inferred from event
+ * shapes or finalization metadata.
+ */
+function resolveStreamProtocolVersion(metadata: unknown): StreamProtocolVersion {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return 1;
+  }
+  return (metadata as Record<string, unknown>).stream_protocol_version === 2 ? 2 : 1;
+}
+
 /** Public API contract for conversation run projection. */
 export interface ConversationRunProjection {
   runId: string;
@@ -66,6 +107,7 @@ export interface ConversationRunProjection {
   waitingToolCallId: string | null;
   waitingToolName: string | null;
   status: "pending" | "running" | "waiting_for_tool" | "completed" | "failed" | "cancelled";
+  streamProtocolVersion: StreamProtocolVersion;
 }
 
 /** Zod schema for get conversation run projection. */
@@ -93,16 +135,26 @@ export const getConversationRunProjectionSchema = defineSchema((v) =>
       const runId = (d.runId ?? d.run_id) as string | undefined;
       const conversationId = (d.conversationId ?? d.conversation_id) as string | undefined;
       const messageId = (d.messageId ?? d.message_id) as string | undefined;
-      const latestEventId = ((d.latestEventId ?? d.latest_event_id) as number | undefined) ?? 0;
+      const latestEventId = (d.latestEventId ?? d.latest_event_id) as number | undefined;
       const latestExternalEventSequence = (d.latestExternalEventSequence ??
         d.latest_external_event_sequence) as number | undefined;
 
       if (!runId || !conversationId || !messageId) {
-        throw new Error("Missing run identifiers in durable run response");
+        throw INPUT_VALIDATION_FAILED.create({
+          detail: "Missing run identifiers in durable run response",
+        });
+      }
+
+      if (latestEventId === undefined) {
+        throw INPUT_VALIDATION_FAILED.create({
+          detail: "Missing latestEventId in durable run response",
+        });
       }
 
       if (latestExternalEventSequence === undefined) {
-        throw new Error("Missing latestExternalEventSequence in durable run response");
+        throw INPUT_VALIDATION_FAILED.create({
+          detail: "Missing latestExternalEventSequence in durable run response",
+        });
       }
 
       return {
@@ -115,6 +167,7 @@ export const getConversationRunProjectionSchema = defineSchema((v) =>
           null,
         waitingToolName: ((d.waitingToolName ?? d.waiting_tool_name) as string | null) ?? null,
         status: d.status as ConversationRunProjection["status"],
+        streamProtocolVersion: resolveStreamProtocolVersion(d.metadata),
       };
     })
 );
@@ -176,7 +229,7 @@ export type ConversationRunQueueFlushOutcome =
 /** Public API contract for conversation run event queue controller. */
 export interface ConversationRunEventQueueController {
   enqueue(events: unknown[]): void;
-  flush(): Promise<
+  flush(options?: { abortSignal?: AbortSignal }): Promise<
     | {
       outcome: "idle" | "flushed";
       latestEventId: number;
@@ -194,9 +247,11 @@ export interface ConversationRunEventQueueController {
       disabled: true;
       disableReason?:
         | "cursor_resyncs_exhausted"
+        | "cursor_mismatch_ambiguous"
         | "non_appendable"
         | "ignorable_append_rejection"
-        | "payload_too_large";
+        | "payload_too_large"
+        | "auth_rejected";
     }
     | {
       outcome: "retry_scheduled";
@@ -206,6 +261,7 @@ export interface ConversationRunEventQueueController {
       consecutiveFailures: number;
       disabled: false;
       errorMessage: string;
+      retryCause?: "timeout";
     }
   >;
   getSnapshot(): {
@@ -214,7 +270,16 @@ export interface ConversationRunEventQueueController {
     pendingEventCount: number;
     consecutiveFailures: number;
     disabled: boolean;
+    appendRequestCount?: number;
+    disableReason?:
+      | "cursor_resyncs_exhausted"
+      | "cursor_mismatch_ambiguous"
+      | "non_appendable"
+      | "ignorable_append_rejection"
+      | "payload_too_large"
+      | "auth_rejected";
   };
+  dispose?(): void;
 }
 
 /** Zod schema for get create conversation run accepted. */
@@ -230,7 +295,9 @@ export const getCreateConversationRunAcceptedSchema = defineSchema((v) =>
       const d = data as { run: Record<string, unknown> };
       const runId = (d.run.runId ?? d.run.run_id) as string | undefined;
       if (!runId) {
-        throw new Error("Missing run id in canonical create run response");
+        throw INPUT_VALIDATION_FAILED.create({
+          detail: "Missing run id in canonical create run response",
+        });
       }
       return { runId };
     })
@@ -250,7 +317,18 @@ export const getCompleteConversationRunResponseSchema = defineSchema((v) =>
     run: v.object({
       runId: v.string().min(1).optional(),
       run_id: v.string().min(1).optional(),
-      status: v.enum(["pending", "running", "waiting", "completed", "failed", "cancelled"]),
+      status: v.enum([
+        "pending",
+        "running",
+        // The completion API has historically reported "waiting" where run
+        // projections use "waiting_for_tool"; accept both so a server-side
+        // normalization to either value cannot break finalization.
+        "waiting",
+        "waiting_for_tool",
+        "completed",
+        "failed",
+        "cancelled",
+      ]),
     }).passthrough(),
   }).passthrough()
 );
@@ -339,6 +417,7 @@ export interface ConversationAgentRunUsage {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  usageCaptureStatus?: "complete" | "partial" | "missing";
 }
 
 /** Input payload for create conversation agent run. */
@@ -351,7 +430,10 @@ export interface CreateConversationAgentRunInput {
   agentId: string;
   implementationKind?: string | null;
   projectId?: string | null;
+  runtimeTargetKind?: "main_branch" | "environment" | "preview_branch" | null;
+  runtimeTargetEnvironmentId?: string | null;
   branchId?: string | null;
+  abortSignal?: AbortSignal;
 }
 
 /** Input payload for finalize conversation agent run. */
@@ -364,6 +446,7 @@ export interface FinalizeConversationAgentRunInput {
   model: string;
   provider: string;
   usage?: ConversationAgentRunUsage;
+  finishReason?: string;
   terminalErrorCode?: string | null;
   terminalErrorMessage?: string | null;
 }

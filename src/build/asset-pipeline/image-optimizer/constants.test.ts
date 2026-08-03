@@ -1,12 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  DEFAULT_OPTIONS,
-  MANIFEST_FILENAME,
-  SHARP_CDN_URL,
-  SUPPORTED_EXTENSIONS,
-} from "./constants.ts";
+import { DEFAULT_OPTIONS, MANIFEST_FILENAME, SUPPORTED_EXTENSIONS } from "./constants.ts";
 
 describe("build/asset-pipeline/image-optimizer/constants", () => {
   describe("DEFAULT_OPTIONS", () => {
@@ -49,12 +44,6 @@ describe("build/asset-pipeline/image-optimizer/constants", () => {
 
     it("should have 5 supported extensions", () => {
       assertEquals(SUPPORTED_EXTENSIONS.length, 5);
-    });
-  });
-
-  describe("SHARP_CDN_URL", () => {
-    it("should be a valid esm.sh URL", () => {
-      assertEquals(SHARP_CDN_URL.startsWith("https://esm.sh/sharp@"), true);
     });
   });
 

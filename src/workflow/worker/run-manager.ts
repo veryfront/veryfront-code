@@ -14,11 +14,12 @@
  */
 
 import { logger as baseLogger } from "#veryfront/utils";
-import { hasLockSupport, hasWorkerSupport, type WorkflowBackend } from "../backends/types.ts";
+import { hasWorkerSupport, type WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowRun } from "../types.ts";
 import { generateId } from "../types.ts";
-import type { RunExecutionConfig, RunExecutionStatus, RunExecutor } from "./executors/types.ts";
+import type { RunExecutionStatus, RunExecutor } from "./executors/types.ts";
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
+import { claimWorkflowRunControl } from "../runtime/workflow-run-control.ts";
 
 const logger = baseLogger.component("workflow-run-manager");
 
@@ -93,6 +94,8 @@ interface TrackedExecution {
   runId: string;
   status: RunExecutionStatus;
   createdAt: Date;
+  /** Consecutive sync cycles this execution was absent from the executor's list. */
+  missingPolls: number;
 }
 
 /** Resolved config type with defaults applied */
@@ -240,8 +243,16 @@ export class WorkflowRunManager {
     }
 
     this.pollTimeout = setTimeout(async () => {
-      await this.poll();
-      this.scheduleNextPoll();
+      // poll() guards itself, but reschedule from a finally so an unexpected
+      // rejection can never kill the loop (leaving the manager alive-but-idle).
+      try {
+        await this.poll();
+      } catch (error) {
+        this.recordError(error);
+        logger.error("Unhandled poll error:", error);
+      } finally {
+        this.scheduleNextPoll();
+      }
     }, this.config.pollInterval);
   }
 
@@ -293,59 +304,7 @@ export class WorkflowRunManager {
           continue;
         }
 
-        let pendingLockAcquired = false;
-        let runToProcess: WorkflowRun | null = run;
-
-        try {
-          // For stalled runs, try to claim first
-          if (run.status === "running" && hasWorkerSupport(this.config.backend)) {
-            const claimed = await this.config.backend.claimStalledRun(
-              run.id,
-              `mgr:${this.managerId}`,
-              this.config.stalledThreshold,
-            );
-            if (!claimed) {
-              // Another manager claimed it
-              continue;
-            }
-          }
-
-          // For pending runs, acquire a short lock to avoid duplicate execution creation
-          // across managers between listRuns() and updateRun().
-          if (run.status === "pending" && hasLockSupport(this.config.backend)) {
-            pendingLockAcquired = await this.config.backend.acquireLock(
-              run.id,
-              this.config.stalledThreshold,
-            );
-            if (!pendingLockAcquired) {
-              continue;
-            }
-
-            // Re-read after locking to ensure status hasn't changed concurrently.
-            const latest = await this.config.backend.getRun(run.id);
-            if (!latest || latest.status !== "pending") {
-              continue;
-            }
-            runToProcess = latest;
-          }
-
-          if (!runToProcess) {
-            continue;
-          }
-
-          await this.createExecutionForWorkflow(runToProcess);
-        } finally {
-          if (pendingLockAcquired) {
-            try {
-              await this.config.backend.releaseLock?.(run.id);
-            } catch (error) {
-              logger.warn(
-                `[WorkflowRunManager] Failed to release pending lock for ${run.id}:`,
-                error,
-              );
-            }
-          }
-        }
+        await this.createExecutionForWorkflow(run);
       }
     } catch (error) {
       this.recordError(error);
@@ -359,6 +318,26 @@ export class WorkflowRunManager {
   private async syncRunExecutionStatuses(): Promise<void> {
     try {
       const executions = await this.config.executor.listRunExecutions(this.managerId);
+      const presentRunIds = new Set(executions.map((e) => e.runId));
+
+      // Reconcile against the executor's live list. A child process reaped or
+      // OOM-killed before reporting a terminal status would otherwise stay in
+      // activeExecutions forever, permanently consuming a concurrency slot.
+      // Require two consecutive misses before reclaiming to avoid races with an
+      // execution not yet visible in the executor's list.
+      for (const [runId, tracked] of this.activeExecutions) {
+        if (presentRunIds.has(runId)) {
+          tracked.missingPolls = 0;
+          continue;
+        }
+
+        tracked.missingPolls++;
+        if (tracked.missingPolls >= 2) {
+          this.activeExecutions.delete(runId);
+          this.stats.executionsFailed++;
+          logger.warn("[WorkflowRunManager] Run execution vanished; freeing concurrency slot");
+        }
+      }
 
       for (const executionInfo of executions) {
         const tracked = this.activeExecutions.get(executionInfo.runId);
@@ -366,14 +345,19 @@ export class WorkflowRunManager {
           continue;
         }
 
-        if (executionInfo.status === tracked.status) {
-          continue;
-        }
-
-        tracked.status = executionInfo.status;
-
         // Handle terminal states
         if (executionInfo.status === "succeeded" || executionInfo.status === "failed") {
+          try {
+            await this.config.executor.deleteRunExecution(executionInfo.executionId);
+          } catch (error) {
+            tracked.status = executionInfo.status;
+            logger.warn(
+              `[WorkflowRunManager] Failed to clean up run execution ${executionInfo.executionId}:`,
+              error,
+            );
+            continue;
+          }
+
           this.activeExecutions.delete(executionInfo.runId);
 
           if (executionInfo.status === "succeeded") {
@@ -388,7 +372,14 @@ export class WorkflowRunManager {
               executionInfo.error,
             );
           }
+          continue;
         }
+
+        if (executionInfo.status === tracked.status) {
+          continue;
+        }
+
+        tracked.status = executionInfo.status;
       }
     } catch (error) {
       logger.error(`Failed to sync run execution statuses:`, error);
@@ -400,54 +391,39 @@ export class WorkflowRunManager {
    */
   private async createExecutionForWorkflow(run: WorkflowRun): Promise<void> {
     const executionId = generateId("run_exec");
-
-    const executionConfig: RunExecutionConfig = {
-      executionId,
+    const outcome = await claimWorkflowRunControl({
+      backend: this.config.backend,
       run,
       managerId: this.managerId,
-      timeout: this.config.executionTimeout,
+      executionId,
+      stalledThreshold: this.config.stalledThreshold,
+      executionTimeout: this.config.executionTimeout,
       env: this.config.env ?? {},
       debug: this.config.debug,
-    };
+      createRunExecution: (config) => this.config.executor.createRunExecution(config),
+    });
 
-    try {
-      await this.config.executor.createRunExecution(executionConfig);
-
+    if (outcome.status === "created" && outcome.execution) {
       const tracked: TrackedExecution = {
-        executionId,
-        runId: run.id,
-        status: "pending",
-        createdAt: new Date(),
+        executionId: outcome.execution.executionId,
+        runId: outcome.execution.runId,
+        status: outcome.execution.status,
+        createdAt: outcome.execution.createdAt,
+        missingPolls: 0,
       };
 
       this.activeExecutions.set(run.id, tracked);
       this.stats.executionsCreated++;
 
-      // Mark workflow as running
-      await this.config.backend.updateRun(run.id, {
-        status: "running",
-        startedAt: new Date(),
-        heartbeatAt: new Date(),
-        workerId: `run-execution:${executionId}`,
-      });
-
       if (this.config.debug) {
         logger.info(`Created run execution ${executionId} for workflow ${run.id}`);
       }
-    } catch (error) {
-      logger.error(`Failed to create run execution for ${run.id}:`, error);
-      this.stats.executionsFailed++;
+      return;
+    }
 
-      // Mark workflow as failed
-      await this.config.backend.updateRun(run.id, {
-        status: "failed",
-        error: {
-          message: `RUN_EXECUTION_CREATION_FAILED: Failed to create run execution: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        },
-        completedAt: new Date(),
-      });
+    if (outcome.status === "failed-before-claim" || outcome.status === "failed-after-claim") {
+      this.stats.executionsFailed++;
+      logger.error(`Failed to create run execution for ${run.id}:`, outcome.error);
     }
   }
 

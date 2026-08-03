@@ -28,7 +28,7 @@
   ],
   "tools": [
     {
-      "id": "list_sandboxes",
+      "id": "e2b__list_sandboxes",
       "name": "List Sandboxes",
       "description": "List all running sandboxes, optionally filtered by metadata key/value pairs",
       "requiresWrite": false,
@@ -45,7 +45,7 @@
       }
     },
     {
-      "id": "create_sandbox",
+      "id": "e2b__create_sandbox",
       "name": "Create Sandbox",
       "description": "Create a new sandbox from a template (starts a billable running sandbox)",
       "requiresWrite": true,
@@ -80,7 +80,7 @@
       }
     },
     {
-      "id": "get_sandbox",
+      "id": "e2b__get_sandbox",
       "name": "Get Sandbox",
       "description": "Get a sandbox by ID, including template, state, resources, and start/end times",
       "requiresWrite": false,
@@ -98,7 +98,7 @@
       }
     },
     {
-      "id": "kill_sandbox",
+      "id": "e2b__kill_sandbox",
       "name": "Kill Sandbox",
       "description": "Kill a sandbox by ID, immediately terminating it and discarding its state",
       "requiresWrite": true,
@@ -116,7 +116,7 @@
       }
     },
     {
-      "id": "list_templates",
+      "id": "e2b__list_templates",
       "name": "List Templates",
       "description": "List all sandbox templates available to the account, with CPU, memory, and disk defaults",
       "requiresWrite": false,
@@ -133,7 +133,7 @@
       }
     },
     {
-      "id": "pause_sandbox",
+      "id": "e2b__pause_sandbox",
       "name": "Pause Sandbox",
       "description": "Pause a running sandbox, preserving its state so it can be resumed later — the middle ground between running and killed (returns 204 on success)",
       "requiresWrite": true,
@@ -151,7 +151,7 @@
       }
     },
     {
-      "id": "resume_sandbox",
+      "id": "e2b__resume_sandbox",
       "name": "Resume Sandbox",
       "description": "Resume a paused sandbox with its preserved state and a fresh timeout",
       "requiresWrite": true,
@@ -176,7 +176,7 @@
       }
     },
     {
-      "id": "set_sandbox_timeout",
+      "id": "e2b__set_sandbox_timeout",
       "name": "Set Sandbox Timeout",
       "description": "Reset a running sandbox's TTL: the sandbox will expire the given number of seconds from now (each call overwrites the previous timeout) — use this to keep a sandbox alive mid-task (returns 204 on success)",
       "requiresWrite": true,

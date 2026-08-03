@@ -33,7 +33,7 @@
   ],
   "tools": [
     {
-      "id": "list_payments",
+      "id": "razorpay__list_payments",
       "name": "List Payments",
       "description": "List payments, optionally within a Unix-timestamp window",
       "requiresWrite": false,
@@ -86,7 +86,7 @@
       }
     },
     {
-      "id": "get_payment",
+      "id": "razorpay__get_payment",
       "name": "Get Payment",
       "description": "Get details of a payment",
       "requiresWrite": false,
@@ -104,7 +104,7 @@
       }
     },
     {
-      "id": "list_orders",
+      "id": "razorpay__list_orders",
       "name": "List Orders",
       "description": "List orders",
       "requiresWrite": false,
@@ -148,7 +148,7 @@
       }
     },
     {
-      "id": "get_order",
+      "id": "razorpay__get_order",
       "name": "Get Order",
       "description": "Get details of an order",
       "requiresWrite": false,
@@ -166,7 +166,7 @@
       }
     },
     {
-      "id": "list_refunds",
+      "id": "razorpay__list_refunds",
       "name": "List Refunds",
       "description": "List refunds",
       "requiresWrite": false,
@@ -200,7 +200,7 @@
       }
     },
     {
-      "id": "list_settlements",
+      "id": "razorpay__list_settlements",
       "name": "List Settlements",
       "description": "List settlements paid out to your bank account",
       "requiresWrite": false,

@@ -1,4 +1,5 @@
 import { compactForStep, estimateOverhead } from "../../chat/message-prep.ts";
+import { AGENT_ERROR } from "#veryfront/errors";
 import type { ProviderModelMessage } from "../../chat/types.ts";
 import {
   type AgentRuntimeMessagePart,
@@ -23,12 +24,30 @@ export type PrepareHostedChildForkRuntimeStepMessagesInput = {
   buildInstructions: () => string;
   forkToolNames: readonly string[];
   resolveSystem?: HostedChildForkRuntimeStepSystemResolver;
+  /**
+   * Pinned tool names (local/essential) that are always present.
+   * Required when `getActivatedToolNames` is provided.
+   */
+  pinnedToolNames?: readonly string[];
+  /**
+   * When provided, returns the current activated remote tool names from the
+   * live run context. The result is merged with `pinnedToolNames` and returned
+   * as `forkToolNames` in the step preparation result, enabling per-step tool
+   * schema refresh without mutating the caller's fixed forkToolNames array.
+   */
+  getActivatedToolNames?: () => readonly string[];
 };
 
 /** Public API contract for hosted child fork runtime step messages. */
 export type HostedChildForkRuntimeStepMessages = {
   messages: AgentMessage[];
   system: string;
+  /**
+   * Present only when `getActivatedToolNames` was provided in the input.
+   * Contains the live `pinned ∪ activated` set the caller should use for the
+   * current step instead of its fixed forkToolNames.
+   */
+  forkToolNames?: readonly string[];
 };
 
 function convertAgentRuntimePartToChildForkMessagePart(
@@ -73,7 +92,9 @@ function convertAgentRuntimePartToChildForkMessagePart(
     return { type: "text", text: `[file: ${part.mediaType}]` };
   }
 
-  throw new Error(`Unhandled AgentRuntimeMessagePart type: ${String(part.type)}`);
+  throw AGENT_ERROR.create({
+    detail: `Unhandled AgentRuntimeMessagePart type: ${String(part.type)}`,
+  });
 }
 
 /** Convert compacted provider messages to child fork runtime messages. */
@@ -113,8 +134,21 @@ export function prepareHostedChildForkRuntimeStepMessages(
     compactedMessages,
   });
 
+  // Compute live forkToolNames = pinned ∪ activated when the caller supplies
+  // a getActivatedToolNames getter. This allows each step to see newly
+  // activated tool schemas without the caller mutating its fixed array.
+  const liveForkToolNames = input.getActivatedToolNames
+    ? [
+      ...new Set([
+        ...(input.pinnedToolNames ?? []),
+        ...input.getActivatedToolNames(),
+      ]),
+    ].sort()
+    : undefined;
+
   return {
     messages: convertCompactedProviderMessagesToChildForkRuntimeMessages(compactedMessages),
     system: typeof resolvedSystem === "string" ? resolvedSystem : currentInstructions,
+    ...(liveForkToolNames !== undefined ? { forkToolNames: liveForkToolNames } : {}),
   };
 }

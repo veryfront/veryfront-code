@@ -6,6 +6,11 @@
  * @module ai/agent/runtime/sse-utils
  */
 
+// Runtime heuristic: detects a write to an already-closed ReadableStream controller.
+// The matched message is a Deno/browser engine implementation detail and may change
+// across runtime versions. If the wording ever changes, writes to closed controllers
+// will throw instead of being silently tolerated — this is the safe failure mode
+// (the stream is already gone) but it will appear as an unhandled error.
 function isClosedStreamControllerError(error: unknown): error is TypeError {
   return error instanceof TypeError &&
     error.message.includes("The stream controller cannot close or enqueue");
@@ -47,5 +52,5 @@ export function closeSSEStream(controller: ReadableStreamDefaultController): voi
  * Generate a unique message ID for streaming.
  */
 export function generateMessageId(): string {
-  return `msg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  return `msg-${crypto.randomUUID()}`;
 }

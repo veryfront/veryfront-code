@@ -22,6 +22,18 @@ export function createVeryfrontAliases(): AliasOptions {
       replacement: sourcePath("src/react/components/chat/index.ts"),
     },
     {
+      find: /^veryfront\/ui\/icons$/,
+      replacement: sourcePath("src/react/components/ui/icons/index.ts"),
+    },
+    {
+      find: /^veryfront\/ui$/,
+      replacement: sourcePath("src/react/components/ui/index.ts"),
+    },
+    {
+      find: /^veryfront\/(?:react\/)?components\/ui$/,
+      replacement: sourcePath("src/react/components/ui/index.ts"),
+    },
+    {
       find: /^veryfront\/head$/,
       replacement: sourcePath("src/react/components/Head.tsx"),
     },
@@ -42,6 +54,7 @@ export function createVeryfrontAliases(): AliasOptions {
       find: /^veryfront\/fonts$/,
       replacement: sourcePath("src/react/fonts/index.ts"),
     },
+    { find: /^#deno-config$/, replacement: sourcePath("deno.json") },
     {
       find: /^#veryfront\/agent\/react$/,
       replacement: sourcePath("src/agent/react/index.ts"),

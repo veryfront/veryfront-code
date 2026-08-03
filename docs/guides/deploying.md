@@ -11,7 +11,7 @@ Keep the first production path narrow: one route, one check, one deploy.
 
 - A Veryfront project that runs with `veryfront dev`.
 - Production credentials for providers, integrations, and deployment targets.
-- For Veryfront Cloud: `VERYFRONT_API_TOKEN` and a project reference.
+- For Veryfront Cloud: run `veryfront login` or set `VERYFRONT_API_TOKEN`.
 - For self-hosting: the current Node.js LTS or a container host that can serve
   the build output.
 
@@ -41,18 +41,14 @@ veryfront build
 This compiles pages, bundles assets, pre-renders static routes, and writes the
 output to `dist/` by default.
 
-Customize the output directory in `veryfront.config.ts`:
+Choose a different output directory explicitly:
 
-```ts
-import { defineConfig } from "veryfront";
-
-export default defineConfig({
-  build: {
-    outDir: "dist",
-    trailingSlash: false,
-  },
-});
+```bash
+veryfront build --output build-output
 ```
+
+`build.outDir` and `build.trailingSlash` remain accepted configuration fields
+for compatibility, but the production builder does not consume them.
 
 ## Run the build locally
 
@@ -64,22 +60,42 @@ veryfront serve
 Open the same route you tested in development. For API routes, compare the dev
 and production responses with `curl`.
 
-## Deploy to Veryfront Cloud
+## Preview on Veryfront Cloud
+
+Create or link the cloud project and push the current source to its preview:
 
 ```bash
-veryfront deploy
+npx veryfront push
 ```
 
-Deploys your project to Veryfront Cloud.
+`veryfront push` stores local project identity in ignored
+`.veryfront/project.json`, records the pushed source digest in
+`.veryfront/push-receipt.json`, and prints the preview URL. It does not write
+`veryfront.json`.
 
-For preview deployments:
+Push preserves remote-only files by default. Use
+`npx veryfront push --prune --dry-run` to preview an exact remote mirror, then
+run `npx veryfront push --prune` only when those deletions are intentional.
+
+For an existing nonproduction environment named `staging`:
 
 ```bash
-veryfront deploy --branch feature-x
+npx veryfront push --branch feature-x
+npx veryfront deploy --branch feature-x --env staging
 ```
 
-Use `veryfront open` after deployment to open the project. Use
-`veryfront open --json` when automation needs the deployed URL.
+Deploy uses the last verified Push receipt and verifies the release was built
+from that exact source digest before assigning it to the environment. If no Push
+receipt exists, Deploy first runs a quiet Push so the first deployment still
+works as one command. Use `veryfront open` after deployment to open the project.
+Deploy prints the environment URL; use `veryfront open --json` when automation
+needs the same URL later.
+
+Project reference precedence is `VERYFRONT_PROJECT_SLUG` or environment
+configuration, then `veryfront.config.ts`, then legacy `veryfront.json`, then
+lower-level tenant or project-ID environment references, then the ignored local
+link. Keep `.veryfront/project.json` ignored unless you intentionally use
+committed configuration instead.
 
 ## Set production environment variables
 
@@ -115,13 +131,16 @@ output.
 
 After `veryfront build`:
 
-- `dist/` or your configured `outDir` contains compiled assets.
+- `dist/`, or the directory passed to `--output`, contains compiled assets.
 - `veryfront serve` serves the build locally.
 - The route you chose responds the same way it did in development.
 
 After `veryfront deploy`:
 
-- The CLI confirms the deployed release and environment.
+- The CLI confirms the release, environment, and verified source digest.
+- The CLI reports whether every shared proxy acknowledged the active release. An
+  unconfirmed data-plane update is a warning after commit, not a failed deploy;
+  do not retry solely because of that warning.
 - `veryfront open` opens the deployed project.
 - The same page, API route, agent, workflow, task, or run path works in
   production.
@@ -130,10 +149,13 @@ After `veryfront deploy`:
 ## Next
 
 - [Configuration](./configuration.md): Configure build and environment behavior
-- [Providers](./providers.md): Configure model provider defaults
+- [Deploy from CI](./deploy-from-ci.md): Push and deploy reviewed Git commits from CI
+- [Move Studio changes into Git](./move-studio-changes-to-git.md): Review a Studio release through a Git pull request
+- [Providers](./providers.md): Configure model providers
 
 ## Related
 
 - [veryfront](../api-reference/veryfront/index.md): Framework entrypoint
+- [veryfront/cli](../api-reference/veryfront/cli.md): Pull, Push, and Deploy command catalog
 - [veryfront/server](../api-reference/veryfront/server.md): Server runtime APIs
 - [veryfront/observability](../api-reference/veryfront/observability.md): Runtime observability

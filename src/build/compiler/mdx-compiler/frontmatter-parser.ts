@@ -1,5 +1,5 @@
 import { extract } from "#std/front-matter/yaml.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { bundlerLogger as logger } from "#veryfront/utils";
 import type { MDXFrontmatter } from "./types.ts";
 

@@ -7,9 +7,8 @@
  * @module transforms/mdx/esm-module-loader/module-fetcher/module-cache
  */
 
-import { join } from "#veryfront/compat/path";
-import * as posix from "#std/path/posix";
-import type { Logger } from "#veryfront/utils/logger/logger.ts";
+import { join, posix } from "#veryfront/compat/path";
+import type { Logger } from "#veryfront/utils";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { getLocalFs, saveModulePathCache } from "../cache/index.ts";
@@ -18,23 +17,32 @@ import { buildMdxEsmModuleFileName, buildMdxEsmPathCacheKey } from "../cache-for
 import { hasUnresolvedImports } from "./nested-imports.ts";
 import { recordModuleToSession } from "./render-sessions.ts";
 import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/filename-default-export.ts";
+import { getMdxModuleCacheVariant } from "./cache-keys.ts";
+import { canonicalizeContainedModulePath, isVfModulePath } from "../resolution/module-path.ts";
+
+function invalidModulePath(): never {
+  throw new TypeError("Module path must remain within the project module root");
+}
 
 /**
  * Normalize a module path, resolving relative paths if a parent is provided.
  */
 export function normalizePath(modulePath: string, parentModulePath?: string): string {
-  // Strip query parameters (e.g., ?ssr=true) as they're not part of the file path
-  // and cause issues with cache key validation (? is not an allowed character)
-  let normalizedPath = modulePath.replace(/\?.*$/, "").replace(/^\//, "");
+  const relativeImport = modulePath.startsWith("./") || modulePath.startsWith("../");
+  if (!parentModulePath || !relativeImport) {
+    return canonicalizeContainedModulePath(modulePath) ?? invalidModulePath();
+  }
 
-  if (!parentModulePath) return normalizedPath;
-  if (!modulePath.startsWith("./") && !modulePath.startsWith("../")) return normalizedPath;
+  const normalizedParent = canonicalizeContainedModulePath(parentModulePath) ??
+    invalidModulePath();
+  const parentDir = posix.dirname(normalizedParent);
+  const resolvedPath = canonicalizeContainedModulePath(posix.join(parentDir, modulePath)) ??
+    invalidModulePath();
 
-  const parentDir = parentModulePath.replace(/\/[^/]+$/, "");
-  normalizedPath = posix.normalize(posix.join(parentDir, modulePath));
-
-  if (!normalizedPath.startsWith("_vf_modules/")) normalizedPath = `_vf_modules/${normalizedPath}`;
-  return normalizedPath;
+  if (isVfModulePath(normalizedParent) && !isVfModulePath(resolvedPath)) {
+    return invalidModulePath();
+  }
+  return isVfModulePath(resolvedPath) ? resolvedPath : `_vf_modules/${resolvedPath}`;
 }
 
 /**
@@ -51,6 +59,8 @@ export async function cacheModule(
   pathCache: Map<string, string>,
   log: Logger,
   reactVersion = REACT_DEFAULT_VERSION,
+  dependencyPinningCacheKey = "off",
+  moduleServerOrigin?: string,
 ): Promise<string | null> {
   moduleCode = ensureFilenameDefaultExport(normalizedPath, moduleCode);
 
@@ -65,7 +75,11 @@ export async function cacheModule(
 
   const contentHash = hashString(normalizedPath + moduleCode);
   const cachePath = join(esmCacheDir, buildMdxEsmModuleFileName(contentHash));
-  const pathCacheKey = buildMdxEsmPathCacheKey(normalizedPath, reactVersion);
+  const pathCacheKey = buildMdxEsmPathCacheKey(
+    normalizedPath,
+    reactVersion,
+    getMdxModuleCacheVariant(dependencyPinningCacheKey, moduleServerOrigin),
+  );
 
   const localFs = getLocalFs();
   try {

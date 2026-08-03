@@ -16,12 +16,16 @@ export async function cleanupCaches(): Promise<void> {
 }
 
 export async function performCleanup(renderer: VeryfrontRenderer): Promise<void> {
-  await cleanupRenderer(renderer);
+  try {
+    await cleanupRenderer(renderer);
+  } catch (_) {
+    logger.warn("Renderer cleanup failed");
+  }
   await cleanupCaches();
 }
 
 export function logBuildCompletion(stats: BuildStats): void {
-  logger.info("Build complete!", {
+  logger.debug("Build complete!", {
     pages: stats.pages,
     chunks: stats.chunks,
     assets: stats.assets,

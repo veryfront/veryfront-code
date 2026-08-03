@@ -26,7 +26,7 @@
   ],
   "tools": [
     {
-      "id": "list_organizations",
+      "id": "planetscale__list_organizations",
       "name": "List Organizations",
       "description": "List organizations the service token can access",
       "requiresWrite": false,
@@ -67,7 +67,7 @@
       }
     },
     {
-      "id": "list_databases",
+      "id": "planetscale__list_databases",
       "name": "List Databases",
       "description": "List databases in an organization",
       "requiresWrite": false,
@@ -116,7 +116,7 @@
       }
     },
     {
-      "id": "get_database",
+      "id": "planetscale__get_database",
       "name": "Get Database",
       "description": "Get details of a database",
       "requiresWrite": false,
@@ -140,7 +140,7 @@
       }
     },
     {
-      "id": "list_branches",
+      "id": "planetscale__list_branches",
       "name": "List Branches",
       "description": "List branches of a database",
       "requiresWrite": false,
@@ -196,7 +196,7 @@
       }
     },
     {
-      "id": "list_deploy_requests",
+      "id": "planetscale__list_deploy_requests",
       "name": "List Deploy Requests",
       "description": "List deploy requests for a database",
       "requiresWrite": false,

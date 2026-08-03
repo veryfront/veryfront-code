@@ -9,6 +9,7 @@ import {
   deriveEvalId,
   discoverEvals,
   evalAgent,
+  evalTool,
   findEvalById,
   metrics,
 } from "veryfront/eval";
@@ -109,29 +110,68 @@ describe("eval/discovery", () => {
   it("derives stable eval ids from eval file paths", () => {
     assertEquals(deriveEvalId("evals/deep-research.eval.ts", "evals"), "eval:deep-research");
     assertEquals(deriveEvalId("evals/rag/retrieval.ts", "evals"), "eval:rag/retrieval");
+    assertEquals(
+      deriveEvalId(
+        String.raw`C:\repo\evals\rag\retrieval.eval.ts`,
+        String.raw`C:\repo\evals`,
+      ),
+      "eval:rag/retrieval",
+    );
   });
 
-  it("discovers eval files with source metadata for Studio editing", async () => {
+  it("fails closed when multiple files declare the same eval id", async () => {
     const adapter = createRuntimeAdapter({
-      "/project/evals/deep-research.eval.ts": "",
+      "/project/evals/alpha.eval.ts": "",
+      "/project/evals/beta.eval.ts": "",
     });
-
     const result = await discoverEvals({
       projectDir: "/project",
       adapter,
       config: { fs: { type: "veryfront-api" } } as never,
       moduleLoader: async () => ({
         default: evalAgent({
-          id: "eval:deep-research",
-          name: "Deep research eval",
+          id: "eval:duplicate",
           target: "agent:researcher",
-          dataset: datasets.inline([{ id: "q1", input: "capital", reference: "Paris" }]),
-          metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+          dataset: datasets.inline([{ id: "q1", input: "capital" }]),
         }),
       }),
     });
 
+    assertEquals(result.evals, []);
+    assertEquals(result.errors.map((entry) => entry.filePath), [
+      "evals/alpha.eval.ts",
+      "evals/beta.eval.ts",
+    ]);
+    assertEquals(result.errors.every((entry) => entry.error.includes("Duplicate eval id")), true);
+  });
+
+  it("discovers eval files with source metadata for Studio editing", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/evals/deep-research.eval.ts": "",
+    });
+    let receivedHostExecutionCapability: boolean | undefined;
+
+    const result = await discoverEvals({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+      allowHostProjectCodeExecution: true,
+      moduleLoader: async (_filePath, options) => {
+        receivedHostExecutionCapability = options.allowHostProjectCodeExecution;
+        return {
+          default: evalAgent({
+            id: "eval:deep-research",
+            name: "Deep research eval",
+            target: "agent:researcher",
+            dataset: datasets.inline([{ id: "q1", input: "capital", reference: "Paris" }]),
+            metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+          }),
+        };
+      },
+    });
+
     assertEquals(result.errors, []);
+    assertEquals(receivedHostExecutionCapability, true);
     assertEquals(
       result.evals.map((item) => ({
         id: item.id,
@@ -203,5 +243,30 @@ describe("eval/discovery", () => {
       filePath,
       exportName: "default",
     });
+  });
+
+  it("discovers tool eval definitions", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/evals/order-tool.eval.ts": "",
+    });
+
+    const result = await discoverEvals({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+      moduleLoader: async () => ({
+        default: evalTool({
+          id: "eval:order-tool",
+          name: "Order tool eval",
+          target: "tool:lookup_order",
+          dataset: datasets.inline([{ id: "q1", input: { orderId: "A1049" } }]),
+          metrics: [metrics.agent.calledTool("lookup_order").gate()],
+        }),
+      }),
+    });
+
+    assertEquals(result.errors, []);
+    assertEquals(result.evals[0]?.definition.targetKind, "tool");
+    assertEquals(result.evals[0]?.definition.target, "tool:lookup_order");
   });
 });

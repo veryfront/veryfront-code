@@ -4,8 +4,8 @@ description: "Define and run quality checks for agents."
 order: 40
 ---
 
-Evals are project-defined quality checks in `evals/`. Run them locally with
-`veryfront eval <eval-id>` and store report artifacts in CI.
+Evals are project-defined quality checks in `evals/`. Use `veryfront eval` to
+run every discovered eval, or `veryfront eval <eval-id>` to run one.
 
 ## Prerequisites
 
@@ -40,7 +40,13 @@ export default evalAgent({
 });
 ```
 
-Run it:
+Run every discovered eval:
+
+```bash
+veryfront eval
+```
+
+Run one eval:
 
 ```bash
 veryfront eval deep-research
@@ -60,11 +66,72 @@ Each run writes `summary.json` and `results.jsonl` to the report directory. If
 `.veryfront/evals/<run-id>/`. Use `--report` only when CI also needs the full
 raw report in one JSON file.
 
-The summary artifact includes pass/fail counts, metric aggregates, skipped
-metric or check results, gate failures, failed examples, flake classification
-for repeated examples, duration aggregates, and usage totals. Use
-`results.jsonl` when you need the full input, output, trace, and per-record
-metric evidence.
+An all-eval run creates one suite directory and one child directory per eval.
+The suite directory contains the summary, one JSONL result per eval, and the
+markdown report. Use `--junit` to add a suite-level JUnit report. Evals run
+sequentially, so a failing eval does not prevent the remaining discovered evals
+from running.
+
+```text
+.veryfront/evals/<suite-run-id>/
+  summary.json
+  results.jsonl
+  report.md
+  junit.xml
+  001-deep-research/
+    summary.json
+    results.jsonl
+    report.md
+```
+
+`--report`, baselines, model overrides, and model comparison are single-eval
+options. Name the eval when using them.
+
+The report and summary artifacts include `schemaVersion`. New reports also
+include dataset metadata with the dataset kind, optional path, example count,
+and a stable SHA-256 hash when examples were loaded. The hash is based on the
+loaded examples and dataset kind; the path is provenance and is not part of the
+fingerprint. The summary artifact
+includes pass/fail counts, metric aggregates, skipped metric or check results,
+gate failures, failed examples, flake classification for repeated examples,
+duration aggregates, and usage totals. Use `results.jsonl` when you need the
+full input, output, trace, and per-record metric evidence.
+
+## Tool evals
+
+Use `evalTool` when the target is one tool and the eval should avoid agent
+routing noise:
+
+```ts
+// evals/support-classifier.eval.ts
+import { datasets, evalTool, metrics } from "veryfront/eval";
+
+export default evalTool({
+  name: "Support classifier quality",
+  target: "tool:classify_support_case",
+  dataset: datasets.inline([
+    {
+      id: "billing-refund",
+      input: {
+        subject: "Refund for duplicate charge",
+        body: "I was charged twice for the same invoice.",
+      },
+      reference: { queue: "billing" },
+    },
+  ]),
+  input: (example) => example.input,
+  metrics: [
+    metrics.agent.calledTool("classify_support_case").gate(),
+    metrics.answer.jsonMatch().gate(),
+  ],
+});
+```
+
+When an `input` mapper is present, reports keep the original dataset example in
+`record.input` and write the actual tool input to `record.executionInput`.
+Direct tool execution is also recorded as a normalized entry in
+`record.trace.toolCalls`, including the tool-call ID, input, output, status, and
+duration metadata when available.
 
 Use JSON mode for automation:
 
@@ -81,6 +148,26 @@ veryfront eval deep-research \
   --report .veryfront/evals/current.json \
   --json
 ```
+
+By default, `--baseline` fails on any aggregate pass-rate drop, failed-count
+increase, metric pass-rate regression, or newly failing example. Use threshold
+flags only for intentional tolerance:
+
+```bash
+veryfront eval deep-research \
+  --baseline .veryfront/evals/baseline.json \
+  --baseline-pass-rate-drop-threshold 0.02 \
+  --baseline-metric-pass-rate-drop-threshold 0.02 \
+  --baseline-usage-increase-threshold 0.15 \
+  --baseline-latency-increase-threshold 0.2 \
+  --json
+```
+
+Usage and p95 latency deltas are reported in `summary.json` whenever both the
+current report and baseline include those values. They fail the run only when
+the matching threshold flag is set. A baseline is accepted only for the same
+eval definition and target; a report from another eval is rejected instead of
+being compared.
 
 Update the baseline explicitly after reviewing the current report:
 
@@ -144,10 +231,11 @@ veryfront eval deep-research \
 Policy metrics can reference `passRate`, `failed`, `gateFailures`,
 `groundednessScore`, `inputTokens`, `outputTokens`, `totalTokens`,
 `billableInputTokens`, `billableOutputTokens`, `costUsd`, `providerCostUsd`,
-`veryfrontChargeUsd`, `costCredits`, and `p95Ms`. `costUsd` remains a
-backward-compatible cost objective and prefers gateway Veryfront charge when it
-is available. Use `min`, `max`, and `maxRegressionPct` for constraints. Use
-`weight` with `direction` set to `"minimize"` or `"maximize"` for objectives.
+`veryfrontChargeUsd`, `veryfrontBilledUsd`, `costCredits`, and `p95Ms`.
+`costUsd` remains a backward-compatible cost objective and prefers gateway
+Veryfront charge when it is available. Use `min`, `max`, and
+`maxRegressionPct` for constraints. Use `weight` with `direction` set to
+`"minimize"` or `"maximize"` for objectives.
 
 Each report includes provenance metadata. Local runs record git SHA, branch,
 dirty state, and a dirty hash. Cloud runs prefer release, deployment, or preview
@@ -197,6 +285,8 @@ metrics.answer.regex({ pattern: "Paris|paris" }).gate();
 metrics.answer.jsonMatch({ expected: { city: "Paris" } }).gate();
 ```
 
+`jsonMatch` compares JSON values, so object key order and insignificant whitespace do not affect the result. Agent text outputs and their string references are parsed only when the entire string is valid JSON; Markdown fences and surrounding prose are not accepted. Direct tool outputs are already values and are compared without reparsing.
+
 Use agent and operational metrics for tool and budget quality:
 
 ```ts
@@ -212,9 +302,11 @@ metrics.ops.tokens({ maxTotal: 4_000 }).budget();
 metrics.ops.cost({ maxUsd: 0.05 }).budget();
 ```
 
-`metrics.ops.cost` uses gateway `veryfrontChargeUsd` first, then legacy
-`costUsd`, then `providerCostUsd`. It does not maintain a separate pricing table
-inside the framework.
+`metrics.ops.cost` uses gateway `veryfrontBilledUsd` first, then
+`veryfrontChargeUsd`, legacy `costUsd`, and finally `providerCostUsd`. It does
+not maintain a separate pricing table inside the framework. Token and cost
+budgets fail when the measurement required by their configured limit is
+missing; absent usage evidence never passes a budget.
 
 Use `calledTool` when the agent must call a tool. Add `input` when the tool
 arguments must include specific fields. `match: "partial"` checks that the
@@ -273,6 +365,9 @@ metrics.knowledge.precisionAtK({
 metrics.knowledge.mrr({
   expected: ["knowledge/login-troubleshooting.md"],
 }).gate({ min: 0.5 });
+
+metrics.knowledge.citationPrecision().gate({ min: 0.9 });
+metrics.knowledge.citationRecall().gate({ min: 0.8 });
 ```
 
 Pass `expectedFrom: "metadata.yourField"` when examples store expected sources
@@ -280,20 +375,57 @@ under a different path. Pass `tool: "your_tool_name"` when the project exposes
 knowledge through a custom retrieval tool. `recallAtK` measures how many
 expected sources appeared in the top `k`, `precisionAtK` measures how many
 retrieved top-`k` items were expected, and `mrr` measures the rank of the first
-expected hit.
+expected hit. `citationPrecision` measures whether answer citations point to
+expected or retrieved sources. `citationRecall` measures whether expected or
+retrieved sources are cited.
 
-Use rubric judges for semantic quality. Inject the judge function from your
-project so the eval definition stays portable:
+Adapters can expose structured RAG evidence directly on the record. Use
+`retrievedContext` for the retrieved passages and `citations` for the answer
+citations:
 
 ```ts
+const adapters = {
+  agent: async () => ({
+    text: "Check the billing ledger before changing the account. [ledger]",
+    retrievedContext: [
+      {
+        source: "knowledge/support/playbooks/billing-ledger.md",
+        content: "Support must review the billing ledger before changing a customer account.",
+      },
+    ],
+    citations: [
+      {
+        source: "knowledge/support/playbooks/billing-ledger.md",
+        text: "[ledger]",
+      },
+    ],
+  }),
+};
+```
+
+Each `retrievedContext` item must include a stable `source` such as a path, URL,
+document id, or document key. Add `content` when groundedness judges or passage
+matching should inspect the retrieved text. Each `citations` item must include
+the cited `source`; add `text` or `quote` when reports should show the answer
+marker or cited passage. When `retrievedContext` is absent, retrieval metrics
+fall back to the configured knowledge tool trace. When `citations` is absent,
+citation metrics read structured `output.citations`, `output.sources`, or
+`output.references`.
+
+Use rubric judges for semantic answer quality:
+
+```ts
+import { judges, metrics } from "veryfront/eval";
+
 metrics.judge.rubric({
   rubric: "Answer must cite the correct city and avoid unsupported facts.",
-  judge: async ({ output, reference }) => {
-    const pass = output.text === reference;
-    return { score: pass ? 1 : 0, pass };
-  },
+  judge: judges.llm.rubric(),
 }).gate({ min: 0.8 });
 ```
+
+The built-in judge grades correctness, completeness, relevance, and compliance
+with the rubric against the optional reference. Pass a custom `judge` function
+instead when evaluation must use project-specific logic or a non-LLM grader.
 
 Use `answer.groundedness` when the judge should compare the final answer against
 retrieved knowledge evidence:
@@ -351,6 +483,59 @@ export default evalAgent({
 });
 ```
 
+## Mock tools for local agent evals
+
+Use `mockTools` when a local `evalAgent` should run the real agent while
+replacing its configured tools with deterministic eval doubles. The agent still
+produces the answer and trace; `mockTools` only changes the request-scoped tool
+set passed to `agent.generate({ tools })`.
+
+```ts
+import { datasets, evalAgent, metrics } from "veryfront/eval";
+import { defineSchema } from "veryfront/schemas";
+import { tool } from "veryfront/tool";
+
+const searchDocs = tool({
+  id: "search_docs",
+  description: "Search docs fixture",
+  inputSchema: defineSchema((v) => v.object({ query: v.string().optional() }))(),
+  execute: async (input) => ({ input, passages: ["Refunds require verification."] }),
+});
+
+export default evalAgent({
+  target: "agent:support",
+  dataset: datasets.inline([{ id: "refund", input: "Can you refund order A1049?" }]),
+  mockTools: { search_docs: searchDocs },
+  metrics: [metrics.agent.calledTool("search_docs").gate()],
+});
+```
+
+`mockTools` can also be a resolver. The local CLI calls it once for each
+example repetition so each record can receive fresh state:
+
+```ts
+export default evalAgent({
+  target: "agent:support",
+  dataset: datasets.inline([{ id: "refund", input: "Refund order A1049." }]),
+  repetitions: 3,
+  mockTools: ({ example, repetition }) => ({
+    search_docs: createFixtureSearchTool({ exampleId: example.id, repetition }),
+  }),
+});
+```
+
+Mock tools are strict and local-only. When present, no configured agent tools,
+remote tools, provider tools, MCP tools, or sandbox tools are advertised or used
+unless they are explicitly included in the `mockTools` result. Skills agents keep
+only the read-only skill loader tools, `load_skill` and
+`load_skill_reference`, so a skills agent can inspect skill instructions during a
+mocked eval; `execute_skill_script` is not retained unless `mockTools` supplies
+it explicitly. Loaded-skill allowed-tool policies and delegation overrides are
+disabled while mock tools are active; the mock tool map is the complete tool
+allowlist for that `generate()` request. There is no `stream()` equivalent for
+request-scoped mock tools. Live AG-UI agent-service evals reject definitions
+with `mockTools` before sending a request to the hosted endpoint.
+
 ## Live agent-service evals
 
 Use the `veryfront/eval/agent-service` subpath, documented under
@@ -395,10 +580,17 @@ calls as `record.trace.toolCalls`, captures tool call IDs, status, streamed
 arguments, result payloads, and denied/error state when the AG-UI endpoint emits
 them, and puts the parsed text at `record.output.text`.
 
+Live adapters and CLI helpers require a non-empty `VERYFRONT_TOKEN`. CLI case
+filters cannot opt into mutation: a requested write case still requires
+`AG_UI_EVAL_WRITE=1`, and an experimental write case requires both
+`AG_UI_EVAL_WRITE=1` and `AG_UI_EVAL_EXPERIMENTAL=1`. Unknown, duplicate, or
+disabled case selections fail before any case runs. A run with no passing case
+exits unsuccessfully instead of treating an all-skipped selection as evidence.
+
 Projects with existing live AG-UI suites can also import reusable CLI, API, and
 durable canary helpers from `veryfront/eval/agent-service`. Use those helpers
 for product-specific canaries that are not yet expressed as `evalAgent`
-definitions. Do not import `veryfront/agent/testing`; that legacy testing path
+definitions. Do not import from `veryfront/agent/testing`; that legacy testing path
 is intentionally absent.
 
 ## Export reports
@@ -460,6 +652,7 @@ const report = await runEval(definition, {
         includeTraces: false,
         includeMetricEvidence: false,
         includeMetricExplanations: false,
+        includeDatasetPath: false,
         metadataAllowlist: ["dataset"],
       },
     },
@@ -468,9 +661,13 @@ const report = await runEval(definition, {
 ```
 
 The registry redacts inputs, outputs, references, traces, tool-call input and
-output, metric evidence, metric explanations, and metadata unless the export
-context explicitly allows each field. Runtime monitoring remains separate: use
-`veryfront/extensions/observability` and the OpenTelemetry extension for spans,
+output, metric evidence, metric explanations, dataset paths, record metadata,
+and export context metadata unless the export context explicitly allows each
+field. Dataset kind, example count, and content hash stay available so
+exporters can group runs without seeing source paths. Use `metadataAllowlist`
+only for metadata keys the destination is allowed to receive. Runtime monitoring
+remains separate: use `veryfront/extensions/observability` and the OpenTelemetry
+extension for spans,
 traces, metrics, and service monitoring. When OpenTelemetry is active, `runEval`
 adds the active `traceId` and `spanId` to export context unless you pass
 `context.trace` explicitly.
@@ -511,9 +708,69 @@ export default defineConfig({
 });
 ```
 
+### Gateway mapping strategy
+
+Keep vendor-specific SDKs and schemas behind your HTTP gateway. Veryfront sends
+one redacted payload shape, `{ report, context }`, and the gateway maps that
+payload to the destination API:
+
+| Destination      | Gateway mapping                                                                                                                                                                                              |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Braintrust       | Map `report.runId`, `definitionId`, `target`, summary scores, and each redacted record to an experiment run or span row. Put `context.trace.traceId` and `context.trace.spanId` in metadata for correlation. |
+| Langfuse         | Map each record to a trace observation or score event. Use the redacted input/output fields only when the export policy allows them, and attach receipts from the Langfuse response to `report.exports`.     |
+| LangSmith        | Map the report to a dataset run and records to examples or feedback rows. Keep references, evidence, explanations, and metadata omitted unless the allowlist permits them.                                   |
+| Internal gateway | Store the full redacted Veryfront report shape, then fan out to vendor adapters asynchronously. Return a receipt with `externalRunId`, `url`, or sanitized metadata.                                         |
+
+Gateways should treat `context.trace` as correlation metadata. It is not span
+export, does not include logs or metric streams, and does not replace ambient
+OpenTelemetry export.
+
+Use `@veryfront/ext-eval-report-mlflow` when completed reports should become
+MLflow Tracking runs. The CLI path can be environment-only: set
+`MLFLOW_TRACKING_URI` to activate the extension and select the default `mlflow`
+exporter for the run.
+
+```bash
+MLFLOW_TRACKING_URI=http://localhost:5001 \
+veryfront eval deep-research --export mlflow
+```
+
+For authenticated MLflow Tracking servers, keep credentials out of
+`MLFLOW_TRACKING_URI`. Use `MLFLOW_TRACKING_TOKEN` for bearer auth or
+`MLFLOW_TRACKING_USERNAME` / `MLFLOW_TRACKING_PASSWORD` for basic auth. Standard
+OAuth client credentials are also supported through
+`MLFLOW_OAUTH_TOKEN_URL`, `MLFLOW_OAUTH_CLIENT_ID`,
+`MLFLOW_OAUTH_CLIENT_SECRET`, and an optional `MLFLOW_OAUTH_SCOPE`.
+
+When `MLFLOW_TRACKING_URI` is configured, `veryfront eval` automatically exports
+every completed eval report to MLflow. Set `VERYFRONT_EVAL_EXPORTERS=mlflow`
+explicitly when CI should make that selection visible in its environment:
+
+```bash
+MLFLOW_TRACKING_URI=http://localhost:5001 \
+VERYFRONT_EVAL_EXPORTERS=mlflow \
+VERYFRONT_EVAL_EXPORT_REQUIRED=true \
+veryfront eval deep-research
+```
+
+`--export` wins over `VERYFRONT_EVAL_EXPORTERS` when both are set. The legacy
+singular `VERYFRONT_EVAL_EXPORT` is used only when
+`VERYFRONT_EVAL_EXPORTERS` is unset. Without either selector,
+`MLFLOW_TRACKING_URI` selects the fixed `mlflow` exporter automatically.
+
 From the CLI, pass comma-separated exporter ids. Export failures are reported in
 the JSON report and do not prevent local report or JUnit files from being
-written.
+written. That best-effort behavior is the local default. CI can make a selected
+export a quality gate with `--require-export` or
+`VERYFRONT_EVAL_EXPORT_REQUIRED=true`; artifacts are still written before the
+command exits non-zero.
+
+Remote MLflow endpoints, OAuth token endpoints, artifact proxies, and optional
+run URL templates must use HTTPS. Plain HTTP remains supported only for local
+`localhost` or loopback MLflow development servers. Requests use bounded
+timeouts and retry only safe operations. The exporter does not blindly retry a
+run creation; it recovers a lost create response using the deterministic
+`veryfront.export_id` run tag.
 
 ```bash
 veryfront eval deep-research \
@@ -523,6 +780,75 @@ veryfront eval deep-research \
   --export braintrust,langfuse \
   --json
 ```
+
+MLflow artifact uploads support HTTP(S) run artifact roots directly. For
+`mlflow-artifacts:/...` roots use the tracking server itself by default, so a
+normal local `mlflow server --serve-artifacts` setup needs only
+`MLFLOW_TRACKING_URI`. For a distinct artifact server or object-store-backed
+root, configure `MLFLOW_ARTIFACTS_URI`; `MLFLOW_ARTIFACTS_PORT` derives it from
+`MLFLOW_TRACKING_URI` for a local server on another port. v1 does not upload
+directly to local filesystem roots or backend-specific schemes such as `dbfs://`,
+`gs://`, `wasbs://`, or similar URIs. After upload, the exporter makes a
+best-effort retrieval check through
+MLflow `artifacts/list` for the `veryfront-eval` path and stores only the
+sanitized `verified`/`missing` paths in the export receipt. The check is
+non-fatal: because `artifacts/list` responses vary across MLflow deployments, a
+mismatch or a failing listing endpoint is logged as a warning rather than
+failing an export whose uploads already succeeded.
+
+When a tracking service provides no HTTP(S) artifact proxy, set
+`MLFLOW_EXPORT_ARTIFACTS=false`. Veryfront still sends the MLflow run's
+aggregate metrics, parameters, and tags, then skips report-artifact upload
+without relying on a backend-specific storage API. This is not needed for a
+normal local `mlflow server --serve-artifacts` setup.
+
+The MLflow exporter logs generic aggregate metrics from the normalized
+`EvalReport`; it does not know project-specific label formats. If a project
+wants generic classification aggregates such as accuracy, macro precision,
+macro recall, macro F1, per-category counts, or confusion counts, extract safe
+labels inside the eval metric and place them in metric evidence:
+
+```ts
+{
+  name: "intent.classification",
+  pass: true,
+  evidence: {
+    expectedCategory: "billing",
+    predictedCategory: "billing",
+  },
+}
+```
+
+Metric evidence is redacted by default. Opt in only when the evidence contains
+safe aggregate labels rather than private prompts, outputs, customer records, or
+tool payloads:
+
+```bash
+MLFLOW_TRACKING_URI=http://localhost:5001 \
+VERYFRONT_EVAL_EXPORT_INCLUDE_METRIC_EVIDENCE=true \
+veryfront eval deep-research --export mlflow
+```
+
+Programmatic eval runs can use the same redaction opt-in through export context:
+
+```ts
+const report = await runEval(definition, {
+  adapters,
+  export: {
+    exporterIds: ["mlflow"],
+    context: {
+      redaction: {
+        includeMetricEvidence: true,
+      },
+    },
+  },
+});
+```
+
+Braintrust should follow the same contract as a sibling
+`@veryfront/ext-eval-report-*` exporter, for example a future
+`@veryfront/ext-eval-report-braintrust`, instead of being special-cased in
+project eval definitions or the MLflow exporter.
 
 ## Discovery
 
@@ -540,8 +866,8 @@ Set `ai.evals.discovery.paths` in project config to use a different directory.
 
 Studio can list eval definitions, show source location, and expose form fields
 for stable parts of the definition: name, target, dataset source, repetitions,
-tags, metadata, and metrics. If code is dynamic, Studio should fall back to
-source editing for the same file.
+tags, metadata, and metrics. If code is dynamic, including a tool eval `input`
+mapper, Studio should fall back to source editing for the same file.
 
 Use `createEvalSourceDocument(discoveredEval)` to normalize a discovered eval
 for Studio panels. The document exposes `editableFields`, `dynamicFields`,
@@ -561,7 +887,13 @@ List discovered evals:
 veryfront eval --list
 ```
 
-Run the eval locally:
+Run every discovered eval locally:
+
+```bash
+veryfront eval
+```
+
+Run one eval locally:
 
 ```bash
 veryfront eval deep-research

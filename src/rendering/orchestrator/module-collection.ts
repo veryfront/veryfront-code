@@ -7,14 +7,31 @@
  * @module rendering/orchestrator/module-collection
  */
 
-/** Timeout for module loading in resolvePageData (prevents hanging on slow transforms) */
+/** Idle timeout for the module-loading stage. Any concrete module/transform progress resets it. */
 export const MODULE_LOAD_TIMEOUT_MS = 10_000;
+
+/**
+ * Fallback cap when module loading is called without an owner signal.
+ * Request and renderer entrypoints supply their own total deadline signal.
+ */
+export const MODULE_LOAD_HARD_TIMEOUT_MS = 45_000;
 
 /** Timeout for data fetching (getStaticData, getServerData) */
 export const DATA_FETCH_TIMEOUT_MS = 15_000;
 
 /** Timeout for SSR rendering stage */
 export const SSR_RENDER_TIMEOUT_MS = 20_000;
+
+/**
+ * Human-readable label for the module-loading timeout.
+ *
+ * Falls back to the route pathname when the slug is empty — the index route's
+ * slug is `""`, which otherwise produced a blank timeout label
+ * (`"Module loading for "`) that named no route when a cold load stalled.
+ */
+export function moduleLoadLabel(slug: string, pathname: string): string {
+  return `Module loading for ${slug || pathname || "unknown route"}`;
+}
 
 /** Module to load for data fetching */
 export interface ModuleToLoad {
@@ -27,6 +44,7 @@ export interface ModuleToLoad {
 export interface LoadedModule {
   type: "page" | "layout";
   id: string;
+  path: string;
   mod: unknown;
 }
 

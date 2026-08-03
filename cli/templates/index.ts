@@ -46,6 +46,7 @@ export {
 
 export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
   "docs-agent": {
+    firstPartyExtensions: ["@veryfront/ext-document-kreuzberg"],
     npmDependencies: {
       "@kreuzberg/node": "^4.4.2",
       "@kreuzberg/wasm": "4.5.2",

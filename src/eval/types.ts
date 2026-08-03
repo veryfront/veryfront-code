@@ -4,14 +4,10 @@
  * @module eval
  */
 
-import type {
-  EvalReportExportContext,
-  EvalReportExporterRegistry,
-  EvalReportExportResult,
-} from "#veryfront/extensions/eval";
+import type { ToolSet } from "#veryfront/tool";
 
-/** Primitive kind an eval can execute. V1 supports agent targets. */
-export type EvalTargetKind = "agent";
+/** Primitive kind an eval can execute. */
+export type EvalTargetKind = "agent" | "tool";
 
 /** How a metric result affects the final eval result. */
 export type EvalSeverity = "gate" | "soft" | "budget";
@@ -27,6 +23,88 @@ export type EvalMetricThreshold = {
 
 /** Value that can be returned synchronously or as a promise. */
 export type EvalMaybePromise<T> = T | Promise<T>;
+
+/** Redaction policy applied before reports leave the process. */
+export interface EvalReportExportRedaction {
+  includeInputs?: boolean;
+  includeOutputs?: boolean;
+  includeReferences?: boolean;
+  includeTraces?: boolean;
+  includeMetricExplanations?: boolean;
+  includeMetricEvidence?: boolean;
+  metadataAllowlist?: string[];
+}
+
+/** Trace correlation fields that connect eval exports to runtime spans. */
+export interface EvalReportExportTraceContext {
+  traceId?: string;
+  spanId?: string;
+  parentSpanId?: string;
+}
+
+/** Context passed to eval report exporters. */
+export interface EvalReportExportContext {
+  projectId?: string;
+  projectReference?: string;
+  evalId?: string;
+  sourcePath?: string;
+  reportPath?: string;
+  environment?: string;
+  branch?: string;
+  commitSha?: string;
+  runUrl?: string;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  trace?: EvalReportExportTraceContext;
+  redaction?: EvalReportExportRedaction;
+}
+
+/** Optional receipt returned by a vendor exporter. */
+export interface EvalReportExportReceipt {
+  externalRunId?: string;
+  url?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/** Vendor or backend implementation that receives sanitized eval reports. */
+export interface EvalReportExporter {
+  readonly id: string;
+  export(
+    report: EvalReport,
+    context: EvalReportExportContext,
+  ): EvalMaybePromise<EvalReportExportReceipt | void>;
+}
+
+/** Successful exporter result. */
+export interface EvalReportExportSuccess {
+  exporterId: string;
+  ok: true;
+  receipt?: EvalReportExportReceipt;
+}
+
+/** Failed exporter result. */
+export interface EvalReportExportFailure {
+  exporterId: string;
+  ok: false;
+  error: string;
+}
+
+/** Result for one exporter invocation. */
+export type EvalReportExportResult = EvalReportExportSuccess | EvalReportExportFailure;
+
+/** Registry contract for eval report exporters. */
+export interface EvalReportExporterRegistry {
+  register(exporter: EvalReportExporter): void;
+  unregister(id: string): void;
+  get(id: string): EvalReportExporter | undefined;
+  require(id: string): EvalReportExporter;
+  list(): EvalReportExporter[];
+  has(id: string): boolean;
+  export(
+    report: EvalReport,
+    context?: EvalReportExportContext,
+  ): Promise<EvalReportExportResult[]>;
+}
 
 /** Normalized dataset example used by eval runners and reports. */
 export interface EvalExample {
@@ -140,6 +218,15 @@ export interface EvalKnowledgeMrrMetricOptions {
   tool?: string;
 }
 
+/** Options for citation precision and recall over retrieved knowledge. */
+export interface EvalKnowledgeCitationMetricOptions {
+  expected?: EvalKnowledgeExpectedSource[];
+  expectedFrom?: string;
+  k?: number;
+  tool?: string;
+  citationsFrom?: string;
+}
+
 /** Options for judge-backed answer grounding checks. */
 export interface EvalAnswerGroundednessMetricOptions {
   tool?: string;
@@ -153,6 +240,30 @@ export interface EvalAnswerGroundednessMetricOptions {
     evidence: string[];
     sources: string[];
   }) => EvalMaybePromise<{ score: number; pass?: boolean; explanation?: string }>;
+}
+
+/** Retrieved context item captured for deterministic RAG metrics. */
+export interface EvalRetrievedContext {
+  /** Stable source id, path, URL, or document key for this retrieved item. */
+  source: string;
+  /** Optional retrieved passage text used by groundedness and content matching. */
+  content?: string;
+  /** Optional display title for the source. */
+  title?: string;
+  /** Optional adapter-specific metadata. */
+  metadata?: Record<string, unknown>;
+}
+
+/** Citation emitted by an answer and matched against retrieved or expected sources. */
+export interface EvalCitation {
+  /** Stable source id, path, URL, or document key being cited. */
+  source: string;
+  /** Optional answer citation marker or label, such as "[1]". */
+  text?: string;
+  /** Optional quoted passage attached to the citation. */
+  quote?: string;
+  /** Optional adapter-specific metadata. */
+  metadata?: Record<string, unknown>;
 }
 
 /** Tool call metadata captured during one eval record. */
@@ -179,9 +290,12 @@ export interface EvalRecord {
   exampleId: string;
   repetition: number;
   input: unknown;
+  executionInput?: unknown;
   output: unknown;
   reference?: unknown;
   metadata: Record<string, unknown>;
+  retrievedContext?: EvalRetrievedContext[];
+  citations?: EvalCitation[];
   trace: EvalTrace;
   usage: EvalUsage;
   durationMs: number;
@@ -248,6 +362,21 @@ export interface EvalCheckContext {
   expect: EvalExpect;
 }
 
+/** Context passed to an agent eval mock tool resolver. */
+export interface EvalMockToolsResolverContext {
+  definition: EvalDefinition;
+  example: EvalExample;
+  repetition: number;
+}
+
+/** Request-scoped mock tool resolver for local `evalAgent` execution. */
+export type EvalMockToolsResolver = (
+  context: EvalMockToolsResolverContext,
+) => EvalMaybePromise<ToolSet>;
+
+/** Static or request-scoped mock tools for local `evalAgent` execution. */
+export type EvalMockTools = ToolSet | EvalMockToolsResolver;
+
 /** Source location for a discovered eval definition. */
 export interface EvalSource {
   filePath: string;
@@ -268,6 +397,8 @@ export interface EvalDefinition {
   tags: string[];
   metadata: Record<string, unknown>;
   source?: EvalSource;
+  input?: (example: EvalExample) => EvalMaybePromise<unknown>;
+  mockTools?: EvalMockTools;
   check?: (context: EvalCheckContext) => EvalMaybePromise<void>;
 }
 
@@ -278,6 +409,26 @@ export interface EvalAgentInput {
   description?: string;
   target: string;
   dataset: EvalDataset | EvalExampleInput[];
+  metrics?: EvalMetric[];
+  repetitions?: number;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  mockTools?: EvalMockTools;
+  check?: (context: EvalCheckContext) => EvalMaybePromise<void>;
+}
+
+/** Input accepted by `evalTool`. */
+export interface EvalToolInput {
+  id?: string;
+  name?: string;
+  description?: string;
+  target: string;
+  dataset: EvalDataset | EvalExampleInput[];
+  /**
+   * Optional mapper from dataset example to tool input. When omitted, the
+   * dataset example's `input` value is passed to the tool adapter unchanged.
+   */
+  input?: (example: EvalExample) => EvalMaybePromise<unknown>;
   metrics?: EvalMetric[];
   repetitions?: number;
   tags?: string[];
@@ -297,6 +448,8 @@ export interface EvalAgentAdapterResult {
   text?: string;
   json?: unknown;
   output?: unknown;
+  retrievedContext?: EvalRetrievedContext[];
+  citations?: EvalCitation[];
   trace?: Partial<EvalTrace>;
   usage?: EvalUsage;
   durationMs?: number;
@@ -309,10 +462,36 @@ export type EvalAgentAdapter = (
   context: EvalAgentAdapterContext,
 ) => EvalMaybePromise<string | EvalAgentAdapterResult>;
 
+/** Context passed to a tool adapter when `runEval` executes an example. */
+export interface EvalToolAdapterContext {
+  definition: EvalDefinition;
+  example: EvalExample;
+  repetition: number;
+  runId: string;
+  input: unknown;
+}
+
+/** Tool adapter result normalized into an eval record. */
+export interface EvalToolAdapterResult {
+  output: unknown;
+  toolCallId?: string;
+  trace?: Partial<EvalTrace>;
+  usage?: EvalUsage;
+  durationMs?: number;
+  completed?: boolean;
+  error?: string;
+}
+
+/** Adapter used by `runEval` to execute tool targets. */
+export type EvalToolAdapter = (
+  context: EvalToolAdapterContext,
+) => EvalMaybePromise<EvalToolAdapterResult>;
+
 /** Options for running an eval locally. */
 export interface RunEvalOptions {
   adapters: {
-    agent: EvalAgentAdapter;
+    agent?: EvalAgentAdapter;
+    tool?: EvalToolAdapter;
   };
   baseDir?: string;
   runId?: string;
@@ -325,6 +504,8 @@ export interface RunEvalOptions {
 export interface EvalReportExportConfig {
   registry?: EvalReportExporterRegistry;
   exporterIds?: string[];
+  /** Make failed or missing selected exports a CLI quality-gate failure. */
+  required?: boolean;
   context?: EvalReportExportContext;
 }
 
@@ -418,6 +599,27 @@ export interface EvalMetricDeltaSummary {
   regressed: boolean;
 }
 
+/** Numeric budget delta between a current eval report and a baseline report. */
+export interface EvalBudgetDeltaSummary {
+  name: string;
+  family: "usage" | "latency";
+  baselineValue: number;
+  currentValue: number;
+  delta: number;
+  percentDelta: number | null;
+  threshold: number | null;
+  regressed: boolean;
+}
+
+/** Regression policy for comparing a current eval report to a saved baseline. */
+export interface EvalReportComparisonPolicy {
+  passRateDropThreshold?: number;
+  metricPassRateDropThreshold?: number;
+  failedDeltaThreshold?: number;
+  usageIncreaseThreshold?: number;
+  latencyIncreaseThreshold?: number;
+}
+
 /** Baseline comparison for a current eval report. */
 export interface EvalReportComparison {
   kind: "eval-report-comparison";
@@ -427,6 +629,7 @@ export interface EvalReportComparison {
   passedDelta: number;
   failedDelta: number;
   metricDeltas: EvalMetricDeltaSummary[];
+  budgetDeltas: EvalBudgetDeltaSummary[];
   newFailedExamples: string[];
   fixedExamples: string[];
   regressed: boolean;
@@ -462,6 +665,14 @@ export interface EvalRunProvenance {
 export interface EvalReportMetadata {
   model?: string;
   provenance?: EvalRunProvenance;
+}
+
+/** Stable dataset identity attached to new eval reports when examples are available. */
+export interface EvalReportDatasetMetadata {
+  kind: EvalDataset["kind"];
+  path?: string;
+  examples: number;
+  hash: string;
 }
 
 /** Per-model row in an eval model comparison report. */
@@ -602,10 +813,13 @@ export interface EvalReportSummary {
 /** JSON-serializable report produced by `runEval`. */
 export interface EvalReport {
   kind: "eval-report";
+  /** Additive report contract version. Missing means legacy V1 report. */
+  schemaVersion?: number;
   runId: string;
   definitionId: string;
   targetKind: EvalTargetKind;
   target: string;
+  dataset?: EvalReportDatasetMetadata;
   startedAt: string;
   endedAt: string;
   summary: EvalReportSummary;

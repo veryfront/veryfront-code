@@ -2,13 +2,13 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import {
   IconButton,
   TooltipProvider,
-} from "../../../src/react/components/chat/ui/index.ts";
+} from "../../../src/react/components/ui/index.ts";
 import {
   CopyIcon,
   PlusIcon,
   RefreshCwIcon,
   TrashIcon,
-} from "../../../src/react/components/chat/icons/index.ts";
+} from "../../../src/react/components/ui/icons/index.ts";
 import {
   DocsCode,
   DocsComposition,
@@ -22,7 +22,7 @@ import {
 // NOTE: Studio's `Plus`/`Copy`/`RefreshCw`/`Trash2` icons are substituted with
 // our `PlusIcon`/`CopyIcon`/`RefreshCwIcon`/`TrashIcon`.
 
-const importCode = `import { IconButton } from "veryfront/chat/ui"`;
+const importCode = `import { IconButton } from "veryfront/ui"`;
 
 const compositionTree = `IconButton
 +-- Tooltip
@@ -102,7 +102,7 @@ function IconButtonDocsPage() {
 }
 
 const meta = {
-  title: "Chat/UI/IconButton",
+  title: "UI/IconButton",
   component: IconButton,
   tags: ["autodocs"],
   args: {

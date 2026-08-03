@@ -1,5 +1,5 @@
 import type { ImportMapConfig } from "./types.ts";
-import { getReactImportMap } from "#veryfront/transforms/esm/package-registry.ts";
+import { getReactImportMap } from "#veryfront/transforms/esm/react-cdn.ts";
 
 /**
  * SSR import map for veryfront/* modules.

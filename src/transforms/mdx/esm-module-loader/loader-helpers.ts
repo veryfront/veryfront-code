@@ -11,8 +11,8 @@
 import { join } from "#veryfront/compat/path";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { exists as fsExists } from "#veryfront/platform/compat/fs.ts";
 import { LOG_PREFIX_MDX_LOADER } from "./constants.ts";
@@ -26,6 +26,12 @@ import {
 import { createModuleFetcherContext, fetchAndCacheModule } from "./module-fetcher/index.ts";
 import { buildMissingModuleError } from "./missing-module.ts";
 import type { ESMLoaderContext } from "./types.ts";
+import { parallelMap } from "#veryfront/utils/parallel.ts";
+import {
+  assertMdxModuleImportCount,
+  MAX_MDX_MODULE_IMPORTS_PER_FILE,
+  MAX_MDX_MODULE_TRANSFORM_CONCURRENCY,
+} from "./module-fetcher/limits.ts";
 
 /**
  * Check which framework bundles are missing from disk.
@@ -106,6 +112,7 @@ export function findVfModuleImports(
   return findStaticImportFromSpans(
     code,
     (specifier) => specifier.match(/^\/?(_vf_modules\/[^?]+)(?:\?.*)?$/)?.[1],
+    MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
   );
 }
 
@@ -139,6 +146,7 @@ export async function processVfModuleImports(
     });
     return code;
   }
+  assertMdxModuleImportCount("compiled MDX entry", imports.length);
 
   if (!context.projectId) {
     throw INVALID_ARGUMENT.create({
@@ -154,6 +162,10 @@ export async function processVfModuleImports(
     {
       contentSourceId: context.contentSourceId,
       reactVersion: context.reactVersion,
+      moduleServerOrigin: context.moduleServerOrigin,
+      dependencyPinningCacheKey: context.dependencyPinningCacheKey,
+      dependencyPinningDependencies: context.dependencyPinningDependencies,
+      dependencyPinningSource: context.dependencyPinningSource,
       projectSlug: context.projectSlug,
       logger: logger.child({
         project_id: context.projectId,
@@ -165,8 +177,9 @@ export async function processVfModuleImports(
 
   const fetchStart = performance.now();
 
-  const results = await Promise.all(
-    imports.map(async ({ original, path, start, end }, index) => {
+  const results = await parallelMap(
+    imports,
+    async ({ original, path, start, end }, index) => {
       return await withSpan(
         SpanNames.MDX_FETCH_MODULE,
         async () => {
@@ -191,7 +204,8 @@ export async function processVfModuleImports(
           "mdx.project_slug": projectSlug,
         },
       );
-    }),
+    },
+    { concurrency: MAX_MDX_MODULE_TRANSFORM_CONCURRENCY },
   );
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Module fetch phase completed`, {

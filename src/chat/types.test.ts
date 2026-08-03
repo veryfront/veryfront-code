@@ -71,6 +71,18 @@ describe("chat/types", () => {
         costCredits: 0.25,
       },
     );
+    assertEquals(
+      messageMetadataSchema.safeParse({
+        usage: { inputTokens: -1 },
+      }).success,
+      false,
+    );
+    assertEquals(
+      messageMetadataSchema.safeParse({
+        childRunAudit: { status: "completed", steps: 1.5 },
+      }).success,
+      false,
+    );
 
     assertEquals(normalizeInlineAttachmentMediaType("notes.md", undefined), "text/plain");
     assertEquals(

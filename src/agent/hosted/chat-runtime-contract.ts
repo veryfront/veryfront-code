@@ -8,7 +8,9 @@ import type {
 import type { AgentRuntimeMessage } from "../runtime/message-adapter.ts";
 import type { ConversationRunEvent } from "../conversation/run-events.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
+import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
+import type { ResolvedSkillSelectorPolicy } from "#veryfront/skill/selector.ts";
 
 /** Public API contract for hosted chat runtime finish part. */
 export type HostedChatRuntimeFinishPart = {
@@ -98,6 +100,7 @@ export type HostedChatRuntimeCreationResult<TMessageMetadata = MessageMetadata> 
 /** Public API contract for hosted chat runtime project steering. */
 export type HostedChatRuntimeProjectSteering<TRuntimeAgentDefinition> = {
   agent: TRuntimeAgentDefinition;
+  skillSelectorPolicy?: ResolvedSkillSelectorPolicy;
   environmentContext?: string;
   initialProjectInstructions?: string;
   initialSkills?: RuntimeSkillDefinition[];
@@ -109,10 +112,16 @@ export type HostedSubmittedFormInputResult = {
   inputRequestId: string;
 };
 
+/** Runtime target kind carried by hosted project-agent runs. */
+export type HostedChatRuntimeTargetKind = "main_branch" | "environment" | "preview_branch";
+
 /** Options accepted by hosted chat runtime creation. */
 export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingConfig> = {
   projectId: string | null;
+  projectSlug?: string;
   branchId?: string | null;
+  runtimeTargetKind?: HostedChatRuntimeTargetKind | null;
+  runtimeTargetEnvironmentId?: string | null;
   authToken: string;
   instructions: string | ChatSystemMessage[];
   runId?: string;
@@ -120,17 +129,31 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   model?: string;
   temperature?: number;
   maxSteps?: number;
+  maxOutputTokens?: number;
   allowedTools?: string[];
+  /** Provider-native selection kept separate from local and MCP tool bindings. */
+  allowedProviderTools?: string[];
+  /** Preserve skill runtime infrastructure for a config-derived empty tool selector. */
+  includeRuntimeEssentialToolsWhenEmpty?: boolean;
   allowDelegation?: boolean;
   thinking?: TThinkingConfig;
   conversationId?: string;
   parentRunId?: string;
   parentMessageId?: string;
   availableSkillIds?: string[];
+  skillSelectorPolicy?: ResolvedSkillSelectorPolicy;
   /** Per-run skill id -> discovered SKILL.md source path (owner-aware catalog). */
   skillSourcePaths?: Readonly<Record<string, string>>;
   publishParentRunEvents?: (events: ConversationRunEvent[]) => Promise<void>;
   clientProfile?: RuntimeClientProfile | null;
   liveProjectSteering?: HostedChatRuntimeProjectSteering<TRuntimeAgentDefinition>;
   submittedFormInputResult?: HostedSubmittedFormInputResult;
+  /** @internal Latest private checkpoint loaded from trusted run state. */
+  serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
+  /** @internal Persists private checkpoint state outside model messages. */
+  persistToolExposureCheckpoint?: (
+    checkpoint: ToolExposureCheckpoint,
+  ) => void | Promise<void>;
+  /** @internal Fail closed when a trusted hosted durable run cannot persist exposure state. */
+  requireToolExposureCheckpointPersistence?: true;
 };

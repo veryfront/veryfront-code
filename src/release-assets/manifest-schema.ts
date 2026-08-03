@@ -1,91 +1,297 @@
 /**
- * Release Asset Manifest — v1 body schema, types, and validator.
+ * Release Asset Manifest — v2 body schema, types, and validator.
  *
- * The manifest body is content-addressed metadata describing the transformed
+ * The manifest body is content-addressed metadata describing transformed
  * browser modules and compiled CSS for a release, plus the per-route closure
  * used to drive preload hints and asset URL rewriting.
  *
- * Validation follows the repo's `defineSchema` convention (zod via the
- * `SchemaValidator` extension contract). The schema is materialized lazily so
- * core modules can import these types without pulling in the validator.
+ * The extension-backed schema is used when the schema contract is available.
+ * Consumption paths also use a dependency-free parser that applies the same
+ * bounds and returns a detached, deeply frozen snapshot.
  *
  * @module release-assets/manifest-schema
  */
 
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, SchemaValidator } from "veryfront/extensions/schema";
-import { RELEASE_ASSET_MANIFEST_SCHEMA_VERSION } from "./constants.ts";
+import {
+  isCSSPipelineIdentity,
+  isStyleProfileHash,
+} from "#veryfront/utils/css-artifact-identity.ts";
+import {
+  isValidContentHash,
+  RELEASE_ASSET_BASE_PATH,
+  RELEASE_ASSET_CONTENT_TYPES,
+  RELEASE_ASSET_MANIFEST_LIMITS,
+  RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
+  RELEASE_ASSET_MAX_SIZE_BYTES,
+  type ReleaseAssetContentType,
+} from "./constants.ts";
+import { hasControlCharacters } from "./string-validation.ts";
+
+const {
+  identifierLength: MAX_IDENTIFIER_LENGTH,
+  builderVersionLength: MAX_BUILDER_VERSION_LENGTH,
+  manifestKeyLength: MAX_MANIFEST_KEY_LENGTH,
+  styleProfileHashLength: MAX_STYLE_PROFILE_HASH_LENGTH,
+  cssPipelineIdentityLength: MAX_CSS_PIPELINE_IDENTITY_LENGTH,
+  moduleEntries: MAX_MODULE_ENTRIES,
+  dependencyEntries: MAX_DEPENDENCY_ENTRIES,
+  cssEntries: MAX_CSS_ENTRIES,
+  routeEntries: MAX_ROUTE_ENTRIES,
+  routeModules: MAX_ROUTE_MODULES,
+  routeCssEntries: MAX_ROUTE_CSS_ENTRIES,
+  totalRouteReferences: MAX_TOTAL_ROUTE_REFERENCES,
+} = RELEASE_ASSET_MANIFEST_LIMITS;
+const MODULE_EXTENSION_PATTERN = /\.(?:tsx?|jsx?|mdx)$/;
+const CANONICAL_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
+const RELEASE_ASSET_DEPENDENCY_MODES = ["source", "immutable"] as const;
+
+const MANIFEST_KEYS = new Set([
+  "schemaVersion",
+  "projectId",
+  "releaseId",
+  "releaseVersion",
+  "manifestVersion",
+  "builderVersion",
+  "sourceContentHash",
+  "createdAt",
+  "assetBasePath",
+  "modules",
+  "css",
+  "routes",
+  "dependencyMode",
+  "dependencies",
+]);
+const ASSET_ENTRY_KEYS = new Set(["contentHash", "size", "contentType"]);
+const CSS_ENTRY_KEYS = new Set([
+  "contentHash",
+  "size",
+  "contentType",
+  "styleProfileHash",
+  "cssPipelineIdentity",
+]);
+const ROUTE_ENTRY_KEYS = new Set(["modules", "css"]);
+
+/**
+ * Check that an untrusted value is a non-empty, trimmed string within
+ * `maxLength` that contains no control characters.
+ */
+export function isSafeBoundedText(value: unknown, maxLength: number): value is string {
+  return typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= maxLength &&
+    value.trim() === value &&
+    !hasControlCharacters(value);
+}
+
+function isCanonicalModuleKey(value: string): boolean {
+  if (
+    !isSafeBoundedText(value, MAX_MANIFEST_KEY_LENGTH) ||
+    value.startsWith("/") ||
+    value.endsWith("/") ||
+    value.includes("\\") ||
+    value.includes("?") ||
+    value.includes("#") ||
+    !MODULE_EXTENSION_PATTERN.test(value)
+  ) {
+    return false;
+  }
+
+  const parts = value.split("/");
+  return parts.every((part) => part.length > 0 && part !== "." && part !== "..");
+}
+
+function isSafeDependencyKey(value: string): boolean {
+  return isSafeBoundedText(value, MAX_MANIFEST_KEY_LENGTH);
+}
+
+function isCanonicalRoutePath(value: string): boolean {
+  if (
+    !isSafeBoundedText(value, MAX_MANIFEST_KEY_LENGTH) ||
+    !value.startsWith("/") ||
+    value.includes("\\") ||
+    value.includes("?") ||
+    value.includes("#") ||
+    (value.length > 1 && value.endsWith("/"))
+  ) {
+    return false;
+  }
+
+  if (value === "/") return true;
+  const parts = value.slice(1).split("/");
+  return parts.every((part) => part.length > 0 && part !== "." && part !== "..");
+}
+
+function isCanonicalTimestamp(value: string): boolean {
+  if (
+    value.length > 64 ||
+    !CANONICAL_TIMESTAMP_PATTERN.test(value) ||
+    !Number.isFinite(Date.parse(value))
+  ) {
+    return false;
+  }
+
+  try {
+    const canonical = new Date(value).toISOString();
+    return canonical === value || canonical.replace(".000Z", "Z") === value;
+  } catch {
+    return false;
+  }
+}
+
+function isSafeIntegerInRange(value: unknown, maximum: number): value is number {
+  return typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 0 &&
+    value <= maximum;
+}
+
+function hasUniqueStrings(values: readonly string[]): boolean {
+  return new Set(values).size === values.length;
+}
+
+function recordEntryCountWithin(value: object, limit: number): boolean {
+  return Object.keys(value).length <= limit;
+}
 
 // ---------------------------------------------------------------------------
-// Schema fragments
+// Extension-backed schema
 // ---------------------------------------------------------------------------
 
-const assetEntryShape = (v: SchemaValidator) => ({
-  contentHash: v.string(),
-  size: v.number(),
-  contentType: v.string(),
-});
+const boundedIdentifierSchema = (v: SchemaValidator) =>
+  v.string()
+    .min(1)
+    .max(MAX_IDENTIFIER_LENGTH)
+    .refine((value) => isSafeBoundedText(value, MAX_IDENTIFIER_LENGTH));
 
-const cssEntryShape = (v: SchemaValidator) => ({
-  contentHash: v.string(),
-  size: v.number(),
-  contentType: v.string(),
-  styleProfileHash: v.string().nullable(),
-});
+const assetEntrySchema = (
+  v: SchemaValidator,
+  contentType: ReleaseAssetContentType,
+) =>
+  v.object({
+    contentHash: v.string().regex(/^[0-9a-f]{64}$/),
+    size: v.number().int().nonnegative().max(RELEASE_ASSET_MAX_SIZE_BYTES),
+    contentType: v.literal(contentType),
+  }).strict();
 
-const routeEntryShape = (v: SchemaValidator) => ({
-  modules: v.array(v.string()),
-  css: v.array(v.string()),
-});
+const routeEntrySchema = (v: SchemaValidator) =>
+  v.object({
+    modules: v.array(
+      v.string()
+        .min(1)
+        .max(MAX_MANIFEST_KEY_LENGTH)
+        .refine(isCanonicalModuleKey),
+    )
+      .max(MAX_ROUTE_MODULES)
+      .refine(hasUniqueStrings),
+    css: v.array(v.string().regex(/^[0-9a-f]{64}$/))
+      .max(MAX_ROUTE_CSS_ENTRIES)
+      .refine(hasUniqueStrings),
+  }).strict();
 
-const fallbackShape = (v: SchemaValidator) => ({
-  mode: v.literal("jit"),
-  gaps: v.array(v.string()),
-});
+interface ManifestReferenceShape {
+  modules: Record<string, unknown>;
+  css: Array<{ contentHash: string }>;
+  routes: Record<string, { modules: string[]; css: string[] }>;
+}
 
-// ---------------------------------------------------------------------------
-// Exported schema getter
-// ---------------------------------------------------------------------------
+function hasValidManifestReferences(manifest: ManifestReferenceShape): boolean {
+  const cssHashes = new Set(manifest.css.map((entry) => entry.contentHash));
+  let referenceCount = 0;
 
+  for (const route of Object.values(manifest.routes)) {
+    referenceCount += route.modules.length + route.css.length;
+    if (referenceCount > MAX_TOTAL_ROUTE_REFERENCES) return false;
+    if (route.modules.some((modulePath) => !Object.hasOwn(manifest.modules, modulePath))) {
+      return false;
+    }
+    if (route.css.some((contentHash) => !cssHashes.has(contentHash))) return false;
+  }
+
+  return true;
+}
+
+/** Extension-backed validator for the strict release asset manifest v2 body. */
 export const getReleaseAssetManifestSchema = defineSchema((v) =>
   v.object({
     schemaVersion: v.literal(RELEASE_ASSET_MANIFEST_SCHEMA_VERSION),
-    projectId: v.string(),
-    releaseId: v.string(),
-    releaseVersion: v.number(),
-    manifestVersion: v.number(),
-    builderVersion: v.string(),
-    sourceContentHash: v.string(),
-    createdAt: v.string(),
-    assetBasePath: v.string(),
-    modules: v.record(v.string(), v.object(assetEntryShape(v))),
-    css: v.array(v.object(cssEntryShape(v))),
-    routes: v.record(v.string(), v.object(routeEntryShape(v))),
-    // `dependencies` records framework dependency artifacts for future S7
-    // vendoring. HTML keeps import-map entries on module URLs until those
-    // artifacts include their own rewritten import closures.
-    dependencies: v.record(v.string(), v.object(assetEntryShape(v))),
-    fallback: v.object(fallbackShape(v)),
-  })
+    projectId: boundedIdentifierSchema(v),
+    releaseId: boundedIdentifierSchema(v),
+    releaseVersion: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    manifestVersion: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    builderVersion: v.string()
+      .min(1)
+      .max(MAX_BUILDER_VERSION_LENGTH)
+      .refine((value) => isSafeBoundedText(value, MAX_BUILDER_VERSION_LENGTH)),
+    sourceContentHash: v.string().regex(/^[0-9a-f]{64}$/),
+    createdAt: v.string().max(64).refine(isCanonicalTimestamp),
+    assetBasePath: v.literal(RELEASE_ASSET_BASE_PATH),
+    modules: v.record(
+      v.string().min(1).max(MAX_MANIFEST_KEY_LENGTH).refine(isCanonicalModuleKey),
+      assetEntrySchema(v, RELEASE_ASSET_CONTENT_TYPES.js),
+    ).refine((value) => recordEntryCountWithin(value, MAX_MODULE_ENTRIES)),
+    css: v.array(
+      v.object({
+        contentHash: v.string().regex(/^[0-9a-f]{64}$/),
+        size: v.number().int().nonnegative().max(RELEASE_ASSET_MAX_SIZE_BYTES),
+        contentType: v.literal(RELEASE_ASSET_CONTENT_TYPES.css),
+        styleProfileHash: v.string()
+          .min(MAX_STYLE_PROFILE_HASH_LENGTH)
+          .max(MAX_STYLE_PROFILE_HASH_LENGTH)
+          .refine(isStyleProfileHash),
+        cssPipelineIdentity: v.string()
+          .min(1)
+          .max(MAX_CSS_PIPELINE_IDENTITY_LENGTH)
+          .refine(isCSSPipelineIdentity),
+      }).strict(),
+    ).max(MAX_CSS_ENTRIES),
+    routes: v.record(
+      v.string().min(1).max(MAX_MANIFEST_KEY_LENGTH).refine(isCanonicalRoutePath),
+      routeEntrySchema(v),
+    ).refine((value) => recordEntryCountWithin(value, MAX_ROUTE_ENTRIES)),
+    dependencyMode: v.enum(RELEASE_ASSET_DEPENDENCY_MODES),
+    dependencies: v.record(
+      v.string().min(1).max(MAX_MANIFEST_KEY_LENGTH).refine(isSafeDependencyKey),
+      assetEntrySchema(v, RELEASE_ASSET_CONTENT_TYPES.js),
+    ).refine((value) => recordEntryCountWithin(value, MAX_DEPENDENCY_ENTRIES)),
+  }).strict().refine(hasValidManifestReferences, "Manifest route references must resolve")
 );
 
 // ---------------------------------------------------------------------------
-// Inferred types
+// Inferred public types
 // ---------------------------------------------------------------------------
 
+/** Validated, immutable release asset manifest v2 body. */
 export type ReleaseAssetManifest = InferSchema<
   ReturnType<typeof getReleaseAssetManifestSchema>
 >;
+/** Content-addressed JavaScript module entry. */
 export type ReleaseAssetEntry = ReleaseAssetManifest["modules"][string];
+/** Content-addressed CSS entry. */
 export type ReleaseAssetCssEntry = ReleaseAssetManifest["css"][number];
+/** Per-route module and CSS closure. */
 export type ReleaseAssetRouteEntry = ReleaseAssetManifest["routes"][string];
+/** Capability represented by entries in the manifest dependency map. */
+export type ReleaseAssetDependencyMode = ReleaseAssetManifest["dependencyMode"];
+/** Manifest whose dependency entries name uploaded content-addressed assets. */
+export type ImmutableReleaseAssetManifest = ReleaseAssetManifest & {
+  readonly dependencyMode: "immutable";
+};
+
+/** True only when manifest dependency entries are safe immutable rewrite targets. */
+export function hasImmutableReleaseAssetDependencies(
+  manifest: ReleaseAssetManifest | null | undefined,
+): manifest is ImmutableReleaseAssetManifest {
+  return manifest?.dependencyMode === "immutable";
+}
 
 /** Manifest lifecycle states (DB-owned; mirrored here for runtime checks). */
 export type ReleaseAssetManifestState =
   | "queued"
   | "building"
-  | "partial"
   | "ready"
+  | "partial"
   | "failed"
   | "superseded";
 
@@ -96,81 +302,322 @@ export interface ReleaseAssetManifestResponse {
   manifest: ReleaseAssetManifest | null;
 }
 
+/** Strict ready response with a generation-matched validated manifest body. */
+export interface ReadyReleaseAssetManifestResponse {
+  readonly state: "ready";
+  readonly manifest_version: number;
+  readonly manifest: ReleaseAssetManifest;
+}
+
+// ---------------------------------------------------------------------------
+// Dependency-free consumption parser
+// ---------------------------------------------------------------------------
+
 /**
- * Hand-rolled structural validator.
+ * Parse an untrusted manifest without requiring a registered schema extension.
  *
- * Used on consumption paths (HTML/proxy) where the `SchemaValidator` extension
- * may not be registered. Returns the typed manifest on success, or null. Does
- * not throw — consumption is always best-effort with a JIT fallback.
+ * The parser is non-throwing, applies explicit work and memory bounds, validates
+ * route references, and returns a detached deeply frozen snapshot.
  */
 export function parseReleaseAssetManifest(value: unknown): ReleaseAssetManifest | null {
-  if (!isRecord(value)) return null;
-  if (value.schemaVersion !== RELEASE_ASSET_MANIFEST_SCHEMA_VERSION) return null;
+  try {
+    return parseReleaseAssetManifestImpl(value);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse an untrusted ready response without executing accessors.
+ *
+ * The response envelope and manifest body must identify the same release and
+ * manifest generation. Extra envelope fields are ignored so the control plane
+ * can add unrelated metadata without weakening these identity checks.
+ */
+export function parseReadyReleaseAssetManifestResponse(
+  value: unknown,
+  expectedReleaseId: string,
+): ReadyReleaseAssetManifestResponse | null {
+  try {
+    if (!isSafeBoundedText(expectedReleaseId, MAX_IDENTIFIER_LENGTH)) return null;
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+
+    const state = readOwnDataProperty(value, "state");
+    const manifestVersion = readOwnDataProperty(value, "manifest_version");
+    const manifest = parseReleaseAssetManifest(readOwnDataProperty(value, "manifest"));
+    if (
+      state !== "ready" ||
+      !isSafeIntegerInRange(manifestVersion, Number.MAX_SAFE_INTEGER) ||
+      !manifest ||
+      manifest.releaseId !== expectedReleaseId ||
+      manifest.manifestVersion !== manifestVersion
+    ) {
+      return null;
+    }
+
+    return Object.freeze({
+      state: "ready",
+      manifest_version: manifestVersion,
+      manifest,
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read an own data property from an untrusted value without invoking accessors.
+ *
+ * Returns undefined for primitives, accessor-backed properties, and values
+ * whose property inspection throws (for example hostile proxies).
+ */
+export function readUntrustedOwnDataProperty(value: unknown, key: PropertyKey): unknown {
+  if (typeof value !== "object" || value === null) return undefined;
+  try {
+    return readOwnDataProperty(value, key);
+  } catch {
+    return undefined;
+  }
+}
+
+function parseReleaseAssetManifestImpl(value: unknown): ReleaseAssetManifest | null {
+  const candidate = snapshotExactDataRecord(value, MANIFEST_KEYS);
+  if (!candidate) return null;
+  if (candidate.schemaVersion !== RELEASE_ASSET_MANIFEST_SCHEMA_VERSION) return null;
+  if (!isSafeBoundedText(candidate.projectId, MAX_IDENTIFIER_LENGTH)) return null;
+  if (!isSafeBoundedText(candidate.releaseId, MAX_IDENTIFIER_LENGTH)) return null;
+  if (!isSafeIntegerInRange(candidate.releaseVersion, Number.MAX_SAFE_INTEGER)) return null;
+  if (!isSafeIntegerInRange(candidate.manifestVersion, Number.MAX_SAFE_INTEGER)) return null;
+  if (!isSafeBoundedText(candidate.builderVersion, MAX_BUILDER_VERSION_LENGTH)) return null;
   if (
-    typeof value.projectId !== "string" ||
-    typeof value.releaseId !== "string" ||
-    typeof value.releaseVersion !== "number" ||
-    typeof value.manifestVersion !== "number" ||
-    typeof value.builderVersion !== "string" ||
-    typeof value.sourceContentHash !== "string" ||
-    typeof value.createdAt !== "string" ||
-    typeof value.assetBasePath !== "string"
+    typeof candidate.sourceContentHash !== "string" ||
+    !isValidContentHash(candidate.sourceContentHash)
   ) {
     return null;
   }
+  if (
+    typeof candidate.createdAt !== "string" ||
+    !isCanonicalTimestamp(candidate.createdAt)
+  ) return null;
+  if (candidate.assetBasePath !== RELEASE_ASSET_BASE_PATH) return null;
+  if (
+    candidate.dependencyMode !== "source" &&
+    candidate.dependencyMode !== "immutable"
+  ) return null;
 
-  if (!isAssetEntryRecord(value.modules)) return null;
-  if (!isAssetEntryRecord(value.dependencies)) return null;
-  if (!Array.isArray(value.css) || !value.css.every(isCssEntry)) return null;
-  if (!isRouteRecord(value.routes)) return null;
-  if (!isFallback(value.fallback)) return null;
-
-  return value as unknown as ReleaseAssetManifest;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isAssetEntry(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    typeof value.contentHash === "string" &&
-    typeof value.size === "number" &&
-    typeof value.contentType === "string"
+  const modules = snapshotAssetRecord(
+    candidate.modules,
+    MAX_MODULE_ENTRIES,
+    isCanonicalModuleKey,
+    RELEASE_ASSET_CONTENT_TYPES.js,
   );
-}
+  if (!modules) return null;
 
-function isAssetEntryRecord(value: unknown): boolean {
-  return isRecord(value) && Object.values(value).every(isAssetEntry);
-}
-
-function isCssEntry(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    typeof value.contentHash === "string" &&
-    typeof value.size === "number" &&
-    typeof value.contentType === "string" &&
-    (value.styleProfileHash === null || typeof value.styleProfileHash === "string")
+  const dependencies = snapshotAssetRecord(
+    candidate.dependencies,
+    MAX_DEPENDENCY_ENTRIES,
+    isSafeDependencyKey,
+    RELEASE_ASSET_CONTENT_TYPES.js,
   );
+  if (!dependencies) return null;
+
+  const css = snapshotCssEntries(candidate.css);
+  if (!css) return null;
+
+  const routes = snapshotRoutes(candidate.routes);
+  if (!routes) return null;
+
+  const manifest = Object.freeze({
+    schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
+    projectId: candidate.projectId,
+    releaseId: candidate.releaseId,
+    releaseVersion: candidate.releaseVersion,
+    manifestVersion: candidate.manifestVersion,
+    builderVersion: candidate.builderVersion,
+    sourceContentHash: candidate.sourceContentHash,
+    createdAt: candidate.createdAt,
+    assetBasePath: RELEASE_ASSET_BASE_PATH,
+    modules,
+    css,
+    routes,
+    dependencyMode: candidate.dependencyMode,
+    dependencies,
+  }) satisfies ReleaseAssetManifest;
+
+  return hasValidManifestReferences(manifest) ? manifest : null;
 }
 
-function isRouteRecord(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  return Object.values(value).every((entry) =>
-    isRecord(entry) &&
-    Array.isArray(entry.modules) &&
-    entry.modules.every((m) => typeof m === "string") &&
-    Array.isArray(entry.css) &&
-    entry.css.every((c) => typeof c === "string")
-  );
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
-function isFallback(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    value.mode === "jit" &&
-    Array.isArray(value.gaps) &&
-    value.gaps.every((g) => typeof g === "string")
-  );
+function hasExactKeys(value: Record<string, unknown>, expected: ReadonlySet<string>): boolean {
+  const keys = Object.keys(value);
+  return keys.length === expected.size && keys.every((key) => expected.has(key));
+}
+
+function readOwnDataProperty(value: object, key: PropertyKey): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
+function snapshotExactDataRecord(
+  value: unknown,
+  expected: ReadonlySet<string>,
+): Record<string, unknown> | null {
+  if (!isPlainRecord(value) || !hasExactKeys(value, expected)) return null;
+
+  const snapshot: Record<string, unknown> = Object.create(null);
+  for (const key of expected) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) return null;
+    snapshot[key] = descriptor.value;
+  }
+  return snapshot;
+}
+
+function boundedArrayLength(value: unknown, maximumLength: number): number | null {
+  if (!Array.isArray(value)) return null;
+  const length = readOwnDataProperty(value, "length");
+  return isSafeIntegerInRange(length, maximumLength) ? length : null;
+}
+
+function snapshotAssetRecord(
+  value: unknown,
+  maxEntries: number,
+  validateKey: (key: string) => boolean,
+  contentType: ReleaseAssetContentType,
+): Record<string, ReleaseAssetEntry> | null {
+  if (!isPlainRecord(value)) return null;
+  const keys = Object.keys(value);
+  if (keys.length > maxEntries) return null;
+
+  const snapshot: Record<string, ReleaseAssetEntry> = Object.create(null);
+  for (const key of keys) {
+    if (!validateKey(key)) return null;
+    const entry = snapshotAssetEntry(readOwnDataProperty(value, key), contentType);
+    if (!entry) return null;
+    Object.defineProperty(snapshot, key, {
+      value: entry,
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    });
+  }
+
+  return Object.freeze(snapshot);
+}
+
+function snapshotAssetEntry(
+  value: unknown,
+  contentType: ReleaseAssetContentType,
+): ReleaseAssetEntry | null {
+  const candidate = snapshotExactDataRecord(value, ASSET_ENTRY_KEYS);
+  if (!candidate) return null;
+  if (
+    typeof candidate.contentHash !== "string" ||
+    !isValidContentHash(candidate.contentHash)
+  ) return null;
+  if (!isSafeIntegerInRange(candidate.size, RELEASE_ASSET_MAX_SIZE_BYTES)) return null;
+  if (candidate.contentType !== contentType) return null;
+
+  return Object.freeze({
+    contentHash: candidate.contentHash,
+    size: candidate.size,
+    contentType,
+  });
+}
+
+function snapshotCssEntries(value: unknown): ReleaseAssetCssEntry[] | null {
+  const length = boundedArrayLength(value, MAX_CSS_ENTRIES);
+  if (length === null) return null;
+  const entries: ReleaseAssetCssEntry[] = [];
+
+  for (let index = 0; index < length; index++) {
+    const candidate = snapshotExactDataRecord(
+      readOwnDataProperty(value as unknown[], index),
+      CSS_ENTRY_KEYS,
+    );
+    if (!candidate) return null;
+    if (
+      typeof candidate.contentHash !== "string" ||
+      !isValidContentHash(candidate.contentHash) ||
+      !isSafeIntegerInRange(candidate.size, RELEASE_ASSET_MAX_SIZE_BYTES) ||
+      candidate.contentType !== RELEASE_ASSET_CONTENT_TYPES.css ||
+      !isStyleProfileHash(candidate.styleProfileHash) ||
+      !isCSSPipelineIdentity(candidate.cssPipelineIdentity)
+    ) {
+      return null;
+    }
+
+    entries.push(Object.freeze({
+      contentHash: candidate.contentHash,
+      size: candidate.size,
+      contentType: RELEASE_ASSET_CONTENT_TYPES.css,
+      styleProfileHash: candidate.styleProfileHash,
+      cssPipelineIdentity: candidate.cssPipelineIdentity,
+    }));
+  }
+
+  return Object.freeze(entries) as ReleaseAssetCssEntry[];
+}
+
+function snapshotRoutes(value: unknown): Record<string, ReleaseAssetRouteEntry> | null {
+  if (!isPlainRecord(value)) return null;
+  const keys = Object.keys(value);
+  if (keys.length > MAX_ROUTE_ENTRIES) return null;
+
+  const routes: Record<string, ReleaseAssetRouteEntry> = Object.create(null);
+  for (const key of keys) {
+    if (!isCanonicalRoutePath(key)) return null;
+    const candidate = snapshotExactDataRecord(
+      readOwnDataProperty(value, key),
+      ROUTE_ENTRY_KEYS,
+    );
+    if (!candidate) return null;
+
+    const modules = snapshotStringArray(
+      candidate.modules,
+      MAX_ROUTE_MODULES,
+      isCanonicalModuleKey,
+    );
+    const css = snapshotStringArray(
+      candidate.css,
+      MAX_ROUTE_CSS_ENTRIES,
+      isValidContentHash,
+    );
+    if (!modules || !css) return null;
+
+    Object.defineProperty(routes, key, {
+      value: Object.freeze({ modules, css }),
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    });
+  }
+
+  return Object.freeze(routes);
+}
+
+function snapshotStringArray(
+  value: unknown,
+  maximumLength: number,
+  validate: (item: string) => boolean,
+  requireUnique = true,
+): string[] | null {
+  const length = boundedArrayLength(value, maximumLength);
+  if (length === null) return null;
+  const result: string[] = [];
+  const seen = requireUnique ? new Set<string>() : null;
+
+  for (let index = 0; index < length; index++) {
+    const item = readOwnDataProperty(value as unknown[], index);
+    if (typeof item !== "string" || !validate(item) || seen?.has(item)) return null;
+    seen?.add(item);
+    result.push(item);
+  }
+
+  return Object.freeze(result) as string[];
 }

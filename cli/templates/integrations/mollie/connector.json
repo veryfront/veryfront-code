@@ -29,7 +29,7 @@
   ],
   "tools": [
     {
-      "id": "list_payments",
+      "id": "mollie__list_payments",
       "name": "List Payments",
       "description": "List Mollie payments in reverse chronological order to review recent transactions",
       "requiresWrite": false,
@@ -60,7 +60,7 @@
       }
     },
     {
-      "id": "get_payment",
+      "id": "mollie__get_payment",
       "name": "Get Payment",
       "description": "Retrieve a single Mollie payment with its current status and details",
       "requiresWrite": false,
@@ -83,7 +83,7 @@
       }
     },
     {
-      "id": "create_payment",
+      "id": "mollie__create_payment",
       "name": "Create Payment",
       "description": "Create a Mollie payment and get a checkout URL to send to the customer",
       "requiresWrite": true,
@@ -126,7 +126,7 @@
       }
     },
     {
-      "id": "list_customers",
+      "id": "mollie__list_customers",
       "name": "List Customers",
       "description": "List Mollie customers to find customer IDs for payments or refund context",
       "requiresWrite": false,
@@ -152,7 +152,7 @@
       }
     },
     {
-      "id": "list_payment_methods",
+      "id": "mollie__list_payment_methods",
       "name": "List Payment Methods",
       "description": "List the payment methods enabled on your Mollie profile, e.g. to pick a valid method for a new payment",
       "requiresWrite": false,
@@ -182,7 +182,7 @@
       }
     },
     {
-      "id": "create_payment_link",
+      "id": "mollie__create_payment_link",
       "name": "Create Payment Link",
       "description": "Create a shareable hosted payment link the customer can open to pay, without building a checkout",
       "requiresWrite": true,
@@ -219,7 +219,7 @@
       }
     },
     {
-      "id": "list_payment_refunds",
+      "id": "mollie__list_payment_refunds",
       "name": "List Payment Refunds",
       "description": "List the refunds created for a payment to review refund status and history",
       "requiresWrite": false,
@@ -251,7 +251,7 @@
       }
     },
     {
-      "id": "create_refund",
+      "id": "mollie__create_refund",
       "name": "Create Refund",
       "description": "Refund all or part of a Mollie payment back to the customer",
       "requiresWrite": true,

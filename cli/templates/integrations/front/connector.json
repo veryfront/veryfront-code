@@ -28,7 +28,7 @@
   ],
   "tools": [
     {
-      "id": "list_conversations",
+      "id": "front__list_conversations",
       "name": "List Conversations",
       "description": "List conversations across your Front inboxes, most recently updated first",
       "requiresWrite": false,
@@ -81,7 +81,7 @@
       }
     },
     {
-      "id": "get_conversation",
+      "id": "front__get_conversation",
       "name": "Get Conversation",
       "description": "Retrieve a single conversation with its subject, status, assignee, recipient, and tags",
       "requiresWrite": false,
@@ -99,7 +99,7 @@
       }
     },
     {
-      "id": "list_conversation_messages",
+      "id": "front__list_conversation_messages",
       "name": "List Conversation Messages",
       "description": "List the messages in a conversation thread, including bodies and authors",
       "requiresWrite": false,
@@ -144,7 +144,7 @@
       }
     },
     {
-      "id": "reply_to_conversation",
+      "id": "front__reply_to_conversation",
       "name": "Reply to Conversation",
       "description": "Send a reply message in an existing conversation (archives the conversation by default)",
       "requiresWrite": true,
@@ -197,7 +197,7 @@
       }
     },
     {
-      "id": "update_conversation",
+      "id": "front__update_conversation",
       "name": "Update Conversation",
       "description": "Update a conversation's assignee, status, inbox, or tags, e.g. to assign, archive, or reopen it without sending a message",
       "requiresWrite": true,
@@ -233,7 +233,7 @@
       }
     },
     {
-      "id": "search_conversations",
+      "id": "front__search_conversations",
       "name": "Search Conversations",
       "description": "Full-text search across conversations with operators like from:, tag:, inbox:, is:open, before:/after:",
       "requiresWrite": false,
@@ -280,7 +280,7 @@
       }
     },
     {
-      "id": "list_teammates",
+      "id": "front__list_teammates",
       "name": "List Teammates",
       "description": "List the teammates in the company to find teammate IDs for assignment and reply authorship",
       "requiresWrite": false,
@@ -305,7 +305,7 @@
       }
     },
     {
-      "id": "list_inboxes",
+      "id": "front__list_inboxes",
       "name": "List Inboxes",
       "description": "List the shared inboxes in the company to find inbox IDs and names",
       "requiresWrite": false,

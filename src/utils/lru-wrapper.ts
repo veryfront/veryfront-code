@@ -7,12 +7,16 @@ import { getEnv } from "#veryfront/platform/compat/process.ts";
 /** Default interval between expired-entry cleanup sweeps (1 minute) */
 const DEFAULT_CLEANUP_INTERVAL_MS = 60_000;
 
-interface LRUOptions {
+interface LRUOptions<K, V> {
   maxEntries?: number;
   /** Byte cap for stored values. Defaults to the adapter's 50 MiB limit. */
   maxSizeBytes?: number;
   ttlMs?: number;
   cleanupIntervalMs?: number;
+  /** Called whenever an entry leaves the cache, including delete/clear/expiry. */
+  onEvict?: LRUCacheOptions["onEvict"];
+  /** Compute the retained byte size used for memory-bound eviction. */
+  estimateSizeOf?: (value: V) => number;
 }
 
 export class LRUCache<K, V> {
@@ -21,11 +25,15 @@ export class LRUCache<K, V> {
   private cleanupIntervalMs: number;
   private ttlMs?: number;
 
-  constructor(options: LRUOptions = {}) {
+  constructor(options: LRUOptions<K, V> = {}) {
     const adapterOptions: LRUCacheOptions = {
       maxEntries: options.maxEntries ?? DEFAULT_LRU_MAX_ENTRIES,
       maxSizeBytes: options.maxSizeBytes,
       ttlMs: options.ttlMs,
+      onEvict: options.onEvict,
+      estimateSizeOf: options.estimateSizeOf as
+        | ((value: unknown) => number)
+        | undefined,
     };
 
     this.adapter = new LRUCacheAdapter(adapterOptions);
@@ -64,7 +72,7 @@ export class LRUCache<K, V> {
   }
 
   has(key: K): boolean {
-    return this.adapter.get(this.toStringKey(key)) !== undefined;
+    return this.adapter.has(this.toStringKey(key));
   }
 
   get(key: K): V | undefined {
@@ -77,7 +85,7 @@ export class LRUCache<K, V> {
 
   delete(key: K): boolean {
     const stringKey = this.toStringKey(key);
-    const had = this.adapter.get(stringKey) !== undefined;
+    const had = this.adapter.has(stringKey);
     this.adapter.delete(stringKey);
     return had;
   }

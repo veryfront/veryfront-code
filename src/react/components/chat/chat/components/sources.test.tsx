@@ -31,6 +31,23 @@ describe("Sources", () => {
     assertStringIncludes(html, "Workflow guide");
     assertStringIncludes(html, "flex flex-wrap gap-2");
   });
+
+  it("renders custom items through the canonical collection callback", () => {
+    const rendered: string[] = [];
+    const html = renderToString(
+      <Sources
+        sources={sources}
+        renderItem={({ item, index }) => {
+          rendered.push(`${index}:${item.title}`);
+          return <span>{`${index}: ${item.title}`}</span>;
+        }}
+      />,
+    );
+
+    assertStringIncludes(html, "0: Agent guide");
+    assertStringIncludes(html, "1: Workflow guide");
+    assertEquals(rendered, ["0:Agent guide", "1:Workflow guide"]);
+  });
 });
 
 // The composability contract: a consuming developer must be able to recompose

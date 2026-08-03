@@ -1,8 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_SPAN_NAME_LENGTH } from "#veryfront/utils/constants/index.ts";
 import { SpanOperations } from "./span-operations.ts";
-import type { OpenTelemetryAPI, Span, Tracer } from "./types.ts";
+import type { Context, OpenTelemetryAPI, Span, Tracer } from "./types.ts";
 
 type MockSpan = Span & {
   _ended: boolean;
@@ -24,15 +25,19 @@ function createMockSpan(): MockSpan {
     },
     setStatus(status: { code: number; message?: string }) {
       span._status = status;
+      return span;
     },
     setAttributes(attrs: Record<string, unknown>) {
       Object.assign(span._attributes, attrs);
+      return span;
     },
     setAttribute(key: string, value: unknown) {
       span._attributes[key] = value;
+      return span;
     },
     addEvent(name: string, attributes?: Record<string, unknown>) {
       span._events.push({ name, attributes });
+      return span;
     },
     recordException(error: Error) {
       span._exception = error;
@@ -48,7 +53,7 @@ function createMockSpan(): MockSpan {
     },
   };
 
-  return span as MockSpan;
+  return span as unknown as MockSpan;
 }
 
 function createMockTracer(): Tracer {
@@ -99,9 +104,113 @@ describe("observability/tracing/span-operations", () => {
   });
 
   describe("startSpan", () => {
+    it("redacts sensitive and URL credential attribute values", () => {
+      let receivedAttributes: Record<string, unknown> | undefined;
+      tracer = {
+        startSpan: (_name, options) => {
+          receivedAttributes = options?.attributes;
+          return createMockSpan();
+        },
+        startActiveSpan: (() => {}) as never,
+      };
+      ops = new SpanOperations(api, tracer);
+
+      ops.startSpan("test", {
+        attributes: {
+          apiKey: "secret",
+          endpoint: "https://example.test/path?token=secret",
+        },
+      });
+
+      assertEquals(receivedAttributes, {
+        apiKey: "[REDACTED]",
+        endpoint: "https://example.test/path?token=[REDACTED]",
+      });
+    });
+
+    it("converts a Span parent into an OpenTelemetry Context", () => {
+      const parent = createMockSpan();
+      const expectedContext = { _type: "parent-context" } as never;
+      let receivedContext: unknown;
+      api.trace.setSpan = (_context, span) => {
+        assertEquals(span, parent);
+        return expectedContext;
+      };
+      tracer = {
+        startSpan: (_name, _options, context) => {
+          receivedContext = context;
+          return createMockSpan();
+        },
+        startActiveSpan: (() => {}) as never,
+      };
+      ops = new SpanOperations(api, tracer);
+
+      ops.startSpan("child", { parent });
+
+      assertEquals(receivedContext, expectedContext);
+    });
+
+    it("passes through a Context whose spanContext getter throws", () => {
+      const parent = Object.defineProperty({}, "spanContext", {
+        get(): never {
+          throw new Error("span context unavailable");
+        },
+      });
+      let receivedContext: unknown;
+      tracer = {
+        startSpan: (_name, _options, context) => {
+          receivedContext = context;
+          return createMockSpan();
+        },
+        startActiveSpan: (() => {}) as never,
+      };
+      ops = new SpanOperations(api, tracer);
+
+      const span = ops.startSpan("child", { parent: parent as Context });
+
+      assertEquals(span !== null, true);
+      assertStrictEquals(receivedContext, parent);
+    });
+
+    it("passes through a revoked Proxy Context without probing it", () => {
+      const revocable = Proxy.revocable({}, {});
+      const parent = revocable.proxy;
+      revocable.revoke();
+      let receivedContext: unknown;
+      tracer = {
+        startSpan: (_name, _options, context) => {
+          receivedContext = context;
+          return createMockSpan();
+        },
+        startActiveSpan: (() => {}) as never,
+      };
+      ops = new SpanOperations(api, tracer);
+
+      const span = ops.startSpan("child", { parent: parent as Context });
+
+      assertEquals(span !== null, true);
+      assertStrictEquals(receivedContext, parent);
+    });
+
     it("should create a span with given name", () => {
       const span = ops.startSpan("test.operation");
       assertEquals(span !== null, true);
+    });
+
+    it("bounds span names before invoking the provider", () => {
+      let receivedName = "";
+      tracer = {
+        startSpan: (name) => {
+          receivedName = name;
+          return createMockSpan();
+        },
+        startActiveSpan: (() => {}) as never,
+      };
+      ops = new SpanOperations(api, tracer);
+
+      ops.startSpan("x".repeat(MAX_SPAN_NAME_LENGTH + 100));
+
+      assertEquals(receivedName.length, MAX_SPAN_NAME_LENGTH);
     });
 
     it("should create a span with default options", () => {
@@ -136,11 +245,48 @@ describe("observability/tracing/span-operations", () => {
   });
 
   describe("endSpan", () => {
+    it("still attempts to end a span when status recording fails", () => {
+      let ended = false;
+      const badSpan = {
+        ...createMockSpan(),
+        setStatus() {
+          throw new Error("setStatus failed");
+        },
+        end() {
+          ended = true;
+        },
+      } as unknown as Span;
+
+      ops.endSpan(badSpan);
+
+      assertEquals(ended, true);
+    });
+
     it("should end a span with OK status", () => {
       const mockSpan = createMockSpan();
       ops.endSpan(mockSpan);
       assertEquals(mockSpan._ended, true);
       assertEquals(mockSpan._status?.code, 1);
+    });
+
+    it("treats an explicitly forwarded undefined error as success", () => {
+      const mockSpan = createMockSpan();
+
+      ops.endSpan(mockSpan, undefined);
+
+      assertEquals(mockSpan._ended, true);
+      assertEquals(mockSpan._status?.code, 1);
+      assertEquals(mockSpan._exception, null);
+    });
+
+    it("records an observed thrown undefined value as a failure", () => {
+      const mockSpan = createMockSpan();
+
+      ops.endSpanWithFailure(mockSpan, undefined);
+
+      assertEquals(mockSpan._ended, true);
+      assertEquals(mockSpan._status?.code, 2);
+      assertEquals(mockSpan._exception?.message, "undefined");
     });
 
     it("should end a span with error status", () => {
@@ -150,7 +296,20 @@ describe("observability/tracing/span-operations", () => {
       assertEquals(mockSpan._ended, true);
       assertEquals(mockSpan._status?.code, 2);
       assertEquals(mockSpan._status?.message, "test error");
-      assertEquals(mockSpan._exception, error);
+      assertEquals(mockSpan._exception?.message, error.message);
+    });
+
+    it("redacts URL credentials from error telemetry", () => {
+      const mockSpan = createMockSpan();
+      const error = new Error(
+        "failed https://user:password@example.test/path?access_token=secret",
+      );
+
+      ops.endSpan(mockSpan, error);
+
+      assertEquals(mockSpan._status?.message?.includes("secret"), false);
+      assertEquals(mockSpan._exception?.message.includes("secret"), false);
+      assertEquals(error.message.includes("secret"), true);
     });
 
     it("should handle null span gracefully", () => {
@@ -193,6 +352,14 @@ describe("observability/tracing/span-operations", () => {
   });
 
   describe("addEvent", () => {
+    it("bounds event names before invoking the provider", () => {
+      const mockSpan = createMockSpan();
+
+      ops.addEvent(mockSpan, "x".repeat(MAX_SPAN_NAME_LENGTH + 100));
+
+      assertEquals(mockSpan._events[0]?.name.length, MAX_SPAN_NAME_LENGTH);
+    });
+
     it("should add an event to a span", () => {
       const mockSpan = createMockSpan();
       ops.addEvent(mockSpan, "user.action", { "user.id": "123" });

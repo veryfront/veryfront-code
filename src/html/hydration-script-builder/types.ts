@@ -11,14 +11,24 @@ export interface HydrationDataStructure {
   params: Record<string, string | string[]>;
   layouts: HydrationLayout[];
   appPath?: string;
+  /** Project-relative path to the app-router error.tsx that wraps the page (client boundary). */
+  errorPath?: string;
+  /** Project-relative directory that contains App Router routes. */
+  appRouterRoot?: string;
+  /** The page and advertised client layouts mount inside a server-owned layout island. */
+  isolatedClientPage?: boolean;
   pagePath?: string;
   pageType?: "mdx" | "md" | "tsx" | "jsx" | "ts" | "js";
   clientModuleStrategy?: ClientModuleStrategy;
+  /** Request-scoped dependency snapshot used to version RSC module imports. */
+  dependencyPinningCacheKey?: string;
   /** Production release id used to version fallback module URLs. */
   releaseId?: string;
   /** Production release asset URLs keyed by logical source path. */
   releaseAssetModules?: Record<string, string>;
   frontmatter?: Record<string, unknown>;
+  /** Bounded, nonce-free route head descriptors for deterministic navigation handoff. */
+  managedHeadPayload?: string;
   layoutProps?: Record<string, Record<string, unknown>>;
   /**
    * Whether running in development mode.

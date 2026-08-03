@@ -18,13 +18,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }):
 
   return (
     <>
-      <Head><title>Docs Agent</title></Head>
+      <Head>
+        <title>Docs Agent</title>
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+      </Head>
       <ChatThemeScope className="flex flex-col h-screen">
         <ConversationsProvider storageKey="rag-conversations">
           <AppShell className="flex-1 min-h-0">
             <AppShell.Sidebar side="left" className="border-r border-[var(--outline-border)]">
               <AppShell.SidebarContent className="p-0">
-                <ChatSidebar fill />
+                <ChatSidebar.Root>
+                  <ChatSidebar.NewButton />
+                  <ChatSidebar.List />
+                </ChatSidebar.Root>
               </AppShell.SidebarContent>
             </AppShell.Sidebar>
             <AppShell.Main>
@@ -33,7 +39,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }):
                 <div className="flex flex-1 justify-center">
                   <Tabs
                     value={activeTab}
-                    onValueChange={(value) => router.push(value === "uploads" ? "/uploads" : "/")}
+                    onValueChange={(value: string) =>
+                      router.push(value === "uploads" ? "/uploads" : "/")}
                   >
                     <TabsItem value="chat">Chat</TabsItem>
                     <TabsItem value="uploads">Uploads</TabsItem>

@@ -2,6 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
+import {
   closeChildRunExecutionBuffers,
   finalizeChildRunExecutionResources,
 } from "./execution-cleanup.ts";
@@ -78,31 +83,43 @@ describe("child-run-execution-cleanup", () => {
 
   it("settles tooling and runtime cleanup failures", async () => {
     const calls: string[] = [];
+    const entries: LogEntry[] = [];
+    __registerLogRecordEmitter((entry) => entries.push(entry));
 
-    await finalizeChildRunExecutionResources({
-      durableStepStarted: false,
-      closeReasoningBuffer: () => {
-        calls.push("reasoning");
-        return Promise.resolve();
-      },
-      closeTextBuffer: () => {
-        calls.push("text");
-        return Promise.resolve();
-      },
-      appendFinishStepChunk: () => {
-        calls.push("finish-step");
-        return Promise.resolve();
-      },
-      closeTooling: () => {
-        calls.push("tooling");
-        return Promise.reject(new Error("tooling failed"));
-      },
-      closeRuntime: () => {
-        calls.push("runtime");
-        return Promise.reject(new Error("runtime failed"));
-      },
-    });
+    try {
+      await finalizeChildRunExecutionResources({
+        durableStepStarted: false,
+        closeReasoningBuffer: () => {
+          calls.push("reasoning");
+          return Promise.resolve();
+        },
+        closeTextBuffer: () => {
+          calls.push("text");
+          return Promise.resolve();
+        },
+        appendFinishStepChunk: () => {
+          calls.push("finish-step");
+          return Promise.resolve();
+        },
+        closeTooling: () => {
+          calls.push("tooling");
+          return Promise.reject(new Error("tooling failed with <TOKEN>"));
+        },
+        closeRuntime: () => {
+          calls.push("runtime");
+          return Promise.reject(new Error("runtime failed at <LOCAL_PATH>"));
+        },
+      });
+    } finally {
+      __resetLogRecordEmitterForTests();
+    }
 
     assertEquals(calls, ["reasoning", "text", "tooling", "runtime"]);
+    assertEquals(entries.map((entry) => entry.context), [
+      { errorName: "Error" },
+      { errorName: "Error" },
+    ]);
+    assertEquals(JSON.stringify(entries).includes("<TOKEN>"), false);
+    assertEquals(JSON.stringify(entries).includes("<LOCAL_PATH>"), false);
   });
 });

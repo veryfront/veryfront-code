@@ -68,5 +68,20 @@ describe("NodeBuiltinStrategy", () => {
       );
       assertEquals(result.specifier?.includes("node-noop"), true);
     });
+
+    it("should preserve the captured snapshot on polyfill child-module URLs", () => {
+      const result = nodeBuiltinStrategy.rewrite(
+        makeInfo("node:async_hooks"),
+        makeCtx({
+          target: "browser",
+          dependencyPinningCacheKey: "on:snapshot-a",
+        }),
+      );
+
+      assertEquals(
+        result.specifier,
+        "/_vf_modules/_pins/on%3Asnapshot-a/_veryfront/platform/polyfills/node-async-hooks.js",
+      );
+    });
   });
 });

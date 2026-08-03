@@ -1,6 +1,66 @@
 import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
+import { validateTempDirectoryPrefix } from "./temp-directory-prefix.ts";
+import { readFileWithinLimit } from "../adapters/bounded-file-read.ts";
+import {
+  captureExclusiveCreateCapability,
+  captureSnapshotReadCapability,
+} from "../adapters/file-system-capabilities.ts";
+import { isProxyWithoutHooks } from "./error-introspection.ts";
+import { isNotFoundError } from "./not-found-error.ts";
+
+export { isNotFoundError };
+
+const DEFAULT_TEMP_DIRECTORY_PREFIX = "tmp-";
+const UNSUPPORTED_CHMOD_ERROR_CODES = new Set([
+  "ENOSYS",
+  "ENOTSUP",
+  "EOPNOTSUPP",
+]);
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const hasOwnProperty = Object.prototype.hasOwnProperty;
+const reflectApply = Reflect.apply;
+
+function hasOwnDataValue(
+  value: object,
+  key: PropertyKey,
+  expected: unknown,
+): boolean {
+  const descriptor = getOwnPropertyDescriptor(value, key);
+  return descriptor !== undefined &&
+    reflectApply(hasOwnProperty, descriptor, ["value"]) === true &&
+    descriptor.value === expected;
+}
+
+/** Stable native identity for one filesystem object. */
+export interface PathIdentity {
+  readonly device: string;
+  readonly inode: string;
+}
+
+function isUnsupportedChmodError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.name === "NotSupported") return true;
+
+  const code = (error as NodeJS.ErrnoException).code;
+  return typeof code === "string" && UNSUPPORTED_CHMOD_ERROR_CODES.has(code);
+}
+
+function normalizePathIdentity(
+  device: number | bigint | null,
+  inode: number | bigint | null,
+): PathIdentity | undefined {
+  const isValidPart = (value: number | bigint | null): value is number | bigint =>
+    (typeof value === "bigint" && value >= 0n) ||
+    (typeof value === "number" && Number.isSafeInteger(value) && value >= 0);
+
+  if (!isValidPart(device) || !isValidPart(inode)) return undefined;
+  return Object.freeze({
+    device: String(device),
+    inode: String(inode),
+  });
+}
 
 /**
  * Typed accessor for the Deno global.
@@ -14,22 +74,47 @@ function denoGlobal(): typeof Deno {
   return (globalThis as { Deno: typeof Deno }).Deno;
 }
 
-/** Public API contract for file system. */
+/**
+ * Runtime-neutral filesystem contract.
+ *
+ * Operations reject filesystem failures. Callers that intentionally tolerate a
+ * missing path can classify the rejection with {@link isNotFoundError}.
+ */
 export interface FileSystem {
   readTextFile(path: string): Promise<string>;
   readFile(path: string): Promise<Uint8Array>;
+  /** Exact bounded binary read; implementations must reject oversized files before materializing them. */
+  readFileBytesWithinLimit?(path: string, byteLimit: number): Promise<Uint8Array>;
+  readFileSnapshotWithinLimit?(
+    path: string,
+    containmentRoot: string,
+    byteLimit: number,
+  ): Promise<Uint8Array>;
   writeTextFile(path: string, data: string): Promise<void>;
   writeFile(path: string, data: Uint8Array): Promise<void>;
+  createFileBytesExclusive?(path: string, data: Uint8Array): Promise<void>;
+  /** Atomically replace a path when same-filesystem rename is supported. */
+  rename?(from: string, to: string): Promise<void>;
   exists(path: string): Promise<boolean>;
   stat(path: string): Promise<FileInfo>;
+  lstat?(path: string): Promise<FileInfo>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
-  readDir(path: string): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }>;
+  readDir(
+    path: string,
+  ): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean; isSymlink?: boolean }>;
+  /** Remove a path, rejecting when it does not exist. */
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
+  /** Atomically create a unique directory beneath the operating-system temp root. */
   makeTempDir(options?: { prefix?: string }): Promise<string>;
+  /** Change permissions, rejecting operational failures. */
   chmod(path: string, mode: number): Promise<void>;
 }
 
 interface NodeFsPromises {
+  open(path: string, flags: "r"): Promise<{
+    read(buffer: Uint8Array): Promise<{ bytesRead: number }>;
+    close(): Promise<void>;
+  }>;
   readFile(
     path: string,
     options?: { encoding?: string; flag?: string } | string,
@@ -39,8 +124,16 @@ interface NodeFsPromises {
     data: string | Uint8Array,
     options?: { encoding?: string; flag?: string } | string,
   ): Promise<void>;
+  rename(from: string, to: string): Promise<void>;
   access(path: string, mode?: number): Promise<void>;
   stat(path: string): Promise<{
+    isFile(): boolean;
+    isDirectory(): boolean;
+    isSymbolicLink(): boolean;
+    size: number;
+    mtime: Date;
+  }>;
+  lstat(path: string): Promise<{
     isFile(): boolean;
     isDirectory(): boolean;
     isSymbolicLink(): boolean;
@@ -57,6 +150,7 @@ interface NodeFsPromises {
     }>
   >;
   rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>;
+  mkdtemp(prefix: string): Promise<string>;
   chmod(path: string, mode: number): Promise<void>;
 }
 
@@ -116,6 +210,17 @@ class NodeFileSystem implements FileSystem {
     return this.getFs().readFile(path) as Promise<Uint8Array>;
   }
 
+  async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    await this.ensureInitialized();
+    return await readFileWithinLimit(async () => {
+      const handle = await this.getFs().open(path, "r");
+      return {
+        close: () => handle.close(),
+        read: async (buffer: Uint8Array) => (await handle.read(buffer)).bytesRead,
+      };
+    }, byteLimit);
+  }
+
   async writeTextFile(path: string, data: string): Promise<void> {
     await this.ensureInitialized();
     await this.getFs().writeFile(path, data, { encoding: "utf8" });
@@ -126,13 +231,18 @@ class NodeFileSystem implements FileSystem {
     await this.getFs().writeFile(path, data);
   }
 
+  async rename(from: string, to: string): Promise<void> {
+    await this.ensureInitialized();
+    await this.getFs().rename(from, to);
+  }
+
   async exists(path: string): Promise<boolean> {
     await this.ensureInitialized();
     try {
       await this.getFs().access(path);
       return true;
     } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return false;
+      if (isNotFoundError(error)) return false;
       throw error;
     }
   }
@@ -149,6 +259,18 @@ class NodeFileSystem implements FileSystem {
     };
   }
 
+  async lstat(path: string): Promise<FileInfo> {
+    await this.ensureInitialized();
+    const stat = await this.getFs().lstat(path);
+    return {
+      isFile: stat.isFile(),
+      isDirectory: stat.isDirectory(),
+      isSymlink: stat.isSymbolicLink(),
+      size: stat.size,
+      mtime: stat.mtime,
+    };
+  }
+
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
     await this.ensureInitialized();
     await this.getFs().mkdir(path, { recursive: options?.recursive ?? false });
@@ -156,38 +278,50 @@ class NodeFileSystem implements FileSystem {
 
   async *readDir(
     path: string,
-  ): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }> {
+  ): AsyncIterable<{
+    name: string;
+    isFile: boolean;
+    isDirectory: boolean;
+    isSymlink?: boolean;
+  }> {
     await this.ensureInitialized();
     const entries = await this.getFs().readdir(path, { withFileTypes: true });
     for (const entry of entries) {
-      yield { name: entry.name, isFile: entry.isFile(), isDirectory: entry.isDirectory() };
+      yield {
+        name: entry.name,
+        isFile: entry.isFile(),
+        isDirectory: entry.isDirectory(),
+        isSymlink: entry.isSymbolicLink(),
+      };
     }
   }
 
   async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
     await this.ensureInitialized();
     const recursive = options?.recursive ?? false;
-    await this.getFs().rm(path, { recursive, force: recursive });
+    await this.getFs().rm(path, { recursive, force: false });
   }
 
   async makeTempDir(options?: { prefix?: string }): Promise<string> {
     await this.ensureInitialized();
-    const tempDir = this.getPath().join(
-      this.getOs().tmpdir(),
-      `${options?.prefix ?? "tmp-"}${crypto.randomUUID().slice(0, 8)}`,
+    const prefix = validateTempDirectoryPrefix(
+      options?.prefix ?? DEFAULT_TEMP_DIRECTORY_PREFIX,
     );
-    await this.getFs().mkdir(tempDir, { recursive: true });
-    return tempDir;
+    const tempRoot = this.getOs().tmpdir();
+    const separator = this.getPath().sep;
+    const tempRootPrefix = tempRoot.endsWith(separator) ? tempRoot : `${tempRoot}${separator}`;
+    return await this.getFs().mkdtemp(`${tempRootPrefix}${prefix}`);
   }
 
   async chmod(path: string, mode: number): Promise<void> {
     await this.ensureInitialized();
     try {
       await this.getFs().chmod(path, mode);
-    } catch {
-      // Ignore errors on Windows where chmod is not fully supported.
-      // Intentionally not logged: this low-level compat module must stay
-      // importable without `--allow-env` (the logger reads env at import).
+    } catch (error: unknown) {
+      if (this.getOs().platform() === "win32" && isUnsupportedChmodError(error)) {
+        return;
+      }
+      throw error;
     }
   }
 }
@@ -201,6 +335,16 @@ class DenoFileSystem implements FileSystem {
     return denoGlobal().readFile(path);
   }
 
+  async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    return await readFileWithinLimit(async () => {
+      const file = await denoGlobal().open(path, { read: true });
+      return {
+        close: () => file.close(),
+        read: (buffer: Uint8Array) => file.read(buffer),
+      };
+    }, byteLimit);
+  }
+
   async writeTextFile(path: string, data: string): Promise<void> {
     await denoGlobal().writeTextFile(path, data);
   }
@@ -209,12 +353,16 @@ class DenoFileSystem implements FileSystem {
     await denoGlobal().writeFile(path, data);
   }
 
+  async rename(from: string, to: string): Promise<void> {
+    await denoGlobal().rename(from, to);
+  }
+
   async exists(path: string): Promise<boolean> {
     try {
       await denoGlobal().stat(path);
       return true;
     } catch (error: unknown) {
-      if (error instanceof denoGlobal().errors.NotFound) return false;
+      if (isNotFoundError(error)) return false;
       throw error;
     }
   }
@@ -230,15 +378,36 @@ class DenoFileSystem implements FileSystem {
     };
   }
 
+  async lstat(path: string): Promise<FileInfo> {
+    const stat = await denoGlobal().lstat(path);
+    return {
+      isFile: stat.isFile,
+      isDirectory: stat.isDirectory,
+      isSymlink: stat.isSymlink,
+      size: stat.size,
+      mtime: stat.mtime,
+    };
+  }
+
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
     await denoGlobal().mkdir(path, { recursive: options?.recursive ?? false });
   }
 
   async *readDir(
     path: string,
-  ): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }> {
+  ): AsyncIterable<{
+    name: string;
+    isFile: boolean;
+    isDirectory: boolean;
+    isSymlink?: boolean;
+  }> {
     for await (const entry of denoGlobal().readDir(path)) {
-      yield { name: entry.name, isFile: entry.isFile, isDirectory: entry.isDirectory };
+      yield {
+        name: entry.name,
+        isFile: entry.isFile,
+        isDirectory: entry.isDirectory,
+        isSymlink: entry.isSymlink,
+      };
     }
   }
 
@@ -246,22 +415,69 @@ class DenoFileSystem implements FileSystem {
     await denoGlobal().remove(path, { recursive: options?.recursive ?? false });
   }
 
-  makeTempDir(options?: { prefix?: string }): Promise<string> {
-    return denoGlobal().makeTempDir({ prefix: options?.prefix });
+  async makeTempDir(options?: { prefix?: string }): Promise<string> {
+    const prefix = validateTempDirectoryPrefix(
+      options?.prefix ?? DEFAULT_TEMP_DIRECTORY_PREFIX,
+    );
+    return await denoGlobal().makeTempDir({ prefix });
   }
 
   async chmod(path: string, mode: number): Promise<void> {
     try {
       await denoGlobal().chmod(path, mode);
-    } catch (_) {
-      /* expected: chmod is not fully supported on Windows */
+    } catch (error: unknown) {
+      if (denoGlobal().build.os === "windows" && isUnsupportedChmodError(error)) {
+        return;
+      }
+      throw error;
     }
   }
 }
 
-/** Create file system. */
+/** Create the runtime-native filesystem implementation. */
 export function createFileSystem(): FileSystem {
-  return isDeno ? new DenoFileSystem() : new NodeFileSystem();
+  const fileSystem = isDeno ? new DenoFileSystem() : new NodeFileSystem();
+  let semanticAdapter:
+    | Promise<import("../adapters/base.ts").FileSystemAdapter>
+    | undefined;
+  const loadSemanticAdapter = () =>
+    semanticAdapter ??= isDeno
+      ? import("../adapters/runtime/deno/filesystem-adapter.ts")
+        .then(({ DenoFileSystemAdapter }) => new DenoFileSystemAdapter())
+      : import("../adapters/runtime/shared/node-filesystem-adapter.ts")
+        .then(({ NodeCompatibleFileSystemAdapter }) => new NodeCompatibleFileSystemAdapter());
+
+  Object.defineProperty(fileSystem, "readFileSnapshotWithinLimit", {
+    value: async (
+      path: string,
+      containmentRoot: string,
+      byteLimit: number,
+    ) => {
+      const snapshotReader = captureSnapshotReadCapability(
+        await loadSemanticAdapter(),
+        "Native filesystem adapter",
+      );
+      if (snapshotReader === undefined) {
+        throw new Error("Native filesystem adapter does not support snapshot reads");
+      }
+      return await snapshotReader.read(path, containmentRoot, byteLimit);
+    },
+    enumerable: true,
+  });
+  Object.defineProperty(fileSystem, "createFileBytesExclusive", {
+    value: async (path: string, content: Uint8Array) => {
+      const exclusiveCreator = captureExclusiveCreateCapability(
+        await loadSemanticAdapter(),
+        "Native filesystem adapter",
+      );
+      if (exclusiveCreator === undefined) {
+        throw new Error("Native filesystem adapter does not support exclusive creates");
+      }
+      await exclusiveCreator.create(path, content);
+    },
+    enumerable: true,
+  });
+  return fileSystem;
 }
 
 let _fs: FileSystem | null = null;
@@ -291,7 +507,7 @@ export function writeFile(path: string, data: Uint8Array): Promise<void> {
   return getFs().writeFile(path, data);
 }
 
-/** Check whether a path exists. */
+/** Return false for a missing path and propagate every other filesystem error. */
 export function exists(path: string): Promise<boolean> {
   return getFs().exists(path);
 }
@@ -301,12 +517,52 @@ export function stat(path: string): Promise<FileInfo> {
   return getFs().stat(path);
 }
 
+/** Read file metadata without following a terminal symbolic link. */
+export async function lstat(path: string): Promise<FileInfo> {
+  if (isDeno) {
+    const info = await denoGlobal().lstat(path);
+    return {
+      isFile: info.isFile,
+      isDirectory: info.isDirectory,
+      isSymlink: info.isSymlink,
+      size: info.size,
+      mtime: info.mtime,
+    };
+  }
+
+  const fs = await import("node:fs/promises");
+  const info = await fs.lstat(path);
+  return {
+    isFile: info.isFile(),
+    isDirectory: info.isDirectory(),
+    isSymlink: info.isSymbolicLink(),
+    size: info.size,
+    mtime: info.mtime,
+  };
+}
+
+/**
+ * Read a path's native device/inode identity without following a terminal
+ * symbolic link. Returns undefined only when the runtime cannot expose a
+ * stable identity for the backing filesystem.
+ */
+export async function getPathIdentity(path: string): Promise<PathIdentity | undefined> {
+  if (isDeno) {
+    const info = await denoGlobal().lstat(path);
+    return normalizePathIdentity(info.dev, info.ino);
+  }
+
+  const fs = await import("node:fs/promises");
+  const info = await fs.lstat(path, { bigint: true });
+  return normalizePathIdentity(info.dev, info.ino);
+}
+
 /** Create a directory. */
 export function mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
   return getFs().mkdir(path, options);
 }
 
-/** Remove a file or directory. */
+/** Remove a file or directory, rejecting when the path does not exist. */
 export function remove(path: string, options?: { recursive?: boolean }): Promise<void> {
   return getFs().remove(path, options);
 }
@@ -314,16 +570,21 @@ export function remove(path: string, options?: { recursive?: boolean }): Promise
 /** Read directory entries. */
 export function readDir(
   path: string,
-): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }> {
+): AsyncIterable<{
+  name: string;
+  isFile: boolean;
+  isDirectory: boolean;
+  isSymlink?: boolean;
+}> {
   return getFs().readDir(path);
 }
 
-/** Create temp dir. */
+/** Atomically create a unique directory beneath the operating-system temp root. */
 export function makeTempDir(options?: { prefix?: string }): Promise<string> {
   return getFs().makeTempDir(options);
 }
 
-/** Change file permissions. */
+/** Change file permissions, rejecting operational failures. */
 export function chmod(path: string, mode: number): Promise<void> {
   return getFs().chmod(path, mode);
 }
@@ -352,32 +613,17 @@ export async function realPath(path: string): Promise<string> {
   return await fs.realpath(path);
 }
 
-type DenoGlobal = typeof globalThis & {
-  Deno?: {
-    errors?: {
-      NotFound?: new (...args: unknown[]) => Error;
-      AlreadyExists?: new (...args: unknown[]) => Error;
-    };
-  };
-};
-
-/** Error shape for is not found. */
-export function isNotFoundError(error: unknown): boolean {
-  const NotFound = (globalThis as DenoGlobal).Deno?.errors?.NotFound;
-  if (isDeno && NotFound && error instanceof NotFound) return true;
-  if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return true;
-  if (
-    error instanceof Error && error.name === "VeryfrontError" &&
-    (error as { slug?: string }).slug === "file-not-found"
-  ) {
-    return true;
-  }
-  return false;
-}
-
 /** Error shape for is already exists. */
 export function isAlreadyExistsError(error: unknown): boolean {
-  const AlreadyExists = (globalThis as DenoGlobal).Deno?.errors?.AlreadyExists;
-  if (isDeno && AlreadyExists && error instanceof AlreadyExists) return true;
-  return (error as NodeJS.ErrnoException)?.code === "EEXIST";
+  if (typeof error !== "object" || error === null || isProxyWithoutHooks(error)) {
+    return false;
+  }
+
+  try {
+    const AlreadyExists = isDeno ? denoGlobal().errors.AlreadyExists : undefined;
+    if (AlreadyExists && error instanceof AlreadyExists) return true;
+    return hasOwnDataValue(error, "code", "EEXIST");
+  } catch {
+    return false;
+  }
 }

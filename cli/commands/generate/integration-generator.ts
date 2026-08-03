@@ -5,13 +5,14 @@
  * Creates connector.json, API client, OAuth routes, token store, and tool skeletons.
  */
 
-import { join } from "#std/path.ts";
-import { cyan, dim, green } from "#cli/ui";
+import { join } from "veryfront/platform/path";
+import { bold, brand, dim } from "#cli/ui";
 import { cliLogger } from "#cli/utils";
 import { createFileSystem, type FileSystem } from "veryfront/platform";
 import { ensureDir } from "../../utils/fs.ts";
 import { isInteractive as checkIsInteractive, promptSync } from "veryfront/platform";
 import { isCiEnv, isDenoTestingEnv } from "veryfront/config";
+import { isInteractive as isCliInteractive } from "../../shared/interactive.ts";
 import {
   getNonInteractiveConfig,
   getToolExecuteBody,
@@ -54,12 +55,12 @@ export interface IntegrationGeneratorOptions {
 }
 
 function canRunPrompts(): boolean {
-  return !(isCiEnv() || isDenoTestingEnv()) && checkIsInteractive();
+  return isCliInteractive() && !(isCiEnv() || isDenoTestingEnv()) && checkIsInteractive();
 }
 
 function promptText(question: string, defaultValue?: string): Promise<string> {
   const defaultHint = defaultValue ? dim(` (${defaultValue})`) : "";
-  const fullQuestion = `${cyan("?")} ${question}${defaultHint}`;
+  const fullQuestion = `${brand("?")} ${question}${defaultHint}`;
   const input = promptSync(fullQuestion);
   return Promise.resolve(input?.trim() || defaultValue || "");
 }
@@ -77,28 +78,29 @@ export async function generateIntegration(
 
   await createIntegrationFiles(projectDir, config);
 
-  console.log("");
-  console.log(green("Integration created successfully!"));
-  console.log("");
-  console.log("Files created:");
-  console.log(`  ${cyan("integrations/" + config.name + "/")} - Integration directory`);
-  console.log("");
-  console.log("Next steps:");
+  console.log();
+  console.log("  ✓ Integration created successfully");
+  console.log();
+  console.log("  " + bold(brand("Files created:")));
+  console.log("  " + brand("integrations/" + config.name + "/") + " - Integration directory");
+  console.log();
+  console.log("  " + bold("Next steps:"));
   console.log(`  1. Add your ${config.envVarPrefix}_* environment variables to .env`);
   if (config.authType === "oauth2") {
     console.log(`  2. Configure OAuth app in ${config.displayName} developer portal`);
     console.log(`  3. Set callback URL to: /api/auth/${config.name}/callback`);
   }
   console.log(`  4. Customize the generated tools in integrations/${config.name}/tools/`);
-  console.log("");
+  console.log();
 }
 
 async function getInteractiveConfig(
   options: IntegrationGeneratorOptions,
 ): Promise<IntegrationConfig> {
-  console.log("");
-  console.log(green("Integration Generator"));
-  console.log("Let's create a new service integration.\n");
+  console.log();
+  console.log("  " + bold(brand("Integration Generator")));
+  console.log("  Let's create a new service integration.");
+  console.log();
 
   const name = options.name ??
     await promptText("Integration name (lowercase, e.g., twilio, zendesk):");

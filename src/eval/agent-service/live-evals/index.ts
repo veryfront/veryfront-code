@@ -94,6 +94,5 @@ export {
   type LiveEvalProjectFile,
   type LiveEvalProjectFileReaderInput,
   type LiveEvalRunnerConfig,
-  liveEvalRunnerInternals,
   type PreparedLiveEvalInput,
 } from "./runner.ts";

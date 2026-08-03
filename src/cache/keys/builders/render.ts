@@ -12,6 +12,9 @@ import { CacheKeyPrefix } from "../prefixes.ts";
 import type { QueryParamCacheOptions } from "../prefixes.ts";
 import { sanitizeQueryParamsForCacheKey } from "../utils.ts";
 import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
+import { encodeCacheSourceIdentity } from "../source-identity.ts";
+import { buildDependencyPinningCacheVariant } from "../dependency-pinning.ts";
+import { encodeCacheKeyLiteralSegment } from "../segment-codec.ts";
 
 export function buildRenderCachePrefix(
   projectId: string,
@@ -72,8 +75,15 @@ export function buildComponentCacheKey(
   projectId: string,
   filePath: string,
   contentHash: string,
+  dependencyPinningCacheKey?: string,
+  moduleServerOrigin?: string,
 ): string {
-  return `${CacheKeyPrefix.COMPONENT}:${projectId}:${filePath}:${contentHash}`;
+  const legacyCacheKey = `${CacheKeyPrefix.COMPONENT}:${projectId}:${filePath}:${contentHash}`;
+  const cacheVariant = buildDependencyPinningCacheVariant(
+    dependencyPinningCacheKey,
+    moduleServerOrigin,
+  );
+  return cacheVariant ? `${legacyCacheKey}:pins:${cacheVariant}` : legacyCacheKey;
 }
 
 export function buildLayoutComponentCacheKey(
@@ -98,8 +108,22 @@ export function buildProxyManagerCacheKey(
   productionMode: boolean,
   releaseId: string | null,
   branch: string | null,
+  environmentName?: string | null,
+  authority?: {
+    projectId: string | null;
+    credentialPrincipal: string;
+  },
 ): string {
   const mode = productionMode ? "production" : "preview";
+  if (authority && !authority.credentialPrincipal) {
+    throw CACHE_INVARIANT_VIOLATION.create({
+      detail: `Missing credential principal for proxy adapter ${projectSlug}`,
+    });
+  }
+  const authorityKey = authority
+    ? `:project:${encodeCacheKeyLiteralSegment(authority.projectId ?? "")}` +
+      `:credential:${encodeCacheKeyLiteralSegment(authority.credentialPrincipal)}`
+    : "";
 
   if (productionMode) {
     if (!releaseId) {
@@ -107,14 +131,20 @@ export function buildProxyManagerCacheKey(
         detail: `Missing releaseId in production for ${projectSlug}`,
       });
     }
-    return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${releaseId}`;
+    const source = environmentName
+      ? encodeCacheSourceIdentity({ type: "environment", environmentName, releaseId })
+      : encodeCacheSourceIdentity({ type: "release", releaseId });
+    return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${source.key}${authorityKey}`;
   }
 
-  return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${branch ?? "main"}`;
+  const source = encodeCacheSourceIdentity({ type: "branch", branch: branch ?? "main" });
+  return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${source.qualifier}${authorityKey}`;
 }
 
 /**
- * Build a query-aware cache key that is safe for multi-tenant caching.
+ * Build a query-aware key that preserves query semantics for multi-tenant
+ * caching. The result can contain internal `*HH` byte escapes; ApiCacheBackend
+ * maps completed concrete keys to the API cache schema at its boundary.
  *
  * @param slug - Base page slug
  * @param url - Optional URL with query params

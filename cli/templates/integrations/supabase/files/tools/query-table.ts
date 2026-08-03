@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { queryTable } from "../../lib/supabase-client.ts";
+import { queryTable } from "../lib/supabase-client.ts";
 
 export default tool({
-  id: "query-table",
+  id: "supabase-query-table",
   description:
     "Query a table in your Supabase database with optional filters, sorting, and pagination.",
   inputSchema: defineSchema((v) => v.object({

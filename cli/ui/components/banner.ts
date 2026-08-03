@@ -1,6 +1,6 @@
 import { RESET } from "../ansi.ts";
 import { BORDER_STYLES, box } from "#cli/ui/box";
-import { brand, dim, shouldUseColor } from "../colors.ts";
+import { brand, BRAND_TRUECOLOR, dim, shouldUseColor } from "../colors.ts";
 import { AGENT_FACE } from "../dot-matrix.ts";
 import { maxLineWidth, pad, repeat } from "../layout.ts";
 
@@ -41,7 +41,7 @@ function formatInfoLines(info: BannerInfo, styleValue = true): string[] {
 
 function renderLogo(): string[] {
   const useColor = shouldUseColor();
-  const litColor = useColor ? "\x1b[38;2;252;143;93m" : "";
+  const litColor = useColor ? BRAND_TRUECOLOR : "";
   const offColor = useColor ? "\x1b[38;5;240m" : "";
 
   return AGENT_FACE.map((row) =>

@@ -9,7 +9,8 @@ import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { transformToESM } from "../../../esm-transform.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
-import type { Logger } from "#veryfront/utils/logger/logger.ts";
+import type { Logger } from "#veryfront/utils";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { rewriteDntImports, rewriteVeryfrontImports } from "./import-rewriter.ts";
 
@@ -26,6 +27,10 @@ export interface TransformResolvedModuleSourceInput {
   normalizedPath: string;
   projectSlug: string;
   reactVersion?: string;
+  moduleServerOrigin?: string;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningSource?: DependencyPinningSourceInput;
   adapter: RuntimeAdapter;
   log: SourceTransformLogger;
   transformToEsm?: TransformToEsmFn;
@@ -61,6 +66,14 @@ export async function transformResolvedModuleSource(
         dev: true,
         ssr: true,
         reactVersion: input.reactVersion,
+        moduleServerOrigin: input.moduleServerOrigin,
+        dependencyPinningCacheKey: input.dependencyPinningCacheKey,
+        ...(input.dependencyPinningDependencies === undefined
+          ? {}
+          : { dependencyPinningDependencies: input.dependencyPinningDependencies }),
+        ...(input.dependencyPinningSource === undefined
+          ? {}
+          : { dependencyPinningSource: input.dependencyPinningSource }),
       },
     );
   } catch (transformError) {

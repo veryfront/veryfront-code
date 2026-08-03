@@ -10,6 +10,7 @@ import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { capitalizeSeparatedWords } from "veryfront/utils/case-utils";
 import { randomSuffix } from "#cli/shared/slug";
 import { getApiUrl } from "#cli/shared/constants";
+import { ApiErrorSchema, formatApiError } from "./config.ts";
 
 function slugToName(slug: string): string {
   return capitalizeSeparatedWords(slug, "-", " ");
@@ -21,8 +22,15 @@ export interface ReserveResult {
   created: boolean;
 }
 
-interface ApiError {
-  message?: string;
+export interface ReserveProjectSlugOptions {
+  allowAlternativeSlug?: boolean;
+}
+
+export class ProjectSlugConflictError extends Error {
+  constructor(readonly slug: string) {
+    super(`Project slug "${slug}" is already in use.`);
+    this.name = "ProjectSlugConflictError";
+  }
 }
 
 interface CreateProjectResult {
@@ -38,12 +46,14 @@ export async function reserveProjectSlug(
   slug: string,
   token: string,
   env: EnvironmentConfig = getEnvironmentConfig(),
+  apiUrl: string = getApiUrl(env),
+  options: ReserveProjectSlugOptions = {},
 ): Promise<ReserveResult> {
   const name = slugToName(slug);
   let currentSlug = slug;
 
   for (let attempt = 1; attempt <= MAX_SLUG_ATTEMPTS; attempt++) {
-    const result = await tryCreateProject(currentSlug, name, token, env);
+    const result = await tryCreateProject(currentSlug, name, token, apiUrl);
 
     if (result.success) {
       return {
@@ -57,6 +67,10 @@ export async function reserveProjectSlug(
       throw new Error(result.error ?? "Failed to create project");
     }
 
+    if (options.allowAlternativeSlug === false) {
+      throw new ProjectSlugConflictError(slug);
+    }
+
     currentSlug = `${slug}-${randomSuffix()}`;
   }
 
@@ -67,10 +81,10 @@ async function tryCreateProject(
   slug: string,
   name: string,
   token: string,
-  env: EnvironmentConfig = getEnvironmentConfig(),
+  apiUrl: string,
 ): Promise<CreateProjectResult> {
   try {
-    const response = await fetch(`${getApiUrl(env)}/projects`, {
+    const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/projects`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -89,8 +103,12 @@ async function tryCreateProject(
       return { success: false, isSlugTaken: true };
     }
 
-    const error = (await response.json().catch(() => ({}))) as ApiError;
-    return { success: false, error: error.message ?? `HTTP ${response.status}` };
+    const fallback = `HTTP ${response.status}`;
+    const parsed = ApiErrorSchema.safeParse(await response.json().catch(() => ({})));
+    return {
+      success: false,
+      error: parsed.success ? formatApiError(parsed.data, fallback) : fallback,
+    };
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : String(error) };
   }

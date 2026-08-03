@@ -4,43 +4,27 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
 const fs = createFileSystem();
 
-const FILE_PATTERNS = [
-  "app/{path}/page.mdx",
-  "app/{path}/page.md",
-  "app/{path}/page.tsx",
-  "app/{path}/page.ts",
-  "app/{path}/page.jsx",
-  "app/{path}/page.js",
-  "app/{path}.mdx",
-  "app/{path}.md",
-  "app/{path}.tsx",
-  "app/{path}.ts",
-  "app/{path}.jsx",
-  "app/{path}.js",
-];
-
-const ROOT_PATTERNS = [
-  "app/page.mdx",
-  "app/page.md",
-  "app/page.tsx",
-  "app/page.ts",
-  "app/page.jsx",
-  "app/page.js",
-];
+const PAGE_EXTENSIONS = ["mdx", "md", "tsx", "ts", "jsx", "js"] as const;
 
 export async function resolveComponentPath(
   pathname: string,
   projectDir: string,
   fsAdapter?: FileSystemAdapter,
+  appDir: string = "app",
 ): Promise<string | null> {
   const cleanPath = cleanPathname(pathname);
+  const normalizedAppDir = appDir.replace(/^\/+|\/+$/g, "") || "app";
+  const rootPatterns = PAGE_EXTENSIONS.map((extension) => `${normalizedAppDir}/page.${extension}`);
 
   if (cleanPath === "index") {
-    const rootMatch = await findFirstExistingPath(projectDir, ROOT_PATTERNS, fsAdapter);
+    const rootMatch = await findFirstExistingPath(projectDir, rootPatterns, fsAdapter);
     if (rootMatch) return rootMatch;
   }
 
-  const patterns = FILE_PATTERNS.map((pattern) => pattern.replace("{path}", cleanPath));
+  const patterns = [
+    ...PAGE_EXTENSIONS.map((extension) => `${normalizedAppDir}/${cleanPath}/page.${extension}`),
+    ...PAGE_EXTENSIONS.map((extension) => `${normalizedAppDir}/${cleanPath}.${extension}`),
+  ];
   return findFirstExistingPath(projectDir, patterns, fsAdapter);
 }
 

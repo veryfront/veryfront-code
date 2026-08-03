@@ -1,4 +1,5 @@
-import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
+import { RENDER_ERROR } from "#veryfront/errors";
+import { SSR_MAX_BUFFERED_BYTES, SSR_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   getReactVersionInfo,
@@ -6,38 +7,21 @@ import {
   renderToStringAdapter,
 } from "#veryfront/react";
 import { isCompiledBinary, rendererLogger as logger } from "#veryfront/utils";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type * as React from "react";
 import { streamToString } from "./utils/index.ts";
 import { setupSSRGlobals } from "./ssr-globals.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
+import {
+  normalizeReactVersion,
+  resolveProjectReactVersion,
+  stripSemverRange,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import type { ServerRenderContextValue } from "#veryfront/react/server-render-context.ts";
 
-function supportsStreamingSSR(
-  versionInfo: ReturnType<typeof getReactVersionInfo>,
-): boolean {
-  return versionInfo.isReact18 || versionInfo.isReact19;
-}
-
-async function pipeToString(
-  pipeFn: (writable: NodeJS.WritableStream) => void,
-): Promise<string> {
-  const { PassThrough } = await import("node:stream");
-  const { Buffer } = await import("node:buffer");
-
-  return await new Promise((resolve, reject) => {
-    const chunks: Uint8Array[] = [];
-    const passThrough = new PassThrough();
-
-    passThrough.on("data", (chunk: Uint8Array) => chunks.push(chunk));
-    passThrough.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
-    passThrough.on("error", (err: Error) => reject(err));
-
-    try {
-      pipeFn(passThrough);
-    } catch (error) {
-      reject(error);
-    }
-  });
+function supportsStreamingReactVersion(version: string): boolean {
+  return Number(version.split(".")[0]) >= 18;
 }
 
 function pipeToReadableStream(
@@ -46,39 +30,65 @@ function pipeToReadableStream(
 ): ReadableStream<Uint8Array> {
   let passThrough: import("node:stream").PassThrough | null = null;
   let cancelled = false;
+  let settled = false;
+  let abortCalled = false;
+
+  const abortOnce = () => {
+    if (abortCalled || !abortFn) return;
+    abortCalled = true;
+    try {
+      abortFn();
+    } catch (error) {
+      logger.warn("Error aborting pipeable SSR stream", error);
+    }
+  };
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       const { PassThrough } = await import("node:stream");
       passThrough = new PassThrough();
+      if (cancelled) {
+        passThrough.destroy();
+        return;
+      }
 
       passThrough.on("data", (chunk: Uint8Array) => {
-        if (cancelled) return;
+        if (cancelled || settled) return;
         controller.enqueue(new Uint8Array(chunk));
+        if ((controller.desiredSize ?? 0) <= 0) passThrough?.pause();
       });
       passThrough.on("end", () => {
-        if (!cancelled) controller.close();
+        if (cancelled || settled) return;
+        settled = true;
+        controller.close();
       });
       passThrough.on("error", (err: Error) => {
-        if (!cancelled) controller.error(err);
+        if (cancelled || settled) return;
+        settled = true;
+        abortOnce();
+        controller.error(err);
       });
 
       try {
         pipeFn(passThrough);
       } catch (error) {
-        if (!cancelled) controller.error(error);
-      }
-    },
-    cancel(reason) {
-      cancelled = true;
-
-      if (abortFn) {
-        try {
-          abortFn();
-        } catch (error) {
-          logger.warn("Error aborting pipeable SSR stream", error);
+        if (cancelled || settled) return;
+        settled = true;
+        abortOnce();
+        controller.error(error);
+        if (!passThrough.destroyed) {
+          passThrough.destroy(error instanceof Error ? error : undefined);
         }
       }
+    },
+    pull() {
+      if (!cancelled && !settled) passThrough?.resume();
+    },
+    cancel(reason) {
+      if (cancelled) return;
+      cancelled = true;
+      settled = true;
+      abortOnce();
 
       if (passThrough && !passThrough.destroyed) {
         passThrough.destroy(reason instanceof Error ? reason : undefined);
@@ -87,10 +97,26 @@ function pipeToReadableStream(
   });
 }
 
+function attachAllReady<T extends ReadableStream<Uint8Array>>(
+  stream: T,
+  allReady?: Promise<unknown>,
+): T {
+  if (!allReady) return stream;
+  return Object.assign(stream, { allReady });
+}
+
 export interface SSRRenderOptions {
   mode: string;
   wantsStream: boolean;
+  /** Response-scoped CSP nonce for React-owned bootstrap scripts. */
+  nonce?: string;
+  /** Request capabilities that must survive async React retries. */
+  renderContext?: ServerRenderContextValue;
   debugMode?: boolean;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  /** Maximum UTF-8 bytes retained when the result must be buffered. */
+  maxBufferedBytes?: number;
 }
 
 export interface SSRRenderResult {
@@ -100,34 +126,54 @@ export interface SSRRenderResult {
 
 export class SSRRenderer {
   private readonly mode: string;
-  private readonly adapter?: RuntimeAdapter;
   private readonly projectDir?: string;
-  private readonly projectId?: string;
-  private versionInfo: ReturnType<typeof getReactVersionInfo> | null = null;
+  private readonly config?: VeryfrontConfig;
+  private reactVersionPromise: Promise<string> | null = null;
+  private resolvedReactVersion: string | null = null;
 
   constructor(
     mode: string,
-    adapter?: RuntimeAdapter,
+    _adapter?: RuntimeAdapter,
     projectDir?: string,
-    projectId?: string,
+    _projectId?: string,
+    config?: VeryfrontConfig,
   ) {
     this.mode = mode;
-    this.adapter = adapter;
     this.projectDir = projectDir;
-    this.projectId = projectId;
+    this.config = config;
+
+    const legacyVersions = config?.client?.cdn?.versions;
+    const configuredVersion = config?.react?.version ??
+      (legacyVersions && legacyVersions !== "auto" ? legacyVersions.react : undefined);
+    if (configuredVersion) {
+      this.resolvedReactVersion = normalizeReactVersion(stripSemverRange(configuredVersion));
+    }
   }
 
-  private async getVersionInfo(): Promise<ReturnType<typeof getReactVersionInfo>> {
-    if (this.versionInfo) return this.versionInfo;
-
-    if (!this.projectDir) {
-      this.versionInfo = getReactVersionInfo();
-      return this.versionInfo;
+  private async getReactVersion(
+    dependencyPinningCacheKey?: string,
+    dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  ): Promise<string> {
+    if (
+      dependencyPinningDependencies !== undefined ||
+      dependencyPinningCacheKey?.startsWith("on:")
+    ) {
+      return await resolveProjectReactVersion({
+        projectDir: this.projectDir,
+        config: this.config,
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies,
+      });
     }
 
-    const { getReactVersionInfoForProject } = await import("#veryfront/react");
-    this.versionInfo = await getReactVersionInfoForProject(this.projectDir, this.projectId);
-    return this.versionInfo;
+    if (this.resolvedReactVersion) return this.resolvedReactVersion;
+
+    this.reactVersionPromise ??= resolveProjectReactVersion({
+      projectDir: this.projectDir,
+      config: this.config,
+    });
+    this.resolvedReactVersion = await this.reactVersionPromise;
+    return this.resolvedReactVersion;
   }
 
   async renderToHTML(
@@ -136,15 +182,19 @@ export class SSRRenderer {
   ): Promise<SSRRenderResult> {
     setupSSRGlobals();
 
-    const versionInfo = await this.getVersionInfo();
+    const reactVersion = await this.getReactVersion(
+      options.dependencyPinningCacheKey,
+      options.dependencyPinningDependencies,
+    );
     const wantsStreamingMode = this.mode === "production" || options.wantsStream;
     const compiledBinary = isCompiledBinary();
+    const maxBufferedBytes = options.maxBufferedBytes ?? SSR_MAX_BUFFERED_BYTES;
 
     if (compiledBinary && wantsStreamingMode) {
       logger.debug(
         "Streaming SSR disabled in compiled binary (using string rendering)",
         {
-          reactVersion: versionInfo.version,
+          reactVersion,
           reason: "Workers with blob URLs not supported in deno compile binaries",
         },
       );
@@ -152,20 +202,27 @@ export class SSRRenderer {
 
     const useStreaming = !compiledBinary &&
       wantsStreamingMode &&
-      supportsStreamingSSR(versionInfo);
+      supportsStreamingReactVersion(reactVersion);
 
     if (!useStreaming) {
       logger.debug("Using string SSR", {
         mode: this.mode,
-        reactVersion: versionInfo.version,
+        reactVersion,
       });
 
       const html = await withSpan(
         SpanNames.SSR_REACT_RENDER,
-        () => renderToStringAdapter(pageElement),
+        () =>
+          renderToStringAdapter(pageElement, {
+            identifierPrefix: "vf",
+            maxBufferedBytes,
+            nonce: options.nonce,
+            renderContext: options.renderContext,
+            reactVersion,
+          }),
         {
           "ssr.method": "string",
-          "ssr.react_version": versionInfo.version,
+          "ssr.react_version": reactVersion,
         },
       );
 
@@ -173,7 +230,7 @@ export class SSRRenderer {
     }
 
     logger.debug("Rendering via streaming adapter", {
-      reactVersion: versionInfo.version,
+      reactVersion,
       delivery: options.wantsStream ? "stream" : "string",
     });
 
@@ -182,10 +239,14 @@ export class SSRRenderer {
       () =>
         renderToStreamAdapter(pageElement, {
           identifierPrefix: "vf",
+          maxBufferedBytes,
+          nonce: options.nonce,
+          renderContext: options.renderContext,
+          reactVersion,
         }),
       {
         "ssr.method": "streaming",
-        "ssr.react_version": versionInfo.version,
+        "ssr.react_version": reactVersion,
         "ssr.wants_stream": options.wantsStream,
       },
     );
@@ -193,10 +254,14 @@ export class SSRRenderer {
     if (renderResult.stream) {
       if (options.wantsStream) {
         logger.debug("True streaming SSR - returning stream without buffering");
-        return { html: "", stream: renderResult.stream };
+        return { html: "", stream: attachAllReady(renderResult.stream, renderResult.allReady) };
       }
 
-      const html = await streamToString(renderResult.stream);
+      const html = await streamToString(
+        renderResult.stream,
+        SSR_TIMEOUT_MS,
+        maxBufferedBytes,
+      );
 
       if (options.debugMode) {
         logger.debug("Streaming SSR completed (buffered)", { htmlLength: html.length });
@@ -208,11 +273,16 @@ export class SSRRenderer {
     if (renderResult.pipe) {
       if (options.wantsStream) {
         logger.debug("Converting pipeable stream to ReadableStream for true streaming");
-        return { html: "", stream: pipeToReadableStream(renderResult.pipe, renderResult.abort) };
+        const stream = pipeToReadableStream(renderResult.pipe, renderResult.abort);
+        return { html: "", stream: attachAllReady(stream, renderResult.allReady) };
       }
 
       logger.debug("Converting pipeable stream to string (Node.js renderToPipeableStream)");
-      const html = await pipeToString(renderResult.pipe);
+      const html = await streamToString(
+        pipeToReadableStream(renderResult.pipe, renderResult.abort),
+        SSR_TIMEOUT_MS,
+        maxBufferedBytes,
+      );
 
       if (options.debugMode) {
         logger.debug("Pipeable SSR completed", { htmlLength: html.length });
@@ -237,13 +307,13 @@ export class SSRRenderer {
       concurrent: boolean;
     };
   } {
-    const versionInfo = getReactVersionInfo();
-    const hasStreamingSupport = supportsStreamingSSR(versionInfo);
+    const reactVersion = this.resolvedReactVersion ?? getReactVersionInfo().version;
+    const hasStreamingSupport = supportsStreamingReactVersion(reactVersion);
     const useStreaming = this.mode === "production" && hasStreamingSupport;
 
     return {
       method: useStreaming ? "streaming" : "string",
-      reactVersion: versionInfo.version,
+      reactVersion,
       features: {
         streaming: hasStreamingSupport,
         suspense: hasStreamingSupport,
@@ -253,6 +323,7 @@ export class SSRRenderer {
   }
 
   supportsStreaming(): boolean {
-    return supportsStreamingSSR(getReactVersionInfo());
+    const reactVersion = this.resolvedReactVersion ?? getReactVersionInfo().version;
+    return supportsStreamingReactVersion(reactVersion);
   }
 }

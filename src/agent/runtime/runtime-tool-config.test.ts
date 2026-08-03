@@ -6,6 +6,10 @@ import {
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
   getRuntimeProviderTools,
+  getRuntimeSourceIntegrationPolicy,
+  getRuntimeSourceIntegrationPolicyFromContext,
+  getRuntimeToolExposureCheckpoint,
+  resolveRuntimeToolLoading,
 } from "./runtime-tool-config.ts";
 
 function runtimeConfig(extra: Record<string, unknown> = {}): AgentConfig {
@@ -17,6 +21,81 @@ function runtimeConfig(extra: Record<string, unknown> = {}): AgentConfig {
 }
 
 describe("agent/runtime-tool-config", () => {
+  it("derives tool loading from the public tools selector", () => {
+    assertEquals(resolveRuntimeToolLoading(runtimeConfig()), {
+      mode: "eager",
+      provenance: "tools-selector",
+    });
+    assertEquals(resolveRuntimeToolLoading(runtimeConfig({ tools: true })), {
+      mode: "deferred",
+      provenance: "tools-selector",
+    });
+    assertEquals(resolveRuntimeToolLoading(runtimeConfig({ tools: { get_release: true } })), {
+      mode: "eager",
+      provenance: "tools-selector",
+    });
+  });
+
+  it("keeps host bindings internal and gives the eager rollback override precedence", () => {
+    assertEquals(
+      resolveRuntimeToolLoading(runtimeConfig({
+        tools: true,
+        __vfToolLoadingMode: "eager",
+      })),
+      {
+        mode: "eager",
+        provenance: "host-runtime-binding",
+      },
+    );
+    assertEquals(
+      resolveRuntimeToolLoading(runtimeConfig({
+        tools: true,
+        __vfToolLoadingMode: "deferred",
+        __vfOperationalToolLoadingOverride: "eager",
+      })),
+      {
+        mode: "eager",
+        provenance: "host-operational-override",
+      },
+    );
+  });
+
+  it("accepts only supported private checkpoint state from internal config", () => {
+    assertEquals(
+      getRuntimeToolExposureCheckpoint(runtimeConfig({
+        __vfToolExposureCheckpoint: {
+          version: 1,
+          loadedToolNames: ["get_release"],
+        },
+      })),
+      {
+        version: 1,
+        loadedToolNames: ["get_release"],
+      },
+    );
+    assertEquals(
+      getRuntimeToolExposureCheckpoint(runtimeConfig({
+        __vfToolExposureCheckpoint: {
+          version: 2,
+          loadedToolNames: ["get_release"],
+        },
+      })),
+      {
+        version: 2,
+        loadedToolNames: ["get_release"],
+      },
+    );
+    assertEquals(
+      getRuntimeToolExposureCheckpoint(runtimeConfig({
+        __vfToolExposureCheckpoint: {
+          version: 3,
+          loadedToolNames: ["get_release"],
+        },
+      })),
+      undefined,
+    );
+  });
+
   describe("getRuntimeAllowedRemoteTools", () => {
     it("distinguishes absent allow-lists from invalid configured allow-lists", () => {
       assertEquals(getRuntimeAllowedRemoteTools(runtimeConfig()), undefined);
@@ -40,6 +119,43 @@ describe("agent/runtime-tool-config", () => {
           __vfAllowedRemoteTools: ["search_docs", 42],
         })),
         [],
+      );
+    });
+  });
+
+  describe("getRuntimeSourceIntegrationPolicy", () => {
+    it("preserves a valid manifest and fails malformed internal state closed", () => {
+      const policy = {
+        schemaVersion: 1 as const,
+        mode: "allowlist" as const,
+        integrations: { gmail: { allowedToolIds: ["list_emails"] } },
+      };
+
+      assertEquals(
+        getRuntimeSourceIntegrationPolicy(runtimeConfig({
+          __vfSourceIntegrationPolicy: policy,
+        })),
+        policy,
+      );
+      assertEquals(
+        getRuntimeSourceIntegrationPolicy(runtimeConfig({
+          __vfSourceIntegrationPolicy: {
+            schemaVersion: 1,
+            mode: "allowlist",
+            integrations: { gmail: { allowedToolIds: "list_emails" } },
+          },
+        })),
+        { schemaVersion: 1, mode: "allowlist", integrations: {} },
+      );
+    });
+
+    it("reads the same fail-closed manifest contract from child tool context", () => {
+      assertEquals(getRuntimeSourceIntegrationPolicyFromContext(undefined), undefined);
+      assertEquals(
+        getRuntimeSourceIntegrationPolicyFromContext({
+          __vfSourceIntegrationPolicy: { schemaVersion: 2, mode: "unrestricted" },
+        }),
+        { schemaVersion: 1, mode: "allowlist", integrations: {} },
       );
     });
   });

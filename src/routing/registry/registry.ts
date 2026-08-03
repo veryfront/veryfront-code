@@ -1,9 +1,42 @@
 import type { Handler, HandlerContext, RouteRegistryConfig } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { errorToRFC9457Response } from "#veryfront/errors/middleware/http-error-boundary.ts";
+import { errorToRFC9457Response } from "#veryfront/errors";
 
 const logger = serverLogger.component("route-registry");
+
+type SpanAttributes = Record<string, string | number | boolean>;
+
+export function buildRouteRegistrySpanAttributes(
+  req: Request,
+  url: URL,
+  ctx: HandlerContext,
+): SpanAttributes {
+  const attributes: SpanAttributes = {
+    "http.method": req.method,
+    "http.path": url.pathname,
+  };
+
+  const projectSlug = ctx.projectSlug ?? ctx.enriched?.projectSlug;
+  if (projectSlug) {
+    attributes["veryfront.project_slug"] = projectSlug;
+    attributes["project.slug"] = projectSlug;
+    attributes["veryfront.environment"] = ctx.resolvedEnvironment ?? ctx.requestContext?.mode ??
+      "unknown";
+  }
+
+  const projectId = ctx.projectId;
+  if (projectId) {
+    attributes["veryfront.project_id"] = projectId;
+    attributes["project.id"] = projectId;
+  }
+
+  if ((projectSlug || projectId) && ctx.environmentName) {
+    attributes["veryfront.environment_name"] = ctx.environmentName;
+  }
+
+  return attributes;
+}
 
 export class RouteRegistry {
   private handlers: Handler[] = [];
@@ -39,20 +72,21 @@ export class RouteRegistry {
 
   execute(req: Request, ctx: HandlerContext): Promise<Response | null> {
     const url = new URL(req.url);
+    const debug = Boolean(this.config.debug || ctx.debug);
 
     return withSpan(
       "routing.registry.execute",
       async () => {
         const startTime = Date.now();
 
-        if (this.config.debug) {
+        if (debug) {
           logger.debug(`Processing ${req.method} ${url.pathname}`);
         }
 
         for (const handler of this.handlers) {
           try {
             if (handler.metadata.enabled && !handler.metadata.enabled(ctx)) {
-              if (this.config.debug) {
+              if (debug) {
                 serverLogger.debug(
                   `[RouteRegistry] Skipping disabled handler: ${handler.metadata.name}`,
                 );
@@ -67,14 +101,14 @@ export class RouteRegistry {
             const result = await handler.handle(req, ctx);
             const handlerTime = Date.now() - handlerStart;
 
-            if (this.config.debug && this.config.enableMetrics) {
+            if (debug && this.config.enableMetrics) {
               serverLogger.debug(
                 `[RouteRegistry] Handler ${handler.metadata.name} took ${handlerTime}ms`,
               );
             }
 
             if (result.response) {
-              if (this.config.debug) {
+              if (debug) {
                 serverLogger.debug(
                   `[RouteRegistry] Response from ${handler.metadata.name} (total: ${
                     Date.now() - startTime
@@ -85,7 +119,7 @@ export class RouteRegistry {
             }
 
             if (!result.continue) {
-              if (this.config.debug) {
+              if (debug) {
                 serverLogger.debug(
                   `[RouteRegistry] Chain stopped by ${handler.metadata.name} without response`,
                 );
@@ -109,7 +143,7 @@ export class RouteRegistry {
           }
         }
 
-        if (this.config.debug) {
+        if (debug) {
           serverLogger.debug(
             `[RouteRegistry] No handler matched (total: ${Date.now() - startTime}ms)`,
           );
@@ -117,7 +151,7 @@ export class RouteRegistry {
 
         return null;
       },
-      { "http.method": req.method, "http.path": url.pathname },
+      buildRouteRegistrySpanAttributes(req, url, ctx),
     );
   }
 
