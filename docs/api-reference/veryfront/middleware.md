@@ -142,13 +142,13 @@ Options accepted by timeout.
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `authRateLimit` | Pre-configured rate limiter for authentication endpoints (5 req/15min). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L140) |
+| `authRateLimit` | Pre-configured rate limiter for authentication endpoints (5 req/15min). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L291) |
 | `cors` | Create CORS middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/middleware.ts#L10) |
 | `devLogger` | Create development request logging middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/logger.ts#L244) |
 | `getTimeoutFromEnv` | Gets timeout from environment variable REQUEST_TIMEOUT_MS | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/timeout.ts#L94) |
 | `logger` | Create request logging middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/logger.ts#L191) |
 | `prodLogger` | Create production request logging middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/logger.ts#L249) |
-| `rateLimit` | Create rate-limit middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L106) |
+| `rateLimit` | Create rate-limit middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L207) |
 | `timeout` | Creates a middleware that enforces request timeouts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/timeout.ts#L52) |
 | `timeoutFromEnv` | Creates a timeout middleware with configuration from environment | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/timeout.ts#L102) |
 
@@ -156,26 +156,25 @@ Options accepted by timeout.
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `MemoryRateLimitStore` | Implement memory rate limit store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L25) |
+| `MemoryRateLimitStore` | Implement memory rate limit store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L37) |
 | `MiddlewareContext` | Context for middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/context.ts#L5) |
 | `MiddlewarePipeline` | Implement middleware pipeline. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/pipeline/pipeline.ts#L9) |
-| `RedisRateLimitStore` | Implement redis rate limit store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/redis-rate-limit.ts#L27) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `AuthRateLimitOptions` | Options accepted by the authentication rate-limit preset. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L87) |
+| `AuthRateLimitOptions` | Options accepted by the authentication rate-limit preset. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L146) |
 | `Context` | Context for context. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/types.ts#L8) |
 | `CorsOptions` | Options accepted by cors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/types.ts#L26) |
 | `ExecutionContext` | Context for execution. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/types.ts#L2) |
 | `LogFormat` | Public API contract for log format. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/logger.ts#L14) |
 | `LoggerOptions` | Options accepted by logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/logger.ts#L17) |
+| `MemoryRateLimitStoreOptions` | Options accepted by the in-memory rate limit store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L122) |
 | `MiddlewareFactory` | Public API contract for middleware factory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/types.ts#L32) |
 | `MiddlewareHandler` | Handler for middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/types.ts#L26) |
 | `MiddlewarePipelineOptions` | Options accepted by middleware pipeline. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/pipeline/types.ts#L2) |
 | `Next` | Public API contract for next. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/types.ts#L23) |
-| `RateLimitOptions` | Options accepted by rate limit. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L72) |
+| `RateLimitOptions` | Options accepted by rate limit. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L131) |
 | `RateLimitStore` | Public API contract for rate limit store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/types.ts#L32) |
-| `RedisRateLimitOptions` | Options accepted by redis rate limit. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/redis-rate-limit.ts#L21) |
 | `TimeoutOptions` | Options accepted by timeout. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/timeout.ts#L17) |
