@@ -195,7 +195,7 @@ export const FIRST_PARTY_EXTENSION_POLICIES = Object.freeze(([
   },
 ] satisfies FirstPartyExtensionPolicy[]).map((policy) => Object.freeze(policy)));
 
-export const FIRST_PARTY_BUILTIN_EXTENSION_POLICIES = Object.freeze(
+export const FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES = Object.freeze(
   FIRST_PARTY_EXTENSION_POLICIES.filter((policy) => policy.selection === "builtin-deferred"),
 );
 

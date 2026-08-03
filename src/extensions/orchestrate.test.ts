@@ -691,6 +691,45 @@ describe("orchestrateExtensions()", () => {
     }
   });
 
+  it("keeps package discovery above ordinary builtins with the same first-party name", async () => {
+    const loader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {},
+      logger: noopLogger,
+      discovery: {
+        ...emptyDiscovery(),
+        discoverPackageExtensions: () =>
+          Promise.resolve([{
+            packageName: "@veryfront/ext-css-tailwind",
+            importTarget: "/canonical/ext-css-tailwind.js",
+            metadata: {
+              isExtension: true as const,
+              activation: "auto" as const,
+              capabilities: [],
+            },
+          }]),
+      },
+      builtinExtensions: [{
+        extension: stubExt("ext-css-tailwind", {
+          provides: { SelectedExtensionSource: { from: "builtin" } },
+        }),
+        source: "builtin",
+        origin: "custom-direct-builtin",
+      }],
+      loadFactory: (_path: string, source: ExtensionSource) =>
+        Promise.resolve<ResolvedExtension>({
+          extension: stubExt("ext-css-tailwind", {
+            provides: { SelectedExtensionSource: { from: "package" } },
+          }),
+          source,
+          origin: "canonical-package",
+        }),
+    });
+
+    assertEquals(tryResolve("SelectedExtensionSource"), { from: "package" });
+    await loader.teardownAll();
+  });
+
   it("skips loadFactory for disabled project extensions (src/index.ts variant)", async () => {
     const loadCalls: string[] = [];
 

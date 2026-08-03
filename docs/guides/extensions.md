@@ -169,10 +169,19 @@ distributions must install it alongside `veryfront`:
 deno add npm:@veryfront/ext-node-websocket-ws
 ```
 
-No `veryfront.config.ts` entry is required. Projects can disable the builtin by
-name when WebSocket support is intentionally unavailable. HTTP serving does not
-require the provider; without it, Node.js WebSocket upgrades fail closed with an
-error that names the required package.
+No `veryfront.config.ts` entry is required. To disable the builtin when
+WebSocket support is intentionally unavailable, use:
+
+```ts
+import { defineConfig } from "veryfront";
+
+export default defineConfig({
+  extensions: [{ name: "ext-node-websocket-ws", enabled: false }],
+});
+```
+
+HTTP serving does not require the provider. Without it, Node.js WebSocket
+upgrades fail closed with an error that names the required package.
 
 ## First-party extension areas
 

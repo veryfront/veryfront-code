@@ -9,10 +9,11 @@
  */
 
 import { basename, dirname } from "#veryfront/compat/path";
+import { getDeferredExtensionState } from "./deferred-extension.ts";
 import * as defaultDiscovery from "./discovery.ts";
 import type { BoundExtensionEntrypoint } from "./entrypoint-identity.ts";
 import { loadExtensionFactory as defaultLoadFactory } from "./factory-loader.ts";
-import { FIRST_PARTY_BUILTIN_EXTENSION_POLICIES } from "./first-party-defaults.ts";
+import { FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES } from "./first-party-defaults.ts";
 import { ExtensionLoader } from "./loader.ts";
 import type {
   Extension,
@@ -71,13 +72,13 @@ let orchestrationTail: Promise<void> = Promise.resolve();
 let activeLoader: ExtensionLoader | undefined;
 let failedCandidate: ExtensionLoader | undefined;
 const FIRST_PARTY_BUILTIN_PACKAGE_TO_EXTENSION = new Map(
-  FIRST_PARTY_BUILTIN_EXTENSION_POLICIES.map((policy) => [
+  FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES.map((policy) => [
     `@veryfront/${policy.sourceDirectory}`,
     policy.name,
   ]),
 );
 const FIRST_PARTY_BUILTIN_EXTENSION_TO_PACKAGE = new Map(
-  FIRST_PARTY_BUILTIN_EXTENSION_POLICIES.map((policy) => [
+  FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES.map((policy) => [
     policy.name,
     `@veryfront/${policy.sourceDirectory}`,
   ]),
@@ -148,10 +149,10 @@ function buildDisableFilters(
 
 function isDeferredBuiltinPackageHit(
   hit: PackageLoadCandidate,
-  builtinExtensionNames: ReadonlySet<string>,
+  deferredBuiltinExtensionNames: ReadonlySet<string>,
 ): boolean {
   const extensionName = FIRST_PARTY_BUILTIN_PACKAGE_TO_EXTENSION.get(hit.packageName);
-  return extensionName !== undefined && builtinExtensionNames.has(extensionName);
+  return extensionName !== undefined && deferredBuiltinExtensionNames.has(extensionName);
 }
 
 /**
@@ -211,8 +212,10 @@ async function orchestrateExtensionGeneration(
   // fails to import or invoke would otherwise take down bootstrap even
   // though the user asked for it to be disabled.
   const disabled = buildDisableFilters(disables);
-  const builtinExtensionNames = new Set(
-    (options.builtinExtensions ?? []).map((entry) => entry.extension.name),
+  const deferredBuiltinExtensionNames = new Set(
+    (options.builtinExtensions ?? [])
+      .filter((entry) => getDeferredExtensionState(entry) !== undefined)
+      .map((entry) => entry.extension.name),
   );
 
   let packageHits: PackageLoadCandidate[];
@@ -260,7 +263,7 @@ async function orchestrateExtensionGeneration(
     .filter((hit) =>
       !disabled.packageNames.has(hit.packageName) &&
       !disabled.extensionNames.has(hit.packageName) &&
-      !isDeferredBuiltinPackageHit(hit, builtinExtensionNames)
+      !isDeferredBuiltinPackageHit(hit, deferredBuiltinExtensionNames)
     )
     .map((hit) => hit.target);
 

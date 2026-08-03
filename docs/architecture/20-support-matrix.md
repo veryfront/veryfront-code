@@ -60,7 +60,7 @@ project.
 | ----------------------------- | --------------------------------------------------------- | ------------------------------------- | --------------------------------------- | ---------------------------- |
 | `SchemaValidator`             | `@veryfront/ext-schema-zod`                               | Built-in                              | Schema-backed runtime validation        | None (pure JS)               |
 | `Bundler`, `ModuleLexer`      | `@veryfront/ext-bundler-esbuild`                          | Built-in                              | Build, import analysis, module bundling | esbuild binary               |
-| `CSSProcessor`                | `@veryfront/ext-css-tailwind`                             | Built-in                              | Tailwind CSS processing                 | Scoped filesystem read       |
+| `CSSProcessor`                | `@veryfront/ext-css-tailwind`                             | Built-in                              | Tailwind CSS processing                 | Filesystem read (pinned CSS) |
 | `ContentProcessor`            | `@veryfront/ext-content-mdx`                              | Built-in                              | MDX or Markdown content compilation     | None (unified ecosystem)     |
 | `CodeParser`                  | `@veryfront/ext-parser-babel`                             | Built-in                              | AST parsing or build-time code analysis | None (Babel)                 |
 | `DocumentExtractor`           | `@veryfront/ext-document-kreuzberg`                       | Built-in                              | Document text extraction                | FS (WASM/native extraction)  |

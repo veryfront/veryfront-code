@@ -13,7 +13,7 @@ Node service distribution must install the package alongside `veryfront`:
 deno add npm:@veryfront/ext-node-websocket-ws
 ```
 
-Projects may disable the builtin with
+Projects can disable the builtin with
 `{ name: "ext-node-websocket-ws", enabled: false }`. Without an available
 provider, Node HTTP requests remain available but Node WebSocket upgrades fail
 closed with an actionable diagnostic. Core never imports `ws` or substitutes a

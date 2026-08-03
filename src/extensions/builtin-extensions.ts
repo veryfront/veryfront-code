@@ -13,7 +13,7 @@ import { captureRegistrationId } from "./runtime-validation.ts";
 import type { LLMProvider, LLMProviderRegistry } from "./llm/index.ts";
 import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.ts";
 import {
-  FIRST_PARTY_BUILTIN_EXTENSION_POLICIES,
+  FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES,
   type FirstPartyEvalExporterSelection,
 } from "./first-party-defaults.ts";
 import { OpenAIProvider } from "@veryfront/ext-llm-openai";
@@ -56,7 +56,7 @@ const BUILTIN_LLM_PROVIDERS: BuiltinLLMProviderDefinition[] = [
 ];
 
 export const OPTIONAL_BUILTIN_EXTENSIONS = Object.freeze(
-  FIRST_PARTY_BUILTIN_EXTENSION_POLICIES.map((policy) =>
+  FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES.map((policy) =>
     Object.freeze({
       name: policy.name,
       origin: `veryfront/${policy.sourceDirectory}`,

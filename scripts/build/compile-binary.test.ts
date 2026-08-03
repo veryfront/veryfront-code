@@ -2,7 +2,7 @@ import { walk } from "#std/fs/walk";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { createCompileArgs, DEFAULT_INCLUDES } from "./compile-binary.ts";
-import { FIRST_PARTY_BUILTIN_EXTENSION_POLICIES } from "#veryfront/extensions/first-party-defaults.ts";
+import { FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES } from "#veryfront/extensions/first-party-defaults.ts";
 
 it("compiled CLI embeds the default Node WebSocket extension for HMR", () => {
   const args = createCompileArgs({
@@ -30,8 +30,10 @@ it("compiled CLI embeds the explicit Redis extension for opt-in activation", () 
   );
 });
 
-it("compiled CLI embeds optional builtin extension source files", async () => {
-  for (const { sourceDirectory } of FIRST_PARTY_BUILTIN_EXTENSION_POLICIES) {
+it("compiled CLI embeds optional builtin extension source files", () => {
+  for (
+    const { sourceDirectory } of FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES
+  ) {
     assertEquals(
       DEFAULT_INCLUDES.includes(`extensions/${sourceDirectory}/src/index.ts`),
       true,
