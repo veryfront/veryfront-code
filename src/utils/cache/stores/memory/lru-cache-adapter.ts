@@ -200,6 +200,7 @@ export class LRUCacheAdapter implements CacheAdapter {
   }
 
   getStats(): LRUCacheStats {
+    this.cleanupExpired();
     return {
       entries: this.store.size,
       sizeBytes: this.currentSize,

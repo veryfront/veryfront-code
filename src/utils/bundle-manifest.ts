@@ -102,12 +102,12 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
       return undefined;
     }
 
-    return entry.value;
+    return structuredClone(entry.value);
   }
 
   async setBundleCode(hash: string, code: BundleCode, ttlMs?: number): Promise<void> {
     const expiry = ttlMs != null ? Date.now() + ttlMs : undefined;
-    this.code.set(hash, { value: code, expiry });
+    this.code.set(hash, { value: structuredClone(code), expiry });
   }
 
   async deleteBundle(key: string): Promise<void> {

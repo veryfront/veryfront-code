@@ -45,6 +45,29 @@ describe("InMemoryBundleManifestStore", () => {
     assertEquals(await store.isAvailable(), true);
   });
 
+  it("snapshots bundle code on write and read", async () => {
+    const store = new InMemoryBundleManifestStore();
+    const code: BundleCode = {
+      code: "export default 'original'",
+      sourceMap: "original-map",
+      css: ".original {}",
+    };
+
+    await store.setBundleCode("code-hash", code);
+    code.code = "export default 'mutated input'";
+
+    const firstRead = await store.getBundleCode("code-hash");
+    assertExists(firstRead);
+    assertEquals(firstRead.code, "export default 'original'");
+    firstRead.code = "export default 'mutated output'";
+
+    assertEquals(await store.getBundleCode("code-hash"), {
+      code: "export default 'original'",
+      sourceMap: "original-map",
+      css: ".original {}",
+    });
+  });
+
   it("TTL expiration", async () => {
     const store = new InMemoryBundleManifestStore();
 

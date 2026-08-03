@@ -236,6 +236,27 @@ describe("LRUCacheAdapter", () => {
       expect(stats.maxSizeBytes).toBe(1024);
       expect(stats.tags).toBe(2);
     });
+
+    it("excludes expired entries without requiring a cleanup sweep", () => {
+      let now = 100;
+      const cacheWithClock = new LRUCacheAdapter({
+        maxEntries: 5,
+        maxSizeBytes: 1024,
+        now: () => now,
+      });
+      cacheWithClock.set("expired", "value", 10, ["expired-tag"]);
+      const retainedSize = cacheWithClock.getStats().sizeBytes;
+      now = 110;
+
+      expect(cacheWithClock.getStats()).toEqual({
+        entries: 0,
+        sizeBytes: 0,
+        maxEntries: 5,
+        maxSizeBytes: 1024,
+        tags: 0,
+      });
+      expect(retainedSize).toBeGreaterThan(0);
+    });
   });
 
   describe("onEvict callback", () => {
