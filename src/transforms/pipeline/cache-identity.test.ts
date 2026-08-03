@@ -62,6 +62,30 @@ describe("transform pipeline cache identity", () => {
     assertEquals(Object.isFrozen(snapshot.imports), true);
   });
 
+  it("rejects import maps that exceed the entry budget", () => {
+    const imports = Object.create(null) as Record<string, string>;
+    for (let index = 0; index <= 20_000; index++) {
+      imports[`package-${index}`] = `/package-${index}.ts`;
+    }
+
+    assertThrows(
+      () => snapshotImportMap({ imports }),
+      TypeError,
+      "too many entries",
+    );
+  });
+
+  it("rejects import-map strings that exceed the per-field byte budget", () => {
+    assertThrows(
+      () =>
+        snapshotImportMap({
+          imports: { package: "x".repeat(64 * 1024 + 1) },
+        }),
+      TypeError,
+      "too large",
+    );
+  });
+
   it("fingerprints import maps independent of insertion order", async () => {
     const first = snapshotImportMap({ imports: { a: "/a.ts", b: "/b.ts" } });
     const reordered = snapshotImportMap({ imports: { b: "/b.ts", a: "/a.ts" } });
@@ -295,6 +319,14 @@ describe("transform pipeline cache identity", () => {
       stringTrim: String.prototype.trim,
       textEncoderEncode: TextEncoder.prototype.encode,
       typeError: TypeError,
+      uint8ArrayByteLength: Object.getOwnPropertyDescriptor(
+        Uint8Array.prototype,
+        "byteLength",
+      ),
+      uint8ArrayLength: Object.getOwnPropertyDescriptor(
+        Uint8Array.prototype,
+        "length",
+      ),
     };
     const rawImportMap = {
       imports: { package: "https://example.com/package.ts" },
@@ -358,6 +390,14 @@ describe("transform pipeline cache identity", () => {
         "TypeError",
         class PoisonedTypeError extends Error {},
       );
+      Object.defineProperty(Uint8Array.prototype, "byteLength", {
+        configurable: true,
+        get: () => 0,
+      });
+      Object.defineProperty(Uint8Array.prototype, "length", {
+        configurable: true,
+        get: () => 0,
+      });
 
       snapshot = snapshotImportMap(rawImportMap);
       [fingerprint, pipelineIdentity] = await Promise.all([
@@ -400,6 +440,24 @@ describe("transform pipeline cache identity", () => {
       Reflect.set(String.prototype, "trim", original.stringTrim);
       Reflect.set(TextEncoder.prototype, "encode", original.textEncoderEncode);
       Reflect.set(globalThis, "TypeError", original.typeError);
+      if (original.uint8ArrayByteLength) {
+        Object.defineProperty(
+          Uint8Array.prototype,
+          "byteLength",
+          original.uint8ArrayByteLength,
+        );
+      } else {
+        Reflect.deleteProperty(Uint8Array.prototype, "byteLength");
+      }
+      if (original.uint8ArrayLength) {
+        Object.defineProperty(
+          Uint8Array.prototype,
+          "length",
+          original.uint8ArrayLength,
+        );
+      } else {
+        Reflect.deleteProperty(Uint8Array.prototype, "length");
+      }
     }
 
     assertEquals(snapshot?.imports?.package, "https://example.com/package.ts");

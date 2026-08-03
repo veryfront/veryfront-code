@@ -10,17 +10,29 @@ const SHORT_HASH_LENGTH = 8;
 const IntrinsicTextEncoder = TextEncoder;
 const IntrinsicUint8Array = Uint8Array;
 const NumberPrototypeToString = Number.prototype.toString;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ReflectApply = Reflect.apply;
 const StringPrototypePadStart = String.prototype.padStart;
 const SubtleCryptoDigest = crypto.subtle.digest;
 const TextEncoderPrototypeEncode = TextEncoder.prototype.encode;
 const cryptoSubtle = crypto.subtle;
 const hashTextEncoder = new IntrinsicTextEncoder();
+const TypedArrayPrototype = ObjectGetPrototypeOf(IntrinsicUint8Array.prototype);
+const TypedArrayLengthGetter = ObjectGetOwnPropertyDescriptor(
+  TypedArrayPrototype,
+  "length",
+)!.get!;
+
+function typedArrayLength(value: Uint8Array): number {
+  return ReflectApply(TypedArrayLengthGetter, value, []) as number;
+}
 
 function toHex(buffer: ArrayBuffer): string {
   const bytes = new IntrinsicUint8Array(buffer);
   let result = "";
-  for (let index = 0; index < bytes.length; index++) {
+  const length = typedArrayLength(bytes);
+  for (let index = 0; index < length; index++) {
     const hex = ReflectApply(NumberPrototypeToString, bytes[index], [16]) as string;
     result += ReflectApply(StringPrototypePadStart, hex, [2, "0"]) as string;
   }

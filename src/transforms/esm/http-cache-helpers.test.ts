@@ -67,6 +67,20 @@ describe("transforms/esm/http-cache-helpers", () => {
       assertNotEquals(first, second);
     });
 
+    it("preserves the established v2 canonical fingerprint bytes", async () => {
+      assertEquals(
+        await fingerprintImportMap({
+          imports: { package: "https://example.com/package.ts" },
+          scopes: {
+            "https://example.com/": {
+              scoped: "https://example.com/scoped.ts",
+            },
+          },
+        }),
+        "c0cef34844a37f56972214c773cc169cec17fa1fdd05f80add96f1821ff4650a",
+      );
+    });
+
     it("frames URL and React version components without delimiter collisions", async () => {
       const importMap = { imports: {}, scopes: {} };
 

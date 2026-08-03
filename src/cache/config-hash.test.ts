@@ -200,6 +200,34 @@ describe("cache/config-hash", () => {
       );
     });
 
+    it("preserves the established identity after array primordial poisoning", () => {
+      const originalFilter = Array.prototype.filter;
+      const originalJoin = Array.prototype.join;
+      const originalPush = Array.prototype.push;
+      let identity: string | undefined;
+      try {
+        Reflect.set(Array.prototype, "filter", () => []);
+        Reflect.set(Array.prototype, "join", () => "poisoned");
+        Reflect.set(Array.prototype, "push", () => 0);
+        identity = computeConfigHashSync({
+          moduleServerUrl: "https://modules.example.test/_vf_modules",
+          vendorBundleHash: "vendor-a",
+          apiBaseUrl: "https://api.example.test",
+          studioEmbed: true,
+          dev: true,
+        });
+      } finally {
+        Reflect.set(Array.prototype, "filter", originalFilter);
+        Reflect.set(Array.prototype, "join", originalJoin);
+        Reflect.set(Array.prototype, "push", originalPush);
+      }
+
+      assertEquals(
+        identity,
+        `v${VERSION}:${DEFAULT_REACT_VERSION}:react:modules:40:https://modules.example.test/_vf_modules:vendor:8:vendor-a:api:24:https://api.example.test:studio:dev`,
+      );
+    });
+
     it("should return a string", () => {
       const hash = computeConfigHashSync({});
       assertEquals(typeof hash, "string");

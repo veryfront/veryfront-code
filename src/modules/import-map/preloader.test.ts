@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   clearImportMapCache,
@@ -7,7 +12,7 @@ import {
   ImportMapPreloader,
   preloadImportMap,
 } from "./preloader.ts";
-import { validateVeryfrontConfig } from "#veryfront/config";
+import { validateVeryfrontConfig, type VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/constants/limits.ts";
 import type { ImportMapConfig } from "./types.ts";
@@ -74,7 +79,7 @@ describe("modules/import-map/preloader", () => {
       const map1 = await preloadImportMap("/test-cache-same", adapter);
       const map2 = await preloadImportMap("/test-cache-same", adapter);
 
-      assertEquals(map1, map2);
+      assertStrictEquals(map1, map2);
     });
 
     it("should cache different projects independently", async () => {
@@ -132,7 +137,7 @@ describe("modules/import-map/preloader", () => {
         },
       );
 
-      assertEquals(first, firstAgain);
+      assertStrictEquals(first, firstAgain);
       assertEquals(first.imports?.package, "https://example.com/package-v1.ts");
       assertEquals(changed.imports?.package, "https://example.com/package-v2.ts");
       assertEquals(first === changed, false);
@@ -156,13 +161,13 @@ describe("modules/import-map/preloader", () => {
           };
         },
       });
-      const config = validateVeryfrontConfig({
+      const config = {
         resolve: {
           importMap: {
             imports: { package: "https://example.com/package-a.ts" },
           },
         },
-      });
+      } as VeryfrontConfig;
       const context = { contentSourceId: "release", config };
 
       const firstPromise = preloader.preload(
@@ -203,7 +208,7 @@ describe("modules/import-map/preloader", () => {
       );
 
       assertEquals(first.imports?.package, "https://example.com/package-a.ts");
-      assertEquals(cachedOriginal, first);
+      assertStrictEquals(cachedOriginal, first);
       assertEquals(changed.imports?.package, "https://example.com/package-b.ts");
       assertEquals(loads, 2);
     });
@@ -598,7 +603,7 @@ describe("modules/import-map/preloader", () => {
       );
 
       assertEquals(replacement === expired, false);
-      assertEquals(cachedReplacement, replacement);
+      assertStrictEquals(cachedReplacement, replacement);
       assertEquals(getLoads(), 2);
     });
 
@@ -662,7 +667,7 @@ describe("modules/import-map/preloader", () => {
 
       assertEquals(replacement === initial, false);
       assertEquals(duplicate, replacement);
-      assertEquals(cached, replacement);
+      assertStrictEquals(cached, replacement);
       assertEquals(
         await preloader.preload(
           "/concurrent-direct-expiry",
@@ -781,7 +786,7 @@ describe("modules/import-map/preloader", () => {
       );
       const reloaded = await postClear;
       assertEquals(reloaded.imports?.loaded, "2");
-      assertEquals(await preloader.getCached("project-a", context), reloaded);
+      assertStrictEquals(await preloader.getCached("project-a", context), reloaded);
     });
 
     it("does not publish pre-clear work into a new global generation", async () => {
@@ -833,7 +838,7 @@ describe("modules/import-map/preloader", () => {
       loads[0]!.resolve({ imports: { source: "a" } });
       const firstResult = await first;
       assertEquals(firstResult.imports?.source, "a");
-      assertEquals(await sameKey, firstResult);
+      assertStrictEquals(await sameKey, firstResult);
 
       await waitForLoadCount(loads, 2);
       loads[1]!.resolve({ imports: { source: "b" } });
@@ -948,14 +953,22 @@ describe("modules/import-map/preloader", () => {
           evicted: boolean;
           loads: number;
         }>((resolve, reject) => {
+          const timeoutId = setTimeout(
+            () => reject(new Error("primordial poisoning worker timed out")),
+            30_000,
+          );
           worker.onmessage = (event) => {
+            clearTimeout(timeoutId);
             const message = event.data as
               | { ok: true; result: Parameters<typeof resolve>[0] }
               | { ok: false; error: string };
             if (message.ok) resolve(message.result);
             else reject(new Error(message.error));
           };
-          worker.onerror = (event) => reject(event.error ?? new Error(event.message));
+          worker.onerror = (event) => {
+            clearTimeout(timeoutId);
+            reject(event.error ?? new Error(event.message));
+          };
         });
 
         assertEquals(result.firstLoaded, "1");

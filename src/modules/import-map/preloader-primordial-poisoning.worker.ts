@@ -24,6 +24,7 @@ const configB = {
 async function runPoisoningRegression() {
   const original = {
     arrayMap: Array.prototype.map,
+    arrayPush: Array.prototype.push,
     arraySort: Array.prototype.sort,
     dateNow: Date.now,
     jsonStringify: JSON.stringify,
@@ -43,6 +44,7 @@ async function runPoisoningRegression() {
     set: Set,
     setAdd: Set.prototype.add,
     setDelete: Set.prototype.delete,
+    setForEach: Set.prototype.forEach,
     setSize: Object.getOwnPropertyDescriptor(Set.prototype, "size")!,
   };
   const poisoned = () => {
@@ -58,6 +60,7 @@ async function runPoisoningRegression() {
 
   try {
     Reflect.set(Array.prototype, "map", poisoned);
+    Reflect.set(Array.prototype, "push", poisoned);
     Reflect.set(Array.prototype, "sort", poisoned);
     Reflect.set(Date, "now", poisoned);
     Reflect.set(JSON, "stringify", poisoned);
@@ -80,6 +83,7 @@ async function runPoisoningRegression() {
     Reflect.set(globalThis, "Set", class PoisonedSet {});
     Reflect.set(original.set.prototype, "add", poisoned);
     Reflect.set(original.set.prototype, "delete", poisoned);
+    Reflect.set(original.set.prototype, "forEach", poisoned);
     Object.defineProperty(original.set.prototype, "size", {
       configurable: true,
       get: poisoned,
@@ -118,6 +122,7 @@ async function runPoisoningRegression() {
     evicted = await preloader.getCached("project", contextA);
   } finally {
     Reflect.set(Array.prototype, "map", original.arrayMap);
+    Reflect.set(Array.prototype, "push", original.arrayPush);
     Reflect.set(Array.prototype, "sort", original.arraySort);
     Reflect.set(Date, "now", original.dateNow);
     Reflect.set(JSON, "stringify", original.jsonStringify);
@@ -134,6 +139,7 @@ async function runPoisoningRegression() {
     Reflect.set(original.promise, "resolve", original.promiseResolve);
     Reflect.set(original.set.prototype, "add", original.setAdd);
     Reflect.set(original.set.prototype, "delete", original.setDelete);
+    Reflect.set(original.set.prototype, "forEach", original.setForEach);
     Object.defineProperty(original.set.prototype, "size", original.setSize);
     Reflect.set(globalThis, "Map", original.map);
     Reflect.set(globalThis, "Promise", original.promise);

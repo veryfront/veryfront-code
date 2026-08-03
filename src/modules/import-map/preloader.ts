@@ -28,6 +28,7 @@ const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSort = Array.prototype.sort;
 const DateNow = Date.now;
 const IntrinsicMap = Map;
+const IntrinsicPerformance = performance;
 const IntrinsicPromise = Promise;
 const IntrinsicRangeError = RangeError;
 const IntrinsicSet = Set;
@@ -50,6 +51,7 @@ const ObjectFreeze = Object.freeze;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const PromisePrototypeThen = Promise.prototype.then;
 const PromiseResolve = Promise.resolve;
+const PerformanceNow = IntrinsicPerformance.now;
 const ReflectApply = Reflect.apply;
 const SetPrototypeAdd = Set.prototype.add;
 const SetPrototypeDelete = Set.prototype.delete;
@@ -70,6 +72,10 @@ function arraySort<T>(
 
 function arrayPush<T>(values: T[], value: T): void {
   ReflectApply(ArrayPrototypePush, values, [value]);
+}
+
+function monotonicNow(): number {
+  return ReflectApply(PerformanceNow, IntrinsicPerformance, []) as number;
 }
 
 function mapClear<K, V>(map: Map<K, V>): void {
@@ -172,9 +178,9 @@ export interface ImportMapPreloaderOptions {
   loadImportMap?: typeof loadImportMap;
 }
 
-function compareEntries(
-  left: readonly [string, string],
-  right: readonly [string, string],
+function compareEntries<T, U>(
+  left: readonly [string, T],
+  right: readonly [string, U],
 ): number {
   return left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0;
 }
@@ -264,7 +270,7 @@ function buildVariantCanonicalIdentity(
 
   const scopes = arraySort(
     ObjectEntries(importMap?.scopes ?? {}),
-    (left, right) => left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0,
+    compareEntries,
   );
   for (let scopeIndex = 0; scopeIndex < scopes.length; scopeIndex++) {
     const scopeEntry = scopes[scopeIndex]!;
@@ -439,7 +445,7 @@ export class ImportMapPreloader {
       weakSetHas(this.capacityErrors, error);
   }
 
-  private waitForActiveWork(): Promise<void> {
+  private waitForActiveWork(timeoutMs: number): Promise<void> {
     const activeWork: Array<Promise<unknown>> = [];
     setForEach(this.activeLoads, (promise) => arrayPush(activeWork, promise));
     setForEach(this.activeIdentityBuilds, (promise) => arrayPush(activeWork, promise));
@@ -455,7 +461,7 @@ export class ImportMapPreloader {
     const timeout = new IntrinsicPromise<void>((_, reject) => {
       timeoutId = SetTimeout(() => {
         reject(new IntrinsicRangeError("Import-map preloader capacity wait timed out"));
-      }, this.loadTimeoutMs);
+      }, timeoutMs);
     });
     return promiseThen(
       racePromises([settled, timeout]),
@@ -654,12 +660,15 @@ export class ImportMapPreloader {
     projectId?: string,
     context?: PreloadImportMapContext,
   ): Promise<ImportMapConfig> {
+    const capacityDeadline = monotonicNow() + this.loadTimeoutMs;
     for (;;) {
       try {
         return await this.preloadOnce(projectDir, adapter, projectId, context);
       } catch (error) {
         if (!this.isCapacityError(error)) throw error;
-        await this.waitForActiveWork();
+        const remainingMs = capacityDeadline - monotonicNow();
+        if (remainingMs <= 0) throw error;
+        await this.waitForActiveWork(remainingMs);
       }
     }
   }

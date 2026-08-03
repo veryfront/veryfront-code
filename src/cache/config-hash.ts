@@ -16,6 +16,17 @@ import { buildDependencyPinningCacheVariant } from "./keys/dependency-pinning.ts
 
 const JSONStringify = JSON.stringify;
 const ObjectCreate = Object.create;
+const ArrayPrototypeJoin = Array.prototype.join;
+const ArrayPrototypePush = Array.prototype.push;
+const ReflectApply = Reflect.apply;
+
+function arrayPush(values: string[], value: string): void {
+  ReflectApply(ArrayPrototypePush, values, [value]);
+}
+
+function arrayJoin(values: string[], separator: string): string {
+  return ReflectApply(ArrayPrototypeJoin, values, [separator]) as string;
+}
 
 /**
  * Configuration that affects transform output.
@@ -77,25 +88,27 @@ export function computeConfigHash(config: TransformConfig): Promise<string> {
  * Use this when you need a config hash but can't afford async overhead.
  */
 export function computeConfigHashSync(config: TransformConfig): string {
-  const parts = [
-    `v${VERSION}`,
-    config.reactVersion ?? DEFAULT_REACT_VERSION,
-    config.jsxImportSource ?? "react",
-    encodeConfigPart("modules", config.moduleServerUrl),
-    encodeConfigPart("vendor", config.vendorBundleHash),
-    encodeConfigPart("api", config.apiBaseUrl),
-    config.studioEmbed ? "studio" : "",
-    config.dev ? "dev" : "",
-  ].filter(Boolean);
+  const parts: string[] = [];
+  arrayPush(parts, `v${VERSION}`);
+  arrayPush(parts, config.reactVersion ?? DEFAULT_REACT_VERSION);
+  arrayPush(parts, config.jsxImportSource ?? "react");
+  const moduleServerUrlPart = encodeConfigPart("modules", config.moduleServerUrl);
+  if (moduleServerUrlPart) arrayPush(parts, moduleServerUrlPart);
+  const vendorBundleHashPart = encodeConfigPart("vendor", config.vendorBundleHash);
+  if (vendorBundleHashPart) arrayPush(parts, vendorBundleHashPart);
+  const apiBaseUrlPart = encodeConfigPart("api", config.apiBaseUrl);
+  if (apiBaseUrlPart) arrayPush(parts, apiBaseUrlPart);
+  if (config.studioEmbed) arrayPush(parts, "studio");
+  if (config.dev) arrayPush(parts, "dev");
   const dependencyPinningCacheVariant = buildDependencyPinningCacheVariant(
     config.dependencyPinningCacheKey,
     config.moduleServerOrigin,
   );
   if (dependencyPinningCacheVariant) {
-    parts.push(`pins:${dependencyPinningCacheVariant}`);
+    arrayPush(parts, `pins:${dependencyPinningCacheVariant}`);
   }
 
-  return parts.join(":");
+  return arrayJoin(parts, ":");
 }
 
 function encodeConfigPart(label: string, value: string | undefined): string {

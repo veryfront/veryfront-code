@@ -30,6 +30,7 @@ async function runRegression() {
   const original = {
     arrayFilter: Array.prototype.filter,
     arrayMap: Array.prototype.map,
+    arrayPush: Array.prototype.push,
     jsonParse: JSON.parse,
     objectAssign: Object.assign,
     objectEntries: Object.entries,
@@ -46,6 +47,7 @@ async function runRegression() {
   try {
     Reflect.set(Array.prototype, "filter", poisoned);
     Reflect.set(Array.prototype, "map", poisoned);
+    Reflect.set(Array.prototype, "push", poisoned);
     Reflect.set(JSON, "parse", poisoned);
     Reflect.set(Object, "assign", poisoned);
     Reflect.set(Object, "entries", poisoned);
@@ -58,6 +60,7 @@ async function runRegression() {
   } finally {
     Reflect.set(Array.prototype, "filter", original.arrayFilter);
     Reflect.set(Array.prototype, "map", original.arrayMap);
+    Reflect.set(Array.prototype, "push", original.arrayPush);
     Reflect.set(JSON, "parse", original.jsonParse);
     Reflect.set(Object, "assign", original.objectAssign);
     Reflect.set(Object, "entries", original.objectEntries);

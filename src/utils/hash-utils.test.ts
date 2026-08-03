@@ -33,6 +33,47 @@ describe("hash-utils", () => {
       const hash = await computeHash("こんにちは世界");
       assertEquals(hash.length, 64);
     });
+
+    it("uses captured typed-array accessors after prototype poisoning", async () => {
+      const lengthDescriptor = Object.getOwnPropertyDescriptor(
+        Uint8Array.prototype,
+        "length",
+      );
+      const byteLengthDescriptor = Object.getOwnPropertyDescriptor(
+        Uint8Array.prototype,
+        "byteLength",
+      );
+      let hash: string | undefined;
+      try {
+        Object.defineProperty(Uint8Array.prototype, "length", {
+          configurable: true,
+          get: () => 0,
+        });
+        Object.defineProperty(Uint8Array.prototype, "byteLength", {
+          configurable: true,
+          get: () => 0,
+        });
+        hash = await computeHash("typed-array-accessor-regression");
+      } finally {
+        if (lengthDescriptor) {
+          Object.defineProperty(Uint8Array.prototype, "length", lengthDescriptor);
+        } else {
+          Reflect.deleteProperty(Uint8Array.prototype, "length");
+        }
+        if (byteLengthDescriptor) {
+          Object.defineProperty(
+            Uint8Array.prototype,
+            "byteLength",
+            byteLengthDescriptor,
+          );
+        } else {
+          Reflect.deleteProperty(Uint8Array.prototype, "byteLength");
+        }
+      }
+
+      assertEquals(hash?.length, 64);
+      assertEquals(hash, await computeHash("typed-array-accessor-regression"));
+    });
   });
 
   describe("computeCodeHash", () => {
