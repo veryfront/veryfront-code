@@ -27,6 +27,9 @@ import {
   snapshotHostedRuntimeSourceIdentity,
 } from "../hosted/runtime-source-binding.ts";
 import { runWithHostedRequestPreparationSignal } from "./request-preparation-context.ts";
+import {
+  runWithVerifiedHostedRunEventWriterRequest,
+} from "../hosted/child-run-event-writer-token.ts";
 
 /** Public API contract for hosted agent service routes logger. */
 export type HostedAgentServiceRoutesLogger = {
@@ -64,10 +67,12 @@ export type HostedAgentServiceStreamExecutionInput<TExecution extends object> = 
 export type AgentServiceStreamExecutionInput<TExecution extends object> =
   HostedAgentServiceStreamExecutionInput<TExecution>;
 
-/** Input payload for hosted agent service detached execution. */
+/** Input delivered to a hosted agent-service detached execution callback. */
 export type HostedAgentServiceDetachedExecutionInput<TExecution extends object> = {
   execution: TExecution;
   abortSignal: AbortSignal;
+  /** Required application-facing request clone with internal control headers removed. */
+  rawRequest: Request;
 };
 
 /** Input payload for agent service detached execution. */
@@ -290,15 +295,20 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     request: Request;
     requestOrCtx?: unknown;
   }): Promise<Response> {
+    const requestOrCtx = input.requestOrCtx instanceof Request ? input.request : input.requestOrCtx;
     return executeHostedDurableChatRun({
       req: input.req,
       rawRequest: input.request,
-      requestOrCtx: input.requestOrCtx,
+      requestOrCtx,
       tracker: options.tracker,
-      prepareExecution: (req) =>
+      prepareExecution: (request) =>
         runWithHostedRequestPreparationSignal(
           input.request.signal,
-          () => options.prepareExecution(req),
+          () =>
+            runWithVerifiedHostedRunEventWriterRequest(
+              input.req,
+              () => options.prepareExecution(request),
+            ),
         ),
       startDetachedExecution: options.startDetachedExecution,
       cleanupExecution: options.cleanupExecution,

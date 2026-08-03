@@ -78,6 +78,46 @@ describe("guide content contracts", () => {
     );
   });
 
+  it("documents the exact-run writer capability migration", async () => {
+    const guide = await Deno.readTextFile(
+      "docs/guides/agent-service-runtime.md",
+    );
+    const reference = await Deno.readTextFile(
+      "docs/api-reference/veryfront/agent.md",
+    );
+
+    assertStringIncludes(guide, "## Migrate custom durable child event writers");
+    assertStringIncludes(guide, "createHostedRunEventWriterCapability");
+    assertStringIncludes(guide, "mintChildRunEventWriterCapability");
+    assertStringIncludes(guide, "runEventWriterCapability: childWriter");
+    assertStringIncludes(guide, "fails before\nprovider dispatch");
+    assertStringIncludes(guide, "must not retry by falling back to a user API token");
+    for (
+      const contract of [
+        "ParsedHostedChatRequest",
+        "PrepareHostedConversationRootRunContextInput",
+        "ExecuteHostedDurableChildForkInput",
+        "DefaultHostedInvokeAgentToolOptions",
+        "ExecuteHostedChildForkWithPreparedToolsInput",
+        "ExecuteHostedChildForkToolInputOptions",
+        "HostedDurableChildForkRunContextInput",
+        "HostedDurableRunStartExecutionInput",
+        "HostedAgentServiceDetachedExecutionInput",
+      ]
+    ) {
+      assertStringIncludes(guide, `\`${contract}\``);
+    }
+    assertStringIncludes(reference, "`HostedRunEventWriterCapability`");
+    assertStringIncludes(reference, "`createHostedRunEventWriterCapability`");
+    assertStringIncludes(
+      reference,
+      "hostedRunEventWriterCapability.mintChildRunEventWriterCapability",
+    );
+    assertStringIncludes(reference, "### `ExecuteHostedDurableChildForkInput`");
+    assertStringIncludes(reference, "### `HostedDurableRunStartExecutionInput`");
+    assertStringIncludes(reference, "### `HostedAgentServiceDetachedExecutionInput`");
+  });
+
   it("documents deploy URL output for the first deploy path", async () => {
     const guide = await Deno.readTextFile("docs/guides/deploying.md");
 
