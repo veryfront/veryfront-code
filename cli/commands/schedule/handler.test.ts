@@ -6,6 +6,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { clearProjectAgentRuntimeRegistries } from "../../../src/agent/project/agent-runtime.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
@@ -27,7 +28,6 @@ import {
 // file is chdir'd into a soon-to-be-deleted temp directory.
 const originalCwd = new URL("../../../", import.meta.url);
 const originalExit = Deno.exit;
-const originalFetch = globalThis.fetch;
 const originalConsoleLog = console.log;
 const environmentNames = [
   "VERYFRONT_API_URL",
@@ -131,7 +131,6 @@ describe("schedule command", () => {
     Deno.chdir(originalCwd);
     // deno-lint-ignore no-explicit-any
     (Deno as any).exit = originalExit;
-    globalThis.fetch = originalFetch;
     console.log = originalConsoleLog;
     setJsonMode(false);
     restoreEnvironment();
@@ -195,7 +194,7 @@ describe("schedule command", () => {
       Deno.chdir(projectDir);
       setJsonMode(true);
       console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
-      globalThis.fetch = (async (
+      const mockFetch = (async (
         input: string | URL | Request,
         init?: RequestInit,
       ) => {
@@ -216,11 +215,12 @@ describe("schedule command", () => {
 
       let exitCode: number | undefined;
       try {
-        await handleScheduleCommand({
-          _: ["schedule", "run", "process-job-submissions"],
-          remote: true,
-          json: true,
-        } as ParsedArgs);
+        await withMockFetch(mockFetch, () =>
+          handleScheduleCommand({
+            _: ["schedule", "run", "process-job-submissions"],
+            remote: true,
+            json: true,
+          } as ParsedArgs));
       } catch (error) {
         if (!(error instanceof ExitSentinel)) throw error;
         exitCode = error.code;

@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertNotEquals, assertRejects, assertThrows } from "#std/assert";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { OAuthProvider, OAuthService } from "./base.ts";
 import type {
   AuthorizationUrlOptions,
@@ -59,33 +60,30 @@ function makeAuthedTokenStore(): TokenStore {
 }
 
 /**
- * Replace globalThis.fetch for the duration of `fn`. Captured calls land in
+ * Replace fetch for the duration of `fn`. Captured calls land in
  * `captured`; the stubbed fetch always returns `{ ok: true }` JSON.
  */
 async function withStubbedFetch(
   captured: string[],
   fn: () => Promise<unknown>,
 ): Promise<void> {
-  const original = globalThis.fetch;
-  globalThis.fetch = ((input: string | URL | Request): Promise<Response> => {
-    const url = typeof input === "string"
-      ? input
-      : input instanceof URL
-      ? input.toString()
-      : input.url;
-    captured.push(url);
-    return Promise.resolve(
-      new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-  }) as typeof fetch;
-  try {
-    await fn();
-  } finally {
-    globalThis.fetch = original;
-  }
+  await withMockFetch(
+    ((input: string | URL | Request): Promise<Response> => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+        ? input.toString()
+        : input.url;
+      captured.push(url);
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    }) as typeof fetch,
+    fn,
+  );
 }
 
 Deno.test("OAuthService.fetch: relative endpoint resolves against apiBaseUrl", async () => {
@@ -117,9 +115,8 @@ Deno.test("OAuthService.fetch: joins relative endpoints without requiring a lead
 
 Deno.test("OAuthService.fetch: preserves Headers instances and caller content types", async () => {
   const service = new OAuthService(TEST_CONFIG, makeAuthedTokenStore(), (k) => ENV[k]);
-  const original = globalThis.fetch;
   let capturedHeaders: Headers | undefined;
-  globalThis.fetch = ((
+  const mockFetch = ((
     _input: string | URL | Request,
     init?: RequestInit,
   ): Promise<Response> => {
@@ -127,7 +124,7 @@ Deno.test("OAuthService.fetch: preserves Headers instances and caller content ty
     return Promise.resolve(Response.json({ ok: true }));
   }) as typeof fetch;
 
-  try {
+  await withMockFetch(mockFetch, async () => {
     await service.fetch("user-1", "/v1/me", {
       method: "POST",
       body: "plain body",
@@ -136,9 +133,7 @@ Deno.test("OAuthService.fetch: preserves Headers instances and caller content ty
         "x-request-id": "request-1",
       }),
     });
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 
   assertEquals(capturedHeaders?.get("authorization"), "Bearer test-access-token");
   assertEquals(capturedHeaders?.get("content-type"), "text/plain");
@@ -147,21 +142,18 @@ Deno.test("OAuthService.fetch: preserves Headers instances and caller content ty
 
 Deno.test("OAuthService.fetch does not invent a content type for caller-owned bodies", async () => {
   const service = new OAuthService(TEST_CONFIG, makeAuthedTokenStore(), (key) => ENV[key]);
-  const original = globalThis.fetch;
   let capturedHeaders: Headers | undefined;
-  globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+  const mockFetch = ((_input: string | URL | Request, init?: RequestInit) => {
     capturedHeaders = new Headers(init?.headers);
     return Promise.resolve(Response.json({ ok: true }));
   }) as typeof fetch;
 
-  try {
+  await withMockFetch(mockFetch, async () => {
     await service.fetch("user-1", "/v1/me", {
       method: "POST",
       body: new URLSearchParams({ field: "value" }),
     });
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 
   assertEquals(capturedHeaders?.get("authorization"), "Bearer test-access-token");
   assertEquals(capturedHeaders?.has("content-type"), false);
@@ -173,20 +165,17 @@ Deno.test("OAuthService.fetch applies provider API headers and owns Authorizatio
     apiHeaders: { "X-Provider-Version": "2026-01-01" },
   };
   const service = new OAuthService(config, makeAuthedTokenStore(), (key) => ENV[key]);
-  const original = globalThis.fetch;
   let capturedHeaders: Headers | undefined;
-  globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+  const mockFetch = ((_input: string | URL | Request, init?: RequestInit) => {
     capturedHeaders = new Headers(init?.headers);
     return Promise.resolve(Response.json({ ok: true }));
   }) as typeof fetch;
 
-  try {
+  await withMockFetch(mockFetch, async () => {
     await service.fetch("user-1", "/v1/me", {
       headers: { Authorization: "Bearer caller-controlled", "X-Request-Id": "request-1" },
     });
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 
   assertEquals(capturedHeaders?.get("authorization"), "Bearer test-access-token");
   assertEquals(capturedHeaders?.get("x-provider-version"), "2026-01-01");
@@ -200,39 +189,39 @@ Deno.test("OAuthService.fetch bounds successful JSON responses and accepts the e
     maxApiResponseBytes: new TextEncoder().encode(exactJson).byteLength,
   };
   const service = new OAuthService(config, makeAuthedTokenStore(), (key) => ENV[key]);
-  const original = globalThis.fetch;
-
-  try {
-    globalThis.fetch = (() => Promise.resolve(new Response(exactJson))) as typeof fetch;
-    assertEquals(await service.fetch("user-1", "/v1/me"), { ok: 1 });
-
-    globalThis.fetch = (() => Promise.resolve(new Response('{"oversized":true}'))) as typeof fetch;
-    await assertRejects(
-      () => service.fetch("user-1", "/v1/me"),
-      Error,
-      "response exceeded",
-    );
-  } finally {
-    globalThis.fetch = original;
-  }
+  await withMockFetch(
+    () => Promise.resolve(new Response(exactJson)),
+    async () => assertEquals(await service.fetch("user-1", "/v1/me"), { ok: 1 }),
+  );
+  await withMockFetch(
+    () => Promise.resolve(new Response('{"oversized":true}')),
+    async () => {
+      await assertRejects(
+        () => service.fetch("user-1", "/v1/me"),
+        Error,
+        "response exceeded",
+      );
+    },
+  );
 });
 
 Deno.test("OAuthService.fetch rejects malformed UTF-8 response bodies", async () => {
   const service = new OAuthService(TEST_CONFIG, makeAuthedTokenStore(), (key) => ENV[key]);
-  const original = globalThis.fetch;
-  globalThis.fetch = (() =>
-    Promise.resolve(
-      new Response(new Uint8Array([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xc3, 0x28, 0x22, 0x7d])),
-    )) as typeof fetch;
-  try {
-    await assertRejects(
-      () => service.fetch("user-1", "/v1/me"),
-      Error,
-      "response could not be read",
-    );
-  } finally {
-    globalThis.fetch = original;
-  }
+  await withMockFetch(
+    () =>
+      Promise.resolve(
+        new Response(
+          new Uint8Array([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xc3, 0x28, 0x22, 0x7d]),
+        ),
+      ),
+    async () => {
+      await assertRejects(
+        () => service.fetch("user-1", "/v1/me"),
+        Error,
+        "response could not be read",
+      );
+    },
+  );
 });
 
 Deno.test("OAuthService.fetch snapshots RequestInit before asynchronous token lookup", async () => {
@@ -246,10 +235,9 @@ Deno.test("OAuthService.fetch snapshots RequestInit before asynchronous token lo
     return { accessToken: "token" };
   };
   const service = new OAuthService(TEST_CONFIG, store, (key) => ENV[key]);
-  const original = globalThis.fetch;
   let capturedMethod: string | undefined;
   let capturedHeader: string | null = null;
-  globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+  const mockFetch = ((_input: string | URL | Request, init?: RequestInit) => {
     capturedMethod = init?.method;
     capturedHeader = new Headers(init?.headers).get("x-request-version");
     return Promise.resolve(Response.json({ ok: true }));
@@ -257,7 +245,7 @@ Deno.test("OAuthService.fetch snapshots RequestInit before asynchronous token lo
 
   const headers = { "X-Request-Version": "original" };
   const options: RequestInit = { method: "POST", headers };
-  try {
+  await withMockFetch(mockFetch, async () => {
     const pending = service.fetch("user-1", "/v1/me", options);
     options.method = "DELETE";
     headers["X-Request-Version"] = "mutated";
@@ -266,24 +254,20 @@ Deno.test("OAuthService.fetch snapshots RequestInit before asynchronous token lo
 
     assertEquals(capturedMethod, "POST");
     assertEquals(capturedHeader, "original");
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 });
 
 Deno.test("OAuthService.fetch supports successful no-content responses", async () => {
   const service = new OAuthService(TEST_CONFIG, makeAuthedTokenStore(), (key) => ENV[key]);
-  const original = globalThis.fetch;
-  globalThis.fetch = (() => Promise.resolve(new Response(null, { status: 204 }))) as typeof fetch;
-
-  try {
-    assertEquals(
-      await service.fetch<void>("user-1", "/v1/resource", { method: "DELETE" }),
-      undefined,
-    );
-  } finally {
-    globalThis.fetch = original;
-  }
+  await withMockFetch(
+    () => Promise.resolve(new Response(null, { status: 204 })),
+    async () => {
+      assertEquals(
+        await service.fetch<void>("user-1", "/v1/resource", { method: "DELETE" }),
+        undefined,
+      );
+    },
+  );
 });
 
 Deno.test("OAuthService.fetch bounds token lookup and non-cooperative API fetches", async () => {
@@ -305,27 +289,22 @@ Deno.test("OAuthService.fetch bounds token lookup and non-cooperative API fetche
     makeAuthedTokenStore(),
     (key) => ENV[key],
   );
-  const original = globalThis.fetch;
-  globalThis.fetch = (() => new Promise<Response>(() => {})) as typeof fetch;
-  try {
+  await withMockFetch(() => new Promise<Response>(() => {}), async () => {
     await assertRejects(
       () => service.fetch("user-1", "/v1/me"),
       Error,
       "API request failed",
     );
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 });
 
 Deno.test("OAuthService.fetch preserves caller cancellation during provider fetch", async () => {
   const service = new OAuthService(TEST_CONFIG, makeAuthedTokenStore(), (key) => ENV[key]);
-  const original = globalThis.fetch;
   let markFetchStarted!: () => void;
   const fetchStarted = new Promise<void>((resolve) => {
     markFetchStarted = resolve;
   });
-  globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+  const mockFetch = ((_input: string | URL | Request, init?: RequestInit) => {
     markFetchStarted();
     return new Promise<Response>((_resolve, reject) => {
       const signal = init?.signal;
@@ -337,26 +316,23 @@ Deno.test("OAuthService.fetch preserves caller cancellation during provider fetc
 
   const controller = new AbortController();
   const reason = new DOMException("caller cancelled provider fetch", "AbortError");
-  try {
+  await withMockFetch(mockFetch, async () => {
     const pending = service.fetch("user-1", "/v1/me", { signal: controller.signal });
     await fetchStarted;
     controller.abort(reason);
 
     const error = await assertRejects(() => pending);
     assert(error === reason);
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 });
 
 Deno.test("OAuthService.fetch preserves caller cancellation during provider body read", async () => {
   const service = new OAuthService(TEST_CONFIG, makeAuthedTokenStore(), (key) => ENV[key]);
-  const original = globalThis.fetch;
   let markBodyReadStarted!: () => void;
   const bodyReadStarted = new Promise<void>((resolve) => {
     markBodyReadStarted = resolve;
   });
-  globalThis.fetch = (() =>
+  const mockFetch = (() =>
     Promise.resolve(
       new Response(
         new ReadableStream<Uint8Array>({
@@ -370,16 +346,14 @@ Deno.test("OAuthService.fetch preserves caller cancellation during provider body
 
   const controller = new AbortController();
   const reason = new DOMException("caller cancelled body read", "AbortError");
-  try {
+  await withMockFetch(mockFetch, async () => {
     const pending = service.fetch("user-1", "/v1/me", { signal: controller.signal });
     await bodyReadStarted;
     controller.abort(reason);
 
     const error = await assertRejects(() => pending);
     assert(error === reason);
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 });
 
 Deno.test("OAuthService.fetch timeout cancels a stalled API body", async () => {
@@ -388,9 +362,8 @@ Deno.test("OAuthService.fetch timeout cancels a stalled API body", async () => {
     makeAuthedTokenStore(),
     (key) => ENV[key],
   );
-  const original = globalThis.fetch;
   let bodyCancelled = false;
-  globalThis.fetch = (() =>
+  const mockFetch = (() =>
     Promise.resolve(
       new Response(
         new ReadableStream({
@@ -402,16 +375,14 @@ Deno.test("OAuthService.fetch timeout cancels a stalled API body", async () => {
       ),
     )) as typeof fetch;
 
-  try {
+  await withMockFetch(mockFetch, async () => {
     await assertRejects(
       () => service.fetch("user-1", "/v1/me"),
       Error,
       "response could not be read",
     );
     assertEquals(bodyCancelled, true);
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 });
 
 Deno.test("OAuthProvider preserves existing authorization endpoint query parameters", async () => {
@@ -478,13 +449,12 @@ Deno.test("OAuthProvider enforces explicit PKCE capability modes", async () => {
     "requires PKCE",
   );
 
-  const originalFetch = globalThis.fetch;
   let tokenRequestCount = 0;
-  globalThis.fetch = (() => {
+  const mockFetch = (() => {
     tokenRequestCount++;
     return Promise.resolve(Response.json({ access_token: "unexpected" }));
   }) as typeof fetch;
-  try {
+  await withMockFetch(mockFetch, async () => {
     await assertRejects(
       () =>
         required.exchangeCode({
@@ -505,9 +475,7 @@ Deno.test("OAuthProvider enforces explicit PKCE capability modes", async () => {
       "does not support PKCE code verifiers",
     );
     assertEquals(tokenRequestCount, 0);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  });
 });
 
 Deno.test("OAuthProvider rejects reserved config-level parameter overrides eagerly", () => {
@@ -737,7 +705,7 @@ Deno.test("OAuthService.fetch rejects parser-normalized endpoint text", async ()
 });
 
 /**
- * Replace globalThis.fetch for the duration of `fn` so that the provider returns
+ * Replace fetch for the duration of `fn` so that the provider returns
  * a non-OK response carrying `body` in its payload. SEC-010 verification.
  */
 async function withErrorFetch(
@@ -745,20 +713,17 @@ async function withErrorFetch(
   body: string,
   fn: () => Promise<unknown>,
 ): Promise<void> {
-  const original = globalThis.fetch;
-  globalThis.fetch = ((): Promise<Response> => {
-    return Promise.resolve(
-      new Response(body, {
-        status,
-        headers: { "Content-Type": "text/plain" },
-      }),
-    );
-  }) as typeof fetch;
-  try {
-    await fn();
-  } finally {
-    globalThis.fetch = original;
-  }
+  await withMockFetch(
+    ((): Promise<Response> => {
+      return Promise.resolve(
+        new Response(body, {
+          status,
+          headers: { "Content-Type": "text/plain" },
+        }),
+      );
+    }) as typeof fetch,
+    fn,
+  );
 }
 
 Deno.test(
@@ -787,7 +752,7 @@ Deno.test(
 );
 
 /**
- * Replace globalThis.fetch so the token endpoint returns `status` with `body`
+ * Replace fetch so the token endpoint returns `status` with `body`
  * JSON. Used to exercise exchangeCode token-validation behavior (H11/H12).
  */
 async function withTokenFetch(
@@ -795,20 +760,17 @@ async function withTokenFetch(
   body: unknown,
   fn: () => Promise<unknown>,
 ): Promise<void> {
-  const original = globalThis.fetch;
-  globalThis.fetch = ((): Promise<Response> => {
-    return Promise.resolve(
-      new Response(JSON.stringify(body), {
-        status,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-  }) as typeof fetch;
-  try {
-    await fn();
-  } finally {
-    globalThis.fetch = original;
-  }
+  await withMockFetch(
+    ((): Promise<Response> => {
+      return Promise.resolve(
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    }) as typeof fetch,
+    fn,
+  );
 }
 
 Deno.test("OAuthProvider uses form-encoded UTF-8 credentials for HTTP Basic auth", async () => {
@@ -816,16 +778,15 @@ Deno.test("OAuthProvider uses form-encoded UTF-8 credentials for HTTP Basic auth
     { ...TEST_CONFIG, useBasicAuth: true },
     (key) => key === TEST_CONFIG.clientIdEnvVar ? "user: ä" : "s%écret",
   );
-  const original = globalThis.fetch;
   let requestHeaders: Headers | undefined;
   let requestBody = "";
-  globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+  const mockFetch = ((_input: string | URL | Request, init?: RequestInit) => {
     requestHeaders = new Headers(init?.headers);
     requestBody = String(init?.body ?? "");
     return Promise.resolve(Response.json({ access_token: "token" }));
   }) as typeof fetch;
 
-  try {
+  await withMockFetch(mockFetch, async () => {
     const result = await provider.exchangeCode({
       code: "code",
       redirectUri: "https://app.test/callback",
@@ -838,9 +799,7 @@ Deno.test("OAuthProvider uses form-encoded UTF-8 credentials for HTTP Basic auth
     const body = new URLSearchParams(requestBody);
     assertEquals(body.has("client_id"), false);
     assertEquals(body.has("client_secret"), false);
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 });
 
 Deno.test("OAuthProvider supports JSON token bodies and required static headers", async () => {
@@ -851,16 +810,15 @@ Deno.test("OAuthProvider supports JSON token bodies and required static headers"
     tokenRequestHeaders: { "X-Provider-Version": "2026-01-01" },
   };
   const provider = new OAuthProvider(config, (key) => ENV[key]);
-  const original = globalThis.fetch;
   let requestHeaders: Headers | undefined;
   let requestBody = "";
-  globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+  const mockFetch = ((_input: string | URL | Request, init?: RequestInit) => {
     requestHeaders = new Headers(init?.headers);
     requestBody = String(init?.body ?? "");
     return Promise.resolve(Response.json({ access_token: "token" }));
   }) as typeof fetch;
 
-  try {
+  await withMockFetch(mockFetch, async () => {
     const result = await provider.exchangeCode({
       code: "code",
       redirectUri: "https://app.test/callback",
@@ -873,9 +831,7 @@ Deno.test("OAuthProvider supports JSON token bodies and required static headers"
       code: "code",
       redirect_uri: "https://app.test/callback",
     });
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 });
 
 Deno.test("OAuthProvider rejects malformed runtime config instead of silently changing protocol", () => {
@@ -972,20 +928,17 @@ Deno.test("OAuthProvider rejects token responses larger than its configured boun
     { ...TEST_CONFIG, maxTokenResponseBytes: 32 },
     (key) => ENV[key],
   );
-  const original = globalThis.fetch;
-  globalThis.fetch =
-    (() => Promise.resolve(Response.json({ access_token: "x".repeat(1_024) }))) as typeof fetch;
-
-  try {
-    const result = await provider.exchangeCode({
-      code: "code",
-      redirectUri: "https://app.test/callback",
-    });
-    assertEquals(result.success, false);
-    assertEquals(result.error, "invalid_token_response");
-  } finally {
-    globalThis.fetch = original;
-  }
+  await withMockFetch(
+    () => Promise.resolve(Response.json({ access_token: "x".repeat(1_024) })),
+    async () => {
+      const result = await provider.exchangeCode({
+        code: "code",
+        redirectUri: "https://app.test/callback",
+      });
+      assertEquals(result.success, false);
+      assertEquals(result.error, "invalid_token_response");
+    },
+  );
 });
 
 Deno.test("OAuthProvider accepts a valid token response exactly at its configured bound", async () => {
@@ -994,25 +947,22 @@ Deno.test("OAuthProvider accepts a valid token response exactly at its configure
     { ...TEST_CONFIG, maxTokenResponseBytes: new TextEncoder().encode(body).byteLength },
     (key) => ENV[key],
   );
-  const original = globalThis.fetch;
-  globalThis.fetch = (() => Promise.resolve(new Response(body, { status: 200 }))) as typeof fetch;
-
-  try {
-    const result = await provider.exchangeCode({
-      code: "code",
-      redirectUri: "https://app.test/callback",
-    });
-    assertEquals(result.success, true);
-    assertEquals(result.tokens?.accessToken, "token");
-  } finally {
-    globalThis.fetch = original;
-  }
+  await withMockFetch(
+    () => Promise.resolve(new Response(body, { status: 200 })),
+    async () => {
+      const result = await provider.exchangeCode({
+        code: "code",
+        redirectUri: "https://app.test/callback",
+      });
+      assertEquals(result.success, true);
+      assertEquals(result.tokens?.accessToken, "token");
+    },
+  );
 });
 
 Deno.test("OAuthProvider rejects malformed UTF-8 token responses", async () => {
   const provider = new OAuthProvider(TEST_CONFIG, (key) => ENV[key]);
-  const original = globalThis.fetch;
-  globalThis.fetch = (() =>
+  const mockFetch = (() =>
     Promise.resolve(
       new Response(
         new Uint8Array([
@@ -1041,16 +991,14 @@ Deno.test("OAuthProvider rejects malformed UTF-8 token responses", async () => {
       ),
     )) as typeof fetch;
 
-  try {
+  await withMockFetch(mockFetch, async () => {
     const result = await provider.exchangeCode({
       code: "code",
       redirectUri: "https://app.test/callback",
     });
     assertEquals(result.success, false);
     assertEquals(result.error, "network_error");
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 });
 
 Deno.test("OAuthProvider aborts token requests at the configured timeout", async () => {
@@ -1058,8 +1006,7 @@ Deno.test("OAuthProvider aborts token requests at the configured timeout", async
     { ...TEST_CONFIG, requestTimeoutMs: 5 },
     (key) => ENV[key],
   );
-  const original = globalThis.fetch;
-  globalThis.fetch =
+  const mockFetch =
     ((_input: string | URL | Request, init?: RequestInit) =>
       new Promise<Response>((_resolve, reject) => {
         const signal = init?.signal;
@@ -1072,7 +1019,7 @@ Deno.test("OAuthProvider aborts token requests at the configured timeout", async
         else signal.addEventListener("abort", rejectWithReason, { once: true });
       })) as typeof fetch;
 
-  try {
+  await withMockFetch(mockFetch, async () => {
     const result = await provider.exchangeCode({
       code: "code",
       redirectUri: "https://app.test/callback",
@@ -1080,9 +1027,7 @@ Deno.test("OAuthProvider aborts token requests at the configured timeout", async
     assertEquals(result.success, false);
     assertEquals(result.error, "network_error");
     assertEquals(result.errorDescription, "OAuth token request timed out");
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 });
 
 Deno.test("OAuthProvider timeout wins when fetch ignores AbortSignal", async () => {
@@ -1090,10 +1035,7 @@ Deno.test("OAuthProvider timeout wins when fetch ignores AbortSignal", async () 
     { ...TEST_CONFIG, requestTimeoutMs: 5 },
     (key) => ENV[key],
   );
-  const original = globalThis.fetch;
-  globalThis.fetch = (() => new Promise<Response>(() => {})) as typeof fetch;
-
-  try {
+  await withMockFetch(() => new Promise<Response>(() => {}), async () => {
     const result = await provider.exchangeCode({
       code: "code",
       redirectUri: "https://app.test/callback",
@@ -1101,9 +1043,7 @@ Deno.test("OAuthProvider timeout wins when fetch ignores AbortSignal", async () 
     assertEquals(result.success, false);
     assertEquals(result.error, "network_error");
     assertEquals(result.errorDescription, "OAuth token request timed out");
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 });
 
 Deno.test("OAuthProvider timeout bounds stalled bodies and cancels late responses", async () => {
@@ -1111,9 +1051,8 @@ Deno.test("OAuthProvider timeout bounds stalled bodies and cancels late response
     { ...TEST_CONFIG, requestTimeoutMs: 5 },
     (key) => ENV[key],
   );
-  const original = globalThis.fetch;
   let bodyCancelled = false;
-  globalThis.fetch = (() =>
+  const mockFetch = (() =>
     Promise.resolve(
       new Response(
         new ReadableStream({
@@ -1125,7 +1064,7 @@ Deno.test("OAuthProvider timeout bounds stalled bodies and cancels late response
       ),
     )) as typeof fetch;
 
-  try {
+  await withMockFetch(mockFetch, async () => {
     const result = await provider.exchangeCode({
       code: "code",
       redirectUri: "https://app.test/callback",
@@ -1133,9 +1072,7 @@ Deno.test("OAuthProvider timeout bounds stalled bodies and cancels late response
     assertEquals(result.error, "network_error");
     assertEquals(result.errorDescription, "OAuth token request timed out");
     assertEquals(bodyCancelled, true);
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 });
 
 Deno.test("OAuthProvider cancels a response that arrives after strict timeout", async () => {
@@ -1143,15 +1080,14 @@ Deno.test("OAuthProvider cancels a response that arrives after strict timeout", 
     { ...TEST_CONFIG, requestTimeoutMs: 5 },
     (key) => ENV[key],
   );
-  const original = globalThis.fetch;
   let resolveFetch!: (response: Response) => void;
   let bodyCancelled = false;
-  globalThis.fetch = (() =>
+  const mockFetch = (() =>
     new Promise<Response>((resolve) => {
       resolveFetch = resolve;
     })) as typeof fetch;
 
-  try {
+  await withMockFetch(mockFetch, async () => {
     const result = await provider.exchangeCode({
       code: "code",
       redirectUri: "https://app.test/callback",
@@ -1169,9 +1105,7 @@ Deno.test("OAuthProvider cancels a response that arrives after strict timeout", 
     await Promise.resolve();
     await Promise.resolve();
     assertEquals(bodyCancelled, true);
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 });
 
 Deno.test("OAuthProvider validates security-sensitive token request inputs", async () => {
@@ -1240,14 +1174,13 @@ Deno.test("OAuthProvider blocks an internal token endpoint before credentials le
     { ...TEST_CONFIG, tokenUrl: "https://169.254.169.254/token" },
     (key) => ENV[key],
   );
-  const original = globalThis.fetch;
   let fetchCalls = 0;
-  globalThis.fetch = (() => {
+  const mockFetch = (() => {
     fetchCalls++;
     return Promise.resolve(Response.json({ access_token: "unexpected" }));
   }) as typeof fetch;
 
-  try {
+  await withMockFetch(mockFetch, async () => {
     const result = await provider.exchangeCode({
       code: "code",
       redirectUri: "https://app.test/callback",
@@ -1255,9 +1188,7 @@ Deno.test("OAuthProvider blocks an internal token endpoint before credentials le
     assertEquals(result.success, false);
     assertEquals(result.error, "network_error");
     assertEquals(fetchCalls, 0);
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 });
 
 Deno.test("OAuthProvider rejects reserved token endpoint query parameters", () => {
@@ -1280,19 +1211,16 @@ Deno.test("OAuthProvider rejects cross-origin HTTP redirects for secret-bearing 
     { ...TEST_CONFIG, revocationUrl: "https://93.184.216.34/revoke" },
     (key) => ENV[key],
   );
-  const original = globalThis.fetch;
   const redirects: Array<RequestRedirect | undefined> = [];
-  globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+  const mockFetch = ((_input: string | URL | Request, init?: RequestInit) => {
     redirects.push(init?.redirect);
     return Promise.resolve(Response.json({ access_token: "token" }));
   }) as typeof fetch;
 
-  try {
+  await withMockFetch(mockFetch, async () => {
     await provider.exchangeCode({ code: "code", redirectUri: "https://app.test/callback" });
     await provider.revokeToken("token");
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 
   assertEquals(redirects, ["manual", "manual"]);
 });
@@ -1302,10 +1230,9 @@ Deno.test("OAuthProvider bounds revocation tokens before fetch and releases resp
     { ...TEST_CONFIG, revocationUrl: "https://93.184.216.34/revoke" },
     (key) => ENV[key],
   );
-  const original = globalThis.fetch;
   let fetchCalls = 0;
   let responseCancelled = false;
-  globalThis.fetch = (() => {
+  const mockFetch = (() => {
     fetchCalls++;
     return Promise.resolve(
       new Response(
@@ -1319,7 +1246,7 @@ Deno.test("OAuthProvider bounds revocation tokens before fetch and releases resp
     );
   }) as typeof fetch;
 
-  try {
+  await withMockFetch(mockFetch, async () => {
     await assertRejects(
       () => provider.revokeToken("x".repeat(MAX_OAUTH_TOKEN_VALUE_LENGTH + 1)),
       Error,
@@ -1329,9 +1256,7 @@ Deno.test("OAuthProvider bounds revocation tokens before fetch and releases resp
     assertEquals(await provider.revokeToken("token"), true);
     assertEquals(fetchCalls, 1);
     assertEquals(responseCancelled, true);
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 });
 
 Deno.test("OAuthProvider authenticates revocation with client credentials in the body", async () => {
@@ -1339,18 +1264,15 @@ Deno.test("OAuthProvider authenticates revocation with client credentials in the
     { ...TEST_CONFIG, revocationUrl: "https://93.184.216.34/revoke" },
     (key) => ENV[key],
   );
-  const original = globalThis.fetch;
   let init: RequestInit | undefined;
-  globalThis.fetch = ((_input: string | URL | Request, requestInit?: RequestInit) => {
+  const mockFetch = ((_input: string | URL | Request, requestInit?: RequestInit) => {
     init = requestInit;
     return Promise.resolve(new Response(null, { status: 200 }));
   }) as typeof fetch;
 
-  try {
+  await withMockFetch(mockFetch, async () => {
     assertEquals(await provider.revokeToken("token"), true);
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 
   const body = new URLSearchParams(String(init?.body));
   assertEquals(body.get("token"), "token");
@@ -1366,18 +1288,15 @@ Deno.test("OAuthProvider authenticates revocation with Basic auth when configure
     { ...TEST_CONFIG, revocationUrl: "https://93.184.216.34/revoke", useBasicAuth: true },
     (key) => ENV[key],
   );
-  const original = globalThis.fetch;
   let init: RequestInit | undefined;
-  globalThis.fetch = ((_input: string | URL | Request, requestInit?: RequestInit) => {
+  const mockFetch = ((_input: string | URL | Request, requestInit?: RequestInit) => {
     init = requestInit;
     return Promise.resolve(new Response(null, { status: 200 }));
   }) as typeof fetch;
 
-  try {
+  await withMockFetch(mockFetch, async () => {
     assertEquals(await provider.revokeToken("token"), true);
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 
   const headers = new Headers(init?.headers);
   assertEquals(headers.get("Authorization"), `Basic ${btoa("test-id:test-secret")}`);
@@ -1393,18 +1312,15 @@ Deno.test("OAuthProvider skips revocation when client credentials are missing", 
     { ...TEST_CONFIG, revocationUrl: "https://93.184.216.34/revoke" },
     () => undefined,
   );
-  const original = globalThis.fetch;
   let fetchCalls = 0;
-  globalThis.fetch = (() => {
+  const mockFetch = (() => {
     fetchCalls++;
     return Promise.resolve(new Response(null, { status: 200 }));
   }) as typeof fetch;
 
-  try {
+  await withMockFetch(mockFetch, async () => {
     assertEquals(await provider.revokeToken("token"), false);
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 
   assertEquals(fetchCalls, 0);
 });
@@ -1414,52 +1330,45 @@ Deno.test("OAuthProvider revocation logging does not coerce hostile thrown value
     { ...TEST_CONFIG, revocationUrl: "https://93.184.216.34/revoke" },
     (key) => ENV[key],
   );
-  const original = globalThis.fetch;
   const hostile = Object.create(null);
   Object.defineProperty(hostile, "toString", {
     get() {
       throw new Error("must not be coerced");
     },
   });
-  globalThis.fetch = (() => {
+  const mockFetch = (() => {
     throw hostile;
   }) as typeof fetch;
 
-  try {
+  await withMockFetch(mockFetch, async () => {
     assertEquals(await provider.revokeToken("token"), false);
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 });
 
 Deno.test("OAuthService.fetch cannot be configured to follow redirects", async () => {
   const service = new OAuthService(TEST_CONFIG, makeAuthedTokenStore(), (key) => ENV[key]);
-  const original = globalThis.fetch;
   let redirect: RequestRedirect | undefined;
-  globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+  const mockFetch = ((_input: string | URL | Request, init?: RequestInit) => {
     redirect = init?.redirect;
     return Promise.resolve(Response.json({ ok: true }));
   }) as typeof fetch;
 
-  try {
+  await withMockFetch(mockFetch, async () => {
     await service.fetch("alice", "/me", { redirect: "follow" });
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 
   assertEquals(redirect, "manual");
 });
 
 Deno.test("OAuthService rejects oversized authorization codes before fetch", async () => {
   const provider = new OAuthProvider(TEST_CONFIG, (key) => ENV[key]);
-  const original = globalThis.fetch;
   let fetchCalls = 0;
-  globalThis.fetch = (() => {
+  const mockFetch = (() => {
     fetchCalls++;
     return Promise.resolve(Response.json({ access_token: "token" }));
   }) as typeof fetch;
 
-  try {
+  await withMockFetch(mockFetch, async () => {
     await assertRejects(
       () =>
         provider.exchangeCode({
@@ -1470,9 +1379,7 @@ Deno.test("OAuthService rejects oversized authorization codes before fetch", asy
       "authorization code",
     );
     assertEquals(fetchCalls, 0);
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 });
 
 Deno.test(
@@ -1518,9 +1425,8 @@ Deno.test(
       },
     };
     const service = new OAuthService(TEST_CONFIG, tokenStore, (k) => ENV[k]);
-    const original = globalThis.fetch;
     let refreshCalls = 0;
-    globalThis.fetch = ((): Promise<Response> => {
+    const mockFetch = ((): Promise<Response> => {
       refreshCalls++;
       return Promise.resolve(
         new Response(
@@ -1538,7 +1444,7 @@ Deno.test(
       );
     }) as typeof fetch;
 
-    try {
+    await withMockFetch(mockFetch, async () => {
       const [first, second] = await Promise.all([
         service.getAccessToken("user-1"),
         service.getAccessToken("user-1"),
@@ -1550,9 +1456,7 @@ Deno.test(
       assertEquals(setTokenCalls, 1);
       assertEquals(storedTokens.refreshToken, "rotated-refresh-token");
       assertEquals(storedTokens.scope, "read");
-    } finally {
-      globalThis.fetch = original;
-    }
+    });
   },
 );
 
@@ -1564,14 +1468,13 @@ Deno.test("OAuthService aborting one waiter does not evict a shared refresh lead
     expiresAt: Date.now() - 1,
   });
   const service = new OAuthService(TEST_CONFIG, store, (key) => ENV[key]);
-  const original = globalThis.fetch;
   let fetchCalls = 0;
   let resolveFetch!: (response: Response) => void;
   let markFetchStarted!: () => void;
   const fetchStarted = new Promise<void>((resolve) => {
     markFetchStarted = resolve;
   });
-  globalThis.fetch = (() => {
+  const mockFetch = (() => {
     fetchCalls++;
     markFetchStarted();
     return new Promise<Response>((resolve) => {
@@ -1579,7 +1482,7 @@ Deno.test("OAuthService aborting one waiter does not evict a shared refresh lead
     });
   }) as typeof fetch;
 
-  try {
+  await withMockFetch(mockFetch, async () => {
     const controller = new AbortController();
     const first = service.getAccessToken("alice", controller.signal);
     await fetchStarted;
@@ -1592,9 +1495,7 @@ Deno.test("OAuthService aborting one waiter does not evict a shared refresh lead
     resolveFetch(Response.json({ access_token: "fresh", expires_in: 3_600 }));
     assertEquals(await second, "fresh");
     assertEquals(fetchCalls, 1);
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 });
 
 Deno.test("OAuthService.getAccessToken treats an epoch expiry as expired", async () => {
@@ -1641,19 +1542,16 @@ Deno.test(
     const store = makeAuthedTokenStore();
     store.getTokens = () => Promise.resolve(expired);
     const service = new OAuthService(TEST_CONFIG, store, (key) => ENV[key]);
-    const original = globalThis.fetch;
     let fetchCalls = 0;
-    globalThis.fetch = (() => {
+    const mockFetch = (() => {
       fetchCalls++;
       return Promise.resolve(Response.json({ access_token: "unexpected" }));
     }) as typeof fetch;
 
-    try {
+    await withMockFetch(mockFetch, async () => {
       await assertRejects(() => service.getAccessToken("alice"), Error, "atomic token refresh");
       assertEquals(fetchCalls, 0);
-    } finally {
-      globalThis.fetch = original;
-    }
+    });
   },
 );
 
@@ -1914,9 +1812,8 @@ Deno.test(
     const firstService = new OAuthService(TEST_CONFIG, store, (k) => ENV[k]);
     const secondService = new OAuthService(TEST_CONFIG, store, (k) => ENV[k]);
 
-    const original = globalThis.fetch;
     let tokenCalls = 0;
-    globalThis.fetch = ((input: string | URL | Request): Promise<Response> => {
+    const mockFetch = ((input: string | URL | Request): Promise<Response> => {
       const url = typeof input === "string"
         ? input
         : input instanceof URL
@@ -1931,7 +1828,7 @@ Deno.test(
       );
     }) as typeof fetch;
 
-    try {
+    await withMockFetch(mockFetch, async () => {
       const [first, second] = await Promise.all([
         firstService.getAccessToken("user-concurrent"),
         secondService.getAccessToken("user-concurrent"),
@@ -1940,9 +1837,7 @@ Deno.test(
       assertEquals(second, "new-token");
       assertEquals(tokenCalls, 1);
       assertEquals(setCount, 1);
-    } finally {
-      globalThis.fetch = original;
-    }
+    });
   },
 );
 
@@ -1969,9 +1864,8 @@ Deno.test(
     });
     const firstService = new OAuthService(TEST_CONFIG, createWrapper(), (key) => ENV[key]);
     const secondService = new OAuthService(TEST_CONFIG, createWrapper(), (key) => ENV[key]);
-    const original = globalThis.fetch;
     let refreshCalls = 0;
-    globalThis.fetch = (() => {
+    const mockFetch = (() => {
       refreshCalls++;
       return Promise.resolve(Response.json({
         access_token: "new-token",
@@ -1980,7 +1874,7 @@ Deno.test(
       }));
     }) as typeof fetch;
 
-    try {
+    await withMockFetch(mockFetch, async () => {
       assertEquals(
         await Promise.all([
           firstService.getAccessToken("alice"),
@@ -1989,9 +1883,7 @@ Deno.test(
         ["new-token", "new-token"],
       );
       assertEquals(refreshCalls, 1);
-    } finally {
-      globalThis.fetch = original;
-    }
+    });
   },
 );
 
@@ -2041,9 +1933,8 @@ Deno.test(
       (k) => ENV[k],
     );
 
-    const original = globalThis.fetch;
     const refreshBodies: string[] = [];
-    globalThis.fetch = ((
+    const mockFetch = ((
       _input: string | URL | Request,
       init?: RequestInit,
     ): Promise<Response> => {
@@ -2056,7 +1947,7 @@ Deno.test(
       );
     }) as typeof fetch;
 
-    try {
+    await withMockFetch(mockFetch, async () => {
       await Promise.all([
         firstService.getAccessToken("same-user"),
         secondService.getAccessToken("same-user"),
@@ -2064,9 +1955,7 @@ Deno.test(
       assertEquals(refreshBodies.length, 2);
       assertEquals(refreshBodies.some((body) => body.includes("refresh-a")), true);
       assertEquals(refreshBodies.some((body) => body.includes("refresh-b")), true);
-    } finally {
-      globalThis.fetch = original;
-    }
+    });
   },
 );
 
@@ -2114,15 +2003,14 @@ Deno.test(
     const started = new Promise<void>((resolve) => {
       markStarted = resolve;
     });
-    const original = globalThis.fetch;
-    globalThis.fetch = (() => {
+    const mockFetch = (() => {
       markStarted();
       return new Promise<Response>((resolve) => {
         resolveFetch = resolve;
       });
     }) as typeof fetch;
 
-    try {
+    await withMockFetch(mockFetch, async () => {
       const accessToken = service.getAccessToken("user-1");
       await started;
       await store.clearTokens(TEST_CONFIG.serviceId, "user-1");
@@ -2131,9 +2019,7 @@ Deno.test(
       assertEquals(await accessToken, null);
       assertEquals(storedTokens, null);
       assertEquals(setCalls, 0);
-    } finally {
-      globalThis.fetch = original;
-    }
+    });
   },
 );
 
@@ -2175,15 +2061,14 @@ Deno.test(
     const started = new Promise<void>((resolve) => {
       markStarted = resolve;
     });
-    const original = globalThis.fetch;
-    globalThis.fetch = (() => {
+    const mockFetch = (() => {
       markStarted();
       return new Promise<Response>((resolve) => {
         resolveFetch = resolve;
       });
     }) as typeof fetch;
 
-    try {
+    await withMockFetch(mockFetch, async () => {
       const accessToken = service.getAccessToken("user-1");
       await started;
       await store.setTokens(TEST_CONFIG.serviceId, "user-1", {
@@ -2196,9 +2081,7 @@ Deno.test(
       assertEquals(await accessToken, "newer-authorization-token");
       assertEquals(storedTokens.accessToken, "newer-authorization-token");
       assertEquals(setCalls, 1);
-    } finally {
-      globalThis.fetch = original;
-    }
+    });
   },
 );
 

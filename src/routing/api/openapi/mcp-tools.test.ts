@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { generateMCPToolsFromSpec } from "./mcp-tools.ts";
 import type { OpenAPISpec } from "./types.ts";
 
@@ -232,70 +233,60 @@ describe("routing/api/openapi/mcp-tools", () => {
     });
 
     it("does not propagate caller-supplied end-user identity headers", async () => {
-      const originalFetch = globalThis.fetch;
       let requestHeaders: Headers | undefined;
 
-      try {
-        globalThis.fetch = (input: string | URL | Request, init?: RequestInit) => {
-          const request = input instanceof Request ? input : new Request(input, init);
-          requestHeaders = request.headers;
-          return Promise.resolve(
-            Response.json({ ok: true }, { status: 200 }),
-          );
-        };
-
-        const tools = generateTools(
-          makeSpec({
-            "/api/users": {
-              get: {
-                operationId: "getUsers",
-                responses: { "200": { description: "OK" } },
-              },
-            },
-          }),
-          { baseUrl: "http://93.184.216.34:3000" },
+      const mockFetch = (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requestHeaders = request.headers;
+        return Promise.resolve(
+          Response.json({ ok: true }, { status: 200 }),
         );
+      };
 
-        const first = tools[0];
-        assertExists(first);
-        await first.execute({}, { endUserId: "user-123" });
+      const tools = generateTools(
+        makeSpec({
+          "/api/users": {
+            get: {
+              operationId: "getUsers",
+              responses: { "200": { description: "OK" } },
+            },
+          },
+        }),
+        { baseUrl: "http://93.184.216.34:3000" },
+      );
 
-        assertExists(requestHeaders);
-        assertEquals(requestHeaders.get("X-End-User-Id"), null);
-      } finally {
-        globalThis.fetch = originalFetch;
-      }
+      const first = tools[0];
+      assertExists(first);
+      await withMockFetch(mockFetch, () => first.execute({}, { endUserId: "user-123" }));
+
+      assertExists(requestHeaders);
+      assertEquals(requestHeaders.get("X-End-User-Id"), null);
     });
 
     it("blocks an internal configured API base URL before invoking fetch", async () => {
-      const originalFetch = globalThis.fetch;
       let fetchCalls = 0;
-      globalThis.fetch = (() => {
+      const mockFetch = (() => {
         fetchCalls++;
         return Promise.resolve(Response.json({ unexpected: true }));
       }) as typeof fetch;
 
-      try {
-        const tools = generateTools(
-          makeSpec({
-            "/api/users": {
-              get: {
-                operationId: "getUsers",
-                responses: { "200": { description: "OK" } },
-              },
+      const tools = generateTools(
+        makeSpec({
+          "/api/users": {
+            get: {
+              operationId: "getUsers",
+              responses: { "200": { description: "OK" } },
             },
-          }),
-          { baseUrl: "http://169.254.169.254" },
-        );
-        const first = tools[0];
-        assertExists(first);
+          },
+        }),
+        { baseUrl: "http://169.254.169.254" },
+      );
+      const first = tools[0];
+      assertExists(first);
 
-        const result = await first.execute({});
-        assertEquals(fetchCalls, 0);
-        assertEquals((result as { error?: boolean }).error, true);
-      } finally {
-        globalThis.fetch = originalFetch;
-      }
+      const result = await withMockFetch(mockFetch, () => first.execute({}));
+      assertEquals(fetchCalls, 0);
+      assertEquals((result as { error?: boolean }).error, true);
     });
   });
 });

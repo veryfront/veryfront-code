@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import type { ModelRuntime } from "./types.ts";
@@ -60,10 +61,7 @@ function testRuntime(provider: string, modelId: string): ModelRuntime {
 }
 
 describe("provider/model-registry", () => {
-  const originalFetch = globalThis.fetch;
-
   afterEach(() => {
-    globalThis.fetch = originalFetch;
     clearModelRegistryEnv();
     clearModelProviders();
   });
@@ -355,7 +353,7 @@ describe("provider/model-registry", () => {
     let requestedUrl = "";
     let requestedBody: Record<string, unknown> | undefined;
 
-    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
+    const mockFetch = (async (input: URL | Request | string, init?: RequestInit) => {
       const request = new Request(input, init);
       requestedUrl = request.url;
       requestedBody = JSON.parse(await request.text()) as Record<string, unknown>;
@@ -378,25 +376,28 @@ describe("provider/model-registry", () => {
       );
     }) as typeof fetch;
 
-    const runtime = resolveModel("openai/gpt-5.4-nano");
-    const result = await runtime.doGenerate({
-      prompt: [{
-        role: "user",
-        content: [{ type: "text", text: "Find order #4587" }],
-      }],
-      tools: [{
-        type: "function",
-        name: "lookup_order",
-        description: "Lookup an order by id",
-        inputSchema: {
-          type: "object",
-          properties: { orderId: { type: "string" } },
-          required: ["orderId"],
-          additionalProperties: false,
-        },
-      }],
-      toolChoice: "auto",
-    });
+    const result = await withMockFetch(
+      mockFetch,
+      async () =>
+        await resolveModel("openai/gpt-5.4-nano").doGenerate({
+          prompt: [{
+            role: "user",
+            content: [{ type: "text", text: "Find order #4587" }],
+          }],
+          tools: [{
+            type: "function",
+            name: "lookup_order",
+            description: "Lookup an order by id",
+            inputSchema: {
+              type: "object",
+              properties: { orderId: { type: "string" } },
+              required: ["orderId"],
+              additionalProperties: false,
+            },
+          }],
+          toolChoice: "auto",
+        }),
+    );
 
     assertEquals(requestedUrl, "https://api.openai.com/v1/responses");
     assertEquals(requestedBody?.model, "gpt-5.4-nano");
@@ -414,7 +415,7 @@ describe("provider/model-registry", () => {
     setEnv("OPENAI_API_KEY", "sk-test-openai");
     let requestedBody: Record<string, unknown> | undefined;
 
-    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
+    const mockFetch = (async (input: URL | Request | string, init?: RequestInit) => {
       const request = new Request(input, init);
       requestedBody = JSON.parse(await request.text()) as Record<string, unknown>;
 
@@ -436,14 +437,17 @@ describe("provider/model-registry", () => {
       );
     }) as typeof fetch;
 
-    const runtime = resolveModel("openai/gpt-5.4-nano");
-    await runtime.doGenerate({
-      prompt: [{
-        role: "user",
-        content: [{ type: "text", text: "Think hard." }],
-      }],
-      reasoning: { enabled: true, effort: "high" },
-    });
+    await withMockFetch(
+      mockFetch,
+      async () =>
+        await resolveModel("openai/gpt-5.4-nano").doGenerate({
+          prompt: [{
+            role: "user",
+            content: [{ type: "text", text: "Think hard." }],
+          }],
+          reasoning: { enabled: true, effort: "high" },
+        }),
+    );
 
     assertEquals(requestedBody?.store, false);
     assertEquals(requestedBody?.reasoning, { effort: "high", summary: "auto" });
@@ -453,7 +457,7 @@ describe("provider/model-registry", () => {
     setEnv("OPENAI_API_KEY", "sk-test-openai");
     let requestedBody: Record<string, unknown> | undefined;
 
-    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
+    const mockFetch = (async (input: URL | Request | string, init?: RequestInit) => {
       const request = new Request(input, init);
       requestedBody = JSON.parse(await request.text()) as Record<string, unknown>;
 
@@ -475,22 +479,25 @@ describe("provider/model-registry", () => {
       );
     }) as typeof fetch;
 
-    const runtime = resolveModel("openai/gpt-5.4-nano");
-    await runtime.doGenerate({
-      prompt: [{
-        role: "user",
-        content: [{ type: "text", text: "Hi" }],
-      }],
-      providerOptions: {
-        "openai-compatible": {
-          custom_compat: true,
-          service_tier: "flex",
-        },
-        openai: {
-          service_tier: "default",
-        },
-      },
-    });
+    await withMockFetch(
+      mockFetch,
+      async () =>
+        await resolveModel("openai/gpt-5.4-nano").doGenerate({
+          prompt: [{
+            role: "user",
+            content: [{ type: "text", text: "Hi" }],
+          }],
+          providerOptions: {
+            "openai-compatible": {
+              custom_compat: true,
+              service_tier: "flex",
+            },
+            openai: {
+              service_tier: "default",
+            },
+          },
+        }),
+    );
 
     assertEquals(requestedBody?.custom_compat, true);
     assertEquals(requestedBody?.service_tier, "default");
