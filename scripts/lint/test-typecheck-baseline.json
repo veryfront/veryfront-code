@@ -27,7 +27,6 @@
   "src/build/renderer/services/css-bundler.test.ts",
   "src/cache/registry.test.ts",
   "src/embedding/chunk.test.ts",
-  "src/embedding/rag-store.test.ts",
   "src/eval/judges.test.ts",
   "src/mcp/elicitation.test.ts",
   "src/mcp/server.test.ts",

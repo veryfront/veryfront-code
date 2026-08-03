@@ -12,6 +12,7 @@ import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/adapter.t
 import type { RuntimeAdapter, ServeOptions, Server } from "#veryfront/platform/adapters/base.ts";
 import { captureBoundedTextReader } from "#veryfront/platform/adapters/bounded-text-reader.ts";
 import { FileSnapshotChangedError } from "#veryfront/platform/adapters/file-snapshot-error.ts";
+import { NodeCompatibleFileSystemAdapter } from "#veryfront/platform/adapters/runtime/shared/node-filesystem-adapter.ts";
 
 function createMockFileSystem(
   overrides: Partial<RuntimeAdapter["fs"]> = {},
@@ -826,6 +827,30 @@ describe("SecureFs", () => {
     assertEquals([...result], [1, 2, 3]);
     assertEquals(received, ["/project/assets/app.bin", "/project", 3]);
     assertEquals({ originalCalls, replacementCalls }, { originalCalls: 1, replacementCalls: 0 });
+  });
+
+  it("reads a canonical snapshot beneath a symlinked configured root", async () => {
+    if (Deno.build.os === "windows") return;
+    const workspace = await Deno.makeTempDir({ prefix: "veryfront-secure-fs-snapshot-root-" });
+    const physicalRoot = `${workspace}/physical`;
+    const linkedRoot = `${workspace}/linked`;
+    try {
+      await Deno.mkdir(physicalRoot);
+      await Deno.writeFile(`${physicalRoot}/asset.bin`, new Uint8Array([1, 2, 3]));
+      await Deno.symlink(physicalRoot, linkedRoot);
+      const secureFs = createSecureFs({
+        baseDir: linkedRoot,
+        adapter: { fs: new NodeCompatibleFileSystemAdapter() } as unknown as RuntimeAdapter,
+        context: "build",
+      });
+
+      assertEquals(
+        [...await secureFs.readFileSnapshotWithinLimit!("asset.bin", 3)],
+        [1, 2, 3],
+      );
+    } finally {
+      await Deno.remove(workspace, { recursive: true });
+    }
   });
 
   it("rejects traversal before invoking raw snapshot authority", async () => {
