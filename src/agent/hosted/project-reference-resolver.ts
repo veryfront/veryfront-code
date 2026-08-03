@@ -18,20 +18,25 @@ const ArrayIsArray = Array.isArray;
  * Read an own data property from untrusted JSON without invoking accessors or
  * walking the prototype chain.
  */
+export function canReadHostedProjectLookupDataProperties(
+  source: unknown,
+  proxyDetectionAvailable = canIdentifyProxyWithoutHooks,
+): source is object {
+  if (typeof source !== "object" || source === null || ArrayIsArray(source)) {
+    return false;
+  }
+  if (!proxyDetectionAvailable) {
+    return false;
+  }
+  return !isProxyWithoutHooks(source);
+}
+
 function readOwnDataProperty(source: unknown, key: string): unknown {
-  if (
-    !canIdentifyProxyWithoutHooks ||
-    typeof source !== "object" ||
-    source === null ||
-    isProxyWithoutHooks(source)
-  ) {
+  if (!canReadHostedProjectLookupDataProperties(source)) {
     return undefined;
   }
 
   try {
-    if (ArrayIsArray(source)) {
-      return undefined;
-    }
     return readRuntimeOwnDataProperty(source, key, "project lookup response", false);
   } catch {
     return undefined;

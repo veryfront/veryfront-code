@@ -2,7 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { canIdentifyProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { MAX_OPAQUE_ID_CODE_UNITS } from "#veryfront/utils/project-identity.ts";
-import { resolveHostedProjectReference } from "./project-reference-resolver.ts";
+import {
+  canReadHostedProjectLookupDataProperties,
+  resolveHostedProjectReference,
+} from "./project-reference-resolver.ts";
 
 const LOOKUP_INPUT = {
   projectReference: "target-project",
@@ -161,6 +164,16 @@ Deno.test("resolveHostedProjectReference rejects active response proxies without
   );
 
   assertEquals(trapCalls, 0);
+});
+
+Deno.test("project lookup data reads fail closed when proxy detection is unavailable", () => {
+  assertEquals(
+    canReadHostedProjectLookupDataProperties(
+      { id: "target-project", slug: "target-project" },
+      false,
+    ),
+    false,
+  );
 });
 
 Deno.test("resolveHostedProjectReference rejects revoked response proxies without leaking revocation errors", async () => {
