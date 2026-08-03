@@ -68,6 +68,25 @@ describe("Route Module Manifest", () => {
     );
   });
 
+  it("generateModulePreloadHintsFromManifest escapes hrefs so a path cannot break out of the attribute", () => {
+    clearProjectManifests("escape-project");
+    recordSSRModules("escape-project", "index", [
+      '_vf_modules/evil"><script>alert(1)</script>.js',
+    ]);
+
+    try {
+      const hints = generateModulePreloadHintsFromManifest("escape-project", "index", 10);
+      assertEquals(hints.length, 1);
+      assertEquals(hints[0]?.includes("<script>"), false);
+      assertEquals(
+        hints[0],
+        '<link rel="modulepreload" href="/_vf_modules/evil&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;.js">',
+      );
+    } finally {
+      clearProjectManifests("escape-project");
+    }
+  });
+
   it("collection API works for tracking", () => {
     const sessionId = "test-session-1";
     startModuleCollection(sessionId);

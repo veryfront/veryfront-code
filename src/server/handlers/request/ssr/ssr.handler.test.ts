@@ -2,7 +2,7 @@ import { RENDER_ERROR } from "#veryfront/errors";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isProductionMode, SSRHandler } from "./ssr.handler.ts";
+import { SSRHandler } from "./ssr.handler.ts";
 import type { HandlerContext } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { SSRRenderOptions } from "../../../services/rendering/ssr.service.ts";
@@ -690,45 +690,6 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       );
 
       assertEquals(capturedOptions!.forceProductionScripts, true);
-    });
-  });
-
-  describe("isProductionMode", () => {
-    it("returns true when config has productionMode = true", () => {
-      const ctx = makeCtx({
-        config: { fs: { veryfront: { productionMode: true } } } as any,
-      });
-      assertEquals(isProductionMode(ctx), true);
-    });
-
-    it("returns true when resolvedEnvironment is production", () => {
-      const ctx = makeCtx({ resolvedEnvironment: "production" });
-      assertEquals(isProductionMode(ctx), true);
-    });
-
-    it("returns false when resolvedEnvironment is preview", () => {
-      const ctx = makeCtx({ resolvedEnvironment: "preview" });
-      assertEquals(isProductionMode(ctx), false);
-    });
-
-    it("falls back to requestContext.mode when resolvedEnvironment is not set", () => {
-      const ctx = makeCtx({
-        requestContext: { mode: "production" } as any,
-      });
-      assertEquals(isProductionMode(ctx), true);
-    });
-
-    it("returns false when neither resolvedEnvironment nor mode is set", () => {
-      const ctx = makeCtx();
-      assertEquals(isProductionMode(ctx), false);
-    });
-
-    it("config productionMode overrides resolvedEnvironment", () => {
-      const ctx = makeCtx({
-        config: { fs: { veryfront: { productionMode: true } } } as any,
-        resolvedEnvironment: "preview",
-      });
-      assertEquals(isProductionMode(ctx), true);
     });
   });
 });

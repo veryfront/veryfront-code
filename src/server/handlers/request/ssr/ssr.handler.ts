@@ -41,20 +41,9 @@ import {
   snapshotConflictResponse,
   stripSnapshotHeader,
 } from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
+import { isProductionMode, shouldHideRouteInProduction } from "../route-visibility-policy.ts";
 
 const logger = serverLogger.component("ssr");
-
-/**
- * Determine if request should serve production (released) content.
- * Uses resolvedEnvironment (from domain lookup) with fallback to requestContext.mode.
- * Config override (PRODUCTION_MODE) takes precedence.
- */
-export function isProductionMode(ctx: HandlerContext, _url?: URL): boolean {
-  if (ctx.config?.fs?.veryfront?.productionMode === true) return true;
-
-  const environment = ctx.resolvedEnvironment ?? ctx.requestContext?.mode;
-  return environment === "production";
-}
 
 /**
  * SSR Handler - Thin orchestration layer
@@ -101,8 +90,7 @@ export class SSRHandler extends BaseHandler {
     const requestId = `${slug || "index"}-${Date.now()}`;
     startRequest(requestId);
 
-    const hasDotSegment = slug.split("/").some((segment) => segment.startsWith("."));
-    if (hasDotSegment && isProductionMode(ctx, url)) {
+    if (shouldHideRouteInProduction(ctx, slug)) {
       this.logDebug("Dot path blocked in production", { slug }, ctx);
       return Promise.resolve(this.continue());
     }
@@ -124,7 +112,7 @@ export class SSRHandler extends BaseHandler {
       const isExtended = isExtendedFSAdapter(fsAdapter);
 
       if (ctx.projectSlug && isExtended && fsAdapter.isMultiProjectMode()) {
-        const prodMode = isProductionMode(ctx, url);
+        const prodMode = isProductionMode(ctx);
         const branch = ctx.parsedDomain?.branch ?? null;
         // Framework-owned token: bypass project env overlay so proxy mode works
         // when a remote project overlay is active.
@@ -169,7 +157,7 @@ export class SSRHandler extends BaseHandler {
         // the failure at warn (rather than swallowing it) so a genuinely broken
         // production-mode setup is visible instead of silently serving draft content.
         try {
-          const prodMode = isProductionMode(ctx, url);
+          const prodMode = isProductionMode(ctx);
           fsAdapter.setProductionMode(prodMode, ctx.releaseId);
         } catch (e) {
           logger.warn("Adapter setProductionMode failed", {
