@@ -42,7 +42,13 @@
 import type { EncryptedKvBackend } from "./encrypted-token-store.ts";
 
 function runtimeMode(): string | undefined {
-  if (typeof process !== "undefined" && process.env) return process.env.NODE_ENV;
+  try {
+    if (typeof process !== "undefined" && process.env) return process.env.NODE_ENV;
+  } catch {
+    // Deno exposes the Node-compatible `process` global even when env access
+    // is denied. Preserve the fail-closed mode decision in that runtime.
+    return undefined;
+  }
   try {
     return (globalThis as { Deno?: { env?: { get?: (name: string) => string | undefined } } })
       .Deno?.env?.get?.("NODE_ENV");

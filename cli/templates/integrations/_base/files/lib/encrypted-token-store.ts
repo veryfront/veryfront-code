@@ -154,7 +154,14 @@ const REQUIRED_BACKEND_METHODS = [
 ] as const;
 
 function readEnvironmentVariable(name: string): string | undefined {
-  if (typeof process !== "undefined" && process.env) return process.env[name];
+  try {
+    if (typeof process !== "undefined" && process.env) return process.env[name];
+  } catch {
+    // Deno exposes the Node-compatible `process` global even when env access
+    // is denied. Treat that denial as an unavailable value; never bypass it
+    // through a second environment API.
+    return undefined;
+  }
   try {
     return (globalThis as { Deno?: { env?: { get?: (name: string) => string | undefined } } })
       .Deno?.env?.get?.(name);

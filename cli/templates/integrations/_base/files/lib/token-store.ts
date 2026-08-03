@@ -45,7 +45,13 @@ const REQUIRED_STORE_METHODS = [
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1_000;
 
 function runtimeMode(): string | undefined {
-  if (typeof process !== "undefined" && process.env) return process.env.NODE_ENV;
+  try {
+    if (typeof process !== "undefined" && process.env) return process.env.NODE_ENV;
+  } catch {
+    // Deno exposes the Node-compatible `process` global even when env access
+    // is denied. Preserve the fail-closed mode decision in that runtime.
+    return undefined;
+  }
   try {
     return (globalThis as { Deno?: { env?: { get?: (name: string) => string | undefined } } })
       .Deno?.env?.get?.("NODE_ENV");

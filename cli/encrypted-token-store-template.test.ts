@@ -271,6 +271,39 @@ describe("generated encrypted OAuth token store", () => {
     }
   });
 
+  it("treats denied process key access as an unset encryption key", () => {
+    const processDescriptor = Object.getOwnPropertyDescriptor(globalThis, "process");
+    Object.defineProperty(globalThis, "process", {
+      configurable: true,
+      value: {
+        env: new Proxy({}, {
+          get() {
+            throw new Error("PermissionDenied");
+          },
+        }),
+      },
+    });
+
+    const backend: EncryptedKvBackend = {
+      get: () => Promise.resolve(null),
+      set: () => Promise.resolve(),
+      delete: () => Promise.resolve(),
+      compareAndSwap: () => Promise.resolve(false),
+      withLock: (_key, operation) => operation(),
+    };
+
+    try {
+      assertThrows(
+        () => createEncryptedTokenStore(backend),
+        Error,
+        "TOKEN_ENCRYPTION_KEY is not set",
+      );
+    } finally {
+      if (processDescriptor) Object.defineProperty(globalThis, "process", processDescriptor);
+      else Reflect.deleteProperty(globalThis, "process");
+    }
+  });
+
   it("rejects malformed encryption keys instead of downgrading", () => {
     for (const bad of ["", "not-hex", "abcd", "zz".repeat(32)]) {
       Deno.env.set("TOKEN_ENCRYPTION_KEY", bad);
@@ -1290,6 +1323,31 @@ describe("generated encrypted OAuth token store", () => {
       else Reflect.deleteProperty(globalThis, "process");
       if (denoDescriptor) Object.defineProperty(globalThis, "Deno", denoDescriptor);
       else Reflect.deleteProperty(globalThis, "Deno");
+    }
+  });
+
+  it("treats denied process runtime mode access as unset for the example backend", () => {
+    const processDescriptor = Object.getOwnPropertyDescriptor(globalThis, "process");
+    Object.defineProperty(globalThis, "process", {
+      configurable: true,
+      value: {
+        env: new Proxy({}, {
+          get() {
+            throw new Error("PermissionDenied");
+          },
+        }),
+      },
+    });
+
+    try {
+      assertThrows(
+        () => createMemoryKvBackend(),
+        Error,
+        "explicit development or test",
+      );
+    } finally {
+      if (processDescriptor) Object.defineProperty(globalThis, "process", processDescriptor);
+      else Reflect.deleteProperty(globalThis, "process");
     }
   });
 

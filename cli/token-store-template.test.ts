@@ -171,6 +171,31 @@ describe("generated OAuth token store", () => {
     }
   });
 
+  it("treats denied process environment access as an unset runtime mode", () => {
+    const processDescriptor = Object.getOwnPropertyDescriptor(globalThis, "process");
+    Object.defineProperty(globalThis, "process", {
+      configurable: true,
+      value: {
+        env: new Proxy({}, {
+          get() {
+            throw new Error("PermissionDenied");
+          },
+        }),
+      },
+    });
+
+    try {
+      assertThrows(
+        () => createDefaultTokenStore(),
+        Error,
+        "NODE_ENV is explicitly development or test",
+      );
+    } finally {
+      if (processDescriptor) Object.defineProperty(globalThis, "process", processDescriptor);
+      else Reflect.deleteProperty(globalThis, "process");
+    }
+  });
+
   it("serializes concurrent refresh and persists it with compare-and-set", async () => {
     const store = createTokenStore(new MemoryTokenStore("refresh-concurrency"));
     await store.setTokens("github", "alice", {
