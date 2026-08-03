@@ -273,29 +273,13 @@ describe("rendering/cache/stores/api-store", () => {
       }
     });
 
-    it("preserves Dates through an actual API backend round-trip", async () => {
+    it("preserves Dates through an API transport round-trip", async () => {
       const previousApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
       const previousApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
       const globals = globalThis as Record<string, unknown>;
       const originalAdapter = globals.__vf_multi_project_adapter;
       const values = new Map<string, string>();
-      const server = Deno.serve(
-        { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-        async (request) => {
-          const url = new URL(request.url);
-          if (url.pathname === "/projects/api-store-date-project/cache/set") {
-            const body = await request.json() as { key: string; value: string };
-            values.set(body.key, body.value);
-            return Response.json({ success: true });
-          }
-          if (url.pathname === "/projects/api-store-date-project/cache/get") {
-            return Response.json({ value: values.get(url.searchParams.get("key") ?? "") ?? null });
-          }
-          return Response.json({ error: "not found" }, { status: 404 });
-        },
-      );
-      const addr = server.addr as Deno.NetAddr;
-      Deno.env.set("VERYFRONT_API_BASE_URL", `http://${addr.hostname}:${addr.port}`);
+      Deno.env.set("VERYFRONT_API_BASE_URL", TEST_PUBLIC_API_ORIGIN);
       Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
       globals.__vf_multi_project_adapter = {
         getCurrentRequestContext: () => ({
@@ -316,13 +300,39 @@ describe("rendering/cache/stores/api-store", () => {
       };
 
       try {
-        await store.set("dated-key", payload);
-        const result = await store.get("dated-key");
+        await withMockFetch(
+          async (input: string | URL | Request, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            const url = new URL(request.url);
+            if (
+              request.method === "POST" &&
+              url.origin === TEST_PUBLIC_API_ORIGIN &&
+              url.pathname === "/projects/api-store-date-project/cache/set"
+            ) {
+              const body = await request.json() as { key: string; value: string };
+              values.set(body.key, body.value);
+              return Response.json({ success: true });
+            }
+            if (
+              request.method === "GET" &&
+              url.origin === TEST_PUBLIC_API_ORIGIN &&
+              url.pathname === "/projects/api-store-date-project/cache/get"
+            ) {
+              return Response.json({
+                value: values.get(url.searchParams.get("key") ?? "") ?? null,
+              });
+            }
+            return Response.json({ error: "not found" }, { status: 404 });
+          },
+          async () => {
+            await store.set("dated-key", payload);
+            const result = await store.get("dated-key");
 
-        assertEquals(result?.result.frontmatter as unknown, { publishedAt });
+            assertEquals(result?.result.frontmatter as unknown, { publishedAt });
+          },
+        );
       } finally {
         await store.destroy();
-        await server.shutdown();
         if (previousApiBaseUrl === undefined) {
           Deno.env.delete("VERYFRONT_API_BASE_URL");
         } else {
